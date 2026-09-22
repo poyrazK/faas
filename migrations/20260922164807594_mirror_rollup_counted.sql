@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-211. Stop legacy mirror rollup workers before applying this migration;
+-- ADR-212. Stop legacy mirror rollup workers before applying this migration;
 -- old binaries do not understand the receipt and must not run after cutover.
 -- The receipt and baseline are installed atomically. Replaying this migration
 -- must NOT rebuild summaries once retention has removed counted ledger rows.
@@ -41,7 +41,7 @@ BEGIN
     -- Whole hours inside retention can be repaired from the retained ledger.
     -- Older hours may already have lost raw rows: never reduce their existing
     -- totals. Historical overcounts/holes with missing raw evidence cannot be
-    -- reconstructed exactly; ADR-211 documents this cutover limitation.
+    -- reconstructed exactly; ADR-212 documents this cutover limitation.
     INSERT INTO mirror_invocation_summary (
         rule_id, app_id, hour_bucket, total_invocations,
         status_diff_count, schema_diff_count, body_diff_count, crash_count,

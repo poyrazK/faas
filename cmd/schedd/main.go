@@ -1906,7 +1906,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"window_s", api.ScaleUpWindowSeconds,
 			"aggressive", cfg.ReaperAggressive)
 	}
-	// Issue #72 / ADR-211: mirror recovery and retention need only Postgres.
+	// Issue #72 / ADR-212: mirror recovery and retention need only Postgres.
 	// Disabling the optional gateway metrics scrape must not disable them.
 	go mirrorRollup.RollupLoop(ctx, pool, mirrorRollup.DefaultRollupInterval, log)
 	log.Info("mirror rollup + ledger sweep enabled",
