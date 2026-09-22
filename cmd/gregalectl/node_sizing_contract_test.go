@@ -238,6 +238,12 @@ func TestNodeJoinDelegatesCgroupControllersBeforeDraining(t *testing.T) {
 			t.Errorf("delegation task is missing %q", want)
 		}
 	}
+	// pipefail is a bashism and ansible.builtin.shell defaults to /bin/sh,
+	// which is dash on these hosts. The first attempt failed with
+	// "set: Illegal option -o pipefail" before the drain even began.
+	if strings.Contains(block, "pipefail") && !strings.Contains(block, "executable: /bin/bash") {
+		t.Error("delegation task uses pipefail without naming bash as the executable")
+	}
 	// One controller per write: a multi-token body is applied atomically, so
 	// an unsupported token would reject the whole write and leave memory off.
 	if strings.Contains(block, `"+memory +cpu +pids"`) || strings.Contains(block, "+memory +cpu") {

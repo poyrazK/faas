@@ -1124,6 +1124,11 @@
             echo "+$c" > "$dir/cgroup.subtree_control"
           done
         done
+      args:
+        # `set -o pipefail` is a bashism and ansible.builtin.shell defaults to
+        # /bin/sh, which is dash here. Every other shell task in this play
+        # names bash explicitly for the same reason.
+        executable: /bin/bash
       changed_when: false
 
     - name: Gracefully drain the existing node before release installation
