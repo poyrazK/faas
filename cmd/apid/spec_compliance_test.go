@@ -495,12 +495,18 @@ var schemaSpecOnly = map[string]bool{
 	// OpenAPI discriminator exposes stricter kind-specific SDK request shapes.
 	"AdminStatusIncidentCreateRequest":    true,
 	"AdminStatusMaintenanceCreateRequest": true,
-	"ChangePlanRequest":                   true, // inline {Plan string} in cmd/apid/handlers_ext.go
-	"CreateKeyRequest":                    true, // inline {Label string} in cmd/apid/handlers_ext.go
-	"RateLimitPlain":                      true, // documentation-only shape for the authlimiter 429
-	"Trace":                               true, // issue #555: gatewayd-public GET /v1/traces/{trace_id} response; gateway-internal type, not a pkg/api DTO
-	"TraceSpan":                           true, // issue #555: subtree of Trace; gateway-internal type
-	"RaiseOverageCapRequest":              true, // issue #561: inline {OverageCapCents *int64} in cmd/apid/handlers_ext.go
+	// Delayed-task create is decoded into api.DelayedTaskRequest. The two
+	// spec-only variants preserve the exactly-one schedule contract while
+	// giving generated SDKs concrete absolute/relative request types instead
+	// of the Python generator's untyped Any fallback for inline oneOf arms.
+	"DelayedTaskAtRequest":    true,
+	"DelayedTaskAfterRequest": true,
+	"ChangePlanRequest":       true, // inline {Plan string} in cmd/apid/handlers_ext.go
+	"CreateKeyRequest":        true, // inline {Label string} in cmd/apid/handlers_ext.go
+	"RateLimitPlain":          true, // documentation-only shape for the authlimiter 429
+	"Trace":                   true, // issue #555: gatewayd-public GET /v1/traces/{trace_id} response; gateway-internal type, not a pkg/api DTO
+	"TraceSpan":               true, // issue #555: subtree of Trace; gateway-internal type
+	"RaiseOverageCapRequest":  true, // issue #561: inline {OverageCapCents *int64} in cmd/apid/handlers_ext.go
 	// Issue #757 / ADR-100 — trigger-enum schemas. Each is the
 	// typed string from pkg/api/trigger.go (TriggerKind,
 	// TriggerRecordState, TriggerRoutedTo, TriggerDeadLetterReason).

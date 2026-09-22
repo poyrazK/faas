@@ -464,6 +464,12 @@ from .debug_timeline_event import DebugTimelineEvent
 from .debug_timeline_event_phase import DebugTimelineEventPhase
 from .declared_route import DeclaredRoute
 from .declared_route_methods_item import DeclaredRouteMethodsItem
+from .delayed_task_after_request import DelayedTaskAfterRequest
+from .delayed_task_after_request_headers import DelayedTaskAfterRequestHeaders
+from .delayed_task_after_request_payload import DelayedTaskAfterRequestPayload
+from .delayed_task_at_request import DelayedTaskAtRequest
+from .delayed_task_at_request_headers import DelayedTaskAtRequestHeaders
+from .delayed_task_at_request_payload import DelayedTaskAtRequestPayload
 from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
@@ -1820,6 +1826,12 @@ __all__ = (
     "DebugTimelineEventPhase",
     "DeclaredRoute",
     "DeclaredRouteMethodsItem",
+    "DelayedTaskAfterRequest",
+    "DelayedTaskAfterRequestHeaders",
+    "DelayedTaskAfterRequestPayload",
+    "DelayedTaskAtRequest",
+    "DelayedTaskAtRequestHeaders",
+    "DelayedTaskAtRequestPayload",
     "DelayedTaskResponse",
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",

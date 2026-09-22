@@ -14956,9 +14956,10 @@ paths:
       description: |
         Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
         bounded to one year. Cap-checked against the plan's
-        MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
-        re-checks at dispatch. Delivery is at least once; handlers should use
-        the invocation id to make side effects idempotent.
+        MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). Accepted
+        tasks are grandfathered across later plan changes. Delivery is at
+        least once; handlers should use the invocation id to make side effects
+        idempotent.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -31318,13 +31319,30 @@ components:
 
     DelayedTaskRequest:
       description: "Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling form; the maximum delay is 31,536,000 seconds (365 days)."
-      type: object
       oneOf:
-        - required: [scheduled_at]
-        - required: [delay_seconds]
+        - $ref: '#/components/schemas/DelayedTaskAtRequest'
+        - $ref: '#/components/schemas/DelayedTaskAfterRequest'
+
+    DelayedTaskAtRequest:
+      description: Schedule a delayed task at an absolute RFC 3339 timestamp.
+      type: object
+      required: [scheduled_at]
       properties:
         payload: { type: object, additionalProperties: true }
         scheduled_at: { type: string, format: date-time }
+        headers: { type: object, additionalProperties: true }
+        method: { type: string, default: POST }
+        path: { type: string, default: "/" }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+        retention_seconds: { type: integer, minimum: 0 }
+        destinations: { $ref: '#/components/schemas/InvocationDestinations' }
+
+    DelayedTaskAfterRequest:
+      description: Schedule a delayed task after a relative whole-second delay.
+      type: object
+      required: [delay_seconds]
+      properties:
+        payload: { type: object, additionalProperties: true }
         delay_seconds: { type: integer, format: int64, minimum: 1, maximum: 31536000 }
         headers: { type: object, additionalProperties: true }
         method: { type: string, default: POST }

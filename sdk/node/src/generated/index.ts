@@ -249,6 +249,8 @@ export type { DebugTelemetryRequestItem } from './models/DebugTelemetryRequestIt
 export type { DebugTelemetrySpan } from './models/DebugTelemetrySpan.js';
 export type { DebugTimelineEvent } from './models/DebugTimelineEvent.js';
 export type { DeclaredRoute } from './models/DeclaredRoute.js';
+export type { DelayedTaskAfterRequest } from './models/DelayedTaskAfterRequest.js';
+export type { DelayedTaskAtRequest } from './models/DelayedTaskAtRequest.js';
 export type { DelayedTaskRequest } from './models/DelayedTaskRequest.js';
 export type { DelayedTaskResponse } from './models/DelayedTaskResponse.js';
 export type { DeploymentAuditResponse } from './models/DeploymentAuditResponse.js';
