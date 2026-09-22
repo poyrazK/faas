@@ -121,6 +121,7 @@ type Loop struct {
 	watchdog              *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
 	liveness              *wire.Liveness                          // ADR-190 main-loop progress beats; nil opts out
 	retention             *Retention                              // §17 retention sweep; nil means "no retention" (tests can opt out)
+	deadLetterRetention   *DeadLetterRetention                    // unified Failed Events projection retention
 	invocationsRetention  *InvocationsRetention                   // ADR-134 PR-B: invocations retention + deadline-breach sweep; nil opts out
 	triggersRetention     *TriggersRetention                      // ADR-134 PR-E: trigger_records retention sweep; nil opts out
 	heartbeat             *Heartbeat                              // issue #97 / ADR-025 axis 3 (PR #114) per-node liveness; nil opts out
@@ -129,6 +130,7 @@ type Loop struct {
 	deadNodeReconciler    *DeadNodeReconciler                     // dead-node billing-leak self-healer; nil opts out (no ticker arm)
 	instanceDivergence    *DeadNodeReconciler                     // ADR-191 vmmd-vs-row divergence sweep; nil opts out (no ticker arm)
 	instStats             InstanceStatsPoller                     // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
+	instanceActivity      InstanceActivityReader                  // fresh per-instance request activity used by scale-in; nil opts out
 	scaleup               *scaleup.Trigger                        // issue #169 / #172 reactive scale-up trigger; nil opts out
 	scaleupMu             sync.Mutex                              // serializes asynchronous scale-up ticks
 	scaleupRunning        bool                                    // true while one scale-up tick is in flight
