@@ -207,6 +207,32 @@ func TestCmdLogsAllWalksEveryHTTPLogPage(t *testing.T) {
 	}
 }
 
+func TestCmdLogsAllStreamsCompletedPagesBeforeLaterPageFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("cursor") != "" {
+			http.Error(w, `{"code":"internal"}`, http.StatusInternalServerError)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"complete":false,"next_cursor":"page-2","requests":[{"id":"row-1","route":"/first","method":"GET","status":200,"latency_ms":1,"count":1,"received_at":"2026-09-22T11:59:00Z"}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	t.Cleanup(func() { osStdout = oldOut })
+
+	if code := cmdLogs([]string{"myapp", "--source", "http", "--all"}); code == 0 {
+		t.Fatal("expected later-page failure")
+	}
+	if !strings.Contains(stdout.String(), `route="/first"`) {
+		t.Fatalf("first page was buffered until after the failing page: %q", stdout.String())
+	}
+}
+
 func TestHTTPLogQueryPageWarnings(t *testing.T) {
 	var output bytes.Buffer
 	renderHTTPLogQueryPageWarnings(&output, api.DebugTelemetryListResponse{
