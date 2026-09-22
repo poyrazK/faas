@@ -64,10 +64,9 @@ import (
 )
 
 // uploadSessionLocks serializes all state/file transitions per
-// upload_id. Without this guard, a commit can observe the CAS from
-// the final PATCH before that PATCH has written the corresponding
-// bytes, or a cancel can remove the .part file while a PATCH is
-// still writing it. It also serializes the Enqueue + dedupe-row-
+// upload_id. Without this guard, racing PATCHes can overwrite the
+// same offset before either acknowledges it, or a cancel can remove
+// the .part file while a PATCH is still writing it. It also serializes the Enqueue + dedupe-row-
 // insert + status-flip commit critical section.
 //
 // In-process only — apid is a single replica per CLAUDE.md,
@@ -224,6 +223,19 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		chunkSize = uploadChunkSizeScalePlan
 	}
 
+	// Validate the persisted encoding before allocating a spool file.
+	// JSON escaping can expand a request that passed the wire-size cap;
+	// without a session row, the reaper cannot reclaim a rejected upload.
+	deployOptions := []byte("{}")
+	if req.DeployOptions != nil {
+		deployOptions, err = json.Marshal(req.DeployOptions)
+		if err != nil || len(deployOptions) > 1<<20 {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid deploy_options", "deploy_options must be valid JSON smaller than 1 MiB"))
+			return
+		}
+	}
+
 	uploadID := randomToken(12)
 	partPath := spoolRoot() + "/" + uploadID + ".part"
 	if err := os.MkdirAll(spoolRoot(), 0o770); err != nil {
@@ -251,15 +263,6 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 
-	deployOptions := []byte("{}")
-	if req.DeployOptions != nil {
-		deployOptions, err = json.Marshal(req.DeployOptions)
-		if err != nil || len(deployOptions) > 1<<20 {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Invalid deploy_options", "deploy_options must be valid JSON smaller than 1 MiB"))
-			return
-		}
-	}
 	row, err := s.store.CreateUploadSession(r.Context(), sqlc.CreateUploadSessionParams{
 		ID:            uploadID,
 		AccountID:     acctUUID,
@@ -325,8 +328,8 @@ func (s *server) handleGetUpload(w http.ResponseWriter, r *http.Request, acct st
 }
 
 // handleAppendUpload is PATCH /v1/uploads/{id}. Reads Upload-Offset
-// + body bytes, runs the atomic CAS in AppendUploadBytes, then
-// WriteAt's the bytes onto the .part file.
+// + body bytes, persists the chunk, then acknowledges it with the
+// atomic CAS in AppendUploadBytes.
 func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
 	offsetHeader := r.Header.Get("Upload-Offset")
@@ -424,10 +427,42 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 
-	// Atomic CAS: server received_bytes goes from clientOffset
-	// to clientOffset + len(chunk). A racing PATCH that already
-	// advanced fails with ErrConflict (sql.ErrNoRows mapped in
-	// PgStore).
+	if int64(len(chunk)) > row.TotalSize-clientOffset {
+		api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeValidation,
+			"Chunk too large", "chunk exceeds the remaining upload size"))
+		return
+	}
+
+	// Persist before acknowledging. The session lock serializes this
+	// write with append/commit/cancel/reaper operations. If storage or
+	// the subsequent CAS fails, the offset remains retryable; an
+	// unacknowledged suffix is simply overwritten by the next PATCH.
+	// Advancing first would let a retry skip bytes that never reached disk.
+	f, err := os.OpenFile(row.PartPath, os.O_WRONLY, 0o660)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Spool open failed", err.Error()))
+		return
+	}
+	if _, err := f.WriteAt(chunk, clientOffset); err != nil {
+		_ = f.Close()
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Spool write failed", err.Error()))
+		return
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Spool fsync failed", err.Error()))
+		return
+	}
+	if err := f.Close(); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+			"Spool close failed", err.Error()))
+		return
+	}
+
+	// Atomic CAS: only durable bytes may become the advertised offset.
 	newReceived := clientOffset + int64(len(chunk))
 	appendRow, err := s.store.AppendUploadBytes(r.Context(), sqlc.AppendUploadBytesParams{
 		ID:                    uploadID,
@@ -448,36 +483,6 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 		}
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Append failed", err.Error()))
-		return
-	}
-
-	// CAS won — WriteAt the bytes to the .part file. The file
-	// was pre-allocated to total_size, so the seek is a no-op.
-	f, err := os.OpenFile(row.PartPath, os.O_WRONLY, 0o660)
-	if err != nil {
-		// CAS already advanced the row; leave the row in a
-		// "row ahead of file" state. Reaper sweep
-		// (status='open' + expires_at < now()) cleans within
-		// 24h. Customer retries from a fresh session.
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool open failed", err.Error()))
-		return
-	}
-	if _, err := f.WriteAt(chunk, clientOffset); err != nil {
-		_ = f.Close()
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool write failed", err.Error()))
-		return
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool fsync failed", err.Error()))
-		return
-	}
-	if err := f.Close(); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool close failed", err.Error()))
 		return
 	}
 
