@@ -949,9 +949,6 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	// immediately hand the same ephemeral port back to the next probe, which
 	// makes the public and control servers race to bind one address. Keep
 	// probing until the two configured listeners are distinct.
-	for controlAddr == addr {
-		controlAddr = freeTCPAddr(t)
-	}
 	if h.ScheddSock == "" {
 		h.ScheddSock = filepath.Join(h.SockDir, "schedd.sock")
 	}
@@ -992,9 +989,6 @@ func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv [
 	}
 	publicAddr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
-	for controlAddr == publicAddr {
-		controlAddr = freeTCPAddr(t)
-	}
 	internalSocket := filepath.Join(h.SockDir, "gatewayd-internal.sock")
 	env := append(testEnvCommon(dbURL),
 		"FAAS_PUBLIC_LISTEN_ADDR="+publicAddr,
@@ -1017,11 +1011,10 @@ func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv [
 // reserving both addresses here only makes the configuration deterministic.
 func reserveGatewayAddresses(t *testing.T, h *Harness) {
 	t.Helper()
+	// No pairwise de-duplication needed: freeTCPAddr never hands the same
+	// address to two callers in this process.
 	addr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
-	for controlAddr == addr {
-		controlAddr = freeTCPAddr(t)
-	}
 	h.gatewayPublicAddr = addr
 	h.gatewayControlAddr = controlAddr
 }
@@ -1897,15 +1890,77 @@ func injectSearchPath(dsn, schema string) string {
 
 // Slight race between close and the daemon re-listening, but acceptable in
 // tests — the daemon retries on bind error.
+// allocatedPorts records every address freeTCPAddr has handed out in this
+// test binary. Entries are never released: a port reused by a later daemon
+// is exactly the bug this prevents, and one e2e binary needs only a few
+// hundred ports.
+var (
+	allocatedPortsMu sync.Mutex
+	allocatedPorts   = map[string]struct{}{}
+)
+
+// claimAddr records addr as handed out and reports whether THIS caller won
+// it. A second caller offered the same address gets false and must keep
+// probing.
+//
+// This is the whole collision guard, factored out because the end-to-end
+// behaviour cannot be tested through freeTCPAddr: the kernel cycles the
+// ephemeral range, so it will not hand the same port to two sequential draws
+// on demand. A test that merely drew N addresses and found them distinct
+// passed just as happily with this guard disabled — it proved nothing.
+// Testing the decision directly is the part that can actually fail.
+func claimAddr(addr string) bool {
+	allocatedPortsMu.Lock()
+	defer allocatedPortsMu.Unlock()
+	if _, taken := allocatedPorts[addr]; taken {
+		return false
+	}
+	allocatedPorts[addr] = struct{}{}
+	return true
+}
+
+// freeTCPAddr returns a loopback address no other daemon in this test binary
+// has been given.
+//
+// Binding :0 and closing the listener is inherently TOCTOU — the port is free
+// at that instant and nothing holds it until the daemon execs. Two calls can
+// therefore return the SAME port, and the loser dies on bind with "address
+// already in use". For gatewayd-internal that means run() returns, its
+// `defer pool.Close()` fires, and every later route lookup fails with
+// "closed pool" — surfacing as a 404 routing timeout in a test that looks
+// nothing like a port conflict. That is the TestE2E_NormalPath_* flake: a CI
+// failure showed apid's loopback target and the gateway's control listener
+// both on 127.0.0.1:32997.
+//
+// Callers used to de-duplicate PAIRWISE ("keep probing until the public and
+// control listeners differ"), which cannot see a collision with a port
+// already handed to a different daemon. This registry is global to the
+// process, so it covers every pair.
+//
+// Rejected probes are held OPEN until the end: closing one would let the
+// kernel hand the same port straight back on the next iteration.
 func freeTCPAddr(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("e2etest: freeTCPAddr: %v", err)
+	var held []net.Listener
+	defer func() {
+		for _, l := range held {
+			_ = l.Close()
+		}
+	}()
+	for attempt := 0; attempt < 64; attempt++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("e2etest: freeTCPAddr: %v", err)
+		}
+		addr := l.Addr().String()
+		if claimAddr(addr) {
+			_ = l.Close()
+			return addr
+		}
+		held = append(held, l)
 	}
-	addr := l.Addr().String()
-	_ = l.Close()
-	return addr
+	t.Fatalf("e2etest: freeTCPAddr: no unallocated loopback port after 64 attempts")
+	return ""
 }
 
 // waitTCP dials addr every 50ms until it accepts or deadline. On timeout
