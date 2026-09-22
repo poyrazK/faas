@@ -56,7 +56,7 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 	}
 	idleSession := newIdleSession(ctx, idle)
 	defer idleSession.stop()
-	ctx = idleSession.ctx
+	ctx = idleSession.ctx //nolint:contextcheck // the idle-session context inherits the caller and adds activity-based cancellation.
 	go func() {
 		<-ctx.Done()
 		_ = conn.Close()
