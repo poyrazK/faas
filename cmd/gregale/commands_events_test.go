@@ -143,3 +143,40 @@ func TestCmdEventsSubscriptions_JSONOutput(t *testing.T) {
 		t.Fatalf("output=%s", stdout.String())
 	}
 }
+
+func TestCmdEventsDeliveries_RendersFilteredRows(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[{"invocation_id":"inv-1","event_id":"evt-1","event_source":"billing","event_type":"invoice.paid","subscription_id":"sub-1","state":"failed","attempts":3,"last_error":"worker unavailable","created_at":"2026-09-19T12:00:00Z"}],"next_before":"inv-1"}`, http.StatusOK)
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsDeliveries([]string{"invoice-worker", "--state", "failed", "--limit", "1"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps/invoice-worker/event-deliveries" {
+		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	}
+	if got := stdout.String(); !strings.Contains(got, "INVOCATION\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR") || !strings.Contains(got, "inv-1\tevt-1\tbilling\tinvoice.paid\tfailed\t3") || !strings.Contains(got, "worker unavailable") {
+		t.Fatalf("stdout=%q", got)
+	}
+}
+
+func TestCmdEventsDeliveries_JSONOutput(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[]}`, http.StatusOK)
+	jsonOutput = true
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsDeliveries([]string{"invoice-worker"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	var got struct {
+		AppSlug    string `json:"app_slug"`
+		Deliveries []any  `json:"deliveries"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode JSON output: %v; output=%s", err, stdout.String())
+	}
+	if got.AppSlug != "invoice-worker" || got.Deliveries == nil {
+		t.Fatalf("output=%s", stdout.String())
+	}
+}

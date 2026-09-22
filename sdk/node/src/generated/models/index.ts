@@ -300,6 +300,8 @@ export type { EnvDiffResponse } from './EnvDiffResponse.js';
 export type { EnvDiffRow } from './EnvDiffRow.js';
 export type { EnvScope } from './EnvScope.js';
 export type { ErrorNewWebhookPayload } from './ErrorNewWebhookPayload.js';
+export type { EventDeliveryListResponse } from './EventDeliveryListResponse.js';
+export type { EventDeliveryResponse } from './EventDeliveryResponse.js';
 export type { EventSubscriptionListResponse } from './EventSubscriptionListResponse.js';
 export type { EventSubscriptionResponse } from './EventSubscriptionResponse.js';
 export type { ExecutionFailure } from './ExecutionFailure.js';

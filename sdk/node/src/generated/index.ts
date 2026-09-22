@@ -306,6 +306,8 @@ export type { EnvDiffResponse } from './models/EnvDiffResponse.js';
 export type { EnvDiffRow } from './models/EnvDiffRow.js';
 export type { EnvScope } from './models/EnvScope.js';
 export type { ErrorNewWebhookPayload } from './models/ErrorNewWebhookPayload.js';
+export type { EventDeliveryListResponse } from './models/EventDeliveryListResponse.js';
+export type { EventDeliveryResponse } from './models/EventDeliveryResponse.js';
 export type { EventSubscriptionListResponse } from './models/EventSubscriptionListResponse.js';
 export type { EventSubscriptionResponse } from './models/EventSubscriptionResponse.js';
 export type { ExecutionFailure } from './models/ExecutionFailure.js';

@@ -30,8 +30,8 @@ class InvokeRequest:
     deadline_at: datetime.datetime | None | Unset = UNSET
     """ADR-134 PR-B. Hard-stop timestamp. Must be within now+Limits.MaxAsyncInvocationDeadlineSeconds."""
     retry_policy: InvokeRequestRetryPolicyType0 | None | Unset = UNSET
-    """ADR-134 PR-B. Per-row retry curve override. Shape mirrors dispatch.RetryPolicy: { max_attempts,
-    base_seconds, max_seconds, jitter_seconds }."""
+    """ADR-134 PR-B. Per-row retry curve override. max_attempts counts the original, is capped by the account plan,
+    and 0 inherits that finite cap."""
     retention_seconds: int | None | Unset = UNSET
     """ADR-134 PR-B. Retention horizon in seconds. NULL/0 means 'use plan default'
     (Limits.MaxAsyncResultRetentionSeconds)."""

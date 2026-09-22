@@ -4679,6 +4679,32 @@ paths:
       tags: [apps]
       operationId: getAppStreamingCap
       summary: Per-app streaming classification probe (ADR-102 D6).
+      parameters:
+        - name: host
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: |
+            Request host to resolve a per-edge-rule cap. Supply together
+            with `path` and `method`; omit all three for the plan-level cap.
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^/'
+            maxLength: 4096
+          description: Request path to resolve against kind=limit rules.
+        - name: method
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Z]+$'
+            maxLength: 32
+          description: HTTP method to resolve against kind=limit rules.
       description: |
         Returns the streaming-status enum (one of `streaming`,
         `accept-json-downgrade`, `flag-disabled`, `plan-disallows`,
@@ -4687,16 +4713,19 @@ paths:
         representative request to this app, plus the effective
         response-body cap (in bytes) and the per-gate flags.
 
-        The probe is a pure read against the apid cache (the
-        per-account `Plan` and the per-app `streaming_enabled`
-        flag). It does NOT dial gatewayd-internal — the operator
-        opt-in (`FAAS_GATEWAY_STREAMING` env) and per-edge-rule
-        cap override are gatewayd-side state, so `effective_cap_bytes`
-        reflects the plan cap (`cap_kind="plan"`) on every probe.
+        With no query parameters the probe is a pure read against the
+        apid cache (the per-account `Plan` and the per-app
+        `streaming_enabled` flag). Supplying `host`, `path`, and `method`
+        together performs a bounded loopback read of gatewayd's compiled
+        kind=limit rules and reports a matching streaming response cap with
+        `cap_kind="endpoint-rule"`. If gatewayd is unavailable or no rule
+        matches, the response falls back to the plan cap.
+
+        The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
+        gatewayd-side state, so the canonical signal is the
+        `Streaming-Status` response header on a real request, not this probe.
         A customer evaluating "will my next request stream?" must
-        consider the operator-side flag separately; the canonical
-        signal is the `Streaming-Status` response header on a real
-        request, not this probe.
+        consider the operator-side flag separately.
 
         `status=plan-disallows` means the customer's plan tier
         forbids `streaming_enabled=true`; the CreateApp gate (D5)
@@ -14785,6 +14814,39 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/event-deliveries:
+    get:
+      tags: [events]
+      operationId: listEventDeliveries
+      summary: Inspect event delivery lifecycle for an app.
+      description: |
+        Returns event-triggered invocation metadata, newest first. The
+        projection includes the published event identity, subscription,
+        lifecycle state, attempts, and last error without returning payloads.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: event_id
+          in: query
+          schema: { type: string }
+          description: Exact published event id to inspect.
+        - name: state
+          in: query
+          schema: { type: string, enum: [pending, dispatching, completed, failed, dead_letter] }
+          description: Exact delivery state to include.
+        - $ref: '#/components/parameters/QueueCursorBefore'
+        - $ref: '#/components/parameters/QueueCursorLimit'
+      responses:
+        '200':
+          description: App-scoped event delivery page, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventDeliveryListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/dlq:replay_all:
     post:
       tags: [queues]
@@ -23186,6 +23248,35 @@ components:
           type: array
           items: { $ref: '#/components/schemas/EventSubscriptionResponse' }
 
+    EventDeliveryResponse:
+      description: Metadata-only lifecycle projection for one event-triggered invocation.
+      type: object
+      additionalProperties: false
+      required: [invocation_id, event_id, event_source, event_type, state, attempts, created_at]
+      properties:
+        invocation_id: { type: string, format: uuid }
+        event_id: { type: string }
+        event_source: { type: string }
+        event_type: { type: string }
+        subscription_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
+        attempts: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+
+    EventDeliveryListResponse:
+      description: App-scoped event delivery page, ordered newest first.
+      type: object
+      additionalProperties: false
+      required: [app_slug, deliveries]
+      properties:
+        app_slug: { type: string }
+        deliveries:
+          type: array
+          items: { $ref: '#/components/schemas/EventDeliveryResponse' }
+        next_before: { type: string, description: ID cursor for the next older page. }
+
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."
       type: object
@@ -27028,9 +27119,10 @@ components:
         retryable conditions is not configurable.
 
         A replay additionally requires that the response has not
-        committed, a healthy sibling exists, and the remaining
-        `kind=budget` allowance is at least `min_remaining_ms`. A
-        retry can never extend a request's deadline.
+        committed, a healthy sibling exists, the aggregate per-app
+        retry budget has capacity, and the remaining `kind=budget`
+        allowance is at least `min_remaining_ms`. A retry can never
+        extend a request's deadline.
       type: object
       properties:
         max_attempts:
@@ -27052,13 +27144,15 @@ components:
           type: boolean
           default: false
           description: |
-            Opt POST and PATCH into replay. Off by default.
+            Opt POST and PATCH into replay. Off by default. Even when
+            enabled, these methods are replayed only when the request
+            carries a non-empty `Idempotency-Key` header.
 
             This is the only field here that can cost correctness
-            rather than latency: a replayed POST runs your handler's
-            side effect twice unless the handler is idempotent or the
-            caller sends an idempotency key. GET, HEAD, OPTIONS,
-            TRACE, PUT and DELETE are replayed without this flag.
+            rather than latency: your handler must honor the key and
+            return the stored result instead of repeating the side
+            effect. GET, HEAD, OPTIONS, TRACE, PUT and DELETE are
+            replayed without this flag.
         min_remaining_ms:
           type: integer
           minimum: 0
@@ -27080,6 +27174,25 @@ components:
             next instance is a different process — so waiting buys
             nothing. Raise it only when the sibling may still be
             waking.
+        budget_percent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+          description: |
+            Aggregate replay allowance as a percentage of original
+            requests in the gateway's short per-app window. For
+            example, 10 permits at most one replay per ten originals,
+            preventing a broad outage from doubling all traffic.
+        budget_min_retries:
+          type: integer
+          minimum: 0
+          maximum: 32
+          default: 1
+          description: |
+            Minimum replay allowance per app and accounting window.
+            The default preserves one recovery opportunity for a
+            low-traffic app even when budget_percent rounds down.
     EdgeRuleCircuitBreakerAction:
       description: |
         Instance health thresholds (ADR-201 §2, kind=circuit_breaker).
@@ -29669,11 +29782,13 @@ components:
           - `upgrade-bypass` — request is an HTTP/1.1 Upgrade (e.g.
             WebSocket) and bypasses the streaming path.
 
-        `effective_cap_bytes` is the plan cap (`cap_kind="plan"`)
-        on every probe in this PR. The per-edge-rule override lives
-        in gatewayd state and is not part of the apid cache; a
-        customer who needs the live cap fires a real request and
-        reads the `Streaming-Status` response header.
+        `effective_cap_bytes` is the plan cap (`cap_kind="plan"`) when
+        no route shape is supplied. A route-aware probe may return
+        `cap_kind="endpoint-rule"` when the compiled gatewayd rule
+        matches; gatewayd failures and non-matches fall back to the
+        plan cap. A customer who needs the canonical live status still
+        fires a real request and reads the `Streaming-Status` response
+        header.
       type: object
       required: [app_id, status, effective_cap_bytes, plan_cap_bytes, flag_enabled, plan_allowed]
       properties:
@@ -29709,10 +29824,9 @@ components:
           x-since: "2026-08"
           x_issue: "102"
           description: |
-            `plan` is the only value this probe ever returns in
-            this PR. The endpoint-rule and none values are reserved
-            for the future gatewayd-side dial path described in
-            `cmd/apid/handlers_streaming_cap.go`.
+            `plan` is the plan-level fallback, `endpoint-rule` is a
+            matching compiled gatewayd response cap, and `none` is
+            reserved for a future explicit no-cap result.
 
     ListInstancesResponse:
       description: |
@@ -31078,9 +31192,9 @@ components:
         retry_policy:
           type: [object, "null"]
           additionalProperties: true
-          description: "ADR-134 PR-B. Per-row retry curve override. Shape mirrors dispatch.RetryPolicy: { max_attempts, base_seconds, max_seconds, jitter_seconds }."
+          description: "ADR-134 PR-B. Per-row retry curve override. max_attempts counts the original, is capped by the account plan, and 0 inherits that finite cap."
           properties:
-            max_attempts:    { type: integer }
+            max_attempts:    { type: integer, minimum: 0, maximum: 25 }
             base_seconds:    { type: number }
             max_seconds:     { type: number }
             jitter_seconds:  { type: number, description: "Fraction (0..1). 0.2 means ±20%." }
@@ -31206,13 +31320,16 @@ components:
 
     RetryPolicyDTO:
       description: |
-        ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. The handler
-        decodes this DTO into a dispatch.RetryPolicy before persisting
-        to invocations.retry_policy JSONB. Lives in pkg/api so the SDK
-        can type the override without importing pkg/dispatch directly.
+        ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
+        is a requested total-attempt count; zero inherits the applicable
+        account plan and never means unlimited. Durable invocation
+        producers materialize the effective plan-capped value, and the
+        scheduler re-clamps it at dispatch time to account for later plan
+        downgrades. Lives in pkg/api so the SDK can type the policy
+        without importing pkg/dispatch directly.
       type: object
       properties:
-        max_attempts:    { type: integer }
+        max_attempts:    { type: integer, minimum: 0, maximum: 25, description: "Total delivery attempts including the original. 0 inherits the current plan cap; it never means unlimited." }
         base_seconds:    { type: number }
         max_seconds:     { type: number }
         jitter_seconds:  { type: number, description: "Fraction (0..1) added to the backoff delay. 0.2 means ±20% jitter on top of the exponential curve." }

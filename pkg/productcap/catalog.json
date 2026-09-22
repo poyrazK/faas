@@ -250,7 +250,7 @@
       "id": "request-retry",
       "name": "Request retry",
       "category": "edge",
-      "description": "Replay a request that died in transport against a different healthy instance of the same app.",
+      "description": "Replay a transport-failed request against a different healthy instance within hard per-request and aggregate app budgets; POST/PATCH also require explicit opt-in and an Idempotency-Key.",
       "maturity": "internal",
       "plans": [],
       "docs_url": "/docs/adr/201-traffic-as-a-platform-primitive",

@@ -995,6 +995,9 @@ type Handler struct {
 	retryMatch func(app App, r *http.Request) (RetryPolicy, bool)
 	// retryObs counts attempts and exhaustions. Nil disables the metric.
 	retryObs retryObserver
+	// retryBudget caps aggregate replay amplification per app. It is shared
+	// with internal service forwarding in production.
+	retryBudget *RetryBudget
 	// streamingWarned is the once-per-process log dedup for the
 	// buffered-fallback deprecation. Keyed on (appID, content-type) so
 	// the first instance of an SSE-emitting app under the flag-off
@@ -1267,6 +1270,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 			},
 		),
 		burstPressure:      &burstPressure{},
+		retryBudget:        NewRetryBudget(0, nil),
 		metrics:            m,
 		headHeaders:        newEdgeHeadHeaderCache(),
 		log:                log,
