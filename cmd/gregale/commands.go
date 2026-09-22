@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/browser"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // authedClient builds a client using the stored token, or errors (exit 2) if the
@@ -521,7 +522,7 @@ func transportProblem(err error) api.Problem {
 		if cause != nil {
 			message := strings.Join(strings.Fields(cause.Error()), " ")
 			if len(message) > 240 {
-				message = message[:237] + "..."
+				message = safetext.Truncate(message, 237) + "..."
 			}
 			if message != "" {
 				detail = "The Gregale API could not be reached: " + message
