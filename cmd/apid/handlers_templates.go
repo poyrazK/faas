@@ -68,6 +68,8 @@ func templateDescription(name string) string {
 		return "signed webhook receiver — bring your own upstream"
 	case "event-worker":
 		return "event-triggered worker — subscribe to routed events"
+	case "queue-worker":
+		return "push queue worker with queue-depth autoscaling and retries"
 	case "ai-chat":
 		return "OpenAI-compatible chat scaffold — bring your own key"
 	}
