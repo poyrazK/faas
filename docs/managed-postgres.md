@@ -177,6 +177,14 @@ a second POST. Deletion also searches by Gregale's stable resource ID when the
 opaque Neon ID was never persisted, closing the ambiguous-create cleanup path.
 Ambiguous duplicate names fail closed.
 
+Before any provider delete call, the PostgreSQL catalog takes an exclusive row
+lock and atomically rejects databases with an active binding or restore
+descendant. Binding reservations take a key-share lock on their target database,
+and restore reservations take the same lock on their source. Consequently, a
+concurrent reservation either commits first and blocks deletion, or observes the
+database in `deleting` and fails without creating a dependent. The provider is
+never contacted after a dependency conflict.
+
 Each app binding uses a deterministic Neon role. Repeating credential
 issuance retrieves the stored role password rather than resetting it. Revoking
 a binding deletes that role. The adapter returns credential material only in
@@ -273,10 +281,13 @@ Neon's adapter implements this using a deterministic point-in-time branch in
 the source project. The opaque target ID is encoded inside the adapter as
 `project_id/branch_id`; the provider-neutral catalog never interprets that
 format. Credentials, inspection, usage, and deletion route to the branch.
-Because Neon reports compute and consumption at project scope, the adapter
-does not claim per-target usage isolation for these shared-project restores;
-the control plane keeps them unavailable while usage guardrails are enabled
-until an allocation model is qualified.
+Neon reports consumption at project scope rather than per branch. With usage
+guardrails enabled, Gregale therefore collects that project aggregate once
+against the source database and skips direct usage collection for every restore
+descendant. This keeps account-level COGS ceilings effective without claiming
+per-target usage isolation; the usage collector exposes skipped descendants as
+`included_in_source` rather than as independently metered databases. Providers
+that can meter restores independently may instead declare that capability.
 If a create response is lost, branch-name discovery recovers the accepted
 branch without a second POST. Deleting a source is rejected while an active
 restore descendant exists, and deleting a restore target removes only its

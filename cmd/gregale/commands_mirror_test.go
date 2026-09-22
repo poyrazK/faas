@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -75,6 +76,37 @@ func TestCmdMirrorList_HappyPath(t *testing.T) {
 	}
 	if gotPath != "/v1/apps/"+wantSlug+"/mirrors" {
 		t.Errorf("path = %q, want /v1/apps/%s/mirrors", gotPath, wantSlug)
+	}
+}
+
+func TestCmdMirrorReplay_HappyPath(t *testing.T) {
+	corpusPath := t.TempDir() + "/corpus.json"
+	if err := os.WriteFile(corpusPath, []byte(`{"requests":[{"request_id":"old-1","method":"POST","path":"/checkout","body":{"order":"sanitized"},"expected_status":200}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got api.MirrorReplayBatchRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/myapp/mirrors/rule-1/replay" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		writeJSONTest(w, api.MirrorReplayBatchResponse{
+			Queued: 1,
+			Invocations: []api.MirrorReplayInvocation{{
+				RequestID: "old-1", MirrorInvocationID: "inv-1", Status: "queued",
+			}},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	if code := cmdMirrorReplay([]string{"--app", "myapp", "--id", "rule-1", "--file", corpusPath, "--allow-unsafe-methods"}); code != 0 {
+		t.Fatalf("cmdMirrorReplay exit = %d", code)
+	}
+	if !got.AllowUnsafeMethods || len(got.Requests) != 1 || got.Requests[0].Path != "/checkout" {
+		t.Fatalf("request body = %+v", got)
 	}
 }
 

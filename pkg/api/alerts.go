@@ -147,7 +147,7 @@ var AllowedAlertRuleWindowSpecs = []string{
 // otherwise the DB's alert_rules_failure_source_xor_chk constraint rejects
 // the row.
 var AllowedAlertRuleFailureSources = []string{
-	"any", "cron", "queue", "delayed_task", "async_invoke",
+	"any", "cron", "queue", "delayed_task", "async_invoke", "inbound_webhook",
 }
 
 // AllowedAlertRuleStates is the closed set for the read-only `state`

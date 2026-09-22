@@ -15,7 +15,7 @@ export type CreateAlertRuleRequest = {
   /**
    * Required when metric == failed_invocations; omit otherwise (xor_chk).
    */
-  failure_source?: 'any' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke';
+  failure_source?: 'any' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke' | 'inbound_webhook';
   webhook_url: string;
   /**
    * Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed.

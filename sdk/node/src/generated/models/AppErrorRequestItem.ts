@@ -16,5 +16,12 @@ export type AppErrorRequestItem = {
    * Nullable — the FK is ON DELETE SET NULL so an evicted deployment leaves the drill-down row intact.
    */
   deployment_id?: string | null;
+  instance_id?: string;
+  node_id?: string;
+  region?: string;
+  commit_sha?: string;
+  deployment_tag?: string;
+  deployment_created_at?: string;
+  image_digest?: string;
 };
 

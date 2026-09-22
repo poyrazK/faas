@@ -135,15 +135,16 @@ type createdProjectResponse struct {
 
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
 	return managedpostgres.Capabilities{
-		PostgresMajors:          []int{14, 15, 16, 17, 18},
-		ServiceClasses:          []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
-		Availability:            []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:        []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite},
-		ScaleToZero:             true,
-		PooledConnections:       true,
-		PointInTimeRestore:      p.maxRestoreWindow > 0,
-		MaxRestoreWindowSeconds: p.maxRestoreWindow,
-		MaxStorageBytes:         p.maxStorageBytes,
+		PostgresMajors:               []int{14, 15, 16, 17, 18},
+		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
+		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
+		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite},
+		ScaleToZero:                  true,
+		PooledConnections:            true,
+		PointInTimeRestore:           p.maxRestoreWindow > 0,
+		RestoreUsageIncludedInSource: p.maxRestoreWindow > 0,
+		MaxRestoreWindowSeconds:      p.maxRestoreWindow,
+		MaxStorageBytes:              p.maxStorageBytes,
 		UsageMeters: []managedpostgres.Meter{
 			managedpostgres.MeterComputeUnitSeconds,
 			managedpostgres.MeterStorageByteSeconds,

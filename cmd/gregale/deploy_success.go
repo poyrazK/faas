@@ -74,10 +74,51 @@ func deploymentAppURL(ctx context.Context, c *Client, appSlug string) string {
 	return deployedAppURL(appSlug)
 }
 
+// deploymentPreviewURL resolves the immutable per-deployment URL after a
+// dark deployment is live. This is receipt enrichment, not a deployment
+// prerequisite: platforms without the preview zone still get a useful
+// promotion command and can inspect the revision later.
+func deploymentPreviewURL(ctx context.Context, c *Client, deploymentID string) string {
+	if c == nil || deploymentID == "" {
+		return ""
+	}
+	readCtx, cancel := context.WithTimeout(ctx, deploymentReceiptFetchTimeout)
+	defer cancel()
+	preview, err := c.GetDeploymentURL(readCtx, deploymentID)
+	if err != nil || !preview.Alive {
+		return ""
+	}
+	return preview.URL
+}
+
+func deploymentCommandRef(dep api.DeploymentResponse) string {
+	if label := renderRevision(dep.Revision); label != "" {
+		return label
+	}
+	return dep.ID
+}
+
+func deploymentPromotionCommand(appSlug string, dep api.DeploymentResponse) string {
+	return fmt.Sprintf("gregale traffic set --app %s --deployment %s --percent 100", appSlug, deploymentCommandRef(dep))
+}
+
+func renderQueuedDeployment(dep api.DeploymentResponse, appURL string, darkDeploy bool) {
+	if !darkDeploy {
+		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, appURL)
+		return
+	}
+	PrintOK(osStdout, "Deployment %s queued with 0%% production traffic.", dep.ID)
+	PrintProgress(osStdout, "Production traffic remains unchanged. %s", appURL)
+}
+
 // renderSuccessfulDeployment prints the existing success/cold-wake copy and
 // appends the verified zero-config profile and smoke evidence when the API has
 // persisted a hosting receipt.
 func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string) int {
+	return renderSuccessfulDeploymentWithOptions(ctx, c, dep, appSlug, false)
+}
+
+func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, darkDeploy bool) int {
 	final := deploymentWithReceipt(ctx, c, dep)
 	appURL := deploymentAppURL(ctx, c, appSlug)
 	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
@@ -104,18 +145,36 @@ func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.Deployme
 		}
 		PrintProgress(osStdout, "Rollout: %d%% traffic · step %d/%d · in progress", final.TrafficPercent, step, final.CanaryTotalSteps)
 		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
+	} else if darkDeploy {
+		if final.TrafficPercent != 0 {
+			PrintFail(osStderr, "Deployment %s became live with %d%% production traffic; expected 0%%. Inspect with: gregale traffic status %s", final.ID, final.TrafficPercent, appSlug)
+			return 1
+		}
+		ref := deploymentCommandRef(final)
+		PrintOK(osStdout, "Staged %s with 0%% production traffic.", ref)
+		if previewURL := deploymentPreviewURL(ctx, c, final.ID); previewURL != "" {
+			PrintProgress(osStdout, "Preview: %s", previewURL)
+		} else {
+			PrintProgress(osStdout, "Preview: gregale deploys show %s --app %s --url", ref, appSlug)
+		}
+		PrintProgress(osStdout, "Production traffic remains unchanged. %s", appURL)
+		PrintProgress(osStdout, "Promote: %s", deploymentPromotionCommand(appSlug, final))
 	} else if label := renderRevision(final.Revision); label != "" {
 		PrintOK(osStdout, "Deployed %s. %s", label, appURL)
 	} else {
 		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
-	printDeployColdWakeSentence()
+	if !darkDeploy {
+		printDeployColdWakeSentence()
+	}
 	if cache := formatBuildCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {
 		PrintProgress(osStdout, "Build cache: %s", cache)
 	}
 	renderDeploymentHostingReceipt(osStdout, final.APIHostingReceipt)
-	if summary, ok := deploymentWithReleaseSummary(ctx, c, appSlug, final.ID); ok {
-		renderDeploymentReleaseSummary(osStdout, summary, appSlug)
+	if !darkDeploy {
+		if summary, ok := deploymentWithReleaseSummary(ctx, c, appSlug, final.ID); ok {
+			renderDeploymentReleaseSummary(osStdout, summary, appSlug)
+		}
 	}
 	return 0
 }
@@ -255,10 +314,10 @@ func warnDeploymentTimeoutForMode(appSlug, deploymentID string, deadline time.Du
 // object using the caller's wait deadline. A timeout still returns the
 // accepted deployment id so automation can resume with `deployment wait`.
 func writeWaitedDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration) int {
-	return writeWaitedDeploymentReceiptUntilWithOptions(ctx, c, dep, prov, appURL, sourceSHA256, appSlug, deadline, false)
+	return writeWaitedDeploymentReceiptUntilWithOptions(ctx, c, dep, prov, appURL, sourceSHA256, appSlug, deadline, false, false)
 }
 
-func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout bool, simplePlans ...*simpleapp.Plan) int {
+func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout, darkDeploy bool, simplePlans ...*simpleapp.Plan) int {
 	if deadline <= 0 {
 		deadline = defaultDeployWaitTimeout
 	}
@@ -288,7 +347,11 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 		return 3
 	}
 	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256, simplePlans...)
-	if final.Status == statusLive {
+	if final.Status == statusLive && darkDeploy && final.TrafficPercent == 0 {
+		receipt.PreviewURL = deploymentPreviewURL(ctx, c, final.ID)
+		receipt.PromotionCommand = deploymentPromotionCommand(appSlug, final)
+	}
+	if final.Status == statusLive && !darkDeploy {
 		if summary, summaryOK := deploymentWithReleaseSummary(ctx, c, appSlug, final.ID); summaryOK {
 			receipt.ReleaseSummary = newDeployReleaseSummary(summary, appSlug)
 		}
@@ -300,6 +363,10 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 		return 1
 	}
 	if final.Status != statusLive {
+		return 1
+	}
+	if darkDeploy && final.TrafficPercent != 0 {
+		PrintFail(osStderr, "Deployment %s became live with %d%% production traffic; expected 0%%", final.ID, final.TrafficPercent)
 		return 1
 	}
 	return 0

@@ -22,11 +22,12 @@ type UsageCollectionObservation struct {
 }
 
 type UsageCollectionSummary struct {
-	Discovered  int
-	Recorded    int
-	Deferred    int
-	Enabled     bool
-	CompletedAt time.Time
+	Discovered            int
+	Recorded              int
+	IncludedInSourceUsage int
+	Deferred              int
+	Enabled               bool
+	CompletedAt           time.Time
 }
 
 // UsageSummary is the provider-neutral account usage read model. It contains
@@ -133,7 +134,16 @@ func (c *UsageCollector) Collect(ctx context.Context) (summary UsageCollectionSu
 			return summary, err
 		}
 		outcome := "recorded"
-		if err := c.collectDatabase(ctx, database, from, to, now); err != nil {
+		backend, resolveErr := c.registry.Resolve(database.BackendID, database.BackendFingerprint)
+		includedInSource := resolveErr == nil && database.State == StateReady && database.ProviderResourceID != "" &&
+			database.RestoreSourceDatabaseID != "" && backend.Capabilities.RestoreUsageIncludedInSource
+		if includedInSource {
+			// The source resource reports a provider-shared aggregate. Recording
+			// it against every restore descendant would multiply COGS and could
+			// make admission decisions depend on how many targets were restored.
+			outcome = "included_in_source"
+			summary.IncludedInSourceUsage++
+		} else if err := c.collectDatabase(ctx, database, from, to, now); err != nil {
 			outcome = "deferred"
 			summary.Deferred++
 			sweepErr = errors.Join(sweepErr, err)

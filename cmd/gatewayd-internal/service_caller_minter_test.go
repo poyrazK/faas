@@ -2,21 +2,25 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/servicecaller"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // Off by default: the assertion has no consumer yet, so an operator who has
 // not opted in must not pay for a signature on every internal call.
 func TestServiceCallerMinterDisabledByDefault(t *testing.T) {
 	t.Setenv(serviceCallerKeyPathEnv, filepath.Join(t.TempDir(), "key.pem"))
-	if got := newServiceCallerMinter("node-1", testLogger()); got != nil {
+	if got := newServiceCallerMinter(context.Background(), state.NewMemStore(), "node-1", testLogger()); got != nil {
 		t.Error("minter was returned with the feature flag unset")
 	}
 }
@@ -27,7 +31,7 @@ func TestServiceCallerMinterMintsVerifiableAssertion(t *testing.T) {
 	t.Setenv(serviceCallerEnabledEnv, "1")
 	t.Setenv(serviceCallerKeyPathEnv, path)
 
-	mint := newServiceCallerMinter("node-1", testLogger())
+	mint := newServiceCallerMinter(context.Background(), state.NewMemStore(), "node-1", testLogger())
 	if mint == nil {
 		t.Fatal("minter is nil with the flag on")
 	}
@@ -99,7 +103,7 @@ func TestServiceCallerKeyRejectsGarbage(t *testing.T) {
 		t.Fatal("loader accepted a non-PEM key")
 	}
 	t.Setenv(serviceCallerEnabledEnv, "1")
-	if newServiceCallerMinter("node-1", testLogger()) != nil {
+	if newServiceCallerMinter(context.Background(), state.NewMemStore(), "node-1", testLogger()) != nil {
 		t.Error("minter was returned despite an unusable key")
 	}
 }
@@ -115,4 +119,57 @@ func readKey(t *testing.T, path string) ed25519.PrivateKey {
 		t.Fatalf("parse key: %v", err)
 	}
 	return priv
+}
+
+// An assertion is minted by the caller's node and verified on the target's
+// node, so a node that never publishes its public half produces assertions no
+// peer can check. Enabling the feature must publish.
+func TestServiceCallerMinterPublishesPublicKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gatewayd.ed25519")
+	t.Setenv(serviceCallerEnabledEnv, "1")
+	t.Setenv(serviceCallerKeyPathEnv, path)
+	store := state.NewMemStore()
+
+	if newServiceCallerMinter(context.Background(), store, "node-a", testLogger()) == nil {
+		t.Fatal("minter is nil")
+	}
+	keys, err := store.ListServiceCallerKeys(context.Background())
+	if err != nil {
+		t.Fatalf("list keys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("published %d keys, want 1", len(keys))
+	}
+	priv := readKey(t, path)
+	if keys[0].NodeID != "node-a" || keys[0].KeyID != serviceCallerKid(priv) {
+		t.Errorf("published %+v, want node-a with the on-disk kid", keys[0])
+	}
+	// The PEM must satisfy the service_caller_keys CHECK, or publication
+	// succeeds in MemStore and fails against Postgres.
+	if !strings.HasPrefix(keys[0].PublicKeyPEM, "-----BEGIN PUBLIC KEY-----") {
+		t.Errorf("published PEM = %.40q, want a PKIX PUBLIC KEY block", keys[0].PublicKeyPEM)
+	}
+}
+
+// Publication is best-effort: a store failure must not stop the node serving
+// traffic for a feature nothing consumes yet.
+func TestServiceCallerMinterSurvivesPublishFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gatewayd.ed25519")
+	t.Setenv(serviceCallerEnabledEnv, "1")
+	t.Setenv(serviceCallerKeyPathEnv, path)
+
+	mint := newServiceCallerMinter(context.Background(), failingKeyStore{}, "node-a", testLogger())
+	if mint == nil {
+		t.Fatal("minter is nil after a publish failure; the node stopped minting over a best-effort step")
+	}
+}
+
+type failingKeyStore struct{}
+
+func (failingKeyStore) PublishServiceCallerKey(context.Context, state.ServiceCallerKey) error {
+	return errors.New("store unavailable")
+}
+
+func (failingKeyStore) ListServiceCallerKeys(context.Context) ([]state.ServiceCallerKey, error) {
+	return nil, errors.New("store unavailable")
 }
