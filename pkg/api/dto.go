@@ -5009,18 +5009,17 @@ const (
 // AppStreamingStatus is the per-request streaming classification
 // returned by GET /v1/apps/{slug}/streaming-cap (ADR-102 D6). It is
 // the wire-level mirror of pkg/gateway.(*Handler).decideStreaming —
-// a customer hitting this endpoint sees exactly what the gateway's
-// gate machine resolved for the next inbound request, with the same
-// status enum and the same effective cap.
+// a customer hitting this endpoint sees the same status enum and plan
+// cap; a route-aware request shape also resolves the matching gateway
+// edge-rule response cap.
 //
 // Status is one of the api.StreamingStatus* constants. CapKind
 // labels the cap source: "plan" means app.Plan.MaxResponseBodyBytes
 // (the buffered cap; for non-streaming statuses this is also the
-// streaming cap because no edge rule matched), "endpoint-rule"
-// means a kind=limit edge rule with a non-zero MaxBodyBytesStreaming
-// field matched and overrode the plan cap. CapKind is omitted from
-// the wire when there is no override so a customer whose plan cap
-// applied sees a clean three-field response.
+// streaming cap), "endpoint-rule" means a route-aware probe matched
+// a kind=limit edge rule with a non-zero MaxBodyBytesStreaming field
+// and overrode the plan cap. A plan-level probe or a gatewayd miss
+// returns CapKind="plan".
 //
 // PlanAllowed + FlagEnabled mirror the two booleans that gated the
 // decision, so a customer can self-diagnose without a separate

@@ -731,7 +731,7 @@ func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server 
 
 // WithGatewaydControlURL (ADR-093) attaches the loopback URL
 // apid uses to reach gatewayd-internal's control listener
-// (/v1/internal/apps/{slug}/routes). Default
+// (/v1/internal/apps/{slug}/routes and /streaming-cap). Default
 // http://127.0.0.1:9090 matches gatewayd-internal's default
 // control bind (see pkg/gateway/control.go ControlAddr);
 // production overrides via FAAS_GATEWAYD_CONTROL_URL when the
