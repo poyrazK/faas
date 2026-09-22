@@ -87,11 +87,11 @@ func TestEdgeRulesCache_E2E_DeclarativeCLIAndDistributedPurge(t *testing.T) {
 		"--host", f.host,
 		"--stale-while-revalidate", "30s",
 		"--stale-if-error", "0s")
-	// The rule-created notification can arrive after the first request and
-	// evict a just-filled response. Let gatewayd consume it before measuring
-	// the fresh and stale windows; otherwise this test exercises a miss after
-	// invalidation instead of stale-while-revalidate.
-	time.Sleep(time.Second)
+	// The rule-created notification or the two-second durable repair poll can
+	// arrive after the first request and evict a just-filled response. Allow
+	// two poll cycles before measuring the fresh and stale windows; otherwise
+	// this test exercises a miss instead of stale-while-revalidate.
+	time.Sleep(5 * time.Second)
 
 	_, firstBody, firstStatus := waitForGatewayResponse(t, f, "/products/42", "normal-path:cache-v1\n", 10*time.Second)
 	if firstStatus != 200 || string(firstBody) != "normal-path:cache-v1\n" {
