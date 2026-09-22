@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
 func TestMaterializeDeployArchiveRejectsMalformedBytes(t *testing.T) {
@@ -100,6 +102,51 @@ func TestMaterializeDeployArchive_FlatArchiveUsesExtractionRoot(t *testing.T) {
 	}
 	if string(got) != "{}" {
 		t.Fatalf("flat archive body = %q", got)
+	}
+}
+
+// adr: 088
+func TestMaterializeDeployArchiveRootMatchesServerWithEmptyDirectories(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, hdr := range []*tar.Header{
+		{Name: "unused/", Typeflag: tar.TypeDir, Mode: 0o755},
+		{Name: "project/package.json", Typeflag: tar.TypeReg, Mode: 0o644, Size: 2},
+	} {
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			if _, err := tw.Write([]byte("{}")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "source.tar.gz")
+	if err := os.WriteFile(archive, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prefix, err := tarball.RootPrefix(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sourceDir, cleanup, err := materializeDeployArchive(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if got := filepath.Base(sourceDir); got != prefix {
+		t.Fatalf("CLI archive root = %q, server archive root = %q", got, prefix)
+	}
+	if _, err := os.Stat(filepath.Join(sourceDir, "package.json")); err != nil {
+		t.Fatalf("selected archive root lost the build marker: %v", err)
 	}
 }
 

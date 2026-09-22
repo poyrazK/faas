@@ -19,7 +19,7 @@ func TestShutdownGatewayServersReturnsImmediatelyWhenIdle(t *testing.T) {
 	t.Cleanup(control.Close)
 
 	started := time.Now()
-	err := shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, drain.NewTracker(), nil, 2*time.Second)
+	err := shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, drain.NewTracker(), nil, 2*time.Second, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestShutdownGatewayServersWaitsForInflightRequest(t *testing.T) {
 
 	shutdownDone := make(chan error, 1)
 	go func() {
-		shutdownDone <- shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, tracker, nil, 2*time.Second)
+		shutdownDone <- shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, tracker, nil, 2*time.Second, nil)
 	}()
 	select {
 	case err := <-shutdownDone:
@@ -67,6 +67,39 @@ func TestShutdownGatewayServersWaitsForInflightRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-requestDone
+}
+
+func TestShutdownGatewayServersDrainsTCPWithSharedBudget(t *testing.T) {
+	public := httptest.NewServer(http.NotFoundHandler())
+	control := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(public.Close)
+	t.Cleanup(control.Close)
+
+	tcpStarted := make(chan struct{})
+	releaseTCP := make(chan struct{})
+	tcpDrain := func(ctx context.Context) error {
+		close(tcpStarted)
+		select {
+		case <-releaseTCP:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, drain.NewTracker(), nil, time.Second, tcpDrain)
+	}()
+	<-tcpStarted
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("shutdown returned before TCP drain completed: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseTCP)
+	if err := <-shutdownDone; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestShutdownGatewayServersUsesOneBoundedBudget(t *testing.T) {
@@ -91,7 +124,7 @@ func TestShutdownGatewayServersUsesOneBoundedBudget(t *testing.T) {
 	<-requestStarted
 
 	started := time.Now()
-	err := shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, tracker, nil, 75*time.Millisecond)
+	err := shutdownGatewayServers(context.Background(), discardLogger(), public.Config, control.Config, tracker, nil, 75*time.Millisecond, nil)
 	elapsed := time.Since(started)
 	close(releaseRequest)
 	if err == nil {

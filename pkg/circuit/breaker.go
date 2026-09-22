@@ -333,15 +333,17 @@ func (g *Group) record(b *breaker, now time.Time, ok bool) {
 	if span <= 0 {
 		span = time.Nanosecond
 	}
-	idx := int(now.UnixNano()/int64(span)) % windowBuckets
+	tick := now.UnixNano() / int64(span)
+	idx := int(tick % windowBuckets)
 	if idx < 0 {
 		idx += windowBuckets
 	}
 	slot := &b.buckets[idx]
-	// A bucket whose timestamp is older than one full window belongs to a
-	// previous revolution of the ring; reuse it rather than adding to stale
-	// counts.
-	if now.Sub(slot.at) >= g.cfg.Window {
+	// Compare bucket generations, not elapsed time since the last sample.
+	// A late sample in the previous revolution can be less than Window old
+	// when this slot is reused. Carrying its counts forward would refresh
+	// historical traffic indefinitely as new observations update slot.at.
+	if slot.at.IsZero() || slot.at.UnixNano()/int64(span) != tick {
 		slot.successes, slot.failures = 0, 0
 	}
 	slot.at = now

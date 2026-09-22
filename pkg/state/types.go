@@ -4188,14 +4188,15 @@ type MirrorInvocationResult struct {
 // = mirror is slower). `P99LatencyDiffMs` is signed and is the
 // operator's drift signal.
 type MirrorSummary struct {
-	TotalInvocations  int
-	StatusDiffCount   int
-	SchemaDiffCount   int
-	BodyDiffCount     int
-	MeanLatencyDiffMs int
-	P99LatencyDiffMs  int
-	CrashCount        int
-	WindowSeconds     int
+	TotalInvocations     int
+	ChangedResponseCount int
+	StatusDiffCount      int
+	SchemaDiffCount      int
+	BodyDiffCount        int
+	MeanLatencyDiffMs    int
+	P99LatencyDiffMs     int
+	CrashCount           int
+	WindowSeconds        int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
@@ -6364,6 +6365,11 @@ const (
 	// is why the quota (Limits.EdgeRulesCircuitBreakerPerApp) gates tuning
 	// rather than the protection itself — resilience is not a paid feature.
 	EdgeRuleKindCircuitBreaker EdgeRuleKind = "circuit_breaker"
+	// EdgeRuleKindAsync converts a matched public HTTP request into a durable
+	// async_invoke row. The gateway returns 202 without waking the app; schedd's
+	// existing invocation drain later delivers the original method, path, JSON
+	// body, and safe headers to the app.
+	EdgeRuleKindAsync EdgeRuleKind = "async"
 )
 
 // IsValid reports whether k is a closed-set kind. New kinds land via
@@ -6376,7 +6382,7 @@ func (k EdgeRuleKind) IsValid() bool {
 		EdgeRuleKindIP, EdgeRuleKindValidate, EdgeRuleKindLimit,
 		EdgeRuleKindMaintenance, EdgeRuleKindThrottle, EdgeRuleKindGeo,
 		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond,
-		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker:
+		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync:
 		return true
 	}
 	return false
@@ -6396,7 +6402,7 @@ func (k EdgeRuleKind) IsValid() bool {
 // before they'll convert; locking them out at the plan gate forces
 // them to upgrade for a feature they haven't sized yet.
 func (k EdgeRuleKind) IsPaidOnly() bool {
-	return k == EdgeRuleKindJWT || k == EdgeRuleKindIP
+	return k == EdgeRuleKindJWT || k == EdgeRuleKindIP || k == EdgeRuleKindAsync
 }
 
 // EdgeRuleRouteAction re-targets the request to another app owned by
@@ -6653,10 +6659,11 @@ type EdgeRuleBudgetAction struct {
 // constants in pkg/gateway/response_cache.go, not per-rule knobs,
 // so a single misconfigured rule cannot blow the in-memory budget.
 type EdgeRuleCacheAction struct {
-	MaxAgeSeconds       int      `json:"max_age_seconds"`
-	StaleIfErrorSeconds int      `json:"stale_if_error_seconds"`
-	VaryOn              []string `json:"vary_on,omitempty"`
-	Methods             []string `json:"methods,omitempty"`
+	MaxAgeSeconds               int      `json:"max_age_seconds"`
+	StaleWhileRevalidateSeconds int      `json:"stale_while_revalidate_seconds,omitempty"`
+	StaleIfErrorSeconds         int      `json:"stale_if_error_seconds"`
+	VaryOn                      []string `json:"vary_on,omitempty"`
+	Methods                     []string `json:"methods,omitempty"`
 }
 
 // EdgeRuleRespondAction is the fixed JSON response for kind=respond.
@@ -6716,6 +6723,11 @@ type EdgeRuleThrottleAction struct {
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
 }
+
+// EdgeRuleAsyncAction is intentionally empty. Matching, payload limits,
+// retry defaults, deadlines, and result retention all reuse the existing
+// durable invocation contract and the account plan's limits.
+type EdgeRuleAsyncAction struct{}
 
 // EdgeRuleAction is the kind-tagged union stored in edge_rules.action
 // as jsonb. The wire shape lives in pkg/api/dto.go (one struct per
@@ -6799,6 +6811,8 @@ type EdgeRuleAction struct {
 	// CircuitBreaker carries the threshold knobs for kind=circuit_breaker
 	// (ADR-201 §2). The runtime is pkg/circuit.
 	CircuitBreaker *EdgeRuleCircuitBreakerAction `json:"circuit_breaker,omitempty"`
+	// Async marks a matching request for durable deferred execution.
+	Async *EdgeRuleAsyncAction `json:"async,omitempty"`
 }
 
 // EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).

@@ -270,6 +270,7 @@ export type { DiffRequest } from './DiffRequest.js';
 export type { DiffResponse } from './DiffResponse.js';
 export type { DomainDoctorCheck } from './DomainDoctorCheck.js';
 export type { DomainDoctorReport } from './DomainDoctorReport.js';
+export type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
 export type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
 export type { EdgeRuleCacheAction } from './EdgeRuleCacheAction.js';
@@ -416,6 +417,10 @@ export type { ManagedRealtimeMessageRequest } from './ManagedRealtimeMessageRequ
 export type { ManagedRealtimePublishResponse } from './ManagedRealtimePublishResponse.js';
 export type { MemberListResponse } from './MemberListResponse.js';
 export type { MirrorCleanCondition } from './MirrorCleanCondition.js';
+export type { MirrorReplayBatchRequest } from './MirrorReplayBatchRequest.js';
+export type { MirrorReplayBatchResponse } from './MirrorReplayBatchResponse.js';
+export type { MirrorReplayInvocation } from './MirrorReplayInvocation.js';
+export type { MirrorReplayRequestItem } from './MirrorReplayRequestItem.js';
 export type { MirrorRuleListResponse } from './MirrorRuleListResponse.js';
 export type { MirrorRuleResponse } from './MirrorRuleResponse.js';
 export type { MirrorSummaryResponse } from './MirrorSummaryResponse.js';

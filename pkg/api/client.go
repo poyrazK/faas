@@ -6013,6 +6013,13 @@ func (c *Client) GetAppsSlugMirrorsIdSummary(ctx context.Context, slug, id, wind
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/mirrors/"+id+"/summary?window="+windowStr, nil, &out)
 }
 
+// PostAppsSlugMirrorsIdReplay queues an explicitly sanitized historical
+// request corpus against one mirror rule.
+func (c *Client) PostAppsSlugMirrorsIdReplay(ctx context.Context, slug, id string, req MirrorReplayBatchRequest) (MirrorReplayBatchResponse, error) {
+	var out MirrorReplayBatchResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/mirrors/"+id+"/replay", req, &out)
+}
+
 // --- CORS presets (issue #975 item #4 / ADR-129) -------------------------
 //
 // Customer-owned, named, reusable CORS configurations. The data

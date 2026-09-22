@@ -301,6 +301,9 @@ func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	if _, err := service.Delete(context.Background(), "account-a", source.ID); !errors.Is(err, ErrConflict) {
 		t.Fatalf("source delete with active restore = %v, want conflict", err)
 	}
+	if provider.deleteCalls != 0 {
+		t.Fatalf("source delete contacted provider with active restore %d times", provider.deleteCalls)
+	}
 	if _, err := service.Delete(context.Background(), "account-a", restored.ID); err != nil {
 		t.Fatalf("restore target delete: %v", err)
 	}
@@ -405,6 +408,30 @@ func TestDeleteSupportsAsynchronousProviders(t *testing.T) {
 	}
 	if deleted.State != StateDeleted || deleted.DeletedAt == nil || provider.deleteCalls != 2 {
 		t.Fatalf("deleted = %+v; calls=%d", deleted, provider.deleteCalls)
+	}
+}
+
+func TestDeleteRejectsActiveBindingBeforeProviderCall(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady, deleteDone: true}
+	store := NewMemoryStore()
+	service := testService(t, testRegistry(t, provider, nil), store)
+	database, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "bound", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	if _, created, err := store.ReserveBinding(context.Background(), testBinding("account-a", database.ID, "app-a", "binding-a", createdAt)); err != nil || !created {
+		t.Fatalf("reserve binding: created=%v err=%v", created, err)
+	}
+	if _, err := service.Delete(context.Background(), "account-a", database.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Delete with active binding = %v, want ErrConflict", err)
+	}
+	if provider.deleteCalls != 0 {
+		t.Fatalf("provider delete calls = %d, want 0", provider.deleteCalls)
+	}
+	current, err := service.Get(context.Background(), "account-a", database.ID)
+	if err != nil || current.State != StateReady || current.LeaseToken != "" {
+		t.Fatalf("database changed after rejected delete: database=%+v err=%v", current, err)
 	}
 }
 

@@ -94,6 +94,23 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 	for _, row := range rows {
 		mu := acquireUploadSessionLock(row.ID)
 		mu.Lock()
+		// The scan ran outside the session lock. A commit that started
+		// before expiry may have completed while we waited; its source
+		// must retain the normal builder-consumption grace period.
+		current, getErr := s.store.GetUploadSession(ctx, row.ID)
+		if getErr != nil {
+			if !errors.Is(getErr, state.ErrNotFound) && !errors.Is(getErr, context.Canceled) {
+				log.Warn("upload session reaper: candidate reload failed", "upload_id", row.ID, "err", getErr)
+				uploadSessionReaperFailedTotal().Inc()
+			}
+			mu.Unlock()
+			continue
+		}
+		if current.Status != "open" || !uploadSessionExpired(current) {
+			mu.Unlock()
+			continue
+		}
+		row.PartPath = current.PartPath
 		// Race order matters: do .part removal FIRST, then flip
 		// status. The reverse ordering leaves a leaked .part if
 		// os.Remove fails (the WHERE status='open' partial index

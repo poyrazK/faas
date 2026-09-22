@@ -18,10 +18,11 @@ func TestCacheMetrics_OutcomeCounterClosedSet(t *testing.T) {
 	want := map[string]bool{
 		"hit": true, "miss": true,
 		"bypass_authed": true, "bypass_uncacheable": true,
-		"stale_if_error_served": true, "store_skipped": true,
+		"stale_while_revalidate_served": true,
+		"stale_if_error_served":         true, "store_skipped": true,
 	}
 	got := map[string]bool{}
-	for _, outcome := range []string{"hit", "miss", "bypass_authed", "bypass_uncacheable", "stale_if_error_served", "store_skipped"} {
+	for _, outcome := range []string{"hit", "miss", "bypass_authed", "bypass_uncacheable", "stale_while_revalidate_served", "stale_if_error_served", "store_skipped"} {
 		// Collect metric families and look for outcome label.
 		got[outcome] = false
 		families, _ := m.registry.Gather()

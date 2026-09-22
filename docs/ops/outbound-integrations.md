@@ -46,6 +46,10 @@ when the rate or concurrency budget is exhausted; inspect
 Callers decide whether and how to retry. Gregale makes no automatic retries,
 does not follow redirects, and does not transparently intercept encrypted
 egress. Provider responses (including provider `429`s) pass through.
+If a provider response is interrupted or exceeds the gateway's body cap after
+headers have been sent, the gateway aborts the response stream. Callers must
+treat the resulting read error as an incomplete response, not a successful
+download of the received prefix.
 
 The loopback listener also serves `/metrics` and `/readyz` on port `8095` by
 default. Prometheus records bounded request status classes (`1xx` through

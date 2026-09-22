@@ -1,3 +1,4 @@
+// adr: 209
 package gateway
 
 import (
@@ -117,6 +118,83 @@ func TestResponseCache_GetPastFresh_StaleOnErrorEligible(t *testing.T) {
 	}
 	if entry == nil {
 		t.Fatal("Get entry = nil, want non-nil (stale-on-error-eligible entries must still be returned so the applier can decide under the wake-failure gate)")
+	}
+}
+
+func TestResponseCache_GetPastFresh_StaleWhileRevalidateEligible(t *testing.T) {
+	start := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	now, advance := responseCacheTestClock(t, start)
+	c := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, now)
+	k := responseCacheSampleKey(7)
+	c.PutWithWindows(
+		k,
+		200,
+		nil,
+		[]byte("body"),
+		start.Add(30*time.Second),
+		start.Add(90*time.Second),
+		start.Add(330*time.Second),
+		&state.EdgeRuleCacheAction{MaxAgeSeconds: 30, StaleWhileRevalidateSeconds: 60, StaleIfErrorSeconds: 300},
+	)
+	advance(31 * time.Second)
+	got, entry := c.Get(k)
+	if got != "stale_while_revalidate_eligible" || entry == nil {
+		t.Fatalf("Get = (%q, %v), want stale_while_revalidate_eligible entry", got, entry)
+	}
+}
+
+type memorySharedResponseCache struct {
+	entries map[string]*cacheEntry
+}
+
+func (m *memorySharedResponseCache) Get(k CacheKey) (*cacheEntry, error) {
+	return m.entries[k.String()], nil
+}
+func (m *memorySharedResponseCache) Put(entry *cacheEntry) error {
+	m.entries[entry.key.String()] = entry
+	return nil
+}
+func (m *memorySharedResponseCache) InvalidateByApp(appID string) error {
+	for k, entry := range m.entries {
+		if entry.key.AppID == appID {
+			delete(m.entries, k)
+		}
+	}
+	return nil
+}
+func (m *memorySharedResponseCache) InvalidateByAppPath(appID, pathGlob string) error {
+	for k, entry := range m.entries {
+		matched, err := pathGlobMatch(pathGlob, entry.key.NormalizedPath)
+		if err != nil {
+			return err
+		}
+		if entry.key.AppID == appID && matched {
+			delete(m.entries, k)
+		}
+	}
+	return nil
+}
+func (m *memorySharedResponseCache) InvalidateAll() error {
+	m.entries = map[string]*cacheEntry{}
+	return nil
+}
+func (m *memorySharedResponseCache) Close() error { return nil }
+
+func TestResponseCache_SharedStoreHydratesAnotherGateway(t *testing.T) {
+	now := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	shared := &memorySharedResponseCache{entries: map[string]*cacheEntry{}}
+	writer := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now }).WithSharedStore(shared)
+	reader := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now }).WithSharedStore(shared)
+	key := responseCacheSampleKey(8)
+	if !writer.Put(key, 200, nil, []byte("shared"), now.Add(time.Minute), now.Add(2*time.Minute), nil) {
+		t.Fatal("writer.Put returned false")
+	}
+	state, entry := reader.Get(key)
+	if state != "fresh" || entry == nil || string(entry.body) != "shared" {
+		t.Fatalf("reader.Get = (%q, %v), want fresh shared entry", state, entry)
+	}
+	if reader.Len() != 1 {
+		t.Fatalf("reader L1 was not hydrated; Len = %d", reader.Len())
 	}
 }
 

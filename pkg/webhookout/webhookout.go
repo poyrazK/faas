@@ -24,9 +24,9 @@
 //
 // CLAUDE.md §11: the secret is NEVER logged. DispatcherOptions.Logger
 // is allowed; the dispatcher only ever logs attempt counts, status
-// codes, and metadata (rule name, delivery id). The body of a
-// response is truncated to 32 KiB so an unbounded reader cannot leak
-// the secret via a reflected-payload response.
+// codes, and metadata (rule name, delivery id). Response bodies are
+// bounded to 32 KiB for explicit diagnostics, but never included in
+// logs or error messages: even a short body may reflect a secret.
 package webhookout
 
 import (
@@ -40,9 +40,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -257,14 +257,14 @@ type Event struct {
 //   - ErrAttemptsExhausted      (MaxAttempts retries on a retryable failure)
 //   - ErrBodyTooLarge           (response body exceeded 32 KiB)
 //   - errors.Is(wrapping oci.ErrImageEgressDenied)  (SSRF rejected)
+//   - context.Canceled or context.DeadlineExceeded (delivery stopped)
 //
 // StatusCode is the last attempt's response status (0 if no response
 // was received — e.g. a network error). BodyPrefix is the first
 // MaxBodyBytes of the last response body; useful for the operator's
 // "why did the customer's endpoint reject this?" debug dump. The
-// prefix is intentionally truncated — keeping the full body would
-// risk leaking the customer's secrets that they may have reflected
-// back into the response.
+// prefix is intentionally bounded, but may still contain reflected
+// customer secrets. Callers must not log it or copy it into errors.
 type Result struct {
 	StatusCode int
 	Attempts   int
@@ -277,8 +277,9 @@ type Result struct {
 // DefaultBaseBackoff = 2s, DefaultPerAttempt = 10s). HTTPClient is
 // optional; nil resolves to oci.NewEgressHTTPClient so the dial-time
 // SSRF guard is on by default. Sleeper is injectable so tests don't
-// wait real backoff; nil resolves to time.Sleep. Logger is optional;
-// nil resolves to slog.Default().
+// wait real backoff; nil uses a context-cancelable timer. An injected
+// Sleeper must return promptly; cancellation is checked before and
+// after calling it. Logger is optional; nil resolves to slog.Default().
 //
 // HeaderSet picks which header names the dispatcher emits on every
 // POST. Zero value is HeaderSetAlert (preserves the pre-#476 alert
@@ -355,9 +356,6 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 			opts.HTTPClient = oci.NewEgressHTTPClient()
 		}
 	}
-	if opts.Sleeper == nil {
-		opts.Sleeper = time.Sleep
-	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
@@ -410,6 +408,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, t Target, evt Event) Result {
 //
 // Refs: ADR-123 PR-C, issue #1233, plan §Commit 2.
 func (d *Dispatcher) DispatchTest(ctx context.Context, t Target, evt Event) Result {
+	// Event is passed by value, but its map still belongs to the caller.
+	// Keep the discriminator local to this synthetic delivery.
+	evt.Payload = maps.Clone(evt.Payload)
 	if evt.Payload == nil {
 		evt.Payload = make(map[string]any, 1)
 	}
@@ -425,6 +426,9 @@ func (d *Dispatcher) DispatchTest(ctx context.Context, t Target, evt Event) Resu
 // and DispatchTest. Refactored so the test path is a single line on
 // top of the production path (no logic duplication).
 func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
+	if err := ctx.Err(); err != nil {
+		return Result{Err: err}
+	}
 	body, err := marshalEvent(evt, d.opts.Format)
 	if err != nil {
 		// Marshalling a map[string]any with a known shape should not
@@ -439,9 +443,16 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 
 	var lastResult Result
 	for attempt := 0; attempt < d.opts.MaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			lastResult.Err = err
+			return lastResult
+		}
 		if attempt > 0 {
 			delay := d.backoffFor(attempt - 1)
-			d.opts.Sleeper(delay)
+			if err := d.waitForRetry(ctx, delay); err != nil {
+				lastResult.Err = err
+				return lastResult
+			}
 		}
 		lastResult = d.attempt(ctx, t.URL, sig, unix, evt.ID, attempt+1, body)
 		lastResult.Attempts = attempt + 1
@@ -467,7 +478,11 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 			// so we leave the sentinel unwrapped below.
 			break
 		}
-		d.logAttempt(t, evt, attempt+1, lastResult)
+		if err := ctx.Err(); err != nil {
+			lastResult.Err = err
+			return lastResult
+		}
+		d.logAttempt(evt, attempt+1, lastResult)
 	}
 	// Loop exited without success or terminal flag — every attempt
 	// was retryable. Surface ErrAttemptsExhausted wrapped around the
@@ -485,6 +500,23 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 		Attempts:   lastResult.Attempts,
 		BodyPrefix: lastResult.BodyPrefix,
 		Err:        fmt.Errorf("%w: %w", ErrAttemptsExhausted, lastResult.Err),
+	}
+}
+
+// waitForRetry retains the test sleeper seam without making production
+// cancellation wait for the (potentially minutes-long) retry delay.
+func (d *Dispatcher) waitForRetry(ctx context.Context, delay time.Duration) error {
+	if d.opts.Sleeper != nil {
+		d.opts.Sleeper(delay)
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ctx.Err()
 	}
 }
 
@@ -608,13 +640,11 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 
 	// Read up to MaxBodyBytes+1 — the extra byte is the "body too
 	// large" probe. io.LimitReader ensures we don't block on the
-	// extra read past the cap, and the defer'd drain step on the
+	// extra read past the cap, and the bounded drain step on the
 	// body-too-large branch lets the underlying conn return to the
 	// keep-alive pool instead of hanging.
-	prefix := make([]byte, MaxBodyBytes+1)
-	n, _ := io.ReadFull(resp.Body, prefix)
-	prefix = prefix[:n]
-	if n > MaxBodyBytes {
+	prefix, readErr := io.ReadAll(io.LimitReader(resp.Body, MaxBodyBytes+1))
+	if len(prefix) > MaxBodyBytes {
 		// Drain the remainder so the conn is reusable. Bounded by
 		// the larger of (MaxBodyBytes, 1<<20) — a misconfigured
 		// endpoint that streams indefinitely can't keep us here
@@ -629,22 +659,32 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 	}
 
 	switch {
+	case resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 408 && resp.StatusCode != 429:
+		// A terminal status must not become retryable just because
+		// its optional diagnostic body was interrupted.
+		return Result{StatusCode: resp.StatusCode, BodyPrefix: prefix, Err: ErrTerminal}
+	case readErr != nil:
+		return Result{
+			StatusCode: resp.StatusCode,
+			BodyPrefix: prefix,
+			Err:        fmt.Errorf("webhookout: read response: %w", readErr),
+		}
 	case resp.StatusCode >= 200 && resp.StatusCode < 400:
 		return Result{StatusCode: resp.StatusCode, BodyPrefix: prefix}
 	case resp.StatusCode == 408 || resp.StatusCode == 429:
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,
-			Err:        fmt.Errorf("webhookout: retryable %d: %s", resp.StatusCode, truncateBody(prefix)),
+			Err:        fmt.Errorf("webhookout: retryable %d", resp.StatusCode),
 		}
 	case resp.StatusCode >= 500:
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,
-			Err:        fmt.Errorf("webhookout: retryable %d: %s", resp.StatusCode, truncateBody(prefix)),
+			Err:        fmt.Errorf("webhookout: retryable %d", resp.StatusCode),
 		}
 	default:
-		// 4xx other than 408/429 — terminal.
+		// Unexpected final statuses are also terminal.
 		return Result{
 			StatusCode: resp.StatusCode,
 			BodyPrefix: prefix,
@@ -670,14 +710,9 @@ func (d *Dispatcher) backoffFor(attempt int) time.Duration {
 
 // logAttempt logs a retryable failure so the operator can see why a
 // delivery is taking longer than usual. Never logs the secret, the
-// body, or the response body. Stripped of CR/LF via the standard
-// CodeQL go/log-injection sanitiser pattern (alert #117) — the
-// server's response body prefix is user-controlled and flows into
-// the log line.
-func (d *Dispatcher) logAttempt(t Target, evt Event, attempt int, r Result) {
-	msg := truncateBody(r.BodyPrefix)
-	msg = strings.ReplaceAll(msg, "\r", "")
-	msg = strings.ReplaceAll(msg, "\n", "")
+// body, or the response body. Receiver-controlled text is unsafe
+// even when truncated or stripped of CR/LF.
+func (d *Dispatcher) logAttempt(evt Event, attempt int, r Result) {
 	d.opts.Logger.Warn(
 		"webhookout: attempt failed; will retry",
 		"rule", evt.Rule,
@@ -685,18 +720,6 @@ func (d *Dispatcher) logAttempt(t Target, evt Event, attempt int, r Result) {
 		"delivery_id", evt.ID,
 		"attempt", attempt,
 		"status", r.StatusCode,
-		"err_msg", msg,
+		"response_bytes", len(r.BodyPrefix),
 	)
-}
-
-// truncateBody returns a short, log-safe string from a response body
-// prefix. Bodies can be JSON, HTML, or anything — we want a stable
-// shape that survives CR/LF stripping and doesn't balloon the log
-// line on a 32 KiB response.
-func truncateBody(b []byte) string {
-	const limit = 256
-	if len(b) > limit {
-		b = b[:limit]
-	}
-	return string(b)
 }

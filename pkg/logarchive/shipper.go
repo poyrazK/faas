@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -55,6 +56,7 @@ const (
 // with Run (blocks until ctx cancel) or RunOnce (one pass,
 // returns the (files shipped, bytes shipped, error) tuple).
 type Shipper struct {
+	mu      sync.Mutex // serialize archive replacement and retention passes
 	cfg     Config
 	spool   *Spool
 	s3      *S3Client
@@ -178,6 +180,8 @@ func (s *Shipper) Run(ctx context.Context) error {
 // daemon log captures the reason via the slog WARN; the metric
 // counter increments the right {reason} bucket.
 func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !s.cfg.Enabled() {
 		return 0, 0, nil
 	}
@@ -196,6 +200,10 @@ func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 			// upload doesn't poison the whole tick.
 			continue
 		}
+		if n == 0 {
+			// Commit recovery can finish without a new network upload.
+			continue
+		}
 		shipped++
 		bytes += n
 		s.metrics.IncFilesUploaded("ok")
@@ -206,8 +214,8 @@ func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 }
 
 // uploadFile rotates the active spool file before reading it, gzips the
-// sealed upload fragment to a sibling .jsonl.gz file, and PUTs the compressed
-// bytes to s3://bucket/faas-logs/{instance}/{YYYY}/{MM}/{DD}.jsonl.gz. New
+// sealed upload fragment after the retained daily gzip history, and PUTs the
+// complete object to s3://bucket/faas-logs/{instance}/{YYYY}/{MM}/{DD}.jsonl.gz. New
 // evictions can continue into a fresh .partial file while the upload runs;
 // failed .upload files remain for the next retry.
 func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
@@ -230,10 +238,19 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 
 	basePath := strings.TrimSuffix(path, spoolUploadSuffix)
 	basePath = strings.TrimSuffix(basePath, spoolPartialSuffix)
-	gzPath := basePath + ".jsonl.gz"
+	historyPath := basePath + archiveGzipSuffix
+	gzPath := historyPath + ".pending"
 	gz, err := os.Create(gzPath)
 	if err != nil {
 		return 0, fmt.Errorf("create %s: %w", gzPath, err)
+	}
+	// Concatenated gzip members decode as one JSONL stream. Preserve earlier
+	// successful flushes without decompressing the entire daily history, and
+	// never truncate that history until the replacement is accepted by S3.
+	if err := copyArchiveHistory(gz, historyPath); err != nil {
+		_ = gz.Close()
+		_ = os.Remove(gzPath)
+		return 0, err
 	}
 	gzWriter, err := gzip.NewWriterLevel(gz, gzip.BestSpeed)
 	if err != nil {
@@ -241,7 +258,7 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 		_ = os.Remove(gzPath)
 		return 0, fmt.Errorf("gzip writer: %w", err)
 	}
-	n, err := io.Copy(gzWriter, src)
+	_, err = io.Copy(gzWriter, src)
 	if err != nil {
 		_ = gzWriter.Close()
 		_ = gz.Close()
@@ -252,6 +269,11 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 		_ = gz.Close()
 		_ = os.Remove(gzPath)
 		return 0, fmt.Errorf("gzip close: %w", err)
+	}
+	if err := gz.Sync(); err != nil {
+		_ = gz.Close()
+		_ = os.Remove(gzPath)
+		return 0, fmt.Errorf("sync pending gzip: %w", err)
 	}
 	if err := gz.Close(); err != nil {
 		_ = os.Remove(gzPath)
@@ -280,14 +302,29 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 		return 0, fmt.Errorf("put %s: %w", key, err)
 	}
 	s.metrics.ObserveUploadDuration(s.now().Sub(uploadStart).Seconds())
-	// Success: remove the sealed upload fragment. The .jsonl.gz file is the
-	// shipped marker retained for local purge; any newer evictions are already
-	// in the independent .partial file and remain untouched.
-	if err := s.spool.CompleteUpload(path); err != nil {
-		s.log.Warn("logarchive.remove_partial_failed",
-			"path", path, "err", err)
+	// A recoverable local commit preserves the cumulative gzip before any
+	// future flush can append another fragment to it. New evictions stay in
+	// their independent .partial file throughout the commit.
+	if err := s.spool.commitArchive(path); err != nil {
+		return 0, err
 	}
-	return n, nil
+	return stat.Size(), nil
+}
+
+func copyArchiveHistory(dst io.Writer, path string) error {
+	//nolint:forbidigo // path is the retained gzip sibling of a spool-owned upload.
+	src, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open archived history: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("copy archived history: %w", err)
+	}
+	return nil
 }
 
 // bucketKey is the S3 object key for an (instance, day) tuple.
@@ -346,6 +383,8 @@ func classifyFailure(err error) string {
 // don't abort the walk — one unreadable file shouldn't block
 // the rest of the purge.
 func (s *Shipper) PurgeOnce(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !s.cfg.Enabled() {
 		return 0, nil
 	}
@@ -372,6 +411,15 @@ func (s *Shipper) PurgeOnce(ctx context.Context) (int, error) {
 		}
 		if info.ModTime().UTC().After(cutoff) {
 			return nil
+		}
+		// A failed or interrupted flush still needs this history as the base
+		// of its replacement object. Purging it would lose already shipped
+		// lines the next time the backlog succeeds.
+		base := strings.TrimSuffix(path, archiveGzipSuffix)
+		for _, suffix := range []string{spoolPartialSuffix, spoolUploadSuffix, spoolCommittedSuffix} {
+			if _, err := os.Stat(base + suffix); !errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			s.log.Warn("logarchive.purge_remove_failed", "path", path, "err", err)

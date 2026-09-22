@@ -894,6 +894,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		TenantID:           app.AccountID,
 		DeploymentID:       dep.ID,
 		SourcePath:         dep.SourcePath,
+		SourceSHA256:       srcHash,
 		SourceRoot:         dep.SourceRoot,
 		DockerfilePath:     dockerfilePath,
 		Framework:          fw,

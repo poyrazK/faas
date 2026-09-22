@@ -49,7 +49,7 @@ func TestRetryPolicy_BackoffCurve(t *testing.T) {
 		{3, 4 * time.Second},
 		{4, 8 * time.Second},
 		{5, 16 * time.Second},
-		{20, 300 * time.Second}, // exp clamps at 9 → 512 → MaxSeconds cap
+		{20, 300 * time.Second}, // exponential growth reaches MaxSeconds
 	}
 	for _, c := range cases {
 		got := p.Backoff(c.attempt)
@@ -124,10 +124,8 @@ func TestRetryPolicy_BackoffJitter(t *testing.T) {
 	}
 }
 
-// TestRetryPolicy_BackoffExpClamp pins the exp > 9 cap. The
-// inline curve at dispatch_triggers.go:1014-1016 has the same
-// clamp; removing it would let attempt=64 overflow time.Duration's
-// int64 shift.
+// TestRetryPolicy_BackoffExpClamp pins the configured maximum even
+// when the attempt count would otherwise overflow a duration.
 func TestRetryPolicy_BackoffExpClamp(t *testing.T) {
 	p := dispatch.RetryPolicy{MaxAttempts: 25, BaseSeconds: 1, MaxSeconds: 300, JitterSeconds: 0}
 	for _, a := range []int{10, 12, 20, 100, 1000} {

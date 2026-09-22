@@ -90,6 +90,14 @@ type RequestTelemetryRow struct {
 	GuestRuntime    string
 	GuestOutcome    string
 	GuestErrorClass string
+	// Deployment provenance copied from the target identity. Empty values
+	// preserve compatibility with legacy targets that predate metadata.
+	NodeID              string
+	Region              string
+	CommitSHA           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 // RequestTelemetryConfig bundles the knobs the recorder reads at

@@ -5,13 +5,11 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,26 +18,21 @@ import (
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
-// framework is the source kind auto-detected from the current directory when
-// `gregale deploy` is run with no source flag (issue #313). It intentionally
-// mirrors the top-level filename rule in pkg/builderd/detect.go, but is copied
-// here rather than imported: importing pkg/builderd would pull the entire
-// server stack (DB, scheduler, firecracker) into the CLI binary. The rule is
-// small and stable; the two copies are the accepted trade for zero server
-// blast radius. The server re-detects authoritatively from the uploaded
-// tarball, so this value is only used for CLI UX + the dockerfile flag.
-type framework string
+// framework is kept as a local alias so the CLI call sites remain concise,
+// while pkg/markers owns the vocabulary used by both the CLI and server.
+type framework = markers.Framework
 
 const (
-	fwNode    framework = "node"
-	fwPython  framework = "python"
-	fwGo      framework = "go"
-	fwDocker  framework = "docker"
-	fwUnknown framework = "unknown"
+	fwNode    = markers.FrameworkNode
+	fwPython  = markers.FrameworkPython
+	fwGo      = markers.FrameworkGo
+	fwDocker  = markers.FrameworkDocker
+	fwUnknown = markers.FrameworkUnknown
 )
 
 // Function runtime literals — declared as constants here so the
@@ -127,29 +120,6 @@ var defaultExcludeFiles = map[string]bool{
 	".DS_Store": true,
 	"Thumbs.db": true,
 	".git":      true, // linked worktrees use a .git file instead of a directory
-}
-
-// appMarker is the closed set of filenames whose presence at the project
-// root (or, for the depth-2 hint path, under a single subdirectory) marks
-// a directory as containing deployable source for an *app* (Railpack
-// framework path). A README.md or dotfile in the same directory is NOT
-// a marker — those files don't change the deploy shape.
-//
-// Single source of truth: detectFramework and detectNestedMarkerHint
-// both consult this map, so a new marker (e.g. Cargo.toml for a Rust
-// Railpack pipeline that lands in a future ADR) only needs to be added
-// here, not in two switches. The marker→framework mapping mirrors
-// pkg/builderd/detect.go:73-82 on the server side — the CLI is
-// intentionally the lighter view (no Dockerfile priority ordering —
-// see detectFramework, which applies Dockerfile-wins as a post-pass).
-var appMarker = map[string]framework{
-	"package.json":     fwNode,
-	"requirements.txt": fwPython,
-	"pyproject.toml":   fwPython,
-	"pipfile":          fwPython,
-	"setup.py":         fwPython,
-	"go.mod":           fwGo,
-	"dockerfile":       fwDocker,
 }
 
 // packEpoch is a fixed modification time stamped on every archive entry so the
@@ -360,51 +330,20 @@ func packExtraExcludeSet(srcDir string, paths []string) map[string]bool {
 	return set
 }
 
-// detectFramework sniffs the TOP-LEVEL entries of srcDir (no recursion) and
-// returns the implied framework. A Dockerfile wins over language markers, in
-// lockstep with pkg/builderd/detect.go. Returns fwUnknown when nothing at the
-// root identifies the project.
+// detectFramework delegates top-level marker detection to the shared package
+// used by apid and builderd. Detection failures remain best-effort on the CLI:
+// callers surface the ordinary unknown-source guidance.
 func detectFramework(srcDir string) framework {
-	entries, err := os.ReadDir(srcDir)
+	fw, err := markers.DetectFromFS(os.DirFS(srcDir))
 	if err != nil {
 		return fwUnknown
 	}
-	// Single source of truth: appMarker (issue #744 / ADR-086). A new
-	// marker added to the map is picked up here AND by
-	// detectNestedMarkerHint without further edits. The Dockerfile-wins
-	// post-pass at the end mirrors pkg/builderd/detect.go — when both a
-	// Dockerfile and a language marker are present, the Dockerfile wins.
-	var hasDocker bool
-	var lang framework
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if fw, ok := appMarker[strings.ToLower(e.Name())]; ok {
-			if fw == fwDocker {
-				hasDocker = true
-				continue
-			}
-			if lang == "" {
-				lang = fw
-			}
-		}
-	}
-	if hasDocker {
-		return fwDocker
-	}
-	if lang != "" {
-		return lang
-	}
-	return fwUnknown
+	return fw
 }
 
-// detectFrameworkVersion is the CLI-side mirror of
-// pkg/builderd/detectversion.go. It pre-walks srcDir (the local cwd
-// the customer is packing from) and returns the best-effort language
-// version declared by the source, or "" if no version marker is found
-// or any parser fails. Used by resolveDeployShape's shapeApp banner
-// (issue #740 / DEPLOY-PROV-5 / ADR-087) to render
+// detectFrameworkVersion uses the same bounded parser as the server and
+// returns the best-effort language version declared by the source. Used by
+// resolveDeployShape's shapeApp banner to render
 //
 //	Detected: app, framework=node, version=22.11.0
 //
@@ -413,51 +352,16 @@ func detectFramework(srcDir string) framework {
 // CLI banner is purely informational — the operator reads the
 // authoritative value via `gregale build provenance <id>`.
 //
-// Priority order mirrors pkg/builderd/detectversion.go (kept in sync
-// intentionally — the CLI is the lighter view; the server is the
-// authoritative re-read):
+// Priority order is owned by pkg/markers:
 //
 //	node    → .nvmrc → package.json::engines.node → ""
 //	python  → .python-version → pyproject.toml::requires-python → ""
 //	go      → go.mod → "go X.Y" directive → ""
 //	docker  → "" (containers pin via FROM; out-of-scope per issue #740)
 //
-// Any parse error → "". A 64 KB cap per file mirrors the server-side
-// bound at pkg/builderd/detectversion.go::maxVersionFileBytes.
+// Any parse error → "". pkg/markers applies the shared 64 KB file bound.
 func detectFrameworkVersion(srcDir string, fw framework) string {
-	switch fw {
-	case fwNode:
-		if v := cliReadFirstLine(srcDir, ".nvmrc"); v != "" {
-			if out := normalizeVersion(stripVersionPrefix(v)); out != "" {
-				return out
-			}
-		}
-		if body := cliReadFile(srcDir, "package.json"); body != "" {
-			if out := cliVersionFromPackageJSONNode(body); out != "" {
-				return out
-			}
-		}
-	case fwPython:
-		if v := cliReadFirstLine(srcDir, ".python-version"); v != "" {
-			if out := normalizeVersion(stripVersionPrefix(v)); out != "" {
-				return out
-			}
-		}
-		if body := cliReadFile(srcDir, "pyproject.toml"); body != "" {
-			if out := cliVersionFromPyprojectRequires(body); out != "" {
-				return out
-			}
-		}
-	case fwGo:
-		if body := cliReadFile(srcDir, "go.mod"); body != "" {
-			if out := cliVersionFromGoModDirective(body); out != "" {
-				return out
-			}
-		}
-	case fwDocker, fwUnknown:
-		// explicit out-of-scope / no anchor
-	}
-	return ""
+	return markers.VersionFromFS(os.DirFS(srcDir), fw)
 }
 
 // funcErrorSuggestion returns the trailing "Detected <fw> project ..."
@@ -482,127 +386,6 @@ func funcErrorSuggestion(srcDir string) string {
 	return fmt.Sprintf(
 		" Detected %s project (version %s) — try `--runtime %s --handler handler.handler`.",
 		fw, ver, rt)
-}
-
-// cliReadFile reads up to 64 KB of the named file in srcDir and returns
-// its contents. Returns "" on any error so the caller treats the file
-// as not-present. A 64 KB cap mirrors the server-side bound.
-func cliReadFile(srcDir, name string) string {
-	const maxBytes = 64 * 1024
-	path := filepath.Join(srcDir, name)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	if len(data) > maxBytes {
-		return ""
-	}
-	return string(data)
-}
-
-// cliReadFirstLine returns the first non-blank, non-comment trimmed
-// line of the named file. "" on any error or all-blank file.
-func cliReadFirstLine(srcDir, name string) string {
-	body := cliReadFile(srcDir, name)
-	if body == "" {
-		return ""
-	}
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		return line
-	}
-	return ""
-}
-
-// stripVersionPrefix strips a leading "v" from a version string. The
-// rest of the version is matched by the per-parser regex; that's how
-// "v22.11.0" turns into "22.11.0" without forcing a strict semver
-// parse.
-func stripVersionPrefix(s string) string {
-	return strings.TrimPrefix(strings.TrimSpace(s), "v")
-}
-
-// versionLikeCLI is the dotted-version matcher used by both the
-// node and python parsers. The .python-version file commonly writes
-// "3.11" (two-component) so the regex accepts X.Y or X.Y.Z. Mirrors
-// pkg/builderd/detectversion.go::semverLike.
-var versionLikeCLI = regexp.MustCompile(`\d+\.\d+(?:\.\d+)?`)
-
-// normalizeVersion extracts the first dotted version (X.Y or X.Y.Z)
-// from s. Mirrors pkg/builderd/detectversion.go::normalizeSemver —
-// the server kept two named variants (semverLike / pythonSemverLike)
-// despite byte-identical regexes, so the CLI does too for symmetry,
-// and uses one shared regex to avoid duplication.
-func normalizeVersion(s string) string {
-	return versionLikeCLI.FindString(s)
-}
-
-// cliVersionFromPackageJSONNode mirrors pkg/builderd's
-// versionFromPackageJSONNode. Only the bare-version-extraction path is
-// copied; the server has the full encoding/json path because the
-// CLI-side path runs on untrusted customer source files.
-func cliVersionFromPackageJSONNode(body string) string {
-	var pkg struct {
-		Engines struct {
-			Node json.RawMessage `json:"node"`
-		} `json:"engines"`
-	}
-	if err := json.Unmarshal([]byte(body), &pkg); err != nil {
-		return ""
-	}
-	if len(pkg.Engines.Node) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(pkg.Engines.Node, &s); err != nil {
-		return ""
-	}
-	s = strings.TrimSpace(s)
-	// Strip the leading operator. Order matters: 2-char prefixes
-	// (>=, <=) come first so they're not eaten by the single-char
-	// match.
-	for _, op := range []string{">=", "<=", ">", "<", "^", "~", "="} {
-		if strings.HasPrefix(s, op) {
-			s = strings.TrimPrefix(s, op)
-			break
-		}
-	}
-	return normalizeVersion(strings.TrimSpace(s))
-}
-
-// cliVersionFromPyprojectRequires mirrors the server-side regex
-// parser. We keep the regex identical so the server-side test cases
-// translate 1:1 to the CLI side.
-func cliVersionFromPyprojectRequires(body string) string {
-	re := regexp.MustCompile(`(?i)requires-python\s*=\s*["']([^"']+)["']`)
-	m := re.FindStringSubmatch(body)
-	if m == nil {
-		return ""
-	}
-	val := strings.TrimSpace(m[1])
-	for _, op := range []string{">=", "<=", "==", "!=", ">", "<", "~=", "^", "="} {
-		if strings.HasPrefix(val, op) {
-			val = strings.TrimPrefix(val, op)
-			break
-		}
-	}
-	if comma := strings.Index(val, ","); comma >= 0 {
-		val = strings.TrimSpace(val[:comma])
-	}
-	return normalizeVersion(val)
-}
-
-// cliVersionFromGoModDirective mirrors the server-side regex.
-func cliVersionFromGoModDirective(body string) string {
-	re := regexp.MustCompile(`(?m)^\s*go\s+(\d+\.\d+(?:\.\d+)?)\s*$`)
-	m := re.FindStringSubmatch(body)
-	if m == nil {
-		return ""
-	}
-	return m[1]
 }
 
 // runtimeSuggestionFor maps a (framework, version) pair to the
@@ -751,7 +534,7 @@ func walkForMarkers(dir string, maxDepth int) bool {
 			}
 			continue
 		}
-		if _, ok := appMarker[strings.ToLower(name)]; ok {
+		if markers.IsAppMarker(name) {
 			return true
 		}
 	}

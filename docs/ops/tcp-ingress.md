@@ -24,6 +24,10 @@ TCP listener API and remains stable while the app instance parks or wakes.
 The idle timeout resets whenever bytes cross the edge; the account-scoped
 session cap is enforced independently for each account on the gateway.
 
+During a gateway restart, SIGTERM closes the raw-TCP listener sockets first and
+lets accepted sessions finish within the shared gateway drain budget. A second
+signal or an expired budget force-closes the remaining sessions.
+
 For split-box deployments, set the `faas_tcpd_schedd_target` and the optional
 `faas_tcpd_*_tls_*_path` variables in the gateway role. Single-box installs
 use the local schedd Unix socket by default.
@@ -39,3 +43,6 @@ and the `gatewayd_public_tcp_sessions_*` counters distinguish accepted,
 completed, and rejected sessions. `gatewayd_public_tcp_bytes_total` reports
 both directions, while `gatewayd_public_tcp_session_duration_seconds` and
 `gatewayd_public_tcp_idle_timeouts_total` cover latency and idle reaping.
+The fleet dashboard panels 418-419 graph these signals, and Prometheus alerts
+on sustained account-quota rejection or idle-timeout spikes; see
+`docs/runbooks/FaasTCPIngress.md` for triage.

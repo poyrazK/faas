@@ -287,6 +287,40 @@ func TestConfig_RequestTelemetryTargetFollowsTopology(t *testing.T) {
 	})
 }
 
+func TestConfig_SpansWriterTargetFollowsTopology(t *testing.T) {
+	t.Run("explicit socket wins", func(t *testing.T) {
+		c := &Config{AppErrorsTarget: "tcp://apid.faas:9093"}
+		env := func(key string) string {
+			if key == "FAAS_APID_OTEL_SPANS_WRITER_SOCKET" {
+				return "unix:///run/faas/custom-spans.sock"
+			}
+			return ""
+		}
+		if got := c.GetSpansWriterTarget(env); got != "unix:///run/faas/custom-spans.sock" {
+			t.Fatalf("explicit socket = %q", got)
+		}
+	})
+
+	t.Run("split target reuses request telemetry endpoint", func(t *testing.T) {
+		c := &Config{AppErrorsTarget: "tcp://apid.faas:9093"}
+		env := func(key string) string {
+			if key == "FAAS_APID_REQUEST_TELEMETRY_TARGET" {
+				return "tcp://telemetry.faas:9443"
+			}
+			return ""
+		}
+		if got := c.GetSpansWriterTarget(env); got != "tcp://telemetry.faas:9443" {
+			t.Fatalf("split target = %q", got)
+		}
+	})
+
+	t.Run("single box keeps dedicated socket", func(t *testing.T) {
+		if got := (&Config{}).GetSpansWriterTarget(func(string) string { return "" }); got != "/run/faas/otel_spans_writer.sock" {
+			t.Fatalf("single-box target = %q", got)
+		}
+	})
+}
+
 // writeTLSFixtures writes a self-signed client cert + key + CA into
 // dir and returns the three paths. Used by
 // TestConfig_LoadVMMDPingTLS to exercise wire.LoadClientTLSConfigWithPrefix

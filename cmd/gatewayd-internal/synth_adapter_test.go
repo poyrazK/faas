@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -227,5 +229,65 @@ func TestSynthAdapterDebugReplayUsesMirrorTargetAndStripsMetadata(t *testing.T) 
 	}
 	if result.SourceStatusCode != 200 || result.MirrorStatusCode != 200 || result.StatusDiff || result.Crashed {
 		t.Fatalf("replay result = %+v, want matching healthy statuses", result)
+	}
+}
+
+func TestSynthAdapterSanitizedReplayForwardsPayloadAndComparesBodyHash(t *testing.T) {
+	const responseBody = `{"result":"same"}`
+	expectedHash := sha256.Sum256([]byte(responseBody))
+	b := &replayTestBackend{
+		rule: gateway.MirrorRuleRow{
+			ID: "rule-1", AccountID: "acct-1", AppID: "app-1",
+			SourceDeploymentID: "dep-source", MirrorDeploymentID: "dep-mirror",
+			Enabled: true, IncludeBody: true, RedactHeaders: []string{"X-Tenant-Secret"},
+		},
+		target: gateway.Target{NodeID: "node-mirror", InstanceID: "instance-mirror", DeploymentID: "dep-mirror"},
+	}
+	metadata, err := json.Marshal(map[string]string{
+		api.DebugReplayRequestIDHeader:        "request-1",
+		api.DebugReplayDeploymentIDHeader:     "dep-source",
+		api.DebugReplayMirrorRuleIDHeader:     "rule-1",
+		api.DebugReplaySourceStatusHeader:     "200",
+		api.DebugReplaySourceBodyHashHeader:   hex.EncodeToString(expectedHash[:]),
+		api.DebugReplaySanitizedPayloadHeader: "true",
+		"Content-Type":                        "application/json",
+		"X-Keep":                              "safe",
+		"Authorization":                       "Bearer must-not-pass",
+		"X-Tenant-Secret":                     "must-not-pass",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &synthAdapter{
+		backend: b,
+		forward: func(gateway.Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				if string(body) != `{"order":"sanitized"}` {
+					t.Errorf("body = %q", body)
+				}
+				if r.URL.RequestURI() != "/checkout?dry_run=1" || r.Header.Get("X-Keep") != "safe" {
+					t.Errorf("request uri/headers = %q %#v", r.URL.RequestURI(), r.Header)
+				}
+				if r.Header.Get("Authorization") != "" || r.Header.Get("X-Tenant-Secret") != "" || r.Header.Get(api.DebugReplayRequestIDHeader) != "" {
+					t.Errorf("sensitive/internal headers leaked: %#v", r.Header)
+				}
+				_, _ = w.Write([]byte(responseBody))
+			})
+		},
+	}
+	out, status, err := a.InvokeWithStatus(context.Background(), "app-1", state.Invocation{
+		ID: "inv-1", AppID: "app-1", AccountID: "acct-1", Source: state.InvocationReplay,
+		Method: http.MethodPost, Path: "/checkout?dry_run=1", Payload: json.RawMessage(`{"order":"sanitized"}`), Headers: metadata,
+	})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("InvokeWithStatus status=%d err=%v", status, err)
+	}
+	var result api.DebugReplayComparison
+	if err := json.Unmarshal(out.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.StatusDiff || result.BodyDiff || result.Crashed {
+		t.Fatalf("comparison = %+v", result)
 	}
 }
