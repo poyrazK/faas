@@ -234,16 +234,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	if h.MaxResponseBytes <= 0 {
-		_, _ = io.Copy(w, resp.Body)
-		return
+	var downstream io.Writer = w
+	if h.MaxResponseBytes > 0 {
+		downstream = &responseBodyCapWriter{ResponseWriter: w, limit: h.MaxResponseBytes}
 	}
-	capWriter := &responseBodyCapWriter{ResponseWriter: w, limit: h.MaxResponseBytes}
-	if _, err := io.Copy(capWriter, resp.Body); errors.Is(err, errResponseBodyTooLarge) {
-		// Headers and the upstream status are already committed, so this
-		// path terminates the body at the cap instead of attempting to write
-		// a second response envelope.
+	if _, err := io.Copy(downstream, resp.Body); err != nil {
+		// The provider status is already committed. Returning normally would
+		// mark a truncated chunked response as a complete success. Abort the
+		// downstream stream, as ReverseProxy does on copy failures, so callers
+		// can detect the incomplete response without a second error envelope.
 		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		dependencySpan.RecordError(err)
+		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
+		panic(http.ErrAbortHandler)
 	}
 }
 
