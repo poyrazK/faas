@@ -89,10 +89,9 @@ func renderDeploymentAccess(w io.Writer, app api.AppResponse, appSlug string) {
 	if !app.RequireAuthn {
 		return
 	}
-	switch {
-	case app.PublicAuth.Mode == api.AppPublicAuthModeBasic:
+	if app.PublicAuth.Mode == api.AppPublicAuthModeBasic {
 		PrintProgress(w, "Access: requests need HTTP Basic credentials (%s).", formatAppAuth(app))
-	default:
+	} else {
 		PrintProgress(w, "Access: requests need Authorization: Bearer <api-key> (%s).", formatAppAuth(app))
 	}
 	PrintProgress(w, "  make the URL public: gregale app %s --no-require-authn", appSlug)
