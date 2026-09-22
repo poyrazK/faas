@@ -39,3 +39,6 @@ and the `gatewayd_public_tcp_sessions_*` counters distinguish accepted,
 completed, and rejected sessions. `gatewayd_public_tcp_bytes_total` reports
 both directions, while `gatewayd_public_tcp_session_duration_seconds` and
 `gatewayd_public_tcp_idle_timeouts_total` cover latency and idle reaping.
+The fleet dashboard panels 418-419 graph these signals, and Prometheus alerts
+on sustained account-quota rejection or idle-timeout spikes; see
+`docs/runbooks/FaasTCPIngress.md` for triage.

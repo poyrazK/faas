@@ -88,6 +88,12 @@ This ADR commits to:
    - On success: emits `app.signed_image_accepted` with the
      matched signer name + digest.
 
+   Live enforce-mode images are revalidated at imaged startup and after
+   `trusted_signer_changed`. If the current trust set no longer validates an
+   image, imaged parks its deployment with the durable security quarantine
+   reason, emits `app.signature_revoked`, and requires a newly signed image
+   before recovery.
+
 6. **apid pre-flight gate** rejects 403 `deploy_signature_invalid`
    before imaged ever sees the deploy, in two cases:
    - `app.require_signed=true` and `app_trusted_signers` is empty
@@ -212,6 +218,8 @@ a customer asks for it.
   - `app.signed_image_accepted` — deploy passed signature check.
   - `app.signature_missing` — registry had no sig blob.
   - `app.signature_invalid` — sig exists, no trusted match.
+  - `app.signature_revoked` — a live enforce-mode image failed revalidation
+    after the trusted-publisher set changed; the deployment was quarantined.
 
 ### Risks (addressed inline)
 

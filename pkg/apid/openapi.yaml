@@ -78,7 +78,7 @@ tags:
   - name: deploydiff
     description: Read-only pre-deploy preview (PR-1 of the deploy-diff cluster).
   - name: edge_rules
-    description: Edge rules (route, rewrite, redirect, headers, cors, jwt, ip, validate, geo) per app.
+    description: Edge rules (route, rewrite, redirect, headers, cors, jwt, ip, validate, geo, async) per app.
   - name: mirror
     description: |
       Traffic mirroring rules (issue #72 / ADR-124 / ADR-125). Each rule
@@ -6734,9 +6734,10 @@ paths:
       operationId: purgeAppCache
       summary: Purge cached responses for an app.
       description: |
-        Requests an in-process response-cache purge on every gateway. The
-        optional path glob limits the purge to matching normalized request
-        paths; omit it to purge the complete app cache.
+        Requests a response-cache purge on every gateway and on the optional
+        distributed cache tier. The optional path glob limits the purge to
+        matching normalized request paths; omit it to purge the complete app
+        cache.
       parameters:
         - name: path
           in: query
@@ -13258,7 +13259,7 @@ paths:
       summary: Create an edge rule on an app.
       description: |
         Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-        validate, geo}. `action` is a kind-tagged jsonb body — the per-kind
+        validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
         shape is documented under components/schemas. Plan-kind gate:
         jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
         is allowed on Free with a tighter per-app quota. Per-app
@@ -26297,7 +26298,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -26323,6 +26324,9 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
+            - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
+            - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -26340,7 +26344,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -26365,6 +26369,9 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
+            - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
+            - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -26400,6 +26407,9 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
+            - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
+            - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'
@@ -26972,6 +26982,10 @@ components:
             (`api.ResponseCacheMaxAgeMaxSeconds`). The runtime cache
             layer in `pkg/gateway/response_cache.go` re-checks this
             cap as defence-in-depth.
+          * `stale_while_revalidate_seconds` — optional. After the fresh
+            window, return the cached response immediately while one
+            gateway request refreshes the key in the background. Default
+            0 (disabled); absolute cap 300.
           * `stale_if_error_seconds` — required. Stale-on-error window
             in seconds. Default 300; absolute cap 300
             (`api.ResponseCacheStaleIfErrorMaxSeconds`). During an
@@ -27000,6 +27014,15 @@ components:
             Fresh window in seconds. 0 = inherit the apid-side default
             (60s). Positive values are clamped to the platform cap
             (3600s = 1 hour).
+        stale_while_revalidate_seconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+          default: 0
+          description: |
+            After the fresh window, serve stale for this many seconds
+            while a single coalesced background request refreshes the
+            cache key. 0 disables stale-while-revalidate.
         stale_if_error_seconds:
           type: integer
           minimum: 0
@@ -27164,6 +27187,15 @@ components:
           description: Arbitrary JSON response body. Omit for an empty response.
           # An unconstrained schema intentionally accepts any JSON value:
           # object, array, scalar, or null.
+
+    EdgeRuleAsyncAction:
+      description: |
+        Marks the matched route for durable asynchronous execution (ADR-211).
+        The action is an empty object; retry, deadline, retention, and payload
+        limits come from the existing invocation and account-plan contracts.
+      type: object
+      additionalProperties: false
+      maxProperties: 0
 
     EdgeRuleGeoAction:
       description: |

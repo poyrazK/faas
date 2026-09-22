@@ -1213,6 +1213,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// so every configured cache rule silently fell through to a wake and all
 	// response-cache counters remained zero.
 	responseCache := gateway.NewResponseCache()
+	if redisURL := strings.TrimSpace(osGetenv("FAAS_GATEWAY_RESPONSE_CACHE_REDIS_URL")); redisURL != "" {
+		sharedCache, cacheErr := gateway.NewRedisResponseCache(ctx, redisURL)
+		if cacheErr != nil {
+			// Response caching is an optimization, never an availability
+			// dependency. Keep the local L1 active when Redis is unavailable.
+			log.Warn("distributed response cache unavailable; using local cache", "err", cacheErr)
+		} else {
+			responseCache.WithSharedStore(sharedCache)
+			log.Info("distributed response cache enabled")
+		}
+	}
+	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithWarmHint(warmHintCache.HintFunc()).
@@ -1241,7 +1253,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -2056,15 +2068,99 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		metricsRegisterer = deps.opsMetrics.Registry()
 		metricPrefix = deps.opsMetrics.MetricPrefix()
 	}
-	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "gatewayd-internal", wire.Version, log, metricsRegisterer, metricPrefix)
+
+	// Platform-owned service-proxy spans bypass the customer OTLP endpoint:
+	// gatewayd-internal already knows the authorized account, so it can retain
+	// those spans through apid's trusted writer without an SDK or customer API
+	// key. The exporter only does in-memory accumulation on Span.End.
+	var retainedSpansAcc *gateway.SpansAccumulator
+	var retainedSpansWriter *apidgrpc.SpansWriterClientImpl
+	var retainedSpansExporter *gateway.RetainedServiceSpansExporter
+	if osGetenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
+		retainedSpansAcc = gateway.NewSpansAccumulator()
+		spansWriterTarget := cfg.GetSpansWriterTarget(osGetenv)
+		spansWriterTLS, tlsErr := cfg.LoadAppErrorsTLS()
+		if tlsErr != nil {
+			return fmt.Errorf("gatewayd-internal: load retained spans writer TLS: %w", tlsErr)
+		}
+		var dialErr error
+		retainedSpansWriter, dialErr = apidgrpc.DialSpansWriter(ctx, spansWriterTarget, spansWriterTLS)
+		if dialErr != nil {
+			return fmt.Errorf("gatewayd-internal: dial apid spans writer at %q: %w", spansWriterTarget, dialErr)
+		}
+		retainedSpansExporter = gateway.NewRetainedServiceSpansExporter(retainedSpansAcc, log)
+	}
+
+	var traceShutdown func(context.Context) error
+	var traceErr error
+	if retainedSpansExporter != nil {
+		traceShutdown, traceErr = trace.InitTracerWithRegistryAndExporters(
+			ctx,
+			"gatewayd-internal",
+			wire.Version,
+			log,
+			metricsRegisterer,
+			metricPrefix,
+			retainedSpansExporter,
+		)
+	} else {
+		traceShutdown, traceErr = trace.InitTracerWithRegistry(ctx, "gatewayd-internal", wire.Version, log, metricsRegisterer, metricPrefix)
+	}
 	if traceErr != nil {
+		if retainedSpansWriter != nil {
+			_ = retainedSpansWriter.Close()
+		}
 		return fmt.Errorf("gatewayd-internal: init tracing: %w", traceErr)
+	}
+
+	var retainedFlushCancel context.CancelFunc
+	var retainedFlushDone <-chan struct{}
+	if retainedSpansAcc != nil && retainedSpansWriter != nil {
+		flushInterval := 30 * time.Second
+		if value := osGetenv("FAAS_OTEL_FLUSH_INTERVAL"); value != "" {
+			if parsed, parseErr := time.ParseDuration(value); parseErr == nil && parsed > 0 {
+				flushInterval = parsed
+			} else {
+				log.Warn("gatewayd-internal: invalid OTel flush interval; using default", "value", value)
+			}
+		}
+		flushCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		flushDone := make(chan struct{})
+		retainedFlushCancel = cancel
+		retainedFlushDone = flushDone
+		go func() {
+			defer close(flushDone)
+			err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
+				Interval: flushInterval,
+				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
+					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				},
+				Log: log,
+				MaxSpansPerTrace: func(string) int {
+					return api.MustLimitsFor(api.PlanScale).DebugTelemetrySpansPerTrace
+				},
+			})
+			if err != nil {
+				log.Error("gatewayd-internal: retained spans flush loop exited", "err", err)
+			}
+		}()
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
 		if err := traceShutdown(shutdownCtx); err != nil {
 			log.Warn("gatewayd-internal: trace shutdown failed", "err", err)
+		}
+		cancel()
+		if retainedFlushCancel != nil {
+			retainedFlushCancel()
+			select {
+			case <-retainedFlushDone:
+			case <-time.After(6 * time.Second):
+				log.Warn("gatewayd-internal: timed out draining retained spans")
+			}
+		}
+		if retainedSpansWriter != nil {
+			_ = retainedSpansWriter.Close()
 		}
 	}()
 
@@ -2227,6 +2323,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return resolved, ok
 	}, deps.edgeRulesAudit)
+	if deps.pgStore != nil {
+		handler.WithAsyncRouteEnqueuer(&asyncRouteEnqueuer{store: deps.pgStore})
+	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
 	// (applyEdgeRuleJWT short-circuits, matching pre-PR-5 + dev

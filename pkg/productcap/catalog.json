@@ -43,6 +43,20 @@
       "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
     },
     {
+      "id": "declarative-response-caching",
+      "name": "Declarative response caching",
+      "category": "edge",
+      "description": "Cache selected GET and HEAD responses by route with bounded freshness, explicit purge hooks, stale-while-revalidate, and an optional distributed Redis tier.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/cache",
+      "acceptance_test": "pkg/gateway/handler_apply_edge_rule_cache_test.go::TestApplyEdgeRuleCache_StaleWhileRevalidate"
+    },
+    {
       "id": "delayed-execution",
       "name": "Delayed execution",
       "category": "async",

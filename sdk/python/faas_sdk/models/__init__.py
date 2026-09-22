@@ -539,6 +539,7 @@ from .domain_doctor_report import DomainDoctorReport
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
+from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_budget_action import EdgeRuleBudgetAction
 from .edge_rule_cache_action import EdgeRuleCacheAction
 from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
@@ -1874,6 +1875,7 @@ __all__ = (
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
+    "EdgeRuleAsyncAction",
     "EdgeRuleBudgetAction",
     "EdgeRuleCacheAction",
     "EdgeRuleCacheActionMethodsItem",

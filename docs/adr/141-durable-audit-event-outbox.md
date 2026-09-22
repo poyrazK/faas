@@ -11,7 +11,8 @@ The imaged daemon discovers image-signature failures, but the original
 handoff to apid was only `pg_notify('audit_event', payload)`. PostgreSQL
 `LISTEN/NOTIFY` is a useful low-latency wakeup, not a durable queue: a
 reconnect window or an apid restart could lose the only copy of a
-`app.signature_missing` or `app.signature_invalid` audit event.
+`app.signature_missing`, `app.signature_invalid`, or
+`app.signature_revoked` audit event.
 
 ## Decision
 

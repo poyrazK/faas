@@ -254,14 +254,27 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 		return false
 	}
 	// Compute the fresh + stale windows. MaxAgeSeconds is the
-	// per-rule fresh window; StaleIfErrorSeconds is the
+	// per-rule fresh window; StaleWhileRevalidateSeconds is the
+	// window where stale can be returned immediately while one
+	// request refreshes the key; StaleIfErrorSeconds is the
 	// post-fresh window where stale-on-error can serve. A
 	// rule with MaxAgeSeconds==0 disables fresh hits entirely
 	// but still keeps the entry in the stale window — useful
 	// for "always serve stale on failure, never on success"
 	// deployments that want maximum reliability.
 	maxAge := time.Duration(c.rule.MaxAgeSeconds) * time.Second
-	stale := time.Duration(c.rule.StaleIfErrorSeconds) * time.Second
-	cache.Put(key, c.status, c.header, c.buf.Bytes(), now.Add(maxAge), now.Add(maxAge+stale), c.ruleAction)
+	staleWhileRevalidate := time.Duration(c.rule.StaleWhileRevalidateSeconds) * time.Second
+	staleIfError := time.Duration(c.rule.StaleIfErrorSeconds) * time.Second
+	freshUntil := now.Add(maxAge)
+	cache.PutWithWindows(
+		key,
+		c.status,
+		c.header,
+		c.buf.Bytes(),
+		freshUntil,
+		freshUntil.Add(staleWhileRevalidate),
+		freshUntil.Add(staleIfError),
+		c.ruleAction,
+	)
 	return true
 }
