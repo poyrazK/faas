@@ -56,13 +56,13 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 	}
 	idleSession := newIdleSession(ctx, idle)
 	defer idleSession.stop()
-	ctx = idleSession.ctx //nolint:contextcheck // the idle-session context inherits the caller and adds activity-based cancellation.
+	idleCtx := idleSession.ctx //nolint:contextcheck // the idle-session context inherits the caller and adds activity-based cancellation.
 	go func() {
-		<-ctx.Done()
+		<-idleCtx.Done()
 		_ = conn.Close()
 	}()
 
-	cli, closer, ok := f.Nodes.ClientFor(ctx, target.NodeID)
+	cli, closer, ok := f.Nodes.ClientFor(idleCtx, target.NodeID)
 	if !ok || cli == nil {
 		return status.Errorf(codes.Unavailable, "compute node %q is unavailable", target.NodeID)
 	}
@@ -70,9 +70,9 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 		defer func() { _ = closer.Close() }()
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	streamCtx, cancel := context.WithCancel(idleCtx)
 	defer cancel()
-	stream, err := cli.ForwardTCPStream(ctx)
+	stream, err := cli.ForwardTCPStream(streamCtx)
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "open TCP forward stream: %v", err)
 	}
@@ -92,7 +92,7 @@ func (f TCPForwarder) ServeConn(ctx context.Context, conn net.Conn, target Targe
 
 	results := make(chan tcpDirectionResult, 2)
 	go func() {
-		results <- tcpDirectionResult{side: tcpDirectionSend, err: tcpConnToStream(ctx, conn, stream, maxBytes, idleSession.touch)}
+		results <- tcpDirectionResult{side: tcpDirectionSend, err: tcpConnToStream(streamCtx, conn, stream, maxBytes, idleSession.touch)}
 	}()
 	go func() {
 		results <- tcpDirectionResult{side: tcpDirectionReceive, err: tcpStreamToConn(conn, stream, maxBytes, idleSession.touch)}
