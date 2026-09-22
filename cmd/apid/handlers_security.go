@@ -269,7 +269,9 @@ func (s *server) securityScanEvidenceClean(dep state.Deployment) bool {
 		return false
 	}
 	var raw api.ScanResult
-	if err := json.Unmarshal(dep.ScanResult, &raw); err != nil || raw.Status != "complete" ||
+	// Scan status is persisted in its own deployment column; the imaged
+	// payload contains scanner evidence only and does not repeat that status.
+	if err := json.Unmarshal(dep.ScanResult, &raw); err != nil || dep.ScanStatus != "complete" ||
 		strings.TrimSpace(raw.ImageDigest) != strings.TrimSpace(dep.ImageDigest) ||
 		raw.ArtifactDigest == "" || raw.ScannerVersion == "" || raw.ScannerDBVersion == "" ||
 		raw.ScannerDBBuiltAt == "" || !strings.EqualFold(raw.ScannerDBStatus, "valid") ||
@@ -326,7 +328,7 @@ func (s *server) appSecurityPosture(ctx context.Context, app state.App) (api.App
 		profile = "authenticated"
 	}
 
-	findings := make([]api.AppSecurityFinding, 0, 5)
+	findings := make([]api.AppSecurityFinding, 0, 9)
 	if profile == "public" {
 		findings = append(findings, api.AppSecurityFinding{
 			Code: "anonymous_access", Severity: postureSeverityHigh,
@@ -400,6 +402,12 @@ func (s *server) appSecurityPosture(ctx context.Context, app state.App) (api.App
 		})
 	}
 
+	scanFindings, err := s.liveImageScanFindings(ctx, app)
+	if err != nil {
+		return api.AppSecurityPostureResponse{}, err
+	}
+	findings = append(findings, scanFindings...)
+
 	// Keep the report stable if checks are added or reordered in the future.
 	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].Severity != findings[j].Severity {
@@ -430,6 +438,100 @@ func (s *server) appSecurityPosture(ctx context.Context, app state.App) (api.App
 		SecurityPolicy: normalizedAppSecurityPolicy(app.SecurityPolicy), Findings: findings,
 		Quarantine: quarantine,
 	}, nil
+}
+
+const (
+	postureScanStaleAfter  = 7 * time.Hour
+	postureScannerDBMaxAge = 30 * 24 * time.Hour
+	postureScanMissing     = "image_scan_missing"
+	postureScanIncomplete  = "image_scan_incomplete"
+	postureScanStale       = "image_scan_stale"
+	postureScanBlocking    = "image_scan_blocking"
+)
+
+// liveImageScanFindings makes the posture report answer the operational
+// question that deploy admission alone cannot: does every currently serving
+// deployment have usable, recent evidence? Enforce mode treats any gap as a
+// high finding; warn mode keeps the same signal visible without making it a
+// deploy blocker. Off mode deliberately preserves the advisory posture.
+func (s *server) liveImageScanFindings(ctx context.Context, app state.App) ([]api.AppSecurityFinding, error) {
+	policy := normalizedAppSecurityPolicy(app.SecurityPolicy)
+	if policy == api.AppSecurityPolicyOff {
+		return nil, nil
+	}
+	live, err := s.store.LiveDeployments(ctx, app.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(live) == 0 {
+		return nil, nil
+	}
+
+	severity := postureSeverityMedium
+	if policy == api.AppSecurityPolicyEnforce {
+		severity = postureSeverityHigh
+	}
+	now := time.Now().UTC()
+	counts := map[string]int{}
+	for _, dep := range live {
+		// Source and Dockerfile builds do not use the imported-image scan
+		// admission path and must not be reported as missing OCI evidence.
+		if dep.Kind != state.DeploymentKindImage {
+			continue
+		}
+		if reason := classifyLiveImageScan(dep, now); reason != "" {
+			counts[reason]++
+		}
+	}
+	findings := make([]api.AppSecurityFinding, 0, len(counts))
+	appendFinding := func(reason, title, detail, remediation string) {
+		if count := counts[reason]; count > 0 {
+			findings = append(findings, api.AppSecurityFinding{
+				Code: reason, Severity: severity, Title: title,
+				Detail:      fmt.Sprintf("%s (%d live deployment%s).", detail, count, pluralSuffix(count)),
+				Remediation: remediation,
+			})
+		}
+	}
+	appendFinding(postureScanMissing, "Live images lack scan evidence", "A live image deployment has no recorded security scan", "Deploy a replacement image after a complete verified scan succeeds.")
+	appendFinding(postureScanIncomplete, "Live image scan is incomplete", "A live image deployment has failed, mismatched, or incomplete scan metadata", "Retry the deployment scan and replace the live image only after verified evidence is recorded.")
+	appendFinding(postureScanStale, "Live image scan evidence is stale", "A live image deployment is relying on evidence older than the allowed freshness window", "Run a fresh scan or deploy a newly scanned image before continuing to serve traffic.")
+	appendFinding(postureScanBlocking, "Live images contain blocking vulnerabilities", "A live image deployment has high, critical, or unknown-severity findings", "Deploy an image with zero high, critical, and unknown findings.")
+	return findings, nil
+}
+
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func classifyLiveImageScan(dep state.Deployment, now time.Time) string {
+	if strings.TrimSpace(dep.ImageDigest) == "" || dep.ScanStatus == "" || len(dep.ScanResult) == 0 {
+		return postureScanMissing
+	}
+	var result api.ScanResult
+	// The deployment column is authoritative for status; imaged stores the
+	// scanner payload separately and does not embed the status in scan_result.
+	if err := json.Unmarshal(dep.ScanResult, &result); err != nil || dep.ScanStatus != "complete" ||
+		strings.TrimSpace(result.ImageDigest) != strings.TrimSpace(dep.ImageDigest) ||
+		result.ArtifactDigest == "" || result.ScannerVersion == "" || result.ScannerDBVersion == "" ||
+		!strings.EqualFold(result.ScannerDBStatus, "valid") || result.Vulnerabilities == nil || result.Error != "" {
+		return postureScanIncomplete
+	}
+	if result.SeverityCounts.Critical > 0 || result.SeverityCounts.High > 0 || result.SeverityCounts.Unknown > 0 {
+		return postureScanBlocking
+	}
+	scannedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(result.ScannedAt))
+	if err != nil || scannedAt.After(now) || now.Sub(scannedAt) > postureScanStaleAfter {
+		return postureScanStale
+	}
+	dbBuiltAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(result.ScannerDBBuiltAt))
+	if err != nil || dbBuiltAt.After(now) || now.Sub(dbBuiltAt) > postureScannerDBMaxAge {
+		return postureScanStale
+	}
+	return ""
 }
 
 func (s *server) securityQuarantineForApp(ctx context.Context, app state.App) (*api.AppSecurityQuarantine, error) {
@@ -465,6 +567,12 @@ func (s *server) enforceSecurityPostureGate(ctx context.Context, app state.App) 
 	}
 	codes := make([]string, 0, len(posture.Findings))
 	for _, finding := range posture.Findings {
+		// Live-image evidence is intentionally advisory to replacement deploys.
+		// Blocking here would deadlock recovery: a clean replacement could not
+		// be admitted while the currently serving image remained unsafe.
+		if strings.HasPrefix(finding.Code, "image_scan_") {
+			continue
+		}
 		if finding.Severity == postureSeverityHigh || finding.Severity == postureSeverityCritical {
 			codes = append(codes, finding.Code)
 		}
