@@ -230,6 +230,16 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			wantSub: "CMD, CMD-SHELL, or NONE",
 		},
 		{
+			name:    "startup-probe-shell-extra-command",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD-SHELL", "echo ready", "ignored"}}},
+			wantSub: "exactly one command string",
+		},
+		{
+			name:    "startup-probe-timing-overflows-wire",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 1 << 31}},
+			wantSub: "must fit in int32",
+		},
+		{
 			name: "env-value-too-long",
 			s: Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeInit,
 				Env: map[string]string{"BIG": strings.Repeat("x", 2<<20)}},

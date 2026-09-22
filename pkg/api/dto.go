@@ -6263,6 +6263,11 @@ func validateSidecarStartupProbe(name string, probe *AppManifestHealthcheck) *Pr
 				"Invalid sidecar startup probe",
 				fmt.Sprintf("sidecar[%q].startup_probe.test %s requires a non-empty command.", name, probe.Test[0]))
 		}
+		if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test CMD-SHELL requires exactly one command string.", name))
+		}
 	default:
 		return NewProblem(http.StatusBadRequest, CodeValidation,
 			"Invalid sidecar startup probe",
@@ -6272,6 +6277,14 @@ func validateSidecarStartupProbe(name string, probe *AppManifestHealthcheck) *Pr
 		return NewProblem(http.StatusBadRequest, CodeValidation,
 			"Invalid sidecar startup probe",
 			fmt.Sprintf("sidecar[%q].startup_probe interval_s, timeout_s, retries, and start_period_s must be >= 0.", name))
+	}
+	// These values cross the vmmd protobuf boundary as int32. Reject values
+	// that would wrap and change the guest's probe timing or retry budget.
+	const maxProtoInt32 = 1<<31 - 1
+	if probe.IntervalS > maxProtoInt32 || probe.TimeoutS > maxProtoInt32 || probe.Retries > maxProtoInt32 || probe.StartPeriodS > maxProtoInt32 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe timing and retry values must fit in int32.", name))
 	}
 	return nil
 }
