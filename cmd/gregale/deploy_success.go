@@ -99,7 +99,7 @@ func deploymentCommandRef(dep api.DeploymentResponse) string {
 }
 
 func deploymentPromotionCommand(appSlug string, dep api.DeploymentResponse) string {
-	return fmt.Sprintf("gregale traffic set --app %s --deployment %s --percent 100", appSlug, deploymentCommandRef(dep))
+	return fmt.Sprintf("gregale traffic promote --app %s --deployment %s", appSlug, deploymentCommandRef(dep))
 }
 
 func renderQueuedDeployment(dep api.DeploymentResponse, appURL string, darkDeploy bool) {

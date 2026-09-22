@@ -1663,6 +1663,14 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  "promote",
+				Short: "Promote a live deployment to 100% production traffic",
+				Flags: []cliFlag{
+					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+					{Name: "deployment", Short: "deployment id or vN revision to promote", Req: true, Value: "ID"},
+				},
+			},
+			{
 				Name:  "status",
 				Short: "Show live deployment traffic weights for an app",
 			},

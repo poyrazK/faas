@@ -2181,6 +2181,15 @@ Set the traffic split for a deployment
 | `--deployment <ID>` | deployment id or vN revision to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
 
+### traffic promote
+
+Promote a live deployment to 100% production traffic
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+| `--deployment <ID>` | deployment id or vN revision to promote | required |
+
 ### traffic status
 
 Show live deployment traffic weights for an app
