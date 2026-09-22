@@ -1237,7 +1237,7 @@ Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
-| `--restart` | restart app after applying changes (otherwise changes apply on next wake) |  |
+| `--restart` | restart app after applying changes (otherwise changes apply on next cold wake) |  |
 
 ### env diff
 

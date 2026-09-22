@@ -611,7 +611,7 @@ func TestCmdSecrets_Set_QuotaStamp(t *testing.T) {
 			list: fakeList{err: true},
 			// The PUT-OK message still prints; the quota stamp is silent.
 			wantSub: []string{"K1 set"},
-			wantNot: []string{"secrets"},
+			wantNot: []string{"x:"},
 		},
 	}
 

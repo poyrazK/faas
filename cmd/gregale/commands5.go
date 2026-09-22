@@ -335,7 +335,7 @@ func envPush(args []string) int {
 	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
 	in := fs.String("f", ".env", "input file (default .env)")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
-	restart := fs.Bool("restart", false, "restart app after applying changes (otherwise changes apply on next wake)")
+	restart := fs.Bool("restart", false, "restart app after applying changes (otherwise changes apply on next cold wake)")
 	// --secret-scan mirrors the deploy-side flag. Default ON because the
 	// failure mode (a Stripe key pasted into a `gregale env push`
 	// heredoc) is the same as the deploy-side case — the value lands in
@@ -522,10 +522,10 @@ func envPush(args []string) int {
 		return 0
 	}
 	// Default semantics are deliberately lazy: the API keeps live
-	// instances on their existing environment and the next wake picks up
+	// instances on their existing environment and the next cold wake picks up
 	// the persisted values. Say this even when no key was a re-PUT — a new
 	// key is just as invisible to already-running processes as a rotation.
-	PrintWarn(osStdout, "Updated env values apply on the next wake; running instances keep their current environment. Use --restart to apply now.")
+	PrintWarn(osStdout, "Updated env values apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	return 0
 }
 

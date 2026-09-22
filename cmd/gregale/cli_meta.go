@@ -993,7 +993,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Flags: []cliFlag{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
-				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next wake)"},
+				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next cold wake)"},
 			}},
 			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)"},
 		},
