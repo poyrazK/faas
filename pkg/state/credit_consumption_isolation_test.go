@@ -20,11 +20,122 @@ func TestCreditConsumptionIsolation(t *testing.T) {
 				store, _, _ = pgStoreAccountCreditsWithPool(t)
 			}
 			t.Run("replay belongs to account", func(t *testing.T) { testCreditReplayAccountScope(t, store) })
+			t.Run("provider scope", func(t *testing.T) { testCreditProviderScope(t, store) })
+			t.Run("legacy provider unknown", func(t *testing.T) { testCreditUnqualifiedProvider(t, store) })
 			t.Run("reversal belongs to account", func(t *testing.T) { testCreditReversalAccountScope(t, store) })
 			t.Run("one compensation", func(t *testing.T) { testCreditReversalSingleCompensation(t, store) })
 			t.Run("no-op balance", func(t *testing.T) { testCreditConsumptionNoOp(t, store) })
 		})
 	}
+}
+
+func TestInvoiceProviderKeyAmbiguity(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			var store state.Store = state.NewMemStore()
+			if backend == "postgres" {
+				store, _, _ = pgStoreAccountCreditsWithPool(t)
+			}
+			ctx := context.Background()
+			acct := creditAccount(t, store, "ambiguous-key@example.com", 0)
+			for _, tc := range []struct{ invoiceID, chargeID string }{
+				{"invoice-a", "shared-key"},
+				{"shared-key", "charge-b"},
+			} {
+				if err := store.UpsertInvoice(ctx, state.Invoice{AccountID: acct.ID, Provider: "polar", ProviderInvoiceID: tc.invoiceID, ProviderChargeID: tc.chargeID, Status: "paid", Plan: api.PlanHobby, TotalCents: 100, AmountPaidCents: 100}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := store.GetInvoiceByProviderID(ctx, acct.ID, "polar", "shared-key"); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("ambiguous invoice/charge key = %v, want conflict", err)
+			}
+			if _, err := store.GetInvoiceByProviderID(ctx, acct.ID, "polar", ""); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("empty key = %v, want not found", err)
+			}
+			for _, tc := range []struct{ key, want string }{{"invoice-a", "invoice-a"}, {"charge-b", "shared-key"}} {
+				inv, err := store.GetInvoiceByProviderID(ctx, acct.ID, "polar", tc.key)
+				if err != nil || inv.ProviderInvoiceID != tc.want {
+					t.Errorf("lookup %q = (%+v, %v), want invoice %q", tc.key, inv, err, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func testCreditUnqualifiedProvider(t *testing.T, store state.Store) {
+	ctx := context.Background()
+	acct := creditAccount(t, store, "legacy-provider@example.com", 140)
+	credits, err := store.ListAccountCredits(ctx, acct.ID, false)
+	if err != nil || len(credits) != 1 {
+		t.Fatalf("credits = (%v, %v)", credits, err)
+	}
+	invoiceID := "legacy-unresolved-invoice"
+	// This balance and audit row model a legacy 60-cent debit whose provider
+	// could not be identified by the migration. Do not guess on later retries.
+	if err := store.CreateCreditLedgerEntry(ctx, state.CreditLedgerEntry{AccountID: acct.ID, CreditID: credits[0].ID, DeltaCents: -60, Reason: "legacy consumption", Actor: "test", ProviderInvoiceID: &invoiceID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"stripe", "paddle", "polar"} {
+		params := state.ConsumeAccountCreditParams{AccountID: acct.ID, TargetCents: 60, Provider: provider, ProviderInvoiceID: invoiceID, Reason: "test", Actor: "test"}
+		if _, err := store.ConsumeAccountCredit(ctx, params); !errors.Is(err, state.ErrConflict) {
+			t.Errorf("%s unresolved replay = %v, want conflict", provider, err)
+		}
+		if err := store.UpsertInvoice(ctx, state.Invoice{AccountID: acct.ID, Provider: provider, ProviderInvoiceID: invoiceID, Plan: api.PlanHobby, Status: "paid", TotalCents: 200, AmountPaidCents: 200}); err != nil {
+			t.Fatal(err)
+		}
+		inv, err := store.GetInvoiceByProviderID(ctx, acct.ID, provider, invoiceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RecordInvoiceRefund(ctx, state.InvoiceRefund{InvoiceID: inv.ID, ProviderRefundID: "legacy-refund", IdempotencyKey: "legacy-refund", AmountCents: 60, Source: "credit", Status: "failed"}); !errors.Is(err, state.ErrConflict) {
+			t.Errorf("%s unresolved refund = %v, want conflict", provider, err)
+		}
+	}
+	requireCreditBalance(t, store, acct.ID, 140)
+}
+
+func testCreditProviderScope(t *testing.T, store state.Store) {
+	ctx := context.Background()
+	acct := creditAccount(t, store, "provider-scope@example.com", 200)
+	params := state.ConsumeAccountCreditParams{AccountID: acct.ID, TargetCents: 60, Provider: "stripe", ProviderInvoiceID: "provider-shared-id", Reason: "test", Actor: "test"}
+	if _, err := store.ConsumeAccountCredit(ctx, params); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertInvoice(ctx, state.Invoice{AccountID: acct.ID, Provider: "polar", ProviderInvoiceID: params.ProviderInvoiceID, Plan: api.PlanHobby, Status: "paid", TotalCents: 200, AmountPaidCents: 200}); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := store.GetInvoiceByProviderID(ctx, acct.ID, "polar", params.ProviderInvoiceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refund := state.InvoiceRefund{InvoiceID: inv.ID, ProviderRefundID: "provider-scope-refund", IdempotencyKey: "provider-scope-key", AmountCents: 60, Source: "credit", Status: "failed"}
+	if err := store.RecordInvoiceRefund(ctx, refund); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("refund of another provider's consumption = %v, want conflict", err)
+	}
+	params.Provider, params.TargetCents = "polar", 80
+	result, err := store.ConsumeAccountCredit(ctx, params)
+	if err != nil || result.ConsumedCents != 80 || result.AlreadyConsumedForInvoice {
+		t.Fatalf("second provider consumption = (%+v, %v), want independent debit of 80", result, err)
+	}
+	requireCreditBalance(t, store, acct.ID, 60)
+	refund.AmountCents = 80
+	for range 2 {
+		if err := store.RecordInvoiceRefund(ctx, refund); err != nil {
+			t.Fatal(err)
+		}
+	}
+	requireCreditBalance(t, store, acct.ID, 140)
+	for _, tc := range []struct {
+		provider string
+		consumed int64
+	}{{"stripe", 60}, {"polar", 0}} {
+		params.Provider = tc.provider
+		result, err := store.ConsumeAccountCredit(ctx, params)
+		if err != nil || result.ConsumedCents != tc.consumed || !result.AlreadyConsumedForInvoice {
+			t.Errorf("%s replay = (%+v, %v), want %d and no further debit", tc.provider, result, err, tc.consumed)
+		}
+	}
+	requireCreditBalance(t, store, acct.ID, 140)
 }
 
 func creditAccount(t *testing.T, store state.Store, email string, cents int64) state.Account {
@@ -140,7 +251,7 @@ func testCreditReversalSingleCompensation(t *testing.T, store state.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConsumeAccountCredit(ctx, state.ConsumeAccountCreditParams{AccountID: acct.ID, ProviderInvoiceID: providerInvoiceID, TargetCents: 170, Actor: "test", Reason: "test"}); err != nil {
+	if _, err := store.ConsumeAccountCredit(ctx, state.ConsumeAccountCreditParams{AccountID: acct.ID, Provider: "polar", ProviderInvoiceID: providerInvoiceID, TargetCents: 170, Actor: "test", Reason: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	start := make(chan struct{})
@@ -196,6 +307,8 @@ func testCreditConsumptionNoOp(t *testing.T, store state.Store) {
 		{AccountID: acct.ID, ProviderInvoiceID: params.ProviderInvoiceID, TargetCents: -1},
 		{AccountID: " ", ProviderInvoiceID: params.ProviderInvoiceID},
 		{AccountID: acct.ID, ProviderInvoiceID: " "},
+		{AccountID: acct.ID, ProviderInvoiceID: "missing-provider", TargetCents: 10},
+		{AccountID: acct.ID, Provider: "unknown", ProviderInvoiceID: "bad-provider", TargetCents: 10},
 	} {
 		if _, err := store.ConsumeAccountCredit(ctx, invalid); err == nil {
 			t.Errorf("invalid request accepted: %+v", invalid)

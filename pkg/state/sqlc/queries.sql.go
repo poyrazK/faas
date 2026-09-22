@@ -314,6 +314,34 @@ func (q *Queries) AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlu
 	return i, err
 }
 
+const appendAccountCreditLedgerEntry = `-- name: AppendAccountCreditLedgerEntry :exec
+INSERT INTO credit_ledger (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`
+
+type AppendAccountCreditLedgerEntryParams struct {
+	AccountID         pgtype.UUID
+	CreditID          pgtype.UUID
+	DeltaCents        int64
+	Reason            string
+	Actor             string
+	Provider          string
+	ProviderInvoiceID pgtype.Text
+}
+
+func (q *Queries) AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error {
+	_, err := db.Exec(ctx, appendAccountCreditLedgerEntry,
+		arg.AccountID,
+		arg.CreditID,
+		arg.DeltaCents,
+		arg.Reason,
+		arg.Actor,
+		arg.Provider,
+		arg.ProviderInvoiceID,
+	)
+	return err
+}
+
 const appendEvent = `-- name: AppendEvent :exec
 insert into events (actor, kind, subject, data)
 values ($1, $2, $3, $4)
@@ -3305,6 +3333,42 @@ UPDATE upload_sessions
 func (q *Queries) ExpireUploadSession(ctx context.Context, db DBTX, id string) error {
 	_, err := db.Exec(ctx, expireUploadSession, id)
 	return err
+}
+
+const findInvoiceIDsByProviderKey = `-- name: FindInvoiceIDsByProviderKey :many
+SELECT id FROM invoices
+WHERE account_id = $1::uuid
+  AND provider = $2::text
+  AND (provider_invoice_id = $3::text
+       OR provider_charge_id = $3)
+LIMIT 2
+`
+
+type FindInvoiceIDsByProviderKeyParams struct {
+	AccountID   pgtype.UUID
+	Provider    string
+	ProviderKey string
+}
+
+// Two matches mean an invoice ID collides with another invoice's charge ID.
+func (q *Queries) FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, findInvoiceIDsByProviderKey, arg.AccountID, arg.Provider, arg.ProviderKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getAppErrorSample = `-- name: GetAppErrorSample :one
@@ -6905,6 +6969,49 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 	return items, nil
 }
 
+const lockCreditConsumption = `-- name: LockCreditConsumption :exec
+SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || $1::text, 0))
+`
+
+// Keep the historical broad lock key, also shared with refund compensation.
+func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error {
+	_, err := db.Exec(ctx, lockCreditConsumption, providerInvoiceID)
+	return err
+}
+
+const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
+SELECT account_id, provider, provider_invoice_id, amount_paid_cents,
+       total_cents, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents
+FROM invoices WHERE id = $1 FOR UPDATE
+`
+
+type LockInvoiceForRefundRow struct {
+	AccountID                pgtype.UUID
+	Provider                 string
+	ProviderInvoiceID        string
+	AmountPaidCents          int64
+	TotalCents               int64
+	AmountRefundedCents      int64
+	AmountRefundPendingCents int64
+	CreditsAppliedCents      int64
+}
+
+func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error) {
+	row := db.QueryRow(ctx, lockInvoiceForRefund, id)
+	var i LockInvoiceForRefundRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.Provider,
+		&i.ProviderInvoiceID,
+		&i.AmountPaidCents,
+		&i.TotalCents,
+		&i.AmountRefundedCents,
+		&i.AmountRefundPendingCents,
+		&i.CreditsAppliedCents,
+	)
+	return i, err
+}
+
 const markDeploymentLive = `-- name: MarkDeploymentLive :exec
 update deployments set status = 'live' where id = $1
 `
@@ -9984,28 +10091,31 @@ func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX,
 }
 
 const readAccountCreditConsumption = `-- name: ReadAccountCreditConsumption :one
-SELECT coalesce(sum(-delta_cents), 0)::bigint AS consumed_cents,
-       coalesce(bool_or(delta_cents < 0), false)::boolean AS has_prior
+SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = $1::text), 0)::bigint AS consumed_cents,
+       coalesce(bool_or(delta_cents < 0) FILTER (WHERE provider = $1), false)::boolean AS has_prior,
+       coalesce(bool_or(provider = ''), false)::boolean AS has_unqualified
 FROM credit_ledger
-WHERE account_id = $1::uuid
-  AND provider_invoice_id = $2::text
+WHERE account_id = $2::uuid
+  AND provider_invoice_id = $3::text
 `
 
 type ReadAccountCreditConsumptionParams struct {
+	Provider          string
 	AccountID         pgtype.UUID
 	ProviderInvoiceID string
 }
 
 type ReadAccountCreditConsumptionRow struct {
-	ConsumedCents int64
-	HasPrior      bool
+	ConsumedCents  int64
+	HasPrior       bool
+	HasUnqualified bool
 }
 
-// Replay and compensation must never use another account's invoice history.
+// An unqualified legacy row blocks the whole key; guessing could double-debit.
 func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error) {
-	row := db.QueryRow(ctx, readAccountCreditConsumption, arg.AccountID, arg.ProviderInvoiceID)
+	row := db.QueryRow(ctx, readAccountCreditConsumption, arg.Provider, arg.AccountID, arg.ProviderInvoiceID)
 	var i ReadAccountCreditConsumptionRow
-	err := row.Scan(&i.ConsumedCents, &i.HasPrior)
+	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
 	return i, err
 }
 
@@ -11138,6 +11248,39 @@ func (q *Queries) RequestTelemetryCoverage(ctx context.Context, db DBTX, arg Req
 	return i, err
 }
 
+const reserveAccountCreditConsumption = `-- name: ReserveAccountCreditConsumption :one
+INSERT INTO credit_ledger (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (provider, provider_invoice_id, credit_id)
+    WHERE provider_invoice_id IS NOT NULL AND delta_cents < 0 DO NOTHING
+RETURNING id
+`
+
+type ReserveAccountCreditConsumptionParams struct {
+	AccountID         pgtype.UUID
+	CreditID          pgtype.UUID
+	DeltaCents        int64
+	Reason            string
+	Actor             string
+	Provider          string
+	ProviderInvoiceID pgtype.Text
+}
+
+func (q *Queries) ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, reserveAccountCreditConsumption,
+		arg.AccountID,
+		arg.CreditID,
+		arg.DeltaCents,
+		arg.Reason,
+		arg.Actor,
+		arg.Provider,
+		arg.ProviderInvoiceID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const resolveStaleRegressionObservations = `-- name: ResolveStaleRegressionObservations :many
 UPDATE debug_regression_observations
 SET state = 'resolved',
@@ -11195,13 +11338,14 @@ WITH consumed AS (
       ON credit.id = ledger.credit_id AND credit.account_id = ledger.account_id
     WHERE ledger.account_id = $1::uuid
       AND ledger.provider_invoice_id = $2::text
+      AND ledger.provider = $3::text
     GROUP BY ledger.credit_id
     HAVING sum(-ledger.delta_cents) > 0
 ), inserted AS (
     INSERT INTO credit_ledger
-        (account_id, credit_id, delta_cents, reason, actor, provider_invoice_id, refund_reversal_id)
+        (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id, refund_reversal_id)
     SELECT $1, credit_id, cents, 'provider refund failed',
-           'apid-refund-reversal', $2, $3::uuid
+           'apid-refund-reversal', $3, $2, $4::uuid
     FROM consumed
     ON CONFLICT (refund_reversal_id, credit_id) WHERE refund_reversal_id IS NOT NULL
         DO NOTHING
@@ -11216,11 +11360,17 @@ WHERE credit.id = inserted.credit_id AND credit.account_id = $1
 type ReverseAccountInvoiceCreditConsumptionParams struct {
 	AccountID         pgtype.UUID
 	ProviderInvoiceID string
+	Provider          string
 	RefundID          pgtype.UUID
 }
 
 func (q *Queries) ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error) {
-	result, err := db.Exec(ctx, reverseAccountInvoiceCreditConsumption, arg.AccountID, arg.ProviderInvoiceID, arg.RefundID)
+	result, err := db.Exec(ctx, reverseAccountInvoiceCreditConsumption,
+		arg.AccountID,
+		arg.ProviderInvoiceID,
+		arg.Provider,
+		arg.RefundID,
+	)
 	if err != nil {
 		return 0, err
 	}

@@ -19199,30 +19199,39 @@ func (s *PgStore) GetInvoiceByID(ctx context.Context, id string) (Invoice, error
 	return inv, nil
 }
 
-// GetInvoiceByProviderID resolves the webhook natural key. It is used after
-// an idempotent invoice upsert to apply monetary credits without scanning an
-// account's full invoice history.
+// GetInvoiceByProviderID resolves invoice or charge keys for billing hooks.
+// A collision between the two namespaces is ambiguous: fail closed instead
+// of returning a map-order or query-plan-dependent invoice.
 func (s *PgStore) GetInvoiceByProviderID(ctx context.Context, accountID, provider, providerInvoiceID string) (Invoice, error) {
-	var inv Invoice
-	err := s.pool.QueryRow(ctx,
-		`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
-		        period_start, period_end,
-		        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-		        currency, pdf_available, created_at, updated_at
-		   from invoices
-		  where account_id = $1 and provider = $2
-		    and (provider_invoice_id = $3 or provider_charge_id = $3)`,
-		accountID, provider, providerInvoiceID).Scan(
-		&inv.ID, &inv.AccountID, &inv.Provider, &inv.ProviderInvoiceID, &inv.ProviderChargeID,
-		&inv.Number, &inv.Status, &inv.PeriodStart, &inv.PeriodEnd,
-		&inv.SubtotalCents, &inv.TaxCents, &inv.TotalCents, &inv.AmountPaidCents,
-		&inv.Plan, &inv.AmountRefundedCents, &inv.AmountRefundPendingCents, &inv.CreditsAppliedCents,
-		&inv.Currency, &inv.PDFAvailable, &inv.CreatedAt, &inv.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if providerInvoiceID == "" {
 		return Invoice{}, ErrNotFound
 	}
-	return inv, err
+	accountUUID, err := parsePgUUID(accountID)
+	if err != nil {
+		return Invoice{}, err
+	}
+	ids, err := sqlc.New().FindInvoiceIDsByProviderKey(ctx, s.pool, sqlc.FindInvoiceIDsByProviderKeyParams{
+		AccountID: accountUUID, Provider: provider, ProviderKey: providerInvoiceID,
+	})
+	if err != nil {
+		return Invoice{}, fmt.Errorf("state: find invoice by provider key: %w", err)
+	}
+	if len(ids) == 0 {
+		return Invoice{}, ErrNotFound
+	}
+	if len(ids) > 1 {
+		return Invoice{}, ErrConflict
+	}
+	inv, err := s.GetInvoiceByID(ctx, pgUUIDString(ids[0]))
+	if err != nil {
+		return Invoice{}, err
+	}
+	// An update between the two reads must not redirect a webhook/refund.
+	if inv.AccountID != accountID || inv.Provider != provider ||
+		(inv.ProviderInvoiceID != providerInvoiceID && inv.ProviderChargeID != providerInvoiceID) {
+		return Invoice{}, ErrConflict
+	}
+	return inv, nil
 }
 
 // UpsertInvoice stores the provider projection used by invoice history. A
@@ -19315,20 +19324,19 @@ func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund)
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var invoiceAccountID, providerInvoiceID string
-	var paid, total, settled, pending, credits int64
-	if err := tx.QueryRow(ctx,
-		`select account_id, provider_invoice_id,
-		        amount_paid_cents, total_cents, amount_refunded_cents,
-		        amount_refund_pending_cents, credits_applied_cents
-		   from invoices where id = $1 for update`, refund.InvoiceID).Scan(
-		&invoiceAccountID, &providerInvoiceID,
-		&paid, &total, &settled, &pending, &credits); err != nil {
+	invoiceUUID, err := parsePgUUID(refund.InvoiceID)
+	if err != nil {
+		return err
+	}
+	invoice, err := sqlc.New().LockInvoiceForRefund(ctx, tx, invoiceUUID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
 	}
+	paid, total := invoice.AmountPaidCents, invoice.TotalCents
+	settled, pending, credits := invoice.AmountRefundedCents, invoice.AmountRefundPendingCents, invoice.CreditsAppliedCents
 	if paid <= 0 {
 		paid = total
 	}
@@ -19420,7 +19428,7 @@ func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund)
 		if existing.ID != "" {
 			refundID = existing.ID
 		}
-		if err := reverseInvoiceCreditConsumption(ctx, tx, invoiceAccountID, providerInvoiceID, refundID, refund.AmountCents); err != nil {
+		if err := reverseInvoiceCreditConsumption(ctx, tx, pgUUIDString(invoice.AccountID), invoice.Provider, invoice.ProviderInvoiceID, refundID, refund.AmountCents); err != nil {
 			return err
 		}
 	}
@@ -19450,7 +19458,7 @@ func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund)
 // makes webhook replay idempotent and the transaction keeps balance + ledger
 // atomic. Sum the remaining net debit so a distinct failed refund cannot
 // compensate consumption that an earlier refund has already restored.
-func reverseInvoiceCreditConsumption(ctx context.Context, tx pgx.Tx, accountID, providerInvoiceID, refundID string, expectedCents int64) error {
+func reverseInvoiceCreditConsumption(ctx context.Context, tx pgx.Tx, accountID, provider, providerInvoiceID, refundID string, expectedCents int64) error {
 	if providerInvoiceID == "" || refundID == "" || expectedCents <= 0 {
 		return ErrConflict
 	}
@@ -19463,8 +19471,15 @@ func reverseInvoiceCreditConsumption(ctx context.Context, tx pgx.Tx, accountID, 
 		return err
 	}
 	queries := sqlc.New()
+	if err := queries.LockCreditConsumption(ctx, tx, providerInvoiceID); err != nil {
+		return fmt.Errorf("state: reverse invoice credits lock: %w", err)
+	}
+	// Reject ambiguous legacy rows before touching either balance or history.
+	if _, _, err := readCreditConsumption(ctx, tx, accountID, provider, providerInvoiceID); err != nil {
+		return err
+	}
 	if _, err := queries.ReverseAccountInvoiceCreditConsumption(ctx, tx, sqlc.ReverseAccountInvoiceCreditConsumptionParams{
-		AccountID: accountUUID, ProviderInvoiceID: providerInvoiceID, RefundID: refundUUID,
+		AccountID: accountUUID, Provider: provider, ProviderInvoiceID: providerInvoiceID, RefundID: refundUUID,
 	}); err != nil {
 		return fmt.Errorf("state: reverse invoice credits: %w", err)
 	}
@@ -19568,15 +19583,26 @@ func (s *PgStore) ListAccountCredits(ctx context.Context, accountID string, only
 // (today's only caller, cmd/apid/handlers_admin_credits.go::issueCredit);
 // the consumption reducer (issue #279 PR-C) sets it on consumption
 // rows and the partial unique index
-// credit_ledger_invoice_credit_idx(provider_invoice_id, credit_id) WHERE
-// provider_invoice_id IS NOT NULL is the dedupe story for webhook
+// credit_ledger_invoice_credit_idx(provider, provider_invoice_id, credit_id)
+// on negative invoice rows is the dedupe story for webhook
 // redelivery and admin endpoint replay.
 func (s *PgStore) CreateCreditLedgerEntry(ctx context.Context, e CreditLedgerEntry) error {
-	_, err := s.pool.Exec(ctx,
-		`insert into credit_ledger (account_id, credit_id, delta_cents, reason, actor, provider_invoice_id)
-		 values ($1, $2, $3, $4, $5, $6)`,
-		e.AccountID, e.CreditID, e.DeltaCents, e.Reason, e.Actor, e.ProviderInvoiceID)
-	return err
+	accountID, err := parsePgUUID(e.AccountID)
+	if err != nil {
+		return err
+	}
+	creditID, err := parsePgUUID(e.CreditID)
+	if err != nil {
+		return err
+	}
+	var invoiceID pgtype.Text
+	if e.ProviderInvoiceID != nil {
+		invoiceID = pgtype.Text{String: *e.ProviderInvoiceID, Valid: true}
+	}
+	return sqlc.New().AppendAccountCreditLedgerEntry(ctx, s.pool, sqlc.AppendAccountCreditLedgerEntryParams{
+		AccountID: accountID, CreditID: creditID, DeltaCents: e.DeltaCents,
+		Reason: e.Reason, Actor: e.Actor, Provider: e.Provider, ProviderInvoiceID: invoiceID,
+	})
 }
 
 // GetAccountOverageCapCents returns (cents, ok, nil). ok=false means
@@ -19678,7 +19704,7 @@ func (s *PgStore) ListActiveCreditsForConsumption(ctx context.Context, accountID
 // Idempotency is enforced twice: a transaction-scoped advisory lock
 // serializes every call for one provider invoice (including the first,
 // when no ledger row exists yet), and the partial unique index
-// credit_ledger_invoice_credit_idx(provider_invoice_id, credit_id) is
+// credit_ledger_invoice_credit_idx(provider, provider_invoice_id, credit_id) is
 // the durable backstop. The ledger reservation is inserted before the
 // credit balance is decremented, so a uniqueness conflict can never
 // consume money.
@@ -19707,7 +19733,7 @@ func (s *PgStore) ListActiveCreditsForConsumption(ctx context.Context, accountID
 // migration's CHECK (cents_remaining >= 0) is the floor.
 //
 // The transaction owns the legacy per-credit writes; replay and compensating
-// ledger reads use generated, account-scoped queries.
+// ledger reads and reservations use generated, account/provider-scoped queries.
 func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCreditParams) (ConsumeAccountCreditResult, error) {
 	if err := validateCreditConsumption(p); err != nil {
 		return ConsumeAccountCreditResult{}, err
@@ -19722,15 +19748,13 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 	// A row lock cannot serialize the first two callers because there is no
 	// ledger row to lock yet. A transaction advisory lock gives the natural
 	// provider-invoice key a lockable object before its first insert.
-	// Keep this existing key across versions: changing its scope would allow
-	// old and new binaries to race for the same account during a rollout.
-	if _, err := tx.Exec(ctx,
-		`select pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		"consume-account-credit:"+p.ProviderInvoiceID); err != nil {
+	// Retain the existing broad key and share it with refund compensation.
+	// This does not make legacy writers compatible with the new ledger schema.
+	if err := sqlc.New().LockCreditConsumption(ctx, tx, p.ProviderInvoiceID); err != nil {
 		return ConsumeAccountCreditResult{}, fmt.Errorf("state: consume_credits invoice_lock: %w", err)
 	}
 
-	hasPrior, priorCents, err := readCreditConsumption(ctx, tx, p.AccountID, p.ProviderInvoiceID)
+	hasPrior, priorCents, err := readCreditConsumption(ctx, tx, p.AccountID, p.Provider, p.ProviderInvoiceID)
 	if err != nil {
 		return ConsumeAccountCreditResult{}, err
 	}
@@ -19772,8 +19796,8 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 		// Re-derive ConsumedCents from existing ledger rows so the
 		// operator sees the same total across calls. The partial
 		// unique index guarantees there is exactly one ledger row
-		// per (invoice, credit) pair.
-		_, rederived, derr := readCreditConsumption(ctx, tx, p.AccountID, p.ProviderInvoiceID)
+		// per (provider, invoice, credit) tuple.
+		_, rederived, derr := readCreditConsumption(ctx, tx, p.AccountID, p.Provider, p.ProviderInvoiceID)
 		if derr != nil {
 			return ConsumeAccountCreditResult{}, derr
 		}
@@ -19796,16 +19820,19 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 // rows. The caller must hold the provider-invoice advisory lock; locking
 // the matching ledger rows is insufficient because the first call has no
 // row to lock.
-func readCreditConsumption(ctx context.Context, tx pgx.Tx, accountID, providerInvoiceID string) (bool, int64, error) {
+func readCreditConsumption(ctx context.Context, tx pgx.Tx, accountID, provider, providerInvoiceID string) (bool, int64, error) {
 	accountUUID, err := parsePgUUID(accountID)
 	if err != nil {
 		return false, 0, err
 	}
 	row, err := sqlc.New().ReadAccountCreditConsumption(ctx, tx, sqlc.ReadAccountCreditConsumptionParams{
-		AccountID: accountUUID, ProviderInvoiceID: providerInvoiceID,
+		AccountID: accountUUID, Provider: provider, ProviderInvoiceID: providerInvoiceID,
 	})
 	if err != nil {
 		return false, 0, fmt.Errorf("state: consume_credits prior_check: %w", err)
+	}
+	if row.HasUnqualified {
+		return false, 0, fmt.Errorf("state: unresolved legacy credit provider: %w", ErrConflict)
 	}
 	return row.HasPrior, max(row.ConsumedCents, 0), nil
 }
@@ -19866,6 +19893,10 @@ func loadActiveForUpdate(ctx context.Context, tx pgx.Tx, accountID string) ([]Ac
 // partial-success path that lets the caller re-read the account's net debit.
 func drainActive(ctx context.Context, tx pgx.Tx, active []AccountCredit, p ConsumeAccountCreditParams) (ConsumeAccountCreditResult, bool, error) {
 	res := ConsumeAccountCreditResult{}
+	accountID, err := parsePgUUID(p.AccountID)
+	if err != nil {
+		return res, false, err
+	}
 	remaining := p.TargetCents
 	anyInserted := false
 	for i := range active {
@@ -19886,23 +19917,21 @@ func drainActive(ctx context.Context, tx pgx.Tx, active []AccountCredit, p Consu
 		// Postgres requires ON CONFLICT inference to use a unique
 		// index whose column list AND WHERE clause match the
 		// conflict target. The partial unique index
-		// credit_ledger_invoice_credit_idx carries `WHERE
+		// credit_ledger_invoice_credit_idx includes provider and carries `WHERE
 		// provider_invoice_id IS NOT NULL AND delta_cents < 0`, so
 		// the inference clause must repeat it — without the WHERE,
 		// Postgres errors with SQLSTATE 42P10 "there is no unique
 		// or exclusion constraint matching the ON CONFLICT
 		// specification".
-		var insertedID string
-		err := tx.QueryRow(ctx,
-			`insert into credit_ledger
-			   (account_id, credit_id, delta_cents, reason, actor, provider_invoice_id)
-			 values ($1, $2, $3, $4, $5, $6)
-			 on conflict (provider_invoice_id, credit_id)
-			   where provider_invoice_id is not null and delta_cents < 0
-			   do nothing
-			 returning id`,
-			p.AccountID, c.ID, -amount, p.Reason, p.Actor, p.ProviderInvoiceID,
-		).Scan(&insertedID)
+		creditID, err := parsePgUUID(c.ID)
+		if err != nil {
+			return res, anyInserted, err
+		}
+		_, err = sqlc.New().ReserveAccountCreditConsumption(ctx, tx, sqlc.ReserveAccountCreditConsumptionParams{
+			AccountID: accountID, CreditID: creditID, DeltaCents: -amount,
+			Reason: p.Reason, Actor: p.Actor, Provider: p.Provider,
+			ProviderInvoiceID: pgtype.Text{String: p.ProviderInvoiceID, Valid: true},
+		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				// ON CONFLICT DO NOTHING returned no rows — the
@@ -19913,7 +19942,6 @@ func drainActive(ctx context.Context, tx pgx.Tx, active []AccountCredit, p Consu
 			}
 			return res, anyInserted, fmt.Errorf("state: consume_credits ledger: %w", err)
 		}
-		_ = insertedID // observational; consumed via RETURNING id
 
 		// Step 3: decrement the already-locked credit. Any failure aborts the
 		// transaction and rolls the ledger reservation back with it.

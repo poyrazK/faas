@@ -448,7 +448,7 @@ var (
 type ConsumeAccountCreditParams struct {
 	AccountID         string
 	TargetCents       int64  // >= 0; 0 is a no-op
-	Provider          string // "stripe" | "paddle" (denormalised for audit context)
+	Provider          string // required: "stripe" | "paddle" | "polar"; part of the replay key
 	ProviderInvoiceID string // dedupe key; required for the partial unique index to apply
 	InvoiceID         string // for the audit row + ledger reason text
 	Reason            string
@@ -5162,8 +5162,8 @@ type Store interface {
 	// list method alone cannot fetch an unknown invoice without
 	// knowing its account_id up-front.
 	GetInvoiceByID(ctx context.Context, id string) (Invoice, error)
-	// GetInvoiceByProviderID resolves the natural webhook key without an
-	// account-wide list scan.
+	// GetInvoiceByProviderID resolves an invoice ID or charge ID within an
+	// account/provider. Ambiguous cross-namespace matches return ErrConflict.
 	GetInvoiceByProviderID(ctx context.Context, accountID, provider, providerInvoiceID string) (Invoice, error)
 	// UpsertInvoice persists one provider invoice projection. The natural key
 	// (account_id, provider, provider_invoice_id) makes webhook redelivery and
@@ -5224,10 +5224,11 @@ type Store interface {
 	ListActiveCreditsForConsumption(ctx context.Context, accountID string) ([]AccountCredit, error)
 	// ConsumeAccountCredit performs an atomic FIFO decrement across the
 	// account's active credits, capped at TargetCents. The unique
-	// (provider_invoice_id, credit_id) partial index on credit_ledger
-	// (migration 00058) makes the call idempotent: re-running with
-	// the same ProviderInvoiceID and credit set is a no-op and
+	// (provider, provider_invoice_id, credit_id) partial index on credit_ledger
+	// makes the call idempotent: re-running with the same account,
+	// Provider and ProviderInvoiceID is a no-op and
 	// returns AlreadyConsumedForInvoice=true.
+	// Unqualified legacy invoice rows return ErrConflict until audited.
 	//
 	// "Atomic" here means: for each credit, the conditional UPDATE
 	// (WHERE cents_remaining >= $amt) cannot return a row that would

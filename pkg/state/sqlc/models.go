@@ -681,6 +681,7 @@ type CreditLedger struct {
 	CreatedAt         pgtype.Timestamptz
 	ProviderInvoiceID pgtype.Text
 	RefundReversalID  pgtype.UUID
+	Provider          string
 }
 
 type Cron struct {

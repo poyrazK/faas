@@ -1,7 +1,8 @@
 -- name: ReadAccountCreditConsumption :one
--- Replay and compensation must never use another account's invoice history.
-SELECT coalesce(sum(-delta_cents), 0)::bigint AS consumed_cents,
-       coalesce(bool_or(delta_cents < 0), false)::boolean AS has_prior
+-- An unqualified legacy row blocks the whole key; guessing could double-debit.
+SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = sqlc.arg(provider)::text), 0)::bigint AS consumed_cents,
+       coalesce(bool_or(delta_cents < 0) FILTER (WHERE provider = sqlc.arg(provider)), false)::boolean AS has_prior,
+       coalesce(bool_or(provider = ''), false)::boolean AS has_unqualified
 FROM credit_ledger
 WHERE account_id = sqlc.arg(account_id)::uuid
   AND provider_invoice_id = sqlc.arg(provider_invoice_id)::text;
@@ -14,13 +15,14 @@ WITH consumed AS (
       ON credit.id = ledger.credit_id AND credit.account_id = ledger.account_id
     WHERE ledger.account_id = sqlc.arg(account_id)::uuid
       AND ledger.provider_invoice_id = sqlc.arg(provider_invoice_id)::text
+      AND ledger.provider = sqlc.arg(provider)::text
     GROUP BY ledger.credit_id
     HAVING sum(-ledger.delta_cents) > 0
 ), inserted AS (
     INSERT INTO credit_ledger
-        (account_id, credit_id, delta_cents, reason, actor, provider_invoice_id, refund_reversal_id)
+        (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id, refund_reversal_id)
     SELECT sqlc.arg(account_id), credit_id, cents, 'provider refund failed',
-           'apid-refund-reversal', sqlc.arg(provider_invoice_id), sqlc.arg(refund_id)::uuid
+           'apid-refund-reversal', sqlc.arg(provider), sqlc.arg(provider_invoice_id), sqlc.arg(refund_id)::uuid
     FROM consumed
     ON CONFLICT (refund_reversal_id, credit_id) WHERE refund_reversal_id IS NOT NULL
         DO NOTHING
@@ -36,6 +38,35 @@ SELECT coalesce(sum(delta_cents), 0)::bigint AS reversed_cents
 FROM credit_ledger
 WHERE account_id = sqlc.arg(account_id)::uuid
   AND refund_reversal_id = sqlc.arg(refund_id)::uuid;
+
+-- name: AppendAccountCreditLedgerEntry :exec
+INSERT INTO credit_ledger (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7);
+
+-- name: ReserveAccountCreditConsumption :one
+INSERT INTO credit_ledger (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (provider, provider_invoice_id, credit_id)
+    WHERE provider_invoice_id IS NOT NULL AND delta_cents < 0 DO NOTHING
+RETURNING id;
+
+-- name: LockInvoiceForRefund :one
+SELECT account_id, provider, provider_invoice_id, amount_paid_cents,
+       total_cents, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents
+FROM invoices WHERE id = $1 FOR UPDATE;
+
+-- name: LockCreditConsumption :exec
+-- Keep the historical broad lock key, also shared with refund compensation.
+SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || sqlc.arg(provider_invoice_id)::text, 0));
+
+-- name: FindInvoiceIDsByProviderKey :many
+-- Two matches mean an invoice ID collides with another invoice's charge ID.
+SELECT id FROM invoices
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND provider = sqlc.arg(provider)::text
+  AND (provider_invoice_id = sqlc.arg(provider_key)::text
+       OR provider_charge_id = sqlc.arg(provider_key))
+LIMIT 2;
 
 -- name: RollupMirrorResults :execrows
 -- ADR-212: claiming and counting share one statement/transaction. SKIP LOCKED

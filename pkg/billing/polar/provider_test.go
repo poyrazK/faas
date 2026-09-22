@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -738,6 +739,47 @@ func TestReconcileUsageWithoutMeterIsUnsupported(t *testing.T) {
 	}
 	if p.Capabilities().Has(billing.CapUsageReconcile) {
 		t.Fatal("provider without meter should not advertise CapUsageReconcile")
+	}
+}
+
+func TestReconcileUsageIntegerBoundary(t *testing.T) {
+	boundary := math.Exp2(63) / float64(billing.SecondsPerGBHour)
+	for _, tc := range []struct {
+		name    string
+		total   float64
+		wantErr bool
+	}{
+		{"int64 boundary", boundary, true},
+		{"above boundary", math.Nextafter(boundary, math.Inf(1)), true},
+		{"below boundary", math.Nextafter(boundary, 0), false},
+		{"huge finite total", math.MaxFloat64, true},
+		{"negative", -1, true},
+		{"zero", 0, false},
+		{"fractional", 1.5, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]float64{"total": tc.total})
+			}))
+			defer server.Close()
+			cfg := testConfig(server.URL)
+			cfg.MeterID = "meter-1"
+			p, err := NewProvider(cfg, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+			got, err := p.ReconcileUsage(context.Background(), state.Account{ID: "acct-1"}, start, start.Add(time.Hour))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ReconcileUsage = (%d, %v), want error=%v", got, err, tc.wantErr)
+			}
+			if !tc.wantErr {
+				want := int64(math.Round(tc.total * float64(billing.SecondsPerGBHour)))
+				if got != want || got < 0 {
+					t.Errorf("ReconcileUsage = %d, want %d", got, want)
+				}
+			}
+		})
 	}
 }
 

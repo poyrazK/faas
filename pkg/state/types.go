@@ -5009,7 +5009,7 @@ type AccountCredit struct {
 //
 // ProviderInvoiceID is NULL on issuance rows (today's only writer);
 // the consumption reducer (issue #279 PR-C, @migration 00058) sets it
-// to the provider's invoice identifier and pairs it with CreditID in
+// to the provider's invoice identifier and pairs it with Provider and CreditID in
 // a unique partial index so a webhook re-fire or admin endpoint
 // replay cannot double-decrement cents_remaining.
 type CreditLedgerEntry struct {
@@ -5020,6 +5020,7 @@ type CreditLedgerEntry struct {
 	Reason            string
 	Actor             string
 	CreatedAt         time.Time
+	Provider          string // empty only for issuance or unresolved legacy rows
 	ProviderInvoiceID *string
 	RefundReversalID  *string
 }

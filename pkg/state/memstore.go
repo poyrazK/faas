@@ -15303,13 +15303,24 @@ func (m *MemStore) GetInvoiceByID(_ context.Context, id string) (Invoice, error)
 }
 
 func (m *MemStore) GetInvoiceByProviderID(_ context.Context, accountID, provider, providerInvoiceID string) (Invoice, error) {
+	if providerInvoiceID == "" {
+		return Invoice{}, ErrNotFound
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var matched Invoice
+	found := false
 	for _, inv := range m.invoices {
 		if inv.AccountID == accountID && inv.Provider == provider &&
 			(inv.ProviderInvoiceID == providerInvoiceID || inv.ProviderChargeID == providerInvoiceID) {
-			return inv, nil
+			if found {
+				return Invoice{}, ErrConflict
+			}
+			matched, found = inv, true
 		}
+	}
+	if found {
+		return matched, nil
 	}
 	return Invoice{}, ErrNotFound
 }
@@ -15472,7 +15483,7 @@ func (m *MemStore) RecordInvoiceRefund(_ context.Context, refund InvoiceRefund) 
 		return ErrConflict
 	}
 	if reverseCredit {
-		if err := m.reverseInvoiceCreditConsumptionLocked(inv.AccountID, inv.ProviderInvoiceID, storedRefund.ID, refund.AmountCents); err != nil {
+		if err := m.reverseInvoiceCreditConsumptionLocked(inv.AccountID, inv.Provider, inv.ProviderInvoiceID, storedRefund.ID, refund.AmountCents); err != nil {
 			return err
 		}
 	}
@@ -15485,7 +15496,12 @@ func (m *MemStore) RecordInvoiceRefund(_ context.Context, refund InvoiceRefund) 
 	return nil
 }
 
-func (m *MemStore) reverseInvoiceCreditConsumptionLocked(accountID, providerInvoiceID, refundID string, expectedCents int64) error {
+func (m *MemStore) reverseInvoiceCreditConsumptionLocked(accountID, provider, providerInvoiceID, refundID string, expectedCents int64) error {
+	for _, entry := range m.creditLedger {
+		if entry.AccountID == accountID && entry.ProviderInvoiceID != nil && *entry.ProviderInvoiceID == providerInvoiceID && entry.Provider == "" {
+			return fmt.Errorf("state: unresolved legacy credit provider: %w", ErrConflict)
+		}
+	}
 	var alreadyReversed int64
 	for _, entry := range m.creditLedger {
 		if entry.AccountID == accountID && entry.RefundReversalID != nil && *entry.RefundReversalID == refundID {
@@ -15502,7 +15518,7 @@ func (m *MemStore) reverseInvoiceCreditConsumptionLocked(accountID, providerInvo
 	// not compensate the same consumption again after an earlier reversal.
 	byCredit := make(map[string]int64)
 	for _, entry := range m.creditLedger {
-		if entry.AccountID == accountID && m.accountCredits[entry.CreditID].AccountID == accountID &&
+		if entry.AccountID == accountID && entry.Provider == provider && m.accountCredits[entry.CreditID].AccountID == accountID &&
 			entry.ProviderInvoiceID != nil && *entry.ProviderInvoiceID == providerInvoiceID {
 			byCredit[entry.CreditID] -= entry.DeltaCents
 		}
@@ -15527,7 +15543,7 @@ func (m *MemStore) reverseInvoiceCreditConsumptionLocked(accountID, providerInvo
 			ID: uuid.NewString(), AccountID: accountID, CreditID: creditID,
 			DeltaCents: cents, Reason: "provider refund failed",
 			Actor: "apid-refund-reversal", CreatedAt: now,
-			ProviderInvoiceID: &invoiceID, RefundReversalID: &reversalID,
+			Provider: provider, ProviderInvoiceID: &invoiceID, RefundReversalID: &reversalID,
 		})
 	}
 	return nil
@@ -15714,6 +15730,12 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 	hasPrior := false
 	for _, le := range m.creditLedger {
 		if le.AccountID == p.AccountID && le.ProviderInvoiceID != nil && *le.ProviderInvoiceID == p.ProviderInvoiceID {
+			if le.Provider == "" {
+				return ConsumeAccountCreditResult{}, fmt.Errorf("state: unresolved legacy credit provider: %w", ErrConflict)
+			}
+			if le.Provider != p.Provider {
+				continue
+			}
 			priorCents += -le.DeltaCents
 			hasPrior = hasPrior || le.DeltaCents < 0
 		}
@@ -15790,6 +15812,7 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 				Reason:            p.Reason,
 				Actor:             p.Actor,
 				CreatedAt:         now,
+				Provider:          p.Provider,
 				ProviderInvoiceID: &invID,
 			})
 			res.PerCredit = append(res.PerCredit, ConsumedCreditRow{

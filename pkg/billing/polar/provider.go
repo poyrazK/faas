@@ -850,11 +850,13 @@ func (p *Provider) ReconcileUsage(ctx context.Context, acct state.Account, start
 	if math.IsNaN(quantities.Total) || math.IsInf(quantities.Total, 0) || quantities.Total < 0 {
 		return 0, fmt.Errorf("polar: reconcile usage account=%s returned invalid total %v", acct.ID, quantities.Total)
 	}
-	mbSeconds := quantities.Total * float64(billing.SecondsPerGBHour)
-	if mbSeconds > float64(math.MaxInt64) {
+	mbSeconds := math.Round(quantities.Total * float64(billing.SecondsPerGBHour))
+	// float64(MaxInt64) rounds up to 2^63, which is already outside int64.
+	// Check the rounded quantity before conversion (also catches +Inf).
+	if mbSeconds >= math.Exp2(63) {
 		return 0, fmt.Errorf("polar: reconcile usage account=%s total overflows int64", acct.ID)
 	}
-	return int64(math.Round(mbSeconds)), nil
+	return int64(mbSeconds), nil
 }
 
 type refundResponse struct {
