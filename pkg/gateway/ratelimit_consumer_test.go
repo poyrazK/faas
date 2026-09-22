@@ -91,6 +91,7 @@ func (*dimensionalCentralBackend) PeekToken(context.Context, string, string, str
 
 func (*dimensionalCentralBackend) Invalidate(string, string, string) {}
 
+// adr: 104
 func TestRouteConsumerThrottle_CentralReplicasShareDimensionalBurst(t *testing.T) {
 	central := &dimensionalCentralBackend{}
 	now := func() time.Time { return time.Unix(1_700_000_000, 0) }
