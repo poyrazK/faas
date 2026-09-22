@@ -1,0 +1,24 @@
+function:
+  runtime: node22
+  handler: handler.handler
+
+# The binding and scaling policy are deployed with the app. Change the queue
+# name or retry values here when the worker's contract changes.
+queue_bindings:
+  - name: default
+    queue_name: default
+    mode: push
+    workload_class: worker
+    max_concurrency: 1
+    retry_policy:
+      max_attempts: 3
+      base_seconds: 1
+      max_seconds: 30
+      jitter_seconds: 0.25
+
+scaling:
+  min_instances: 0
+  max_instances: 10
+  target:
+    metric: queue_depth
+    value: 10
