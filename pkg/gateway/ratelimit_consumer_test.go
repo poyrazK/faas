@@ -60,6 +60,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type dimensionalCentralBackend struct {
@@ -116,8 +118,16 @@ func TestRouteConsumerThrottle_CentralReplicasShareDimensionalBurst(t *testing.T
 
 func TestDimensionalCentralSubjectID_IsStableAndBounded(t *testing.T) {
 	const ruleID = "00000000-0000-0000-0000-000000000001"
-	if a, b := dimensionalCentralSubjectID(ruleID, "country", "TR", 100), dimensionalCentralSubjectID(ruleID, "country", "TR", 100); a != b {
+	subject := dimensionalCentralSubjectID(ruleID, "country", "TR", 100)
+	if a, b := subject, dimensionalCentralSubjectID(ruleID, "country", "TR", 100); a != b {
 		t.Fatalf("same dimension mapped to different subjects: %q != %q", a, b)
+	}
+	parsed, err := uuid.Parse(subject)
+	if err != nil {
+		t.Fatalf("central subject is not a UUID: %v", err)
+	}
+	if parsed.Version() != 8 || parsed.Variant() != uuid.RFC4122 {
+		t.Fatalf("central subject version/variant = %d/%v, want 8/%v", parsed.Version(), parsed.Variant(), uuid.RFC4122)
 	}
 	seen := map[string]struct{}{}
 	for i := 0; i < 10_000; i++ {

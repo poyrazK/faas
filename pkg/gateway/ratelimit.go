@@ -7,7 +7,7 @@ package gateway
 import (
 	"container/list"
 	"context"
-	"crypto/sha256"
+	"hash/fnv"
 	"strconv"
 	"strings"
 	"sync"
@@ -223,17 +223,28 @@ func (l *Limiter) AllowWithCentralConsumerKey(
 }
 
 // dimensionalCentralSubjectID maps a request concept into one of cap stable
-// UUID rows for the rule. Version 8 marks the UUID as application-defined;
-// SHA-256 supplies both the shard selection and collision-resistant row ID.
+// UUID rows for the rule. FNV-1a selects the non-security shard and derives
+// its stable row identifier; version 8 marks that UUID as application-defined.
 func dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID string, cap int) string {
-	identityHash := sha256.Sum256([]byte(dimensionKind + "\x00" + consumerID))
-	shard := uint64(0)
-	for i := 0; i < 8; i++ {
-		shard = shard<<8 | uint64(identityHash[i])
-	}
-	shard %= uint64(cap)
+	// This hash only selects a bounded counter shard; it is neither a
+	// credential digest nor a security boundary. FNV-1a is deliberately used
+	// to make that non-cryptographic purpose explicit and avoid suggesting
+	// that SHA-256 is suitable for password hashing. The raw identity is never
+	// persisted, logged, or exposed.
+	shardHash := fnv.New64a()
+	_, _ = shardHash.Write([]byte(dimensionKind))
+	_, _ = shardHash.Write([]byte{0})
+	_, _ = shardHash.Write([]byte(consumerID))
+	shard := shardHash.Sum64() % uint64(cap)
 	name := ruleID + "\x00" + dimensionKind + "\x00" + strconv.FormatUint(shard, 10)
-	return uuid.NewHash(sha256.New(), uuid.NameSpaceOID, []byte(name), 8).String()
+	rowHash := fnv.New128a()
+	_, _ = rowHash.Write([]byte(name))
+	var subjectID uuid.UUID
+	copy(subjectID[:], rowHash.Sum(nil))
+	// RFC 9562 application-defined UUID version and RFC 4122 variant.
+	subjectID[6] = (subjectID[6] & 0x0f) | 0x80
+	subjectID[8] = (subjectID[8] & 0x3f) | 0x80
+	return subjectID.String()
 }
 
 // AllowWithCentralParams is the central-aware sibling of
