@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/markers"
 )
 
 // devSetupReceipt is the local, side-effect-free plan produced by
@@ -287,18 +288,18 @@ func devSetupSourceMarkers(sourceDir string) []string {
 	if err != nil {
 		return nil
 	}
-	markers := make([]string, 0)
+	found := make([]string, 0)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
-		if _, ok := appMarker[name]; ok || functionHandlerFiles[name] {
-			markers = append(markers, entry.Name())
+		if markers.IsAppMarker(name) || functionHandlerFiles[name] {
+			found = append(found, entry.Name())
 		}
 	}
-	sort.Strings(markers)
-	return markers
+	sort.Strings(found)
+	return found
 }
 
 func devSetupDependencyFiles(sourceDir string) []string {

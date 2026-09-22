@@ -29330,6 +29330,7 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 	if err := s.pool.QueryRow(ctx, `
 		select
 			count(*),
+			coalesce(sum(case when status_diff or schema_diff or body_diff then 1 else 0 end), 0),
 			coalesce(sum(case when status_diff then 1 else 0 end), 0),
 			coalesce(sum(case when schema_diff then 1 else 0 end), 0),
 			coalesce(sum(case when body_diff   then 1 else 0 end), 0),
@@ -29345,7 +29346,7 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2`,
 		ruleID, since,
-	).Scan(&s2.TotalInvocations, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
+	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
 		return MirrorSummary{}, fmt.Errorf("state: mirror summary for rule %s: %w", ruleID, err)
 	}
 	if meanLatencyDiff != nil {
