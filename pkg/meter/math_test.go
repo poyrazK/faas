@@ -171,6 +171,16 @@ func TestAccountMonthKey(t *testing.T) {
 			in:   time.Date(2026, 7, 17, 0, 30, 0, 0, berlinTZ()),
 			want: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
 		},
+		{
+			name: "positive_offset_previous_utc_month",
+			in:   time.Date(2026, 9, 1, 0, 30, 0, 0, time.FixedZone("UTC+3", 3*3600)),
+			want: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "negative_offset_next_utc_year",
+			in:   time.Date(2026, 12, 31, 23, 30, 0, 0, time.FixedZone("UTC-5", -5*3600)),
+			want: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
 		// Year boundary. Dec 17 → Jan 1.
 		{
 			name: "year_boundary",

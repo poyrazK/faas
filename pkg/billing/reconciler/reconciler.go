@@ -53,13 +53,15 @@ type Reconciler struct {
 	Registry *prometheus.Registry
 
 	// Window is the rolling window the reconciler compares
-	// local-vs-pushed totals over. Default 24 h when zero.
+	// local-vs-pushed totals over. Default 24 h when zero. Only complete
+	// UTC hours are included, matching provider delivery windows.
 	Window time.Duration
 
 	// ProviderName is the label value on the emitted gauges
 	// (e.g. "stripe", "paddle"). Empty defaults to "unknown".
 	ProviderName string
 	Mode         billing.Mode
+	now          func() time.Time
 
 	driftMBSeconds *prometheus.GaugeVec
 	driftRatio     *prometheus.GaugeVec
@@ -96,6 +98,7 @@ func New(providerName string, store state.Store, provider billing.Provider, log 
 		Registry:     registry,
 		ProviderName: providerName,
 		Window:       DefaultWindow,
+		now:          time.Now,
 		driftMBSeconds: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "meterd_billing_drift_mb_seconds",
 			Help: "Signed diff between local usage_minutes mb_seconds total and the provider's pushed total over the rolling Window. ADR-049 §B.1.",
@@ -176,8 +179,14 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 		r.failures.WithLabelValues(r.ProviderName, "store").Inc()
 		return fmt.Errorf("list accounts: %w", err)
 	}
-	end := time.Now().UTC().Truncate(time.Minute)
-	start := end.Add(-r.Window)
+	now := time.Now()
+	if r.now != nil {
+		now = r.now()
+	}
+	start, end := billing.CompletedUsageWindow(now, r.Window)
+	if !start.Before(end) {
+		return nil
+	}
 	for _, acct := range accounts {
 		if err := r.reconcileOne(ctx, acct, start, end); err != nil {
 			// Fail-soft per account: log + skip, but retain a fleet-level

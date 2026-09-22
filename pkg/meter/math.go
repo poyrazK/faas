@@ -32,6 +32,7 @@ func MBSecondsPerMinute(admissionMB int) int64 {
 // AccountMonthKey truncates t to the start of its UTC month. Used by the
 // aggregator to look up a per-month quota band.
 func AccountMonthKey(t time.Time) time.Time {
+	t = t.UTC()
 	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
