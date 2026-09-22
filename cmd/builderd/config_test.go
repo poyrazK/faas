@@ -56,6 +56,9 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.WarmIdle != builderdpkg.DefaultWarmIdle {
 		t.Errorf("WarmIdle = %v, want %v", cfg.WarmIdle, builderdpkg.DefaultWarmIdle)
 	}
+	if cfg.CacheAffinityGrace != builderdpkg.DefaultCacheAffinityGrace {
+		t.Errorf("CacheAffinityGrace = %v, want %v", cfg.CacheAffinityGrace, builderdpkg.DefaultCacheAffinityGrace)
+	}
 	if cfg.MetricsAddr != "127.0.0.1:9105" {
 		t.Errorf("MetricsAddr = %q, want canonical loopback metrics default", cfg.MetricsAddr)
 	}
@@ -147,6 +150,7 @@ build_export_max_bytes = 1048576
 build_export_max_age = "12h"
 build_export_orphan_min_age = "30m"
 build_export_sweep_interval = "1m"
+cache_affinity_grace = "7s"
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -170,6 +174,9 @@ build_export_sweep_interval = "1m"
 	if cfg.BuildExportMaxBytes != 1<<20 || cfg.BuildExportMaxAge != 12*time.Hour ||
 		cfg.BuildExportOrphanMinAge != 30*time.Minute || cfg.BuildExportSweepInterval != time.Minute {
 		t.Errorf("build export retention overrides not respected: %+v", cfg)
+	}
+	if cfg.CacheAffinityGrace != 7*time.Second {
+		t.Errorf("CacheAffinityGrace = %v, want 7s", cfg.CacheAffinityGrace)
 	}
 }
 

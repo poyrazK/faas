@@ -10716,6 +10716,53 @@ func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error
 	return b, nil
 }
 
+// ClaimQueuedBuildWithNodeAffinity is the notification-path equivalent of
+// ClaimQueuedBuild. During affinityGrace it only lets the node that completed
+// the app's latest successful build win the CAS. Missing provenance means a
+// cold app and remains claimable by any node. Once the grace expires the age
+// predicate opens the claim fleet-wide.
+func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nodeID string, affinityGrace time.Duration) (Build, error) {
+	if strings.TrimSpace(nodeID) == "" || affinityGrace <= 0 {
+		return s.ClaimQueuedBuild(ctx, id)
+	}
+	row := s.pool.QueryRow(ctx,
+		`update builds b
+		   set status = 'running', started_at = now()
+		  from deployments d
+		 where b.id = $1
+		   and b.status = 'queued'
+		   and d.id = b.deployment_id
+		   and (
+		     b.enqueued_at <= now() - $3::interval
+		     or coalesce((
+		       select nullif(bp.builder_node_id, '')
+		         from deployments prior_d
+		         join builds prior_b on prior_b.deployment_id = prior_d.id
+		         join build_provenance bp on bp.build_id = prior_b.id
+		        where prior_d.app_id = d.app_id
+		          and prior_b.status = 'succeeded'
+		          and prior_b.id <> b.id
+		          and nullif(bp.builder_node_id, '') is not null
+		        order by prior_b.finished_at desc nulls last, prior_b.id desc
+		        limit 1
+		     ), $2) = $2
+		   )
+		 returning b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
+		           coalesce(b.failure_class,''), coalesce(b.log_path,''),
+		           b.started_at, b.finished_at, b.enqueued_at,
+		           b.cancelled_at, b.cancelled_by_deployment_cascade,
+		           coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')`,
+		id, nodeID, fmt.Sprintf("%d milliseconds", affinityGrace.Milliseconds()))
+	b, err := scanBuild(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Build{}, ErrNotFound
+		}
+		return Build{}, fmt.Errorf("state: claim queued build %s with node affinity: %w", id, err)
+	}
+	return b, nil
+}
+
 // ClaimNextQueuedBuild is the durable worker surface (PR-B). Single
 // statement so the lock + flip + RETURNING happens in one round-trip:
 // the SKIP LOCKED subquery picks the earliest queued row that no
@@ -10785,6 +10832,67 @@ func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairness
 			return Build{}, ErrNotFound
 		}
 		return Build{}, fmt.Errorf("state: claim next queued build (fairness): %w", err)
+	}
+	return b, nil
+}
+
+// ClaimNextQueuedBuildWithNodeAffinity combines cache locality with the
+// existing account-fairness ranking. Affinity is an eligibility filter for a
+// short grace period; fairness ranks the eligible rows. A zero fairness window
+// makes the EXISTS expression false and preserves FIFO ordering.
+func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nodeID string, affinityGrace, fairnessWindow time.Duration) (Build, error) {
+	if strings.TrimSpace(nodeID) == "" || affinityGrace <= 0 {
+		if fairnessWindow > 0 {
+			return s.ClaimNextQueuedBuildWithFairness(ctx, fairnessWindow)
+		}
+		return s.ClaimNextQueuedBuild(ctx)
+	}
+	row := s.pool.QueryRow(ctx,
+		`update builds set status = 'running', started_at = now()
+		 where status = 'queued' and id = (
+		   select b.id
+		     from builds b
+		     join deployments d on d.id = b.deployment_id
+		     join apps a on a.id = d.app_id
+		    where b.status = 'queued'
+		      and (
+		        b.enqueued_at <= now() - $2::interval
+		        or coalesce((
+		          select nullif(bp.builder_node_id, '')
+		            from deployments prior_d
+		            join builds prior_b on prior_b.deployment_id = prior_d.id
+		            join build_provenance bp on bp.build_id = prior_b.id
+		           where prior_d.app_id = d.app_id
+		             and prior_b.status = 'succeeded'
+		             and prior_b.id <> b.id
+		             and nullif(bp.builder_node_id, '') is not null
+		           order by prior_b.finished_at desc nulls last, prior_b.id desc
+		           limit 1
+		        ), $1) = $1
+		      )
+		    order by exists (
+		      select 1 from recent_build_claims r
+		       where $3::interval > interval '0 milliseconds'
+		         and r.account_id = a.account_id
+		         and r.claimed_at > now() - $3::interval
+		    ), b.enqueued_at, b.id
+		    limit 1
+		    for update of b skip locked
+		 )
+		 returning id, deployment_id, kind, source_bytes, status,
+		           coalesce(failure_class,''), coalesce(log_path,''),
+		           started_at, finished_at, enqueued_at,
+		           cancelled_at, cancelled_by_deployment_cascade,
+		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`,
+		nodeID,
+		fmt.Sprintf("%d milliseconds", affinityGrace.Milliseconds()),
+		fmt.Sprintf("%d milliseconds", fairnessWindow.Milliseconds()))
+	b, err := scanBuild(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Build{}, ErrNotFound
+		}
+		return Build{}, fmt.Errorf("state: claim next queued build with node affinity: %w", err)
 	}
 	return b, nil
 }

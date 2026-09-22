@@ -32,6 +32,11 @@ source_spool_dir = "/var/spool/faas/builds"
 # ceiling even if this value is raised accidentally.
 build_log_max_bytes = 8388608
 
+# Prefer the node that completed an app's latest successful build long enough
+# to reuse its node-local artifact and dependency caches. After this bounded
+# grace any healthy builder may claim the row, preserving availability.
+cache_affinity_grace = "5s"
+
 # builderd's ephemeral VMs ride vmmd's jailer (ADR-003) — no KVM
 # surface from this unit. drv = "vmmd" is the only supported value
 # at v1; the vmmd-raw-bridge driver lives in pkg/builderd for the
