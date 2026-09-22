@@ -303,6 +303,50 @@ type CreatePreviewRequest struct {
 	TTLHours int `json:"ttl_hours,omitempty"`
 }
 
+// PreviewResourceResponse is the first-class preview read model. It keeps
+// streamed logs and time-windowed metrics behind their native endpoints while
+// making those endpoints, the effective app configuration, production
+// baseline, artifact comparison, and expiration discoverable from one object.
+type PreviewResourceResponse struct {
+	App                  AppResponse                      `json:"app"`
+	Parent               *AppResponse                     `json:"parent,omitempty"`
+	LatestDeployment     *DeploymentResponse              `json:"latest_deployment,omitempty"`
+	ProductionDeployment *DeploymentResponse              `json:"production_deployment,omitempty"`
+	Changes              PreviewProductionChangesResponse `json:"changes_from_production"`
+	Links                PreviewResourceLinksResponse     `json:"links"`
+}
+
+// PreviewProductionChangesResponse summarizes safe, non-secret differences
+// between a preview and its production parent.
+type PreviewProductionChangesResponse struct {
+	ArtifactChanged            bool                    `json:"artifact_changed"`
+	PreviewArtifact            PreviewArtifactResponse `json:"preview_artifact"`
+	ProductionArtifact         PreviewArtifactResponse `json:"production_artifact"`
+	ConfigurationChangedGroups []string                `json:"configuration_changed_groups"`
+}
+
+// PreviewArtifactResponse is the strongest available immutable identity for a
+// deployment plus enough provenance for a human-readable comparison.
+type PreviewArtifactResponse struct {
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Revision     int    `json:"revision,omitempty"`
+	Status       string `json:"status,omitempty"`
+	ImageDigest  string `json:"image_digest,omitempty"`
+	SourceSHA256 string `json:"source_sha256,omitempty"`
+	CommitSHA    string `json:"commit_sha,omitempty"`
+	BuildID      string `json:"build_id,omitempty"`
+}
+
+// PreviewResourceLinksResponse points to the preview's public URL and native
+// observability/configuration APIs. Logs remain SSE and metrics remain
+// time-windowed instead of being embedded as stale snapshots.
+type PreviewResourceLinksResponse struct {
+	URL           string `json:"url"`
+	Logs          string `json:"logs"`
+	Metrics       string `json:"metrics"`
+	Configuration string `json:"configuration"`
+}
+
 // UpsertDevSessionRequest describes the application shape for an expiring,
 // CLI-managed developer preview. The project identity lives in the URL path;
 // WorkspaceID separates developers and local source trees within that project.

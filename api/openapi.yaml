@@ -4000,6 +4000,28 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/preview/{slug}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [previews]
+      operationId: getPreview
+      summary: Get a first-class preview resource.
+      description: |
+        Returns preview identity, public URL, expiration, latest preview and
+        production deployments, safe changes from production, and links to
+        the native streaming logs, time-windowed metrics, and configuration
+        endpoints. Secret values and ciphertext are never included.
+      responses:
+        '200':
+          description: Preview resource and production comparison.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewResourceResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/preview/{slug}/destroy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -21289,6 +21311,52 @@ components:
           maximum: 720
           default: 168
           description: Preview lease duration. The server defaults to 168 hours and caps it at 30 days.
+
+    PreviewResourceResponse:
+      description: A first-class preview with production comparison and observability links.
+      type: object
+      required: [app, changes_from_production, links]
+      properties:
+        app: { $ref: '#/components/schemas/AppResponse' }
+        parent: { $ref: '#/components/schemas/AppResponse' }
+        latest_deployment: { $ref: '#/components/schemas/DeploymentResponse' }
+        production_deployment: { $ref: '#/components/schemas/DeploymentResponse' }
+        changes_from_production: { $ref: '#/components/schemas/PreviewProductionChangesResponse' }
+        links: { $ref: '#/components/schemas/PreviewResourceLinksResponse' }
+
+    PreviewProductionChangesResponse:
+      description: Non-secret preview differences from the production parent.
+      type: object
+      required: [artifact_changed, preview_artifact, production_artifact, configuration_changed_groups]
+      properties:
+        artifact_changed: { type: boolean }
+        preview_artifact: { $ref: '#/components/schemas/PreviewArtifactResponse' }
+        production_artifact: { $ref: '#/components/schemas/PreviewArtifactResponse' }
+        configuration_changed_groups:
+          type: array
+          items: { type: string, enum: [runtime, resources, scaling, routing, policies] }
+
+    PreviewArtifactResponse:
+      description: Strongest available non-secret deployment artifact identity.
+      type: object
+      properties:
+        deployment_id: { type: string }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string }
+        image_digest: { type: string }
+        source_sha256: { type: string }
+        commit_sha: { type: string }
+        build_id: { type: string }
+
+    PreviewResourceLinksResponse:
+      description: Public preview URL and native APIs for its logs, metrics, and effective app configuration.
+      type: object
+      required: [url, logs, metrics, configuration]
+      properties:
+        url: { type: string, format: uri }
+        logs: { type: string }
+        metrics: { type: string }
+        configuration: { type: string }
 
     UpsertDevSessionRequest:
       description: Application shape and opaque local identity for a CLI-managed developer environment.

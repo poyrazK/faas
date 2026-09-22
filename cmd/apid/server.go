@@ -1472,6 +1472,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateApp))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreApp))))
+	// First-class preview state keeps URL, expiry, production diff, and
+	// observability/configuration links behind the normal read surface.
+	mux.HandleFunc("GET /v1/preview/{slug}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPreviewStatus)))
 	// Mega-C PR-1 / issue #961 leaf 3: one-click preview destroy
 	// from a PR comment. Distinct URL from DELETE /v1/apps/{slug}
 	// so production apps do not collide with the preview-specific

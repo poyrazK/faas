@@ -22,8 +22,7 @@ import (
 // cmdPreview dispatches the `gregale preview` sub-commands.
 func cmdPreview(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale preview <create|list|show|wait|destroy> [args]", "preview")
-		return 1
+		return cmdPreviewList(nil)
 	}
 	switch args[0] {
 	case "create":

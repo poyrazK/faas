@@ -13,6 +13,16 @@
   (edge rules / preview placement), spec §14 M8 (preview
   environments).
 
+## 2026-09-22 first-class read-model amendment
+
+`GET /v1/preview/{slug}` is the canonical preview resource. It aggregates the
+preview and production app/deployment identities, expiration, strongest
+available artifact comparison, and changed non-secret configuration groups.
+It links to the existing app log stream, metrics window, and configuration
+resource instead of embedding stale copies. The endpoint never returns secret
+plaintext, ciphertext, or sealing-key identifiers. The older app and latest-
+deployment reads remain compatible for polling clients.
+
 > **Historical hostname note (issue #1727):** this ADR records the
 > original preview design, including the retired `.apps.gregale.dev`
 > examples. That hostname shape is legacy and is retained only for
