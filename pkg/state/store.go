@@ -5496,6 +5496,10 @@ type Store interface {
 	// CountAppSecrets is the quota check helper. apid calls it before
 	// UpsertAppSecret to enforce Limits.SecretCountMax.
 	CountAppSecrets(ctx context.Context, accountID, appID string) (int, error)
+	// RecordAppSecretDelivery conditionally records one runtime-start result
+	// for the exact secret versions schedd staged. A concurrent rotation wins:
+	// candidates whose version no longer matches remain pending.
+	RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer; imaged is the only reader. PasswordEncrypted

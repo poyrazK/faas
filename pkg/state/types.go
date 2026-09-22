@@ -5679,8 +5679,51 @@ type AppSecret struct {
 	// object-storage binding. Customer secret mutations reject rows carrying
 	// this ownership marker until the binding is revoked and cleaned up.
 	ManagedObjectStorageCredentialID string
-	CreatedAt                        time.Time
-	UpdatedAt                        time.Time
+	// DeliveryVersion advances only when the runtime value changes. Host-key
+	// reseals deliberately preserve it because they do not change what the
+	// application receives. DeliveredVersion identifies the newest version
+	// confirmed by a successful runtime start.
+	DeliveryVersion         int64
+	DeliveredVersion        int64
+	DeliveryStatus          SecretDeliveryStatus
+	LastDeliveryAttemptAt   *time.Time
+	LastDeliveredAt         *time.Time
+	LastDeliveryErrorCode   string
+	LastDeliveredWakeID     string
+	LastDeliveredInstanceID string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+type SecretDeliveryStatus string
+
+const (
+	SecretDeliveryPending   SecretDeliveryStatus = "pending"
+	SecretDeliveryDelivered SecretDeliveryStatus = "delivered"
+	SecretDeliveryFailed    SecretDeliveryStatus = "failed"
+)
+
+// AppSecretDeliveryCandidate is the non-sensitive identity of one exact
+// secret version staged into a runtime. The version fence prevents a late
+// wake from marking a newer rotation as delivered.
+type AppSecretDeliveryCandidate struct {
+	Scope   string
+	Key     string
+	Version int64
+}
+
+// AppSecretDeliveryResult records one runtime-start attempt for the staged
+// candidates. ErrorCode is a closed, non-sensitive reason; secret values and
+// ciphertext are intentionally absent.
+type AppSecretDeliveryResult struct {
+	AccountID   string
+	AppID       string
+	WakeID      string
+	InstanceID  string
+	Status      SecretDeliveryStatus
+	ErrorCode   string
+	AttemptedAt time.Time
+	Candidates  []AppSecretDeliveryCandidate
 }
 
 // AccountAppSecret is the per-row shape returned by

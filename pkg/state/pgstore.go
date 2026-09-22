@@ -21008,7 +21008,11 @@ func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, 
 		 values ($1, $2, $3, $4, $5)
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
-		       updated_at = now()
+		       updated_at = now(),
+		       delivery_version = app_secrets.delivery_version + 1,
+		       delivery_status = 'pending',
+		       last_delivery_attempt_at = null,
+		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext)
@@ -21028,7 +21032,11 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
-		       updated_at = now()
+		       updated_at = now(),
+		       delivery_version = app_secrets.delivery_version + 1,
+		       delivery_status = 'pending',
+		       last_delivery_attempt_at = null,
+		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid)
@@ -21062,7 +21070,11 @@ func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context,
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
 		       value_hash = excluded.value_hash,
-		       updated_at = now()
+		       updated_at = now(),
+		       delivery_version = app_secrets.delivery_version + 1,
+		       delivery_status = 'pending',
+		       last_delivery_attempt_at = null,
+		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid, valueHash)
@@ -21128,6 +21140,26 @@ func (s *PgStore) PutManagedPostgresSecret(ctx context.Context, secret AppSecret
 			value_hash = excluded.value_hash,
 			managed_credential_ref = excluded.managed_credential_ref,
 			managed_credential_generation = excluded.managed_credential_generation,
+			delivery_version = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN app_secrets.delivery_version + 1
+				ELSE app_secrets.delivery_version
+			END,
+			delivery_status = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN 'pending'
+				ELSE app_secrets.delivery_status
+			END,
+			last_delivery_attempt_at = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN NULL
+				ELSE app_secrets.last_delivery_attempt_at
+			END,
+			last_delivery_error_code = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN NULL
+				ELSE app_secrets.last_delivery_error_code
+			END,
 			updated_at = now()
 		 where app_secrets.managed_postgres_binding_id = excluded.managed_postgres_binding_id
 		   and (
@@ -21210,6 +21242,10 @@ func (s *PgStore) PutManagedObjectStorageSecret(ctx context.Context, secret AppS
 			kid = excluded.kid,
 			value_hash = excluded.value_hash,
 			managed_object_storage_credential_id = excluded.managed_object_storage_credential_id,
+			delivery_version = app_secrets.delivery_version + 1,
+			delivery_status = 'pending',
+			last_delivery_attempt_at = null,
+			last_delivery_error_code = null,
 			updated_at = now()
 		 where app_secrets.managed_object_storage_credential_id = excluded.managed_object_storage_credential_id
 		   and app_secrets.managed_postgres_binding_id is null`,
@@ -21246,12 +21282,18 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 	err := s.pool.QueryRow(ctx,
 		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
-		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''), created_at, updated_at
+		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''),
+		        delivery_version, COALESCE(delivered_version, 0), delivery_status,
+		        last_delivery_attempt_at, last_delivered_at, COALESCE(last_delivery_error_code, ''),
+		        COALESCE(last_delivered_wake_id, ''), COALESCE(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
 		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.ValueHash,
 		&out.ManagedPostgresBindingID, &out.ManagedCredentialRef, &out.ManagedCredentialGeneration, &out.ManagedObjectStorageCredentialID,
+		&out.DeliveryVersion, &out.DeliveredVersion, &out.DeliveryStatus,
+		&out.LastDeliveryAttemptAt, &out.LastDeliveredAt, &out.LastDeliveryErrorCode,
+		&out.LastDeliveredWakeID, &out.LastDeliveredInstanceID,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -21457,7 +21499,10 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
+		        delivery_version, coalesce(delivered_version, 0), delivery_status,
+		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -21472,6 +21517,9 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
 			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
+			&r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
+			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
+			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -21499,7 +21547,10 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
+		        delivery_version, coalesce(delivered_version, 0), delivery_status,
+		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -21514,6 +21565,9 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
 			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
+			&r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
+			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
+			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -21592,6 +21646,74 @@ func (s *PgStore) CountAppSecrets(ctx context.Context, accountID, appID string) 
 		`select count(*) from app_secrets where account_id = $1 and app_id = $2`,
 		accountID, appID).Scan(&n)
 	return n, err
+}
+
+// RecordAppSecretDelivery updates only rows whose delivery_version still
+// matches the version schedd staged. This compare-and-set is the race fence
+// between an in-flight boot and a concurrent rotation.
+func (s *PgStore) RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error) {
+	if result.AccountID == "" || result.AppID == "" || result.WakeID == "" || result.InstanceID == "" {
+		return 0, ErrInvalidArgument
+	}
+	if result.Status != SecretDeliveryDelivered && result.Status != SecretDeliveryFailed {
+		return 0, ErrInvalidArgument
+	}
+	if result.Status == SecretDeliveryFailed && result.ErrorCode == "" {
+		return 0, ErrInvalidArgument
+	}
+	if len(result.Candidates) == 0 {
+		return 0, nil
+	}
+	attemptedAt := result.AttemptedAt.UTC()
+	if attemptedAt.IsZero() {
+		attemptedAt = time.Now().UTC()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	updated := 0
+	for _, candidate := range result.Candidates {
+		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
+			return 0, ErrInvalidArgument
+		}
+		var tag pgconn.CommandTag
+		if result.Status == SecretDeliveryDelivered {
+			tag, err = tx.Exec(ctx,
+				`update app_secrets
+				 set delivered_version = delivery_version,
+				     delivery_status = 'delivered',
+				     last_delivery_attempt_at = $7,
+				     last_delivered_at = $7,
+				     last_delivery_error_code = null,
+				     last_delivered_wake_id = $5,
+				     last_delivered_instance_id = $6
+				 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+				   and delivery_version = $8`,
+				result.AccountID, result.AppID, candidate.Scope, candidate.Key,
+				result.WakeID, result.InstanceID, attemptedAt, candidate.Version)
+		} else {
+			tag, err = tx.Exec(ctx,
+				`update app_secrets
+				 set delivery_status = 'failed',
+				     last_delivery_attempt_at = $5,
+				     last_delivery_error_code = $7
+				 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+				   and delivery_version = $6
+				   and coalesce(delivered_version, 0) < delivery_version`,
+				result.AccountID, result.AppID, candidate.Scope, candidate.Key,
+				attemptedAt, candidate.Version, result.ErrorCode)
+		}
+		if err != nil {
+			return 0, mapErr(err)
+		}
+		updated += int(tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, mapErr(err)
+	}
+	return updated, nil
 }
 
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------

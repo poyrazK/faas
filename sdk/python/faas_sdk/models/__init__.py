@@ -159,6 +159,8 @@ from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
 from .app_secret_response import AppSecretResponse
+from .app_secret_response_delivery_status import AppSecretResponseDeliveryStatus
+from .app_secret_response_last_delivery_error_code import AppSecretResponseLastDeliveryErrorCode
 from .app_security_finding import AppSecurityFinding
 from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
@@ -1153,6 +1155,8 @@ from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
 from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
+from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
+from .scoped_app_secret_response_last_delivery_error_code import ScopedAppSecretResponseLastDeliveryErrorCode
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -1514,6 +1518,8 @@ __all__ = (
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
     "AppSecretResponse",
+    "AppSecretResponseDeliveryStatus",
+    "AppSecretResponseLastDeliveryErrorCode",
     "AppSecurityFinding",
     "AppSecurityFindingSeverity",
     "AppSecurityPostureResponse",
@@ -2472,6 +2478,8 @@ __all__ = (
     "ScanResultStatus",
     "ScopedAppEnvResponse",
     "ScopedAppSecretResponse",
+    "ScopedAppSecretResponseDeliveryStatus",
+    "ScopedAppSecretResponseLastDeliveryErrorCode",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",

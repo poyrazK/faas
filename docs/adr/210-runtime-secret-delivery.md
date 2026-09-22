@@ -37,3 +37,9 @@
   claim and returns `503`. If VM destruction, snapshot invalidation, or wake
   fails later, the outbox retries while the app remains cold rather than
   restoring an old credential.
+- **Delivery evidence:** Every value mutation advances an opaque per-secret
+  delivery version. Schedd records `pending`, `delivered`, or `failed` against
+  the exact version it staged, using a compare-and-set so an older in-flight
+  wake cannot acknowledge a concurrent rotation. Successful and failed
+  attempts emit value-free audit events containing only app, secret names,
+  wake/instance correlation, counts, timestamps, and a closed error code.

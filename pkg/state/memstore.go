@@ -17270,7 +17270,8 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	if !ok {
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
-			Ciphertext: ciphertext, CreatedAt: now, UpdatedAt: now,
+			Ciphertext: ciphertext, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
+			CreatedAt: now, UpdatedAt: now,
 		}
 		return nil
 	}
@@ -17281,6 +17282,10 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 		return ErrConflict
 	}
 	existing.Ciphertext = ciphertext
+	existing.DeliveryVersion++
+	existing.DeliveryStatus = SecretDeliveryPending
+	existing.LastDeliveryAttemptAt = nil
+	existing.LastDeliveryErrorCode = ""
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
 	return nil
@@ -17299,7 +17304,8 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	if !ok {
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
-			Ciphertext: ciphertext, Kid: kid, CreatedAt: now, UpdatedAt: now,
+			Ciphertext: ciphertext, Kid: kid, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
+			CreatedAt: now, UpdatedAt: now,
 		}
 		return nil
 	}
@@ -17311,6 +17317,10 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
+	existing.DeliveryVersion++
+	existing.DeliveryStatus = SecretDeliveryPending
+	existing.LastDeliveryAttemptAt = nil
+	existing.LastDeliveryErrorCode = ""
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
 	return nil
@@ -17333,6 +17343,7 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, Kid: kid, ValueHash: valueHash,
+			DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		return nil
@@ -17346,6 +17357,10 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
 	existing.ValueHash = valueHash
+	existing.DeliveryVersion++
+	existing.DeliveryStatus = SecretDeliveryPending
+	existing.LastDeliveryAttemptAt = nil
+	existing.LastDeliveryErrorCode = ""
 	existing.UpdatedAt = now
 	m.secrets[k] = existing
 	return nil
@@ -17393,8 +17408,24 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 	now := time.Now()
 	if ok {
 		secret.CreatedAt = existing.CreatedAt
+		secret.DeliveryVersion = existing.DeliveryVersion
+		secret.DeliveredVersion = existing.DeliveredVersion
+		secret.DeliveryStatus = existing.DeliveryStatus
+		secret.LastDeliveryAttemptAt = existing.LastDeliveryAttemptAt
+		secret.LastDeliveredAt = existing.LastDeliveredAt
+		secret.LastDeliveryErrorCode = existing.LastDeliveryErrorCode
+		secret.LastDeliveredWakeID = existing.LastDeliveredWakeID
+		secret.LastDeliveredInstanceID = existing.LastDeliveredInstanceID
+		if secret.ManagedCredentialGeneration > existing.ManagedCredentialGeneration {
+			secret.DeliveryVersion++
+			secret.DeliveryStatus = SecretDeliveryPending
+			secret.LastDeliveryAttemptAt = nil
+			secret.LastDeliveryErrorCode = ""
+		}
 	} else {
 		secret.CreatedAt = now
+		secret.DeliveryVersion = 1
+		secret.DeliveryStatus = SecretDeliveryPending
 	}
 	secret.UpdatedAt = now
 	m.secrets[k] = secret
@@ -17431,9 +17462,18 @@ func (m *MemStore) PutManagedObjectStorageSecret(_ context.Context, secret AppSe
 	now := time.Now()
 	if ok {
 		secret.CreatedAt = existing.CreatedAt
+		secret.DeliveryVersion = existing.DeliveryVersion + 1
+		secret.DeliveredVersion = existing.DeliveredVersion
+		secret.LastDeliveredAt = existing.LastDeliveredAt
+		secret.LastDeliveredWakeID = existing.LastDeliveredWakeID
+		secret.LastDeliveredInstanceID = existing.LastDeliveredInstanceID
 	} else {
 		secret.CreatedAt = now
+		secret.DeliveryVersion = 1
 	}
+	secret.DeliveryStatus = SecretDeliveryPending
+	secret.LastDeliveryAttemptAt = nil
+	secret.LastDeliveryErrorCode = ""
 	secret.UpdatedAt = now
 	m.secrets[k] = secret
 	return nil
@@ -17695,6 +17735,53 @@ func (m *MemStore) CountAppSecrets(_ context.Context, accountID, appID string) (
 		}
 	}
 	return n, nil
+}
+
+func (m *MemStore) RecordAppSecretDelivery(_ context.Context, result AppSecretDeliveryResult) (int, error) {
+	if result.AccountID == "" || result.AppID == "" || result.WakeID == "" || result.InstanceID == "" {
+		return 0, ErrInvalidArgument
+	}
+	if result.Status != SecretDeliveryDelivered && result.Status != SecretDeliveryFailed {
+		return 0, ErrInvalidArgument
+	}
+	if result.Status == SecretDeliveryFailed && result.ErrorCode == "" {
+		return 0, ErrInvalidArgument
+	}
+	attemptedAt := result.AttemptedAt.UTC()
+	if attemptedAt.IsZero() {
+		attemptedAt = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	updated := 0
+	for _, candidate := range result.Candidates {
+		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
+			return 0, ErrInvalidArgument
+		}
+		k := secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}
+		secret, ok := m.secrets[k]
+		if !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
+			continue
+		}
+		if result.Status == SecretDeliveryFailed && secret.DeliveredVersion >= secret.DeliveryVersion {
+			continue
+		}
+		secret.LastDeliveryAttemptAt = &attemptedAt
+		if result.Status == SecretDeliveryDelivered {
+			secret.DeliveredVersion = secret.DeliveryVersion
+			secret.DeliveryStatus = SecretDeliveryDelivered
+			secret.LastDeliveredAt = &attemptedAt
+			secret.LastDeliveryErrorCode = ""
+			secret.LastDeliveredWakeID = result.WakeID
+			secret.LastDeliveredInstanceID = result.InstanceID
+		} else {
+			secret.DeliveryStatus = SecretDeliveryFailed
+			secret.LastDeliveryErrorCode = result.ErrorCode
+		}
+		m.secrets[k] = secret
+		updated++
+	}
+	return updated, nil
 }
 
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------
