@@ -133,6 +133,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// serviceCallerKeys mirrors service_caller_keys: one published
+	// public key per node (ADR-206).
+	serviceCallerKeys map[string]ServiceCallerKey
 	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
@@ -22156,6 +22159,9 @@ func (m *MemStore) MirrorSummary(_ context.Context, ruleID string, since time.Ti
 			continue
 		}
 		s.TotalInvocations++
+		if r.StatusDiff || r.SchemaDiff || r.BodyDiff {
+			s.ChangedResponseCount++
+		}
 		if r.StatusDiff {
 			s.StatusDiffCount++
 		}
@@ -23076,6 +23082,43 @@ func (m *MemStore) DeleteDeadLetterEvents(_ context.Context, accountID, appID st
 	for _, ev := range events {
 		if purged >= limit || ev.AccountID != accountID {
 			continue
+		}
+		if m.deadLetterPurged == nil {
+			m.deadLetterPurged = make(map[string]struct{})
+		}
+		m.deadLetterPurged[ev.ID] = struct{}{}
+		delete(m.deadLetterSnapshots, ev.ID)
+		purged++
+	}
+	return purged, nil
+}
+
+// PurgeExpiredDeadLetterEvents removes old unified projection rows while
+// leaving the source records in their terminal state. The in-memory source
+// maps are intentionally not rewritten; deadLetterPurged mirrors the
+// projection delete performed by PgStore.
+func (m *MemStore) PurgeExpiredDeadLetterEvents(_ context.Context, before time.Time, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	all := make([]DeadLetterEvent, 0)
+	for appID := range m.apps {
+		all = append(all, m.deadLetterEventsLocked(appID)...)
+	}
+	// Jobs are account-owned and have no app_id.
+	all = append(all, m.deadLetterEventsLocked("")...)
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].LastFailedAt.Equal(all[j].LastFailedAt) {
+			return all[i].ID < all[j].ID
+		}
+		return all[i].LastFailedAt.Before(all[j].LastFailedAt)
+	})
+	purged := 0
+	for _, ev := range all {
+		if purged >= limit || !ev.LastFailedAt.Before(before) {
+			break
 		}
 		if m.deadLetterPurged == nil {
 			m.deadLetterPurged = make(map[string]struct{})

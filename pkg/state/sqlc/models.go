@@ -292,36 +292,50 @@ type AppEnv struct {
 }
 
 type AppError struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	DeploymentID  pgtype.UUID
-	Fingerprint   string
-	Route         string
-	HttpStatus    int32
-	ErrorClass    string
-	SampleMessage string
-	Count         int64
-	RequestCount  int64
-	FirstSeenAt   pgtype.Timestamptz
-	LastSeenAt    pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	AppID                   pgtype.UUID
+	DeploymentID            pgtype.UUID
+	Fingerprint             string
+	Route                   string
+	HttpStatus              int32
+	ErrorClass              string
+	SampleMessage           string
+	Count                   int64
+	RequestCount            int64
+	FirstSeenAt             pgtype.Timestamptz
+	LastSeenAt              pgtype.Timestamptz
+	CreatedAt               pgtype.Timestamptz
+	LastInstanceID          string
+	LastNodeID              string
+	LastRegion              string
+	LastCommitSha           string
+	LastDeploymentTag       string
+	LastDeploymentCreatedAt string
+	LastImageDigest         string
 }
 
 type AppErrorRequest struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	Fingerprint   string
-	RequestID     pgtype.UUID
-	ReceivedAt    pgtype.Timestamptz
-	Route         string
-	HttpStatus    int32
-	ErrorClass    string
-	SampleMessage string
-	DeploymentID  pgtype.UUID
-	HeadersSample []byte
-	Redactions    []string
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	Fingerprint         string
+	RequestID           pgtype.UUID
+	ReceivedAt          pgtype.Timestamptz
+	Route               string
+	HttpStatus          int32
+	ErrorClass          string
+	SampleMessage       string
+	DeploymentID        pgtype.UUID
+	HeadersSample       []byte
+	Redactions          []string
+	InstanceID          string
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 type AppLogDrain struct {
@@ -1707,29 +1721,35 @@ type ReleaseBundle struct {
 }
 
 type RequestTelemetry struct {
-	ID              pgtype.UUID
-	AccountID       pgtype.UUID
-	AppID           pgtype.UUID
-	DeploymentID    pgtype.UUID
-	Route           string
-	Method          string
-	Status          int32
-	LatencyMs       int32
-	ColdBoot        bool
-	TraceID         pgtype.Text
-	SpansSummary    []byte
-	ReceivedAt      pgtype.Timestamptz
-	Count           int32
-	UaFamily        string
-	ReferrerHost    string
-	Country         string
-	WakeID          pgtype.Text
-	InstanceID      pgtype.Text
-	GuestDurationMs int32
-	GuestRuntime    string
-	GuestOutcome    string
-	GuestErrorClass string
-	ConsumerID      pgtype.UUID
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	SpansSummary        []byte
+	ReceivedAt          pgtype.Timestamptz
+	Count               int32
+	UaFamily            string
+	ReferrerHost        string
+	Country             string
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 type RequestTelemetry202608 struct {
