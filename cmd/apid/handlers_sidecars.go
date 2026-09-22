@@ -79,18 +79,19 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 		return []byte("[]"), nil
 	}
 	type sealedSidecar struct {
-		Name          string                   `json:"name"`
-		Image         string                   `json:"image"`
-		Type          api.SidecarType          `json:"type"`
-		Cmd           []string                 `json:"cmd,omitempty"`
-		Env           map[string]string        `json:"env,omitempty"`
-		Port          int                      `json:"port,omitempty"`
-		RamMB         int                      `json:"ram_mb,omitempty"`
-		ScratchMB     int                      `json:"scratch_mb,omitempty"`
-		CPUMillicores int                      `json:"cpu_millicores,omitempty"`
-		DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
-		Essential     *bool                    `json:"essential,omitempty"`
-		DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
+		Name          string                      `json:"name"`
+		Image         string                      `json:"image"`
+		Type          api.SidecarType             `json:"type"`
+		Cmd           []string                    `json:"cmd,omitempty"`
+		Env           map[string]string           `json:"env,omitempty"`
+		Port          int                         `json:"port,omitempty"`
+		RamMB         int                         `json:"ram_mb,omitempty"`
+		ScratchMB     int                         `json:"scratch_mb,omitempty"`
+		CPUMillicores int                         `json:"cpu_millicores,omitempty"`
+		DiskIOProfile string                      `json:"disk_io_profile,omitempty"`
+		Essential     *bool                       `json:"essential,omitempty"`
+		StartupProbe  *api.AppManifestHealthcheck `json:"startup_probe,omitempty"`
+		DependsOn     []api.WorkloadDependency    `json:"depends_on,omitempty"`
 	}
 	out := make([]sealedSidecar, 0, len(ss))
 	for _, s := range ss {
@@ -128,6 +129,7 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 			CPUMillicores: s.CPUMillicores,
 			DiskIOProfile: s.DiskIOProfile,
 			Essential:     s.Essential,
+			StartupProbe:  s.StartupProbe,
 			DependsOn:     s.DependsOn,
 		})
 	}
@@ -540,7 +542,8 @@ func emitSidecarSetAudit(ctxr context.Context, audit *auditor, acct state.Accoun
 // the goroutine briefly (audit.Emit is sync; pkg/audit batches
 // async-flush). The log line sanitises req.Image at the sink
 // (CodeQL go/log-injection CWE-117).
-func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Account, app state.App, d state.Deployment, prev state.Deployment, req *api.CreateDeploymentRequest) {
+func notifyAndAuditDeployment(r *http.Request, s *server, acct state.Account, app state.App, d state.Deployment, prev state.Deployment, req *api.CreateDeploymentRequest) {
+	ctxr := r.Context()
 	// F-03: deployment_changed emits now carry status + deployment_id.
 	// status="pending" tells listeners this row is still in-flight
 	// (builderd will eventually stamp rootfs_path → imaged converts to
@@ -606,6 +609,8 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 		PRNumber:   d.PRNumber,
 	})
 	s.audit.EmitAs(ctxr, resolvedActor, "app.deployed", &acct.ID, mergeActorAudit(appDeployedData, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.recordDeploymentActivity(ctxr, r, acct, app, d,
+		map[string]any{"revision": d.Revision, "scope": d.Scope, "supersedes": supersedes})
 	// Issue #472 / ADR-054: emit app.signed_image_accepted here ONLY
 	// when effective signature enforcement is on for this deploy
 	// (apps.require_signed or security_policy=enforce). imaged will later emit

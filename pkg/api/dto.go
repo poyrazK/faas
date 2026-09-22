@@ -59,6 +59,31 @@ type EventSubscriptionListResponse struct {
 	Subscriptions []EventSubscriptionResponse `json:"subscriptions"`
 }
 
+// EventDeliveryResponse is the safe, metadata-only projection of an
+// event-triggered invocation. Payloads and handler results stay behind the
+// per-invocation endpoint; this view answers the operational question of
+// whether a published event reached a worker.
+type EventDeliveryResponse struct {
+	InvocationID   string     `json:"invocation_id"`
+	EventID        string     `json:"event_id"`
+	EventSource    string     `json:"event_source"`
+	EventType      string     `json:"event_type"`
+	SubscriptionID string     `json:"subscription_id,omitempty"`
+	State          string     `json:"state"`
+	Attempts       int        `json:"attempts"`
+	LastError      string     `json:"last_error,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+}
+
+// EventDeliveryListResponse is an app-scoped page of event-triggered
+// invocations, ordered newest first.
+type EventDeliveryListResponse struct {
+	AppSlug    string                  `json:"app_slug"`
+	Deliveries []EventDeliveryResponse `json:"deliveries"`
+	NextBefore string                  `json:"next_before,omitempty"`
+}
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.
@@ -2405,11 +2430,33 @@ type DeploymentResponse struct {
 	// 'pending' isn't "" — the dashboard fills in from
 	// pkg/state.SerializeDeployment which always stamps the
 	// resolved value).
-	RolloutState         string     `json:"rollout_state,omitempty"`
-	RolloutStartedAt     *time.Time `json:"rollout_started_at,omitempty"`
-	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
-	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
-	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	RolloutState          string                         `json:"rollout_state,omitempty"`
+	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
+}
+
+// ServiceRolloutHandoffResponse exposes the durable scheduler barrier state
+// for readiness-gated service deployments. Gateway lists contain registered
+// node names only; request or customer identifiers are never used as metric
+// labels or placed in this status payload.
+type ServiceRolloutHandoffResponse struct {
+	Action                  string     `json:"action"`
+	Phase                   string     `json:"phase"`
+	PredecessorDeploymentID string     `json:"predecessor_deployment_id,omitempty"`
+	Generation              int64      `json:"generation,omitempty"`
+	ExpectedGateways        []string   `json:"expected_gateways,omitempty"`
+	AcknowledgedGateways    []string   `json:"acknowledged_gateways,omitempty"`
+	MissingGateways         []string   `json:"missing_gateways,omitempty"`
+	RetryCount              int        `json:"retry_count"`
+	LastError               string     `json:"last_error,omitempty"`
+	Reason                  string     `json:"reason,omitempty"`
+	StartedAt               *time.Time `json:"started_at,omitempty"`
+	UpdatedAt               *time.Time `json:"updated_at,omitempty"`
+	AcknowledgedAt          *time.Time `json:"acknowledged_at,omitempty"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }
 
 // BuildPlan describes what the build pipeline did with the source
@@ -4820,6 +4867,46 @@ type ListAuditLogResponse struct {
 	NextBefore string          `json:"next_before,omitempty"`
 }
 
+// ActivityActorResponse is the captured identity shown beside one global
+// organization activity item. Label remains useful after an account or API
+// key is removed; AccountID is present only for human actors known locally.
+type ActivityActorResponse struct {
+	Type      string `json:"type"`
+	Label     string `json:"label"`
+	AccountID string `json:"account_id,omitempty"`
+}
+
+// ActivityResourceResponse identifies the primary object affected by an
+// activity item. ID may be absent for an external resource such as a domain.
+type ActivityResourceResponse struct {
+	Type  string `json:"type"`
+	ID    string `json:"id,omitempty"`
+	Label string `json:"label"`
+}
+
+// OrgActivityResponse is one safe, display-ready entry in an organization's
+// unified infrastructure history. Data contains kind-specific non-secret
+// metadata; clients must tolerate keys they do not recognize.
+type OrgActivityResponse struct {
+	ID           string                   `json:"id"`
+	OccurredAt   string                   `json:"occurred_at"`
+	Kind         string                   `json:"kind"`
+	Summary      string                   `json:"summary"`
+	Actor        ActivityActorResponse    `json:"actor"`
+	Resource     ActivityResourceResponse `json:"resource"`
+	AppID        string                   `json:"app_id,omitempty"`
+	ProjectID    string                   `json:"project_id,omitempty"`
+	DeploymentID string                   `json:"deployment_id,omitempty"`
+	Data         json.RawMessage          `json:"data"`
+}
+
+// ListOrgActivityResponse is a newest-first keyset page. NextBefore is opaque;
+// pass it back unchanged as the before query parameter.
+type ListOrgActivityResponse struct {
+	Items      []OrgActivityResponse `json:"items"`
+	NextBefore string                `json:"next_before,omitempty"`
+}
+
 // --- GitHub install bind picker (PR-B; §11) ---------------------------------
 //
 // InstallBindRequest is the body for both POST /v1/install/repos/list
@@ -5049,18 +5136,17 @@ const (
 // AppStreamingStatus is the per-request streaming classification
 // returned by GET /v1/apps/{slug}/streaming-cap (ADR-102 D6). It is
 // the wire-level mirror of pkg/gateway.(*Handler).decideStreaming —
-// a customer hitting this endpoint sees exactly what the gateway's
-// gate machine resolved for the next inbound request, with the same
-// status enum and the same effective cap.
+// a customer hitting this endpoint sees the same status enum and plan
+// cap; a route-aware request shape also resolves the matching gateway
+// edge-rule response cap.
 //
 // Status is one of the api.StreamingStatus* constants. CapKind
 // labels the cap source: "plan" means app.Plan.MaxResponseBodyBytes
 // (the buffered cap; for non-streaming statuses this is also the
-// streaming cap because no edge rule matched), "endpoint-rule"
-// means a kind=limit edge rule with a non-zero MaxBodyBytesStreaming
-// field matched and overrode the plan cap. CapKind is omitted from
-// the wire when there is no override so a customer whose plan cap
-// applied sees a clean three-field response.
+// streaming cap), "endpoint-rule" means a route-aware probe matched
+// a kind=limit edge rule with a non-zero MaxBodyBytesStreaming field
+// and overrode the plan cap. A plan-level probe or a gatewayd miss
+// returns CapKind="plan".
 //
 // PlanAllowed + FlagEnabled mirror the two booleans that gated the
 // decision, so a customer can self-diagnose without a separate
@@ -5796,8 +5882,9 @@ type AppSecurityResponse struct {
 }
 
 // AppSecurityPostureResponse is the read-only security posture projection for
-// an app. Findings are deterministic configuration checks; the response never
-// includes credentials, allowlist values, or other secret material.
+// an app. Findings cover deterministic configuration checks and the evidence
+// coverage of currently live images; the response never includes credentials,
+// allowlist values, or other secret material.
 type AppSecurityPostureResponse struct {
 	AppID          string                 `json:"app_id"`
 	Slug           string                 `json:"slug"`
@@ -6118,6 +6205,10 @@ type Sidecar struct {
 	// from "explicit true/false". PR-A only persists the field;
 	// the runtime effect is PR-B.
 	Essential *bool `json:"essential,omitempty"`
+	// StartupProbe optionally replaces the image's baked OCI HEALTHCHECK for
+	// this workload. The exec-style shape matches AppManifest.Healthcheck;
+	// use Test=["NONE"] to explicitly disable an image healthcheck.
+	StartupProbe *AppManifestHealthcheck `json:"startup_probe,omitempty"`
 	// DependsOn gates this workload on another workload's lifecycle state.
 	// At most WorkloadDependencyCapMax unique targets are accepted. An omitted
 	// condition means started. Init workloads remain prerequisites of the main
@@ -6200,6 +6291,9 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	if !ValidSidecarDiskIOProfile(s.DiskIOProfile) {
 		return ErrSidecarInvalidDiskIOProfile(s.DiskIOProfile)
 	}
+	if p := validateSidecarStartupProbe(s.Name, s.StartupProbe); p != nil {
+		return p
+	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
 			"Invalid sidecar dependency",
@@ -6230,6 +6324,54 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 				"Invalid sidecar dependency",
 				fmt.Sprintf("sidecar[%q].depends_on[%d].condition %q is invalid; use started, healthy, or completed_successfully.", s.Name, i, dep.Condition))
 		}
+	}
+	return nil
+}
+
+func validateSidecarStartupProbe(name string, probe *AppManifestHealthcheck) *Problem {
+	if probe == nil {
+		return nil
+	}
+	if len(probe.Test) == 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe.test must contain CMD, CMD-SHELL, or NONE; use [\"NONE\"] to disable the image probe.", name))
+	}
+	switch probe.Test[0] {
+	case "NONE":
+		if len(probe.Test) != 1 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test with NONE must contain exactly one element.", name))
+		}
+	case "CMD", "CMD-SHELL":
+		if len(probe.Test) < 2 || probe.Test[1] == "" {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test %s requires a non-empty command.", name, probe.Test[0]))
+		}
+		if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test CMD-SHELL requires exactly one command string.", name))
+		}
+	default:
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe.test must start with CMD, CMD-SHELL, or NONE.", name))
+	}
+	if probe.IntervalS < 0 || probe.TimeoutS < 0 || probe.Retries < 0 || probe.StartPeriodS < 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe interval_s, timeout_s, retries, and start_period_s must be >= 0.", name))
+	}
+	// These values cross the vmmd protobuf boundary as int32. Reject values
+	// that would wrap and change the guest's probe timing or retry budget.
+	const maxProtoInt32 = 1<<31 - 1
+	if probe.IntervalS > maxProtoInt32 || probe.TimeoutS > maxProtoInt32 || probe.Retries > maxProtoInt32 || probe.StartPeriodS > maxProtoInt32 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe timing and retry values must fit in int32.", name))
 	}
 	return nil
 }
@@ -6872,18 +7014,25 @@ type EdgeRuleRetryAction struct {
 	// MaxAttempts counts attempts, not retries: 2 is the original plus one
 	// replay. Zero applies EdgeRuleRetryDefaultMaxAttempts.
 	MaxAttempts int `json:"max_attempts,omitempty"`
-	// AllowNonIdempotent opts POST and PATCH into replay.
+	// AllowNonIdempotent opts POST and PATCH into replay when the request also
+	// carries a non-empty Idempotency-Key header.
 	//
 	// This is the only field here that can cost correctness rather than
 	// latency: a replayed POST runs the customer's side effect twice unless
-	// their handler is idempotent or they send an idempotency key. It
-	// defaults false and the CLI/docs state the consequence explicitly.
+	// their handler does not honor the idempotency key. It defaults false and
+	// the CLI/docs state the consequence explicitly.
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
 	// MinRemainingMs is the request-budget floor below which a replay is
 	// skipped. Zero applies EdgeRuleRetryDefaultMinRemainingMs.
 	MinRemainingMs int `json:"min_remaining_ms,omitempty"`
 	// BackoffMs delays a replay. Defaults to 0.
 	BackoffMs int `json:"backoff_ms,omitempty"`
+	// BudgetPercent caps aggregate replay attempts relative to original
+	// requests in a short per-app window. Zero applies the 10% default.
+	BudgetPercent int `json:"budget_percent,omitempty"`
+	// BudgetMinRetries is the low-traffic retry allowance per window. Zero
+	// applies the default of one.
+	BudgetMinRetries int `json:"budget_min_retries,omitempty"`
 }
 
 // Validate applies the ADR-201 §1 defaults and bounds. It mutates the
@@ -6921,6 +7070,22 @@ func (a *EdgeRuleRetryAction) Validate() *Problem {
 		return ErrValidation(fmt.Sprintf(
 			"retry action: backoff_ms must be in 0..%d (got %d) — the failure being retried is a dead peer, so a delay rarely helps",
 			MaxEdgeRuleRetryBackoffMs, a.BackoffMs))
+	}
+	if a.BudgetPercent == 0 {
+		a.BudgetPercent = EdgeRuleRetryDefaultBudgetPercent
+	}
+	if a.BudgetPercent < 1 || a.BudgetPercent > MaxEdgeRuleRetryBudgetPercent {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: budget_percent must be in 1..%d (got %d)",
+			MaxEdgeRuleRetryBudgetPercent, a.BudgetPercent))
+	}
+	if a.BudgetMinRetries == 0 {
+		a.BudgetMinRetries = EdgeRuleRetryDefaultBudgetMin
+	}
+	if a.BudgetMinRetries < 0 || a.BudgetMinRetries > MaxEdgeRuleRetryBudgetMin {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: budget_min_retries must be in 0..%d (got %d)",
+			MaxEdgeRuleRetryBudgetMin, a.BudgetMinRetries))
 	}
 	return nil
 }

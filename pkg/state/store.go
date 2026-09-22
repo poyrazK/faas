@@ -2493,6 +2493,13 @@ type Store interface {
 	// predecessor remains available until every serving gateway acknowledges
 	// the routing generation and its in-flight requests drain.
 	BeginServiceRolloutCutover(ctx context.Context, id string) (Deployment, error)
+	// BeginServiceRolloutAbort restores the predecessor's traffic weight while
+	// retaining both generations as live. The scheduler must wait for gateway
+	// acknowledgement and candidate request drain before finalising the abort.
+	BeginServiceRolloutAbort(ctx context.Context, id string) (Deployment, error)
+	// UpdateServiceRolloutHandoff persists scheduler progress between the
+	// routing and drain barriers so another schedd can resume safely.
+	UpdateServiceRolloutHandoff(ctx context.Context, id string, handoff ServiceRolloutHandoff) (Deployment, error)
 	// AbortServiceRollout atomically removes a failed service rollout and
 	// restores the newest older live deployment in the same app/scope to 100%
 	// traffic. The target must be a live zero-step row marked
@@ -6427,6 +6434,15 @@ type Store interface {
 // older operator implementations.
 type DefaultCustomDomainStore interface {
 	DefaultCustomDomain(context.Context, string) (string, error)
+}
+
+// OrgActivityStore is the optional durable projection behind the global
+// organization activity timeline. It remains a narrow capability instead of
+// widening Store so small test doubles and alternate stores do not need to
+// implement a customer-facing read model they never use.
+type OrgActivityStore interface {
+	AppendOrgActivity(context.Context, OrgActivity) (OrgActivity, error)
+	ListOrgActivity(context.Context, OrgActivityFilter) ([]OrgActivity, error)
 }
 
 // CustomerEventFilter is the tenant-safe query contract for the customer audit

@@ -62,6 +62,12 @@ type PrivateNetworkFabricTransportRouter interface {
 	ReconcilePrivateNetworkFabricWithPeers(context.Context, string, string, string, string, netip.Prefix, []netip.Addr) error
 }
 
+// PrivateNetworkFabricTeardownRouter is the additive vmmd capability used to
+// remove a node-local bridge after a Gregale-owned network is deleted.
+type PrivateNetworkFabricTeardownRouter interface {
+	RemovePrivateNetworkFabric(context.Context, string, string, string, string, netip.Prefix) error
+}
+
 // PrivateNetworkRouteApplier fans one app-level CIDR set out to the vmmds that
 // own its live instances. vmmd itself fans that update out to all of its local
 // instances, so schedd only sends one update per node.
@@ -407,6 +413,103 @@ func (a *PrivateNetworkFabricApplier) ApplyWithReport(ctx context.Context, attac
 		report.Nodes = append(report.Nodes, privatenetwork.RouteNodeObservation{NodeID: nodeID, Status: api.PrivateNetworkAttachmentStatusReady, Detail: "fabric bridge ready"})
 	}
 	return report, errors.Join(errs...)
+}
+
+// PrivateNetworkFabricTeardown fans a durable network deletion out to every
+// active compute node in the network's region. The vmmd operation is
+// idempotent, while the joined error keeps the outbox row pending until every
+// node has acknowledged cleanup.
+type PrivateNetworkFabricTeardown struct {
+	store  state.Store
+	router PrivateNetworkFabricTeardownRouter
+	log    *slog.Logger
+}
+
+func NewPrivateNetworkFabricTeardown(store state.Store, router PrivateNetworkFabricTeardownRouter, log *slog.Logger) *PrivateNetworkFabricTeardown {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &PrivateNetworkFabricTeardown{store: store, router: router, log: log}
+}
+
+func (t *PrivateNetworkFabricTeardown) Remove(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix) error {
+	if t == nil || t.store == nil || t.router == nil {
+		return errors.New("private network fabric teardown is not configured")
+	}
+	if strings.TrimSpace(accountID) == "" || strings.TrimSpace(networkID) == "" || !cidr.IsValid() {
+		return errors.New("private network fabric teardown requires account, network, and CIDR")
+	}
+	rows, err := t.store.ActiveComputeNodes(ctx)
+	if err != nil {
+		return fmt.Errorf("list active compute nodes: %w", err)
+	}
+	nodes := make([]state.ComputeNode, 0, len(rows))
+	for _, node := range rows {
+		if strings.TrimSpace(node.ID) == "" || !node.Active || !fabricNodeInRegion(node, region) {
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	var errs []error
+	for _, node := range nodes {
+		if err := t.router.RemovePrivateNetworkFabric(ctx, node.ID, accountID, networkID, region, cidr); err != nil {
+			err = fmt.Errorf("node %s: %w", node.ID, err)
+			errs = append(errs, err)
+			t.log.Warn("schedd: private network fabric teardown failed", "account", accountID, "network", networkID, "region", region, "node", node.ID, "err", err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// PrivateNetworkFabricDeletionSubscriber turns the durable network-deleted
+// notification into node-local fabric cleanup. The network row is already
+// gone, so the notification carries the immutable region and CIDR needed for
+// teardown.
+type PrivateNetworkFabricDeletionSubscriber struct {
+	teardown *PrivateNetworkFabricTeardown
+	log      *slog.Logger
+}
+
+func NewPrivateNetworkFabricDeletionSubscriber(teardown *PrivateNetworkFabricTeardown, log *slog.Logger) *PrivateNetworkFabricDeletionSubscriber {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &PrivateNetworkFabricDeletionSubscriber{teardown: teardown, log: log}
+}
+
+func (s *PrivateNetworkFabricDeletionSubscriber) Handle(ctx context.Context, n db.Notification) error {
+	if n.Channel != db.NotifyPrivateNetworkChanged {
+		return nil
+	}
+	var payload struct {
+		Kind      string `json:"kind"`
+		AccountID string `json:"account_id"`
+		NetworkID string `json:"network_id"`
+		Region    string `json:"region"`
+		CIDR      string `json:"cidr"`
+	}
+	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
+		return fmt.Errorf("decode private network deletion: %w", err)
+	}
+	if payload.Kind != "private_network_deleted" {
+		return nil
+	}
+	if strings.TrimSpace(payload.AccountID) == "" || strings.TrimSpace(payload.NetworkID) == "" || strings.TrimSpace(payload.Region) == "" {
+		return errors.New("private network deletion requires account_id, network_id, and region")
+	}
+	cidr, err := api.ValidatePrivateNetworkCIDR(payload.CIDR)
+	if err != nil {
+		return fmt.Errorf("private network deletion CIDR: %w", err)
+	}
+	if s.teardown == nil {
+		return errors.New("private network fabric deletion subscriber is not configured")
+	}
+	if err := s.teardown.Remove(ctx, payload.AccountID, payload.NetworkID, payload.Region, cidr); err != nil {
+		return err
+	}
+	s.log.Debug("schedd: private network fabric teardown converged", "account", payload.AccountID, "network", payload.NetworkID, "region", payload.Region)
+	return nil
 }
 
 func findComputeNode(nodes []state.ComputeNode, id string) (state.ComputeNode, bool) {
