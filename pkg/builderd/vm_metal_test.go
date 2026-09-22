@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -334,5 +335,40 @@ func TestBuildManifestForRequestCarriesWarmInputs(t *testing.T) {
 	}
 	if manifest.DockerfilePath != "deploy/Dockerfile.production" {
 		t.Fatalf("manifest dockerfile = %q", manifest.DockerfilePath)
+	}
+}
+
+func TestRunJanitorRemovesStaleBuildArtifacts(t *testing.T) {
+	driveDir := t.TempDir()
+	staleStage := filepath.Join(driveDir, ".faas-buildstage-stale")
+	freshStage := filepath.Join(driveDir, ".faas-buildstage-fresh")
+	unrelatedDir := filepath.Join(driveDir, "operator-data")
+	for _, path := range []string{staleStage, freshStage, unrelatedDir} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	staleDrive := filepath.Join(driveDir, "build-stale.ext4")
+	if err := os.WriteFile(staleDrive, []byte("sparse fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	for _, path := range []string{staleStage, staleDrive} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	(&VMMDriver{driveDir: driveDir}).runJanitor()
+
+	for _, path := range []string{staleStage, staleDrive} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("stale artifact %q remains: %v", path, err)
+		}
+	}
+	for _, path := range []string{freshStage, unrelatedDir} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("preserved directory %q: %v", path, err)
+		}
 	}
 }

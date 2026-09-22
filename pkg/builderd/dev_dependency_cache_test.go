@@ -132,6 +132,58 @@ func TestStageDependencyCacheValidatesBeforeMove(t *testing.T) {
 	}
 }
 
+func TestStageDependencyCacheForDriveUsesHardLinks(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "cache")
+	dst := filepath.Join(root, "staged")
+	writeCacheFixture(t, src, "linked")
+
+	if err := stageDependencyCacheForDrive(src, dst, 1<<20, os.Link); err != nil {
+		t.Fatal(err)
+	}
+	assertCacheFixture(t, dst, "linked")
+	sourceInfo, err := os.Stat(filepath.Join(src, "blobs", "sha256", "fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagedInfo, err := os.Stat(filepath.Join(dst, "blobs", "sha256", "fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(sourceInfo, stagedInfo) {
+		t.Fatal("same-filesystem drive staging copied the cache instead of linking it")
+	}
+	if err := os.RemoveAll(src); err != nil {
+		t.Fatal(err)
+	}
+	assertCacheFixture(t, dst, "linked")
+}
+
+func TestStageDependencyCacheForDriveFallsBackToCopy(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "cache")
+	dst := filepath.Join(root, "staged")
+	writeCacheFixture(t, src, "copied")
+
+	if err := stageDependencyCacheForDrive(src, dst, 1<<20, func(string, string) error {
+		return syscall.EXDEV
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertCacheFixture(t, dst, "copied")
+	sourceInfo, err := os.Stat(filepath.Join(src, "blobs", "sha256", "fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagedInfo, err := os.Stat(filepath.Join(dst, "blobs", "sha256", "fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(sourceInfo, stagedInfo) {
+		t.Fatal("cross-filesystem fallback unexpectedly retained a hard link")
+	}
+}
+
 func TestCopyDependencyCacheRejectsUnsafeOrOversizedEntries(t *testing.T) {
 	t.Run("oversized", func(t *testing.T) {
 		src := filepath.Join(t.TempDir(), "cache")

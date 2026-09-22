@@ -284,6 +284,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	go l.runGCTick(ctx, l.now())
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
 	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
+	go l.reconcileSecuritySignatures(ctx, l.now())
 
 	for {
 		select {
@@ -410,7 +411,20 @@ func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) error 
 	if l.handler == nil {
 		return errors.New("imaged: notification handler unavailable")
 	}
-	return l.handler.HandleNotification(ctx, n)
+	if err := l.handler.HandleNotification(ctx, n); err != nil {
+		return err
+	}
+	if n.Channel == db.NotifyTrustedSignerChanged {
+		// HandleNotification refreshes the trust cache first. Revalidate only
+		// after that succeeds so a signer removal can quarantine a live image
+		// before this durable notification is acknowledged.
+		observedAt := time.Now().UTC()
+		if l.now != nil {
+			observedAt = l.now().UTC()
+		}
+		l.reconcileSecuritySignatures(ctx, observedAt)
+	}
+	return nil
 }
 
 // dispatchNotification is the LISTEN fast path. A durable row is acknowledged

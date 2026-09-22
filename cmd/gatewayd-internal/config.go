@@ -375,6 +375,26 @@ func (c *Config) GetRequestTelemetryTarget(env func(string) string) string {
 	return "/run/faas/request_telemetry.sock"
 }
 
+// GetSpansWriterTarget resolves the apid SpansWriter endpoint. Single-box
+// deployments retain the dedicated Unix socket. Split-box deployments reuse
+// the same private mTLS listener as AppErrors and RequestTelemetry, because
+// all three services share the gatewayd-internal → apid trust boundary.
+func (c *Config) GetSpansWriterTarget(env func(string) string) string {
+	if v := env("FAAS_APID_OTEL_SPANS_WRITER_SOCKET"); v != "" {
+		return v
+	}
+	if v := env("FAAS_APID_REQUEST_TELEMETRY_TARGET"); v != "" {
+		return v
+	}
+	if v := env("FAAS_APID_APP_ERRORS_TARGET"); v != "" {
+		return v
+	}
+	if c != nil && c.AppErrorsTarget != "" {
+		return c.AppErrorsTarget
+	}
+	return "/run/faas/otel_spans_writer.sock"
+}
+
 // LoadAppErrorsTLS returns the client mTLS config gatewayd uses to report
 // errors to apid. Empty paths preserve the Unix-socket/single-box path.
 func (c *Config) LoadAppErrorsTLS() (*tls.Config, error) {

@@ -67,6 +67,20 @@ func TestPrivateNetworkFabricLifecycle(t *testing.T) {
 	if attachmentResp.Attachment == nil || attachmentResp.Attachment.Address != "10.42.1.2" {
 		t.Fatalf("attachment address = %+v, want stable member 10.42.1.2", attachmentResp.Attachment)
 	}
+	rec = e.do(t, "GET", "/v1/networks/"+created.ID+"/members", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("members status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var members api.PrivateNetworkMembersResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &members); err != nil {
+		t.Fatalf("decode members: %v", err)
+	}
+	if members.NetworkID != created.ID || members.CIDR != "10.42.1.0/28" || members.Capacity != 13 || members.Used != 1 || members.Available != 12 || len(members.Members) != 1 {
+		t.Fatalf("members = %+v", members)
+	}
+	if member := members.Members[0]; member.OwnerType != "app" || member.OwnerID == "" || member.Address != "10.42.1.2" {
+		t.Fatalf("member = %+v", member)
+	}
 	if err := e.store.DeletePrivateNetwork(t.Context(), e.acct.ID, created.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("delete attached network err = %v, want conflict", err)
 	}
@@ -93,5 +107,9 @@ func TestPrivateNetworkFabricFlagOff(t *testing.T) {
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s status = %d, want 503; body=%s", method, rec.Code, rec.Body.String())
 		}
+	}
+	rec := e.do(t, "GET", "/v1/networks/net-missing/members", nil, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("members status = %d, want 503; body=%s", rec.Code, rec.Body.String())
 	}
 }

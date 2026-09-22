@@ -3462,6 +3462,29 @@ func (c *Client) ListWakeTimeline(ctx context.Context, slug, wakeID, since strin
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListSidecarTimeline returns the init, restart, and health-transition frames
+// for one sidecar (issue #463 / ADR-069). Events are oldest-first and Latest
+// contains the most recent health status when a health frame exists.
+//
+// since is an RFC 3339 timestamp and limit is bounded server-side at 1000.
+// Cross-account visibility is enforced server-side by the slug ownership and
+// per-row data.app_id forge-proof checks.
+func (c *Client) ListSidecarTimeline(ctx context.Context, slug, sidecarName, since string, limit int) (SidecarTimelineResponse, error) {
+	var out SidecarTimelineResponse
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/sidecars/" + sidecarName + "/timeline"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // ListAuditEvents returns the caller's auth audit events newest-first.
 // includeAnonymous (Wave 0 PR-C / ADR-047) toggles subject=NULL rows —
 // the defensive case where the app row was deleted between wake and

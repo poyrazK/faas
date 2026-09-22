@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
 // TestCmdInit_AllTemplatesMaterialize: every Wave 0 PR-B template
@@ -139,6 +140,69 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 				t.Errorf("stdout missing docs URL; got: %q", stdout.String())
 			}
 		})
+	}
+}
+
+// TestCmdInit_EventWorkerQuickstartContract keeps the built-in event worker
+// starter aligned with the manifest validator and the documented happy path.
+// The router's publish, fan-out, and DLQ behavior is covered by cmd/e2e; this
+// local contract catches a broken starter before a user reaches those steps.
+func TestCmdInit_EventWorkerQuickstartContract(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "invoice-worker")
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	if code := runCmdInit("event-worker", dest, false, "", osStdout, os.Stderr); code != 0 {
+		t.Fatalf("runCmdInit(event-worker) = %d; stdout=%q", code, stdout.String())
+	}
+
+	manifest, ok, err := gregalemanifest.Load(dest)
+	if err != nil {
+		t.Fatalf("load event-worker manifest: %v", err)
+	}
+	if !ok || manifest == nil {
+		t.Fatal("event-worker starter did not produce a manifest")
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("validate event-worker manifest: %v", err)
+	}
+	if len(manifest.EventTriggers) != 1 {
+		t.Fatalf("event triggers = %d, want 1", len(manifest.EventTriggers))
+	}
+	trigger := manifest.EventTriggers[0]
+	if trigger.Source != "billing.*" || trigger.Type != "invoice.paid" ||
+		trigger.Filter != `{"data":{"amount":{"$gt":100}}}` {
+		t.Fatalf("event trigger = %+v, want billing.* / invoice.paid / amount filter", trigger)
+	}
+
+	handler, err := os.ReadFile(filepath.Join(dest, "handler.js"))
+	if err != nil {
+		t.Fatalf("read event-worker handler: %v", err)
+	}
+	for _, want := range []string{"event_id", "source:", "type:", "statusCode: 202"} {
+		if !strings.Contains(string(handler), want) {
+			t.Errorf("handler missing %q", want)
+		}
+	}
+
+	readme, err := os.ReadFile(filepath.Join(dest, "README.md"))
+	if err != nil {
+		t.Fatalf("read event-worker README: %v", err)
+	}
+	readmeText := string(readme)
+	steps := []string{
+		"gregale init --template event-worker",
+		"gregale deploy --name invoice-worker",
+		"gregale events publish billing.stripe invoice.paid",
+		"gregale invocations list --limit 10",
+		"gregale events subscriptions invoice-worker",
+	}
+	last := -1
+	for _, step := range steps {
+		at := strings.Index(readmeText, step)
+		if at <= last {
+			t.Fatalf("README quickstart step %q is missing or out of order", step)
+		}
+		last = at
 	}
 }
 

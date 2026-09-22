@@ -1741,6 +1741,10 @@ Configure a simple push workload with queue-depth scaling
 | `--queue-name <QUEUE>` | logical queue name |  |
 | `--target-depth <N>` | messages per worker before scaling out |  |
 | `--max-concurrency <N>` | maximum concurrent deliveries per worker |  |
+| `--max-attempts <N>` | maximum delivery attempts (0 uses the plan default) |  |
+| `--retry-base-seconds <N>` | base retry delay in seconds |  |
+| `--retry-max-seconds <N>` | maximum retry delay in seconds |  |
+| `--retry-jitter-seconds <N>` | retry jitter in seconds (0..1) |  |
 | `--force` | replace an existing default binding on another queue |  |
 
 ### queue bindings

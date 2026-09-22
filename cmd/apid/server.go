@@ -1254,6 +1254,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworks))))
 	mux.HandleFunc("POST /v1/networks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPrivateNetwork)))))
 	mux.HandleFunc("GET /v1/networks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPrivateNetwork))))
+	mux.HandleFunc("GET /v1/networks/{id}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworkMembers))))
 	mux.HandleFunc("GET /v1/networks/{id}/peerings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrivateNetworkPeerings))))
 	mux.HandleFunc("POST /v1/networks/{id}/peerings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPrivateNetworkPeering)))))
 	mux.HandleFunc("GET /v1/networks/{id}/peerings/{peer_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPrivateNetworkPeering))))
@@ -2504,6 +2505,10 @@ func (s *server) handler() http.Handler {
 	// index events_wake_id_idx (migrations/00113) for O(frames)
 	// latency regardless of events table size.
 	mux.HandleFunc("GET /v1/apps/{slug}/wakes/{wake_id}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWakeTimeline))))
+	// Issue #463 / ADR-069: customer-facing sidecar lifecycle timeline.
+	// The read is backed by the sidecar_name partial indexes and applies
+	// the same per-app forge-proof as the wake timeline above.
+	mux.HandleFunc("GET /v1/apps/{slug}/sidecars/{sidecar_name}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSidecarTimeline))))
 
 	// Customer secrets (spec §11/G2). Plaintext VALUE flows through PUT
 	// over TLS; sealed server-side by handlers_secrets.go.
@@ -2996,6 +3001,12 @@ func (s *server) handler() http.Handler {
 	}))))
 	mux.Handle("POST /dashboard/failed-events/discard-all", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.dashboardFailedEventsBulkAction(w, r, "discard")
+	}))))
+	mux.Handle("POST /dashboard/failed-events/replay-selected", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardFailedEventsSelectedAction(w, r, "replay")
+	}))))
+	mux.Handle("POST /dashboard/failed-events/discard-selected", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.dashboardFailedEventsSelectedAction(w, r, "discard")
 	}))))
 	mux.Handle("POST /dashboard/failed-events/{slug}/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.dashboardFailedEventAction(w, r, "replay")

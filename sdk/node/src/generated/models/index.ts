@@ -489,6 +489,8 @@ export type { PrewarmRequest } from './PrewarmRequest.js';
 export type { PrivateNetwork } from './PrivateNetwork.js';
 export type { PrivateNetworkFirewallRule } from './PrivateNetworkFirewallRule.js';
 export type { PrivateNetworkListResponse } from './PrivateNetworkListResponse.js';
+export type { PrivateNetworkMember } from './PrivateNetworkMember.js';
+export type { PrivateNetworkMembersResponse } from './PrivateNetworkMembersResponse.js';
 export type { PrivateNetworkPeering } from './PrivateNetworkPeering.js';
 export type { PrivateNetworkPeeringListResponse } from './PrivateNetworkPeeringListResponse.js';
 export type { Problem } from './Problem.js';
@@ -609,6 +611,8 @@ export type { SetObjectBucketAccessGrantRequest } from './SetObjectBucketAccessG
 export type { SetPasswordRequest } from './SetPasswordRequest.js';
 export type { SeverityCounts } from './SeverityCounts.js';
 export type { Sidecar } from './Sidecar.js';
+export type { SidecarTimelineResponse } from './SidecarTimelineResponse.js';
+export type { SidecarTimelineStatus } from './SidecarTimelineStatus.js';
 export type { Slug } from './Slug.js';
 export type { SourceRefDeployRequest } from './SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './SourceTarballDeployRequest.js';

@@ -42,22 +42,23 @@ const (
 	mfaFile               = "mfa.go"
 	sessionsFile          = "sessions.go" // IAM-3 (ADR-039)
 	errorsFile            = "errors.go"
-	wakeTLFile            = "wake_timeline.go"   // issue #517 PR-C / ADR-064
-	orgsFile              = "orgs.go"            // issue #190 / IAM-6 / ADR-061 PR 5
-	scanFile              = "dto_scan.go"        // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
-	webhooksFile          = "webhooks.go"        // issue #476 / ADR-076
-	realtimeFile          = "realtime.go"        // ADR-156 — managed realtime endpoint DTOs
-	logDrainsFile         = "logdrains.go"       // issue #1398 O4 — customer runtime log destinations
-	billingFile           = "billing.go"         // PR-P3 — admin reconcile + future billing DTOs
-	diffFile              = "diff.go"            // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
-	upstreamsFile         = "upstreams.go"       // ADR-098 §9.A PR-B
-	triggerFile           = "trigger.go"         // issue #757 / ADR-100 — trigger primitive wire DTOs
-	oidcFile              = "oidc.go"            // ADR-101 / PR-A — OIDC / keyless deploy auth DTOs
-	envDiffFile           = "env_diff.go"        // ADR-117 PR-C — EnvDiffResponse / EnvDiffRow / EnvDiffCell wire DTOs
-	operatorConfigFile    = "operator_config.go" // ADR-132 — operator runtime configuration
-	obsFile               = "obs.go"             // Obs-Meta + Trace-IDs Mega-PR / C7 — operator obs backend DTOs + ObsHealthResponse
-	corsPresetsFile       = "cors_preset_dto.go" // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
-	uploadSessionFile     = "upload_session.go"  // issue #1182 §P1 PR-1 — resumable upload session DTOs
+	wakeTLFile            = "wake_timeline.go"    // issue #517 PR-C / ADR-064
+	sidecarTimelineFile   = "sidecar_timeline.go" // issue #463 / ADR-069 — sidecar lifecycle timeline DTOs
+	orgsFile              = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
+	scanFile              = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
+	webhooksFile          = "webhooks.go"         // issue #476 / ADR-076
+	realtimeFile          = "realtime.go"         // ADR-156 — managed realtime endpoint DTOs
+	logDrainsFile         = "logdrains.go"        // issue #1398 O4 — customer runtime log destinations
+	billingFile           = "billing.go"          // PR-P3 — admin reconcile + future billing DTOs
+	diffFile              = "diff.go"             // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
+	upstreamsFile         = "upstreams.go"        // ADR-098 §9.A PR-B
+	triggerFile           = "trigger.go"          // issue #757 / ADR-100 — trigger primitive wire DTOs
+	oidcFile              = "oidc.go"             // ADR-101 / PR-A — OIDC / keyless deploy auth DTOs
+	envDiffFile           = "env_diff.go"         // ADR-117 PR-C — EnvDiffResponse / EnvDiffRow / EnvDiffCell wire DTOs
+	operatorConfigFile    = "operator_config.go"  // ADR-132 — operator runtime configuration
+	obsFile               = "obs.go"              // Obs-Meta + Trace-IDs Mega-PR / C7 — operator obs backend DTOs + ObsHealthResponse
+	corsPresetsFile       = "cors_preset_dto.go"  // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
+	uploadSessionFile     = "upload_session.go"   // issue #1182 §P1 PR-1 — resumable upload session DTOs
 	managedPostgresFile   = "managed_postgres.go"
 	openapiContractFile   = "openapi_contract.go"
 	executionsFile        = "executions.go"      // ADR-171 — disposable one-shot execution DTOs
@@ -200,7 +201,9 @@ var routeExclude = map[string]bool{
 	// by the session cookie and CSRF token. The public SDK does not model
 	// browser form surfaces; mirror cmd/sdk-coverage/main.go::routeExclude.
 	"POST /dashboard/failed-events/discard-all":          true,
+	"POST /dashboard/failed-events/discard-selected":     true,
 	"POST /dashboard/failed-events/replay-all":           true,
+	"POST /dashboard/failed-events/replay-selected":      true,
 	"POST /dashboard/failed-events/{slug}/{id}/discard":  true,
 	"POST /dashboard/failed-events/{slug}/{id}/replay":   true,
 	"POST /dashboard/failed-events/account/{id}/discard": true,
@@ -924,6 +927,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", sessionsFile),
 		filepath.Join(root, "pkg", "api", errorsFile),
 		filepath.Join(root, "pkg", "api", wakeTLFile),
+		filepath.Join(root, "pkg", "api", sidecarTimelineFile),
 		filepath.Join(root, "pkg", "api", orgsFile),
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),

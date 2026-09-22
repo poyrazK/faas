@@ -2056,15 +2056,99 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		metricsRegisterer = deps.opsMetrics.Registry()
 		metricPrefix = deps.opsMetrics.MetricPrefix()
 	}
-	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "gatewayd-internal", wire.Version, log, metricsRegisterer, metricPrefix)
+
+	// Platform-owned service-proxy spans bypass the customer OTLP endpoint:
+	// gatewayd-internal already knows the authorized account, so it can retain
+	// those spans through apid's trusted writer without an SDK or customer API
+	// key. The exporter only does in-memory accumulation on Span.End.
+	var retainedSpansAcc *gateway.SpansAccumulator
+	var retainedSpansWriter *apidgrpc.SpansWriterClientImpl
+	var retainedSpansExporter *gateway.RetainedServiceSpansExporter
+	if osGetenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
+		retainedSpansAcc = gateway.NewSpansAccumulator()
+		spansWriterTarget := cfg.GetSpansWriterTarget(osGetenv)
+		spansWriterTLS, tlsErr := cfg.LoadAppErrorsTLS()
+		if tlsErr != nil {
+			return fmt.Errorf("gatewayd-internal: load retained spans writer TLS: %w", tlsErr)
+		}
+		var dialErr error
+		retainedSpansWriter, dialErr = apidgrpc.DialSpansWriter(ctx, spansWriterTarget, spansWriterTLS)
+		if dialErr != nil {
+			return fmt.Errorf("gatewayd-internal: dial apid spans writer at %q: %w", spansWriterTarget, dialErr)
+		}
+		retainedSpansExporter = gateway.NewRetainedServiceSpansExporter(retainedSpansAcc, log)
+	}
+
+	var traceShutdown func(context.Context) error
+	var traceErr error
+	if retainedSpansExporter != nil {
+		traceShutdown, traceErr = trace.InitTracerWithRegistryAndExporters(
+			ctx,
+			"gatewayd-internal",
+			wire.Version,
+			log,
+			metricsRegisterer,
+			metricPrefix,
+			retainedSpansExporter,
+		)
+	} else {
+		traceShutdown, traceErr = trace.InitTracerWithRegistry(ctx, "gatewayd-internal", wire.Version, log, metricsRegisterer, metricPrefix)
+	}
 	if traceErr != nil {
+		if retainedSpansWriter != nil {
+			_ = retainedSpansWriter.Close()
+		}
 		return fmt.Errorf("gatewayd-internal: init tracing: %w", traceErr)
+	}
+
+	var retainedFlushCancel context.CancelFunc
+	var retainedFlushDone <-chan struct{}
+	if retainedSpansAcc != nil && retainedSpansWriter != nil {
+		flushInterval := 30 * time.Second
+		if value := osGetenv("FAAS_OTEL_FLUSH_INTERVAL"); value != "" {
+			if parsed, parseErr := time.ParseDuration(value); parseErr == nil && parsed > 0 {
+				flushInterval = parsed
+			} else {
+				log.Warn("gatewayd-internal: invalid OTel flush interval; using default", "value", value)
+			}
+		}
+		flushCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		flushDone := make(chan struct{})
+		retainedFlushCancel = cancel
+		retainedFlushDone = flushDone
+		go func() {
+			defer close(flushDone)
+			err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
+				Interval: flushInterval,
+				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
+					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				},
+				Log: log,
+				MaxSpansPerTrace: func(string) int {
+					return api.MustLimitsFor(api.PlanScale).DebugTelemetrySpansPerTrace
+				},
+			})
+			if err != nil {
+				log.Error("gatewayd-internal: retained spans flush loop exited", "err", err)
+			}
+		}()
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
 		if err := traceShutdown(shutdownCtx); err != nil {
 			log.Warn("gatewayd-internal: trace shutdown failed", "err", err)
+		}
+		cancel()
+		if retainedFlushCancel != nil {
+			retainedFlushCancel()
+			select {
+			case <-retainedFlushDone:
+			case <-time.After(6 * time.Second):
+				log.Warn("gatewayd-internal: timed out draining retained spans")
+			}
+		}
+		if retainedSpansWriter != nil {
+			_ = retainedSpansWriter.Close()
 		}
 	}()
 

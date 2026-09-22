@@ -34,7 +34,7 @@ var errResponseBodyTooLarge = errors.New("outbound response body exceeds gateway
 
 var hopByHopHeaders = map[string]struct{}{
 	"Connection": {}, "Keep-Alive": {}, "Proxy-Authenticate": {},
-	"Proxy-Authorization": {}, "TE": {}, "Trailer": {},
+	"Proxy-Authorization": {}, "Te": {}, "Trailer": {},
 	"Transfer-Encoding": {}, "Upgrade": {},
 }
 
@@ -100,8 +100,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusMethodNotAllowed, "outbound_method_not_allowed", "CONNECT is not supported", "")
 		return
 	}
-	id, path, ok := parsePath(r.URL.Path)
-	if !ok {
+	// Split before unescaping so an encoded slash remains part of a provider
+	// path segment instead of becoming a different resource hierarchy.
+	id, path, ok := parsePath(r.URL.EscapedPath())
+	id, pathErr := url.PathUnescape(id)
+	if !ok || pathErr != nil {
 		writeProblem(w, http.StatusNotFound, "outbound_integration_not_found", "Outbound integration not found", "")
 		return
 	}
@@ -131,7 +134,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
 		return
 	}
-	if h.MaxBodyBytes > 0 {
+	if h.MaxBodyBytes > 0 && r.Body != nil && r.Body != http.NoBody {
 		// ContentLength is -1 for chunked requests. Always wrap the body so
 		// the same cap applies when the caller omits a length or lies about it.
 		r.Body = http.MaxBytesReader(w, r.Body, h.MaxBodyBytes)
@@ -186,6 +189,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamReq.Header = forwardedHeaders(r.Header)
+	// NewRequest cannot infer the length of a server-side ReadCloser (or
+	// MaxBytesReader). Preserve known lengths and the explicit empty-body
+	// sentinel so providers do not unexpectedly receive chunked uploads.
+	upstreamReq.ContentLength = r.ContentLength
+	if r.ContentLength == 0 {
+		upstreamReq.Body = http.NoBody
+	}
 	resp, err := h.Client.Do(upstreamReq)
 	if err != nil {
 		dependencySpan.RecordError(err)
@@ -210,7 +220,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadGateway, "outbound_response_headers_too_large", "Outbound provider response headers exceed the gateway limit", "")
 		return
 	}
-	if h.MaxResponseBytes > 0 && resp.ContentLength > h.MaxResponseBytes {
+	if r.Method != http.MethodHead && resp.StatusCode != http.StatusNotModified && h.MaxResponseBytes > 0 && resp.ContentLength > h.MaxResponseBytes {
 		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
 		return
@@ -224,16 +234,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	if h.MaxResponseBytes <= 0 {
-		_, _ = io.Copy(w, resp.Body)
-		return
+	var downstream io.Writer = w
+	if h.MaxResponseBytes > 0 {
+		downstream = &responseBodyCapWriter{ResponseWriter: w, limit: h.MaxResponseBytes}
 	}
-	capWriter := &responseBodyCapWriter{ResponseWriter: w, limit: h.MaxResponseBytes}
-	if _, err := io.Copy(capWriter, resp.Body); errors.Is(err, errResponseBodyTooLarge) {
-		// Headers and the upstream status are already committed, so this
-		// path terminates the body at the cap instead of attempting to write
-		// a second response envelope.
+	if _, err := io.Copy(downstream, resp.Body); err != nil {
+		// The provider status is already committed. Returning normally would
+		// mark a truncated chunked response as a complete success. Abort the
+		// downstream stream, as ReverseProxy does on copy failures, so callers
+		// can detect the incomplete response without a second error envelope.
 		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		dependencySpan.RecordError(err)
+		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
+		panic(http.ErrAbortHandler)
 	}
 }
 
@@ -299,8 +312,12 @@ func targetURL(origin *url.URL, path, rawQuery string) (string, error) {
 		return "", ErrInvalidIntegration
 	}
 	u := *origin
-	u.Path = strings.TrimSuffix(origin.Path, "/") + "/" + strings.TrimPrefix(path, "/")
-	u.RawPath = ""
+	u.RawPath = strings.TrimSuffix(origin.EscapedPath(), "/") + "/" + strings.TrimPrefix(path, "/")
+	var err error
+	u.Path, err = url.PathUnescape(u.RawPath)
+	if err != nil {
+		return "", ErrInvalidIntegration
+	}
 	u.RawQuery = rawQuery
 	u.Fragment = ""
 	return u.String(), nil

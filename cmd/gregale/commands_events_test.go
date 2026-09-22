@@ -103,3 +103,43 @@ func TestCmdEventsPublish_JSONOutput(t *testing.T) {
 		t.Fatalf("body=%s", f.sawBody)
 	}
 }
+
+func TestCmdEventsSubscriptions_RendersReconciledManifest(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","subscriptions":[{"id":"sub-1","app_id":"app-1","source":"billing.*","type":"invoice.paid","filter":{"data":{"amount":{"$gt":100}}},"enabled":true,"created_at":"2026-09-19T12:00:00Z","updated_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsSubscriptions([]string{"invoice-worker"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps/invoice-worker/event-subscriptions" {
+		t.Fatalf("route=%s %s, want GET /v1/apps/invoice-worker/event-subscriptions", f.sawMethod, f.sawPath)
+	}
+	out := stdout.String()
+	for _, want := range []string{"ID\tSOURCE\tTYPE\tFILTER\tENABLED\tUPDATED", "sub-1\tbilling.*\tinvoice.paid", `"$gt":100`, "true"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestCmdEventsSubscriptions_JSONOutput(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"app_slug":"invoice-worker","subscriptions":[]}`, http.StatusOK)
+	jsonOutput = true
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsSubscriptions([]string{"invoice-worker"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	var got struct {
+		AppSlug       string `json:"app_slug"`
+		Subscriptions []any  `json:"subscriptions"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode JSON output: %v; output=%s", err, stdout.String())
+	}
+	if got.AppSlug != "invoice-worker" || got.Subscriptions == nil {
+		t.Fatalf("output=%s", stdout.String())
+	}
+}

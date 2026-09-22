@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -5334,7 +5335,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// otelhttp span, but gatewayd-internal also serves the handler directly in
 	// split-node and test paths. This child gives the routing, wake, and
 	// forwarding work one stable span regardless of how the request arrived.
-	requestCtx, requestSpan := pkgtrace.StartSpan(r.Context(), "gateway.request",
+	// gatewayd-internal uses a plain/private HTTP listener rather than an
+	// otelhttp server wrapper. Extract the edge's W3C context at this boundary
+	// so request telemetry, the guest hop, and service-proxy dependencies share
+	// the public trace ID.
+	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
 	r = r.WithContext(requestCtx)
 	defer func() {

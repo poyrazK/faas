@@ -12,8 +12,8 @@
 //
 // Region handling: AWS S3 uses the region in the canonical
 // request scope; some vendors (Cloudflare R2) accept "auto".
-// The Endpoint URL is opaque to SigV4 — only the host header
-// matters for the Host field.
+// The Endpoint host, path prefix, and query participate in SigV4 alongside
+// the bucket and object key. Signing must use the actual request URL.
 
 package logarchive
 
@@ -29,6 +29,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -125,32 +126,25 @@ func NewS3Client(endpoint, region, bucket, keyID, secret string, authMode ...str
 // "application/gzip"). Returns *Permanent on 4xx, plain error on
 // 5xx/network, nil on success.
 //
-// The signature is computed against the SHA-256 of the body; the
-// body is buffered in memory because gzip-compressed JSONL is
-// bounded by the BatchMaxBytes cap (default 100 MB). The
-// shipper's local-spool size cap (DefaultLocalBytesMax = 10 GB)
-// ensures no single PUT exceeds the stdlib memory budget —
-// tests with httptest.NewServer cover the streaming case directly.
+// The signature is computed against the SHA-256 of the body. Seekable files
+// are hashed, rewound, and streamed, so a daily archive does not need to fit
+// on the daemon heap. Plain readers are buffered up to the declared size;
+// both paths probe one extra byte to detect a length mismatch.
 func (c *S3Client) PutObject(ctx context.Context, key, contentType string, r io.Reader, size int64) error {
-	body, err := io.ReadAll(r)
+	body, payloadHash, err := prepareUploadBody(r, size)
 	if err != nil {
-		return fmt.Errorf("logarchive: read body: %w", err)
+		return err
 	}
-	if int64(len(body)) != size {
-		// Defensive: the shipper always passes the local file
-		// size; a mismatch means r produced a different byte
-		// count than expected. Surface as Permanent so the
-		// shipper increments the right counter and the operator
-		// sees the bug in metrics.
-		return &Permanent{StatusCode: 0, Code: "BodyLengthMismatch", Message: fmt.Sprintf("body length %d != expected %d", len(body), size)}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.objectURL(key), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.objectURL(key), body)
 	if err != nil {
 		return fmt.Errorf("logarchive: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("Content-Length", fmt.Sprintf("%d", size))
-	if err := c.authorize(req, body, "PUT", key); err != nil {
+	req.ContentLength = size
+	if size == 0 {
+		req.Body = http.NoBody
+	}
+	if err := c.authorize(req, payloadHash); err != nil {
 		return err
 	}
 	resp, err := c.HTTP.Do(req)
@@ -159,6 +153,49 @@ func (c *S3Client) PutObject(ctx context.Context, key, contentType string, r io.
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return parseS3Response(resp, "PUT")
+}
+
+func prepareUploadBody(r io.Reader, size int64) (io.Reader, string, error) {
+	if size < 0 {
+		return nil, "", &Permanent{Code: "BodyLengthMismatch", Message: "negative body size"}
+	}
+	seeker, seekable := r.(io.ReadSeeker)
+	var start int64
+	if seekable {
+		var err error
+		start, err = seeker.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return nil, "", fmt.Errorf("logarchive: locate body: %w", err)
+		}
+	}
+	hash := sha256.New()
+	var buffer bytes.Buffer
+	var dst io.Writer = hash
+	if !seekable {
+		dst = io.MultiWriter(hash, &buffer)
+	}
+	n, err := io.Copy(dst, io.LimitReader(r, size))
+	if err != nil {
+		return nil, "", fmt.Errorf("logarchive: read body: %w", err)
+	}
+	if n != size {
+		return nil, "", &Permanent{Code: "BodyLengthMismatch", Message: fmt.Sprintf("body length %d != expected %d", n, size)}
+	}
+	extra, err := io.CopyN(io.Discard, r, 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, "", fmt.Errorf("logarchive: probe body length: %w", err)
+	}
+	if extra != 0 {
+		return nil, "", &Permanent{Code: "BodyLengthMismatch", Message: fmt.Sprintf("body exceeds expected length %d", size)}
+	}
+	payloadHash := hex.EncodeToString(hash.Sum(nil))
+	if seekable {
+		if _, err := seeker.Seek(start, io.SeekStart); err != nil {
+			return nil, "", fmt.Errorf("logarchive: rewind body: %w", err)
+		}
+		return io.LimitReader(r, size), payloadHash, nil
+	}
+	return bytes.NewReader(buffer.Bytes()), payloadHash, nil
 }
 
 // GetObject fetches {bucket}/{key} and writes the body to w.
@@ -171,7 +208,7 @@ func (c *S3Client) GetObject(ctx context.Context, key string, w io.Writer) (int6
 	if err != nil {
 		return 0, fmt.Errorf("logarchive: build request: %w", err)
 	}
-	if err := c.authorize(req, nil, "GET", key); err != nil {
+	if err := c.authorize(req, hexSHA256(nil)); err != nil {
 		return 0, err
 	}
 	resp, err := c.HTTP.Do(req)
@@ -191,9 +228,9 @@ func (c *S3Client) GetObject(ctx context.Context, key string, w io.Writer) (int6
 	return n, nil
 }
 
-func (c *S3Client) authorize(req *http.Request, body []byte, method, key string) error {
+func (c *S3Client) authorize(req *http.Request, payloadHash string) error {
 	if c.TokenSource == nil {
-		return c.sign(req, body, method, key)
+		return c.sign(req, payloadHash)
 	}
 	token, err := c.TokenSource.Token()
 	if err != nil {
@@ -223,9 +260,8 @@ func (c *S3Client) objectURL(key string) string {
 	return u.String()
 }
 
-// sign adds the AWS SigV4 authorization header to req. body is
-// the bytes that will be sent (or nil for GET); method is the
-// HTTP verb; key is the object key (without the bucket prefix).
+// sign adds the AWS SigV4 authorization header using the precomputed hash and
+// the actual request URI, including its bucket, endpoint prefix, and query.
 //
 // Algorithm (AWS SigV4):
 //
@@ -251,18 +287,11 @@ func (c *S3Client) objectURL(key string) string {
 // rather than threading it through — the request timestamp is
 // allowed to drift up to 15 minutes from the server's clock and
 // apid's ntp-synced clock stays inside that envelope.
-func (c *S3Client) sign(req *http.Request, body []byte, method, key string) error {
+func (c *S3Client) sign(req *http.Request, payloadHash string) error {
 	now := time.Now().UTC()
 	amzDate := now.Format("20060102T150405Z")
 	dateStamp := now.Format("20060102")
 
-	// Empty body hash for GET; SHA-256 hex for PUT.
-	var payloadHash string
-	if body == nil {
-		payloadHash = hexSHA256(nil)
-	} else {
-		payloadHash = hexSHA256(body)
-	}
 	req.Header.Set("x-amz-content-sha256", payloadHash)
 	req.Header.Set("x-amz-date", amzDate)
 	if req.Host != "" {
@@ -282,10 +311,17 @@ func (c *S3Client) sign(req *http.Request, body []byte, method, key string) erro
 		"x-amz-date:" + amzDate + "\n"
 	signedHeaders := "content-type;host;x-amz-content-sha256;x-amz-date"
 
-	canonicalURI := "/" + key
-	canonicalQuery := ""
+	canonicalURI := req.URL.EscapedPath()
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+	query := req.URL.Query()
+	for _, values := range query {
+		sort.Strings(values)
+	}
+	canonicalQuery := strings.ReplaceAll(query.Encode(), "+", "%20")
 
-	canonicalRequest := method + "\n" +
+	canonicalRequest := req.Method + "\n" +
 		canonicalURI + "\n" +
 		canonicalQuery + "\n" +
 		canonicalHeaders + "\n" +

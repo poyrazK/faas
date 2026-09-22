@@ -45,6 +45,7 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/propagation"
 	"golang.org/x/net/http2"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -419,6 +420,11 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	if !isUpgradeRequest(r) {
 		stripHopByHopInPlace(outReq.Header)
 	}
+	// This transport is intentionally custom rather than otelhttp.Transport,
+	// so propagate the active public-edge span explicitly. The internal
+	// gateway extracts it before starting gateway.request, keeping the edge,
+	// request telemetry, guest, and retained service spans on one trace.
+	propagation.TraceContext{}.Inject(r.Context(), propagation.HeaderCarrier(outReq.Header))
 	// Forwarding trust is peer-scoped. A configured TLS terminator may
 	// provide one canonical client IP and scheme; direct callers cannot.
 	clientIP, proto := p.forwardingContext(r)

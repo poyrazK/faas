@@ -13,8 +13,8 @@
 // (now - lastFetch) < interval returns the cached set without
 // hitting the network; outside that window the next Get triggers a
 // fetch-in-flight guarded by per-URL singleflight semantics.
-// Rotation is automatic when a known kid is missing because the
-// fetch re-runs.
+// Expiry applies to every key ID, including a missing ID, so removed keys
+// cannot stay trusted indefinitely just because callers keep presenting them.
 //
 // Per-URL key cap (1024) is enforced post-fetch — if the fetched
 // keyset has more than 1024 keys (an IdP misconfiguration / abuse
@@ -40,9 +40,8 @@ import (
 type Cache interface {
 	// Get returns the cached jose.JSONWebKeySet for url, performing
 	// a network fetch on the first call per window (see
-	// MinRefreshInterval) and re-fetching if the kid is missing
-	// from the cached set (rotation). The bool indicates "this
-	// URL has been registered at least once" — false means the
+	// MinRefreshInterval). Unknown kids do not bypass the window.
+	// The bool indicates "this URL has been registered at least once" — false means the
 	// caller should call Register first (cmd-side
 	// MatchJWT does this lazily).
 	Get(ctx context.Context, url string, kid string) (*jose.JSONWebKeySet, bool, error)
@@ -68,10 +67,9 @@ const MaxKeysPerJWKSURL = 1024
 // still be very large even when the key-count limit is respected.
 const MaxResponseBytes = 2 << 20
 
-// MinRefreshInterval is the minimum time between automatic
-// background refreshes per URL. The cache always re-fetches
-// immediately on a Get if the requested kid is missing (rotation)
-// regardless of this window.
+// DefaultMinRefreshInterval is the window for demand-driven refreshes per
+// URL. A Get after this window refreshes known and unknown key IDs alike;
+// unknown IDs cannot trigger unbounded fetches inside the window.
 const DefaultMinRefreshInterval = 5 * time.Minute
 
 // DefaultFetchTimeout caps a single JWKS HTTP fetch. Larger values
@@ -90,9 +88,9 @@ type Options struct {
 	OnFetchErr func(url string, err error)
 }
 
-// jwksCache is the production impl. Per-URL state is guarded by
-// per-URL mutexes so concurrent Get on distinct URLs don't contend;
-// the registry map itself is guarded by mu.
+// jwksCache is the production impl. Per-URL state is guarded by cancelable
+// gates so waiters retain their own request deadlines. Distinct URLs do not
+// contend; the registry map itself is guarded by mu.
 type jwksCache struct {
 	mu         sync.Mutex
 	byURL      map[string]*urlEntry
@@ -103,10 +101,9 @@ type jwksCache struct {
 }
 
 type urlEntry struct {
-	mu        sync.Mutex
+	gate      chan struct{}
 	set       *jose.JSONWebKeySet
 	lastFetch time.Time
-	fetching  bool // singleflight gate — only one in-flight fetch per URL
 }
 
 // NewCache returns an empty cache. Callers (cmd/gatewayd-internal/edge_rules.go::MatchJWT)
@@ -141,46 +138,36 @@ func (c *jwksCache) Register(rawURL string) error {
 	}
 	c.mu.Lock()
 	if _, ok := c.byURL[rawURL]; !ok {
-		c.byURL[rawURL] = &urlEntry{}
+		c.byURL[rawURL] = &urlEntry{gate: make(chan struct{}, 1)}
 	}
 	c.mu.Unlock()
 	return nil
 }
 
-// Get returns the cached keyset for url, fetching on first call (and
-// on rotation — kid missing). kid may be "" for IDP signers that
-// don't set the header; we still fetch on a cold cache and return
-// the full keyset for the verifier to walk.
-func (c *jwksCache) Get(ctx context.Context, rawURL string, kid string) (*jose.JSONWebKeySet, bool, error) {
+// Get returns the cached keyset for url, fetching on the first call after
+// expiry. The refresh policy is independent of kid, which may be empty.
+func (c *jwksCache) Get(ctx context.Context, rawURL string, _ string) (*jose.JSONWebKeySet, bool, error) {
 	c.mu.Lock()
 	entry, ok := c.byURL[rawURL]
 	c.mu.Unlock()
 	if !ok {
 		return nil, false, nil
 	}
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-
-	if entry.set != nil {
-		// Rotation: if the requested kid is missing AND the window
-		// has elapsed (or we have a fresh-but-empty kid set),
-		// force a re-fetch. We deliberately do NOT re-fetch on
-		// every rotation signal — that would let a malicious
-		// attacker trigger an SSRF DoS by sending many tokens with
-		// bogus kid headers. The refresh window caps the worst
-		// case to one fetch per window per attacker-controlled
-		// bogus kid (still 0, because the missing-kid signal is
-		// only emitted when the cached set has been used at least
-		// once — the first call always goes to network anyway).
-		if kid != "" && len(entry.set.Key(kid)) == 0 &&
-			time.Since(entry.lastFetch) > c.refresh {
-			entry.set = nil // force re-fetch
-		}
+	select {
+	case entry.gate <- struct{}{}:
+	case <-ctx.Done():
+		return nil, true, ctx.Err()
 	}
-
-	if entry.set != nil {
+	defer func() { <-entry.gate }()
+	// The gate and ctx.Done may both have been ready. Do not return a
+	// cached success or start network work for an already-canceled caller.
+	if err := ctx.Err(); err != nil {
+		return nil, true, err
+	}
+	if entry.set != nil && time.Since(entry.lastFetch) < c.refresh {
 		return entry.set, true, nil
 	}
+	entry.set = nil // Fail closed if refreshing an expired keyset fails.
 
 	if err := entry.fetch(ctx, c.httpClient, c.fetchTO, rawURL); err != nil {
 		if c.onFetchErr != nil {
@@ -194,18 +181,9 @@ func (c *jwksCache) Get(ctx context.Context, rawURL string, kid string) (*jose.J
 // fetch performs a single HTTP GET of the JWKS URL, parses into a
 // jose.JSONWebKeySet, enforces MaxKeysPerJWKSURL, and stores in
 // entry. Singleflight: only one fetch per URL at a time; concurrent
-// callers wait on the same fetch via entry.mu (already held by the
-// caller).
+// callers wait via entry.gate (already held by the caller), or cancel their
+// own wait without interrupting the in-flight request.
 func (e *urlEntry) fetch(ctx context.Context, hc *http.Client, timeout time.Duration, rawURL string) error {
-	if e.fetching {
-		// Another goroutine holds e.mu and is mid-fetch; we shouldn't
-		// get here because fetch is only called while entry.mu is
-		// held, but guard against reentrancy defensively.
-		return fmt.Errorf("edgejwks: reentrant fetch for %s", rawURL)
-	}
-	e.fetching = true
-	defer func() { e.fetching = false }()
-
 	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, rawURL, nil)
