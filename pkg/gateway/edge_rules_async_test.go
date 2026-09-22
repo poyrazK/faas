@@ -1,6 +1,6 @@
 package gateway
 
-// adr: 206 — a matched public route is durably accepted before any app wake.
+// adr: 207 — a matched public route is durably accepted before any app wake.
 
 import (
 	"context"
