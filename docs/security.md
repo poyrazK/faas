@@ -25,11 +25,16 @@ promoted. Enforce mode also requires a trusted signature for OCI images, so a
 clean image cannot be promoted when its publisher provenance is unknown. This
 does not replace dependency patching or application review.
 
+When a trusted publisher is removed or its key no longer validates a live
+image, imaged rechecks the active deployment and quarantines the enforce-mode
+app instead of grandfathering the old provenance. A fresh image signed by an
+active trusted publisher is required before recovery.
+
 Use `gregale app <slug> security --posture` in CI before enabling enforcement.
 
 ## Quarantine recovery
 
-When an enforce-policy app is parked after a live image scan regresses,
+When an enforce-policy app is parked after live security evidence regresses,
 `GET /v1/apps/{slug}/security` reports the quarantined deployment and digest.
 After deploying a newer image, use `POST /v1/apps/{slug}/security/recover` with
 that deployment id. Recovery restores traffic only when every live canary has

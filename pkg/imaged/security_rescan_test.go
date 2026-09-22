@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -124,6 +125,89 @@ func TestReconcileSecurityLeasesQuarantinesExpiredEvidence(t *testing.T) {
 	}
 	if data["reason"] != "security_scan_evidence_missing" {
 		t.Fatalf("lease audit reason = %v", data["reason"])
+	}
+}
+
+func TestReconcileSecuritySignaturesQuarantinesRevokedSigner(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "security-signature@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID:      account.ID,
+		Slug:           "signature-app",
+		Status:         state.AppActive,
+		SecurityPolicy: api.AppSecurityPolicyEnforce,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "registry.example.com/app@sha256:revoked",
+		Status:      state.DeployLive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notif := &fakeNotifier{}
+	handler := &Handler{
+		store: store,
+		notif: notif,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	// The trust cache has been refreshed after the signer was removed. An
+	// empty per-app list is the fail-closed representation of that state.
+	handler.trustedPublishersMu.Lock()
+	handler.trustedPublishersCache = map[string][]cosign.TrustedPublisher{app.ID: {}}
+	handler.trustedPublishersCacheOK = true
+	handler.trustedPublishersMu.Unlock()
+	loop := &Loop{
+		store:   store,
+		handler: handler,
+		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:     func() time.Time { return time.Date(2026, 9, 19, 15, 0, 0, 0, time.UTC) },
+	}
+	loop.reconcileSecuritySignatures(ctx, loop.now())
+
+	gotApp, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotApp.Status != state.AppEvictedCold {
+		t.Fatalf("app status = %q, want evicted_cold", gotApp.Status)
+	}
+	gotDep, err := store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDep.ParkedReason != string(state.ParkReasonSecurityScanRegressed) {
+		t.Fatalf("parked reason = %q, want security_scan_regressed", gotDep.ParkedReason)
+	}
+	appChanged := findNotify(notif, db.NotifyAppChanged)
+	if appChanged == nil {
+		t.Fatal("signature quarantine did not notify app_changed")
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(appChanged.payload), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["evidence_reason"] != "security_signature_revoked" || payload["deployment_id"] != dep.ID {
+		t.Fatalf("notification payload = %v, want revoked signer evidence", payload)
+	}
+	audit := findNotify(notif, db.NotifyAuditEvent)
+	if audit == nil {
+		t.Fatal("signature quarantine did not notify audit_event")
+	}
+	var auditPayload signatureAuditPayload
+	if err := json.Unmarshal([]byte(audit.payload), &auditPayload); err != nil {
+		t.Fatal(err)
+	}
+	if auditPayload.Kind != "app.signature_revoked" {
+		t.Fatalf("audit kind = %q, want app.signature_revoked", auditPayload.Kind)
 	}
 }
 
