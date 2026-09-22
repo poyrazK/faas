@@ -24,6 +24,7 @@ type (
 	AppResponse            = api.AppResponse
 	AppEffectiveLimits     = api.AppEffectiveLimits
 	AppConfiguredResources = api.AppConfiguredResources
+	AppServiceBinding      = api.AppServiceBinding
 	DeclaredRoute          = api.DeclaredRoute
 	RetryPolicyDTO         = api.RetryPolicyDTO
 

@@ -20145,6 +20145,20 @@ components:
             type: string
             enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, CONNECT, TRACE]
 
+    AppServiceBinding:
+      description: "A repository-declared dependency on another same-account app. The binding is injected for discovery; gateway authorization remains account-scoped until a separate bindings-only policy is enabled."
+      type: object
+      required: [binding, service]
+      properties:
+        binding:
+          type: string
+          pattern: '^GREGALE_SERVICE_[A-Z0-9_]+_URL$'
+          description: "Platform-owned environment key containing the internal service URL."
+        service:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,61})[a-z0-9]$'
+          description: "Stable target app name used by private service discovery."
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
@@ -20224,6 +20238,11 @@ components:
           format: date-time
           description: "Automatic teardown deadline for a preview, when one is configured."
         manifest: { $ref: '#/components/schemas/AppManifest' }
+        service_bindings:
+          description: "Repository-declared same-account service dependencies currently injected into this workload. This is a read-only discovery projection, not an enforcement allowlist."
+          type: array
+          items:
+            $ref: '#/components/schemas/AppServiceBinding'
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
         # the per-app outbound CIDR allowlist. Each entry is a
         # canonical CIDR string — v4 ("1.2.3.0/24") or v6

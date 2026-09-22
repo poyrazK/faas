@@ -393,6 +393,11 @@ type AppConfiguredResources struct {
 	CPUMillicores int `json:"cpu_millicores"`
 }
 
+type AppServiceBinding struct {
+	Binding string `json:"binding"`
+	Service string `json:"service"`
+}
+
 // AppResponse is an app as returned by the API.
 // RepoResponse is one repository visible to the account's GitHub App
 // installation. Installation credentials are never returned.
@@ -479,6 +484,9 @@ type AppResponse struct {
 	// The DTO reuses the existing api.AppManifest (defined in
 	// appmanifest.go) so the wire shape stays a single source of truth.
 	Manifest AppManifest `json:"manifest"`
+	// ServiceBindings are repository-declared discovery edges. They do not
+	// change the service mesh's account-scoped authorization policy.
+	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6

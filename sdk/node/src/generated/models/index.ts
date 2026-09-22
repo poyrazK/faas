@@ -90,6 +90,7 @@ export type { AppSecurityPostureResponse } from './AppSecurityPostureResponse.js
 export type { AppSecurityQuarantine } from './AppSecurityQuarantine.js';
 export type { AppSecurityRequest } from './AppSecurityRequest.js';
 export type { AppSecurityResponse } from './AppSecurityResponse.js';
+export type { AppServiceBinding } from './AppServiceBinding.js';
 export type { AppStaticEgressIPResponse } from './AppStaticEgressIPResponse.js';
 export type { AppStreamingStatus } from './AppStreamingStatus.js';
 export type { AppTrustedSignerListResponse } from './AppTrustedSignerListResponse.js';

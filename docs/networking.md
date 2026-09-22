@@ -193,6 +193,11 @@ services:
 environment. The dependency graph is validated before anything deploys —
 unknown names, self-edges, and ambiguous names are rejected.
 
+The same declared edges are exposed as service bindings by the app API and by
+`gregale bindings public-api`, alongside database, object-storage, and queue
+bindings. A service binding is currently a discovery and deploy-order
+declaration, not a network allowlist: omitting an edge does not deny traffic.
+
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the

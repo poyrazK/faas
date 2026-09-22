@@ -170,6 +170,7 @@ from .app_security_request import AppSecurityRequest
 from .app_security_request_security_policy import AppSecurityRequestSecurityPolicy
 from .app_security_response import AppSecurityResponse
 from .app_security_response_security_policy import AppSecurityResponseSecurityPolicy
+from .app_service_binding import AppServiceBinding
 from .app_slo_response import AppSLOResponse
 from .app_slo_response_wake_queue_sample_status import AppSLOResponseWakeQueueSampleStatus
 from .app_slo_response_window import AppSLOResponseWindow
@@ -1534,6 +1535,7 @@ __all__ = (
     "AppSecurityRequestSecurityPolicy",
     "AppSecurityResponse",
     "AppSecurityResponseSecurityPolicy",
+    "AppServiceBinding",
     "AppSLOResponse",
     "AppSLOResponseWakeQueueSampleStatus",
     "AppSLOResponseWindow",

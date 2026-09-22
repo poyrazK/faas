@@ -1112,6 +1112,11 @@ type AppResponse struct {
 	// The DTO reuses the existing api.AppManifest (defined in
 	// appmanifest.go) so the wire shape stays a single source of truth.
 	Manifest AppManifest `json:"manifest"`
+	// ServiceBindings are the repository-declared same-account app
+	// dependencies currently injected into this workload. They are a read-only
+	// discovery projection; service-mesh authorization remains unchanged until
+	// a separate bindings-only policy is enabled.
+	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6

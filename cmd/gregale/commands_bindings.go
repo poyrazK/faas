@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	bindingTypeService       = "service"
 	bindingTypePostgres      = "postgres"
 	bindingTypeObjectStorage = "object_storage"
 	bindingTypeQueue         = "queue"
@@ -76,6 +77,16 @@ func collectAppBindingInventory(ctx context.Context, client appBindingInventoryC
 	inventory := appBindingInventory{
 		App:      appSlug,
 		Bindings: make([]appBindingInventoryItem, 0),
+	}
+	for _, binding := range app.ServiceBindings {
+		inventory.Bindings = append(inventory.Bindings, appBindingInventoryItem{
+			Type:    bindingTypeService,
+			Name:    binding.Service,
+			Binding: binding.Binding,
+			Scope:   "app",
+			Access:  "invoke",
+			State:   "declared",
+		})
 	}
 
 	databases, err := client.ListManagedPostgresDatabases(ctx)

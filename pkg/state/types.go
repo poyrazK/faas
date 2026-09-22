@@ -1484,8 +1484,12 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
-	WorkingDir          string `json:"working_dir,omitempty"`
-	Port                int    `json:"port,omitempty"`
+	// ServiceBindings is the authoritative project-reconcile projection of
+	// Compose depends_on edges. Keeping it beside the generated service URL
+	// environment makes the declaration inspectable without parsing env text.
+	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
+	WorkingDir      string                  `json:"working_dir,omitempty"`
+	Port            int                     `json:"port,omitempty"`
 	// Ports is the app-owned listener declaration. It is merged into every
 	// deployment manifest so the gateway can expose named TCP listeners while
 	// UDP listeners remain available to workloads through guest discovery.
@@ -1532,7 +1536,7 @@ func (m AppManifest) EffectiveCrawlerPolicy() string {
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1545,15 +1549,23 @@ func (m AppManifest) IsZero() bool {
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
-	if len(desired.Env) > 0 {
+	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
+	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
+			if strings.HasPrefix(key, "GREGALE_SERVICE_") && strings.HasSuffix(key, "_URL") {
+				continue
+			}
 			merged[key] = value
 		}
 		for key, value := range desired.Env {
 			merged[key] = value
 		}
-		existing.Env = merged
+		if len(merged) == 0 {
+			existing.Env = nil
+		} else {
+			existing.Env = merged
+		}
 	}
 	return existing
 }

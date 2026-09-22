@@ -98,6 +98,7 @@ export type { AppSecurityPostureResponse } from './models/AppSecurityPostureResp
 export type { AppSecurityQuarantine } from './models/AppSecurityQuarantine.js';
 export type { AppSecurityRequest } from './models/AppSecurityRequest.js';
 export type { AppSecurityResponse } from './models/AppSecurityResponse.js';
+export type { AppServiceBinding } from './models/AppServiceBinding.js';
 export type { AppSLOResponse } from './models/AppSLOResponse.js';
 export type { AppsMetricsResponse } from './models/AppsMetricsResponse.js';
 export type { AppStaticEgressIPResponse } from './models/AppStaticEgressIPResponse.js';
