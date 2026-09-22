@@ -67,3 +67,7 @@ gregale events subscriptions APP --json
 
 This is useful after a deploy or manifest change: it shows the normalized
 source, type, filter, and enabled state that the router will use.
+
+The machine-readable event contract is published in
+[`api/asyncapi.yaml`](../api/asyncapi.yaml), including the authenticated
+`POST /v1/events:publish` ingress.
