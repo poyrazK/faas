@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -92,6 +93,46 @@ func TestPrivateNetworkFabricLifecycle(t *testing.T) {
 	rec = e.do(t, "DELETE", "/v1/networks/"+created.ID, nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPrivateNetworkDeleteEmitsFabricTeardownNotification(t *testing.T) {
+	t.Setenv("FAAS_PRIVATE_NETWORK_FABRIC_ENABLED", "true")
+	e := setup(t, api.PlanScale)
+	notifier := &captureNotifier{}
+	e.s.notif = notifier
+
+	rec := e.do(t, "POST", "/v1/networks", api.CreatePrivateNetworkRequest{
+		Name: "cleanup", Region: "fra1", CIDR: "10.43.0.0/24",
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var created api.PrivateNetwork
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode POST: %v", err)
+	}
+
+	rec = e.do(t, "DELETE", "/v1/networks/"+created.ID, nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	notifications := notifier.byChannel(db.NotifyPrivateNetworkChanged)
+	if len(notifications) != 1 {
+		t.Fatalf("private network notifications = %d, want 1", len(notifications))
+	}
+	var payload struct {
+		Kind      string `json:"kind"`
+		AccountID string `json:"account_id"`
+		NetworkID string `json:"network_id"`
+		Region    string `json:"region"`
+		CIDR      string `json:"cidr"`
+	}
+	if err := json.Unmarshal([]byte(notifications[0].payload), &payload); err != nil {
+		t.Fatalf("decode teardown notification: %v", err)
+	}
+	if payload.Kind != "private_network_deleted" || payload.AccountID != e.acct.ID || payload.NetworkID != created.ID || payload.Region != "fra1" || payload.CIDR != "10.43.0.0/24" {
+		t.Fatalf("teardown payload = %+v", payload)
 	}
 }
 

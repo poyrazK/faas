@@ -254,6 +254,11 @@ service Vmmd {
   // reconciled as the authoritative regional VXLAN topology.
   rpc ReconcilePrivateNetworkFabric(ReconcilePrivateNetworkFabricRequest) returns (ReconcilePrivateNetworkFabricAck);
 
+  // RemovePrivateNetworkFabric tears down the node-local bridge and optional
+  // regional VXLAN link for a deleted Gregale-owned network. The operation is
+  // idempotent so durable delete notifications may be replayed safely.
+  rpc RemovePrivateNetworkFabric(RemovePrivateNetworkFabricRequest) returns (RemovePrivateNetworkFabricAck);
+
   // SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
   // Linux kernel seccomp state of the jailer child process backing
   // this instance. Spec §11: "Firecracker's default seccomp filter
@@ -1964,6 +1969,19 @@ message ReconcilePrivateNetworkFabricAck {
   repeated string expected_peer_addresses = 4;
   repeated string observed_peer_addresses = 5;
 }
+
+// RemovePrivateNetworkFabricRequest carries the identity needed to remove a
+// node-local Gregale-owned network fabric after its durable control-plane row
+// has been deleted.
+message RemovePrivateNetworkFabricRequest {
+  string account_id = 1;
+  string network_id = 2;
+  string region = 3;
+  string cidr = 4;
+}
+
+// RemovePrivateNetworkFabricAck confirms an idempotent fabric teardown.
+message RemovePrivateNetworkFabricAck {}
 
 // ForwardTCPRequestInit addresses one guest TCP listener. The caller is
 // responsible for selecting a listener declared by the app manifest; vmmd

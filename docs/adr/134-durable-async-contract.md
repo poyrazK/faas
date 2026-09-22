@@ -92,6 +92,21 @@ independently reviewable:
    `pkg/sched/retention_triggers.go` 5-minute tick, batch 1000,
    terminal-state rows with `result_retention_until < now()`.
 
+### 2026-09-22 retry-budget hardening
+
+`max_attempts` now always means a finite count including the original
+delivery. Apid resolves request override → app default → plan default when it
+creates an invocation and persists the effective, plan-capped value. Schedd
+re-clamps that value against the current plan at dispatch time, so a plan
+downgrade cannot retain an older, larger budget.
+
+A zero or omitted value means "inherit the plan", not unlimited. Plans with
+no retry allowance receive one original delivery and zero replays. If the app
+or account lookup needed for the narrower plan cap is temporarily unavailable,
+schedd uses the platform hard ceiling of 25 attempts; it never falls back to
+an infinite loop. This applies to async invoke, sync invoke, queues, delayed
+tasks, cron-backed invocation rows, and manual replay.
+
 ## Why a wrapper type for `state.Invocation` to satisfy `dispatch.Job`
 
 Go forbids a field and a method of the same name on a struct, and

@@ -13,9 +13,10 @@
  * retryable conditions is not configurable.
  *
  * A replay additionally requires that the response has not
- * committed, a healthy sibling exists, and the remaining
- * `kind=budget` allowance is at least `min_remaining_ms`. A
- * retry can never extend a request's deadline.
+ * committed, a healthy sibling exists, the aggregate per-app
+ * retry budget has capacity, and the remaining `kind=budget`
+ * allowance is at least `min_remaining_ms`. A retry can never
+ * extend a request's deadline.
  *
  */
 export type EdgeRuleRetryAction = {
@@ -33,13 +34,15 @@ export type EdgeRuleRetryAction = {
    */
   max_attempts?: number;
   /**
-   * Opt POST and PATCH into replay. Off by default.
+   * Opt POST and PATCH into replay. Off by default. Even when
+   * enabled, these methods are replayed only when the request
+   * carries a non-empty `Idempotency-Key` header.
    *
    * This is the only field here that can cost correctness
-   * rather than latency: a replayed POST runs your handler's
-   * side effect twice unless the handler is idempotent or the
-   * caller sends an idempotency key. GET, HEAD, OPTIONS,
-   * TRACE, PUT and DELETE are replayed without this flag.
+   * rather than latency: your handler must honor the key and
+   * return the stored result instead of repeating the side
+   * effect. GET, HEAD, OPTIONS, TRACE, PUT and DELETE are
+   * replayed without this flag.
    *
    */
   allow_non_idempotent?: boolean;
@@ -60,5 +63,20 @@ export type EdgeRuleRetryAction = {
    *
    */
   backoff_ms?: number;
+  /**
+   * Aggregate replay allowance as a percentage of original
+   * requests in the gateway's short per-app window. For
+   * example, 10 permits at most one replay per ten originals,
+   * preventing a broad outage from doubling all traffic.
+   *
+   */
+  budget_percent?: number;
+  /**
+   * Minimum replay allowance per app and accounting window.
+   * The default preserves one recovery opportunity for a
+   * low-traffic app even when budget_percent rounds down.
+   *
+   */
+  budget_min_retries?: number;
 };
 

@@ -145,6 +145,14 @@ func TestGCSPresignBindsUploadAndMultipartShape(t *testing.T) {
 	if query.Query().Get("response-content-disposition") != "attachment" || query.Query().Get("response-content-type") != "application/octet-stream" {
 		t.Fatal("unsafe download response", download.URL)
 	}
+	proxied, err := p.PresignObjectRead(context.Background(), "gregale-test", http.MethodGet, "hello", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxiedURL, _ := url.Parse(proxied.URL)
+	if proxiedURL.Query().Has("response-content-disposition") || proxiedURL.Query().Has("response-content-type") {
+		t.Fatalf("proxied read overrides stored metadata: %s", proxied.URL)
+	}
 	head, err := p.Presign(context.Background(), "gregale-test", SignRequest{Method: http.MethodHead, Key: "hello", ExpiresIn: 60})
 	if err != nil {
 		t.Fatal(err)

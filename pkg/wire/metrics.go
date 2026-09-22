@@ -3850,7 +3850,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Only imaged increments via ObserveDeployStageDuration.
 	deployStageDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_deploy_stage_duration_seconds",
-		Help:    "Per-deploy stage wall-clock duration in seconds (ADR-117 §Production-ready follow-on). One observation per `transitionWithStage` write (pkg/imaged/handler.go). stage ∈ {source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness}; status ∈ {completed, failed}. Buckets skew to the long tail (300s) so a stalled image_build surfaces as a top-bucket observation rather than +Inf.",
+		Help:    "Per-deploy stage wall-clock duration in seconds (ADR-117 §Production-ready follow-on). One observation per successful stage closure in imaged. stage ∈ {source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness}; status ∈ {completed, failed}. Buckets skew to the long tail (300s) so a stalled image_build surfaces as a top-bucket observation rather than +Inf.",
 		Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300},
 	}, []string{"stage", "status"})
 	commonCollectors = append(commonCollectors, deployStageDuration)

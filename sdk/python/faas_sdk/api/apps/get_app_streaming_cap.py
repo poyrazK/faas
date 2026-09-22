@@ -8,18 +8,33 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_streaming_status import AppStreamingStatus
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    host: str | Unset = UNSET,
+    path: str | Unset = UNSET,
+    method: str | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["host"] = host
+
+    params["path"] = path
+
+    params["method"] = method
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/apps/{slug}/streaming-cap".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -74,6 +89,9 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    host: str | Unset = UNSET,
+    path: str | Unset = UNSET,
+    method: str | Unset = UNSET,
 ) -> Response[AppStreamingStatus | Problem]:
     r"""Per-app streaming classification probe (ADR-102 D6).
 
@@ -84,16 +102,19 @@ def sync_detailed(
     representative request to this app, plus the effective
     response-body cap (in bytes) and the per-gate flags.
 
-    The probe is a pure read against the apid cache (the
-    per-account `Plan` and the per-app `streaming_enabled`
-    flag). It does NOT dial gatewayd-internal — the operator
-    opt-in (`FAAS_GATEWAY_STREAMING` env) and per-edge-rule
-    cap override are gatewayd-side state, so `effective_cap_bytes`
-    reflects the plan cap (`cap_kind=\"plan\"`) on every probe.
+    With no query parameters the probe is a pure read against the
+    apid cache (the per-account `Plan` and the per-app
+    `streaming_enabled` flag). Supplying `host`, `path`, and `method`
+    together performs a bounded loopback read of gatewayd's compiled
+    kind=limit rules and reports a matching streaming response cap with
+    `cap_kind=\"endpoint-rule\"`. If gatewayd is unavailable or no rule
+    matches, the response falls back to the plan cap.
+
+    The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
+    gatewayd-side state, so the canonical signal is the
+    `Streaming-Status` response header on a real request, not this probe.
     A customer evaluating \"will my next request stream?\" must
-    consider the operator-side flag separately; the canonical
-    signal is the `Streaming-Status` response header on a real
-    request, not this probe.
+    consider the operator-side flag separately.
 
     `status=plan-disallows` means the customer's plan tier
     forbids `streaming_enabled=true`; the CreateApp gate (D5)
@@ -104,6 +125,9 @@ def sync_detailed(
 
     Args:
         slug (str):
+        host (str | Unset):
+        path (str | Unset):
+        method (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -115,6 +139,9 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        host=host,
+        path=path,
+        method=method,
     )
 
     response = client.get_httpx_client().request(
@@ -128,6 +155,9 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    host: str | Unset = UNSET,
+    path: str | Unset = UNSET,
+    method: str | Unset = UNSET,
 ) -> AppStreamingStatus | Problem | None:
     r"""Per-app streaming classification probe (ADR-102 D6).
 
@@ -138,16 +168,19 @@ def sync(
     representative request to this app, plus the effective
     response-body cap (in bytes) and the per-gate flags.
 
-    The probe is a pure read against the apid cache (the
-    per-account `Plan` and the per-app `streaming_enabled`
-    flag). It does NOT dial gatewayd-internal — the operator
-    opt-in (`FAAS_GATEWAY_STREAMING` env) and per-edge-rule
-    cap override are gatewayd-side state, so `effective_cap_bytes`
-    reflects the plan cap (`cap_kind=\"plan\"`) on every probe.
+    With no query parameters the probe is a pure read against the
+    apid cache (the per-account `Plan` and the per-app
+    `streaming_enabled` flag). Supplying `host`, `path`, and `method`
+    together performs a bounded loopback read of gatewayd's compiled
+    kind=limit rules and reports a matching streaming response cap with
+    `cap_kind=\"endpoint-rule\"`. If gatewayd is unavailable or no rule
+    matches, the response falls back to the plan cap.
+
+    The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
+    gatewayd-side state, so the canonical signal is the
+    `Streaming-Status` response header on a real request, not this probe.
     A customer evaluating \"will my next request stream?\" must
-    consider the operator-side flag separately; the canonical
-    signal is the `Streaming-Status` response header on a real
-    request, not this probe.
+    consider the operator-side flag separately.
 
     `status=plan-disallows` means the customer's plan tier
     forbids `streaming_enabled=true`; the CreateApp gate (D5)
@@ -158,6 +191,9 @@ def sync(
 
     Args:
         slug (str):
+        host (str | Unset):
+        path (str | Unset):
+        method (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,6 +206,9 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        host=host,
+        path=path,
+        method=method,
     ).parsed
 
 
@@ -177,6 +216,9 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    host: str | Unset = UNSET,
+    path: str | Unset = UNSET,
+    method: str | Unset = UNSET,
 ) -> Response[AppStreamingStatus | Problem]:
     r"""Per-app streaming classification probe (ADR-102 D6).
 
@@ -187,16 +229,19 @@ async def asyncio_detailed(
     representative request to this app, plus the effective
     response-body cap (in bytes) and the per-gate flags.
 
-    The probe is a pure read against the apid cache (the
-    per-account `Plan` and the per-app `streaming_enabled`
-    flag). It does NOT dial gatewayd-internal — the operator
-    opt-in (`FAAS_GATEWAY_STREAMING` env) and per-edge-rule
-    cap override are gatewayd-side state, so `effective_cap_bytes`
-    reflects the plan cap (`cap_kind=\"plan\"`) on every probe.
+    With no query parameters the probe is a pure read against the
+    apid cache (the per-account `Plan` and the per-app
+    `streaming_enabled` flag). Supplying `host`, `path`, and `method`
+    together performs a bounded loopback read of gatewayd's compiled
+    kind=limit rules and reports a matching streaming response cap with
+    `cap_kind=\"endpoint-rule\"`. If gatewayd is unavailable or no rule
+    matches, the response falls back to the plan cap.
+
+    The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
+    gatewayd-side state, so the canonical signal is the
+    `Streaming-Status` response header on a real request, not this probe.
     A customer evaluating \"will my next request stream?\" must
-    consider the operator-side flag separately; the canonical
-    signal is the `Streaming-Status` response header on a real
-    request, not this probe.
+    consider the operator-side flag separately.
 
     `status=plan-disallows` means the customer's plan tier
     forbids `streaming_enabled=true`; the CreateApp gate (D5)
@@ -207,6 +252,9 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
+        host (str | Unset):
+        path (str | Unset):
+        method (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -218,6 +266,9 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        host=host,
+        path=path,
+        method=method,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -229,6 +280,9 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    host: str | Unset = UNSET,
+    path: str | Unset = UNSET,
+    method: str | Unset = UNSET,
 ) -> AppStreamingStatus | Problem | None:
     r"""Per-app streaming classification probe (ADR-102 D6).
 
@@ -239,16 +293,19 @@ async def asyncio(
     representative request to this app, plus the effective
     response-body cap (in bytes) and the per-gate flags.
 
-    The probe is a pure read against the apid cache (the
-    per-account `Plan` and the per-app `streaming_enabled`
-    flag). It does NOT dial gatewayd-internal — the operator
-    opt-in (`FAAS_GATEWAY_STREAMING` env) and per-edge-rule
-    cap override are gatewayd-side state, so `effective_cap_bytes`
-    reflects the plan cap (`cap_kind=\"plan\"`) on every probe.
+    With no query parameters the probe is a pure read against the
+    apid cache (the per-account `Plan` and the per-app
+    `streaming_enabled` flag). Supplying `host`, `path`, and `method`
+    together performs a bounded loopback read of gatewayd's compiled
+    kind=limit rules and reports a matching streaming response cap with
+    `cap_kind=\"endpoint-rule\"`. If gatewayd is unavailable or no rule
+    matches, the response falls back to the plan cap.
+
+    The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
+    gatewayd-side state, so the canonical signal is the
+    `Streaming-Status` response header on a real request, not this probe.
     A customer evaluating \"will my next request stream?\" must
-    consider the operator-side flag separately; the canonical
-    signal is the `Streaming-Status` response header on a real
-    request, not this probe.
+    consider the operator-side flag separately.
 
     `status=plan-disallows` means the customer's plan tier
     forbids `streaming_enabled=true`; the CreateApp gate (D5)
@@ -259,6 +316,9 @@ async def asyncio(
 
     Args:
         slug (str):
+        host (str | Unset):
+        path (str | Unset):
+        method (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -272,5 +332,8 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            host=host,
+            path=path,
+            method=method,
         )
     ).parsed

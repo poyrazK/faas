@@ -1184,10 +1184,12 @@ func (l *Loop) computeTransportRetryBackoff(ctx context.Context, t sqlc.Trigger,
 }
 
 // retryExhausted reports whether the next delivery would consume the final
-// allowed attempt. A zero max_attempts preserves the legacy unlimited-retry
-// posture used by older trigger rows.
+// allowed attempt. New rows are constrained by the SQL and plan checks, but
+// legacy or directly seeded zero values still resolve to the platform safety
+// ceiling rather than restoring an unlimited retry loop.
 func retryExhausted(nextAttempt, maxAttempts int32) bool {
-	return maxAttempts > 0 && nextAttempt >= maxAttempts
+	effective := api.EffectiveRetryMaxAttempts(int(maxAttempts), api.DurableRetryMaxAttempts)
+	return nextAttempt >= int32(effective)
 }
 
 // batchItemIDs walks the batch and returns the item identifiers

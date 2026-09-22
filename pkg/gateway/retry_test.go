@@ -146,6 +146,7 @@ func TestRetrySkipsNonIdempotentByDefault(t *testing.T) {
 func TestRetryReplaysPostWhenExplicitlyAllowed(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r := replayableRequest(http.MethodPost, `{"charge":1}`)
+	r.Header.Set("Idempotency-Key", "charge-123")
 	policy := testPolicy()
 	policy.AllowNonIdempotent = true
 
@@ -173,6 +174,71 @@ func TestRetryReplaysPostWhenExplicitlyAllowed(t *testing.T) {
 	// regression the GetBody enabler exists to prevent.
 	if len(bodies) != 2 || bodies[0] != bodies[1] || bodies[1] != `{"charge":1}` {
 		t.Fatalf("bodies = %q, want the same full body on both attempts", bodies)
+	}
+}
+
+func TestRetryRequiresIdempotencyKeyForOptedInPost(t *testing.T) {
+	rec := httptest.NewRecorder()
+	r := replayableRequest(http.MethodPost, `{"charge":1}`)
+	policy := testPolicy()
+	policy.AllowNonIdempotent = true
+	obs := &recordingObserver{}
+	calls := 0
+
+	runWithRetry(rec, r, Target{InstanceID: "dead"}, policy,
+		func(Target) {}, func(w http.ResponseWriter, req *http.Request, target Target) {
+			calls++
+			deadTargetAttempt(w, req, target)
+		}, func() (Target, bool) { return Target{InstanceID: "b"}, true }, obs)
+
+	if calls != 1 {
+		t.Fatalf("attempts = %d, want 1 without Idempotency-Key", calls)
+	}
+	if len(obs.exhausted) != 1 || obs.exhausted[0] != RetrySkipIdempotency {
+		t.Fatalf("exhausted = %v, want %q", obs.exhausted, RetrySkipIdempotency)
+	}
+}
+
+func TestRetryAggregateBudgetStopsStorm(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	budget := NewRetryBudget(time.Minute, func() time.Time { return now })
+	policy := testPolicy()
+	policy.BudgetPercent = 10
+	policy.BudgetMinRetries = 1
+
+	for i := 0; i < 2; i++ {
+		if i == 1 {
+			// Requests that are not eligible for replay must not inflate the
+			// denominator and mint retry tokens for other routes.
+			for j := 0; j < 10; j++ {
+				post := replayableRequest(http.MethodPost, "")
+				runWithRetry(httptest.NewRecorder(), post, Target{InstanceID: "dead"}, policy,
+					func(Target) {}, deadTargetAttempt,
+					func() (Target, bool) { return Target{InstanceID: "b"}, true }, nil,
+					retryBudgetAdmission{budget: budget, scope: "app-1"})
+			}
+		}
+		rec := httptest.NewRecorder()
+		r := replayableRequest(http.MethodGet, "")
+		obs := &recordingObserver{}
+		calls := 0
+		runWithRetry(rec, r, Target{InstanceID: "dead"}, policy,
+			func(Target) {}, func(w http.ResponseWriter, req *http.Request, target Target) {
+				calls++
+				deadTargetAttempt(w, req, target)
+			}, func() (Target, bool) { return Target{InstanceID: "b"}, true }, obs,
+			retryBudgetAdmission{budget: budget, scope: "app-1"})
+		if i == 0 && calls != 2 {
+			t.Fatalf("first request attempts = %d, want minimum allowance replay", calls)
+		}
+		if i == 1 {
+			if calls != 1 {
+				t.Fatalf("second request attempts = %d, want aggregate budget to block replay", calls)
+			}
+			if len(obs.exhausted) == 0 || obs.exhausted[len(obs.exhausted)-1] != RetrySkipAggregate {
+				t.Fatalf("exhausted = %v, want %q", obs.exhausted, RetrySkipAggregate)
+			}
+		}
 	}
 }
 

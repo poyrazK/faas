@@ -3343,3 +3343,25 @@ func TestFullRootfsAllowAutoDefault_PerPlan(t *testing.T) {
 		}
 	}
 }
+
+func TestEffectiveRetryMaxAttempts(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested int
+		planLimit int
+		want      int
+	}{
+		{name: "no-retry plan still permits original", requested: 0, planLimit: 0, want: 1},
+		{name: "inherits plan", requested: 0, planLimit: 10, want: 10},
+		{name: "request below plan", requested: 3, planLimit: 10, want: 3},
+		{name: "request above plan", requested: 20, planLimit: 10, want: 10},
+		{name: "absolute safety ceiling", requested: 0, planLimit: 100, want: DurableRetryMaxAttempts},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EffectiveRetryMaxAttempts(tc.requested, tc.planLimit); got != tc.want {
+				t.Fatalf("EffectiveRetryMaxAttempts(%d, %d) = %d, want %d", tc.requested, tc.planLimit, got, tc.want)
+			}
+		})
+	}
+}
