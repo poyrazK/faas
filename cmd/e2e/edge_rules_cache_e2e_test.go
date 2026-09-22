@@ -82,10 +82,10 @@ func TestEdgeRulesCache_E2E_DeclarativeCLIAndDistributedPurge(t *testing.T) {
 
 	bin := buildGregale(t)
 	runGregaleForCacheE2E(t, bin, f.h.APIDURL, f.key,
-		"cache", "GET", "/products/:id", "for", "1s",
+		"cache", "GET", "/products/:id", "for", "10s",
 		"--app", f.app.Slug,
 		"--host", f.host,
-		"--stale-while-revalidate", "5s",
+		"--stale-while-revalidate", "30s",
 		"--stale-if-error", "0s")
 
 	_, firstBody, firstStatus := waitForGatewayResponse(t, f, "/products/42", "normal-path:cache-v1\n", 10*time.Second)
@@ -108,14 +108,14 @@ func TestEdgeRulesCache_E2E_DeclarativeCLIAndDistributedPurge(t *testing.T) {
 		t.Fatalf("fresh hit reached origin: forward count=%d, want %d", got, filledAt)
 	}
 
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(11 * time.Second)
 	f.vmmd.SetVersion(instance.ID, "cache-v2")
 	staleHeaders, staleBody, staleStatus := doReqHeaders(t, f.h, f.host, http.MethodGet, "/products/42", nil)
+	if got := staleHeaders.Get("x-faas-cache"); got != "stale-while-revalidate" {
+		t.Fatalf("SWR classification header = %q, status=%d body=%q", got, staleStatus, staleBody)
+	}
 	if staleStatus != 200 || string(staleBody) != "normal-path:cache-v1\n" {
 		t.Fatalf("SWR response: status=%d body=%q", staleStatus, staleBody)
-	}
-	if got := staleHeaders.Get("x-faas-cache"); got != "stale-while-revalidate" {
-		t.Fatalf("SWR header = %q, want stale-while-revalidate", got)
 	}
 	waitForForwardCount(t, f, filledAt+1, 10*time.Second)
 	_, refreshedBody, _ := waitForGatewayResponse(t, f, "/products/42", "normal-path:cache-v2\n", 10*time.Second)
