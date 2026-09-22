@@ -247,9 +247,10 @@ func cmdEdgeRulesCreate(args []string) int {
 	// acct.Plan is the authoritative gate).
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: token-bucket burst (>0; <=plan.RateLimitBurst)")
-	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)")
 	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: JWT claim name when --throttle-key-by=jwt_claim")
 	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: maximum distinct consumer buckets (0=plan default)")
+	throttleMissingKeyPolicy := fs.String("throttle-missing-key-policy", "", "kind=throttle: missing identity behavior (shared|reject; default shared)")
 
 	// cache (ADR-122 §Decision). Per-route TTL primitive.
 	// max-age-seconds is the fresh window (default 60); stale-
@@ -346,6 +347,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		ThrottleKeyBy:              *throttleKeyBy,
 		ThrottleJWTClaim:           *throttleJWTClaim,
 		ThrottleMaxKeys:            *throttleMaxKeys,
+		ThrottleMissingKeyPolicy:   *throttleMissingKeyPolicy,
 		CacheMaxAgeSeconds:         *cacheMaxAge,
 		CacheStaleIfErrorSeconds:   *cacheStaleIfError,
 		CacheVaryOn:                cacheVaryOn,
@@ -500,9 +502,10 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// here AND the validator rejects it server-side.
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: new refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: new token-bucket burst (>0; <=plan.RateLimitBurst)")
-	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: new bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: new bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)")
 	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: new JWT claim name when --throttle-key-by=jwt_claim")
 	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: new maximum distinct consumer buckets (0=plan default)")
+	throttleMissingKeyPolicy := fs.String("throttle-missing-key-policy", "", "kind=throttle: new missing identity behavior (shared|reject)")
 
 	// cache (ADR-122 §Decision). Mirror of the create-side
 	// flags. Same closed-set + cap semantics — the CLI does
@@ -631,6 +634,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			ThrottleKeyBy:              *throttleKeyBy,
 			ThrottleJWTClaim:           *throttleJWTClaim,
 			ThrottleMaxKeys:            *throttleMaxKeys,
+			ThrottleMissingKeyPolicy:   *throttleMissingKeyPolicy,
 			CacheMaxAgeSeconds:         *cacheMaxAge,
 			CacheStaleIfErrorSeconds:   *cacheStaleIfError,
 			CacheVaryOn:                cacheVaryOn,
@@ -758,11 +762,12 @@ type edgeRuleActionInputs struct {
 	// ceiling check — the CLI does the structural checks only
 	// (positive rps, positive burst) so the local error mirrors
 	// the server's "0-rps is a leak" message.
-	ThrottleRPS      float64
-	ThrottleBurst    int
-	ThrottleKeyBy    string
-	ThrottleJWTClaim string
-	ThrottleMaxKeys  int
+	ThrottleRPS              float64
+	ThrottleBurst            int
+	ThrottleKeyBy            string
+	ThrottleJWTClaim         string
+	ThrottleMaxKeys          int
+	ThrottleMissingKeyPolicy string
 	// cache (ADR-122 §Decision). Per-route TTL primitive.
 	// MaxAgeSeconds defaults to 60 server-side when 0 is passed
 	// (the apid validator applies the default in
@@ -954,6 +959,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			KeyBy:             in.ThrottleKeyBy,
 			JWTClaimName:      in.ThrottleJWTClaim,
 			MaxKeysPerRule:    in.ThrottleMaxKeys,
+			MissingKeyPolicy:  in.ThrottleMissingKeyPolicy,
 		}
 		// The server's EdgeRuleThrottleAction.Validate takes a
 		// ThrottleValidationContext (per-plan ceiling). The CLI has
@@ -1279,7 +1285,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"ip-allow", "ip-deny",
 		"limit-max-body-bytes", "limit-max-body-bytes-streaming",
 		"throttle-requests-per-second", "throttle-burst",
-		"throttle-key-by", "throttle-jwt-claim", "throttle-max-keys-per-rule",
+		"throttle-key-by", "throttle-jwt-claim", "throttle-max-keys-per-rule", "throttle-missing-key-policy",
 		// geo + cache were added to the create/update flag sets but
 		// never to this list, so `edge-rules update <id> --geo-allow X`
 		// silently skipped the action rebuild and sent a metadata-only

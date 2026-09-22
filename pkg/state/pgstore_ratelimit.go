@@ -43,11 +43,12 @@
 // (see pkg/gateway/ratelimit.go:300-609 the Allow/Poke seam)
 // and emits a `ratelimit_degraded` audit row.
 //
-// # Phase 4 scope
+// # Dimensional rule scope
 //
-// Per-app + per-account + per-rule only. Per-consumer central mode
-// is Phase 5 (the PK does NOT include consumer_id; the __other__
-// collapse bucket stays in-process until Phase 5).
+// The backend remains intentionally unaware of consumer identities. The
+// gateway maps each dimensional rule value into one of a bounded number of
+// deterministic UUID subjects (ADR-104 amendment 6), allowing replicas to
+// share counters without widening this table or persisting raw claims.
 
 package state
 

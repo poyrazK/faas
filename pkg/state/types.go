@@ -6685,7 +6685,7 @@ type EdgeRuleRespondAction struct {
 // runtime spends the float as `tokens += dt * rps` so fractional
 // values are exact under the refill formula.
 //
-// Per-IP sub-keying is deliberately absent in v1 — a per-IP boolean
+// Per-IP sub-keying is deliberately absent — a per-IP boolean
 // would multiply the limiter's map cardinality by unique-IP count
 // (unbounded, attacker-controlled). If a per-IP variant is wanted
 // later it gets its own bounded design (ADR-093-style cap + an
@@ -6693,7 +6693,9 @@ type EdgeRuleRespondAction struct {
 // bucket). Shipping the field now and bounding it later is not safe.
 //
 // Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881 Phase 3)
-// extends the wire shape with optional per-consumer keying. The new
+// extends the wire shape with optional dimensional keying. Country
+// keying and strict missing-key behavior are the ADR-104 amendment 6
+// additions. The fields are
 // fields are byte-identical to the DTO mirror at
 // pkg/api/dto.go::EdgeRuleThrottleAction — gatewayd reads them through
 // the limiter constructor (pkg/gateway/ratelimit.go::AllowWithConsumerKey,
@@ -6707,6 +6709,7 @@ type EdgeRuleThrottleAction struct {
 	KeyBy             string  `json:"key_by,omitempty"`
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
+	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
 }
 
 // EdgeRuleAction is the kind-tagged union stored in edge_rules.action

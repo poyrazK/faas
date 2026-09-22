@@ -573,6 +573,7 @@ from .edge_rule_suggestion_kind import EdgeRuleSuggestionKind
 from .edge_rule_suggestion_methods_item import EdgeRuleSuggestionMethodsItem
 from .edge_rule_throttle_action import EdgeRuleThrottleAction
 from .edge_rule_throttle_action_key_by import EdgeRuleThrottleActionKeyBy
+from .edge_rule_throttle_action_missing_key_policy import EdgeRuleThrottleActionMissingKeyPolicy
 from .edge_rule_validate_action import EdgeRuleValidateAction
 from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
@@ -1903,6 +1904,7 @@ __all__ = (
     "EdgeRuleSuggestionMethodsItem",
     "EdgeRuleThrottleAction",
     "EdgeRuleThrottleActionKeyBy",
+    "EdgeRuleThrottleActionMissingKeyPolicy",
     "EdgeRuleValidateAction",
     "EdgeRuleValidateActionSchema",
     "EdgeRuleValidateActionValidateMode",

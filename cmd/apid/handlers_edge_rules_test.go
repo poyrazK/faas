@@ -63,6 +63,34 @@ func edgeRuleRouteReq(slug string) api.CreateEdgeRuleRequest {
 // because no other test file needs it today.
 func boolPtr(b bool) *bool { return &b }
 
+// The throttle action carries its dimensional policy inside the jsonb action
+// column. Dropping any field at this DTO→state boundary silently turns an
+// authenticated rule back into a shared route bucket, so pin the full mapping.
+func TestActionFromBody_ThrottlePreservesDimensionalFields(t *testing.T) {
+	raw := json.RawMessage(`{
+		"requests_per_second":10,
+		"burst":20,
+		"key_by":"jwt_claim",
+		"jwt_claim_name":"tenant_id",
+		"max_keys_per_rule":250,
+		"missing_key_policy":"reject"
+	}`)
+	action := actionFromBody(string(state.EdgeRuleKindThrottle), raw)
+	if action.Throttle == nil {
+		t.Fatal("actionFromBody(throttle) returned nil throttle action")
+	}
+	got := action.Throttle
+	if got.KeyBy != api.ThrottleKeyByJWTClaim || got.JWTClaimName != "tenant_id" {
+		t.Errorf("identity fields = (%q, %q), want (%q, tenant_id)", got.KeyBy, got.JWTClaimName, api.ThrottleKeyByJWTClaim)
+	}
+	if got.MaxKeysPerRule != 250 {
+		t.Errorf("max_keys_per_rule = %d, want 250", got.MaxKeysPerRule)
+	}
+	if got.MissingKeyPolicy != api.ThrottleMissingKeyReject {
+		t.Errorf("missing_key_policy = %q, want %q", got.MissingKeyPolicy, api.ThrottleMissingKeyReject)
+	}
+}
+
 // TestCreateEdgeRule_HappyPath confirms the canonical create flow:
 // 201, the response carries the seeded fields, and a follow-up
 // GET-by-id returns the same row.

@@ -37,10 +37,10 @@ type authenticatedKey struct{}
 //     at line 1022; Phase 3 keeps it via withAuthenticated.
 //
 //   - applyEdgeRuleJWT (handler.go:1658) stamps JWTSubject and
-//     JWTClaims after JWKS verification succeeds. Custom claims
-//     are sourced from pkg/edgejwks.Claims.Custom — a string→string
-//     subset; non-string claim values are dropped at the verifier
-//     and never reach this struct.
+//     JWTClaims after JWKS verification succeeds. Custom claims are
+//     sourced from pkg/edgejwks.Claims.Custom — a bounded string→string
+//     map of top-level scalar values. JSON numbers and booleans are
+//     normalized to strings; arrays and objects are dropped.
 //
 // All fields are zero-valued until their respective branch ran.
 // Anonymous traffic (no authn chain OR RequireAuthn=false on the
@@ -82,13 +82,10 @@ type Authenticated struct {
 	// key.
 	JWTSubject string
 
-	// JWTClaims is the string→string subset of custom claims the
-	// rule required (pkg/edgejwks.Claims.Custom). Empty when no
-	// JWT was verified OR when the rule did not require any custom
-	// claims. Used by KeyBy == "jwt_claim" to look up the named
-	// claim (rule.JWTClaimName) for the per-consumer bucket key.
-	// Non-string claim values are intentionally absent — Phase 3
-	// does not attempt coercion (see ADR-104 §Out of scope).
+	// JWTClaims is the bounded string→string subset of top-level scalar
+	// custom claims in the verified JWT (pkg/edgejwks.Claims.Custom). Empty
+	// when no JWT was verified. Used by KeyBy == "jwt_claim" to look up the
+	// named claim (rule.JWTClaimName) for the dimensional bucket key.
 	JWTClaims map[string]string
 }
 
@@ -120,10 +117,8 @@ func authenticatedFrom(ctx context.Context) Authenticated {
 // non-empty identity is available for the requested dimension;
 // (consumerID == "", false) when the request is anonymous on the
 // requested dimension — caller (applyEdgeRuleThrottle) treats
-// that as "the per-rule bucket already throttled, let anonymous
-// traffic through the per-consumer layer" (the documented
-// back-compat posture; a future hardening may 401 anonymous
-// traffic against a per-consumer rule explicitly).
+// that as a missing dimension. The caller applies the rule's
+// missing_key_policy: one shared anonymous bucket or a 401 rejection.
 //
 // The consumerID must NOT equal ConsumerKeySentinel — if a
 // customer manages to inject "__other__" via keyBy="api_key" +

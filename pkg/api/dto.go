@@ -7344,15 +7344,15 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 //   - Burst > 0 (same leak rationale as above).
 //   - Burst ≤ plan.RateLimitBurst (sub-plan ceiling).
 //
-// Per-IP sub-keying is deliberately absent in v1 — see
+// Per-IP sub-keying is deliberately absent — see
 // pkg/state/types.go::EdgeRuleThrottleAction for the design rationale.
 //
 // Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881 Phase 3)
-// extends the wire shape with optional per-consumer keying. The new
+// extends the wire shape with optional dimensional keying. The new
 // fields default to zero-values that produce bit-identical behaviour
 // to PR #887's bucket key (appID+"\x00"+ruleID):
 //
-//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim"}.
+//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"}.
 //     Empty string and "none" are equivalent — the empty value is the
 //     pre-Phase-3 shape; "none" is the explicit Phase-3 opt-out. Both
 //     preserve back-compat (the bucket key is unchanged).
@@ -7364,6 +7364,9 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 //     collapse into a single non-evicting "__other__" bucket that
 //     STILL consumes tokens (ADR-104 §"Consequences" load-bearing
 //     safety property). Defaults to 0 meaning "use plan default".
+//   - MissingKeyPolicy controls requests without an authentication-backed
+//     dimension: "shared" (or empty) uses one anonymous bucket; "reject"
+//     returns 401 before consuming a token.
 //
 // The bounded design is enforced at the limiter layer
 // (pkg/gateway/ratelimit.go::AllowWithConsumerKey, Phase 3). The
@@ -7375,6 +7378,7 @@ type EdgeRuleThrottleAction struct {
 	KeyBy             string  `json:"key_by,omitempty"`
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
+	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
 }
 
 // ThrottleKeyByNone is the explicit Phase-3 opt-out value. The empty
@@ -7389,6 +7393,15 @@ const (
 	ThrottleKeyByConsumerID = "consumer_id"
 	ThrottleKeyByJWTSubject = "jwt_subject"
 	ThrottleKeyByJWTClaim   = "jwt_claim"
+	ThrottleKeyByCountry    = "country"
+
+	// ThrottleMissingKeyShared preserves the permissive historical posture for
+	// a dimensional rule when the request has no usable identity: all such
+	// requests share one bounded anonymous child bucket. Reject makes the
+	// dimension mandatory and prevents callers from bypassing a user/tenant
+	// limit by omitting their credential or claim.
+	ThrottleMissingKeyShared = "shared"
+	ThrottleMissingKeyReject = "reject"
 )
 
 // ThrottleMaxKeysPerRuleDefault is the fallback MaxKeysPerRule the
@@ -7404,19 +7417,19 @@ const (
 const ThrottleMaxKeysPerRuleDefault = 1000
 
 // ThrottleKeyByIsPerConsumer reports whether the supplied KeyBy
-// value opts the rule into per-consumer bucket keying
+// value opts the rule into dimensional bucket keying
 // (ADR-104, issue #881 Phase 3). Empty string is treated as
 // back-compat (PR #887's `appID+"\x00"+ruleID` shape) — only
 // the non-empty per-consumer values trigger per-consumer routing;
 // "none" remains an explicit opt-out. The single source of truth for
-// "is this a per-consumer KeyBy?" — pkg/gateway/handler.go and
+// "is this a dimensional KeyBy?" — pkg/gateway/handler.go and
 // cmd/gatewayd-internal/edge_rules.go both consult this rather
 // than duplicating the membership test, so adding a future
 // Phase 4 value (e.g. "ip") is a one-line constant + this helper
 // update.
 func ThrottleKeyByIsPerConsumer(keyBy string) bool {
 	switch keyBy {
-	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim, ThrottleKeyByCountry:
 		return true
 	default:
 		return false
@@ -7477,6 +7490,20 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 			"throttle action: burst %d exceeds the plan ceiling %d — a throttle rule is strictly a tightening primitive",
 			a.Burst, ctx.PlanMaxBurst))
 	}
+	dimensional := ThrottleKeyByIsPerConsumer(a.KeyBy)
+	switch a.MissingKeyPolicy {
+	case "":
+		// Empty preserves the pre-field shared behavior.
+	case ThrottleMissingKeyShared, ThrottleMissingKeyReject:
+		if !dimensional {
+			return ErrValidation("throttle action: missing_key_policy requires a dimensional key_by")
+		}
+	default:
+		return ErrValidation(fmt.Sprintf(
+			"throttle action: missing_key_policy %q is not in the closed vocab (allowed: \"shared\", \"reject\")",
+			a.MissingKeyPolicy))
+	}
+
 	// Phase 3 (ADR-104): per-consumer keying validation. KeyBy is
 	// optional; the empty value preserves PR #887's behaviour and
 	// needs no further checks. Non-empty values must be in the closed
@@ -7493,7 +7520,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		if a.MaxKeysPerRule != 0 {
 			return ErrValidation("throttle action: max_keys_per_rule requires key_by != \"none\" (got key_by=\"\")")
 		}
-	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByCountry:
 		if a.JWTClaimName != "" {
 			return ErrValidation(fmt.Sprintf(
 				"throttle action: jwt_claim_name is only valid with key_by=\"jwt_claim\" (got key_by=%q)",
@@ -7516,7 +7543,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		}
 	default:
 		return ErrValidation(fmt.Sprintf(
-			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\")",
+			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\", \"country\")",
 			a.KeyBy))
 	}
 	return nil

@@ -409,6 +409,15 @@ PR-A/B/C — keep their cite numbers untouched.)
         + 2 review-fix commits; pattern after PR #924 Mega-PR-A).
         Branch `feat-881-phase-3-per-consumer` carries the
         work; PR opens as DRAFT per mega-PR house style.
+      **Amendment 6 (ADR-104, 2026-09-22):** The throttle dimension
+        vocabulary adds `country`; verified top-level scalar JWT claims
+        are available for `jwt_claim` even when not listed in the JWT
+        rule's `required_claims`; `missing_key_policy=shared|reject`
+        controls absent authentication dimensions; and central mode
+        coordinates bounded deterministic dimension shards across
+        replicas. See ADR-104 amendment 6 for the security and collision
+        semantics. The host/path/method matcher remains the endpoint
+        dimension and no schema migration is required.
     - **D20.6 — CORS non-preflight e2e path.** PR 6 covers CORS
       preflight e2e; non-preflight stamp-the-Origin flow is
       unit-tested at `pkg/gateway/handler.go:1175-1220` and the e2e

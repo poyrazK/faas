@@ -57,9 +57,75 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
+
+type dimensionalCentralBackend struct {
+	mu     sync.Mutex
+	tokens map[string]int
+}
+
+func (b *dimensionalCentralBackend) ConsumeToken(_ context.Context, _, subjectID, _ string, _, burst float64) (int, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.tokens == nil {
+		b.tokens = map[string]int{}
+	}
+	remaining, ok := b.tokens[subjectID]
+	if !ok {
+		remaining = int(burst)
+	}
+	if remaining < 1 {
+		return 0, false, nil
+	}
+	remaining--
+	b.tokens[subjectID] = remaining
+	return remaining, true, nil
+}
+
+func (*dimensionalCentralBackend) PeekToken(context.Context, string, string, string) (int, error) {
+	return 0, nil
+}
+
+func (*dimensionalCentralBackend) Invalidate(string, string, string) {}
+
+func TestRouteConsumerThrottle_CentralReplicasShareDimensionalBurst(t *testing.T) {
+	central := &dimensionalCentralBackend{}
+	now := func() time.Time { return time.Unix(1_700_000_000, 0) }
+	replicas := []*Limiter{
+		NewLimiterWithCentralLRU(100, central, now),
+		NewLimiterWithCentralLRU(100, central, now),
+	}
+	const centralKey = "rule:00000000-0000-0000-0000-000000000001:hobby"
+	admitted := 0
+	for _, limiter := range replicas {
+		if limiter.AllowWithCentralConsumerKey(
+			context.Background(), "app-1\x00rule-1", "jwt_claim", "tenant-42",
+			1, 1, 100, centralKey,
+		) {
+			admitted++
+		}
+	}
+	if admitted != 1 {
+		t.Fatalf("admitted=%d across two replicas, want 1 shared dimensional burst", admitted)
+	}
+}
+
+func TestDimensionalCentralSubjectID_IsStableAndBounded(t *testing.T) {
+	const ruleID = "00000000-0000-0000-0000-000000000001"
+	if a, b := dimensionalCentralSubjectID(ruleID, "country", "TR", 100), dimensionalCentralSubjectID(ruleID, "country", "TR", 100); a != b {
+		t.Fatalf("same dimension mapped to different subjects: %q != %q", a, b)
+	}
+	seen := map[string]struct{}{}
+	for i := 0; i < 10_000; i++ {
+		seen[dimensionalCentralSubjectID(ruleID, "jwt_claim", fmt.Sprintf("tenant-%d", i), 100)] = struct{}{}
+	}
+	if len(seen) > 100 {
+		t.Fatalf("central subjects=%d, want <= cap 100", len(seen))
+	}
+}
 
 // TestRouteConsumerThrottle_OtherBucketPinnedEvenWhenFull is the
 // load-bearing safety property (ADR-104 §Consequences + plan

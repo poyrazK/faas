@@ -7,10 +7,13 @@ package gateway
 import (
 	"container/list"
 	"context"
+	"crypto/sha256"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -172,6 +175,67 @@ func (l *Limiter) AllowWithConsumerKey(ruleKey, consumerID string, rps, burst fl
 	return l.allowWithConsumerKey(ruleKey, consumerID, rps, burst, cap)
 }
 
+// AllowWithCentralConsumerKey is the fleet-coordinated dimensional sibling of
+// AllowWithConsumerKey. Local mode preserves the exact tracked-consumer +
+// pinned-__other__ behavior above. In central mode, the authoritative row is
+// selected by a deterministic shard of (rule, dimension kind, value), bounded
+// by cap. Every gateway replica therefore maps the same request concept to the
+// same Postgres UUID without adding an attacker-controlled identity column or
+// allowing unbounded counter rows. Hash collisions conservatively make two
+// concepts share a bucket; they cannot increase either concept's allowance.
+func (l *Limiter) AllowWithCentralConsumerKey(
+	ctx context.Context,
+	ruleKey, dimensionKind, consumerID string,
+	rps, burst float64,
+	cap int,
+	centralKey string,
+) bool {
+	if l.noop {
+		return true
+	}
+	if rps < 0 || burst < 0 || cap <= 0 || consumerID == ConsumerKeySentinel {
+		return false
+	}
+	bucketKey, localAllowed := l.allowWithConsumerKeyLocal(ruleKey, consumerID, rps, burst, cap)
+	if centralKey == "" || l.isNoopBackend() {
+		return localAllowed
+	}
+	scope, ruleID, plan, ok := splitCentralKey(centralKey)
+	if !ok || scope != rateLimitScopeRule {
+		return false
+	}
+	centralSubjectID := dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID, cap)
+	ctx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+	defer cancel()
+	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, centralSubjectID, plan, rps, burst)
+	if err != nil {
+		return localAllowed
+	}
+	// Keep headers and the degraded fallback aligned with the authoritative
+	// balance of the deterministic central shard.
+	l.mu.Lock()
+	if current := l.buckets[bucketKey]; current != nil {
+		current.tokens = float64(remaining)
+		current.last = l.now()
+	}
+	l.mu.Unlock()
+	return admitted
+}
+
+// dimensionalCentralSubjectID maps a request concept into one of cap stable
+// UUID rows for the rule. Version 8 marks the UUID as application-defined;
+// SHA-256 supplies both the shard selection and collision-resistant row ID.
+func dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID string, cap int) string {
+	identityHash := sha256.Sum256([]byte(dimensionKind + "\x00" + consumerID))
+	shard := uint64(0)
+	for i := 0; i < 8; i++ {
+		shard = shard<<8 | uint64(identityHash[i])
+	}
+	shard %= uint64(cap)
+	name := ruleID + "\x00" + dimensionKind + "\x00" + strconv.FormatUint(shard, 10)
+	return uuid.NewHash(sha256.New(), uuid.NameSpaceOID, []byte(name), 8).String()
+}
+
 // AllowWithCentralParams is the central-aware sibling of
 // AllowWithParams (ADR-104 amendment 5, issue #881 Phase 4).
 // When centralKey is non-empty, the shared counter is authoritative for every
@@ -194,6 +258,11 @@ func (l *Limiter) AllowWithCentralParams(ctx context.Context, id string, rps, bu
 // locked method (which holds l.mu through the bucket lookup +
 // consumer-set bookkeeping).
 func (l *Limiter) allowWithConsumerKey(ruleKey, consumerID string, rps, burst float64, cap int) bool {
+	_, allowed := l.allowWithConsumerKeyLocal(ruleKey, consumerID, rps, burst, cap)
+	return allowed
+}
+
+func (l *Limiter) allowWithConsumerKeyLocal(ruleKey, consumerID string, rps, burst float64, cap int) (string, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -222,7 +291,7 @@ func (l *Limiter) allowWithConsumerKey(ruleKey, consumerID string, rps, burst fl
 		consumers[consumerID] = struct{}{}
 	}
 
-	return l.allowTokenKeyedLocked(bucketKey, rps, burst, otherKey, now)
+	return bucketKey, l.allowTokenKeyedLocked(bucketKey, rps, burst, otherKey, now)
 }
 
 // ConsumerIsTracked reports whether consumerID has its own bucket

@@ -27014,11 +27014,12 @@ components:
         BEFORE any DB write — a customer cannot raise their
         plan limit by registering a throttle rule.
 
-        Per-IP sub-keying is deliberately absent in v1 — see
-        the package doc on `pkg/state.EdgeRuleThrottleAction`
-        for the design rationale (memory-bounded limiter +
-        attacker-controlled IP cardinality = unbounded bucket
-        growth).
+        Per-IP sub-keying is deliberately absent — see the package
+        doc on `pkg/state.EdgeRuleThrottleAction` for the design
+        rationale (memory-bounded limiter + attacker-controlled IP
+        cardinality = unbounded bucket growth). Country keying uses
+        the existing trusted GeoIP lookup and therefore has bounded
+        cardinality.
 
         Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881
         Phase 3) extends the wire shape with optional per-consumer
@@ -27050,7 +27051,7 @@ components:
           example: 200
         key_by:
           type: string
-          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim"]
+          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"]
           default: ""
           description: |
             Per-consumer keying dimension (ADR-104 / issue #881
@@ -27061,7 +27062,9 @@ components:
             identity (all rotated keys for that consumer share a bucket).
             When `"jwt_subject"`, one bucket per JWT `sub`.
             When `"jwt_claim"`, one bucket per value of the
-            claim named by `jwt_claim_name`. Each non-empty
+            claim named by `jwt_claim_name`. When `"country"`, one
+            bucket per ISO 3166-1 alpha-2 country resolved from the
+            gateway's trusted client IP. Each non-empty
             value activates the bounded design: when the
             per-rule consumer set exceeds
             `max_keys_per_rule`, all over-cap callers collapse
@@ -27077,9 +27080,12 @@ components:
             custom claim to extract (e.g., `"tier"`,
             `"org_id"`). Format is a CodeQL safe-identifier:
             leading letter or underscore, then `[A-Za-z0-9_]`,
-            max 64 chars. Anything looser risks label-cardinality
-            explosion in metric series or a CodeQL go-clear-
-            text-logging finding on a future refactor.
+            max 64 chars. Top-level string, number, and boolean
+            values are supported and normalized to their JSON scalar
+            representation. Arrays, objects, empty strings, and values
+            longer than 256 bytes are treated as missing. The configured
+            claim is retained first within the verifier's 64-claim
+            request-context bound.
           example: "tier"
         max_keys_per_rule:
           type: integer
@@ -27095,6 +27101,19 @@ components:
             `plan.ThrottleMaxKeysPerRule`. Must be 0 when
             `key_by` is `""` or `"none"` — the cap is moot for
             non-per-consumer rules.
+        missing_key_policy:
+          type: string
+          enum: ["shared", "reject"]
+          default: "shared"
+          description: |
+            Behavior when an authentication-backed dimension is not
+            available on the request. `"shared"` places all such
+            requests in one bounded `__anonymous__` bucket (the
+            backward-compatible default). `"reject"` returns 401
+            before consuming a route token. This field requires a
+            dimensional `key_by` value. Country lookup dependency
+            failures remain fail-closed with 503 rather than being
+            treated as an anonymous identity.
 
     EdgeRuleBudgetAction:
       description: |

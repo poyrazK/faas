@@ -244,6 +244,10 @@ type EdgeRuleJWTResolved struct {
 	JWKSURL        string            // already https:// + not private
 	Algorithms     []string          // closed vocab
 	RequiredClaims map[string]string // key=value
+	// ExtractClaims is a request-local copy-time hint populated by the
+	// handler when the matching throttle keys by jwt_claim. It is never
+	// stored in the edge-rule cache.
+	ExtractClaims []string
 }
 
 // EdgeRuleIPResolved is the kind=ip subset (ADR-091). PR 5 calls
@@ -1048,9 +1052,10 @@ type JWTVerifier interface {
 // surface as a mismatch when the cmd-side adapter copies the
 // fields over, which is intentional).
 //
-// Custom is the string→string subset of additional claims the rule
-// required (pkg/edgejwks.Claims.Custom). Phase 3 (ADR-104, issue
-// #881 Phase 3) threads this through to applyEdgeRuleThrottle so a
+// Custom is the bounded string→string subset of safe top-level scalar
+// claims in the verified token (pkg/edgejwks.Claims.Custom). It is
+// populated independently of the JWT rule's required_claims. Phase 3
+// (ADR-104, issue #881 Phase 3) threads this through to applyEdgeRuleThrottle so a
 // rule with key_by="jwt_claim" can look up the named claim value
 // for bucket-key construction. Pre-Phase-3 code never read Custom
 // — adding the field is a non-breaking widening; zero-value (nil)

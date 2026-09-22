@@ -10,6 +10,10 @@ from ..models.edge_rule_throttle_action_key_by import (
     EdgeRuleThrottleActionKeyBy,
     check_edge_rule_throttle_action_key_by,
 )
+from ..models.edge_rule_throttle_action_missing_key_policy import (
+    EdgeRuleThrottleActionMissingKeyPolicy,
+    check_edge_rule_throttle_action_missing_key_policy,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="EdgeRuleThrottleAction")
@@ -29,11 +33,12 @@ class EdgeRuleThrottleAction:
     BEFORE any DB write — a customer cannot raise their
     plan limit by registering a throttle rule.
 
-    Per-IP sub-keying is deliberately absent in v1 — see
-    the package doc on `pkg/state.EdgeRuleThrottleAction`
-    for the design rationale (memory-bounded limiter +
-    attacker-controlled IP cardinality = unbounded bucket
-    growth).
+    Per-IP sub-keying is deliberately absent — see the package
+    doc on `pkg/state.EdgeRuleThrottleAction` for the design
+    rationale (memory-bounded limiter + attacker-controlled IP
+    cardinality = unbounded bucket growth). Country keying uses
+    the existing trusted GeoIP lookup and therefore has bounded
+    cardinality.
 
     Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881
     Phase 3) extends the wire shape with optional per-consumer
@@ -65,7 +70,9 @@ class EdgeRuleThrottleAction:
     identity (all rotated keys for that consumer share a bucket).
     When `"jwt_subject"`, one bucket per JWT `sub`.
     When `"jwt_claim"`, one bucket per value of the
-    claim named by `jwt_claim_name`. Each non-empty
+    claim named by `jwt_claim_name`. When `"country"`, one
+    bucket per ISO 3166-1 alpha-2 country resolved from the
+    gateway's trusted client IP. Each non-empty
     value activates the bounded design: when the
     per-rule consumer set exceeds
     `max_keys_per_rule`, all over-cap callers collapse
@@ -78,9 +85,12 @@ class EdgeRuleThrottleAction:
     custom claim to extract (e.g., `"tier"`,
     `"org_id"`). Format is a CodeQL safe-identifier:
     leading letter or underscore, then `[A-Za-z0-9_]`,
-    max 64 chars. Anything looser risks label-cardinality
-    explosion in metric series or a CodeQL go-clear-
-    text-logging finding on a future refactor.
+    max 64 chars. Top-level string, number, and boolean
+    values are supported and normalized to their JSON scalar
+    representation. Arrays, objects, empty strings, and values
+    longer than 256 bytes are treated as missing. The configured
+    claim is retained first within the verifier's 64-claim
+    request-context bound.
     """
     max_keys_per_rule: int | Unset = 0
     """Caps the cardinality of the per-consumer bucket map
@@ -91,6 +101,16 @@ class EdgeRuleThrottleAction:
     `plan.ThrottleMaxKeysPerRule`. Must be 0 when
     `key_by` is `""` or `"none"` — the cap is moot for
     non-per-consumer rules.
+    """
+    missing_key_policy: EdgeRuleThrottleActionMissingKeyPolicy | Unset = "shared"
+    """Behavior when an authentication-backed dimension is not
+    available on the request. `"shared"` places all such
+    requests in one bounded `__anonymous__` bucket (the
+    backward-compatible default). `"reject"` returns 401
+    before consuming a route token. This field requires a
+    dimensional `key_by` value. Country lookup dependency
+    failures remain fail-closed with 503 rather than being
+    treated as an anonymous identity.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -107,6 +127,10 @@ class EdgeRuleThrottleAction:
 
         max_keys_per_rule = self.max_keys_per_rule
 
+        missing_key_policy: str | Unset = UNSET
+        if not isinstance(self.missing_key_policy, Unset):
+            missing_key_policy = self.missing_key_policy
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -121,6 +145,8 @@ class EdgeRuleThrottleAction:
             field_dict["jwt_claim_name"] = jwt_claim_name
         if max_keys_per_rule is not UNSET:
             field_dict["max_keys_per_rule"] = max_keys_per_rule
+        if missing_key_policy is not UNSET:
+            field_dict["missing_key_policy"] = missing_key_policy
 
         return field_dict
 
@@ -142,12 +168,20 @@ class EdgeRuleThrottleAction:
 
         max_keys_per_rule = d.pop("max_keys_per_rule", UNSET)
 
+        _missing_key_policy = d.pop("missing_key_policy", UNSET)
+        missing_key_policy: EdgeRuleThrottleActionMissingKeyPolicy | Unset
+        if isinstance(_missing_key_policy, Unset):
+            missing_key_policy = UNSET
+        else:
+            missing_key_policy = check_edge_rule_throttle_action_missing_key_policy(_missing_key_policy)
+
         edge_rule_throttle_action = cls(
             requests_per_second=requests_per_second,
             burst=burst,
             key_by=key_by,
             jwt_claim_name=jwt_claim_name,
             max_keys_per_rule=max_keys_per_rule,
+            missing_key_policy=missing_key_policy,
         )
 
         edge_rule_throttle_action.additional_properties = d

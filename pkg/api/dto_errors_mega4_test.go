@@ -635,6 +635,7 @@ func TestThrottleKeyByIsPerConsumer_Mega4(t *testing.T) {
 		ThrottleKeyByConsumerID: true,
 		ThrottleKeyByJWTSubject: true,
 		ThrottleKeyByJWTClaim:   true,
+		ThrottleKeyByCountry:    true,
 		"ip":                    false, // unknown → default-false
 		"unknown-thing":         false,
 	}

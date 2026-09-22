@@ -578,6 +578,29 @@ func TestBuildEdgeRuleAction_Throttle_ConsumerID(t *testing.T) {
 	}
 }
 
+func TestBuildEdgeRuleAction_Throttle_CountryAndStrictMissingKey(t *testing.T) {
+	raw, err := buildEdgeRuleAction("throttle", edgeRuleActionInputs{
+		ThrottleRPS:              10,
+		ThrottleBurst:            20,
+		ThrottleKeyBy:            api.ThrottleKeyByCountry,
+		ThrottleMaxKeys:          250,
+		ThrottleMissingKeyPolicy: api.ThrottleMissingKeyReject,
+	})
+	if err != nil {
+		t.Fatalf("buildEdgeRuleAction(throttle) = %v, want nil", err)
+	}
+	var got api.EdgeRuleThrottleAction
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal action: %v", err)
+	}
+	if got.KeyBy != api.ThrottleKeyByCountry {
+		t.Errorf("key_by = %q, want %q", got.KeyBy, api.ThrottleKeyByCountry)
+	}
+	if got.MissingKeyPolicy != api.ThrottleMissingKeyReject {
+		t.Errorf("missing_key_policy = %q, want %q", got.MissingKeyPolicy, api.ThrottleMissingKeyReject)
+	}
+}
+
 // TestBuildEdgeRuleAction_Budget_Marshals pins the regression that
 // motivated this change: `budget` was in edgeRuleKindVocab but had no
 // case in buildEdgeRuleAction, so every `--kind budget` create fell

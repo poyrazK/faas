@@ -18,10 +18,10 @@
 //      balance after each successful consume.
 //
 // Phase 4 covers per-app + per-account + per-rule scopes (the 00281
-// migration widened the 00126 CHECK to include scope='rule'). Per-
-// consumer central mode is Phase 5: the PK (scope, subject_id, plan)
-// does NOT include consumer_id; the __other__ collapse bucket stays
-// in-process until Phase 5.
+// migration widened the 00126 CHECK to include scope='rule'). ADR-104
+// amendment 6 also coordinates dimensional rule buckets without widening
+// the table: a bounded deterministic shard is encoded as a derived UUID in
+// subject_id, so the existing (scope, subject_id, plan) key remains valid.
 
 package gateway
 

@@ -30,7 +30,6 @@ import (
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
-	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -1089,12 +1088,12 @@ type Handler struct {
 	// proxy all see the *target* app's context, not the
 	// inbound host's (auth remains per-app).
 	edgeRules EdgeRuleMatcher
-	// geoReader is the pkg/geoip.Reader used by applyEdgeRuleGeo
-	// (ADR-091 D21). A nil reader means the gate is disabled —
-	// applyEdgeRuleGeo short-circuits to fall-through so the
-	// daemon boots cleanly without a DB-IP file (§11 fail-open
-	// spirit). Set via WithGeoReader.
-	geoReader *geoip.Reader
+	// geoReader is the country lookup used by applyEdgeRuleGeo and
+	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
+	// at boot, but a matched policy that needs geography fails closed.
+	// A matched policy fails closed when the reader is unavailable;
+	// the daemon itself can still boot without a DB-IP file.
+	geoReader CountryReader
 	// resolveTargetApp is the closure the matcher uses to
 	// swap the gateway.App when a `kind=route` rule fires.
 	// It returns (App{}, false) when the slug is not found
@@ -1637,14 +1636,17 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
-// WithGeoReader (ADR-091 D21 / §4.1.2.8b) arms the per-rule
-// geographic lookup consulted by applyEdgeRuleGeo. r may be nil
-// (geo kind disabled; pre-PR-7 + file-missing posture). The
-// nil-receiver-safe pattern in pkg/geoip.Reader.Lookup means a
-// nil reader keeps the gate fail-open — the matcher can still
-// surface a geo rule, but the lookup returns ("", false, nil)
-// and the rule does not fire.
-func (h *Handler) WithGeoReader(r *geoip.Reader) *Handler {
+// CountryReader is the narrow GeoIP seam used by geo access rules and
+// country-keyed throttles. *geoip.Reader is the production implementation;
+// the interface keeps request-policy tests independent from a binary MMDB.
+type CountryReader interface {
+	Lookup(net.IP) (country string, ok bool, err error)
+}
+
+// WithGeoReader (ADR-091 D21 / §4.1.2.8b) arms the geographic lookup
+// consulted by geo access rules and country-keyed throttles. A nil reader is
+// allowed at boot, but any matched policy that needs it fails closed with 503.
+func (h *Handler) WithGeoReader(r CountryReader) *Handler {
 	h.geoReader = r
 	return h
 }
@@ -2519,7 +2521,18 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 		h.jwtEmit(r.Context(), "jwt", "missing", rule.ID, r.Host, nil, nil)
 		return true
 	}
-	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, rule)
+	// A matching jwt_claim throttle chooses a verified custom claim even when
+	// the JWT access rule does not require that claim's value. Copy the cached
+	// JWT rule before adding the extraction hint; matcher-owned values are
+	// immutable and shared across requests.
+	verifyRule := rule
+	if throttle := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method); throttle != nil &&
+		throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
+		cloned := *rule
+		cloned.ExtractClaims = []string{throttle.JWTClaimName}
+		verifyRule = &cloned
+	}
+	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, verifyRule)
 	if err != nil {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="apps"`)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
@@ -3996,12 +4009,11 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 // same-account governance doesn't get to gate traffic.
 //
 // Phase 3 (ADR-104, issue #881 Phase 3): when the matched rule
-// opts into a per-consumer KeyBy value (`api_key`, `consumer_id`, `jwt_subject`,
-// `jwt_claim`), this applier reads the Authenticated struct from
-// the request context (populated by enforceRequireAuthn and
-// applyEdgeRuleJWT) and routes the bucket lookup through the
-// routeConsumerLimiter (separate scope so per-rule and
-// per-consumer buckets don't share slots). The __other__ collapse
+// opts into a dimensional KeyBy value (`api_key`, `consumer_id`,
+// `jwt_subject`, `jwt_claim`, or `country`), this applier resolves the
+// trusted request concept and routes the bucket lookup through the
+// routeConsumerLimiter (separate scope so per-rule and dimensional
+// buckets don't share slots). The __other__ collapse
 // bucket — see ratelimit.go::AllowWithConsumerKey — is pinned
 // non-evictable so an attacker cannot weaponise key-space growth
 // to bypass the throttle. Empty KeyBy (and the "none" sentinel)
@@ -4039,6 +4051,63 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		}
 		return false
 	}
+	// Resolve the optional request dimension before consuming a parent route
+	// token. A strict missing-key policy and an unavailable GeoIP dependency
+	// must not charge a request that never reaches the application.
+	var consumerID string
+	dimensional := api.ThrottleKeyByIsPerConsumer(rule.KeyBy)
+	if dimensional {
+		if h.routeConsumerLimiter == nil {
+			h.rejectUnavailableEdgeRule(w, r, "throttle", rule.ID, "dimension_limiter_not_configured")
+			return true
+		}
+		var ok bool
+		var unavailableReason string
+		consumerID, ok, unavailableReason = h.resolveThrottleDimension(r, rule)
+		if unavailableReason != "" {
+			if unavailableReason == "caller_ip_untrusted" {
+				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+					"Caller IP not in trusted set", "X-Forwarded-For did not contain exactly one trusted address; refusing to evaluate a country-keyed throttle"))
+				if h.edgeRuleAudit != nil {
+					h.edgeRuleAudit.Emit(r.Context(), "edge_rule.caller_ip_forged", nil, map[string]any{
+						"rule_id": rule.ID, "from_host": r.Host,
+						"xff_count": len(r.Header.Values("X-Forwarded-For")),
+						"policy":    "throttle_country",
+					})
+				}
+				if h.metrics != nil {
+					h.metrics.ObserveEdgeRuleMatch("throttle", "blocked")
+					h.metrics.ObserveEdgeRuleApply("throttle", "error")
+				}
+				return true
+			}
+			h.rejectUnavailableEdgeRule(w, r, "throttle", rule.ID, unavailableReason)
+			return true
+		}
+		if !ok {
+			if h.metrics != nil {
+				h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, "anonymous")
+			}
+			if rule.MissingKeyPolicy == api.ThrottleMissingKeyReject {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+					"Throttle identity required", "the request did not provide the authenticated identity or claim required by this throttle rule"))
+				if h.edgeRuleAudit != nil {
+					h.edgeRuleAudit.Emit(r.Context(), "edge_rule.throttle_identity_missing", nil, map[string]any{
+						"rule_id": rule.ID,
+						"app_id":  app.ID,
+						"key_by":  rule.KeyBy,
+					})
+				}
+				if h.metrics != nil {
+					h.metrics.ObserveEdgeRuleMatch("throttle", "blocked")
+					h.metrics.ObserveEdgeRuleApply("throttle", "success")
+				}
+				return true
+			}
+			consumerID = "__anonymous__"
+		}
+	}
+
 	// Bucket key is `appID + "\x00" + ruleID` for PR #887 rules
 	// (KeyBy == "" or "none"). Per-consumer keying (Phase 3)
 	// constructs a longer key by appending the resolved consumer
@@ -4062,26 +4131,18 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	// documented in the 00126 schema would remain.
 	centralKey := "rule:" + rule.ID + ":" + string(app.Plan)
 	allowed := h.routeLimiter.AllowWithCentralParams(r.Context(), bucketKey, rule.RequestsPerSecond, float64(rule.Burst), centralKey)
-	// consumerID is hoisted out of the per-consumer branch so the
-	// 429 path (below) can read it for the X-RouteRateLimit-Policy
-	// collapse detection (ADR-104 amendment 5, issue #881 Phase 4
-	// H1). Empty string means "anonymous / not resolved" — the
-	// policy-header computation treats that as "route" (no
-	// collapse to advertise).
-	var consumerID string
-	if allowed && api.ThrottleKeyByIsPerConsumer(rule.KeyBy) {
-		authed := authenticatedFrom(r.Context())
-		var ok bool
-		consumerID, ok = resolveConsumerKey(rule.KeyBy, rule.JWTClaimName, authed)
-		if ok {
+	dimensionApplied := false
+	if allowed && dimensional {
+		if consumerID != "" {
 			// The consumer bucket key is the same
 			// `appID+"\x00"+ruleID` prefix used by the per-rule
 			// bucket, plus a "\x00"+consumerID suffix. The per-rule
 			// AllowWithParams call above already admitted the
 			// request into the rule scope (token decrement on the
 			// rule bucket — the parent bucket the per-consumer
-			// sub-buckets ride on); the per-consumer AllowWithConsumerKey
-			// call throttles within that scope.
+			// sub-buckets ride on); AllowWithCentralConsumerKey throttles
+			// within that scope and coordinates replicas when central mode
+			// is enabled.
 			//
 			// When MaxKeysPerRule == 0 (resolver-default; cmd-side
 			// compileThrottleRules substitutes the plan default) we
@@ -4092,30 +4153,21 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 			if cap <= 0 {
 				cap = api.ThrottleMaxKeysPerRuleDefault
 			}
-			if !h.routeConsumerLimiter.AllowWithConsumerKey(bucketKey, consumerID, rule.RequestsPerSecond, float64(rule.Burst), cap) {
+			if !h.routeConsumerLimiter.AllowWithCentralConsumerKey(
+				r.Context(), bucketKey, rule.KeyBy, consumerID,
+				rule.RequestsPerSecond, float64(rule.Burst), cap, centralKey,
+			) {
 				allowed = false
-				h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, "throttle")
+				if h.metrics != nil {
+					h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, "throttle")
+				}
 			} else {
-				h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, "admit")
+				if h.metrics != nil {
+					h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, "admit")
+				}
 			}
-		} else {
-			// Anonymous on a per-consumer rule — emit the
-			// `anonymous` outcome so the dashboard can flag
-			// authn-gated apps that are seeing unauthenticated
-			// traffic on a per-consumer rule (a misconfiguration
-			// signal).
-			h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, "anonymous")
+			dimensionApplied = true
 		}
-		// resolveConsumerKey returning ok=false means anonymous
-		// traffic on a per-consumer rule (e.g. an unauthenticated
-		// request hitting a rule with key_by=api_key). The PR #887
-		// rule-only bucket has already been consumed; we treat
-		// anonymous on a per-consumer rule as a free pass through
-		// the per-consumer layer — anonymous collapses into the
-		// rule scope via the AllowWithParams token. A future
-		// hardening may explicitly 401 here, but for Phase 3 the
-		// documented behaviour matches today (per-rule bucket
-		// already throttled).
 	}
 	if !allowed {
 		w.Header().Set("Retry-After", "1")
@@ -4145,7 +4197,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		// with KeyBy ∈ {"", "none"} never enter this branch
 		// (ThrottleKeyByIsPerConsumer is false) so the
 		// back-compat "route" default is preserved.
-		if api.ThrottleKeyByIsPerConsumer(rule.KeyBy) {
+		if dimensionApplied {
 			if !h.routeConsumerLimiter.ConsumerIsTracked(bucketKey, consumerID) {
 				policy = "per-consumer"
 			}
@@ -4186,6 +4238,33 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		h.metrics.ObserveEdgeRuleApply("throttle", "success")
 	}
 	return false
+}
+
+// resolveThrottleDimension resolves only trusted, platform-established
+// request concepts. Authentication dimensions come from the verified request
+// context; country comes from the single sanitized X-Forwarded-For hop and the
+// configured GeoIP database. A missing database, forged XFF, lookup error, or
+// uncovered address is unavailable and fails closed.
+func (h *Handler) resolveThrottleDimension(r *http.Request, rule *EdgeRuleThrottleResolved) (string, bool, string) {
+	if rule.KeyBy != api.ThrottleKeyByCountry {
+		value, ok := resolveConsumerKey(rule.KeyBy, rule.JWTClaimName, authenticatedFrom(r.Context()))
+		return value, ok, ""
+	}
+	if h.geoReader == nil {
+		return "", false, "geo_reader_not_configured"
+	}
+	clientIP, ok := clientIPFromTrustedXFF(r)
+	if !ok {
+		return "", false, "caller_ip_untrusted"
+	}
+	country, found, err := h.geoReader.Lookup(clientIP)
+	if err != nil {
+		return "", false, "geo_lookup_error"
+	}
+	if !found || country == "" {
+		return "", false, "geo_country_not_found"
+	}
+	return strings.ToUpper(country), true, ""
 }
 
 // geoFailReason returns a short audit-friendly string explaining
