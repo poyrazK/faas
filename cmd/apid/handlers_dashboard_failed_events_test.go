@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -209,7 +210,7 @@ func TestDashboardFailedEvents_DiscardIsAuditedAndObserved(t *testing.T) {
 	if loc := discarded.Header().Get("Location"); !strings.Contains(loc, "action=discarded") {
 		t.Fatalf("Location = %q, want discard flash", loc)
 	}
-	if _, err := env.store.DeadLetterEventByID(t.Context(), app.ID, eventID); err != state.ErrNotFound {
+	if _, err := env.store.DeadLetterEventByID(t.Context(), app.ID, eventID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("discarded event lookup error = %v, want ErrNotFound", err)
 	}
 	stillDead, err := env.store.InvocationByID(t.Context(), inv.ID)
