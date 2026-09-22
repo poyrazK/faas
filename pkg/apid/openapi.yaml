@@ -22905,15 +22905,15 @@ components:
             - type: 'null'
           description: "Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck). nil/omitted = deploy the image as-is."
         # Issue #472 / ADR-054: per-deploy require_signed opt-in.
-        # Only honoured when the apps row's require_signed is
-        # already false (i.e. the customer is volunteering to
-        # gate THIS deploy). When apps.require_signed=true the
-        # operator policy wins — a *false request field is
-        # rejected with 403 deploy_signature_invalid (no
-        # per-deploy opt-out). nil = "leave the per-app flag
-        # alone" (apid default).
+        # Only honoured when effective app signature enforcement is
+        # already false (i.e. the customer is volunteering to gate
+        # THIS deploy). When apps.require_signed=true or
+        # security_policy=enforce, the operator policy wins — a
+        # *false request field is rejected with 403
+        # deploy_signature_invalid (no per-deploy opt-out). nil =
+        # "leave the per-app policy alone" (apid default).
         require_signed:
-          description: "Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit apps.require_signed; *true is a no-op when the app flag is already on; *false is rejected with 403 deploy_signature_invalid when the app flag is on (operator policy wins)."
+          description: "Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit the app's effective signature policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid when apps.require_signed is on or security_policy=enforce (operator policy wins)."
           type: [boolean, "null"]
           example: true
         # Issue #463 / ADR-068: up to 2 stateless sidecars
@@ -31333,7 +31333,7 @@ components:
         security_policy:
           type: [string, "null"]
           enum: [off, warn, enforce]
-          description: "Deploy-time response to high-severity posture findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated."
+          description: "Deploy-time response to high-severity posture findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated and require a trusted signature for OCI images."
           example: enforce
 
     AppSecurityResponse:

@@ -14,3 +14,12 @@ const (
 func (p AppSecurityPolicy) Valid() bool {
 	return p == AppSecurityPolicyOff || p == AppSecurityPolicyWarn || p == AppSecurityPolicyEnforce
 }
+
+// RequiresSignedImage reports whether the policy's supply-chain gate requires
+// an OCI image to carry a trusted signature. Enforce mode treats the signature
+// as part of the deployment's provenance chain; the legacy require_signed flag
+// remains available for apps that want signature enforcement without the full
+// security posture policy.
+func (p AppSecurityPolicy) RequiresSignedImage() bool {
+	return p == AppSecurityPolicyEnforce
+}
