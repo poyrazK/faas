@@ -57,7 +57,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 214 | [Distributed declarative response caching](214-distributed-declarative-response-cache.md) | accepted | Optional Redis L2, stale-while-revalidate, and shared invalidation for route-level response caching |
 | 211 | [Durable async routes](211-durable-async-routes.md) | accepted | Accept authenticated edge requests durably before waking apps, then expose invocation results |
 | 210 | [Runtime secret delivery status](210-runtime-secret-delivery.md) | accepted | Expose durable runtime-secret delivery outcomes and errors to operators |
-| 214 | [Application inbox and outbox facades](214-application-inbox-outbox.md) | accepted | Explicit app-to-app queue delivery and custom signed webhook delivery over the existing invocation and webhook ledgers |
+| 215 | [Application inbox and outbox facades](215-application-inbox-outbox.md) | accepted | Explicit app-to-app queue delivery and custom signed webhook delivery over the existing invocation and webhook ledgers |
 | 208 | [Acknowledged routing handoff for zero-downtime service rollouts](208-zero-downtime-service-rollout-handoff.md) | accepted | Two-phase route publication, serving-gateway acknowledgements, and post-ack per-instance request draining before predecessor retirement |
 | 212 | [Durable inbound webhook ingress](212-durable-inbound-webhook-ingress.md) | accepted | Provider-signed Stripe callbacks persist a deduplicated invocation before `202`, then reuse the scheduler wake, retry, and DLQ path |
 | 207 | [Bounded builder cache affinity](207-bounded-builder-cache-affinity.md) | accepted | Prefer the latest successful builder briefly so production rebuilds reuse node-local caches without sacrificing availability |
