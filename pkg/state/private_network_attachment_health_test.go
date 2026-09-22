@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -62,7 +63,7 @@ func TestPrivateNetworkAttachmentNodeStatusRejectsUnknownStage(t *testing.T) {
 	err := store.UpsertPrivateNetworkAttachmentNodeStatus(context.Background(), PrivateNetworkAttachmentNodeStatus{
 		AccountID: "acct-1", AppID: "app-1", NetworkID: "net-1", NodeID: "node-a", RouteStatus: "pending",
 	})
-	if err != ErrInvalidArgument {
+	if !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("unknown stage status error = %v, want %v", err, ErrInvalidArgument)
 	}
 }
