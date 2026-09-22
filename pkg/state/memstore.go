@@ -349,6 +349,10 @@ type MemStore struct {
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64
+	// deploymentRouteGeneration mirrors deployment_route_generation_seq.
+	// It is independent from edge-rule generations because the consumers and
+	// acknowledgement channels are disjoint.
+	deploymentRouteGeneration int64
 	// mirrorRules mirrors mirror_rules for handler tests (issue #72
 	// / ADR-125). Keyed by MirrorRule.ID; the (app_id, enabled) and
 	// (source_deployment_id, enabled) lookup hot paths walk the map
@@ -6309,6 +6313,32 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+// ListServiceRolloutsInFlight mirrors PgStore's durable schedd recovery set.
+func (m *MemStore) ListServiceRolloutsInFlight(_ context.Context, ownerNodeID string) ([]Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Deployment
+	for _, d := range m.deployments {
+		if d.Status != DeployLive || !IsServiceRollout(d) {
+			continue
+		}
+		if ownerNodeID != "" {
+			app, ok := m.apps[d.AppID]
+			if !ok || app.NodeID != ownerNodeID {
+				continue
+			}
+		}
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out, nil
@@ -18771,6 +18801,15 @@ func (m *MemStore) NextEdgeRuleGeneration(_ context.Context) (int64, error) {
 	defer m.mu.Unlock()
 	m.edgeRuleGeneration++
 	return m.edgeRuleGeneration, nil
+}
+
+// NextDeploymentRouteGeneration mirrors PostgreSQL's independent deployment
+// routing sequence.
+func (m *MemStore) NextDeploymentRouteGeneration(_ context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deploymentRouteGeneration++
+	return m.deploymentRouteGeneration, nil
 }
 
 func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {

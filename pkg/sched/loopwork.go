@@ -79,10 +79,11 @@ type workSpec struct {
 // lock, so concurrent primes for one app serialize anyway; the budget
 // bounds cross-app fan-out.
 //
-// The reconcile kinds get 8 each. They are short database-bound
-// reconciles, and 8 keeps the worst case (all four kinds saturated, 32
-// goroutines) well inside schedd's 16-connection pool budget because
-// each reconcile holds a connection only for the length of a query.
+// The reconcile kinds get 8 each. Most are short database-bound reconciles;
+// a service deployment reconcile may also wait through ADR-208's bounded
+// gateway-ack and request-drain barriers. It holds no database connection
+// while waiting, and the eight-slot cap prevents a fleet-wide gateway issue
+// from turning one stuck rollout into one unbounded goroutine.
 var workSpecs = map[workKind]workSpec{
 	workPrime:               {slots: maxConcurrentPrimes, overflow: overflowInline},
 	workRestart:             {slots: 8, overflow: overflowDrop},

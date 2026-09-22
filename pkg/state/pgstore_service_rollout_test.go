@@ -118,6 +118,60 @@ func TestPgStoreFinalizeServiceRolloutSupersedesPrevious(t *testing.T) {
 	}
 }
 
+func TestPgStoreBeginServiceRolloutCutoverRetainsPrevious(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	stable, rollout := seedServiceRollout(t, s)
+
+	updated, err := s.BeginServiceRolloutCutover(t.Context(), rollout.ID)
+	if err != nil {
+		t.Fatalf("BeginServiceRolloutCutover: %v", err)
+	}
+	if updated.Status != state.DeployLive || updated.TrafficPercent != 100 || updated.RolloutState != "rolling_out" {
+		t.Fatalf("cutover rollout = %+v; want live/100/rolling_out", updated)
+	}
+	old, err := s.DeploymentByID(t.Context(), stable.ID)
+	if err != nil {
+		t.Fatalf("read retained stable: %v", err)
+	}
+	if old.Status != state.DeployLive || old.TrafficPercent != 0 {
+		t.Fatalf("stable during handoff = status:%q traffic:%d; want live/0", old.Status, old.TrafficPercent)
+	}
+
+	pending, err := s.ListServiceRolloutsInFlight(t.Context(), "")
+	if err != nil {
+		t.Fatalf("ListServiceRolloutsInFlight: %v", err)
+	}
+	found := false
+	for _, candidate := range pending {
+		if candidate.ID == rollout.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("cutover rollout %s missing from recovery set: %+v", rollout.ID, pending)
+	}
+
+	if _, err := s.FinalizeServiceRollout(t.Context(), rollout.ID); err != nil {
+		t.Fatalf("FinalizeServiceRollout after cutover: %v", err)
+	}
+}
+
+func TestPgStoreDeploymentRouteGenerationIsMonotonic(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	first, err := s.NextDeploymentRouteGeneration(t.Context())
+	if err != nil {
+		t.Fatalf("first generation: %v", err)
+	}
+	second, err := s.NextDeploymentRouteGeneration(t.Context())
+	if err != nil {
+		t.Fatalf("second generation: %v", err)
+	}
+	if first <= 0 || second != first+1 {
+		t.Fatalf("generations = %d, %d; want positive consecutive values", first, second)
+	}
+}
+
 func TestPgStoreAbortServiceRolloutRestoresPrevious(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	stable, rollout := seedServiceRollout(t, s)

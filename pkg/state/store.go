@@ -2427,6 +2427,12 @@ type Store interface {
 	// canaries are in flight — both consumers treat (nil, nil) as a
 	// no-op.
 	ListCanaryInFlight(ctx context.Context) ([]Deployment, error)
+	// ListServiceRolloutsInFlight returns readiness-gated zero-step service
+	// rollouts that still need scheduler reconciliation. Unlike the canary
+	// orchestrator's walk set, this deliberately includes rows left at the
+	// routing handoff after a schedd restart. A non-empty ownerNodeID scopes the
+	// recovery walk to apps owned by that schedd; empty preserves single-box.
+	ListServiceRolloutsInFlight(ctx context.Context, ownerNodeID string) ([]Deployment, error)
 	// SafedeployListPendingRollouts (issue #976 / ADR-122 /
 	// SAFE-RELEASES-F) returns the orchestrator's walk set: rows
 	// whose rollout_state is 'pending' or 'rolling_out' AND
@@ -2462,6 +2468,11 @@ type Store interface {
 	// the same app/scope. The target must be a live zero-step row marked
 	// rollout_state='rolling_out'.
 	FinalizeServiceRollout(ctx context.Context, id string) (Deployment, error)
+	// BeginServiceRolloutCutover publishes the candidate as the sole
+	// positive-weight live generation without superseding its predecessor. The
+	// predecessor remains available until every serving gateway acknowledges
+	// the routing generation and its in-flight requests drain.
+	BeginServiceRolloutCutover(ctx context.Context, id string) (Deployment, error)
 	// AbortServiceRollout atomically removes a failed service rollout and
 	// restores the newest older live deployment in the same app/scope to 100%
 	// traffic. The target must be a live zero-step row marked

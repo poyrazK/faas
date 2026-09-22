@@ -116,6 +116,23 @@ type EdgeRuleAckPayload struct {
 	Node       string `json:"node"`
 }
 
+// DeploymentRouteChangedPayload is the scheduler -> gateway handoff envelope
+// for a service rollout cutover. A gateway acknowledges only after both its
+// deployment weights and live target set reflect the authoritative database
+// state for AppID.
+type DeploymentRouteChangedPayload struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+	Generation   int64  `json:"generation"`
+}
+
+// DeploymentRouteAckPayload is emitted by each serving gateway after it has
+// applied DeploymentRouteChangedPayload locally.
+type DeploymentRouteAckPayload struct {
+	Generation int64  `json:"generation"`
+	Node       string `json:"node"`
+}
+
 func ParseEdgeRuleChangedPayload(raw string) (EdgeRuleChangedPayload, error) {
 	var payload EdgeRuleChangedPayload
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
@@ -134,6 +151,31 @@ func ParseEdgeRuleAckPayload(raw string) (EdgeRuleAckPayload, error) {
 	}
 	if payload.Generation <= 0 || strings.TrimSpace(payload.Phase) == "" || strings.TrimSpace(payload.Node) == "" {
 		return EdgeRuleAckPayload{}, errors.New("db: incomplete edge_rule_ack payload")
+	}
+	return payload, nil
+}
+
+func ParseDeploymentRouteChangedPayload(raw string) (DeploymentRouteChangedPayload, error) {
+	var payload DeploymentRouteChangedPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return DeploymentRouteChangedPayload{}, fmt.Errorf("db: decode deployment_route_changed payload: %w", err)
+	}
+	payload.AppID = strings.TrimSpace(payload.AppID)
+	payload.DeploymentID = strings.TrimSpace(payload.DeploymentID)
+	if payload.AppID == "" || payload.DeploymentID == "" || payload.Generation <= 0 {
+		return DeploymentRouteChangedPayload{}, errors.New("db: incomplete deployment_route_changed payload")
+	}
+	return payload, nil
+}
+
+func ParseDeploymentRouteAckPayload(raw string) (DeploymentRouteAckPayload, error) {
+	var payload DeploymentRouteAckPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return DeploymentRouteAckPayload{}, fmt.Errorf("db: decode deployment_route_ack payload: %w", err)
+	}
+	payload.Node = strings.TrimSpace(payload.Node)
+	if payload.Generation <= 0 || payload.Node == "" {
+		return DeploymentRouteAckPayload{}, errors.New("db: incomplete deployment_route_ack payload")
 	}
 	return payload, nil
 }
@@ -729,6 +771,15 @@ const (
 	//   phase of an edge-rule convergence barrier. This channel is consumed
 	//   only by the mutation request that allocated the generation.
 	NotifyEdgeRuleAck = "edge_rule_ack"
+	// NotifyDeploymentRouteChanged {"app_id":uuid,
+	//   "deployment_id":uuid,"generation":int}
+	//   schedd -> gatewayd-internal: a readiness-gated service rollout has
+	//   published its candidate as the sole positive-weight generation.
+	NotifyDeploymentRouteChanged = "deployment_route_changed"
+	// NotifyDeploymentRouteAck {"generation":int,"node":string}
+	//   gatewayd-internal -> schedd: the named serving gateway refreshed both
+	//   deployment weights and live targets for the generation.
+	NotifyDeploymentRouteAck = "deployment_route_ack"
 	// NotifyCachePurge is emitted by the explicit per-app cache purge API.
 	// Payload: {"app_id":uuid,"path_glob":string}; an empty glob purges
 	// the app's complete response cache.

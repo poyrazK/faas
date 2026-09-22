@@ -4347,6 +4347,28 @@ const (
 	GatewayDrainGraceSeconds        = 25
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000
+	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
+	// acknowledgement round. A timeout does not retire the predecessor; the
+	// scheduler leaves it serving and retries reconciliation.
+	ServiceRouteConvergenceTimeoutSeconds = 5
+	// ServiceRouteNotificationRetryMilliseconds is the retry cadence for the
+	// idempotent routing-generation notification while a gateway reconnects.
+	ServiceRouteNotificationRetryMilliseconds = 250
+	// ServiceReplicaDrainTimeoutSeconds bounds one attempt to observe every
+	// predecessor replica idle after all gateways adopted the new generation.
+	// Timeout is fail-safe: the predecessor remains resident and routable only
+	// to already-established requests, and reconciliation retries later.
+	ServiceReplicaDrainTimeoutSeconds = GatewayDrainGraceSeconds
+	// ServiceReplicaDrainQuietSeconds requires more than one fresh telemetry
+	// sample at zero in-flight requests before a VM can be retired.
+	ServiceReplicaDrainQuietSeconds = 2
+	// ServiceReplicaDrainPollMilliseconds is intentionally shorter than the
+	// one-second vmmd telemetry cadence without becoming a busy loop.
+	ServiceReplicaDrainPollMilliseconds = 200
+	// ServiceRolloutRecoveryIntervalSeconds bounds retry latency after a
+	// transient handoff failure or a schedd exit before finalisation. The
+	// database rollout row is the durable retry ledger.
+	ServiceRolloutRecoveryIntervalSeconds = 30
 	// WarmHintHeartbeatInterval keeps idle hint streams observable without tenant traffic.
 	WarmHintHeartbeatInterval = 30 * time.Second
 	CertSyncIntervalSeconds   = 30

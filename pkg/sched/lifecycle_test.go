@@ -2,14 +2,55 @@ package sched
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+type routeAckNotifier struct {
+	*fakeNotifier
+	events chan db.Notification
+	nodes  []string
+}
+
+func newRouteAckNotifier(nodes ...string) *routeAckNotifier {
+	return &routeAckNotifier{
+		fakeNotifier: &fakeNotifier{},
+		events:       make(chan db.Notification, len(nodes)),
+		nodes:        append([]string(nil), nodes...),
+	}
+}
+
+func (n *routeAckNotifier) Subscribe(_ context.Context, _ []string) (<-chan db.Notification, error) {
+	return n.events, nil
+}
+
+func (n *routeAckNotifier) Notify(ctx context.Context, channel, payload string) error {
+	if err := n.fakeNotifier.Notify(ctx, channel, payload); err != nil {
+		return err
+	}
+	if channel != db.NotifyDeploymentRouteChanged {
+		return nil
+	}
+	changed, err := db.ParseDeploymentRouteChangedPayload(payload)
+	if err != nil {
+		return err
+	}
+	for _, node := range n.nodes {
+		body, err := json.Marshal(db.DeploymentRouteAckPayload{Generation: changed.Generation, Node: node})
+		if err != nil {
+			return err
+		}
+		n.events <- db.Notification{Channel: db.NotifyDeploymentRouteAck, Payload: string(body)}
+	}
+	return nil
+}
 
 func TestInstanceModeForApp(t *testing.T) {
 	tests := []struct {
@@ -51,6 +92,75 @@ func TestClassifyServiceReplicasSeparatesReadiness(t *testing.T) {
 	}
 	if got.inFlight() != 4 || got.managed() != 5 {
 		t.Fatalf("service replica capacity = in_flight:%d managed:%d, want in_flight:4 managed:5", got.inFlight(), got.managed())
+	}
+}
+
+// adr: 208 — only active, named compute nodes with a gateway endpoint
+// participate in the service-route acknowledgement barrier.
+func TestServingGatewayNamesFiltersNonServingNodes(t *testing.T) {
+	servingRole := "compute-only"
+	controlRole := "control-plane"
+	target := "https://10.0.0.2:8443"
+	nodes := []state.ComputeNode{
+		{Name: "gw-a", Active: true, Role: &servingRole, GatewayTargetURL: &target},
+		{Name: "", Active: true, Role: &servingRole, GatewayTargetURL: &target},
+		{Name: "inactive", Active: false, Role: &servingRole, GatewayTargetURL: &target},
+		{Name: "control", Active: true, Role: &controlRole, GatewayTargetURL: &target},
+		{Name: "no-target", Active: true, Role: &servingRole},
+	}
+	got := servingGatewayNames(nodes)
+	if len(got) != 1 {
+		t.Fatalf("serving gateways = %v, want only gw-a", got)
+	}
+	if _, ok := got["gw-a"]; !ok {
+		t.Fatalf("serving gateways = %v, want gw-a", got)
+	}
+}
+
+// adr: 208 — a cutover may proceed only after every serving gateway
+// acknowledges the published route generation.
+func TestWaitForServiceRouteConvergenceRequiresEveryServingGateway(t *testing.T) {
+	store := state.NewMemStore()
+	role := "compute-only"
+	target := "https://10.0.0.2:8443"
+	for _, name := range []string{"gw-a", "gw-b"} {
+		if _, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+			Name: name, TargetURL: "tcp://" + name + ":50051", Active: true,
+			Role: &role, GatewayTargetURL: &target,
+		}); err != nil {
+			t.Fatalf("CreateComputeNode(%s): %v", name, err)
+		}
+	}
+	notifier := newRouteAckNotifier("gw-a", "gw-b")
+	e := newEngine(t, store, &fakeVMM{}, notifier, "1.10.0")
+
+	acknowledgedAt, fleetBarrier, ok := e.waitForServiceRouteConvergence(
+		context.Background(), "app-1", "dep-2")
+	if !ok || !fleetBarrier || acknowledgedAt.IsZero() {
+		t.Fatalf("route convergence = (%v, %v, %v), want timestamp/true/true", acknowledgedAt, fleetBarrier, ok)
+	}
+	if notifier.count(db.NotifyDeploymentRouteChanged) != 1 {
+		t.Fatalf("route-change notifications = %d, want 1", notifier.count(db.NotifyDeploymentRouteChanged))
+	}
+}
+
+// adr: 208 — a configured fleet without a registered serving gateway fails
+// closed instead of silently using the single-box compatibility path.
+func TestWaitForServiceRouteConvergenceFailsClosedWithoutFleetGateway(t *testing.T) {
+	store := state.NewMemStore()
+	role := "compute-only"
+	if _, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+		Name: "compute-without-gateway", TargetURL: "tcp://10.0.0.3:50051",
+		Active: true, Role: &role,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(t, store, &fakeVMM{}, newRouteAckNotifier(), "1.10.0")
+
+	acknowledgedAt, fleetBarrier, ok := e.waitForServiceRouteConvergence(
+		context.Background(), "app-1", "dep-2")
+	if ok || !fleetBarrier || !acknowledgedAt.IsZero() {
+		t.Fatalf("route convergence = (%v, %v, %v), want zero/true/false", acknowledgedAt, fleetBarrier, ok)
 	}
 }
 
@@ -373,7 +483,9 @@ func TestReconcileServiceApp_ReadinessTimeoutRestoresPrevious(t *testing.T) {
 	}
 }
 
-func TestReconcileServiceApp_ExactFitRolloutReleasesPredecessorSlot(t *testing.T) {
+// adr: 208 — a rollout consumes its bounded surge before retiring the healthy
+// predecessor, even when the steady-state app ceiling is an exact fit.
+func TestReconcileServiceApp_ExactFitRolloutUsesSurgeBeforeRetiringPredecessor(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, stable := seedApp(t, store, api.PlanPro, 128, 1)
 	manifest := state.AppManifest{
@@ -423,6 +535,78 @@ func TestReconcileServiceApp_ExactFitRolloutReleasesPredecessorSlot(t *testing.T
 		t.Fatal(err)
 	} else if got.State != string(state.StateParked) {
 		t.Fatalf("predecessor after exact-fit promotion = %q; want parked", got.State)
+	}
+}
+
+// adr: 208 — exhausted physical capacity holds the rollout without parking
+// the last healthy predecessor.
+func TestReconcileServiceApp_PhysicalCapacityHoldsWithoutParkingPredecessor(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, stable := seedApp(t, store, api.PlanPro, 128, 1)
+	manifest := state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 1, Desired: 1},
+	}
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.AdmissionCeilingMB = app.RAMMB + api.PerVMOverheadMB
+	node, err = store.UpsertComputeNodeFromOperator(ctx, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := store.CreateInstanceWithMode(ctx, app.ID, stable.ID,
+		string(state.StateRunning), app.RAMMB, node.ID, "stable-capacity-full", string(state.InstanceModeService))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	limits := api.MustLimitsFor(api.PlanPro)
+	if err := e.ledger.Admit(Request{
+		Instance: old.ID, AppID: app.ID, DeploymentID: stable.ID, Plan: api.PlanPro,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		NodeID: node.ID, NodeCeilingMB: node.AdmissionCeilingMB, VCPUBudget: node.VCPUBudget,
+	}); err != nil {
+		t.Fatalf("seed predecessor ledger reservation: %v", err)
+	}
+	rollout, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:service-capacity-hold",
+		Status: state.DeployPending, Scope: stable.Scope, TrafficPercent: 0,
+		RolloutState: "rolling_out",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, rollout.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	e.ReconcileServiceApp(ctx, app.ID)
+	predecessor, err := store.InstanceByID(ctx, old.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if predecessor.State != string(state.StateRunning) {
+		t.Fatalf("predecessor state = %q, want running while candidate lacks physical capacity", predecessor.State)
+	}
+	pending, err := store.DeploymentByID(ctx, rollout.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Status != state.DeployLive || pending.TrafficPercent != 0 || pending.RolloutState != "rolling_out" {
+		t.Fatalf("capacity-held rollout = status:%q traffic:%d state:%q; want live/0/rolling_out",
+			pending.Status, pending.TrafficPercent, pending.RolloutState)
+	}
+	if count, err := store.CountLiveInstancesByDeployment(ctx, rollout.ID); err != nil {
+		t.Fatal(err)
+	} else if count != 0 {
+		t.Fatalf("candidate live instances = %d, want 0", count)
 	}
 }
 

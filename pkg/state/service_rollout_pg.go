@@ -111,6 +111,38 @@ func (s *PgStore) FinalizeServiceRollout(ctx context.Context, id string) (Deploy
 	return updated, nil
 }
 
+// BeginServiceRolloutCutover makes the ready candidate the only
+// positive-weight live generation while deliberately retaining the previous
+// generation as live. Gateways refresh and acknowledge this state before
+// FinalizeServiceRollout supersedes the predecessor.
+func (s *PgStore) BeginServiceRolloutCutover(ctx context.Context, id string) (Deployment, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: begin service rollout cutover: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	target, _, err := s.loadAndLockServiceRollout(ctx, tx, id)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if _, err := tx.Exec(ctx,
+		`update deployments
+		    set traffic_percent = case when id = $3 then 100 else 0 end
+		  where app_id = $1 and scope = $2 and status = 'live'`,
+		target.AppID, target.Scope, target.ID); err != nil {
+		return Deployment{}, fmt.Errorf("state: begin service rollout cutover weights: %w", err)
+	}
+	updated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+		`select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1`, target.ID))
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: begin service rollout cutover reload: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, fmt.Errorf("state: begin service rollout cutover commit: %w", err)
+	}
+	return updated, nil
+}
+
 // AbortServiceRollout restores the newest older stable generation and closes
 // the failed target atomically. The target remains in deployment history with
 // an explicit aborted reason for operator visibility.

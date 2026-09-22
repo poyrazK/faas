@@ -76,6 +76,28 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 	return target, nil
 }
 
+// BeginServiceRolloutCutover mirrors the PostgreSQL two-phase handoff. It
+// changes only traffic weights; every generation remains live until the
+// scheduler completes the gateway acknowledgement and request-drain barriers.
+func (m *MemStore) BeginServiceRolloutCutover(_ context.Context, id string) (Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, rows, err := m.serviceRolloutTargetLocked(id)
+	if err != nil {
+		return Deployment{}, err
+	}
+	for _, row := range rows {
+		other := m.deployments[row.id]
+		if row.id == id {
+			other.TrafficPercent = 100
+		} else {
+			other.TrafficPercent = 0
+		}
+		m.deployments[row.id] = other
+	}
+	return m.deployments[target.ID], nil
+}
+
 // AbortServiceRollout is the in-memory mirror of PgStore's atomic rollback.
 // It restores the newest older stable live row and closes every other live
 // sibling so a failed rollout cannot leave an ambiguous serving set.

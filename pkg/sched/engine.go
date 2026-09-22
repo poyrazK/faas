@@ -8799,6 +8799,13 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 	return db.Notify(ctx, p.Pool, channel, payload)
 }
 
+// Subscribe exposes the acknowledgement side of a routing convergence
+// barrier. It is deliberately optional rather than part of Notifier so
+// notify-only test fakes and producers remain narrow.
+func (p PoolNotifier) Subscribe(ctx context.Context, channels []string) (<-chan db.Notification, error) {
+	return db.SubscribeWithReconnect(ctx, p.Pool, channels, slog.Default())
+}
+
 // StreamWarmHints (ADR-025 axis 4) is the push-side fanout for
 // sticky-warm affinity. It subscribes to the engine's broadcaster
 // and invokes sink for every WarmHintEvent until the context

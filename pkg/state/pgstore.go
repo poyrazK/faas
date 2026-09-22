@@ -6479,6 +6479,30 @@ func (s *PgStore) ListCanaryInFlight(ctx context.Context) ([]Deployment, error) 
 	return scanDeployments(rows)
 }
 
+// ListServiceRolloutsInFlight returns the durable recovery set for schedd's
+// readiness-gated service reconciler. A row can remain here after schedd
+// publishes the candidate's 100% weight but exits before gateway convergence,
+// request draining, or finalisation completes.
+func (s *PgStore) ListServiceRolloutsInFlight(ctx context.Context, ownerNodeID string) ([]Deployment, error) {
+	query := `select ` + deploymentSelectColumnsWithRootfs + `
+		 from deployments
+		 where status = 'live'
+		   and canary_total_steps = 0
+		   and rollout_state = 'rolling_out'`
+	args := make([]any, 0, 1)
+	if ownerNodeID != "" {
+		query += ` and app_id in (select id from apps where node_id = $1)`
+		args = append(args, ownerNodeID)
+	}
+	query += ` order by created_at asc`
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("state: list service rollouts in-flight: %w", err)
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
 // SafedeployListPendingRollouts (issue #976 / ADR-122 /
 // SAFE-RELEASES-F) walks the orchestrator's tick set. The
 // predicate is a strict superset of ListCanaryInFlight: it
@@ -12189,6 +12213,16 @@ func (s *PgStore) NextEdgeRuleGeneration(ctx context.Context) (int64, error) {
 	var generation int64
 	if err := s.pool.QueryRow(ctx, `select nextval('edge_rule_generation_seq')`).Scan(&generation); err != nil {
 		return 0, fmt.Errorf("state: allocate edge-rule generation: %w", err)
+	}
+	return generation, nil
+}
+
+// NextDeploymentRouteGeneration allocates the token used to correlate one
+// service cutover with acknowledgements from every serving gateway.
+func (s *PgStore) NextDeploymentRouteGeneration(ctx context.Context) (int64, error) {
+	var generation int64
+	if err := s.pool.QueryRow(ctx, `select nextval('deployment_route_generation_seq')`).Scan(&generation); err != nil {
+		return 0, fmt.Errorf("state: allocate deployment route generation: %w", err)
 	}
 	return generation, nil
 }

@@ -415,6 +415,10 @@ type invalidator interface {
 	FlushRoutes()
 	InvalidatePublicAuth()
 	RefreshDeploymentWeights(ctx context.Context, appID string) error
+	// RefreshLiveTargets reloads the app's running instance set. ADR-208 route
+	// acknowledgements are valid only after both this target refresh and the
+	// deployment-weight refresh above have succeeded.
+	RefreshLiveTargets(ctx context.Context, appID string) error
 	// RefreshMirrorRules (issue #72 / ADR-125 PR-A3) reloads
 	// the per-app mirror rules cache from Postgres on a
 	// kind="mirror" notify. Mirrors RefreshDeploymentWeights'
@@ -506,6 +510,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyDomainVerify,
 		db.NotifyKeyChanged,
 		db.NotifyDeploymentChanged,
+		db.NotifyDeploymentRouteChanged,
 		db.NotifyDeploymentSmokeChallenge,
 		db.NotifyEdgeRuleChanged,
 		db.NotifyCachePurge,
@@ -535,11 +540,53 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 				// Defensive — wrapper keeps open until ctx cancels.
 				return
 			}
+			gatewayNode := ""
+			if len(nodeName) > 0 {
+				gatewayNode = strings.TrimSpace(nodeName[0])
+			}
+			if n.Channel == db.NotifyDeploymentRouteChanged {
+				payload, applied := handleDeploymentRouteInvalidation(ctx, inv, n.Payload, log)
+				if applied && gatewayNode != "" {
+					ackDeploymentRouteInvalidation(ctx, pool, payload.Generation, gatewayNode, log)
+				}
+				continue
+			}
 			handleInvalidation(ctx, inv, n, log)
-			if n.Channel == db.NotifyEdgeRuleChanged && len(nodeName) > 0 && strings.TrimSpace(nodeName[0]) != "" {
-				ackEdgeRuleInvalidation(ctx, pool, n.Payload, strings.TrimSpace(nodeName[0]), log)
+			if n.Channel == db.NotifyEdgeRuleChanged && gatewayNode != "" {
+				ackEdgeRuleInvalidation(ctx, pool, n.Payload, gatewayNode, log)
 			}
 		}
+	}
+}
+
+func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw string, log *slog.Logger) (db.DeploymentRouteChangedPayload, bool) {
+	payload, err := db.ParseDeploymentRouteChangedPayload(raw)
+	if err != nil {
+		log.Warn("gatewayd: bad deployment_route_changed payload", "err", err)
+		return db.DeploymentRouteChangedPayload{}, false
+	}
+	inv.InvalidateResponseCacheByApp(payload.AppID)
+	// Load the candidate target before publishing its 100% weight into this
+	// process. Reversing this order creates a small 503 window when the old
+	// cached target is assigned zero but the new target is not cached yet.
+	if err := inv.RefreshLiveTargets(ctx, payload.AppID); err != nil {
+		log.Warn("gatewayd: refresh deployment route targets failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
+		return payload, false
+	}
+	if err := inv.RefreshDeploymentWeights(ctx, payload.AppID); err != nil {
+		log.Warn("gatewayd: refresh deployment route weights failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
+		return payload, false
+	}
+	return payload, true
+}
+
+func ackDeploymentRouteInvalidation(ctx context.Context, pool *pgxpool.Pool, generation int64, node string, log *slog.Logger) {
+	body, err := json.Marshal(db.DeploymentRouteAckPayload{Generation: generation, Node: node})
+	if err != nil {
+		return
+	}
+	if err := db.Notify(ctx, pool, db.NotifyDeploymentRouteAck, string(body)); err != nil {
+		log.Warn("gatewayd: acknowledge deployment route generation", "generation", generation, "node", node, "err", err)
 	}
 }
 
