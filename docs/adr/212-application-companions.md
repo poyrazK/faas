@@ -1,4 +1,4 @@
-# ADR-209 · Application companions without exposing an orchestration API
+# ADR-212 · Application companions without exposing an orchestration API
 
 - **Status:** accepted
 - **Date:** 2026-09-22
