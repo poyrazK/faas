@@ -163,7 +163,7 @@ func TestEdgeRulesThrottle_E2E_ConsumerDimensionsAreIndependent(t *testing.T) {
 		}
 		rawKey, status := doReq(t, h, accountKey, http.MethodPost,
 			"/v1/apps/"+slug+"/consumers/"+consumer.ID+"/keys",
-			api.CreateConsumerKeyRequest{Name: "primary", Scopes: []string{"read"}})
+			api.CreateConsumerKeyRequest{Name: externalRef + "-primary", Scopes: []string{"read"}})
 		if status != http.StatusCreated {
 			t.Fatalf("create key for %s: status=%d body=%s", externalRef, status, rawKey)
 		}
