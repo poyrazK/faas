@@ -128,6 +128,33 @@ greater than zero.
 The single `target:` form is still accepted and behaves as a one-element
 `targets` list, so existing manifests keep working unchanged.
 
+## How apps scale back down
+
+Scale-down is deliberately more conservative than scale-out, and the two are
+not symmetric:
+
+- **Apps with a legacy `autoscale_target_rps`** get the aggressive path: the
+  scheduler computes a desired replica count from rolling request rate and
+  parks the surplus above it.
+- **Apps scaling on any other signal** (`concurrent_requests`, `cpu`,
+  `queue_depth`, `queue_lag`, `custom`) are not offered to that path at all.
+  They scale down when each instance individually exceeds its idle timeout
+  (30–600 s by plan).
+
+The practical effect is that a multi-signal app holds capacity a little
+longer after a burst than an RPS-scaled one. The failure direction is
+deliberate — holding an instance too long costs money, parking a busy one
+costs requests.
+
+One consequence is worth planning around if you scale on `custom`: a pushed
+metric describes a backlog the platform cannot see, and a hot backlog does
+not by itself generate the request traffic that keeps an instance alive. If
+the work your metric describes is not driven by invocations, instances can be
+admitted for the backlog, idle out, be parked, and be admitted again — churn
+at the period of your idle timeout, and you are billed for each cycle. Either
+make the backlog drive invocations (a queue binding does this for you), or
+set `min_instances` for the window in which you expect the backlog.
+
 ## Scheduled warm windows
 
 Every target above is reactive: it observes load that has already arrived. If
