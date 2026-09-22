@@ -195,3 +195,52 @@ func TestComputeNodesSizingEmitsJSONThroughRun(t *testing.T) {
 		t.Fatalf("human form is missing the ceiling: %q", out)
 	}
 }
+
+// TestNodeJoinDelegatesCgroupControllersBeforeDraining pins the deadlock fix.
+//
+// ADR-205 made vmmd enable memory/cpu/pids on the parent slice before writing
+// a per-VM fence, but that cannot unblock a rolling rollout on its own:
+// draining a node migrates its instances, which needs the OUTGOING node's
+// vmmd to widen memory.max, and that vmmd is still the pre-ADR-205 build
+// until the play replaces it. The drain needs the new binary and the new
+// binary needs the drain.
+//
+// The play therefore repairs the host's cgroup delegation itself, and must do
+// so BEFORE the drain begins. systemd resets subtree_control on
+// daemon-reload, so ordering against the drain is the load-bearing part.
+//
+// adr: 205
+// spec: §11
+func TestNodeJoinDelegatesCgroupControllersBeforeDraining(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatalf("read node_join.yml: %v", err)
+	}
+	play := string(body)
+
+	delegate := strings.Index(play, "Delegate cgroup controllers to the per-plan tenant slices before draining")
+	drain := strings.Index(play, "Gracefully drain the existing node before release installation")
+	if delegate < 0 || drain < 0 {
+		t.Fatalf("missing tasks: delegate=%d drain=%d", delegate, drain)
+	}
+	if delegate > drain {
+		t.Fatalf("cgroup delegation must precede the drain: delegate=%d drain=%d", delegate, drain)
+	}
+
+	block := play[delegate:drain]
+	for _, want := range []string{
+		"faas-tenant-$plan.slice",
+		"cgroup.subtree_control",
+		"cgroup.controllers",
+		"for c in memory cpu pids",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("delegation task is missing %q", want)
+		}
+	}
+	// One controller per write: a multi-token body is applied atomically, so
+	// an unsupported token would reject the whole write and leave memory off.
+	if strings.Contains(block, `"+memory +cpu +pids"`) || strings.Contains(block, "+memory +cpu") {
+		t.Error("delegation task writes multiple controllers in one body; the kernel applies it atomically")
+	}
+}

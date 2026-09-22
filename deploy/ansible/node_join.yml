@@ -1093,6 +1093,39 @@
     # that barrier times out, no service or release has been touched yet, so
     # restore a node that entered the rollout active instead of silently
     # leaving healthy capacity excluded from new placement.
+    - name: Delegate cgroup controllers to the per-plan tenant slices before draining
+      # ADR-205: a per-VM cgroup only gets memory.max when its parent lists
+      # `memory` in cgroup.subtree_control, and nothing enables it. systemd
+      # will not: Delegate= is not honoured for .slice units, and systemd only
+      # propagates a controller when a child *unit* needs it — the per-VM
+      # scopes come from jailer. vmmd does it at runtime, but that does not
+      # help here: draining a node requires migrating its instances, which
+      # requires the OUTGOING node's vmmd to widen memory.max, and that vmmd
+      # is still the pre-ADR-205 build until this very play replaces it.
+      #
+      # Without this the rollout deadlocks: the drain needs the new binary and
+      # the new binary needs the drain. Repair the host first, then drain.
+      #
+      # Run it here, after the last daemon-reload in this play, because
+      # systemd resets subtree_control on reload. One controller per write:
+      # the kernel applies a multi-token body atomically, so an unsupported
+      # token would reject the whole write.
+      ansible.builtin.shell: |
+        set -euo pipefail
+        base=/sys/fs/cgroup/faas.slice/faas-tenant.slice
+        for plan in free hobby pro scale; do
+          dir="$base/faas-tenant-$plan.slice"
+          [ -d "$dir" ] || continue
+          available=$(cat "$dir/cgroup.controllers" 2>/dev/null || true)
+          enabled=$(cat "$dir/cgroup.subtree_control" 2>/dev/null || true)
+          for c in memory cpu pids; do
+            case " $available " in *" $c "*) ;; *) continue ;; esac
+            case " $enabled " in *" $c "*) continue ;; esac
+            echo "+$c" > "$dir/cgroup.subtree_control"
+          done
+        done
+      changed_when: false
+
     - name: Gracefully drain the existing node before release installation
       when: >-
         (faas_join_rollout_phase | default('full')) == 'activate' or
