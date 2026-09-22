@@ -42,6 +42,44 @@ func NewLocalVerifier(path string, stor storage.StorageBackend) (*LocalVerifier,
 	return &LocalVerifier{pub: pub, stor: stor}, nil
 }
 
+// CheckPresent is the request-path precheck for an artifact that a later
+// boot will Verify in full. It reads the 64-byte signature and probes the
+// layer's existence without transferring the layer body, so it fits inside
+// an HTTP deadline where hashing a multi-GB rootfs from a remote registry
+// cannot (issue #3356). It does not prove integrity: schedd's prime and
+// cold-boot paths still run Verify before any boot.
+//
+// Returns a storage.ErrNotFound-wrapping error when either object is
+// missing, the same sig_invalid problem as Verify for a malformed
+// signature, and plain I/O errors otherwise.
+func (v *LocalVerifier) CheckPresent(ctx context.Context, layerKey, sigKey string) error {
+	if layerKey == "" || sigKey == "" {
+		return errors.New("cosign: CheckPresent: empty layerKey or sigKey")
+	}
+	sigRC, err := v.stor.Get(ctx, sigKey)
+	if err != nil {
+		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
+	}
+	sig, err := io.ReadAll(io.LimitReader(sigRC, 65))
+	_ = sigRC.Close()
+	if err != nil {
+		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
+	}
+	if len(sig) != 64 {
+		return api.NewProblem(503, "sig_invalid",
+			"malformed signature for cold-boot layer",
+			fmt.Sprintf("signature for layer %q at %q is %d bytes, want 64", layerKey, sigKey, len(sig)))
+	}
+	exists, supported, err := storage.Exists(ctx, v.stor, layerKey)
+	if err != nil {
+		return fmt.Errorf("cosign: probe layer %q: %w", layerKey, err)
+	}
+	if supported && !exists {
+		return fmt.Errorf("cosign: layer %q: %w", layerKey, storage.ErrNotFound)
+	}
+	return nil
+}
+
 // Verify reads the layer + sig, hashes the layer, and checks the
 // signature. Returns nil on success. On mismatch or missing sig,
 // returns *api.Problem with code=sig_invalid (HTTP 503, per

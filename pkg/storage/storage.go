@@ -74,6 +74,34 @@ type LocalPathResolver interface {
 	LocalPath(key string) (path string, ok bool, err error)
 }
 
+// ExistenceChecker is an optional capability for backends that can answer
+// whether a key exists without transferring its body. Request-path callers
+// (for example apid's rollback precheck) use it to fail fast on a missing
+// multi-GB artifact; a full Get of a rootfs from a remote registry cannot fit
+// inside an HTTP request deadline (issue #3356).
+type ExistenceChecker interface {
+	Exists(ctx context.Context, key string) (bool, error)
+}
+
+// Exists probes key through b's ExistenceChecker capability. supported is
+// false when b cannot answer cheaply; callers must then treat existence as
+// unknown rather than fall back to a body-transferring Get.
+func Exists(ctx context.Context, b StorageBackend, key string) (exists, supported bool, err error) {
+	checker, ok := b.(ExistenceChecker)
+	if !ok {
+		return false, false, nil
+	}
+	exists, err = checker.Exists(ctx, key)
+	if errors.Is(err, ErrExistenceUnsupported) {
+		return false, false, nil
+	}
+	return exists, true, err
+}
+
+// ErrExistenceUnsupported is returned by wrapper backends whose delegate
+// cannot answer an existence probe cheaply. Exists maps it to supported=false.
+var ErrExistenceUnsupported = errors.New("storage: existence probe unsupported")
+
 // LocalPathSource describes why a backend can expose an artifact as a local
 // file. The values are stable telemetry vocabulary for snapshot restore
 // diagnostics; callers must treat unknown future values as local hits.

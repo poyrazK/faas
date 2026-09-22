@@ -2118,7 +2118,7 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 	if s.rollbackArtifactVerifier == nil {
 		return api.ErrCapacity("rollback artifact verification is not configured")
 	}
-	err := s.rollbackArtifactVerifier.Verify(ctx, target.RootfsKey, "sigs/"+target.RootfsKey+".sig")
+	err := s.rollbackArtifactVerifier.CheckPresent(ctx, target.RootfsKey, "sigs/"+target.RootfsKey+".sig")
 	if err == nil {
 		return nil
 	}

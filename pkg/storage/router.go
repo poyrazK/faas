@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -236,6 +237,23 @@ func (r *PrefixRouter) Get(ctx context.Context, key string) (io.ReadCloser, erro
 		return nil, fmt.Errorf("storage: get %q: %w", prefix+rem, err)
 	}
 	return rc, nil
+}
+
+// Exists implements ExistenceChecker through the same route Get uses.
+func (r *PrefixRouter) Exists(ctx context.Context, key string) (bool, error) {
+	b, rem, prefix, err := r.dispatch(key)
+	if err != nil {
+		return false, err
+	}
+	checker, ok := b.(ExistenceChecker)
+	if !ok {
+		return false, ErrExistenceUnsupported
+	}
+	exists, err := checker.Exists(ctx, rem)
+	if err != nil && !errors.Is(err, ErrExistenceUnsupported) {
+		return false, fmt.Errorf("storage: exists %q: %w", prefix+rem, err)
+	}
+	return exists, err
 }
 
 // Delete mirrors Put: dispatch, forward, swallow "not found" only

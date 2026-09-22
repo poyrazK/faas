@@ -51,7 +51,10 @@ type fakeRegistry struct {
 	// driver's fallback PUT path is exercised — production registries
 	// vary in which they return.
 	monolithicOK bool
-	mu           sync.Mutex
+	// blobGets counts blob body downloads so existence probes can pin
+	// that they never transfer an artifact (issue #3356).
+	blobGets int
+	mu       sync.Mutex
 	// blobs: digest → body
 	blobs map[string][]byte
 	// manifests: repo → tag OR digest → raw JSON body
@@ -311,6 +314,7 @@ func (f *fakeRegistry) handleV2(w http.ResponseWriter, r *http.Request) {
 		}
 		f.mu.Lock()
 		body, ok := f.blobs[digest]
+		f.blobGets++
 		f.mu.Unlock()
 		if !ok {
 			http.Error(w, "blob not found", http.StatusNotFound)
