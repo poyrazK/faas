@@ -177,7 +177,7 @@ func readAsyncRoutePayload(r *http.Request, limit int64) (json.RawMessage, *api.
 		closeBody = body
 	}
 	if closeBody != nil {
-		defer closeBody.Close()
+		defer func() { _ = closeBody.Close() }()
 	}
 	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil {
