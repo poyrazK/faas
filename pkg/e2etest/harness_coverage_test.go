@@ -2,6 +2,7 @@ package e2etest
 
 import (
 	"bytes"
+	"net"
 	"sync"
 	"testing"
 )
@@ -70,6 +71,28 @@ func TestSweep_FreeTCPAddr(t *testing.T) {
 	// Should bind to 127.0.0.1.
 	if addr[:10] != "127.0.0.1:" {
 		t.Errorf("addr = %q, want 127.0.0.1:...", addr)
+	}
+}
+
+func TestSweep_ReserveGatewayAddresses_HoldsUntilRelease(t *testing.T) {
+	h := &Harness{}
+	reserveGatewayAddresses(t, h)
+
+	for _, addr := range []string{h.gatewayPublicAddr, h.gatewayControlAddr} {
+		listener, err := net.Listen("tcp", addr)
+		if err == nil {
+			_ = listener.Close()
+			t.Fatalf("reserved gateway address %s was bindable before release", addr)
+		}
+	}
+
+	h.releaseGatewayAddressReservations()
+	for _, addr := range []string{h.gatewayPublicAddr, h.gatewayControlAddr} {
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Fatalf("gateway address %s remained reserved after release: %v", addr, err)
+		}
+		_ = listener.Close()
 	}
 }
 
