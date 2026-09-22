@@ -74,6 +74,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/securitytxt"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/tcpmetrics"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -230,7 +231,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// sessions). We construct it here so the DNSHandoff wiring
 	// has a Store to call into. Mirrors cmd/gatewayd-internal/run.go:366.
 	pgStore := state.NewPgStore(pool)
-	tcpStop, err := startTCPIngress(ctx, log, pgStore)
+	tcpMetrics := tcpmetrics.New(prometheus.NewRegistry(), "gatewayd_public")
+	tcpStop, err := startTCPIngress(ctx, log, pgStore, tcpMetrics)
 	if err != nil {
 		return err
 	}
@@ -629,7 +631,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Pass drainTracker so every control request is counted
 	// during graceful shutdown.
 	controlMux := gateway.ControlMuxWithExtra(gatewayMetrics,
-		prometheus.Gatherers{opsMetrics.Registry(), budgetReg},
+		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry()},
 		probe.ReadyFunc(), drainTracker)
 	controlAddr := envOr("FAAS_PUBLIC_CONTROL_ADDR", defaultPublicControlAddr)
 	listenAddr := envOr("FAAS_PUBLIC_LISTEN_ADDR", defaultListenAddr)

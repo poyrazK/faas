@@ -14,17 +14,25 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
+    fresh: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
 
+    params: dict[str, Any] = {}
+
+    params["fresh"] = fresh
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
     _kwargs: dict[str, Any] = {
         "method": "post",
         "url": "/v1/apps/{slug}/restart".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["headers"] = headers
@@ -95,16 +103,21 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    fresh: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[AppRestartResponse | Problem]:
-    """Restart an app from a fresh snapshot.
+    """Restart an app.
 
      Parks every live instance, captures a fresh snapshot, and queues one
     replacement wake. Requests are single-flight per app; the returned
-    wake_id identifies the replacement wake in the wake timeline.
+    wake_id identifies the replacement wake in the wake timeline. With
+    `fresh=true`, destroys live instances without capturing process memory,
+    invalidates cached snapshots, and cold-boots with the latest environment
+    and secrets. The fresh path is durably queued.
 
     Args:
         slug (str):
+        fresh (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -117,6 +130,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        fresh=fresh,
         idempotency_key=idempotency_key,
     )
 
@@ -131,16 +145,21 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    fresh: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> AppRestartResponse | Problem | None:
-    """Restart an app from a fresh snapshot.
+    """Restart an app.
 
      Parks every live instance, captures a fresh snapshot, and queues one
     replacement wake. Requests are single-flight per app; the returned
-    wake_id identifies the replacement wake in the wake timeline.
+    wake_id identifies the replacement wake in the wake timeline. With
+    `fresh=true`, destroys live instances without capturing process memory,
+    invalidates cached snapshots, and cold-boots with the latest environment
+    and secrets. The fresh path is durably queued.
 
     Args:
         slug (str):
+        fresh (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -154,6 +173,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        fresh=fresh,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -162,16 +182,21 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    fresh: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[AppRestartResponse | Problem]:
-    """Restart an app from a fresh snapshot.
+    """Restart an app.
 
      Parks every live instance, captures a fresh snapshot, and queues one
     replacement wake. Requests are single-flight per app; the returned
-    wake_id identifies the replacement wake in the wake timeline.
+    wake_id identifies the replacement wake in the wake timeline. With
+    `fresh=true`, destroys live instances without capturing process memory,
+    invalidates cached snapshots, and cold-boots with the latest environment
+    and secrets. The fresh path is durably queued.
 
     Args:
         slug (str):
+        fresh (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -184,6 +209,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        fresh=fresh,
         idempotency_key=idempotency_key,
     )
 
@@ -196,16 +222,21 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    fresh: bool | Unset = False,
     idempotency_key: str | Unset = UNSET,
 ) -> AppRestartResponse | Problem | None:
-    """Restart an app from a fresh snapshot.
+    """Restart an app.
 
      Parks every live instance, captures a fresh snapshot, and queues one
     replacement wake. Requests are single-flight per app; the returned
-    wake_id identifies the replacement wake in the wake timeline.
+    wake_id identifies the replacement wake in the wake timeline. With
+    `fresh=true`, destroys live instances without capturing process memory,
+    invalidates cached snapshots, and cold-boots with the latest environment
+    and secrets. The fresh path is durably queued.
 
     Args:
         slug (str):
+        fresh (bool | Unset):  Default: False.
         idempotency_key (str | Unset):
 
     Raises:
@@ -220,6 +251,7 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            fresh=fresh,
             idempotency_key=idempotency_key,
         )
     ).parsed

@@ -469,6 +469,15 @@ func TestStatusForCode_WaitForWarm(t *testing.T) {
 	}
 }
 
+func TestStatusForCode_ConcurrencyQueueOutcomes(t *testing.T) {
+	if got := StatusForCode(CodeConcurrencyQueueFull); got != http.StatusTooManyRequests {
+		t.Errorf("StatusForCode(CodeConcurrencyQueueFull) = %d, want %d", got, http.StatusTooManyRequests)
+	}
+	if got := StatusForCode(CodeConcurrencyQueueTimeout); got != http.StatusServiceUnavailable {
+		t.Errorf("StatusForCode(CodeConcurrencyQueueTimeout) = %d, want %d", got, http.StatusServiceUnavailable)
+	}
+}
+
 // TestStatusForCode_CodeAdmissionRefused (issue #561) — pins the
 // spend-cap pause-workload HTTP status mapping. The per-cap
 // rejection lifts to HTTP 402 Payment Required, NOT 429 (that's

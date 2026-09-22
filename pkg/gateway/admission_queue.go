@@ -52,6 +52,32 @@ func WakeAdmissionPolicyForApp(plan api.Plan, overflow string, maxQueueWaitMS in
 	return wakeAdmissionPolicyForApp(plan, overflow, maxQueueWaitMS, 0, 0)
 }
 
+// ConcurrencyAdmissionPolicyForApp returns the warm-instance saturation
+// policy. It deliberately does not reuse the cold-wake defaults: once an app
+// is already running, a 10-30 second wait is surprising and usually exceeds
+// the caller's useful latency budget. MaxWaiters is the hard per-app backlog
+// cap and MaxWait is the maximum time a request may occupy that backlog.
+func ConcurrencyAdmissionPolicyForApp(plan api.Plan, overflow string, maxQueueWaitMS, maxQueueDepth int) WakeAdmissionPolicy {
+	depth, wait, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	p := WakeAdmissionPolicy{MaxWaiters: depth, MaxWait: wait, Plan: string(plan)}
+	if maxQueueWaitMS > 0 {
+		if maxQueueWaitMS > api.MaxConcurrencyQueueWaitMS {
+			maxQueueWaitMS = api.MaxConcurrencyQueueWaitMS
+		}
+		p.MaxWait = time.Duration(maxQueueWaitMS) * time.Millisecond
+	}
+	if maxQueueDepth > 0 {
+		if max := api.ConcurrencyQueueMaxDepthForPlan(plan); maxQueueDepth > max {
+			maxQueueDepth = max
+		}
+		p.MaxWaiters = maxQueueDepth
+	}
+	if overflow == api.ConcurrencyOverflowDrop {
+		p.MaxWaiters = 0
+	}
+	return p
+}
+
 // WakeAdmissionPolicyForAppWithWakeLimits applies both the existing
 // concurrency admission override and the per-app cold-wake queue controls.
 // The wake-specific fields are intentionally independent so a customer can
@@ -155,6 +181,44 @@ func (e *WakeConcurrencyDropError) Unwrap() error { return ErrQueueFull }
 func isWakeConcurrencyDrop(err error) bool {
 	var drop *WakeConcurrencyDropError
 	return errors.As(err, &drop)
+}
+
+var (
+	// ErrConcurrencyQueueFull means the warm saturation backlog reached its
+	// explicit per-app depth cap. It is a customer-configured concurrency
+	// boundary, not a platform-capacity failure.
+	ErrConcurrencyQueueFull = errors.New("gateway: concurrency queue full")
+	// ErrConcurrencyQueueWaitTimeout means a queued request did not receive a
+	// VM slot within the configured warm wait budget.
+	ErrConcurrencyQueueWaitTimeout = errors.New("gateway: concurrency queue wait timeout")
+)
+
+type ConcurrencyQueueFullError struct {
+	Depth      int
+	Limit      int
+	RetryAfter time.Duration
+}
+
+func (e *ConcurrencyQueueFullError) Error() string {
+	if e == nil {
+		return ErrConcurrencyQueueFull.Error()
+	}
+	return fmt.Sprintf("gateway: concurrency queue full (%d/%d)", e.Depth, e.Limit)
+}
+
+func (e *ConcurrencyQueueFullError) Unwrap() error { return ErrConcurrencyQueueFull }
+
+type ConcurrencyQueueWaitTimeoutError struct {
+	Waited     time.Duration
+	RetryAfter time.Duration
+}
+
+func (e *ConcurrencyQueueWaitTimeoutError) Error() string {
+	return ErrConcurrencyQueueWaitTimeout.Error()
+}
+
+func (e *ConcurrencyQueueWaitTimeoutError) Unwrap() error {
+	return ErrConcurrencyQueueWaitTimeout
 }
 
 // ErrWakeAdmissionQueueFull means the gateway-wide cold-wake scheduler is

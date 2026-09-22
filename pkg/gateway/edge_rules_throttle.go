@@ -58,11 +58,11 @@ package gateway
 // same posture compileLimitRules takes for kind=limit.
 //
 // Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881 Phase 3)
-// extends the resolved shape with three per-consumer keying fields.
+// extends the resolved shape with dimensional keying fields.
 // The applier (handler.go::applyEdgeRuleThrottle) reads these and
 // routes the bucket-key construction through Limiter.AllowWithParams
 // (back-compat, KeyBy == "" or "none") or Limiter.AllowWithConsumerKey
-// (per-consumer, KeyBy ∈ {"api_key","consumer_id","jwt_subject","jwt_claim"}):
+// (dimensional, KeyBy ∈ {"api_key","consumer_id","jwt_subject","jwt_claim","country"}):
 //
 //   - KeyBy           closed vocab from api.ThrottleKeyBy*.
 //     Empty / "none" preserves PR #887 behaviour.
@@ -84,9 +84,12 @@ type EdgeRuleThrottleResolved struct {
 	RequestsPerSecond float64         // > 0 post-compile
 	Burst             int             // > 0 post-compile
 	// Phase 3 (ADR-104):
-	KeyBy          string // "" | "none" | "api_key" | "consumer_id" | "jwt_subject" | "jwt_claim"
+	KeyBy          string // "" | "none" | "api_key" | "consumer_id" | "jwt_subject" | "jwt_claim" | "country"
 	JWTClaimName   string // required iff KeyBy == "jwt_claim"
 	MaxKeysPerRule int    // 0 = plan default; capped at compileThrottleRules
+	// MissingKeyPolicy is "shared" (or empty for back-compat) or
+	// "reject". Reject makes the selected identity dimension mandatory.
+	MissingKeyPolicy string
 }
 
 // PickFirstThrottleMatch is the priority-ASC + methods +

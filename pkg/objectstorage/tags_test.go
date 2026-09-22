@@ -23,4 +23,7 @@ func TestObjectTagsRoundTripAndValidation(t *testing.T) {
 	if err := ValidateObjectMetadata(ObjectMetadata{Metadata: map[string]string{ReservedObjectTagsMetadataKey: "provider-owned"}}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("reserved metadata key err=%v", err)
 	}
+	if err := ValidateObjectMetadata(ObjectMetadata{Metadata: map[string]string{ReservedMultipartSessionMetadataKey: "provider-owned"}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("reserved multipart metadata key err=%v", err)
+	}
 }

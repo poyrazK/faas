@@ -2040,10 +2040,13 @@ export class AppsService {
     });
   }
   /**
-   * Restart an app from a fresh snapshot.
+   * Restart an app.
    * Parks every live instance, captures a fresh snapshot, and queues one
    * replacement wake. Requests are single-flight per app; the returned
-   * wake_id identifies the replacement wake in the wake timeline.
+   * wake_id identifies the replacement wake in the wake timeline. With
+   * `fresh=true`, destroys live instances without capturing process memory,
+   * invalidates cached snapshots, and cold-boots with the latest environment
+   * and secrets. The fresh path is durably queued.
    *
    * @returns AppRestartResponse Restart accepted.
    * @throws ApiError
@@ -2051,6 +2054,7 @@ export class AppsService {
   public static restartApp({
     slug,
     idempotencyKey,
+    fresh = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -2062,6 +2066,10 @@ export class AppsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Cold-boot with current runtime configuration instead of capturing/restoring process memory.
+     */
+    fresh?: boolean,
   }): CancelablePromise<AppRestartResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -2071,6 +2079,9 @@ export class AppsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'fresh': fresh,
       },
       errors: {
         401: `code: unauthorized`,

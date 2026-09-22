@@ -21,6 +21,8 @@ The closed vocabulary is:
 | `admin`        | Every action including billing, account deletion, key management.   |
 | `apps:read`    | GETs across `/v1/apps`, `/v1/deployments`, `/v1/keys`, `/v1/audit-events`, `/v1/invocations`, `/v1/delayed-tasks/{id}`, `/v1/account`, `/v1/account/export`, `/v1/crons`, `/v1/domains`, `/v1/apps/{slug}/secrets` (list only). |
 | `deploy:write` | POST/PATCH/DELETE on `/v1/apps`, `/v1/domains`, `/v1/crons`, `/v1/invocations/queues/*`, `/v1/delayed-tasks`, `/v1/account/restore`, `/v1/apps/{slug}/invoke`, `/v1/apps/{slug}/deployments`, `/v1/apps/{slug}/wake`, `/v1/apps/{slug}/park`, `/v1/apps/{slug}/rollback`, `/v1/apps/{slug}/rename`. |
+| `delayed_tasks:read` | List delayed tasks for an app and get one delayed task without account-wide app read access. |
+| `delayed_tasks:write` | Create and cancel delayed tasks without general deployment authority; also admits delayed-task reads. |
 | `secrets:read` | Reserved for IAM-5 (per-secret GET). Today every secret read is admin-only. |
 | `secrets:write`| PUT/DELETE on `/v1/apps/{slug}/secrets/{key}`.                      |
 | `usage:read`   | GET `/v1/usage`, `/v1/usage/summary`.                               |

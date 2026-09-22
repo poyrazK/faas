@@ -49,8 +49,8 @@ func (p *gregaleProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				MarkdownDescription: "Gregale API base URL. Defaults to `GREGALE_BASE_URL` or `https://api.gregale.dev`.",
 			},
 		},
-		Description:         "Manage Gregale applications, deployments, raw TCP listeners, static egress IPs, private networks, attachments, and peerings, environment variables, alert rules, scheduled invocations, app secrets, and custom domains, and inspect existing apps, deployments, and project environments.",
-		MarkdownDescription: "Manage Gregale applications, deployments, raw TCP listeners, static egress IPs, private networks, attachments, and peerings, environment variables, alert rules, scheduled invocations, app secrets, and custom domains, and inspect existing apps, deployments, and project environments.",
+		Description:         "Manage Gregale applications, deployments, raw TCP listeners, static egress IPs, private networks, attachments, peerings, project environments, environment variables, alert rules, scheduled invocations, app secrets, and custom domains, and inspect existing apps and deployments.",
+		MarkdownDescription: "Manage Gregale applications, deployments, raw TCP listeners, static egress IPs, private networks, attachments, peerings, project environments, environment variables, alert rules, scheduled invocations, app secrets, and custom domains, and inspect existing apps and deployments.",
 	}
 }
 
@@ -104,6 +104,7 @@ func (p *gregaleProvider) Resources(_ context.Context) []func() resource.Resourc
 		newPrivateNetworkAttachmentResource,
 		newPrivateNetworkResource,
 		newPrivateNetworkPeeringResource,
+		newProjectEnvironmentResource,
 		newProjectEnvironmentConfigResource,
 	}
 }

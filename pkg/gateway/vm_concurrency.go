@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -44,6 +45,22 @@ type vmConcurrencyManager struct {
 	mu      sync.Mutex
 	gates   map[string]*vmConcurrencyGate
 	onDelta func(plan string, delta int64)
+
+	queueMu      sync.Mutex
+	queues       map[string]*concurrencyWaitQueue
+	onQueueDepth func(appID, plan string, depth int)
+}
+
+type concurrencyWaitQueue struct {
+	plan    string
+	tickets []*concurrencyWaitTicket
+}
+
+type concurrencyWaitTicket struct {
+	manager *vmConcurrencyManager
+	appID   string
+	ready   chan struct{}
+	left    bool
 }
 
 type vmConcurrencyGate struct {
@@ -58,8 +75,120 @@ type vmConcurrencyGate struct {
 func newVMConcurrencyManager(onDelta func(plan string, delta int64)) *vmConcurrencyManager {
 	return &vmConcurrencyManager{
 		gates:   make(map[string]*vmConcurrencyGate),
+		queues:  make(map[string]*concurrencyWaitQueue),
 		onDelta: onDelta,
 	}
+}
+
+func (m *vmConcurrencyManager) setQueueDepthSink(sink func(appID, plan string, depth int)) {
+	if m == nil {
+		return
+	}
+	m.queueMu.Lock()
+	m.onQueueDepth = sink
+	m.queueMu.Unlock()
+}
+
+// enterQueue appends one request to the per-app FIFO warm-capacity queue.
+// The returned ticket becomes runnable only when it reaches the head. This
+// avoids the notify-all race in which newer requests can repeatedly beat an
+// older waiter to a released VM slot.
+func (m *vmConcurrencyManager) enterQueue(appID, plan string, limit int) (*concurrencyWaitTicket, int, bool) {
+	if m == nil || appID == "" || limit <= 0 {
+		return nil, 0, false
+	}
+	m.queueMu.Lock()
+	q := m.queues[appID]
+	if q == nil {
+		q = &concurrencyWaitQueue{plan: plan}
+		m.queues[appID] = q
+	}
+	if len(q.tickets) >= limit {
+		depth := len(q.tickets)
+		m.queueMu.Unlock()
+		return nil, depth, false
+	}
+	ticket := &concurrencyWaitTicket{manager: m, appID: appID, ready: make(chan struct{})}
+	q.tickets = append(q.tickets, ticket)
+	depth := len(q.tickets)
+	if depth == 1 {
+		close(ticket.ready)
+	}
+	sink := m.onQueueDepth
+	m.queueMu.Unlock()
+	if sink != nil {
+		sink(appID, plan, depth)
+	}
+	return ticket, depth, true
+}
+
+func (t *concurrencyWaitTicket) wait(ctx context.Context) error {
+	if t == nil {
+		return ErrConcurrencyQueueFull
+	}
+	select {
+	case <-t.ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (t *concurrencyWaitTicket) leave() {
+	if t == nil || t.manager == nil {
+		return
+	}
+	m := t.manager
+	m.queueMu.Lock()
+	if t.left {
+		m.queueMu.Unlock()
+		return
+	}
+	t.left = true
+	q := m.queues[t.appID]
+	if q == nil {
+		m.queueMu.Unlock()
+		return
+	}
+	idx := -1
+	for i, candidate := range q.tickets {
+		if candidate == t {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		m.queueMu.Unlock()
+		return
+	}
+	wasHead := idx == 0
+	copy(q.tickets[idx:], q.tickets[idx+1:])
+	q.tickets[len(q.tickets)-1] = nil
+	q.tickets = q.tickets[:len(q.tickets)-1]
+	depth := len(q.tickets)
+	plan := q.plan
+	if depth == 0 {
+		delete(m.queues, t.appID)
+	} else if wasHead {
+		close(q.tickets[0].ready)
+	}
+	sink := m.onQueueDepth
+	m.queueMu.Unlock()
+	if sink != nil {
+		sink(t.appID, plan, depth)
+	}
+}
+
+func (m *vmConcurrencyManager) queueDepth(appID string) int {
+	if m == nil {
+		return 0
+	}
+	m.queueMu.Lock()
+	defer m.queueMu.Unlock()
+	if q := m.queues[appID]; q != nil {
+		return len(q.tickets)
+	}
+	return 0
 }
 
 func newVMConcurrencyGate(limit int) *vmConcurrencyGate {
@@ -274,9 +403,24 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 	if candidate, release, ok := tryReadyTarget(); ok {
 		return candidate, release, false, nil
 	}
+	policy := ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth)
 	if app.ConcurrencyOverflow == api.ConcurrencyOverflowDrop {
-		policy := WakeAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS)
 		return pick, nil, true, &WakeConcurrencyDropError{RetryAfter: policy.MaxWait}
+	}
+	ticket, depth, ok := h.vmConcurrency.enterQueue(app.ID, string(app.Plan), policy.MaxWaiters)
+	if !ok {
+		return pick, nil, true, &ConcurrencyQueueFullError{Depth: depth, Limit: policy.MaxWaiters, RetryAfter: policy.MaxWait}
+	}
+	queuedAt := time.Now()
+	defer ticket.leave()
+	if err := ticket.wait(ctx); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return pick, nil, true, &ConcurrencyQueueWaitTimeoutError{Waited: time.Since(queuedAt), RetryAfter: policy.MaxWait}
+		}
+		return pick, nil, true, err
+	}
+	if candidate, release, ok := tryReadyTarget(); ok {
+		return candidate, release, true, nil
 	}
 
 	ticker := time.NewTicker(vmConcurrencyRetryInterval)
@@ -288,6 +432,9 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 				return candidate, release, true, nil
 			}
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return pick, nil, true, &ConcurrencyQueueWaitTimeoutError{Waited: time.Since(queuedAt), RetryAfter: policy.MaxWait}
+			}
 			return pick, nil, true, ctx.Err()
 		}
 	}

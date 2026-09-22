@@ -60,6 +60,25 @@ func TestWakeAdmissionPolicyForAppOverrides(t *testing.T) {
 	}
 }
 
+func TestConcurrencyAdmissionPolicyForAppUsesWarmQueueDefaults(t *testing.T) {
+	queue := ConcurrencyAdmissionPolicyForApp(api.PlanPro, api.ConcurrencyOverflowQueue, 0, 0)
+	if queue.MaxWaiters != api.ConcurrencyQueueProDefaultDepth || queue.MaxWait != api.ConcurrencyQueuePaidDefaultWait {
+		t.Fatalf("warm queue policy = %+v", queue)
+	}
+	overridden := ConcurrencyAdmissionPolicyForApp(api.PlanFree, api.ConcurrencyOverflowQueue, 1750, 12)
+	if overridden.MaxWaiters != 12 || overridden.MaxWait != 1750*time.Millisecond {
+		t.Fatalf("overridden warm queue policy = %+v", overridden)
+	}
+	clamped := ConcurrencyAdmissionPolicyForApp(api.PlanFree, api.ConcurrencyOverflowQueue, api.MaxConcurrencyQueueWaitMS+1, 999)
+	if clamped.MaxWaiters != api.ConcurrencyQueueMaxDepthForPlan(api.PlanFree) || clamped.MaxWait != api.MaxConcurrencyQueueWaitMS*time.Millisecond {
+		t.Fatalf("clamped warm queue policy = %+v", clamped)
+	}
+	drop := ConcurrencyAdmissionPolicyForApp(api.PlanScale, api.ConcurrencyOverflowDrop, 0, 99)
+	if drop.MaxWaiters != 0 {
+		t.Fatalf("drop warm queue policy = %+v, want no waiters", drop)
+	}
+}
+
 func TestWriteWakeErrorConcurrencyDrop(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeWakeError(rec, &WakeConcurrencyDropError{RetryAfter: 1500 * time.Millisecond})
@@ -263,6 +282,18 @@ func TestWakeAdmissionMetricsAndRetryAfter(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "10" {
 		t.Fatalf("timeout response = status=%d retry-after=%q", rec.Code, rec.Header().Get("Retry-After"))
 	}
+	rec = httptest.NewRecorder()
+	writeWakeError(rec, &ConcurrencyQueueFullError{Depth: 8, Limit: 8, RetryAfter: time.Second})
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" || rec.Header().Get(api.ErrorCodeHeader) != api.CodeConcurrencyQueueFull {
+		t.Fatalf("warm queue-full response = status=%d retry-after=%q code=%q", rec.Code, rec.Header().Get("Retry-After"), rec.Header().Get(api.ErrorCodeHeader))
+	}
+	rec = httptest.NewRecorder()
+	writeWakeError(rec, &ConcurrencyQueueWaitTimeoutError{RetryAfter: 2 * time.Second})
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "2" || rec.Header().Get(api.ErrorCodeHeader) != api.CodeConcurrencyQueueTimeout {
+		t.Fatalf("warm queue-timeout response = status=%d retry-after=%q code=%q", rec.Code, rec.Header().Get("Retry-After"), rec.Header().Get(api.ErrorCodeHeader))
+	}
+	m.SetConcurrencyQueueDepth("app-1", string(api.PlanPro), 2)
+	m.ObserveConcurrencyQueueWait("app-1", string(api.PlanPro), "admitted", 25*time.Millisecond)
 
 	metrics := httptest.NewRecorder()
 	m.Handler().ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -272,6 +303,8 @@ func TestWakeAdmissionMetricsAndRetryAfter(t *testing.T) {
 		"gateway_wake_admission_total",
 		"gateway_wake_admission_wait_seconds",
 		"gateway_wake_admission_preempt_total",
+		"gateway_concurrency_queue_depth",
+		"gateway_concurrency_queue_wait_seconds",
 	} {
 		if !strings.Contains(body, name) {
 			t.Errorf("metrics missing %q:\n%s", name, body)

@@ -21,10 +21,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -173,6 +175,48 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	if len(rows) != 0 {
 		t.Errorf("store after delete = %d, want 0", len(rows))
 	}
+}
+
+func TestSecretMutationsInvalidateRestorableSnapshots(t *testing.T) {
+	e := setupSecrets(t, api.PlanHobby)
+	app := createApp(t, e, "secret-snapshot-invalidation")
+	ctx := context.Background()
+	deployment, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:secret",
+		Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+
+	assertMutationInvalidates := func(t *testing.T, tier, key string, mutate func() *httptest.ResponseRecorder) {
+		t.Helper()
+		if _, err := e.store.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: deployment.ID, Tier: tier, FCVersion: "test",
+			StorageKey: "snap/" + key,
+		}); err != nil {
+			t.Fatalf("CreateSnapshot: %v", err)
+		}
+		response := mutate()
+		if response.Code < 200 || response.Code >= 300 {
+			t.Fatalf("mutation status %d: %s", response.Code, response.Body.String())
+		}
+		if _, err := e.store.LatestSnapshotForTier(ctx, deployment.ID, tier); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("LatestSnapshotForTier after mutation = %v, want not found", err)
+		}
+	}
+
+	assertMutationInvalidates(t, state.SnapshotTierWarm, "set", func() *httptest.ResponseRecorder {
+		return e.do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/secrets/API_TOKEN",
+			api.PutAppSecretRequest{Value: "v1"}, nil)
+	})
+	assertMutationInvalidates(t, state.SnapshotTierInit, "rotate", func() *httptest.ResponseRecorder {
+		return e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/secrets/API_TOKEN/rotate",
+			api.RotateAppSecretRequest{Value: "v2"}, nil)
+	})
+	assertMutationInvalidates(t, state.SnapshotTierWarm, "delete", func() *httptest.ResponseRecorder {
+		return e.do(t, http.MethodDelete, "/v1/apps/"+app.Slug+"/secrets/API_TOKEN", nil, nil)
+	})
 }
 
 func TestSecrets_CiphertextStoredNotPlaintext(t *testing.T) {

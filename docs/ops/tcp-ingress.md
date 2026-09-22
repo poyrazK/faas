@@ -31,3 +31,11 @@ use the local schedd Unix socket by default.
 After convergence, verify the daemon log contains `raw TCP ingress enabled`,
 then create a listener through `gregale app tcp create` (or the API) and test
 the allocated port from an allowed source. Do not set `0.0.0.0/0` in staging.
+
+The public gateway publishes TCP runtime telemetry on its existing `/metrics`
+endpoint. The `gatewayd_public_tcp_active_sessions` gauge shows current load,
+`gatewayd_public_tcp_active_sessions_by_account` shows account-scoped usage,
+and the `gatewayd_public_tcp_sessions_*` counters distinguish accepted,
+completed, and rejected sessions. `gatewayd_public_tcp_bytes_total` reports
+both directions, while `gatewayd_public_tcp_session_duration_seconds` and
+`gatewayd_public_tcp_idle_timeouts_total` cover latency and idle reaping.

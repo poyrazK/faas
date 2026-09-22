@@ -30,10 +30,11 @@ func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload Object
 			continue
 		}
 		if old.Key == upload.Key {
-			if old.SizeBytes != upload.SizeBytes || old.ContentType != upload.ContentType {
+			if old.SizeBytes != upload.SizeBytes || old.ContentType != upload.ContentType || !equalObjectMultipartMetadata(old.Metadata, upload.Metadata) {
 				return ObjectMultipartUpload{}, ErrConflict
 			}
 			old.Parts = cloneMultipartParts(old.Parts)
+			old.Metadata = cloneObjectMultipartMetadata(old.Metadata)
 			return old, nil
 		}
 		count++
@@ -44,6 +45,7 @@ func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload Object
 	now := time.Now().UTC()
 	upload.State, upload.CreatedAt, upload.UpdatedAt, upload.RetryAt = ObjectMultipartInitiating, now, now, now
 	upload.Parts = []api.ObjectMultipartCompletedPart{}
+	upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
 	if m.objectMultipartUploads == nil {
 		m.objectMultipartUploads = map[string]ObjectMultipartUpload{}
 	}
@@ -63,6 +65,7 @@ func (m *MemStore) ListObjectMultipartUploads(_ context.Context, account, app, b
 			continue
 		}
 		upload.Parts = cloneMultipartParts(upload.Parts)
+		upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
 		rows = append(rows, upload)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
@@ -82,6 +85,7 @@ func (m *MemStore) GetObjectMultipartUpload(_ context.Context, account, app, buc
 		return ObjectMultipartUpload{}, ErrNotFound
 	}
 	upload.Parts = cloneMultipartParts(upload.Parts)
+	upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
 	return upload, nil
 }
 
@@ -133,6 +137,7 @@ func (m *MemStore) ClaimObjectMultipartUpload(_ context.Context, account, app, b
 	upload.LeaseUntil = now.Add(ObjectMultipartLeaseDuration)
 	m.objectMultipartUploads[id] = upload
 	upload.Parts = cloneMultipartParts(upload.Parts)
+	upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
 	return upload, nil
 }
 
@@ -205,6 +210,7 @@ func (m *MemStore) DueObjectMultipartUploads(_ context.Context, limit int32) ([]
 		dueOperation := upload.State == ObjectMultipartInitiating || upload.State == ObjectMultipartCompleting || upload.State == ObjectMultipartAborting
 		if (dueOperation && !upload.RetryAt.After(now) || upload.State == ObjectMultipartActive && !upload.ExpiresAt.After(now)) && !upload.LeaseUntil.After(now) {
 			upload.Parts = cloneMultipartParts(upload.Parts)
+			upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
 			rows = append(rows, upload)
 		}
 	}

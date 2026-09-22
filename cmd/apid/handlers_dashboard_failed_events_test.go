@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +119,31 @@ func dashboardFailedEventsAudit(t *testing.T, store *state.MemStore, accountID, 
 		}
 	}
 	t.Fatalf("missing %s audit row for event %s", kind, eventID)
+	return nil
+}
+
+func dashboardFailedEventsBatchAudit(t *testing.T, store *state.MemStore, accountID, kind string, wantCount int) map[string]any {
+	t.Helper()
+	rows, err := store.ListEvents(t.Context(), accountID, 100)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	for _, row := range rows {
+		if row.Kind != kind {
+			continue
+		}
+		var data map[string]any
+		if err := json.Unmarshal(row.Data, &data); err != nil {
+			t.Fatalf("decode %s data: %v", kind, err)
+		}
+		if data["operation"] != "batch" {
+			continue
+		}
+		if got, _ := data["count"].(float64); int(got) == wantCount {
+			return data
+		}
+	}
+	t.Fatalf("missing %s batch audit row with count %d", kind, wantCount)
 	return nil
 }
 
@@ -277,5 +303,137 @@ func TestDashboardFailedEvents_AccountJobReplayIsAuditedAndObserved(t *testing.T
 	metrics := scrapeOpsMetrics(t, env.ops)
 	if !strings.Contains(metrics, `faas_dlq_replayed_total{app="account",status="success"} 1`) {
 		t.Fatalf("missing account replay metric:\n%s", metrics)
+	}
+}
+
+func TestDashboardFailedEvents_BulkReplayIsScopedAndAudited(t *testing.T) {
+	env := newDashboardFailedEventsTestEnv(t)
+	app, err := env.store.CreateApp(t.Context(), state.App{
+		AccountID: env.account.ID, Slug: "dashboard-bulk-replay", Type: state.AppTypeApp,
+		Runtime: "node22", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	other, err := env.store.CreateApp(t.Context(), state.App{
+		AccountID: env.account.ID, Slug: "dashboard-bulk-other", Type: state.AppTypeApp,
+		Runtime: "node22", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp other: %v", err)
+	}
+	invocations := make([]state.Invocation, 0, 3)
+	for i := 0; i < 2; i++ {
+		inv, _ := seedDashboardFailedInvocation(t, env.store, env.account.ID, app.ID)
+		invocations = append(invocations, inv)
+	}
+	otherInv, _ := seedDashboardFailedInvocation(t, env.store, env.account.ID, other.ID)
+	invocations = append(invocations, otherInv)
+
+	csrf := dashboardFailedEventsCSRF(t, env)
+	replayed := dashboardPOST(t, env.h, env.session, "/dashboard/failed-events/replay-all", map[string]string{
+		middleware.FormFieldName: csrf.Value,
+		"app":                    app.Slug,
+	}, csrf)
+	if replayed.Code != http.StatusSeeOther {
+		t.Fatalf("bulk replay status = %d, want 303; body=%s", replayed.Code, replayed.Body.String())
+	}
+	if loc := replayed.Header().Get("Location"); !strings.Contains(loc, "action=replayed") || !strings.Contains(loc, "count=2") {
+		t.Fatalf("bulk replay Location = %q, want replay/count flash", loc)
+	}
+	for i, inv := range invocations {
+		got, err := env.store.InvocationByID(t.Context(), inv.ID)
+		if err != nil {
+			t.Fatalf("InvocationByID[%d]: %v", i, err)
+		}
+		if i < 2 && (got.State != state.InvocationPending || got.Attempts != 0) {
+			t.Fatalf("selected invocation[%d] = state %q attempts %d, want pending/0", i, got.State, got.Attempts)
+		}
+		if i == 2 && got.State != state.InvocationDeadLetter {
+			t.Fatalf("other invocation changed state to %q", got.State)
+		}
+	}
+	audit := dashboardFailedEventsBatchAudit(t, env.store, env.account.ID, "app.dlq.event_replayed", 2)
+	if audit["surface"] != "dashboard" || audit["app_id"] != app.ID {
+		t.Fatalf("bulk replay audit = %+v, want dashboard/app scope", audit)
+	}
+	metrics := scrapeOpsMetrics(t, env.ops)
+	if !strings.Contains(metrics, `faas_dlq_replayed_total{app="dashboard-bulk-replay",status="success"} 2`) {
+		t.Fatalf("missing bulk replay metric:\n%s", metrics)
+	}
+}
+
+func TestDashboardFailedEvents_BulkDiscardLeavesSourcesDeadLettered(t *testing.T) {
+	env := newDashboardFailedEventsTestEnv(t)
+	app, err := env.store.CreateApp(t.Context(), state.App{
+		AccountID: env.account.ID, Slug: "dashboard-bulk-discard", Type: state.AppTypeApp,
+		Runtime: "node22", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	invocations := make([]state.Invocation, 0, 2)
+	for i := 0; i < 2; i++ {
+		inv, _ := seedDashboardFailedInvocation(t, env.store, env.account.ID, app.ID)
+		invocations = append(invocations, inv)
+	}
+	csrf := dashboardFailedEventsCSRF(t, env)
+	discarded := dashboardPOST(t, env.h, env.session, "/dashboard/failed-events/discard-all", map[string]string{
+		middleware.FormFieldName: csrf.Value,
+		"app":                    app.Slug,
+	}, csrf)
+	if discarded.Code != http.StatusSeeOther {
+		t.Fatalf("bulk discard status = %d, want 303; body=%s", discarded.Code, discarded.Body.String())
+	}
+	if loc := discarded.Header().Get("Location"); !strings.Contains(loc, "action=discarded") || !strings.Contains(loc, "count=2") {
+		t.Fatalf("bulk discard Location = %q, want discard/count flash", loc)
+	}
+	for i, inv := range invocations {
+		got, err := env.store.InvocationByID(t.Context(), inv.ID)
+		if err != nil {
+			t.Fatalf("InvocationByID[%d]: %v", i, err)
+		}
+		if got.State != state.InvocationDeadLetter {
+			t.Fatalf("discarded invocation[%d] state = %q, want dead_letter", i, got.State)
+		}
+	}
+	if events, err := env.store.ListDeadLetterEvents(t.Context(), app.ID, 10, ""); err != nil || len(events) != 0 {
+		t.Fatalf("remaining app dead-letter events = %d, err=%v; want 0", len(events), err)
+	}
+	audit := dashboardFailedEventsBatchAudit(t, env.store, env.account.ID, "app.dlq.purged", 2)
+	if audit["surface"] != "dashboard" || audit["app_id"] != app.ID {
+		t.Fatalf("bulk discard audit = %+v, want dashboard/app scope", audit)
+	}
+	metrics := scrapeOpsMetrics(t, env.ops)
+	if !strings.Contains(metrics, `faas_dlq_purged_total{app="dashboard-bulk-discard",status="success"} 2`) {
+		t.Fatalf("missing bulk discard metric:\n%s", metrics)
+	}
+}
+
+func TestDashboardFailedEvents_PaginatesAtPageSize(t *testing.T) {
+	env := newDashboardFailedEventsTestEnv(t)
+	app, err := env.store.CreateApp(t.Context(), state.App{
+		AccountID: env.account.ID, Slug: "dashboard-pagination", Type: state.AppTypeApp,
+		Runtime: "node22", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	for i := 0; i < dashboardFailedEventsPageSize+1; i++ {
+		seedDashboardFailedInvocation(t, env.store, env.account.ID, app.ID)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/failed-events?app="+app.Slug, nil)
+	req.AddCookie(env.session)
+	env.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET failed events status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Older events") || !strings.Contains(body, "before=") {
+		t.Fatalf("paginated page missing older-events link:\n%s", body)
+	}
+	if rows := strings.Count(body, "<tr>"); rows != dashboardFailedEventsPageSize+1 {
+		t.Fatalf("rendered table rows = %d, want %d including header", rows, dashboardFailedEventsPageSize+1)
 	}
 }

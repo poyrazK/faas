@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,16 +44,26 @@ var (
 )
 
 // Claims is the parsed subset pkg/gateway surfaces. Subject/Issuer/Aud
-// are copied out of the standard jwt.Claims struct. Custom is the
-// string→string subset of any additional claims the rule required
-// (rule.RequiredClaims map is k:string→v:string, so non-string claim
-// values are dropped at applyEdgeRuleJWT rather than parsed here).
+// are copied out of the standard jwt.Claims struct. Custom is a bounded
+// string→string subset of safe top-level scalar custom claims. Strings,
+// numbers, and booleans are retained; arrays and objects are omitted.
 type Claims struct {
 	Subject string
 	Issuer  string
 	Aud     []string
 	Exp     time.Time
 	Custom  map[string]string
+}
+
+const (
+	maxCustomClaims     = 64
+	maxCustomClaimValue = 256
+)
+
+var customClaimNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`)
+
+var registeredJWTClaims = map[string]struct{}{
+	"iss": {}, "sub": {}, "aud": {}, "exp": {}, "nbf": {}, "iat": {}, "jti": {},
 }
 
 // Verifier is the narrow interface pkg/gateway sees. cmd-side wires
@@ -79,6 +91,10 @@ type VerifierRule struct {
 	Algorithms            []string
 	RequiredClaims        map[string]string
 	RequiredClaimPatterns map[string]string
+	// ExtractClaims gives downstream policy a verified claim handoff that is
+	// independent of RequiredClaims. Named claims are retained before the
+	// generic custom-claim cap is filled.
+	ExtractClaims []string
 }
 
 var allowedSignatureAlgorithms = map[string]struct{}{
@@ -229,12 +245,17 @@ func (v *joseVerifier) Verify(ctx context.Context, rawToken string, rule Verifie
 		if err := std.ValidateWithLeeway(exp, v.skew); err != nil {
 			return nil, mapParseError(err)
 		}
+		// Decode the verified payload once into a generic map. Besides
+		// validating required claims, the bounded scalar subset is returned to
+		// the gateway for key_by=jwt_claim throttles. This must happen even when
+		// the JWT rule has no required_claims: the throttle rule, not the JWT
+		// rule, selects which verified claim becomes the bucket dimension.
+		generic := map[string]any{}
+		if err := decodeJSON(payload, &generic); err != nil {
+			return nil, fmt.Errorf("%w: decode claims: %w", ErrJWTMissingClaim, err)
+		}
 		// RequiredClaims — read raw claim map.
 		if len(rule.RequiredClaims) > 0 || len(rule.RequiredClaimPatterns) > 0 {
-			generic := map[string]any{}
-			if err := decodeJSON(payload, &generic); err != nil {
-				return nil, fmt.Errorf("%w: decode claims: %w", ErrJWTMissingClaim, err)
-			}
 			for k, want := range rule.RequiredClaims {
 				got, present := generic[k]
 				if !present {
@@ -286,6 +307,7 @@ func (v *joseVerifier) Verify(ctx context.Context, rawToken string, rule Verifie
 			Issuer:  std.Issuer,
 			Aud:     aud,
 			Exp:     expTime,
+			Custom:  boundedCustomClaims(generic, rule.ExtractClaims),
 		}, nil
 	}
 	if lastErr != nil {
@@ -295,6 +317,64 @@ func (v *joseVerifier) Verify(ctx context.Context, rawToken string, rule Verifie
 		return nil, fmt.Errorf("%w: kid=%q alg=%q", ErrJWTKeyMetadata, kid, alg)
 	}
 	return nil, fmt.Errorf("%w: no usable key", ErrJWTNoMatchingKey)
+}
+
+// boundedCustomClaims returns only safe, top-level scalar custom claims. The
+// limits bound both the request-context footprint and the eventual throttle
+// bucket key. Explicitly requested names are visited first so a configured
+// throttle claim cannot be crowded out by unrelated token claims. Arrays and
+// objects are intentionally excluded because their canonicalization and
+// cardinality semantics require a separate contract.
+func boundedCustomClaims(raw map[string]any, priority []string) map[string]string {
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		if _, registered := registeredJWTClaims[key]; registered || !customClaimNamePattern.MatchString(key) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make(map[string]string, min(len(keys), maxCustomClaims))
+	seen := make(map[string]struct{}, len(priority))
+	ordered := make([]string, 0, len(priority)+len(keys))
+	for _, key := range priority {
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		ordered = append(ordered, key)
+	}
+	for _, key := range keys {
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		ordered = append(ordered, key)
+	}
+	for _, key := range ordered {
+		if _, registered := registeredJWTClaims[key]; registered || !customClaimNamePattern.MatchString(key) {
+			continue
+		}
+		var value string
+		switch v := raw[key].(type) {
+		case string:
+			value = v
+		case bool:
+			value = strconv.FormatBool(v)
+		case float64:
+			value = strconv.FormatFloat(v, 'g', -1, 64)
+		default:
+			continue
+		}
+		if value == "" || len(value) > maxCustomClaimValue {
+			continue
+		}
+		out[key] = value
+		if len(out) == maxCustomClaims {
+			break
+		}
+	}
+	return out
 }
 
 // mapParseError turns the go-jose/jwt error zoo into our sentinels

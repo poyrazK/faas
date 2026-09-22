@@ -580,6 +580,10 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
+	if !app.AcceptsRequestInvocations() {
+		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxDelayedTasksPerApp == 0 {
 		api.WriteProblem(w, api.ErrPlanFeatureGated("delayed_tasks", acct.Plan))
@@ -599,33 +603,107 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	now := time.Now().UTC()
-	if req.ScheduledAt.Before(now) {
-		api.WriteProblem(w, api.ErrInvalidScheduledAt())
+	sched, problem := delayedTaskSchedule(now, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	sched := req.ScheduledAt.UTC()
-	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), nil)
+	if problem := validateInvocationRetryPolicy(req.RetryPolicy); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if req.RetentionSeconds != nil && *req.RetentionSeconds < 0 {
+		api.WriteProblem(w, api.ErrValidation("retention_seconds must be non-negative"))
+		return
+	}
+	if req.Method == "" {
+		req.Method = defaultInvokeMethod
+	}
+	if req.Path == "" {
+		req.Path = "/"
+	}
+	onSuccessDestination, onFailureDestination, destinationProblem := s.resolveInvocationDestinations(r.Context(), app.ID, acct.ID, req.Destinations)
+	if destinationProblem != nil {
+		api.WriteProblem(w, destinationProblem)
+		return
+	}
+	invocationHeaders, err := pkgtrace.MergeHeaders(r.Context(), req.Headers)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("encode delayed task trace context"))
 		return
 	}
 	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
-		AppID:       app.ID,
-		AccountID:   acct.ID,
-		Source:      state.InvocationDelayedTask,
-		Payload:     req.Payload,
-		Headers:     invocationHeaders,
-		DueAt:       sched,
-		ScheduledAt: &sched,
+		AppID:                  app.ID,
+		AccountID:              acct.ID,
+		Source:                 state.InvocationDelayedTask,
+		Method:                 req.Method,
+		Path:                   req.Path,
+		Payload:                req.Payload,
+		Headers:                invocationHeaders,
+		DueAt:                  sched,
+		ScheduledAt:            &sched,
+		DeadlineAt:             deadlineForRequestAt(sched, nil, acct),
+		RetryPolicyJSON:        effectiveInvocationRetryPolicy(app, req.RetryPolicy),
+		ResultRetentionUntil:   retentionForRequestAt(sched, req.RetentionSeconds, acct),
+		OnSuccessDestinationID: onSuccessDestination,
+		OnFailureDestinationID: onFailureDestination,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("enqueue delayed task"))
 		return
 	}
-	writeJSON(w, http.StatusCreated, api.DelayedTaskResponse{
-		ID:          inv.ID,
-		ScheduledAt: sched,
-	})
+	writeJSON(w, http.StatusCreated, delayedTaskResponse(inv))
+}
+
+// delayedTaskSchedule validates the mutually-exclusive absolute and relative
+// scheduling forms and applies the platform's bounded scheduling horizon.
+func delayedTaskSchedule(now time.Time, req delayedTaskRequest) (time.Time, *api.Problem) {
+	hasAbsolute := !req.ScheduledAt.IsZero()
+	hasRelative := req.DelaySeconds != 0
+	if hasAbsolute == hasRelative {
+		return time.Time{}, api.ErrInvalidScheduledAt("exactly one of scheduled_at or delay_seconds is required")
+	}
+	if req.DelaySeconds < 0 || req.DelaySeconds > int64(api.MaxDelayedTaskDelaySeconds) {
+		return time.Time{}, api.ErrInvalidScheduledAt(fmt.Sprintf("delay_seconds must be between 1 and %d", api.MaxDelayedTaskDelaySeconds))
+	}
+	sched := req.ScheduledAt.UTC()
+	if hasRelative {
+		sched = now.Add(time.Duration(req.DelaySeconds) * time.Second)
+	}
+	if !sched.After(now) {
+		return time.Time{}, api.ErrInvalidScheduledAt()
+	}
+	if sched.After(now.Add(time.Duration(api.MaxDelayedTaskDelaySeconds) * time.Second)) {
+		return time.Time{}, api.ErrInvalidScheduledAt(fmt.Sprintf("scheduled_at cannot be more than %d days in the future", api.MaxDelayedTaskDelaySeconds/(24*60*60)))
+	}
+	return sched, nil
+}
+
+// delayedTaskList returns delayed tasks for one app, newest first.
+func (s *server) delayedTaskList(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	limit := 20
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	rows, err := s.store.ListDelayedTasksForApp(r.Context(), app.ID, limit, r.URL.Query().Get("before"))
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("list delayed tasks"))
+		return
+	}
+	response := api.ListDelayedTasksResponse{Tasks: make([]api.DelayedTaskResponse, 0, len(rows))}
+	for _, inv := range rows {
+		response.Tasks = append(response.Tasks, delayedTaskResponse(inv))
+	}
+	if len(rows) == limit && len(rows) > 0 {
+		response.NextBefore = rows[len(rows)-1].ID
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // delayedTaskGet is the read-only counterpart. Restricted to
@@ -638,11 +716,7 @@ func (s *server) delayedTaskGet(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrInvocationNotFound(id))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.DelayedTaskResponse{
-		ID:          inv.ID,
-		ScheduledAt: ptrTime(inv.ScheduledAt),
-		State:       string(inv.State),
-	})
+	writeJSON(w, http.StatusOK, delayedTaskResponse(inv))
 }
 
 // delayedTaskCancel moves a pending delayed_task row to cancelled and
@@ -664,11 +738,24 @@ func (s *server) delayedTaskCancel(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("cancel delayed task"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.DelayedTaskResponse{
+	inv.State = result
+	writeJSON(w, http.StatusOK, delayedTaskResponse(inv))
+}
+
+func delayedTaskResponse(inv state.Invocation) api.DelayedTaskResponse {
+	return api.DelayedTaskResponse{
 		ID:          inv.ID,
+		AppID:       inv.AppID,
 		ScheduledAt: ptrTime(inv.ScheduledAt),
-		State:       string(result),
-	})
+		State:       string(inv.State),
+		Method:      inv.Method,
+		Path:        inv.Path,
+		Attempts:    inv.Attempts,
+		LastError:   inv.LastError,
+		Result:      inv.Result,
+		CreatedAt:   inv.CreatedAt,
+		CompletedAt: inv.CompletedAt,
+	}
 }
 
 // ptrTime is a tiny adapter so delayedTaskGet can format *time.Time
@@ -690,6 +777,10 @@ func (s *server) delayedTaskCancel(w http.ResponseWriter, r *http.Request, acct 
 // value, so nil is a defensive guard for a future PR that adds a
 // no-retention plan).
 func retentionForRequest(reqRetentionSeconds *int, acct state.Account) *time.Time {
+	return retentionForRequestAt(time.Now().UTC(), reqRetentionSeconds, acct)
+}
+
+func retentionForRequestAt(base time.Time, reqRetentionSeconds *int, acct state.Account) *time.Time {
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxAsyncResultRetentionSeconds <= 0 {
 		return nil
@@ -700,7 +791,7 @@ func retentionForRequest(reqRetentionSeconds *int, acct state.Account) *time.Tim
 			seconds = *reqRetentionSeconds
 		}
 	}
-	t := time.Now().UTC().Add(time.Duration(seconds) * time.Second)
+	t := base.UTC().Add(time.Duration(seconds) * time.Second)
 	return &t
 }
 
@@ -709,11 +800,15 @@ func retentionForRequest(reqRetentionSeconds *int, acct state.Account) *time.Tim
 // An omitted deadline receives the plan default; a requested deadline beyond
 // the plan max is clamped to now + plan max.
 func deadlineForRequest(reqDeadline *time.Time, acct state.Account) *time.Time {
+	return deadlineForRequestAt(time.Now().UTC(), reqDeadline, acct)
+}
+
+func deadlineForRequestAt(base time.Time, reqDeadline *time.Time, acct state.Account) *time.Time {
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxAsyncInvocationDeadlineSeconds <= 0 {
 		return nil
 	}
-	maxDeadline := time.Now().UTC().Add(time.Duration(limits.MaxAsyncInvocationDeadlineSeconds) * time.Second)
+	maxDeadline := base.UTC().Add(time.Duration(limits.MaxAsyncInvocationDeadlineSeconds) * time.Second)
 	if reqDeadline == nil {
 		return &maxDeadline
 	}

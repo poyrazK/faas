@@ -245,6 +245,8 @@ func managedPostgresManifestProblem(err error, detail string) *api.Problem {
 		status, code, title = http.StatusConflict, "managed_postgres_conflict", "Managed PostgreSQL resource conflict"
 	case errors.Is(err, managedpostgres.ErrInvalid):
 		status, code, title = http.StatusBadRequest, "managed_postgres_invalid", "Invalid managed PostgreSQL request"
+	case errors.Is(err, managedpostgres.ErrUnsupported):
+		status, code, title = http.StatusUnprocessableEntity, "managed_postgres_unsupported", "Managed PostgreSQL feature unsupported"
 	}
 	if detail == "" {
 		detail = "The managed PostgreSQL operation could not be completed."

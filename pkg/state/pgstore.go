@@ -666,6 +666,29 @@ func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Pla
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if plan == api.PlanFree {
+		// The streaming plan invariant rejects a paid -> Free account
+		// transition while any app still opts in. Lock the account before
+		// clearing those flags so a concurrent opt-in cannot race the
+		// downgrade and leave an invalid pair of rows behind.
+		var accountID string
+		if err := tx.QueryRow(ctx,
+			`select id::text from accounts where id = $1 for update`, id,
+		).Scan(&accountID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if _, err := tx.Exec(ctx,
+			`update apps
+			    set streaming_enabled = false
+			  where account_id = $1
+			    and streaming_enabled`, id,
+		); err != nil {
+			return err
+		}
+	}
 	tag, err := tx.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
 	if err != nil {
 		return err
@@ -4760,6 +4783,75 @@ func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accoun
 	return scanProjectEnvironment(row)
 }
 
+func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin project environment delete: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var projectSlug string
+	var protected bool
+	err = tx.QueryRow(ctx, `
+		select p.slug, e.protected
+		  from project_environments e
+		  join projects p on p.id = e.project_id
+		 where p.account_id = $1 and e.project_id = $2 and e.slug = $3
+		 for update
+	`, accountID, projectID, slug).Scan(&projectSlug, &protected)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return mapErr(err)
+	}
+	if slug == "production" || protected {
+		return ErrConflict
+	}
+
+	var hasLiveRelease bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			  from apps a
+			  join deployments d on d.app_id = a.id
+			 where a.project_id = $1 and d.scope = $2 and d.status = 'live'
+		)
+	`, projectID, slug).Scan(&hasLiveRelease); err != nil {
+		return mapErr(err)
+	}
+	if hasLiveRelease {
+		return ErrConflict
+	}
+
+	if _, err := tx.Exec(ctx, `
+		delete from project_environment_config_versions
+		 where project_id = $1 and environment_slug = $2
+	`, projectID, slug); err != nil {
+		return mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from project_environment_approvals
+		 where account_id = $1 and project_slug = $2 and environment_slug = $3
+	`, accountID, projectSlug, slug); err != nil {
+		return mapErr(err)
+	}
+	tag, err := tx.Exec(ctx, `
+		delete from project_environments
+		 where project_id = $1 and slug = $2
+	`, projectID, slug)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit project environment delete: %w", err)
+	}
+	return nil
+}
+
 // ApplyProjectPlan persists a project + its member apps + crons in
 // one transaction. The critical section sits behind a
 // `SELECT … FOR UPDATE` on the parent accounts row so two concurrent
@@ -6451,6 +6543,30 @@ func (s *PgStore) ListCanaryInFlight(ctx context.Context) ([]Deployment, error) 
 		 order by created_at asc`)
 	if err != nil {
 		return nil, fmt.Errorf("state: list canary in-flight: %w", err)
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
+// ListServiceRolloutsInFlight returns the durable recovery set for schedd's
+// readiness-gated service reconciler. A row can remain here after schedd
+// publishes the candidate's 100% weight but exits before gateway convergence,
+// request draining, or finalisation completes.
+func (s *PgStore) ListServiceRolloutsInFlight(ctx context.Context, ownerNodeID string) ([]Deployment, error) {
+	query := `select ` + deploymentSelectColumnsWithRootfs + `
+		 from deployments
+		 where status = 'live'
+		   and canary_total_steps = 0
+		   and rollout_state = 'rolling_out'`
+	args := make([]any, 0, 1)
+	if ownerNodeID != "" {
+		query += ` and app_id in (select id from apps where node_id = $1)`
+		args = append(args, ownerNodeID)
+	}
+	query += ` order by created_at asc`
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("state: list service rollouts in-flight: %w", err)
 	}
 	defer rows.Close()
 	return scanDeployments(rows)
@@ -12170,6 +12286,16 @@ func (s *PgStore) NextEdgeRuleGeneration(ctx context.Context) (int64, error) {
 	return generation, nil
 }
 
+// NextDeploymentRouteGeneration allocates the token used to correlate one
+// service cutover with acknowledgements from every serving gateway.
+func (s *PgStore) NextDeploymentRouteGeneration(ctx context.Context) (int64, error) {
+	var generation int64
+	if err := s.pool.QueryRow(ctx, `select nextval('deployment_route_generation_seq')`).Scan(&generation); err != nil {
+		return 0, fmt.Errorf("state: allocate deployment route generation: %w", err)
+	}
+	return generation, nil
+}
+
 const edgeRuleSelectCols = `id, account_id, app_id, match_host, match_path,
        match_methods, priority, enabled, kind, action,
        cors_preset_id, validate_mode, created_at, updated_at`
@@ -14332,6 +14458,35 @@ func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID strin
 			      select created_at, id from invocations where id = $2 and account_id = $1)
 			order by created_at desc, id desc
 			limit $3`, accountID, before, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return scanInvocations(rows)
+}
+
+// ListDelayedTasksForApp is the app-scoped delayed-task collection read.
+func (s *PgStore) ListDelayedTasksForApp(ctx context.Context, appID string, limit int, before string) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var rows pgx.Rows
+	var err error
+	if before == "" {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+`
+			from invocations
+			where app_id = $1 and source = 'delayed_task'
+			order by created_at desc, id desc
+			limit $2`, appID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+`
+			from invocations
+			where app_id = $1 and source = 'delayed_task'
+			  and (created_at, id) < (
+			      select created_at, id from invocations
+			      where id = $2 and app_id = $1 and source = 'delayed_task')
+			order by created_at desc, id desc
+			limit $3`, appID, before, limit)
 	}
 	if err != nil {
 		return nil, err

@@ -1106,8 +1106,8 @@ func TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge(t *testing.T) 
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("decode delayed task response: %v body=%s", err, body)
 	}
-	if created.ID == "" || created.State != "" {
-		t.Fatalf("delayed task response=%+v, want id and no terminal state", created)
+	if created.ID == "" || created.State != string(state.InvocationPending) {
+		t.Fatalf("delayed task response=%+v, want id and pending state", created)
 	}
 	if created.ScheduledAt.Before(scheduledAt.Add(-time.Second)) || created.ScheduledAt.After(scheduledAt.Add(time.Second)) {
 		t.Fatalf("scheduled_at=%v, want near %v", created.ScheduledAt, scheduledAt)

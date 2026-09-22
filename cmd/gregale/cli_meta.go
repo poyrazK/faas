@@ -408,6 +408,8 @@ var cliCommands = []cliCommand{
 			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
 			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
 			{Name: "concurrency-overflow", Short: "set saturated concurrency behavior", ClosedSet: []string{"queue", "drop"}},
+			{Name: "max-queue-depth", Short: "set maximum warm-saturation waiters", Value: "N"},
+			{Name: "max-queue-wait", Short: "set maximum warm-saturation wait as a duration", Value: "DURATION"},
 			{Name: "max-queue-wait-ms", Short: "set maximum queued concurrency wait", Value: "N"},
 			{Name: "wake-max-queue-depth", Short: "set per-app cold-wake waiter cap", Value: "N"},
 			{Name: "wake-max-queue-wait-seconds", Short: "set per-app cold-wake wait budget", Value: "N"},
@@ -669,9 +671,22 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "delayed-task",
 		DocSlug: "delayed-task",
-		Short:   "Schedule a deferred invocation (delayed-task add|get|cancel)",
+		Short:   "Schedule and inspect deferred invocations",
 		Subcommands: []cliSub{
-			{Name: "add", Short: "Schedule a deferred invocation"},
+			{Name: "add", Short: "Schedule a deferred invocation", Flags: []cliFlag{
+				{Name: "app", Value: "SLUG", Short: "app slug", Req: true},
+				{Name: "scheduled-at", Value: "RFC3339", Short: "absolute dispatch time; exclusive with --delay"},
+				{Name: "delay", Value: "DURATION", Short: "relative delay such as 30m; exclusive with --scheduled-at"},
+				{Name: "payload", Value: "JSON|@FILE|-", Short: "JSON request payload"},
+				{Name: "method", Value: "METHOD", Short: "HTTP method (default POST)"},
+				{Name: "path", Value: "PATH", Short: "app path (default /)"},
+				{Name: "idempotency-key", Value: "KEY", Short: "stable create retry key"},
+			}},
+			{Name: "list", Short: "List delayed tasks for an app", Flags: []cliFlag{
+				{Name: "app", Value: "SLUG", Short: "app slug", Req: true},
+				{Name: "limit", Value: "N", Short: "page size (1-200)"},
+				{Name: "before", Value: "ID", Short: "pagination cursor"},
+			}},
 			{Name: "get", Short: "Show one delayed task"},
 			{Name: "info", Short: "Alias for get"},
 			{Name: "cancel", Short: "Cancel a delayed task"},
@@ -994,7 +1009,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Flags: []cliFlag{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
-				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next wake)"},
+				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next cold wake)"},
 			}},
 			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)"},
 		},
@@ -1497,10 +1512,10 @@ var cliCommands = []cliCommand{
 		Short:   "Manage env secrets (secrets list|set|unset|list-all|rotate)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List sealed secrets", Flags: []cliFlag{{Name: "scope", Short: "env scope filter (defaults to linked project environment)", Value: "SCOPE|__all__"}}},
-			{Name: "set", Short: "Set a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"}}},
+			{Name: "set", Short: "Set a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply updated secrets now"}}},
 			{Name: "unset", Short: "Remove a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"}}},
 			{Name: "list-all", Short: "List every secret across apps"},
-			{Name: subRotate, Short: "Re-seal one secret under the current host key", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}}},
+			{Name: subRotate, Short: "Re-seal one secret under the current host key", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}}},
 		},
 	},
 	{

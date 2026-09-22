@@ -1612,6 +1612,19 @@ func (c *Client) UpdateProjectEnvironment(ctx context.Context, projectSlug, envi
 	return out, c.do(ctx, http.MethodPatch, path, req, &out)
 }
 
+// DeleteProjectEnvironment removes an unused project environment. Gregale
+// rejects production, protected, and environments with live releases.
+func (c *Client) DeleteProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string) error {
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// DeleteProjectsSlugEnvironmentsEnvironment is the route-shaped alias used by
+// the SDK coverage contract. Prefer DeleteProjectEnvironment for new callers.
+func (c *Client) DeleteProjectsSlugEnvironmentsEnvironment(ctx context.Context, projectSlug, environmentSlug string) error {
+	return c.DeleteProjectEnvironment(ctx, projectSlug, environmentSlug)
+}
+
 // GetProjectEnvironmentConfig returns the latest non-secret configuration
 // snapshot for one project environment. An unconfigured environment returns
 // version zero with an empty object and its canonical empty hash.
@@ -2069,6 +2082,14 @@ func (c *Client) Wake(ctx context.Context, slug string) (AppWakeResponse, error)
 func (c *Client) RestartApp(ctx context.Context, slug string) (AppRestartResponse, error) {
 	var out AppRestartResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restart", nil, &out)
+}
+
+// RestartAppFresh destroys live instances without snapshotting their process
+// memory, invalidates cached snapshots, and cold-wakes with current runtime
+// configuration. Use this after environment or secret mutations.
+func (c *Client) RestartAppFresh(ctx context.Context, slug string) (AppRestartResponse, error) {
+	var out AppRestartResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restart?fresh=true", nil, &out)
 }
 
 // PurgeAppCache asks the gateways to evict cached responses for an app. An
@@ -3179,6 +3200,30 @@ func (c *Client) DeleteAccountDlq(ctx context.Context, limit int) (AccountDeadLe
 func (c *Client) CreateDelayedTask(ctx context.Context, slug string, req DelayedTaskRequest) (DelayedTaskResponse, error) {
 	var out DelayedTaskResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/delayed-tasks", req, &out)
+}
+
+// CreateDelayedTaskWithIdempotencyKey lets producers reuse the same key when
+// retrying an uncertain create response, preventing duplicate scheduled work.
+func (c *Client) CreateDelayedTaskWithIdempotencyKey(ctx context.Context, slug string, req DelayedTaskRequest, idempotencyKey string) (DelayedTaskResponse, error) {
+	var out DelayedTaskResponse
+	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/apps/"+slug+"/delayed-tasks", req, &out, idempotencyKey)
+}
+
+// ListDelayedTasks returns one newest-first page for an app.
+func (c *Client) ListDelayedTasks(ctx context.Context, slug, before string, limit int) (ListDelayedTasksResponse, error) {
+	var out ListDelayedTasksResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/delayed-tasks"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // GetDelayedTask returns a single delayed-task by id. Account-scoped

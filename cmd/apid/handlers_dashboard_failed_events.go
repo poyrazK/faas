@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -20,6 +21,7 @@ const (
 	dashboardFailedEventsCSRFCookie = "faas_csrf_failed_events"
 	dashboardFailedEventsPerApp     = 50
 	dashboardFailedEventsMax        = 200
+	dashboardFailedEventsPageSize   = 50
 )
 
 func (s *server) renderFailedEvents(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
@@ -30,7 +32,9 @@ func (s *server) renderFailedEvents(w http.ResponseWriter, r *http.Request, log 
 		apps = nil
 	}
 	selected := strings.TrimSpace(r.URL.Query().Get("app"))
-	data := dashboard.FailedEventsData{SelectedApp: selected, Action: failedEventsActionFlash(r)}
+	data := dashboard.FailedEventsData{
+		SelectedApp: selected, Action: failedEventsActionFlash(r), ActionCount: failedEventsActionCount(r),
+	}
 	appIDs := make(map[string]string, len(apps))
 	appSlugs := make(map[string]string, len(apps))
 	for _, app := range apps {
@@ -46,10 +50,21 @@ func (s *server) renderFailedEvents(w http.ResponseWriter, r *http.Request, log 
 			return
 		}
 	}
-	events, listErr := s.store.ListDeadLetterEventsForAccount(ctx, acct.ID, dashboardFailedEventsMax, "")
-	if listErr != nil {
-		log.Warn("dashboard failed events: list account events", "account_id", acct.ID, "err", listErr)
+	var events []state.DeadLetterEvent
+	var listErr error
+	listLimit := dashboardFailedEventsPageSize + 1
+	if selected != "" {
+		events, listErr = s.store.ListDeadLetterEvents(ctx, appIDs[selected], listLimit, strings.TrimSpace(r.URL.Query().Get("before")))
 	} else {
+		events, listErr = s.store.ListDeadLetterEventsForAccount(ctx, acct.ID, listLimit, strings.TrimSpace(r.URL.Query().Get("before")))
+	}
+	if listErr != nil {
+		log.Warn("dashboard failed events: list events", "account_id", acct.ID, "app", selected, "err", listErr)
+	} else {
+		if len(events) > dashboardFailedEventsPageSize {
+			data.NextPageURL = failedEventsPageURL(selected, events[dashboardFailedEventsPageSize-1].ID)
+			events = events[:dashboardFailedEventsPageSize]
+		}
 		for _, event := range events {
 			appSlug := appSlugs[event.AppID]
 			if selected != "" && appSlug != selected {
@@ -112,6 +127,22 @@ func failedEventsActionFlash(r *http.Request) string {
 	default:
 		return ""
 	}
+}
+
+func failedEventsActionCount(r *http.Request) int {
+	count, err := strconv.Atoi(r.URL.Query().Get("count"))
+	if err != nil || count < 0 || count > dashboardFailedEventsMax {
+		return 0
+	}
+	return count
+}
+
+func failedEventsPageURL(app, before string) string {
+	values := url.Values{"before": []string{before}}
+	if app != "" {
+		values.Set("app", app)
+	}
+	return "/dashboard/failed-events?" + values.Encode()
 }
 
 func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Request, action string) {
@@ -227,6 +258,80 @@ func (s *server) dashboardAccountFailedEventAction(w http.ResponseWriter, r *htt
 	http.Redirect(w, r, failedEventsRedirect("", flash), http.StatusSeeOther)
 }
 
+func (s *server) dashboardFailedEventsBulkAction(w http.ResponseWriter, r *http.Request, action string) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardFailedEventsAction, acct.ID, dashboardFailedEventsCSRFCookie); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid CSRF token", "please reload the page and try again"))
+		return
+	}
+	selected := strings.TrimSpace(r.FormValue("app"))
+	scope := "account"
+	var count int
+	var err error
+	var app state.App
+	if selected != "" {
+		app, err = s.store.AppBySlug(r.Context(), selected)
+		if err != nil || app.AccountID != acct.ID {
+			s.observeDashboardDeadLetterAction("account", action, state.ErrNotFound)
+			http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
+			return
+		}
+		scope = app.Slug
+		switch action {
+		case "replay":
+			count, err = s.store.ReplayDeadLetterEvents(r.Context(), acct.ID, app.ID, dashboardFailedEventsMax)
+		case "discard":
+			count, err = s.store.DeleteDeadLetterEvents(r.Context(), acct.ID, app.ID, dashboardFailedEventsMax)
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	} else {
+		switch action {
+		case "replay":
+			count, err = s.store.ReplayDeadLetterEventsForAccount(r.Context(), acct.ID, dashboardFailedEventsMax)
+		case "discard":
+			count, err = s.store.DeleteDeadLetterEventsForAccount(r.Context(), acct.ID, dashboardFailedEventsMax)
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}
+	if err != nil {
+		s.observeDashboardDeadLetterAction(scope, action, err)
+		s.log.Warn("dashboard failed events bulk action", "action", action, "account_id", acct.ID, "app", selected, "err", err)
+		http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
+		return
+	}
+	for i := 0; i < count; i++ {
+		s.observeDashboardDeadLetterAction(scope, action, nil)
+	}
+	if count > 0 {
+		kind := "app.dlq.event_replayed"
+		if action == "discard" {
+			kind = "app.dlq.purged"
+		}
+		data := map[string]any{"count": count, "operation": "batch", "surface": "dashboard"}
+		if selected != "" {
+			data["app_id"] = app.ID
+		} else {
+			data["account_scope"] = true
+			if action == "replay" {
+				kind = "account.dlq.event_replayed"
+			} else {
+				kind = "account.dlq.purged"
+			}
+		}
+		s.audit.Emit(r.Context(), kind, &acct.ID, data)
+	}
+	flash := action + "ed"
+	http.Redirect(w, r, failedEventsRedirect(selected, flash, count), http.StatusSeeOther)
+}
+
 func (s *server) observeDashboardDeadLetterAction(app, action string, err error) {
 	status := "success"
 	if err != nil {
@@ -243,7 +348,10 @@ func (s *server) observeDashboardDeadLetterAction(app, action string, err error)
 	}
 }
 
-func failedEventsRedirect(slug, action string) string {
+func failedEventsRedirect(slug, action string, count ...int) string {
 	values := url.Values{"app": []string{slug}, "action": []string{action}}
+	if len(count) > 0 {
+		values.Set("count", strconv.Itoa(count[0]))
+	}
 	return "/dashboard/failed-events?" + values.Encode()
 }

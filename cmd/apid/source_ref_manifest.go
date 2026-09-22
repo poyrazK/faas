@@ -455,7 +455,9 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 	}
 	if left.MinInstances != right.MinInstances || left.MaxInstances != right.MaxInstances ||
 		left.ScaleOutCooldownS != right.ScaleOutCooldownS || left.ScaleInCooldownS != right.ScaleInCooldownS ||
-		left.ConcurrencyOverflow != right.ConcurrencyOverflow || left.MaxQueueWaitMS != right.MaxQueueWaitMS {
+		left.ConcurrencyOverflow != right.ConcurrencyOverflow || left.MaxQueueWaitMS != right.MaxQueueWaitMS ||
+		left.MaxQueueDepth != right.MaxQueueDepth || left.WakeMaxQueueDepth != right.WakeMaxQueueDepth ||
+		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds {
 		return false
 	}
 	if left.Target == nil || right.Target == nil {

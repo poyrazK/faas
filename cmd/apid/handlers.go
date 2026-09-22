@@ -321,13 +321,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	// CodePlanStreamingNotAllowed returns the same status on
 	// POST vs PATCH — telemetry collapsing on `code` is uniform.
 	//
-	// TODO(ADR-102-followup): add apps_streaming_enabled_plan_check
-	// Postgres CHECK constraint via NOT VALID + VALIDATE
-	// migrations once production telemetry confirms zero Free+
-	// streaming_enabled=true rows. Until then this runtime gate is
-	// the only enforcement; a direct-DB write or backup-restore
-	// can still violate the invariant. The follow-up ships a
-	// 1-cycle telemetry window after this PR lands.
+	// The apps_streaming_enabled_plan_check migration is the database
+	// backstop for direct writes and restores. Keep this runtime gate as
+	// the customer-facing 403 so API callers get the same stable error.
 	if req.StreamingEnabled != nil && *req.StreamingEnabled && !acct.Plan.StreamingResponseAllowed() {
 		return state.App{}, api.NewProblem(http.StatusForbidden,
 			api.CodePlanStreamingNotAllowed,
@@ -948,6 +944,15 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	if !ok {
 		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency, RequestBodyMaxBytes: plan.MaxRequestBodyBytes()}
 	}
+	queueDepth, queueWait, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	if a.ScalingPolicy != nil {
+		if a.ScalingPolicy.MaxQueueDepth > 0 {
+			queueDepth = a.ScalingPolicy.MaxQueueDepth
+		}
+		if a.ScalingPolicy.MaxQueueWaitMS > 0 {
+			queueWait = time.Duration(a.ScalingPolicy.MaxQueueWaitMS) * time.Millisecond
+		}
+	}
 	maxInstances := a.MaxConcurrency
 	if a.ScalingPolicy != nil && a.ScalingPolicy.MaxInstances > 0 {
 		maxInstances = a.ScalingPolicy.MaxInstances
@@ -959,6 +964,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
 		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
+		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
 		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
 		RequestBudgetMS:       limits.RequestBudgetForType(string(a.Type)).Milliseconds(),
@@ -1034,6 +1040,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 		ScaleInCooldownS:        p.ScaleInCooldownS,
 		ConcurrencyOverflow:     p.ConcurrencyOverflow,
 		MaxQueueWaitMS:          p.MaxQueueWaitMS,
+		MaxQueueDepth:           p.MaxQueueDepth,
 		WakeMaxQueueDepth:       p.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: p.WakeMaxQueueWaitSeconds,
 	}

@@ -165,6 +165,10 @@ func (c *Client) addAuthHeader(req *http.Request) {
 // when body != nil, decodes non-2xx as Problem, and unmarshals a
 // successful response into out when out != nil.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	return c.doWithIdempotencyKey(ctx, method, path, body, out, "")
+}
+
+func (c *Client) doWithIdempotencyKey(ctx context.Context, method, path string, body, out any, idempotencyKey string) error {
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -183,7 +187,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	// or double-creates. We never override an explicit key the caller
 	// already set.
 	if method != http.MethodGet && method != http.MethodHead && req.Header.Get("Idempotency-Key") == "" {
-		req.Header.Set("Idempotency-Key", newUUIDv4())
+		if idempotencyKey == "" {
+			idempotencyKey = newUUIDv4()
+		}
+		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -851,6 +858,27 @@ func (c *Client) AckQueueRow(ctx context.Context, slug, id string) error {
 func (c *Client) CreateDelayedTask(ctx context.Context, slug string, req DelayedTaskRequest) (DelayedTaskResponse, error) {
 	var out DelayedTaskResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/delayed-tasks", req, &out)
+}
+
+func (c *Client) CreateDelayedTaskWithIdempotencyKey(ctx context.Context, slug string, req DelayedTaskRequest, idempotencyKey string) (DelayedTaskResponse, error) {
+	var out DelayedTaskResponse
+	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/apps/"+slug+"/delayed-tasks", req, &out, idempotencyKey)
+}
+
+func (c *Client) ListDelayedTasks(ctx context.Context, slug, before string, limit int) (ListDelayedTasksResponse, error) {
+	var out ListDelayedTasksResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/delayed-tasks"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // GetDelayedTask returns a single delayed-task by id. Account-scoped

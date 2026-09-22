@@ -372,6 +372,25 @@ func TestInvocationListForAccount_OrdersDescAndCaps(t *testing.T) {
 	}
 }
 
+func TestListDelayedTasksForAppFiltersSourceAndPages(t *testing.T) {
+	m, appID, acctID := seedInvocationApp(t)
+	ctx := context.Background()
+	for _, source := range []InvocationSource{InvocationDelayedTask, InvocationQueue, InvocationDelayedTask} {
+		_, err := m.EnqueueInvocation(ctx, Invocation{AppID: appID, AccountID: acctID, Source: source, DueAt: time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := m.ListDelayedTasksForApp(ctx, appID, 1, "")
+	if err != nil || len(rows) != 1 || rows[0].Source != InvocationDelayedTask {
+		t.Fatalf("first page = (%+v, %v)", rows, err)
+	}
+	next, err := m.ListDelayedTasksForApp(ctx, appID, 1, rows[0].ID)
+	if err != nil || len(next) != 1 || next[0].Source != InvocationDelayedTask || next[0].ID == rows[0].ID {
+		t.Fatalf("second page = (%+v, %v)", next, err)
+	}
+}
+
 func TestInvocationCountInstanceInMinute(t *testing.T) {
 	m, appID, acctID := seedInvocationApp(t)
 	ctx := context.Background()

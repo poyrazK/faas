@@ -31,6 +31,7 @@ func TestApplyManifestScalingPolicy(t *testing.T) {
     metric: rps
     value: 10
   concurrency_overflow: drop
+  max_queue_depth: 17
   max_queue_wait_ms: 1250
 `)
 	fake := &fakeManifestScalingClient{}
@@ -42,7 +43,7 @@ func TestApplyManifestScalingPolicy(t *testing.T) {
 	}
 	policy := fake.updates[0].ScalingPolicy
 	if policy.MinInstances != 1 || policy.MaxInstances != 3 || policy.ScaleOutCooldownS != 5 || policy.ScaleInCooldownS != 60 ||
-		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueWaitMS != 1250 {
+		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 17 || policy.MaxQueueWaitMS != 1250 {
 		t.Fatalf("policy = %+v, want defaults 5/60", policy)
 	}
 	if err := applyManifestScalingPolicy(context.Background(), fake, "api", dir); err != nil {

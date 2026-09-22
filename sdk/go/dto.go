@@ -151,14 +151,16 @@ type (
 	CliAuthExchangeResponse = api.CliAuthExchangeResponse
 
 	// Async + queues + delayed tasks.
-	AsyncInvokeResponse  = api.AsyncInvokeResponse
-	InvokeResponse       = api.InvokeResponse
-	InvokeRequest        = api.InvokeRequest
-	QueueSendRequest     = api.QueueSendRequest
-	QueueSendResponse    = api.QueueSendResponse
-	QueueReceiveResponse = api.QueueReceiveResponse
-	DelayedTaskRequest   = api.DelayedTaskRequest
-	DelayedTaskResponse  = api.DelayedTaskResponse
+	AsyncInvokeResponse      = api.AsyncInvokeResponse
+	InvokeResponse           = api.InvokeResponse
+	InvokeRequest            = api.InvokeRequest
+	InvocationDestinations   = api.InvocationDestinations
+	QueueSendRequest         = api.QueueSendRequest
+	QueueSendResponse        = api.QueueSendResponse
+	QueueReceiveResponse     = api.QueueReceiveResponse
+	DelayedTaskRequest       = api.DelayedTaskRequest
+	DelayedTaskResponse      = api.DelayedTaskResponse
+	ListDelayedTasksResponse = api.ListDelayedTasksResponse
 
 	// Audit + invocations.
 	Invocation              = api.Invocation

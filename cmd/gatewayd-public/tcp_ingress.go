@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tcpd"
+	"github.com/onebox-faas/faas/pkg/tcpmetrics"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 )
@@ -24,7 +25,7 @@ const defaultTCPDScheddTarget = "unix:///run/faas/schedd.sock"
 // startTCPIngress is the production wiring for ADR-183's second rollout
 // step. It is opt-in until the firewall/systemd exposure slice lands; when
 // enabled, tcpd binds only the durable listener ports marked enabled.
-func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore) (func(), error) {
+func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore, metrics *tcpmetrics.Metrics) (func(), error) {
 	if !envBoolOr("FAAS_TCPD_ENABLED", false) {
 		return func() {}, nil
 	}
@@ -120,10 +121,11 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 		Source:                   store,
 		Routes:                   tcpd.ListenerStoreResolver{Store: store},
 		Targets:                  &tcpd.StoreTargetResolver{Instances: store, Admitter: sched},
-		Forwarder:                gateway.TCPForwarder{Nodes: nodes, MaxBytes: maxBytes, IdleTimeout: idleTimeout},
+		Forwarder:                gateway.TCPForwarder{Nodes: nodes, MaxBytes: maxBytes, IdleTimeout: idleTimeout, Metrics: metrics},
 		RefreshInterval:          refreshInterval,
 		MaxConnections:           maxConnections,
 		MaxConnectionsPerAccount: maxConnectionsPerAccount,
+		Metrics:                  metrics,
 		OnError: func(err error) {
 			log.Error("gatewayd-public: tcpd runtime error", "err", err)
 		},

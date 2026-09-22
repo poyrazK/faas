@@ -370,6 +370,7 @@ export type { LatestDeploymentsByAppResponse } from './models/LatestDeploymentsB
 export type { ListAuditEventsResponse } from './models/ListAuditEventsResponse.js';
 export type { ListAuditLogResponse } from './models/ListAuditLogResponse.js';
 export type { ListCronRunsResponse } from './models/ListCronRunsResponse.js';
+export type { ListDelayedTasksResponse } from './models/ListDelayedTasksResponse.js';
 export type { ListDeploymentAuditResponse } from './models/ListDeploymentAuditResponse.js';
 export type { ListDeployTokensResponse } from './models/ListDeployTokensResponse.js';
 export type { ListInstancesResponse } from './models/ListInstancesResponse.js';

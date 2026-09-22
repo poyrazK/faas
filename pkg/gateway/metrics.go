@@ -198,7 +198,12 @@ type Metrics struct {
 	// label is closed to queue|drop and the app label is the existing gateway
 	// app identity used by request metrics.
 	concurrencyThrottled *prometheus.CounterVec
-	rateLimited          *prometheus.CounterVec
+	// concurrencyQueueDepth and concurrencyQueueWait expose warm-instance
+	// backpressure separately from the cold-wake queue. Without this split a
+	// customer cannot tell whether latency came from booting or saturation.
+	concurrencyQueueDepth *prometheus.GaugeVec
+	concurrencyQueueWait  *prometheus.HistogramVec
+	rateLimited           *prometheus.CounterVec
 	// leaderBootstrapAborts (ADR-098 C7): counter labelled by
 	// reason — closed set {queue_empty_no_instance, ttl_expired,
 	// app_deleted}. Pre-instantiated in NewMetrics so the §12
@@ -316,7 +321,7 @@ type Metrics struct {
 	// routeConsumerThrottleDecisions (ADR-104, issue #881 Phase 3):
 	// counter of per-consumer throttle decisions, labelled by
 	// {kind, outcome}. `kind` is the KeyBy dimension
-	// (none | api_key | consumer_id | jwt_subject | jwt_claim — closed set per
+	// (none | api_key | consumer_id | jwt_subject | jwt_claim | country — closed set per
 	// pkg/api.ThrottleKeyBy* constants). `outcome` is the
 	// decision (admit | throttle | anonymous — the third covers
 	// anonymous traffic on a per-consumer rule, which the limiter
@@ -948,7 +953,7 @@ func NewMetrics() *Metrics {
 		ruleLabels: newRuleLabelSet(),
 		// ADR-104 (issue #881 Phase 3) — per-consumer throttle
 		// decisions, distinct from the per-rule edgeRuleApply path.
-		// `kind` ∈ {none, api_key, consumer_id, jwt_subject, jwt_claim} tracks the
+		// `kind` ∈ {none, api_key, consumer_id, jwt_subject, jwt_claim, country} tracks the
 		// KeyBy dimension; `outcome` ∈ {admit, throttle, anonymous}
 		// tracks the per-consumer admit/deny split. The anonymous
 		// outcome covers anonymous traffic on a per-consumer rule —
@@ -958,7 +963,7 @@ func NewMetrics() *Metrics {
 		// per-consumer rule (which is a misconfiguration).
 		routeConsumerThrottleDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "route_consumer_throttle_decisions_total",
-			Help: "Per-consumer throttle decisions, labelled by KeyBy kind (none|api_key|consumer_id|jwt_subject|jwt_claim) and outcome (admit|throttle|anonymous). ADR-104, issue #881 Phase 3.",
+			Help: "Dimensional throttle decisions, labelled by KeyBy kind (none|api_key|consumer_id|jwt_subject|jwt_claim|country) and outcome (admit|throttle|anonymous). ADR-104, issue #881 Phase 3.",
 		}, []string{"kind", "outcome"}),
 		// ADR-122 §Decision: kind=cache outcome counter.
 		responseCache: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -1188,6 +1193,15 @@ func NewMetrics() *Metrics {
 			Name: "gateway_concurrency_throttled_total",
 			Help: "Requests rejected or delayed by an app concurrency boundary, labelled by app and overflow mode.",
 		}, []string{"app", "mode"}),
+		concurrencyQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_concurrency_queue_depth",
+			Help: "Requests currently waiting for warm instance capacity, labelled by app and plan.",
+		}, []string{"app", "plan"}),
+		concurrencyQueueWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "gateway_concurrency_queue_wait_seconds",
+			Help:    "Time spent waiting for warm instance capacity, labelled by app, plan, and outcome.",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 120},
+		}, []string{"app", "plan", "outcome"}),
 		// ADR-098 C7: closed-set reasons pre-instantiated so the
 		// §12 dashboard chip "leader bootstrap aborts" surfaces
 		// zero rows from boot. Adding a new reason is a code +
@@ -1576,7 +1590,7 @@ func NewMetrics() *Metrics {
 	// admit/deny split. The "anonymous" outcome covers
 	// unauthenticated traffic on a per-consumer rule — a
 	// misconfiguration signal for the dashboard.
-	for _, kind := range []string{"none", "api_key", "consumer_id", "jwt_subject", "jwt_claim"} {
+	for _, kind := range []string{"none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"} {
 		for _, outcome := range []string{"admit", "throttle", "anonymous"} {
 			m.routeConsumerThrottleDecisions.WithLabelValues(kind, outcome)
 		}
@@ -1744,7 +1758,7 @@ func NewMetrics() *Metrics {
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
-	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceWakeLatency)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -2479,6 +2493,28 @@ func (m *Metrics) ObserveConcurrencyThrottled(app, mode string) {
 		mode = api.ConcurrencyOverflowQueue
 	}
 	m.concurrencyThrottled.WithLabelValues(app, mode).Inc()
+}
+
+func (m *Metrics) SetConcurrencyQueueDepth(app, plan string, depth int) {
+	if m == nil || app == "" || m.concurrencyQueueDepth == nil {
+		return
+	}
+	m.concurrencyQueueDepth.WithLabelValues(app, normalizeWakeAdmissionPlan(plan)).Set(float64(max(depth, 0)))
+}
+
+func (m *Metrics) ObserveConcurrencyQueueWait(app, plan, outcome string, d time.Duration) {
+	if m == nil || app == "" || m.concurrencyQueueWait == nil {
+		return
+	}
+	switch outcome {
+	case "admitted", "full", "timeout", "canceled":
+	default:
+		outcome = "error"
+	}
+	if d < 0 {
+		d = 0
+	}
+	m.concurrencyQueueWait.WithLabelValues(app, normalizeWakeAdmissionPlan(plan), outcome).Observe(d.Seconds())
 }
 
 // ObserveWakePhase records a single phase-decomposed wake boundary

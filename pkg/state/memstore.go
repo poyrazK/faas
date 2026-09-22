@@ -349,6 +349,10 @@ type MemStore struct {
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64
+	// deploymentRouteGeneration mirrors deployment_route_generation_seq.
+	// It is independent from edge-rule generations because the consumers and
+	// acknowledgement channels are disjoint.
+	deploymentRouteGeneration int64
 	// mirrorRules mirrors mirror_rules for handler tests (issue #72
 	// / ADR-125). Keyed by MirrorRule.ID; the (app_id, enabled) and
 	// (source_deployment_id, enabled) lookup hot paths walk the map
@@ -1601,6 +1605,16 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if plan == api.PlanFree {
+		// Keep the in-memory backend aligned with PgStore's database
+		// invariant: a Free account cannot retain an opted-in streaming app.
+		for appID, app := range m.apps {
+			if app.AccountID == id && app.StreamingEnabled {
+				app.StreamingEnabled = false
+				m.apps[appID] = app
+			}
+		}
 	}
 	a.Plan = plan
 	m.accounts[id] = a
@@ -2901,6 +2915,53 @@ func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, account
 		}
 	}
 	return ProjectEnvironment{}, ErrNotFound
+}
+
+func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projectID, slug string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	project, ok := m.projects[projectID]
+	if !ok || project.AccountID != accountID {
+		return ErrNotFound
+	}
+
+	var environmentID string
+	var environment ProjectEnvironment
+	for id, candidate := range m.projectEnvironments {
+		if candidate.ProjectID == projectID && candidate.Slug == slug {
+			environmentID = id
+			environment = candidate
+			break
+		}
+	}
+	if environmentID == "" {
+		return ErrNotFound
+	}
+	if slug == "production" || environment.Protected {
+		return ErrConflict
+	}
+
+	for _, app := range m.apps {
+		if app.ProjectID != projectID {
+			continue
+		}
+		for _, deployment := range m.deployments {
+			if deployment.AppID == app.ID && deployment.Status == DeployLive &&
+				normalizedDeploymentScope(deployment.Scope) == slug {
+				return ErrConflict
+			}
+		}
+	}
+
+	delete(m.projectEnvironments, environmentID)
+	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	for id, approval := range m.projectEnvironmentApprovals {
+		if approval.AccountID == accountID && approval.ProjectSlug == project.Slug && approval.EnvironmentSlug == slug {
+			delete(m.projectEnvironmentApprovals, id)
+		}
+	}
+	return nil
 }
 
 func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
@@ -6299,6 +6360,32 @@ func (m *MemStore) ListCanaryInFlight(_ context.Context) ([]Deployment, error) {
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+// ListServiceRolloutsInFlight mirrors PgStore's durable schedd recovery set.
+func (m *MemStore) ListServiceRolloutsInFlight(_ context.Context, ownerNodeID string) ([]Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Deployment
+	for _, d := range m.deployments {
+		if d.Status != DeployLive || !IsServiceRollout(d) {
+			continue
+		}
+		if ownerNodeID != "" {
+			app, ok := m.apps[d.AppID]
+			if !ok || app.NodeID != ownerNodeID {
+				continue
+			}
+		}
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out, nil
@@ -11309,6 +11396,36 @@ func (m *MemStore) ListInvocationsForAccount(_ context.Context, accountID string
 		// If the cursor isn't in the page (already GC'd, expired),
 		// PgStore falls back to the inner SELECT; MemStore returns the
 		// full page, which is the cheap-and-cheerful answer.
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ListDelayedTasksForApp returns only delayed_task rows owned by appID.
+func (m *MemStore) ListDelayedTasksForApp(_ context.Context, appID string, limit int, before string) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Invocation
+	for _, inv := range m.invocations {
+		if inv.AppID == appID && inv.Source == InvocationDelayedTask {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if before != "" {
+		for i, inv := range out {
+			if inv.ID == before {
+				out = out[i+1:]
+				break
+			}
+		}
 	}
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
@@ -18761,6 +18878,15 @@ func (m *MemStore) NextEdgeRuleGeneration(_ context.Context) (int64, error) {
 	defer m.mu.Unlock()
 	m.edgeRuleGeneration++
 	return m.edgeRuleGeneration, nil
+}
+
+// NextDeploymentRouteGeneration mirrors PostgreSQL's independent deployment
+// routing sequence.
+func (m *MemStore) NextDeploymentRouteGeneration(_ context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deploymentRouteGeneration++
+	return m.deploymentRouteGeneration, nil
 }
 
 func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {

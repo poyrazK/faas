@@ -55,23 +55,27 @@ import "fmt"
 // The closed vocabulary is mirrored at the DB layer by migration
 // 00044's api_keys_scopes_vocab_chk CHECK constraint.
 const (
-	ScopeAdmin        = "admin"
-	ScopeAppsRead     = "apps:read"
-	ScopeDeployWrite  = "deploy:write"
-	ScopeSecretsRead  = "secrets:read"
-	ScopeSecretsWrite = "secrets:write"
-	ScopeUsageRead    = "usage:read"
+	ScopeAdmin             = "admin"
+	ScopeAppsRead          = "apps:read"
+	ScopeDeployWrite       = "deploy:write"
+	ScopeSecretsRead       = "secrets:read"
+	ScopeSecretsWrite      = "secrets:write"
+	ScopeUsageRead         = "usage:read"
+	ScopeDelayedTasksRead  = "delayed_tasks:read"
+	ScopeDelayedTasksWrite = "delayed_tasks:write"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
 // order is not significant — callers can pass scopes in any order.
 var validScopes = map[string]struct{}{
-	ScopeAdmin:        {},
-	ScopeAppsRead:     {},
-	ScopeDeployWrite:  {},
-	ScopeSecretsRead:  {},
-	ScopeSecretsWrite: {},
-	ScopeUsageRead:    {},
+	ScopeAdmin:             {},
+	ScopeAppsRead:          {},
+	ScopeDeployWrite:       {},
+	ScopeSecretsRead:       {},
+	ScopeSecretsWrite:      {},
+	ScopeUsageRead:         {},
+	ScopeDelayedTasksRead:  {},
+	ScopeDelayedTasksWrite: {},
 }
 
 // IsValidScope reports whether s is in the allowed scope vocabulary.

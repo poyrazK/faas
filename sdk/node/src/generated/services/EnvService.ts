@@ -109,8 +109,8 @@ export class EnvService {
    * Persists the plaintext value verbatim in the app_envs table (no
    * seal step). Env vars are non-sensitive runtime config by contract
    * — credentials stay on `/v1/apps/{slug}/secrets/{key}`. Applies on
-   * next wake (cold-boot OR snapshot-restore); the running instance
-   * is unaffected.
+   * next cold wake; cached snapshots are invalidated and the running
+   * instance is unaffected. Use `POST /restart?fresh=true` to apply now.
    *
    * **ADR-090 PR-B scope filter.** The optional `?scope=`
    * query param selects which scope to write. Omitted = the

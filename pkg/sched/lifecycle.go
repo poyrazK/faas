@@ -520,7 +520,218 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 	}
 }
 
+type serviceRouteSubscriber interface {
+	Subscribe(context.Context, []string) (<-chan db.Notification, error)
+}
+
+type serviceRouteGenerationStore interface {
+	NextDeploymentRouteGeneration(context.Context) (int64, error)
+}
+
+func servingGatewayNames(nodes []state.ComputeNode) map[string]struct{} {
+	expected := make(map[string]struct{})
+	for _, node := range nodes {
+		name := strings.TrimSpace(node.Name)
+		role := ""
+		if node.Role != nil {
+			role = strings.TrimSpace(*node.Role)
+		}
+		if name == "" || !node.Active || (role != "compute-only" && role != "compute-node") ||
+			node.GatewayTargetURL == nil || strings.TrimSpace(*node.GatewayTargetURL) == "" {
+			continue
+		}
+		expected[name] = struct{}{}
+	}
+	return expected
+}
+
+func serviceRouteFleetConfigured(nodes []state.ComputeNode, ownerNodeID string) bool {
+	if strings.TrimSpace(ownerNodeID) != "" {
+		return true
+	}
+	for _, node := range nodes {
+		name := strings.TrimSpace(node.Name)
+		if name != "" && name != state.DefaultLocalNodeName {
+			return true
+		}
+	}
+	return false
+}
+
+// waitForServiceRouteConvergence publishes a unique routing generation and
+// waits for every registered serving gateway to confirm that both its weight
+// table and live targets reflect the cutover. The caller has already retained
+// the predecessor as a live zero-weight generation, so every failure path is
+// safe: old requests continue while reconciliation retries.
+func (e *Engine) waitForServiceRouteConvergence(ctx context.Context, appID, deploymentID string) (acknowledgedAt time.Time, fleetBarrier bool, ok bool) {
+	nodes, err := e.store.ListComputeNodes(ctx, false)
+	if err != nil {
+		e.log.Warn("sched: list serving gateways for rollout", "app", appID, "deployment", deploymentID, "err", err)
+		return time.Time{}, false, false
+	}
+	expected := servingGatewayNames(nodes)
+	if len(expected) == 0 {
+		if serviceRouteFleetConfigured(nodes, e.ownerNodeID) {
+			e.log.Warn("sched: no active serving gateways registered for rollout", "app", appID, "deployment", deploymentID)
+			return time.Time{}, true, false
+		}
+		// Legacy single-box and unit-test installs have no registered gateway
+		// identity. Preserve their existing notify path without pretending it
+		// provides a fleet acknowledgement or telemetry drain barrier.
+		e.emitServiceRolloutChange(ctx, appID, deploymentID, state.DeployLive)
+		return time.Now(), false, true
+	}
+	subscriber, available := e.notif.(serviceRouteSubscriber)
+	if !available {
+		e.log.Warn("sched: deployment route acknowledgement subscriber unavailable", "app", appID, "deployment", deploymentID)
+		return time.Time{}, true, false
+	}
+	allocator, available := e.store.(serviceRouteGenerationStore)
+	if !available {
+		e.log.Warn("sched: deployment route generation store unavailable", "app", appID, "deployment", deploymentID)
+		return time.Time{}, true, false
+	}
+	generation, err := allocator.NextDeploymentRouteGeneration(ctx)
+	if err != nil {
+		e.log.Warn("sched: allocate deployment route generation", "app", appID, "deployment", deploymentID, "err", err)
+		return time.Time{}, true, false
+	}
+	payloadBytes, err := json.Marshal(db.DeploymentRouteChangedPayload{
+		AppID: appID, DeploymentID: deploymentID, Generation: generation,
+	})
+	if err != nil {
+		return time.Time{}, true, false
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(api.ServiceRouteConvergenceTimeoutSeconds)*time.Second)
+	defer cancel()
+	events, err := subscriber.Subscribe(waitCtx, []string{db.NotifyDeploymentRouteAck})
+	if err != nil {
+		e.log.Warn("sched: subscribe deployment route acknowledgements", "app", appID, "deployment", deploymentID, "generation", generation, "err", err)
+		return time.Time{}, true, false
+	}
+	payload := string(payloadBytes)
+	if err := e.Notifier().Notify(waitCtx, db.NotifyDeploymentRouteChanged, payload); err != nil {
+		e.log.Warn("sched: publish deployment route generation", "app", appID, "deployment", deploymentID, "generation", generation, "err", err)
+		return time.Time{}, true, false
+	}
+	retry := time.NewTicker(time.Duration(api.ServiceRouteNotificationRetryMilliseconds) * time.Millisecond)
+	defer retry.Stop()
+	seen := make(map[string]struct{}, len(expected))
+	for len(seen) < len(expected) {
+		select {
+		case <-waitCtx.Done():
+			missing := make([]string, 0, len(expected)-len(seen))
+			for node := range expected {
+				if _, found := seen[node]; !found {
+					missing = append(missing, node)
+				}
+			}
+			sort.Strings(missing)
+			e.log.Warn("sched: deployment route convergence incomplete", "app", appID, "deployment", deploymentID, "generation", generation, "missing", strings.Join(missing, ","))
+			return time.Time{}, true, false
+		case event, open := <-events:
+			if !open {
+				return time.Time{}, true, false
+			}
+			ack, parseErr := db.ParseDeploymentRouteAckPayload(event.Payload)
+			if parseErr != nil || ack.Generation != generation {
+				continue
+			}
+			if _, wanted := expected[ack.Node]; wanted {
+				seen[ack.Node] = struct{}{}
+			}
+		case <-retry.C:
+			_ = e.Notifier().Notify(waitCtx, db.NotifyDeploymentRouteChanged, payload)
+		}
+	}
+	return time.Now(), true, true
+}
+
+// waitForServiceDeploymentDrain requires post-ack, fresh telemetry showing a
+// quiet zero-inflight window for every predecessor replica. Missing or stale
+// telemetry fails safe and keeps the predecessor resident.
+func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, deploymentID string, acknowledgedAt time.Time) bool {
+	replicas, err := listServiceReplicas(ctx, e.store, appID, deploymentID)
+	if err != nil {
+		e.log.Warn("sched: list predecessor replicas for drain", "app", appID, "deployment", deploymentID, "err", err)
+		return false
+	}
+	ids := make([]string, 0, len(replicas))
+	for _, replica := range replicas {
+		if state.State(replica.State) == state.StateRunning {
+			ids = append(ids, replica.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return true
+	}
+	drainCtx, cancel := context.WithTimeout(ctx, time.Duration(api.ServiceReplicaDrainTimeoutSeconds)*time.Second)
+	defer cancel()
+	quietFor := time.Duration(api.ServiceReplicaDrainQuietSeconds) * time.Second
+	zeroSince := make(map[string]time.Time, len(ids))
+	ticker := time.NewTicker(time.Duration(api.ServiceReplicaDrainPollMilliseconds) * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		now := time.Now()
+		allQuiet := true
+		for _, instanceID := range ids {
+			fresh, loadErr := e.store.InstanceByID(drainCtx, instanceID)
+			if errors.Is(loadErr, state.ErrNotFound) || (loadErr == nil && state.State(fresh.State) != state.StateRunning) {
+				continue
+			}
+			if loadErr != nil {
+				allQuiet = false
+				continue
+			}
+			inflight, receivedAt, observed := e.telemetryCache.LookupInflightRequests(instanceID, now)
+			if !observed || !receivedAt.After(acknowledgedAt) {
+				delete(zeroSince, instanceID)
+				allQuiet = false
+				continue
+			}
+			if inflight > 0 {
+				delete(zeroSince, instanceID)
+				allQuiet = false
+				continue
+			}
+			started, seenZero := zeroSince[instanceID]
+			if !seenZero {
+				zeroSince[instanceID] = receivedAt
+				allQuiet = false
+				continue
+			}
+			if receivedAt.Sub(started) < quietFor {
+				allQuiet = false
+			}
+		}
+		if allQuiet {
+			return true
+		}
+		select {
+		case <-drainCtx.Done():
+			e.log.Warn("sched: predecessor request drain incomplete", "app", appID, "deployment", deploymentID)
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
 func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollout, previous state.Deployment) bool {
+	if previous.ID != "" {
+		if _, err := e.store.BeginServiceRolloutCutover(ctx, rollout.ID); err != nil {
+			if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
+				e.log.Warn("sched: begin service rollout cutover", "app", app.ID, "deployment", rollout.ID, "err", err)
+			}
+			return false
+		}
+		acknowledgedAt, fleetBarrier, converged := e.waitForServiceRouteConvergence(ctx, app.ID, rollout.ID)
+		if !converged {
+			return false
+		}
+		if fleetBarrier && !e.waitForServiceDeploymentDrain(ctx, app.ID, previous.ID, acknowledgedAt) {
+			return false
+		}
+	}
 	updated, err := e.store.FinalizeServiceRollout(ctx, rollout.ID)
 	if err != nil {
 		if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
@@ -586,21 +797,6 @@ func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rol
 		}
 		e.convergeServiceReplicasToTarget(ctx, previous.ID, oldTarget, false)
 		e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true)
-		// max_concurrency is also the service app's replica ceiling. A
-		// rollout normally uses one bounded surge slot, but the API permits
-		// the common exact-fit shape (max_concurrency == desired). If the
-		// first replacement admission hit that ceiling, release one ready
-		// predecessor replica and retry. This keeps exact-fit services from
-		// hanging forever while retaining the predecessor's snapshot for a
-		// rollback if the replacement later fails.
-		if app.MaxConcurrency > 0 && e.ledger.Concurrency(app.ID) >= app.MaxConcurrency {
-			ready, readErr := listServiceReplicas(ctx, e.store, app.ID, rollout.ID)
-			if readErr == nil && classifyServiceReplicas(ready).managed() < newTarget {
-				if e.parkOneServiceReplica(ctx, app.ID, previous.ID) {
-					e.convergeServiceReplicasToTarget(ctx, rollout.ID, newTarget, true)
-				}
-			}
-		}
 	}
 	// Admission may synchronously reach RUNNING. Re-read so a fast boot can
 	// complete the rollout without waiting for a second notification.
@@ -626,9 +822,9 @@ func (e *Engine) ReconcileServiceDeployment(ctx context.Context, deploymentID st
 }
 
 // ReconcileServiceApp applies one globally consistent service allocation to
-// every live deployment of an app. Surplus is parked for all generations
-// before any deficit is admitted, which makes rollout capacity available even
-// when the predecessor currently occupies the entire app quota.
+// every live deployment of an app. Steady-state surplus is parked before a
+// deficit is admitted. Active rollout scopes are handled separately above and
+// never park healthy predecessor capacity merely to make candidate headroom.
 func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 	ctx = detachedServiceContext(ctx)
 	reconcileMu := e.serviceAppMutex(appID)
@@ -1325,28 +1521,4 @@ func (e *Engine) parkSurplusServiceReplicas(ctx context.Context, replicas []stat
 		parked++
 	}
 	return parked
-}
-
-// parkOneServiceReplica releases one per-app concurrency slot for an
-// exact-fit rolling replacement. The caller has already confirmed that a
-// replacement admission could not fit under max_concurrency; only a RUNNING
-// predecessor is eligible because parking an in-flight wake would require a
-// different destroy path and would make the rollout's capacity accounting
-// ambiguous.
-func (e *Engine) parkOneServiceReplica(ctx context.Context, appID, deploymentID string) bool {
-	replicas, err := listServiceReplicas(ctx, e.store, appID, deploymentID)
-	if err != nil {
-		return false
-	}
-	for _, replica := range replicas {
-		if state.State(replica.State) != state.StateRunning {
-			continue
-		}
-		if err := e.Park(ctx, replica.ID); err != nil {
-			e.log.Warn("sched: park predecessor for exact-fit service rollout", "instance", replica.ID, "deployment", deploymentID, "err", err)
-			continue
-		}
-		return true
-	}
-	return false
 }

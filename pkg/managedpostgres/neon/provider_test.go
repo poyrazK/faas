@@ -118,6 +118,12 @@ func TestNewValidatesBackendAndAdvertisesConservativeCapabilities(t *testing.T) 
 	if err := capabilities.Supports(testDatabaseSpec()); err != nil {
 		t.Fatalf("expected test spec support: %v", err)
 	}
+	if err := capabilities.SupportsCredentialAccess(managedpostgres.CredentialReadWrite); err != nil {
+		t.Fatalf("expected read-write binding support: %v", err)
+	}
+	if err := capabilities.SupportsCredentialAccess(managedpostgres.CredentialReadOnly); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("read-only binding support = %v, want ErrUnsupported", err)
+	}
 	ha := testDatabaseSpec()
 	ha.Availability = managedpostgres.AvailabilityHighlyAvailable
 	if !errors.Is(capabilities.Supports(ha), managedpostgres.ErrUnsupported) {

@@ -46,6 +46,7 @@ AuthDefaultFlippedAt
 AuthenticateKey
 AuthenticateOIDCBearer
 AutoRollbackDeploymentsTx
+BeginServiceRolloutCutover
 BuildByDeployment
 BuildByID
 BuildProvenanceByBuildID
@@ -425,6 +426,7 @@ ListRequestTelemetryDependencySpans
 ListRunningInstancesOnDeadNodes
 ListRuntimeConfigRevisions
 ListRuntimeConfigs
+ListServiceRolloutsInFlight
 ListSessions
 ListSnapshotDeploymentIDs
 ListSnapshotsForGC

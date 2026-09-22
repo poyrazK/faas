@@ -134,6 +134,15 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
+	if err != nil {
+		s.log.Error("secret rotate: invalidate snapshots", "app", app.Slug, "err", err)
+		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
+			"app_id": app.ID, "scope": scope, "name": key, "operation": "rotate",
+		})
+		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+		return
+	}
 
 	now := time.Now().UTC()
 	s.log.Info("secret rotated",
@@ -163,11 +172,12 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 	// matches the spec's millisecond audit-grain convention.
 	nowStr := now.Format(time.RFC3339Nano)
 	s.audit.Emit(r.Context(), auditKind, &acct.ID, map[string]any{
-		"app_id":     app.ID,
-		"name":       key,
-		"scope":      scope,
-		"kid":        kid,
-		"rotated_at": nowStr,
+		"app_id":                app.ID,
+		"name":                  key,
+		"scope":                 scope,
+		"kid":                   kid,
+		"rotated_at":            nowStr,
+		"snapshots_invalidated": invalidated,
 	})
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, auditKind, scope, key)
 

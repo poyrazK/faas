@@ -19,7 +19,7 @@ export type CreateDeploymentRequest = {
    */
   overrides?: (CreateDeploymentOverrides | null);
   /**
-   * Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit apps.require_signed; *true is a no-op when the app flag is already on; *false is rejected with 403 deploy_signature_invalid when the app flag is on (operator policy wins).
+   * Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit the app's effective signature policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid when apps.require_signed is on or security_policy=enforce (operator policy wins).
    */
   require_signed?: boolean | null;
   /**

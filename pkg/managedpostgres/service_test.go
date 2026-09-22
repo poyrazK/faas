@@ -79,6 +79,7 @@ func testCapabilities() Capabilities {
 		PostgresMajors:          []int{16, 17},
 		ServiceClasses:          []ServiceClass{ClassDevelopment, ClassBurstable},
 		Availability:            []Availability{AvailabilitySingleZone},
+		CredentialAccess:        []CredentialAccess{CredentialReadWrite, CredentialReadOnly},
 		ScaleToZero:             true,
 		PooledConnections:       true,
 		PointInTimeRestore:      true,
@@ -453,6 +454,34 @@ func TestPlacementFingerprintFencesRepurposedBackend(t *testing.T) {
 	resolved, err := rotatedSecret.Resolve(oldBackend.ID, oldBackend.Fingerprint)
 	if err != nil || resolved.Fingerprint != oldBackend.Fingerprint {
 		t.Fatalf("credential rotation changed placement: %+v, %v", resolved, err)
+	}
+}
+
+func TestCapabilitiesValidateAndSupportCredentialAccess(t *testing.T) {
+	capabilities := testCapabilities()
+	for _, access := range []CredentialAccess{CredentialReadWrite, CredentialReadOnly} {
+		if err := capabilities.SupportsCredentialAccess(access); err != nil {
+			t.Fatalf("SupportsCredentialAccess(%q) = %v", access, err)
+		}
+	}
+	if err := capabilities.SupportsCredentialAccess(CredentialAccess("owner")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown credential access = %v, want ErrInvalid", err)
+	}
+
+	capabilities.CredentialAccess = []CredentialAccess{CredentialReadWrite}
+	if err := capabilities.SupportsCredentialAccess(CredentialReadOnly); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unsupported credential access = %v, want ErrUnsupported", err)
+	}
+	if err := capabilities.Validate(); err != nil {
+		t.Fatalf("read-write-only capabilities = %v", err)
+	}
+	capabilities.CredentialAccess = []CredentialAccess{CredentialReadWrite, CredentialReadWrite}
+	if err := capabilities.Validate(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("duplicate credential access = %v, want ErrInvalid", err)
+	}
+	capabilities.CredentialAccess = nil
+	if err := capabilities.Validate(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing credential access = %v, want ErrInvalid", err)
 	}
 }
 

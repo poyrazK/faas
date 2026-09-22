@@ -19,6 +19,7 @@ func (sourceRefManagedPostgresProvider) Capabilities() managedpostgres.Capabilit
 		PostgresMajors:    []int{17},
 		ServiceClasses:    []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment},
 		Availability:      []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
+		CredentialAccess:  []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite},
 		ScaleToZero:       true,
 		PooledConnections: true,
 	}
@@ -199,6 +200,32 @@ func TestSourceRef_ManagedPostgresBindingIsReadyBeforeDeployment(t *testing.T) {
 	}
 	if sink.puts[binding.ID] == "" {
 		t.Fatalf("secret sink has no value for binding %q", binding.ID)
+	}
+}
+
+func TestSourceRef_ManagedPostgresRejectsUnsupportedAccessWithoutBinding(t *testing.T) {
+	env := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	store, sink, databaseID := configureSourceRefManagedPostgres(t, env)
+	env.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `databases:
+  - database: orders
+    app: x
+    scope: default
+    env: DATABASE_URL
+    access: read_only
+`))}
+
+	rec := env.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusUnprocessableEntity || bodyCode(t, rec) != "managed_postgres_unsupported" {
+		t.Fatalf("status/code = %d/%q, want 422/managed_postgres_unsupported; body=%s", rec.Code, bodyCode(t, rec), rec.Body)
+	}
+	bindings, err := store.ListBindings(context.Background(), env.acctID, databaseID)
+	if err != nil {
+		t.Fatalf("list bindings: %v", err)
+	}
+	if len(bindings) != 0 || sink.putCount != 0 || len(sink.puts) != 0 {
+		t.Fatalf("unsupported access left side effects: bindings=%+v puts=%d secrets=%+v", bindings, sink.putCount, sink.puts)
 	}
 }
 

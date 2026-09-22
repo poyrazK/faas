@@ -55,7 +55,7 @@ func cmdPostgresAttach(args []string) int {
 	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise production)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
-	access := fs.String("access", "read_write", "credential access: read_write|read_only")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -366,7 +366,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 	app := fs.String("app", "", "app ID (required)")
 	scope := fs.String("scope", "", "environment scope (required)")
 	environmentKey := fs.String("environment-key", "", "environment variable name (required)")
-	access := fs.String("access", "read_write", "credential access: read_write|read_only")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

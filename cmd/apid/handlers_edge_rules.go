@@ -578,6 +578,10 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			out.Throttle = &state.EdgeRuleThrottleAction{
 				RequestsPerSecond: a.RequestsPerSecond,
 				Burst:             a.Burst,
+				KeyBy:             a.KeyBy,
+				JWTClaimName:      a.JWTClaimName,
+				MaxKeysPerRule:    a.MaxKeysPerRule,
+				MissingKeyPolicy:  a.MissingKeyPolicy,
 			}
 		}
 	case state.EdgeRuleKindGeo:

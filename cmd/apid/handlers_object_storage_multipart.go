@@ -402,7 +402,12 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 		case state.ObjectMultipartInitiating:
 			var providerID string
 			providerID, err = backend.Provider.EnsureMultipartUpload(callCtx, bucket.PhysicalName, objectstorage.MultipartCreateRequest{
-				SessionID: upload.ID, Key: upload.Key, SizeBytes: upload.SizeBytes, ContentType: upload.ContentType,
+				SessionID: upload.ID, Key: upload.Key, SizeBytes: upload.SizeBytes,
+				Metadata: objectstorage.ObjectMetadata{
+					ContentType: upload.ContentType, CacheControl: upload.Metadata.CacheControl,
+					ContentDisposition: upload.Metadata.ContentDisposition, ContentEncoding: upload.Metadata.ContentEncoding,
+					ContentLanguage: upload.Metadata.ContentLanguage, Metadata: upload.Metadata.UserMetadata, Tags: upload.Metadata.Tags,
+				},
 			})
 			if err == nil {
 				err = finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {

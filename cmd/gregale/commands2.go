@@ -206,7 +206,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth MODE] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -217,6 +217,8 @@ func cmdApp(args []string) int {
 	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
 	concurrencyOverflow := fs.String("concurrency-overflow", "", "saturated concurrency behavior: queue|drop")
+	maxQueueDepth := fs.Int("max-queue-depth", 0, "maximum queued requests at warm saturation (0 = plan default)")
+	maxQueueWait := fs.Duration("max-queue-wait", 0, "maximum warm-saturation wait as a duration, for example 750ms or 2s (0 = plan default)")
 	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	wakeMaxQueueDepth := fs.Int("wake-max-queue-depth", 0, "per-app cold-wake waiter cap (0 = plan default)")
 	wakeMaxQueueWaitSeconds := fs.Int("wake-max-queue-wait-seconds", 0, "per-app cold-wake wait budget in seconds (0 = plan default, max 60)")
@@ -389,6 +391,10 @@ func cmdApp(args []string) int {
 	// Build the partial-update payload from explicit flags only.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	queueWaitMS, setQueueWait, err := cliQueueWaitMilliseconds(*maxQueueWaitMS, *maxQueueWait, explicit["max-queue-wait-ms"], explicit["max-queue-wait"])
+	if err != nil {
+		return printErr("Invalid concurrency policy", err)
+	}
 	var req api.UpdateAppRequest
 	if explicit["ram"] {
 		if *ram <= 0 {
@@ -415,8 +421,8 @@ func cmdApp(args []string) int {
 		v := *conc
 		req.MaxConcurrency = &v
 	}
-	if explicit["concurrency-overflow"] || explicit["max-queue-wait-ms"] || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
-		policy, err := cliScalingPolicyPatchWithWake(ctx, client, slug, *concurrencyOverflow, *maxQueueWaitMS, explicit["concurrency-overflow"], explicit["max-queue-wait-ms"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
+	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
+		policy, err := cliScalingPolicyPatchWithQueues(ctx, client, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
 		}
@@ -619,11 +625,8 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %s\n", "concurrency overflow:", a.ScalingPolicy.ConcurrencyOverflow)
 		}
-		if a.ScalingPolicy != nil && a.ScalingPolicy.MaxQueueWaitMS > 0 {
-			fmt.Printf("%-30s %d ms\n", "max queue wait:", a.ScalingPolicy.MaxQueueWaitMS)
-		} else {
-			fmt.Printf("%-30s %s\n", "max queue wait:", "plan default")
-		}
+		fmt.Printf("%-30s %d\n", "max queue depth:", a.EffectiveLimits.ConcurrencyQueueDepth)
+		fmt.Printf("%-30s %d ms\n", "max queue wait:", a.EffectiveLimits.ConcurrencyQueueWaitMS)
 		// Issue #559: surface the platform-advertised per-VM
 		// concurrency bound for the app's plan. Distinct from
 		// `max concurrency` above (the per-app instance cap).
@@ -1188,11 +1191,37 @@ func cliScalingPolicyPatch(ctx context.Context, client interface {
 	return cliScalingPolicyPatchWithWake(ctx, client, slug, overflow, maxQueueWaitMS, setOverflow, setMaxQueueWait, 0, 0, false, false)
 }
 
+func cliQueueWaitMilliseconds(milliseconds int, duration time.Duration, setMilliseconds, setDuration bool) (int, bool, error) {
+	if setMilliseconds && setDuration {
+		return 0, false, fmt.Errorf("--max-queue-wait and --max-queue-wait-ms are mutually exclusive")
+	}
+	if !setDuration {
+		return milliseconds, setMilliseconds, nil
+	}
+	maxWait := time.Duration(api.MaxConcurrencyQueueWaitMS) * time.Millisecond
+	if duration < 0 || duration > maxWait {
+		return 0, false, fmt.Errorf("--max-queue-wait must be between 0 and %s; got %s", maxWait, duration)
+	}
+	if duration%time.Millisecond != 0 {
+		return 0, false, fmt.Errorf("--max-queue-wait must use whole milliseconds; got %s", duration)
+	}
+	return int(duration / time.Millisecond), true, nil
+}
+
 func cliScalingPolicyPatchWithWake(ctx context.Context, client interface {
 	GetApp(context.Context, string) (api.AppResponse, error)
 }, slug, overflow string, maxQueueWaitMS int, setOverflow, setMaxQueueWait bool, wakeMaxQueueDepth, wakeMaxQueueWaitSeconds int, setWakeDepth, setWakeWait bool) (*api.ScalingPolicy, error) {
+	return cliScalingPolicyPatchWithQueues(ctx, client, slug, overflow, maxQueueWaitMS, 0, setOverflow, setMaxQueueWait, false, wakeMaxQueueDepth, wakeMaxQueueWaitSeconds, setWakeDepth, setWakeWait)
+}
+
+func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
+	GetApp(context.Context, string) (api.AppResponse, error)
+}, slug, overflow string, maxQueueWaitMS, maxQueueDepth int, setOverflow, setMaxQueueWait, setMaxQueueDepth bool, wakeMaxQueueDepth, wakeMaxQueueWaitSeconds int, setWakeDepth, setWakeWait bool) (*api.ScalingPolicy, error) {
 	if setOverflow && overflow != api.ConcurrencyOverflowQueue && overflow != api.ConcurrencyOverflowDrop {
 		return nil, fmt.Errorf("--concurrency-overflow must be %q or %q; got %q", api.ConcurrencyOverflowQueue, api.ConcurrencyOverflowDrop, overflow)
+	}
+	if setMaxQueueDepth && maxQueueDepth < 0 {
+		return nil, fmt.Errorf("--max-queue-depth must be >= 0; got %d", maxQueueDepth)
 	}
 	if setMaxQueueWait && (maxQueueWaitMS < 0 || maxQueueWaitMS > api.MaxConcurrencyQueueWaitMS) {
 		return nil, fmt.Errorf("--max-queue-wait-ms must be between 0 and %d; got %d", api.MaxConcurrencyQueueWaitMS, maxQueueWaitMS)
@@ -1240,6 +1269,9 @@ func cliScalingPolicyPatchWithWake(ctx context.Context, client interface {
 	if setMaxQueueWait {
 		policy.MaxQueueWaitMS = maxQueueWaitMS
 	}
+	if setMaxQueueDepth {
+		policy.MaxQueueDepth = maxQueueDepth
+	}
 	if setWakeDepth {
 		policy.WakeMaxQueueDepth = wakeMaxQueueDepth
 	}
@@ -1255,7 +1287,9 @@ func scalingPolicyEqual(a, b *api.ScalingPolicy) bool {
 	}
 	if a.MinInstances != b.MinInstances || a.MaxInstances != b.MaxInstances ||
 		a.ScaleOutCooldownS != b.ScaleOutCooldownS || a.ScaleInCooldownS != b.ScaleInCooldownS ||
-		a.ConcurrencyOverflow != b.ConcurrencyOverflow || a.MaxQueueWaitMS != b.MaxQueueWaitMS {
+		a.ConcurrencyOverflow != b.ConcurrencyOverflow || a.MaxQueueWaitMS != b.MaxQueueWaitMS ||
+		a.MaxQueueDepth != b.MaxQueueDepth || a.WakeMaxQueueDepth != b.WakeMaxQueueDepth ||
+		a.WakeMaxQueueWaitSeconds != b.WakeMaxQueueWaitSeconds {
 		return false
 	}
 	if a.Target == nil || b.Target == nil {

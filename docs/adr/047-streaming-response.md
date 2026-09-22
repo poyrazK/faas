@@ -417,9 +417,9 @@ the CI-chase risk).
 ### Deferred work (out of scope for this PR)
 
 - **Postgres CHECK constraint** (`apps_streaming_enabled_plan_check`)
-  — ships in ADR-102-followup after telemetry confirms zero Free
-  + flag rows in production. Uses the NOT VALID + VALIDATE idiom
-  per migration 00155 precedent.
+  — shipped in `20260922131114370_apps_streaming_plan_check.sql` after
+  telemetry confirmed zero Free + flag rows in production. The migration
+  uses the NOT VALID + VALIDATE idiom and guards paid → Free downgrades.
 - **Retirement of `accept-json-downgrade` enum variant + advisory
   header** — ~30 days post-merge. The advisory header becomes
   redundant once the variant is gone.
@@ -428,4 +428,3 @@ the CI-chase risk).
   endpoint-rule override is gatewayd-side state and is not part
   of the apid cache. Future ADR may wire the apid→gatewayd-internal
   control-listener hop for live cap resolution.
-

@@ -22,6 +22,9 @@
     .badge.open { background: #fee2e2; color: #991b1b; }
     .badge.replayed { background: #d1fae5; color: #065f46; }
     .actions form { display: inline; margin-right: 0.35rem; }
+    .bulk-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
+    .bulk-actions form { display: inline; }
+    .pagination { margin: 1rem 0; }
     button { padding: 0.3rem 0.65rem; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; cursor: pointer; }
     select { padding: 0.35rem; }
     .payload { max-width: 24rem; white-space: pre-wrap; }
@@ -48,8 +51,8 @@
     <h1>Failed events</h1>
     <p class="muted">Terminal queue, trigger, and webhook delivery failures collected in one place. Replay returns an event to its source queue; discard removes only the Failed Events entry and leaves the source record for audit.</p>
 
-    {{if eq .Data.Action "replayed"}}<div class="flash ok" role="status">Event replayed and returned to its source queue.</div>{{end}}
-    {{if eq .Data.Action "discarded"}}<div class="flash ok" role="status">Event discarded from Failed Events.</div>{{end}}
+    {{if eq .Data.Action "replayed"}}<div class="flash ok" role="status">{{if gt .Data.ActionCount 0}}{{.Data.ActionCount}} events replayed and returned to their source queues.{{else}}Events replayed and returned to their source queues.{{end}}</div>{{end}}
+    {{if eq .Data.Action "discarded"}}<div class="flash ok" role="status">{{if gt .Data.ActionCount 0}}{{.Data.ActionCount}} events discarded from Failed Events.{{else}}Event discarded from Failed Events.{{end}}</div>{{end}}
     {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The event action could not be completed. Refresh and try again.</div>{{end}}
     {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
 
@@ -61,6 +64,14 @@
         </select>
       </label>
     </form>
+
+    {{if .Data.Events}}
+      <div class="bulk-actions">
+        <span class="muted">Bulk actions apply to up to 200 open events{{if .Data.SelectedApp}} for <code>{{.Data.SelectedApp}}</code>{{end}}.</span>
+        <form method="POST" action="/dashboard/failed-events/replay-all"><input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}"><input type="hidden" name="app" value="{{.Data.SelectedApp}}"><button type="submit">Replay all matching</button></form>
+        <form method="POST" action="/dashboard/failed-events/discard-all"><input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}"><input type="hidden" name="app" value="{{.Data.SelectedApp}}"><button type="submit">Discard all matching</button></form>
+      </div>
+    {{end}}
 
     {{if .Data.Events}}
       <table aria-label="Failed events">
@@ -96,6 +107,7 @@
           {{end}}
         </tbody>
       </table>
+      {{if .Data.NextPageURL}}<nav class="pagination" aria-label="Failed events pagination"><a href="{{.Data.NextPageURL}}">Older events</a></nav>{{end}}
     {{else}}
       <p class="muted">No failed events.</p>
     {{end}}
