@@ -3873,6 +3873,10 @@ type Store interface {
 	ReplayDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
 	DeleteDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) error
 	DeleteDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error)
+	// PurgeExpiredDeadLetterEvents deletes old unified DLQ projection rows
+	// without touching their authoritative source rows or audit events. The
+	// cutoff is exclusive and the store should delete at most limit rows.
+	PurgeExpiredDeadLetterEvents(ctx context.Context, before time.Time, limit int) (int, error)
 	// Account-scoped unified dead-letter projection. These methods include
 	// app-owned events plus account-owned job runs, whose app_id is NULL.
 	ListDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int, before string) ([]DeadLetterEvent, error)

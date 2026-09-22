@@ -28280,6 +28280,32 @@ func (s *PgStore) DeleteDeadLetterEvents(ctx context.Context, accountID, appID s
 	return purged, nil
 }
 
+// PurgeExpiredDeadLetterEvents removes only old rows from the unified failed
+// events projection. The invocation, trigger, webhook, job, or workflow
+// source row remains untouched, as do the append-only audit events used to
+// explain replay and discard actions.
+func (s *PgStore) PurgeExpiredDeadLetterEvents(ctx context.Context, before time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = deadLetterEventsDefaultLimit
+	}
+	tag, err := s.pool.Exec(ctx, `
+		with victims as (
+			select id
+			  from dead_letter_events
+			 where last_failed_at < $1
+			 order by last_failed_at asc, id asc
+			 limit $2
+			 for update skip locked
+		)
+		delete from dead_letter_events d
+		 using victims v
+		 where d.id = v.id`, before, limit)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 const (
 	deadLetterEventsDefaultLimit = 20
 	deadLetterEventsMaxLimit     = 200
