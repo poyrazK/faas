@@ -132,10 +132,14 @@ returns the same status on POST vs PATCH. Telemetry collapsing on
 ### D6. SDK probe
 
 `GET /v1/apps/{slug}/streaming-cap` returns the resolved status, cap,
-and gate flags pre-flight. Mirrors `GET /v1/apps/{slug}/routes` at
+and gate flags pre-flight. With `host`, `path`, and `method` supplied,
+the probe also resolves the compiled gatewayd per-edge-rule response
+cap; if gatewayd is unavailable or no rule matches, it falls back to
+the plan cap. Mirrors `GET /v1/apps/{slug}/routes` at
 `api/openapi.yaml:1396-1429`. SDK method `GetAppStreamingStatus` in
 `pkg/api/client.go` mirrors `GetAppRoutes` at
-`pkg/api/client.go:1878-1881`.
+`pkg/api/client.go:1878-1881`, with
+`GetAppStreamingStatusForRequest` for route-aware callers.
 
 ### D7. CLI probe
 

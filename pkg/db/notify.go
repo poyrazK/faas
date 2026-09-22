@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -289,9 +290,25 @@ func enqueueAndNotify(ctx context.Context, pool *pgxpool.Pool, channel, payload 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := EnqueueDurableNotificationTx(ctx, tx, channel, payload); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("db: notify %s commit: %w", channel, err)
+	}
+	return nil
+}
+
+// EnqueueDurableNotificationTx binds a durable handoff to the producer's
+// mutation transaction. Callers must commit the transaction; a failed enqueue
+// therefore rolls the mutation back rather than losing its only replay cue.
+func EnqueueDurableNotificationTx(ctx context.Context, tx pgx.Tx, channel, payload string) error {
+	if tx == nil || !IsDurableNotificationChannel(channel) {
+		return fmt.Errorf("db: enqueue notification %s: transaction and durable channel required", channel)
+	}
 	var id int64
 	availableAt := time.Now().UTC().Add(notificationOutboxWakeDelay)
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		INSERT INTO notification_outbox (channel, payload, available_at)
 		VALUES ($1, $2, $3)
 		RETURNING id`, channel, payload, availableAt).Scan(&id)
@@ -312,9 +329,6 @@ func enqueueAndNotify(ctx context.Context, pool *pgxpool.Pool, channel, payload 
 		if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", channel, wire); err != nil {
 			return fmt.Errorf("db: notify %s: %w", channel, err)
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("db: notify %s commit: %w", channel, err)
 	}
 	return nil
 }
@@ -543,8 +557,9 @@ const (
 	// LISTEN gap cannot leave stale private routes on a live VM.
 	NotifyPrivateNetworkAttachmentChanged = "private_network_attachment_changed"
 	// NotifyPrivateNetworkChanged wakes schedd after a Gregale-owned network
-	// policy or peering mutation. The payload carries account/region identity so
-	// policy changes and deleted peerings converge without waiting for a sweep.
+	// policy, peering, or deletion mutation. The payload carries account/region
+	// identity; deletion payloads also carry the immutable CIDR so node-local
+	// fabric teardown can converge after the network row is gone.
 	NotifyPrivateNetworkChanged = "private_network_changed"
 	NotifyDeploymentChanged     = "deployment_changed"
 	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge

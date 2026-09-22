@@ -144,6 +144,10 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			_, err := c.ListInvocations(ctx, "", 50)
 			return err
 		}},
+		{"ListEventDeliveries", obj.URL, func(t *testing.T, c *Client) error {
+			_, err := c.ListEventDeliveries(ctx, "app", "evt", "failed", "", 20)
+			return err
+		}},
 		{"GetInvocation", obj.URL, func(t *testing.T, c *Client) error {
 			_, err := c.GetInvocation(ctx, "inv")
 			return err

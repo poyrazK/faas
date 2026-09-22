@@ -23,9 +23,9 @@ import (
 
 const defaultTCPDScheddTarget = "unix:///run/faas/schedd.sock"
 
-// startTCPIngress is the production wiring for ADR-183's second rollout
-// step. It is opt-in until the firewall/systemd exposure slice lands; when
-// enabled, tcpd binds only the durable listener ports marked enabled.
+// startTCPIngress is the production wiring for ADR-183. It remains opt-in;
+// when enabled, tcpd binds only durable listener ports marked enabled and
+// startup waits until the initial enabled-listener snapshot is bound.
 func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore, metrics *tcpmetrics.Metrics) (stop func(), drain func(context.Context) error, err error) {
 	if !envBoolOr("FAAS_TCPD_ENABLED", false) {
 		return func() {}, func(context.Context) error { return nil }, nil
@@ -126,6 +126,8 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 		refreshInterval = parsed
 	}
 
+	serveReady := make(chan struct{})
+	serveResult := make(chan error, 1)
 	supervisor := &tcpd.Supervisor{
 		BindHost:                 envOr("FAAS_TCPD_BIND_HOST", "0.0.0.0"),
 		Source:                   store,
@@ -136,6 +138,7 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 		MaxConnections:           maxConnections,
 		MaxConnectionsPerAccount: maxConnectionsPerAccount,
 		Metrics:                  metrics,
+		OnReady:                  func() { close(serveReady) },
 		OnError: func(err error) {
 			log.Error("gatewayd-public: tcpd runtime error", "err", err)
 		},
@@ -147,10 +150,28 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 	serveDone := make(chan struct{})
 	go func() {
 		defer close(serveDone)
-		if serveErr := supervisor.Serve(tcpCtx); serveErr != nil && !errors.Is(serveErr, context.Canceled) {
+		serveErr := supervisor.Serve(tcpCtx)
+		serveResult <- serveErr
+		if serveErr != nil && !errors.Is(serveErr, context.Canceled) {
 			log.Error("gatewayd-public: tcpd stopped", "err", serveErr)
 		}
 	}()
+	select {
+	case <-serveReady:
+	case serveErr := <-serveResult:
+		tcpCancel()
+		<-serveDone
+		closeDependencies()
+		if serveErr == nil {
+			serveErr = errors.New("tcpd stopped before initial listeners were ready")
+		}
+		return nil, nil, fmt.Errorf("gatewayd-public: start tcpd: %w", serveErr)
+	case <-ctx.Done():
+		tcpCancel()
+		<-serveDone
+		closeDependencies()
+		return nil, nil, ctx.Err()
+	}
 	log.Info("gatewayd-public: raw TCP ingress enabled", "bind_host", supervisor.BindHost, "refresh_interval", refreshInterval)
 
 	var stopOnce sync.Once

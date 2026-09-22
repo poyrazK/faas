@@ -317,7 +317,13 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook app"))
 		return
 	}
-	s.acceptInboundWebhook(w, r, endpoint, providerEventID, body, effectiveInvocationRetryPolicy(app, nil))
+	acct, err := s.store.AccountByID(r.Context(), app.AccountID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook account"))
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	s.acceptInboundWebhook(w, r, endpoint, providerEventID, body, effectiveInvocationRetryPolicy(app, nil, limits.MaxQueueAttempts))
 }
 
 func readInboundWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, *api.Problem) {

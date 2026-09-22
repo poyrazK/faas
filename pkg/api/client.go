@@ -4199,23 +4199,39 @@ func (c *Client) GetAppRoutes(ctx context.Context, slug string) (AppRoutesRespon
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/routes", nil, &out)
 }
 
-// GetAppStreamingStatus returns the per-request streaming
-// classification for the named app (ADR-102 D6). The endpoint is
-// the SDK-side mirror of pkg/gateway.(*Handler).decideStreaming —
-// a customer hitting this endpoint sees exactly what the gateway's
-// gate machine would resolve for the next inbound request, with the
-// same status enum (api.StreamingStatus*) and the same effective
-// cap (plan cap by default; endpoint-rule MaxBodyBytesStreaming if
-// a kind=limit edge rule matched).
-//
-// Use case: a customer evaluating "will my next request stream?"
-// fires this endpoint pre-flight instead of probing with a real
-// request and reading the Streaming-Status response header. The
-// probe does NOT mutate state and does NOT warm a wake — it's a
-// pure read against the per-app cache.
+// StreamingCapRequest identifies the request shape used to resolve a
+// per-edge-rule streaming response cap. A zero value preserves the
+// plan-level probe and avoids the gatewayd control-listener hop.
+type StreamingCapRequest struct {
+	Host   string
+	Path   string
+	Method string
+}
+
+// GetAppStreamingStatus returns the per-request streaming classification for
+// the named app (ADR-102 D6). With no request shape it reports the plan cap;
+// use GetAppStreamingStatusForRequest to resolve a matching kind=limit
+// endpoint override using gatewayd's compiled rule cache.
 func (c *Client) GetAppStreamingStatus(ctx context.Context, slug string) (AppStreamingStatus, error) {
+	return c.GetAppStreamingStatusForRequest(ctx, slug, StreamingCapRequest{})
+}
+
+// GetAppStreamingStatusForRequest is the route-aware streaming probe. Host,
+// Path, and Method must be supplied together; when present the server asks
+// gatewayd to apply the same host/path/method matcher used by live requests.
+// A gatewayd miss or unavailable control listener falls back to the plan cap
+// and still returns a successful probe response.
+func (c *Client) GetAppStreamingStatusForRequest(ctx context.Context, slug string, shape StreamingCapRequest) (AppStreamingStatus, error) {
 	var out AppStreamingStatus
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/streaming-cap", nil, &out)
+	path := "/v1/apps/" + slug + "/streaming-cap"
+	if shape.Host != "" || shape.Path != "" || shape.Method != "" {
+		q := url.Values{}
+		q.Set("host", shape.Host)
+		q.Set("path", shape.Path)
+		q.Set("method", shape.Method)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // GetAppsMetrics returns the account-wide per-app metrics rollup
@@ -6186,6 +6202,36 @@ func (c *Client) ListEventSubscriptions(ctx context.Context, slug string) (Event
 // SDK coverage and callers that prefer method names matching the REST path.
 func (c *Client) ListAppsSlugEventSubscriptions(ctx context.Context, slug string) (EventSubscriptionListResponse, error) {
 	return c.ListEventSubscriptions(ctx, slug)
+}
+
+// ListEventDeliveries returns the app's event-triggered invocation lifecycle,
+// newest first. Optional filters are exact event-id/state matches.
+func (c *Client) ListEventDeliveries(ctx context.Context, slug, eventID, deliveryState, before string, limit int) (EventDeliveryListResponse, error) {
+	var out EventDeliveryListResponse
+	q := url.Values{}
+	if eventID != "" {
+		q.Set("event_id", eventID)
+	}
+	if deliveryState != "" {
+		q.Set("state", deliveryState)
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/event-deliveries"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListAppsSlugEventDeliveries is the route-shaped alias used by generated
+// SDK coverage and callers that prefer method names matching the REST path.
+func (c *Client) ListAppsSlugEventDeliveries(ctx context.Context, slug, eventID, deliveryState, before string, limit int) (EventDeliveryListResponse, error) {
+	return c.ListEventDeliveries(ctx, slug, eventID, deliveryState, before, limit)
 }
 
 // CancelWorkflowRun (ADR-081) cancels an in-flight workflow run.

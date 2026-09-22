@@ -559,10 +559,12 @@ func TestSidecarsFromProto(t *testing.T) {
 		{
 			Name: "migrator", Image: "ghcr.io/org/m@sha256:00", Type: "init",
 			RamMb: 64, CpuMillicores: 250, ScratchMb: 192, DiskIoProfile: "high", Port: 9091, Essential: true,
-			StorageKey: "apps/foo/00000000-0000-0000-0000-aaaaaaaa-migrator.ext4",
-			DriveSlot:  "layer-sidecar-0",
-			SealedEnv:  []*vmmdpb.SealedSecret{{Key: "TOKEN", Ciphertext: []byte("age-ciphertext")}},
-			DependsOn:  []*vmmdpb.WorkloadDependency{{Name: "main", Condition: "started"}},
+			StorageKey:       "apps/foo/00000000-0000-0000-0000-aaaaaaaa-migrator.ext4",
+			DriveSlot:        "layer-sidecar-0",
+			SealedEnv:        []*vmmdpb.SealedSecret{{Key: "TOKEN", Ciphertext: []byte("age-ciphertext")}},
+			DependsOn:        []*vmmdpb.WorkloadDependency{{Name: "main", Condition: "started"}},
+			StartupProbeTest: []string{"CMD", "/usr/local/bin/ready"}, StartupProbeIntervalS: 5,
+			StartupProbeTimeoutS: 2, StartupProbeRetries: 3, StartupProbeStartPeriodS: 10,
 		},
 		{
 			Name: "scraper", Image: "ghcr.io/org/s@sha256:01", Type: "sidecar",
@@ -595,6 +597,9 @@ func TestSidecarsFromProto(t *testing.T) {
 	}
 	if len(got[0].DependsOn) != 1 || got[0].DependsOn[0].Name != "main" || got[0].DependsOn[0].Condition != api.WorkloadDependencyStarted {
 		t.Errorf("entry 0 dependencies wrong: got %+v", got[0].DependsOn)
+	}
+	if got[0].StartupProbe == nil || len(got[0].StartupProbe.Test) != 2 || got[0].StartupProbe.Test[1] != "/usr/local/bin/ready" || got[0].StartupProbe.IntervalS != 5 || got[0].StartupProbe.TimeoutS != 2 || got[0].StartupProbe.Retries != 3 || got[0].StartupProbe.StartPeriodS != 10 {
+		t.Errorf("entry 0 startup probe wrong: got %+v", got[0].StartupProbe)
 	}
 	if got[1].Name != "scraper" || got[1].Type != "sidecar" {
 		t.Errorf("entry 1 name/type: got %+v", got[1])

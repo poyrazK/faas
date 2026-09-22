@@ -3005,14 +3005,15 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	} else if currentStage != state.StageReadiness && currentStage != "" {
 		h.log.Debug("mark live: stage already advanced", "deployment_id", dep.ID, "current_stage", currentStage)
 	}
-	if ready == nil && h.ops != nil && len(appended.StageState) > 0 {
+	if h.ops != nil && len(appended.StageState) > 0 {
 		var ss state.StageState
 		if json.Unmarshal(appended.StageState, &ss) == nil && len(ss.History) > 0 {
-			for i := len(ss.History) - 1; i >= 0; i-- {
-				stage := ss.History[i]
-				if stage.Name == state.StageSnapshotPrepare && stage.StartedAt != nil && stage.EndedAt != nil {
-					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(app), "boot", wire.APIHostingOutcomeComplete, stage.EndedAt.Sub(*stage.StartedAt))
-					break
+			stage := ss.History[len(ss.History)-1]
+			if stage.Name == state.StageSnapshotPrepare && stage.StartedAt != nil && stage.EndedAt != nil {
+				duration := stage.EndedAt.Sub(*stage.StartedAt)
+				h.ops.ObserveDeployStageDuration(string(state.StageSnapshotPrepare), "completed", duration)
+				if ready == nil {
+					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(app), "boot", wire.APIHostingOutcomeComplete, duration)
 				}
 			}
 		}
@@ -3029,17 +3030,19 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				"deployment_id", dep.ID, "stage", "readiness", "err", serr)
 		}
 	}
-	if ready == nil && h.ops != nil && len(closed.StageState) > 0 {
-		if len(closed.StageState) > 0 {
-			var ss state.StageState
-			if json.Unmarshal(closed.StageState, &ss) == nil && len(ss.History) > 0 {
-				last := ss.History[len(ss.History)-1]
-				if last.Name == state.StageReadiness && last.StartedAt != nil && last.EndedAt != nil {
-					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(app), "readiness", wire.APIHostingOutcomeComplete, last.EndedAt.Sub(*last.StartedAt))
+	if h.ops != nil && len(closed.StageState) > 0 {
+		var ss state.StageState
+		if json.Unmarshal(closed.StageState, &ss) == nil && len(ss.History) > 0 {
+			last := ss.History[len(ss.History)-1]
+			if last.Name == state.StageReadiness && last.StartedAt != nil && last.EndedAt != nil {
+				duration := last.EndedAt.Sub(*last.StartedAt)
+				h.ops.ObserveDeployStageDuration(string(state.StageReadiness), "completed", duration)
+				if ready == nil {
+					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(app), "readiness", wire.APIHostingOutcomeComplete, duration)
 				}
 			}
 		}
-		if state.IsDeveloperApp(app) {
+		if ready == nil && state.IsDeveloperApp(app) {
 			// The live notification is the route switch boundary for a
 			// developer environment. There is no customer-derived label.
 			h.ops.ObserveAPIHostingPhase(wire.APIHostingFlowDev, "route_switch", wire.APIHostingOutcomeComplete, 0)

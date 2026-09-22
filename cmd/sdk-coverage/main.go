@@ -658,6 +658,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/dlq:replay_all":                 "PostAppsSlugDlqReplayAll",
 	"GET /v1/apps/{slug}/dlq":                             "GetAppsSlugDlq",
 	"GET /v1/apps/{slug}/event-subscriptions":             "ListAppsSlugEventSubscriptions",
+	"GET /v1/apps/{slug}/event-deliveries":                "ListAppsSlugEventDeliveries",
 	"DELETE /v1/apps/{slug}/dlq":                          "DeleteAppsSlugDlq",
 	"GET /v1/apps/{slug}/dlq/{id}":                        "GetAppsSlugDlqId",
 	"DELETE /v1/apps/{slug}/dlq/{id}":                     "DeleteAppsSlugDlqId",
