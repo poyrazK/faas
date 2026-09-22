@@ -1079,6 +1079,25 @@ func defaultServer(addr string, handler http.Handler) *http.Server {
 // placeholder that was previously serving TEMPLATE_OK from this
 // package; the `prod` prefix was the placeholder-era workaround so
 // the two `run` symbols could coexist in `package main`).
+// readyWhenClosed flips signal ready once done closes, and never otherwise.
+//
+// Extracted so the ordering can be tested: the whole point of the
+// invalidation-subscription signal is that readiness is announced AFTER the
+// LISTEN exists, not when the goroutine watching for it starts. A version
+// that set the signal eagerly would reintroduce exactly the window this
+// closes and would still look correct at the call site.
+//
+// A cancelled ctx must NOT flip the signal: shutdown is not readiness.
+func readyWhenClosed(ctx context.Context, signal *gateway.ReadySignal, done <-chan struct{}) {
+	go func() {
+		select {
+		case <-done:
+			signal.Set(true, "")
+		case <-ctx.Done():
+		}
+	}()
+}
+
 func run(ctx context.Context, log *slog.Logger) error {
 	pool, err := db.OpenWithAppName(ctx, "", "faas-gatewayd-internal")
 	if err != nil {
@@ -2914,14 +2933,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// changes would serve a frozen routing table, which is worse than being
 	// drained out of rotation.
 	if deps.invalidationsReady != nil {
-		s := readyProbe.Register()
-		go func(ready <-chan struct{}) {
-			select {
-			case <-ready:
-				s.Set(true, "")
-			case <-ctx.Done():
-			}
-		}(deps.invalidationsReady)
+		readyWhenClosed(ctx, readyProbe.Register(), deps.invalidationsReady)
 	}
 	readyProbe.SetReadyObserver(func(ready bool, reason string) {
 		if deps.opsMetrics != nil {
