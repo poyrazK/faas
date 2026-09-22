@@ -9983,6 +9983,32 @@ func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX,
 	return err
 }
 
+const readAccountCreditConsumption = `-- name: ReadAccountCreditConsumption :one
+SELECT coalesce(sum(-delta_cents), 0)::bigint AS consumed_cents,
+       coalesce(bool_or(delta_cents < 0), false)::boolean AS has_prior
+FROM credit_ledger
+WHERE account_id = $1::uuid
+  AND provider_invoice_id = $2::text
+`
+
+type ReadAccountCreditConsumptionParams struct {
+	AccountID         pgtype.UUID
+	ProviderInvoiceID string
+}
+
+type ReadAccountCreditConsumptionRow struct {
+	ConsumedCents int64
+	HasPrior      bool
+}
+
+// Replay and compensation must never use another account's invoice history.
+func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error) {
+	row := db.QueryRow(ctx, readAccountCreditConsumption, arg.AccountID, arg.ProviderInvoiceID)
+	var i ReadAccountCreditConsumptionRow
+	err := row.Scan(&i.ConsumedCents, &i.HasPrior)
+	return i, err
+}
+
 const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many
 SELECT id, part_path
 FROM upload_sessions
@@ -11161,6 +11187,46 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 	return items, nil
 }
 
+const reverseAccountInvoiceCreditConsumption = `-- name: ReverseAccountInvoiceCreditConsumption :execrows
+WITH consumed AS (
+    SELECT ledger.credit_id, sum(-ledger.delta_cents)::bigint AS cents
+    FROM credit_ledger AS ledger
+    JOIN account_credits AS credit
+      ON credit.id = ledger.credit_id AND credit.account_id = ledger.account_id
+    WHERE ledger.account_id = $1::uuid
+      AND ledger.provider_invoice_id = $2::text
+    GROUP BY ledger.credit_id
+    HAVING sum(-ledger.delta_cents) > 0
+), inserted AS (
+    INSERT INTO credit_ledger
+        (account_id, credit_id, delta_cents, reason, actor, provider_invoice_id, refund_reversal_id)
+    SELECT $1, credit_id, cents, 'provider refund failed',
+           'apid-refund-reversal', $2, $3::uuid
+    FROM consumed
+    ON CONFLICT (refund_reversal_id, credit_id) WHERE refund_reversal_id IS NOT NULL
+        DO NOTHING
+    RETURNING credit_id, delta_cents
+)
+UPDATE account_credits AS credit
+SET cents_remaining = credit.cents_remaining + inserted.delta_cents
+FROM inserted
+WHERE credit.id = inserted.credit_id AND credit.account_id = $1
+`
+
+type ReverseAccountInvoiceCreditConsumptionParams struct {
+	AccountID         pgtype.UUID
+	ProviderInvoiceID string
+	RefundID          pgtype.UUID
+}
+
+func (q *Queries) ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error) {
+	result, err := db.Exec(ctx, reverseAccountInvoiceCreditConsumption, arg.AccountID, arg.ProviderInvoiceID, arg.RefundID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeAllSessions = `-- name: RevokeAllSessions :many
 update sessions set revoked_at = now()
 where account_id = $1 and id <> $2 and revoked_at is null
@@ -11261,7 +11327,7 @@ type RollupMirrorResultsParams struct {
 	WindowEnd   pgtype.Timestamptz
 }
 
-// ADR-211: claiming and counting share one statement/transaction. SKIP LOCKED
+// ADR-212: claiming and counting share one statement/transaction. SKIP LOCKED
 // permits concurrent workers without counting the same result twice.
 func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error) {
 	result, err := db.Exec(ctx, rollupMirrorResults, arg.WindowStart, arg.WindowEnd)
@@ -11574,6 +11640,25 @@ update orgs set deleted_pending = true, status = 'deleted_pending', updated_at =
 func (q *Queries) SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, softDeleteOrg, id)
 	return err
+}
+
+const sumAccountCreditRefundReversal = `-- name: SumAccountCreditRefundReversal :one
+SELECT coalesce(sum(delta_cents), 0)::bigint AS reversed_cents
+FROM credit_ledger
+WHERE account_id = $1::uuid
+  AND refund_reversal_id = $2::uuid
+`
+
+type SumAccountCreditRefundReversalParams struct {
+	AccountID pgtype.UUID
+	RefundID  pgtype.UUID
+}
+
+func (q *Queries) SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error) {
+	row := db.QueryRow(ctx, sumAccountCreditRefundReversal, arg.AccountID, arg.RefundID)
+	var reversed_cents int64
+	err := row.Scan(&reversed_cents)
+	return reversed_cents, err
 }
 
 const sumOpenUploadSessionBytesByAccount = `-- name: SumOpenUploadSessionBytesByAccount :one

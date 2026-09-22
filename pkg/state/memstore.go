@@ -15488,7 +15488,7 @@ func (m *MemStore) RecordInvoiceRefund(_ context.Context, refund InvoiceRefund) 
 func (m *MemStore) reverseInvoiceCreditConsumptionLocked(accountID, providerInvoiceID, refundID string, expectedCents int64) error {
 	var alreadyReversed int64
 	for _, entry := range m.creditLedger {
-		if entry.RefundReversalID != nil && *entry.RefundReversalID == refundID {
+		if entry.AccountID == accountID && entry.RefundReversalID != nil && *entry.RefundReversalID == refundID {
 			alreadyReversed += entry.DeltaCents
 		}
 	}
@@ -15498,27 +15498,34 @@ func (m *MemStore) reverseInvoiceCreditConsumptionLocked(accountID, providerInvo
 		}
 		return nil
 	}
-	var consumed int64
+	// Restore only the outstanding debit. A different failed refund ID must
+	// not compensate the same consumption again after an earlier reversal.
+	byCredit := make(map[string]int64)
 	for _, entry := range m.creditLedger {
-		if entry.ProviderInvoiceID != nil && *entry.ProviderInvoiceID == providerInvoiceID && entry.DeltaCents < 0 {
-			consumed -= entry.DeltaCents
+		if entry.AccountID == accountID && m.accountCredits[entry.CreditID].AccountID == accountID &&
+			entry.ProviderInvoiceID != nil && *entry.ProviderInvoiceID == providerInvoiceID {
+			byCredit[entry.CreditID] -= entry.DeltaCents
 		}
+	}
+	var consumed int64
+	for _, cents := range byCredit {
+		consumed += max(cents, 0)
 	}
 	if consumed != expectedCents {
 		return ErrConflict
 	}
 	now := time.Now().UTC()
-	for _, entry := range append([]CreditLedgerEntry(nil), m.creditLedger...) {
-		if entry.ProviderInvoiceID == nil || *entry.ProviderInvoiceID != providerInvoiceID || entry.DeltaCents >= 0 {
+	for creditID, cents := range byCredit {
+		if cents <= 0 {
 			continue
 		}
-		credit := m.accountCredits[entry.CreditID]
-		credit.CentsRemaining -= entry.DeltaCents
-		m.accountCredits[entry.CreditID] = credit
+		credit := m.accountCredits[creditID]
+		credit.CentsRemaining += cents
+		m.accountCredits[creditID] = credit
 		invoiceID, reversalID := providerInvoiceID, refundID
 		m.creditLedger = append(m.creditLedger, CreditLedgerEntry{
-			ID: uuid.NewString(), AccountID: accountID, CreditID: entry.CreditID,
-			DeltaCents: -entry.DeltaCents, Reason: "provider refund failed",
+			ID: uuid.NewString(), AccountID: accountID, CreditID: creditID,
+			DeltaCents: cents, Reason: "provider refund failed",
 			Actor: "apid-refund-reversal", CreatedAt: now,
 			ProviderInvoiceID: &invoiceID, RefundReversalID: &reversalID,
 		})
@@ -15656,13 +15663,10 @@ func (m *MemStore) ListActiveCreditsForConsumption(_ context.Context, accountID 
 // serialises behind us on the same mutex and observes the post-
 // state.
 //
-// Idempotency mirrors the pgstore partial unique index
-// (provider_invoice_id, credit_id) WHERE provider_invoice_id IS NOT
-// NULL: a second call with the same ProviderInvoiceID and the same
-// credit set sees every INSERT skipped (the seen map already has
-// the (invoice, credit) pair) and returns AlreadyConsumedForInvoice
-// = true with the original ConsumedCents re-derived from the existing
-// ledger rows.
+// Idempotency mirrors the pgstore invoice guard: while holding m.mu, a
+// second call for this account and ProviderInvoiceID returns the prior net
+// consumption, including any compensating refund reversal. No new credit
+// can be inserted between that check and the debit below.
 //
 // "Atomic" here means: the per-credit check
 // (cents_remaining >= amount) cannot return a row that would have
@@ -15691,12 +15695,11 @@ func (m *MemStore) sumActive(accountID string, now time.Time) int64 {
 }
 
 func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCreditParams) (ConsumeAccountCreditResult, error) {
+	if err := validateCreditConsumption(p); err != nil {
+		return ConsumeAccountCreditResult{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	if p.ProviderInvoiceID == "" {
-		return ConsumeAccountCreditResult{}, fmt.Errorf("ConsumeAccountCredit: ProviderInvoiceID required (the partial unique index needs a non-null dedupe key)")
-	}
 
 	// Idempotency guard: if any consumption ledger row already exists
 	// for this invoice, the invoice was already drained in a prior
@@ -15710,7 +15713,7 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 	priorCents := int64(0)
 	hasPrior := false
 	for _, le := range m.creditLedger {
-		if le.ProviderInvoiceID != nil && *le.ProviderInvoiceID == p.ProviderInvoiceID {
+		if le.AccountID == p.AccountID && le.ProviderInvoiceID != nil && *le.ProviderInvoiceID == p.ProviderInvoiceID {
 			priorCents += -le.DeltaCents
 			hasPrior = hasPrior || le.DeltaCents < 0
 		}
@@ -15729,7 +15732,7 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 		}, nil
 	}
 	if p.TargetCents == 0 {
-		return ConsumeAccountCreditResult{}, nil
+		return ConsumeAccountCreditResult{RemainingCreditsCents: m.sumActive(p.AccountID, time.Now().UTC())}, nil
 	}
 
 	now := time.Now().UTC()
@@ -15751,24 +15754,8 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 	}
 	sort.Slice(active, func(i, j int) bool { return active[i].CreatedAt.Before(active[j].CreatedAt) })
 
-	// Idempotency map: (provider_invoice_id, credit_id) → first-seen
-	// delta. Built up-front from existing ledger rows so a second
-	// call for the same invoice recognises the prior consumption and
-	// skips the decrement.
-	seen := make(map[string]int64)
-	for _, le := range m.creditLedger {
-		if le.ProviderInvoiceID == nil || *le.ProviderInvoiceID != p.ProviderInvoiceID {
-			continue
-		}
-		key := *le.ProviderInvoiceID + "\x00" + le.CreditID
-		if _, ok := seen[key]; !ok {
-			seen[key] = le.DeltaCents
-		}
-	}
-
 	res := ConsumeAccountCreditResult{}
 	remaining := p.TargetCents
-	anyInserted := false
 	for _, c := range active {
 		if remaining == 0 {
 			break
@@ -15776,13 +15763,6 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 		amount := c.CentsRemaining
 		if amount > remaining {
 			amount = remaining
-		}
-
-		key := p.ProviderInvoiceID + "\x00" + c.ID
-		if _, alreadyConsumed := seen[key]; alreadyConsumed {
-			// This (invoice, credit) pair was already drained in a
-			// prior call — skip the decrement and the ledger insert.
-			continue
 		}
 
 		newBalance := c.CentsRemaining - amount
@@ -15812,7 +15792,6 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 				CreatedAt:         now,
 				ProviderInvoiceID: &invID,
 			})
-			seen[key] = -amount
 			res.PerCredit = append(res.PerCredit, ConsumedCreditRow{
 				CreditID:   c.ID,
 				DeltaCents: -amount,
@@ -15820,21 +15799,7 @@ func (m *MemStore) ConsumeAccountCredit(_ context.Context, p ConsumeAccountCredi
 			})
 			res.ConsumedCents += amount
 			remaining -= amount
-			anyInserted = true
 		}
-	}
-
-	if !anyInserted && p.TargetCents > 0 {
-		// Every (invoice, credit) pair was already drained. The
-		// original ConsumedCents for this invoice is the sum of the
-		// seen entries — re-derive it so the operator sees the same
-		// total regardless of which call they inspect.
-		for _, le := range m.creditLedger {
-			if le.ProviderInvoiceID != nil && *le.ProviderInvoiceID == p.ProviderInvoiceID {
-				res.ConsumedCents -= le.DeltaCents
-			}
-		}
-		res.AlreadyConsumedForInvoice = true
 	}
 
 	// Sum of remaining active credits after the call.

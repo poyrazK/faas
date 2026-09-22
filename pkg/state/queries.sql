@@ -1,5 +1,44 @@
+-- name: ReadAccountCreditConsumption :one
+-- Replay and compensation must never use another account's invoice history.
+SELECT coalesce(sum(-delta_cents), 0)::bigint AS consumed_cents,
+       coalesce(bool_or(delta_cents < 0), false)::boolean AS has_prior
+FROM credit_ledger
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND provider_invoice_id = sqlc.arg(provider_invoice_id)::text;
+
+-- name: ReverseAccountInvoiceCreditConsumption :execrows
+WITH consumed AS (
+    SELECT ledger.credit_id, sum(-ledger.delta_cents)::bigint AS cents
+    FROM credit_ledger AS ledger
+    JOIN account_credits AS credit
+      ON credit.id = ledger.credit_id AND credit.account_id = ledger.account_id
+    WHERE ledger.account_id = sqlc.arg(account_id)::uuid
+      AND ledger.provider_invoice_id = sqlc.arg(provider_invoice_id)::text
+    GROUP BY ledger.credit_id
+    HAVING sum(-ledger.delta_cents) > 0
+), inserted AS (
+    INSERT INTO credit_ledger
+        (account_id, credit_id, delta_cents, reason, actor, provider_invoice_id, refund_reversal_id)
+    SELECT sqlc.arg(account_id), credit_id, cents, 'provider refund failed',
+           'apid-refund-reversal', sqlc.arg(provider_invoice_id), sqlc.arg(refund_id)::uuid
+    FROM consumed
+    ON CONFLICT (refund_reversal_id, credit_id) WHERE refund_reversal_id IS NOT NULL
+        DO NOTHING
+    RETURNING credit_id, delta_cents
+)
+UPDATE account_credits AS credit
+SET cents_remaining = credit.cents_remaining + inserted.delta_cents
+FROM inserted
+WHERE credit.id = inserted.credit_id AND credit.account_id = sqlc.arg(account_id);
+
+-- name: SumAccountCreditRefundReversal :one
+SELECT coalesce(sum(delta_cents), 0)::bigint AS reversed_cents
+FROM credit_ledger
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND refund_reversal_id = sqlc.arg(refund_id)::uuid;
+
 -- name: RollupMirrorResults :execrows
--- ADR-211: claiming and counting share one statement/transaction. SKIP LOCKED
+-- ADR-212: claiming and counting share one statement/transaction. SKIP LOCKED
 -- permits concurrent workers without counting the same result twice.
 WITH pending AS MATERIALIZED (
     SELECT id FROM mirror_invocation_results

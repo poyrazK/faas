@@ -916,6 +916,8 @@ type Querier interface {
 	// partition tail (rows in the default partition or
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
+	// Replay and compensation must never use another account's invoice history.
+	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
 	// The reaper's scan query (cmd/apid/upload_session_reaper.go).
 	// Returns at most 100 rows per invocation to bound memory; the
 	// goroutine ticker at cmd/apid/main.go re-invokes on its 5-minute
@@ -1043,6 +1045,7 @@ type Querier interface {
 	// observation. Returning rows lets apid publish one account-scoped event per
 	// lifecycle transition without a second read.
 	ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error)
+	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
 	RevokeAllSessions(ctx context.Context, db DBTX, arg RevokeAllSessionsParams) ([]pgtype.UUID, error)
@@ -1052,7 +1055,7 @@ type Querier interface {
 	// coalesce(revoked_at, now()) makes the call idempotent on already
 	// revoked rows (returns 0 rows).
 	RevokeSession(ctx context.Context, db DBTX, arg RevokeSessionParams) (pgtype.UUID, error)
-	// ADR-211: claiming and counting share one statement/transaction. SKIP LOCKED
+	// ADR-212: claiming and counting share one statement/transaction. SKIP LOCKED
 	// permits concurrent workers without counting the same result twice.
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
 	RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error)
@@ -1078,6 +1081,7 @@ type Querier interface {
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
+	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap
 	// per plan). The handler sums the declared total_size across all
 	// open sessions for the account, adds the new total_size, and

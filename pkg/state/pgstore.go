@@ -19448,38 +19448,30 @@ func (s *PgStore) RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund)
 // reverseInvoiceCreditConsumption compensates an asynchronous failed refund.
 // The positive ledger rows keep the history append-only; refund_reversal_id
 // makes webhook replay idempotent and the transaction keeps balance + ledger
-// atomic.
+// atomic. Sum the remaining net debit so a distinct failed refund cannot
+// compensate consumption that an earlier refund has already restored.
 func reverseInvoiceCreditConsumption(ctx context.Context, tx pgx.Tx, accountID, providerInvoiceID, refundID string, expectedCents int64) error {
 	if providerInvoiceID == "" || refundID == "" || expectedCents <= 0 {
 		return ErrConflict
 	}
-	if _, err := tx.Exec(ctx,
-		`with consumed as (
-		   select credit_id, sum(-delta_cents)::bigint as cents
-		     from credit_ledger
-		    where provider_invoice_id = $1 and delta_cents < 0
-		    group by credit_id
-		 ), inserted as (
-		   insert into credit_ledger
-		     (account_id, credit_id, delta_cents, reason, actor, provider_invoice_id, refund_reversal_id)
-		   select $2, credit_id, cents, 'provider refund failed', 'apid-refund-reversal', $1, $3
-		     from consumed
-		   on conflict (refund_reversal_id, credit_id)
-		     where refund_reversal_id is not null
-		     do nothing
-		   returning credit_id, delta_cents
-		 )
-		 update account_credits c
-		    set cents_remaining = c.cents_remaining + inserted.delta_cents
-		   from inserted
-		  where c.id = inserted.credit_id`,
-		providerInvoiceID, accountID, refundID); err != nil {
+	accountUUID, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	refundUUID, err := parsePgUUID(refundID)
+	if err != nil {
+		return err
+	}
+	queries := sqlc.New()
+	if _, err := queries.ReverseAccountInvoiceCreditConsumption(ctx, tx, sqlc.ReverseAccountInvoiceCreditConsumptionParams{
+		AccountID: accountUUID, ProviderInvoiceID: providerInvoiceID, RefundID: refundUUID,
+	}); err != nil {
 		return fmt.Errorf("state: reverse invoice credits: %w", err)
 	}
-	var reversed int64
-	if err := tx.QueryRow(ctx,
-		`select coalesce(sum(delta_cents), 0)
-		   from credit_ledger where refund_reversal_id = $1`, refundID).Scan(&reversed); err != nil {
+	reversed, err := queries.SumAccountCreditRefundReversal(ctx, tx, sqlc.SumAccountCreditRefundReversalParams{
+		AccountID: accountUUID, RefundID: refundUUID,
+	})
+	if err != nil {
 		return fmt.Errorf("state: verify reversed invoice credits: %w", err)
 	}
 	if reversed != expectedCents {
@@ -19714,11 +19706,11 @@ func (s *PgStore) ListActiveCreditsForConsumption(ctx context.Context, accountID
 // return a row that would have driven cents_remaining negative — the
 // migration's CHECK (cents_remaining >= 0) is the floor.
 //
-// Hand-written (not sqlc) — multi-statement transaction with
-// dynamic per-credit bounds; sqlc would not add observability here.
+// The transaction owns the legacy per-credit writes; replay and compensating
+// ledger reads use generated, account-scoped queries.
 func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCreditParams) (ConsumeAccountCreditResult, error) {
-	if p.ProviderInvoiceID == "" {
-		return ConsumeAccountCreditResult{}, fmt.Errorf("ConsumeAccountCredit: ProviderInvoiceID required (the partial unique index needs a non-null dedupe key)")
+	if err := validateCreditConsumption(p); err != nil {
+		return ConsumeAccountCreditResult{}, err
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -19730,13 +19722,15 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 	// A row lock cannot serialize the first two callers because there is no
 	// ledger row to lock yet. A transaction advisory lock gives the natural
 	// provider-invoice key a lockable object before its first insert.
+	// Keep this existing key across versions: changing its scope would allow
+	// old and new binaries to race for the same account during a rollout.
 	if _, err := tx.Exec(ctx,
 		`select pg_advisory_xact_lock(hashtextextended($1, 0))`,
 		"consume-account-credit:"+p.ProviderInvoiceID); err != nil {
 		return ConsumeAccountCreditResult{}, fmt.Errorf("state: consume_credits invoice_lock: %w", err)
 	}
 
-	hasPrior, priorCents, err := priorLockAndCheck(ctx, tx, p.ProviderInvoiceID)
+	hasPrior, priorCents, err := readCreditConsumption(ctx, tx, p.AccountID, p.ProviderInvoiceID)
 	if err != nil {
 		return ConsumeAccountCreditResult{}, err
 	}
@@ -19755,10 +19749,14 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 		}, nil
 	}
 	if p.TargetCents == 0 {
+		remaining, err := sumActiveCents(ctx, tx, p.AccountID)
+		if err != nil {
+			return ConsumeAccountCreditResult{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ConsumeAccountCreditResult{}, fmt.Errorf("state: consume_credits zero_target_commit: %w", err)
 		}
-		return ConsumeAccountCreditResult{}, nil
+		return ConsumeAccountCreditResult{RemainingCreditsCents: remaining}, nil
 	}
 
 	active, err := loadActiveForUpdate(ctx, tx, p.AccountID)
@@ -19775,7 +19773,7 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 		// operator sees the same total across calls. The partial
 		// unique index guarantees there is exactly one ledger row
 		// per (invoice, credit) pair.
-		rederived, derr := rederiveConsumed(ctx, tx, p.ProviderInvoiceID)
+		_, rederived, derr := readCreditConsumption(ctx, tx, p.AccountID, p.ProviderInvoiceID)
 		if derr != nil {
 			return ConsumeAccountCreditResult{}, derr
 		}
@@ -19794,21 +19792,22 @@ func (s *PgStore) ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCred
 	return res, nil
 }
 
-// priorLockAndCheck reports whether the invoice already has consumption
+// readCreditConsumption reports whether this account's invoice has consumption
 // rows. The caller must hold the provider-invoice advisory lock; locking
 // the matching ledger rows is insufficient because the first call has no
 // row to lock.
-func priorLockAndCheck(ctx context.Context, tx pgx.Tx, providerInvoiceID string) (bool, int64, error) {
-	var priorCents int64
-	var hasPrior bool
-	if err := tx.QueryRow(ctx,
-		`select coalesce(sum(-delta_cents), 0), coalesce(bool_or(delta_cents < 0), false)
-		   from credit_ledger
-		  where provider_invoice_id = $1`,
-		providerInvoiceID).Scan(&priorCents, &hasPrior); err != nil {
+func readCreditConsumption(ctx context.Context, tx pgx.Tx, accountID, providerInvoiceID string) (bool, int64, error) {
+	accountUUID, err := parsePgUUID(accountID)
+	if err != nil {
+		return false, 0, err
+	}
+	row, err := sqlc.New().ReadAccountCreditConsumption(ctx, tx, sqlc.ReadAccountCreditConsumptionParams{
+		AccountID: accountUUID, ProviderInvoiceID: providerInvoiceID,
+	})
+	if err != nil {
 		return false, 0, fmt.Errorf("state: consume_credits prior_check: %w", err)
 	}
-	return hasPrior, priorCents, nil
+	return row.HasPrior, max(row.ConsumedCents, 0), nil
 }
 
 // loadActiveForUpdate returns the account's FIFO-locked active
@@ -19851,7 +19850,7 @@ func loadActiveForUpdate(ctx context.Context, tx pgx.Tx, accountID string) ([]Ac
 // CONFLICT DO NOTHING loop, capped at p.TargetCents. Returns the
 // per-credit rows plus the total drained and whether any row was
 // successfully inserted (the latter distinguishes a fresh drain from
-// the all-already-consumed path that triggers rederiveConsumed).
+// the all-already-consumed path that re-reads the account's net debit).
 //
 // Per credit:
 //  1. amount = min(credit.CentsRemaining, remaining).
@@ -19864,7 +19863,7 @@ func loadActiveForUpdate(ctx context.Context, tx pgx.Tx, accountID string) ([]Ac
 //
 // Returns (res, anyInserted, err). Errors abort the loop and surface
 // to the caller; AlreadyConsumedForInvoice=true in res is the
-// partial-success path that lets the caller trigger rederiveConsumed.
+// partial-success path that lets the caller re-read the account's net debit.
 func drainActive(ctx context.Context, tx pgx.Tx, active []AccountCredit, p ConsumeAccountCreditParams) (ConsumeAccountCreditResult, bool, error) {
 	res := ConsumeAccountCreditResult{}
 	remaining := p.TargetCents
@@ -19960,21 +19959,6 @@ func sumActiveCents(ctx context.Context, tx pgx.Tx, accountID string) (int64, er
 		return 0, fmt.Errorf("state: consume_credits remaining: %w", err)
 	}
 	return remSum, nil
-}
-
-// rederiveConsumed returns the net debit for an invoice. A failed async
-// refund appends positive reversal rows, making the net zero while retaining
-// the original immutable consumption evidence.
-func rederiveConsumed(ctx context.Context, tx pgx.Tx, providerInvoiceID string) (int64, error) {
-	var rederived int64
-	if err := tx.QueryRow(ctx,
-		`select coalesce(sum(-delta_cents), 0)
-		   from credit_ledger
-		  where provider_invoice_id = $1`,
-		providerInvoiceID).Scan(&rederived); err != nil {
-		return 0, fmt.Errorf("state: consume_credits rederive: %w", err)
-	}
-	return rederived, nil
 }
 
 // LoadAllOverageCapCents returns every (account_id, cap) tuple in one
