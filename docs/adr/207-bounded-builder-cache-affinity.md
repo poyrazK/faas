@@ -1,4 +1,4 @@
-# ADR-206 · Bounded builder cache affinity
+# ADR-207 · Bounded builder cache affinity
 
 - **Status:** accepted
 - **Date:** 2026-09-22
