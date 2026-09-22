@@ -50,6 +50,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/account/dpa":                       true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"POST /v1/webhooks/stripe":                  true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                  true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
+	"POST /v1/hooks/{token}":                    true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
 	"GET /v1/openapi.yaml":                      true, // metadata
 	"GET /v1/openapi.json":                      true, // metadata
 	"GET /docs":                                 true, // anonymous Swagger UI metadata page
@@ -561,6 +562,15 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/webhooks/{id}/rotate-secret":          "RotateAppWebhookSecret",
 	"GET /v1/apps/{slug}/webhooks/{id}/deliveries":              "ListAppWebhookDeliveries",
 	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry": "RetryAppWebhookDelivery",
+
+	// ADR-212 — signature-verified durable inbound webhook configuration.
+	// The provider-facing /v1/hooks route is excluded above because it is not
+	// a bearer-auth SDK operation.
+	"GET /v1/apps/{slug}/inbound-webhooks":         "ListInboundWebhookEndpoints",
+	"POST /v1/apps/{slug}/inbound-webhooks":        "CreateInboundWebhookEndpoint",
+	"GET /v1/apps/{slug}/inbound-webhooks/{id}":    "GetInboundWebhookEndpoint",
+	"PATCH /v1/apps/{slug}/inbound-webhooks/{id}":  "UpdateInboundWebhookEndpoint",
+	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}": "DeleteInboundWebhookEndpoint",
 
 	// ADR-156 — durable managed realtime endpoint configuration.
 	"GET /v1/apps/{slug}/realtime/endpoints":                                                             "ListManagedRealtimeEndpoints",

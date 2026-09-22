@@ -152,6 +152,24 @@ The effective values are returned by the API and shown by the CLI so users do
 not need to reconstruct plan defaults. This amendment does not change instance
 ceilings, cold-wake admission, billing, or scheduler placement.
 
+**Fleet semantics (2026-09-22 amendment 2).** `max_queue_depth` is one
+fleet-wide per-app admission budget, not a per-`gatewayd-internal` multiplier.
+Gateways acquire short-lived Postgres permits only after all warm targets are
+saturated. Request bodies remain in the accepting process; the database never
+becomes a request broker. Each gateway preserves FIFO among requests it
+accepted, while ordering across gateways is intentionally unspecified because
+the public edge does not pin an app to one internal replica. A permit is
+released when its local request leaves the queue and expires after the request
+wait budget plus a five-second crash-recovery grace period.
+
+Shared admission fails closed with a retryable 503 when Postgres cannot be
+consulted. Falling back to a local counter would violate the customer-visible
+fleet cap exactly during an infrastructure fault. Expired permits are reaped
+under an app-scoped transaction advisory lock on the next admission attempt;
+unrelated apps never share a logical lock (a hash collision can only serialize
+their attempts). Queue-depth metrics remain replica-local so Prometheus may
+aggregate them without every replica publishing the same global gauge.
+
 ## Failure modes
 
 | Scenario | Behaviour |
