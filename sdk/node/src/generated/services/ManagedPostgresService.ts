@@ -185,6 +185,7 @@ export class ManagedPostgresService {
   }
   /**
    * Bind a workload app to a database
+   * The selected database backend must advertise the requested credential access. Unsupported access is rejected before a durable binding is reserved or provider credentials are requested.
    * @returns Problem Invalid request, conflict, or provider error
    * @returns ManagedPostgresBinding Binding accepted or ready; credentials are delivered through the app secret
    * @throws ApiError
