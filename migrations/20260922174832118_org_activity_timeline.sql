@@ -7,7 +7,7 @@
 -- only safe labels and identifiers into it, never credentials or secret
 -- values. Deliberately FK-free so deleting an app, deployment, account, or
 -- project cannot erase the history that explains what happened.
-create table org_activity (
+create table if not exists org_activity (
     id bigint generated always as identity primary key,
     org_id uuid not null,
     occurred_at timestamptz not null default now(),
@@ -34,10 +34,10 @@ create table org_activity (
         unique (org_id, source_type, source_id)
 );
 
-create index org_activity_timeline_idx
+create index if not exists org_activity_timeline_idx
     on org_activity (org_id, occurred_at desc, id desc);
 
-create index org_activity_app_timeline_idx
+create index if not exists org_activity_app_timeline_idx
     on org_activity (org_id, app_id, occurred_at desc, id desc)
     where app_id is not null;
 
