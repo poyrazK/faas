@@ -22,8 +22,8 @@ const LogEventMaintenanceInterval = time.Hour
 const retentionLogEventsBatchSQL = `
 WITH expired AS MATERIALIZED (
     SELECT e.id, e.occurred_at
-      FROM public.log_events e
-      LEFT JOIN public.accounts ac ON ac.id = e.account_id
+      FROM log_events e
+      LEFT JOIN accounts ac ON ac.id = e.account_id
      WHERE e.occurred_at < now() - interval '1 day'
        AND e.occurred_at < now() - (CASE ac.plan
            WHEN 'free'  THEN interval '1 day'
@@ -35,7 +35,7 @@ WITH expired AS MATERIALIZED (
      ORDER BY e.occurred_at, e.id
      LIMIT $1
 )
-DELETE FROM public.log_events e
+DELETE FROM log_events e
  USING expired x
  WHERE e.id = x.id AND e.occurred_at = x.occurred_at`
 
