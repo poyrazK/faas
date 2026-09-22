@@ -102,6 +102,44 @@ func TestRenderSuccessfulDeploymentUsesCanonicalAppURL(t *testing.T) {
 	}
 }
 
+func TestRenderSuccessfulDarkDeploymentShowsPreviewAndPromotion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployments/d1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive, Revision: 44, TrafficPercent: 0})
+		case "/v1/deployments/d1/url":
+			_ = json.NewEncoder(w).Encode(api.DeploymentPreviewURL{DeploymentID: "d1", URL: "https://deploy-44-my-app.gregale.dev", Alive: true})
+		case "/v1/apps/my-app":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "my-app", CanonicalURL: "https://my-app.gregale.dev"})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	defer func() { osStdout = oldOut }()
+
+	if code := renderSuccessfulDeploymentWithOptions(context.Background(), api.NewClient(srv.URL, "fp_live_x"), api.DeploymentResponse{ID: "d1", Status: statusLive}, "my-app", true); code != 0 {
+		t.Fatalf("renderSuccessfulDeploymentWithOptions exit = %d, want 0", code)
+	}
+	for _, want := range []string{
+		"Staged v44 with 0% production traffic.",
+		"Preview: https://deploy-44-my-app.gregale.dev",
+		"Production traffic remains unchanged. https://my-app.gregale.dev",
+		"Promote: gregale traffic set --app my-app --deployment v44 --percent 100",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("dark deploy output missing %q\nfull output:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "Deployed v44") || strings.Contains(out.String(), "Release summary:") {
+		t.Errorf("dark deploy rendered normal release copy\nfull output:\n%s", out.String())
+	}
+}
+
 func TestWriteWaitedDeploymentReceiptIncludesReleaseSummary(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -148,6 +186,50 @@ func TestWriteWaitedDeploymentReceiptIncludesReleaseSummary(t *testing.T) {
 	}
 	if len(receipt.ReleaseSummary.Changes) != 1 || receipt.ReleaseSummary.Changes[0].Field != "image_digest" {
 		t.Fatalf("release changes = %+v", receipt.ReleaseSummary.Changes)
+	}
+}
+
+func TestWriteWaitedDarkDeploymentReceiptIncludesPreviewAndPromotion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployments/d1":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive, Revision: 44, TrafficPercent: 0})
+		case "/v1/deployments/d1/url":
+			_ = json.NewEncoder(w).Encode(api.DeploymentPreviewURL{DeploymentID: "d1", URL: "https://deploy-44-my-app.gregale.dev", Alive: true})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	defer func() { osStdout = oldOut }()
+	oldJSON := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = oldJSON }()
+
+	if code := writeWaitedDeploymentReceiptUntilWithOptions(
+		context.Background(), api.NewClient(srv.URL, "fp_live_x"),
+		api.DeploymentResponse{ID: "d1", Status: statusLive}, nil,
+		"https://my-app.gregale.dev", "", "my-app", time.Second, false, true,
+	); code != 0 {
+		t.Fatalf("writeWaitedDeploymentReceiptUntilWithOptions exit = %d, want 0", code)
+	}
+
+	var receipt DeployReceipt
+	if err := json.Unmarshal(out.Bytes(), &receipt); err != nil {
+		t.Fatalf("decode dark deploy receipt: %v\noutput: %s", err, out.String())
+	}
+	if receipt.PreviewURL != "https://deploy-44-my-app.gregale.dev" {
+		t.Fatalf("preview_url = %q", receipt.PreviewURL)
+	}
+	if receipt.PromotionCommand != "gregale traffic set --app my-app --deployment v44 --percent 100" {
+		t.Fatalf("promotion_command = %q", receipt.PromotionCommand)
+	}
+	if receipt.ReleaseSummary != nil {
+		t.Fatalf("dark receipt unexpectedly contains release_summary: %+v", receipt.ReleaseSummary)
 	}
 }
 

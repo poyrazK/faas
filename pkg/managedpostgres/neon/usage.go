@@ -42,10 +42,11 @@ func (p *Provider) Usage(ctx context.Context, providerResourceID string, window 
 	if err != nil || window.From.IsZero() || !window.To.After(window.From) {
 		return managedpostgres.Usage{}, managedpostgres.ErrInvalid
 	}
-	// Neon exposes consumption at project scope. A restored target is a
-	// branch inside its source project, so returning the project total here
-	// would double-count it alongside the source database. Keep the target
-	// unmetered until Neon exposes an allocatable branch-level breakdown.
+	// Neon exposes consumption at project scope, including root and child
+	// branch meters. The control plane records that aggregate once against the
+	// source database and skips restore descendants; direct branch reads remain
+	// unsupported so callers cannot mistake a project total for branch-only
+	// consumption.
 	if ref.branchID != "" {
 		return managedpostgres.Usage{}, managedpostgres.ErrUnsupported
 	}
