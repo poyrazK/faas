@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"golang.org/x/sys/unix"
@@ -85,7 +86,7 @@ func CreateBuildDrive1(ctx context.Context, dest string, m api.BuildManifest, so
 // Cache errors degrade to a cold build: source integrity and drive creation are
 // still authoritative, while the cache is explicitly disposable.
 func createBuildDrive1(ctx context.Context, dest string, m api.BuildManifest, sourcePath, dependencyCache string) (bool, error) {
-	return createBuildDrive1WithCacheStager(ctx, dest, m, sourcePath, dependencyCache, func(src, dst string, maxBytes int64) error {
+	return createBuildDrive1WithCacheStager(ctx, dest, m, sourcePath, "", dependencyCache, func(src, dst string, maxBytes int64) error {
 		return stageDependencyCacheForDrive(src, dst, maxBytes, os.Link)
 	})
 }
@@ -95,7 +96,7 @@ type dependencyCacheStager func(src, dst string, maxBytes int64) error
 // createBuildDrive1WithCacheStager keeps the cache snapshot boundary injectable
 // so VMMDriver can serialize it against cache publication without holding that
 // lock across source staging or the comparatively expensive mke2fs operation.
-func createBuildDrive1WithCacheStager(ctx context.Context, dest string, m api.BuildManifest, sourcePath, dependencyCache string, stageCache dependencyCacheStager) (bool, error) {
+func createBuildDrive1WithCacheStager(ctx context.Context, dest string, m api.BuildManifest, sourcePath, sourceSHA256, dependencyCache string, stageCache dependencyCacheStager) (bool, error) {
 	if dest == "" {
 		return false, fmt.Errorf("builderd: empty drive1 path")
 	}
@@ -105,9 +106,13 @@ func createBuildDrive1WithCacheStager(ctx context.Context, dest string, m api.Bu
 	if sourcePath == "" {
 		return false, fmt.Errorf("builderd: empty source_path for build %s (image deploys must not reach builderd)", m.BuildID)
 	}
-	srcSum, err := fileSHA256(sourcePath)
-	if err != nil {
-		return false, fmt.Errorf("builderd: stat source %s: %w", sourcePath, err)
+	expectedSourceSHA256 := strings.TrimSpace(sourceSHA256)
+	if expectedSourceSHA256 == "" {
+		var err error
+		expectedSourceSHA256, err = fileSHA256(sourcePath)
+		if err != nil {
+			return false, fmt.Errorf("builderd: hash source %s: %w", sourcePath, err)
+		}
 	}
 	if err := checkBuildDriveCapacity(dest); err != nil {
 		return false, err
@@ -152,8 +157,12 @@ func createBuildDrive1WithCacheStager(ctx context.Context, dest string, m api.Bu
 	if err := writeBuildManifest(mp, m); err != nil {
 		return false, fmt.Errorf("builderd: write manifest: %w", err)
 	}
-	if err := copySourceTarball(mp, sourcePath); err != nil {
+	stagedSourceSHA256, err := copySourceTarballAndHash(mp, sourcePath)
+	if err != nil {
 		return false, fmt.Errorf("builderd: copy source: %w", err)
+	}
+	if stagedSourceSHA256 != expectedSourceSHA256 {
+		return false, fmt.Errorf("builderd: staged tarball sha256 mismatch: got %s, want %s", stagedSourceSHA256, expectedSourceSHA256)
 	}
 	if err := writeBuildEntropy(mp); err != nil {
 		return false, fmt.Errorf("builderd: write entropy seed: %w", err)
@@ -164,17 +173,6 @@ func createBuildDrive1WithCacheStager(ctx context.Context, dest string, m api.Bu
 	if err := wrapBuildUpper(mp); err != nil {
 		return false, fmt.Errorf("builderd: wrap drive1 upper: %w", err)
 	}
-	// Sanity: confirm the bytes that landed on disk match the host source.
-	// Catches a torn copy / quota-hit / ENOSPC that would otherwise surface
-	// as a silent truncated tarball inside the VM.
-	gotSum, err := fileSHA256(filepath.Join(mp, "upper", "build", "src.tar"))
-	if err != nil {
-		return false, fmt.Errorf("builderd: re-stat staged tarball: %w", err)
-	}
-	if gotSum != srcSum {
-		return false, fmt.Errorf("builderd: staged tarball sha256 mismatch: got %s, want %s", gotSum, srcSum)
-	}
-
 	// 3. Build the ext4 image directly from the staged tree. mke2fs creates
 	// the filesystem and copies the tree in one operation; the image remains
 	// sparse and keeps the existing 28 GiB builder scratch budget.
@@ -239,40 +237,43 @@ func wrapBuildUpper(mountPoint string) error {
 	return nil
 }
 
-// copySourceTarball copies the host source tarball at sourcePath into the
-// mounted drive1 at /build/src.tar. Called from inside the same mount loop
-// that writeBuildManifest runs in — no extra umount cycle.
-func copySourceTarball(mountPoint, sourcePath string) error {
+// copySourceTarballAndHash computes the digest from the same bytes written to
+// /build/src.tar in the plain staging tree. io.Copy and fsync remain the
+// torn-write/ENOSPC boundary, while the digest comparison in
+// createBuildDrive1WithCacheStager proves the staged stream is the source
+// archive ProcessOne already verified.
+func copySourceTarballAndHash(mountPoint, sourcePath string) (string, error) {
 	buildDir := filepath.Join(mountPoint, "build")
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir build: %w", err)
+		return "", fmt.Errorf("mkdir build: %w", err)
 	}
 	//nolint:forbidigo // sourcePath is the apid-spooled tarball that already passed apid's validateTarballShape (in cmd/apid/deploy_inputs.go) — same rationale as pkg/rootfs/build.go:ApplyTarball; symmetric validation chain.
 	in, err := os.Open(sourcePath)
 	if err != nil {
-		return fmt.Errorf("open source: %w", err)
+		return "", fmt.Errorf("open source: %w", err)
 	}
 	defer func() { _ = in.Close() }()
 
 	out, err := os.OpenFile(filepath.Join(buildDir, "src.tar"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		return fmt.Errorf("create dst: %w", err)
+		return "", fmt.Errorf("create dst: %w", err)
 	}
 	defer func() { _ = out.Close() }()
 
-	if _, err := io.Copy(out, in); err != nil {
-		return fmt.Errorf("copy: %w", err)
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(out, h), in); err != nil {
+		return "", fmt.Errorf("copy: %w", err)
 	}
 	if err := out.Sync(); err != nil {
-		return fmt.Errorf("sync dst: %w", err)
+		return "", fmt.Errorf("sync dst: %w", err)
 	}
-	return nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// fileSHA256 returns the hex sha256 of path, hex-encoded. Used to verify
-// the host source and the staged copy on drive1 match byte-for-byte.
+// fileSHA256 returns the hex sha256 of path, hex-encoded. Legacy callers that
+// do not supply ProcessOne's verified source digest use it before staging.
 //
-//nolint:forbidigo // path is the buildDir/src.tar written by copySourceTarball in this file (or the equivalent apid-spooled source) — builderd is the sole writer of buildDir in the local case, and in the spooled case apid's validateTarballShape has already run. Symlink-attack impossible.
+//nolint:forbidigo // path is the platform-owned apid-spooled source archive; apid validated its shape and builderd installs split-box downloads atomically without replacing an existing spool file.
 func fileSHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
