@@ -1322,7 +1322,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "receive", Short: "Receive a wake request"},
 			{Name: "state", Short: "Show queue state"},
-			{Name: statusLiteral, Short: "Alias for queue state"},
+			{Name: statusLiteral, Short: "Show queue depth, scaling, bindings, and liveness"},
 			{Name: "peek", Short: "Peek at the next wake"},
 			{Name: "dead-letter", Short: "Inspect the dead-letter queue"},
 			{Name: "ack", Short: "Ack a wake"},

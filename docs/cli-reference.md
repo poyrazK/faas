@@ -1696,7 +1696,7 @@ Show queue state
 
 ### queue status
 
-Alias for queue state
+Show queue depth, scaling, bindings, and liveness
 
 ### queue peek
 
