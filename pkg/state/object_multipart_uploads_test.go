@@ -52,6 +52,7 @@ func objectMultipartUploadStoreSuite(t *testing.T, base state.Store) {
 	request := state.ObjectMultipartUpload{
 		ID: uuid.NewString(), AccountID: account.ID, AppID: app.ID, BucketID: bucket.ID, Key: "large/file.bin",
 		SizeBytes: 130 << 20, PartSizeBytes: 64 << 20, PartCount: 3, ContentType: "application/octet-stream",
+		Metadata:  state.ObjectMultipartMetadata{CacheControl: "public, max-age=60", UserMetadata: map[string]string{"owner": "platform"}, Tags: map[string]string{"env": "prod"}},
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	upload, err := uploads.ReserveObjectMultipartUpload(ctx, request, 2)
@@ -64,10 +65,20 @@ func objectMultipartUploadStoreSuite(t *testing.T, base state.Store) {
 	if err != nil || retryUpload.ID != upload.ID {
 		t.Fatal("create retry changed session", retryUpload, err)
 	}
+	retryUpload.Metadata.UserMetadata["owner"] = "mutated"
+	stored, err := uploads.GetObjectMultipartUpload(ctx, account.ID, app.ID, bucket.ID, upload.ID)
+	if err != nil || stored.Metadata.UserMetadata["owner"] != "platform" {
+		t.Fatal("multipart metadata was not defensively cloned", stored, err)
+	}
 	mismatch := retry
 	mismatch.SizeBytes++
 	if _, err = uploads.ReserveObjectMultipartUpload(ctx, mismatch, 2); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("mismatched retry accepted", err)
+	}
+	metadataMismatch := retry
+	metadataMismatch.Metadata.CacheControl = "private"
+	if _, err = uploads.ReserveObjectMultipartUpload(ctx, metadataMismatch, 2); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("mismatched multipart metadata accepted", err)
 	}
 	if _, err = uploads.GetObjectMultipartUpload(ctx, uuid.NewString(), app.ID, bucket.ID, upload.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("cross-account read", err)

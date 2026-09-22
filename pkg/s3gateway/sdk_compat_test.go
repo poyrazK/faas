@@ -84,6 +84,65 @@ func TestGatewayAWSGoSDKCompatibility(t *testing.T) {
 	}
 }
 
+func TestGatewayAWSGoSDKMultipartMetadataCompatibility(t *testing.T) {
+	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected provider request: %s %s", r.Method, r.URL.String())
+		return nil, nil
+	})
+	handler.now = func() time.Time { return time.Now().UTC() }
+	handler.multipartStore = newGatewayMultipartStore()
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	endpoint, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.host = endpoint.Host
+	client := awss3.NewFromConfig(aws.Config{
+		Region:      "us-east-1",
+		Credentials: credentials.NewStaticCredentialsProvider(testAccess, testSecret, ""),
+		HTTPClient:  server.Client(),
+	}, func(options *awss3.Options) {
+		options.BaseEndpoint = aws.String(server.URL)
+		options.UsePathStyle = true
+	})
+
+	created, err := client.CreateMultipartUpload(context.Background(), &awss3.CreateMultipartUploadInput{
+		Bucket:             aws.String("assets"),
+		Key:                aws.String("sdk-large.bin"),
+		ContentType:        aws.String("application/octet-stream"),
+		CacheControl:       aws.String("public, max-age=60"),
+		ContentDisposition: aws.String(`attachment; filename="sdk-large.bin"`),
+		ContentEncoding:    aws.String("gzip"),
+		ContentLanguage:    aws.String("en"),
+		Metadata:           map[string]string{"owner": "platform"},
+		Tagging:            aws.String("env=prod&team=core"),
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload through AWS SDK: %v", err)
+	}
+	if created.UploadId == nil || *created.UploadId == "" {
+		t.Fatal("CreateMultipartUpload returned an empty upload id")
+	}
+	if len(provider.multipartCreates) != 1 {
+		t.Fatalf("multipart creates = %d", len(provider.multipartCreates))
+	}
+	metadata := provider.multipartCreates[0].Metadata
+	if metadata.ContentType != "application/octet-stream" || metadata.CacheControl != "public, max-age=60" || metadata.ContentDisposition != `attachment; filename="sdk-large.bin"` || metadata.ContentEncoding != "gzip" || metadata.ContentLanguage != "en" || metadata.Metadata["owner"] != "platform" || metadata.Tags["env"] != "prod" || metadata.Tags["team"] != "core" {
+		t.Fatalf("multipart metadata was not preserved: %+v", metadata)
+	}
+
+	if _, err := client.AbortMultipartUpload(context.Background(), &awss3.AbortMultipartUploadInput{
+		Bucket: aws.String("assets"), Key: aws.String("sdk-large.bin"), UploadId: created.UploadId,
+	}); err != nil {
+		t.Fatalf("AbortMultipartUpload through AWS SDK: %v", err)
+	}
+	if len(provider.abortedUploads) != 1 {
+		t.Fatalf("aborted uploads = %v", provider.abortedUploads)
+	}
+}
+
 func hasSDKIntegrityHeader(header http.Header) bool {
 	if header.Get("Content-MD5") != "" {
 		return true

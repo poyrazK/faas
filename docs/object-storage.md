@@ -311,12 +311,14 @@ UploadPart bodies support signed payload chunks, signed checksum trailers, and
 the unsigned-payload checksum trailer form used by current AWS SDKs. The
 gateway verifies every frame, decoded length, trailer signature, and checksum
 before allowing a complete object or part to reach the provider. Ordinary PUT
-accepts the standard HTTP metadata fields, `x-amz-meta-*`, and URL-encoded
-`x-amz-tagging`; GET/HEAD returns customer metadata using the branded
-`x-amz-meta-*` names. `?tagging` supports GET, PUT, and DELETE with up to ten
-tags per object. S3 backends use native tags; GCS stores the tag set in a
-reserved provider-private metadata field (including direct signed uploads) that
-is hidden from customers. It emits
+and multipart initiation accept the standard HTTP metadata fields,
+`x-amz-meta-*`, and URL-encoded `x-amz-tagging`; multipart sessions persist this
+metadata so provider recovery and eventual completion retain it. GET/HEAD
+returns customer metadata using the branded `x-amz-meta-*` names. `?tagging`
+supports GET, PUT, and DELETE with up to ten tags per object. S3 backends use
+native tags; GCS stores the tag set in a reserved provider-private metadata
+field (including direct signed and multipart uploads) that is hidden from
+customers. It emits
 Gregale-owned S3 XML errors and filters provider response headers, URLs, bucket
 names, and credentials. At most four PUTs per gateway are staged concurrently;
 additional authenticated uploads receive S3 `SlowDown` without consuming more

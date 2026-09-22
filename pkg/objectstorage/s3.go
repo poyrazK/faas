@@ -368,10 +368,8 @@ func (p *S3) DeleteObjectTags(ctx context.Context, bucket, key string) error {
 	return normalize(err)
 }
 
-const multipartSessionMetadata = "gregale-upload-id"
-
 func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {
-	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateContentType(r.ContentType) != nil {
+	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateObjectMetadata(r.Metadata) != nil {
 		return "", ErrInvalid
 	}
 	// A Gregale bucket does not expose native provider credentials. Combined
@@ -411,14 +409,29 @@ func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r Multipa
 	if found != "" {
 		return found, nil
 	}
-	contentType := r.ContentType
+	contentType := r.Metadata.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	out, err := p.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+	metadata := make(map[string]string, len(r.Metadata.Metadata)+1)
+	for key, value := range r.Metadata.Metadata {
+		metadata[key] = value
+	}
+	metadata[ReservedMultipartSessionMetadataKey] = r.SessionID
+	tagging, err := EncodeObjectTags(r.Metadata.Tags)
+	if err != nil {
+		return "", err
+	}
+	in := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucket), Key: aws.String(r.Key), ContentType: aws.String(contentType),
-		Metadata: map[string]string{multipartSessionMetadata: r.SessionID},
-	})
+		CacheControl: stringPtrOrNil(r.Metadata.CacheControl), ContentDisposition: stringPtrOrNil(r.Metadata.ContentDisposition),
+		ContentEncoding: stringPtrOrNil(r.Metadata.ContentEncoding), ContentLanguage: stringPtrOrNil(r.Metadata.ContentLanguage),
+		Metadata: metadata,
+	}
+	if tagging != "" {
+		in.Tagging = aws.String(tagging)
+	}
+	out, err := p.client.CreateMultipartUpload(ctx, in)
 	if err != nil {
 		return "", normalize(err)
 	}
@@ -520,7 +533,7 @@ func (p *S3) CompleteMultipartUpload(ctx context.Context, bucket string, r Multi
 	if headErr != nil {
 		return normalize(headErr)
 	}
-	if aws.ToInt64(head.ContentLength) != r.SizeBytes || head.Metadata[multipartSessionMetadata] != r.SessionID {
+	if aws.ToInt64(head.ContentLength) != r.SizeBytes || head.Metadata[ReservedMultipartSessionMetadataKey] != r.SessionID {
 		return ErrConflict
 	}
 	return nil

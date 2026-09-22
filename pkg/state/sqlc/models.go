@@ -1512,6 +1512,7 @@ type ObjectStorageMultipartUpload struct {
 	PartSizeBytes    int64
 	PartCount        int32
 	ContentType      string
+	ObjectMetadata   []byte
 	ProviderUploadID string
 	CompletionParts  []byte
 	State            string

@@ -80,14 +80,19 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 	if !ok {
 		return
 	}
-	contentType := r.Header.Get("Content-Type")
-	if objectstorage.ValidateContentType(contentType) != nil {
+	metadata, metadataErr := objectMetadataFromHeaders(r)
+	if metadataErr != nil {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
 		return
 	}
 	upload, err := store.ReserveObjectMultipartUpload(r.Context(), state.ObjectMultipartUpload{
 		ID: uuid.NewString(), AccountID: req.credential.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID,
-		Key: key, ContentType: contentType, ExpiresAt: h.now().UTC().Add(publicMultipartTTL),
+		Key: key, ContentType: metadata.ContentType, ExpiresAt: h.now().UTC().Add(publicMultipartTTL),
+		Metadata: state.ObjectMultipartMetadata{
+			CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition,
+			ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage,
+			UserMetadata: metadata.Metadata, Tags: metadata.Tags,
+		},
 	}, api.MaxActiveMultipartUploadsPerBucket)
 	if err != nil {
 		h.writeMultipartError(w, r, req, err, "InvalidRequest")
@@ -104,7 +109,12 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 			return
 		}
 		providerID, providerErr := req.provider.EnsureMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCreateRequest{
-			SessionID: claimed.ID, Key: claimed.Key, SizeBytes: 0, ContentType: claimed.ContentType,
+			SessionID: claimed.ID, Key: claimed.Key, SizeBytes: 0,
+			Metadata: objectstorage.ObjectMetadata{
+				ContentType: claimed.ContentType, CacheControl: claimed.Metadata.CacheControl,
+				ContentDisposition: claimed.Metadata.ContentDisposition, ContentEncoding: claimed.Metadata.ContentEncoding,
+				ContentLanguage: claimed.Metadata.ContentLanguage, Metadata: claimed.Metadata.UserMetadata, Tags: claimed.Metadata.Tags,
+			},
 		})
 		if providerErr != nil {
 			h.providerError(w, r, req, providerErr, key)
