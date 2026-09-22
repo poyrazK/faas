@@ -14,8 +14,14 @@ policy through the same MFA-protected surface (or with
 - `off` reports findings without affecting deploys (the default).
 - `warn` keeps deploys flowing while making the policy explicit for staged
   rollout.
-- `enforce` rejects new deploys while high-severity findings remain, such as
-  anonymous access or credentialed wildcard CORS.
+- `enforce` rejects new deploys while high-severity configuration findings
+  remain, such as anonymous access or credentialed wildcard CORS.
+
+The report also checks every currently live image for usable, digest-matched,
+recent scanner evidence and flags missing, incomplete, stale, or blocking
+results with `image_scan_*` finding codes.
+These live-image findings stay visible during replacement deploys so a clean
+image can be admitted to remediate the currently serving one.
 
 For `enforce` apps, an image promotion also requires a fresh, complete scan
 whose recorded image reference matches the deployment. Failed, incomplete,

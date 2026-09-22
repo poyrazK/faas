@@ -95,18 +95,19 @@ import (
 // pkg/fcvm/vmm.go::workloadManifest for the rationale and the
 // round-trip test that pins the parsed-equivalence contract.
 type workloadSpec struct {
-	Cmd           []string                 `json:"cmd,omitempty"`
-	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
-	DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
-	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
-	Entrypoint    []string                 `json:"entrypoint,omitempty"`
-	Essential     bool                     `json:"essential"`
-	Name          string                   `json:"name"`
-	Port          int                      `json:"port"`
-	Ports         []api.WorkloadPort       `json:"ports,omitempty"`
-	RamMB         int                      `json:"ram_mb"`
-	ScratchMB     int                      `json:"scratch_mb,omitempty"`
-	Type          string                   `json:"type"` // "main" | "init" | "sidecar"
+	Cmd           []string                    `json:"cmd,omitempty"`
+	CPUMillicores int                         `json:"cpu_millicores,omitempty"`
+	DiskIOProfile string                      `json:"disk_io_profile,omitempty"`
+	DependsOn     []api.WorkloadDependency    `json:"depends_on,omitempty"`
+	Entrypoint    []string                    `json:"entrypoint,omitempty"`
+	Essential     bool                        `json:"essential"`
+	Name          string                      `json:"name"`
+	Port          int                         `json:"port"`
+	Ports         []api.WorkloadPort          `json:"ports,omitempty"`
+	RamMB         int                         `json:"ram_mb"`
+	ScratchMB     int                         `json:"scratch_mb,omitempty"`
+	StartupProbe  *api.AppManifestHealthcheck `json:"startup_probe,omitempty"`
+	Type          string                      `json:"type"` // "main" | "init" | "sidecar"
 }
 
 // workloadRosterPath is the deployment-level roster location
@@ -709,6 +710,14 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	} else {
 		return fmt.Errorf("run sidecar %s: load baked manifest: %w", spec.Name, manifestErr)
 	}
+	// A deployment-level probe override wins over the image's immutable OCI
+	// HEALTHCHECK. Both startup gating and ongoing monitoring use this effective
+	// manifest, so they cannot drift into different probe definitions.
+	effectiveManifest := baked
+	if spec.StartupProbe != nil {
+		effectiveManifest.Healthcheck = spec.StartupProbe
+	}
+	healthManifestAvailable := manifestErr == nil || spec.StartupProbe != nil
 	// Per-sidecar deployment overrides are staged into the instance-scoped
 	// main upper by vmmd. They win over image defaults (and over the legacy
 	// shared env fallback), but main-workload secrets/API env never leak into
@@ -800,12 +809,12 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 		if spec.Type == "sidecar" {
 			sup.reportHealth("starting", "process_started")
 		}
-		if sup.onHealthy != nil && manifestErr == nil {
+		if sup.onHealthy != nil && healthManifestAvailable {
 			uid := lookupUID(baked.EffectiveUser())
 			if directRoot != "" {
 				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
 			}
-			if err := runStartupHealthcheck(baked, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, slog.Default()); err != nil {
+			if err := runStartupHealthcheck(effectiveManifest, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, slog.Default()); err != nil {
 				if spec.Type == "sidecar" {
 					sup.reportHealth("unhealthy", err.Error())
 				}
@@ -822,14 +831,14 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	var healthCancel context.CancelFunc
 	var healthDone <-chan struct{}
 	healthErrCh := make(chan error, 1)
-	if manifestErr == nil && spec.Type == "sidecar" {
+	if healthManifestAvailable && spec.Type == "sidecar" {
 		healthCtx, cancelHealth := context.WithCancel(context.Background())
 		healthCancel = cancelHealth
 		done := make(chan struct{})
 		healthDone = done
 		go func() {
 			defer close(done)
-			monitorSidecarHealth(healthCtx, baked, env, cmd.Dir, directRoot, lookupUID(baked.EffectiveUser()), cmd.SysProcAttr, func(err error) {
+			monitorSidecarHealth(healthCtx, effectiveManifest, env, cmd.Dir, directRoot, lookupUID(effectiveManifest.EffectiveUser()), cmd.SysProcAttr, func(err error) {
 				if sup != nil {
 					sup.reportHealth("unhealthy", err.Error())
 				}

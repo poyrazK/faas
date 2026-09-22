@@ -34,7 +34,9 @@ use the local schedd Unix socket by default.
 
 After convergence, verify the daemon log contains `raw TCP ingress enabled`,
 then create a listener through `gregale app tcp create` (or the API) and test
-the allocated port from an allowed source. Do not set `0.0.0.0/0` in staging.
+the allocated port from an allowed source. If an enabled listener cannot bind
+at daemon startup, the daemon now fails startup and logs the port error. Do not
+set `0.0.0.0/0` in staging.
 
 The public gateway publishes TCP runtime telemetry on its existing `/metrics`
 endpoint. The `gatewayd_public_tcp_active_sessions` gauge shows current load,

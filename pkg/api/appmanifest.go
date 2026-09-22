@@ -284,18 +284,18 @@ func ValidateWorkloadPorts(ports []WorkloadPort) error {
 type AppManifestHealthcheck struct {
 	// Test is the argv of the check command, prefixed by "CMD",
 	// "CMD-SHELL", or "NONE" per Docker semantics.
-	Test []string `json:"test"`
+	Test []string `json:"test" yaml:"test" toml:"test"`
 	// IntervalS is the poll cadence after StartPeriodS elapses.
 	// 0 = inherit platform default (Docker: 30s).
-	IntervalS int `json:"interval_s,omitempty"`
+	IntervalS int `json:"interval_s,omitempty" yaml:"interval_s,omitempty" toml:"interval_s,omitempty"`
 	// TimeoutS is the per-probe exec timeout. 0 = inherit (Docker: 30s).
-	TimeoutS int `json:"timeout_s,omitempty"`
+	TimeoutS int `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty" toml:"timeout_s,omitempty"`
 	// Retries is the consecutive failure count to mark unhealthy.
 	// 0 = inherit (Docker: 3).
-	Retries int `json:"retries,omitempty"`
+	Retries int `json:"retries,omitempty" yaml:"retries,omitempty" toml:"retries,omitempty"`
 	// StartPeriodS is the startup grace during which failures
 	// don't count (Docker 17.05+).
-	StartPeriodS int `json:"start_period_s,omitempty"`
+	StartPeriodS int `json:"start_period_s,omitempty" yaml:"start_period_s,omitempty" toml:"start_period_s,omitempty"`
 }
 
 // EffectivePort returns Port or the default.
