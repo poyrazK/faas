@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -71,7 +72,7 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 	for _, mode := range []string{"signed index", "signed child only", "resolution failure"} {
 		t.Run(mode, func(t *testing.T) {
 			th := newTestHarness(t, state.DeploymentKindImage, "pro", "")
-			th.app.RequireSigned = true
+			th.app.SecurityPolicy = api.AppSecurityPolicyEnforce
 			th.dep.ImageDigest = "example.com/org/service:latest"
 			p := &resolvingTestPuller{fakeManifestPuller: &fakeManifestPuller{}, resolution: oci.ImageResolution{
 				SourceDigest: source, SourceReference: "example.com/org/service@" + source,

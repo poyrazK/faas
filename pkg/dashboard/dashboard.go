@@ -587,8 +587,10 @@ type FailedEventsData struct {
 	Events       []FailedEventPageItem
 	Apps         []AppListItem
 	SelectedApp  string
+	NextPageURL  string
 	ActionCSRF   string
 	Action       string
+	ActionCount  int
 	ErrorMessage string
 }
 

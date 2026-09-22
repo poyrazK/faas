@@ -383,7 +383,7 @@ func (s *server) appSecurityPosture(ctx context.Context, app state.App) (api.App
 			Remediation: "Replace * with the smallest set of trusted origins.",
 		})
 	}
-	if !app.RequireSigned {
+	if !app.RequireSigned && !normalizedAppSecurityPolicy(app.SecurityPolicy).RequiresSignedImage() {
 		findings = append(findings, api.AppSecurityFinding{
 			Code: "unsigned_deploys", Severity: postureSeverityLow,
 			Title:       "Image signature enforcement is disabled",

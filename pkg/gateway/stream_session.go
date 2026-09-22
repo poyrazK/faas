@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -39,11 +40,12 @@ func newStreamSession(parent context.Context, ceiling, idle time.Duration) (ctx 
 }
 
 type idleSession struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	reset  chan struct{}
-	done   chan struct{}
-	once   sync.Once
+	ctx          context.Context
+	cancel       context.CancelFunc
+	reset        chan struct{}
+	done         chan struct{}
+	once         sync.Once
+	timedOutFlag atomic.Bool
 }
 
 func newIdleSession(parent context.Context, idle time.Duration) *idleSession {
@@ -69,6 +71,7 @@ func (s *idleSession) run(idle time.Duration) {
 	for {
 		select {
 		case <-timer.C:
+			s.timedOutFlag.Store(true)
 			s.cancel()
 			return
 		case <-s.reset:
@@ -83,6 +86,10 @@ func (s *idleSession) run(idle time.Duration) {
 			return
 		}
 	}
+}
+
+func (s *idleSession) timedOut() bool {
+	return s != nil && s.timedOutFlag.Load()
 }
 
 func (s *idleSession) touch() {
