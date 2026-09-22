@@ -80,9 +80,10 @@ func (l *Loop) routePublishedEvent(ctx context.Context, payload string) error {
 			headers, marshalErr := json.Marshal(pkgtrace.MergeHeaderMap(
 				pkgtrace.ExtractHeaders(ctx, producerHeaders),
 				map[string]string{
-					"x-gregale-event-id":     envelope.ID,
-					"x-gregale-event-source": envelope.Source,
-					"x-gregale-event-type":   envelope.Type,
+					"x-gregale-event-id":              envelope.ID,
+					"x-gregale-event-source":          envelope.Source,
+					"x-gregale-event-type":            envelope.Type,
+					"x-gregale-event-subscription-id": row.ID,
 				},
 			))
 			if marshalErr != nil {

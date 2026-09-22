@@ -2130,6 +2130,10 @@ type Deployment struct {
 	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// ServiceRolloutHandoff persists the scheduler-owned routing and drain
+	// barriers for zero-step service rollouts. Empty for ordinary canaries and
+	// stable deployments.
+	ServiceRolloutHandoff ServiceRolloutHandoff `json:"service_rollout_handoff,omitempty"`
 
 	// Parking reason + timestamp (issue #554 / ADR-079 follow-up).
 	// pkg/sched.Engine.ParkDeployment sets these before flipping
@@ -6824,10 +6828,9 @@ type EdgeRuleAction struct {
 // EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).
 //
 // MaxAttempts counts attempts, not retries: 2 is the original plus one
-// replay. AllowNonIdempotent opts POST and PATCH into replay and is the one
-// field here that can cost a customer correctness rather than latency — a
-// replayed POST runs their side effect twice unless their handler is
-// idempotent — so it defaults false and the API documents the consequence.
+// replay. AllowNonIdempotent opts POST and PATCH into replay only when the
+// request carries an Idempotency-Key. The handler must honor that key, so the
+// field defaults false and the API documents the consequence.
 // MinRemainingMs is the request-budget floor below which a replay is skipped,
 // which is what stops a retry converting a 502 into a 504. BackoffMs defaults
 // to 0 because the failure being retried is a dead peer, not a loaded one.
@@ -6836,6 +6839,8 @@ type EdgeRuleRetryAction struct {
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
 	MinRemainingMs     int  `json:"min_remaining_ms,omitempty"`
 	BackoffMs          int  `json:"backoff_ms,omitempty"`
+	BudgetPercent      int  `json:"budget_percent,omitempty"`
+	BudgetMinRetries   int  `json:"budget_min_retries,omitempty"`
 }
 
 // EdgeRuleCircuitBreakerAction is the kind=circuit_breaker payload

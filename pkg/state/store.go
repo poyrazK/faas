@@ -2493,6 +2493,13 @@ type Store interface {
 	// predecessor remains available until every serving gateway acknowledges
 	// the routing generation and its in-flight requests drain.
 	BeginServiceRolloutCutover(ctx context.Context, id string) (Deployment, error)
+	// BeginServiceRolloutAbort restores the predecessor's traffic weight while
+	// retaining both generations as live. The scheduler must wait for gateway
+	// acknowledgement and candidate request drain before finalising the abort.
+	BeginServiceRolloutAbort(ctx context.Context, id string) (Deployment, error)
+	// UpdateServiceRolloutHandoff persists scheduler progress between the
+	// routing and drain barriers so another schedd can resume safely.
+	UpdateServiceRolloutHandoff(ctx context.Context, id string, handoff ServiceRolloutHandoff) (Deployment, error)
 	// AbortServiceRollout atomically removes a failed service rollout and
 	// restores the newest older live deployment in the same app/scope to 100%
 	// traffic. The target must be a live zero-step row marked

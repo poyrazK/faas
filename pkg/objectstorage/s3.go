@@ -311,11 +311,11 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 		}
 		result.Headers["Content-Type"] = contentType
 	case http.MethodGet:
-		out, err := p.signer.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(r.Key), ResponseContentDisposition: aws.String("attachment"), ResponseContentType: aws.String("application/octet-stream")}, options)
+		out, err := p.presignGetObject(ctx, bucket, r.Key, options, true)
 		if err != nil {
 			return SignedRequest{}, ErrUnavailable
 		}
-		result.URL = out.URL
+		result.URL = out
 	default:
 		out, err := p.signer.PresignHeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(r.Key)}, options)
 		if err != nil {
@@ -324,6 +324,46 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 		result.URL = out.URL
 	}
 	return result, nil
+}
+
+func (p *S3) PresignObjectRead(ctx context.Context, bucket, method, key string, expiresIn int64) (SignedRequest, error) {
+	r := SignRequest{Method: method, Key: key, ExpiresIn: expiresIn}
+	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil || method != http.MethodGet && method != http.MethodHead {
+		return SignedRequest{}, ErrInvalid
+	}
+	ttl := time.Duration(expiresIn) * time.Second
+	if ttl == 0 {
+		ttl = 5 * time.Minute
+	}
+	options := func(o *s3.PresignOptions) { o.Expires = ttl }
+	result := SignedRequest{Method: method, Headers: map[string]string{}, ExpiresAt: time.Now().UTC().Add(ttl)}
+	if method == http.MethodGet {
+		out, err := p.presignGetObject(ctx, bucket, key, options, false)
+		if err != nil {
+			return SignedRequest{}, ErrUnavailable
+		}
+		result.URL = out
+		return result, nil
+	}
+	out, err := p.signer.PresignHeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}, options)
+	if err != nil {
+		return SignedRequest{}, ErrUnavailable
+	}
+	result.URL = out.URL
+	return result, nil
+}
+
+func (p *S3) presignGetObject(ctx context.Context, bucket, key string, options func(*s3.PresignOptions), forceDownload bool) (string, error) {
+	in := &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}
+	if forceDownload {
+		in.ResponseContentDisposition = aws.String("attachment")
+		in.ResponseContentType = aws.String("application/octet-stream")
+	}
+	out, err := p.signer.PresignGetObject(ctx, in, options)
+	if err != nil {
+		return "", err
+	}
+	return out.URL, nil
 }
 
 func (p *S3) GetObjectTags(ctx context.Context, bucket, key string) (map[string]string, error) {

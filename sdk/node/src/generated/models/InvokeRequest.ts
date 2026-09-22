@@ -16,7 +16,7 @@ export type InvokeRequest = {
    */
   deadline_at?: string | null;
   /**
-   * ADR-134 PR-B. Per-row retry curve override. Shape mirrors dispatch.RetryPolicy: { max_attempts, base_seconds, max_seconds, jitter_seconds }.
+   * ADR-134 PR-B. Per-row retry curve override. max_attempts counts the original, is capped by the account plan, and 0 inherits that finite cap.
    */
   retry_policy?: any | null;
   /**

@@ -92,6 +92,12 @@ type Limiter struct {
 	// shared counter on every request; local state is a degraded fallback and
 	// supplies response-header state.
 	central CentralBackend
+	// centralErrorObserver is called whenever an authoritative central consume
+	// fails and the limiter falls back to its process-local decision. The
+	// callback is installed by Handler.WithCentralBackend so the fallback is
+	// visible without coupling this token-bucket primitive to Prometheus,
+	// logging, or the gateway audit sink.
+	centralErrorObserver func(context.Context, string, error)
 }
 
 type bucket struct {
@@ -137,7 +143,7 @@ const ConsumerKeySentinel = "__other__"
 // new consumer bucket. The __other__ bucket is pinned non-evictable
 // (bucket.pinned = true) so even when full it cannot be dropped
 // from the recency list — an attacker who pushed past the cap still
-// pays the parent rule's rps cost on every subsequent request,
+// pays the rule's configured rps cost on every subsequent request,
 // because every over-cap consumer routes through the same pinned
 // bucket.
 //
@@ -209,6 +215,7 @@ func (l *Limiter) AllowWithCentralConsumerKey(
 	defer cancel()
 	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, centralSubjectID, plan, rps, burst)
 	if err != nil {
+		l.observeCentralError(ctx, scope, err)
 		return localAllowed
 	}
 	// Keep headers and the degraded fallback aligned with the authoritative
@@ -307,13 +314,10 @@ func (l *Limiter) allowWithConsumerKeyLocal(ruleKey, consumerID string, rps, bur
 
 // ConsumerIsTracked reports whether consumerID has its own bucket
 // under ruleKey (i.e. is in the per-rule consumer set, NOT
-// collapsed into the __other__ bucket). Phase 4 H1's applier
-// (handler.go::applyEdgeRuleThrottle) uses this to decide whether
-// to emit X-RouteRateLimit-Policy=per-consumer on the 429 path:
-// the value is set when the per-consumer rule's consumer has
-// collapsed to __other__ (i.e. NOT tracked). False is the
-// back-compat answer for rules where KeyBy ∈ {"", "none"} — the
-// rule-only bucket key path never reaches here.
+// collapsed into the __other__ bucket). This is a diagnostics/test accessor;
+// request enforcement and headers use consumerBucketKey so they address the
+// exact concrete bucket. False is the back-compat answer for rules where
+// KeyBy ∈ {"", "none"} — the rule-only bucket key path never reaches here.
 //
 // Lock-safe (mu is a sync.Mutex today; locking is cheap — the map
 // is small and the lookup is a constant-time hash read); safe to
@@ -339,6 +343,25 @@ func (l *Limiter) ConsumerIsTracked(ruleKey, consumerID string) bool {
 	}
 	_, tracked := consumers[consumerID]
 	return tracked
+}
+
+// consumerBucketKey returns the concrete local bucket selected for consumerID
+// after AllowWithConsumerKey / AllowWithCentralConsumerKey has run. Consumers
+// admitted under the per-rule cardinality cap have their own suffix; every
+// over-cap consumer resolves to the pinned __other__ bucket. It is used only
+// to expose accurate remaining/reset headers for a dimensional 429.
+func (l *Limiter) consumerBucketKey(ruleKey, consumerID string) string {
+	if l == nil || ruleKey == "" || consumerID == "" {
+		return ""
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if consumers := l.ruleConsumers[ruleKey]; consumers != nil {
+		if _, tracked := consumers[consumerID]; tracked {
+			return ruleKey + "\x00" + consumerID
+		}
+	}
+	return ruleKey + "\x00" + ConsumerKeySentinel
 }
 
 // allowTokenKeyedLocked is the shared refill math used by
@@ -642,6 +665,7 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	defer cancel()
 	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, subjectID, plan, rps, burst)
 	if err != nil {
+		l.observeCentralError(ctx, scope, err)
 		return localAllowed
 	}
 	// Keep response headers and degraded fallback aligned with the latest
@@ -653,6 +677,13 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	}
 	l.mu.Unlock()
 	return admitted
+}
+
+func (l *Limiter) observeCentralError(ctx context.Context, scope string, err error) {
+	if l == nil || l.centralErrorObserver == nil || err == nil {
+		return
+	}
+	l.centralErrorObserver(ctx, scope, err)
 }
 
 // isNoopBackend reports whether the central field is the default

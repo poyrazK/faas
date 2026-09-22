@@ -129,7 +129,7 @@ func TestRenderSuccessfulDarkDeploymentShowsPreviewAndPromotion(t *testing.T) {
 		"Staged v44 with 0% production traffic.",
 		"Preview: https://deploy-44-my-app.gregale.dev",
 		"Production traffic remains unchanged. https://my-app.gregale.dev",
-		"Promote: gregale traffic set --app my-app --deployment v44 --percent 100",
+		"Promote: gregale traffic promote --app my-app --deployment v44",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("dark deploy output missing %q\nfull output:\n%s", want, out.String())
@@ -225,7 +225,7 @@ func TestWriteWaitedDarkDeploymentReceiptIncludesPreviewAndPromotion(t *testing.
 	if receipt.PreviewURL != "https://deploy-44-my-app.gregale.dev" {
 		t.Fatalf("preview_url = %q", receipt.PreviewURL)
 	}
-	if receipt.PromotionCommand != "gregale traffic set --app my-app --deployment v44 --percent 100" {
+	if receipt.PromotionCommand != "gregale traffic promote --app my-app --deployment v44" {
 		t.Fatalf("promotion_command = %q", receipt.PromotionCommand)
 	}
 	if receipt.ReleaseSummary != nil {

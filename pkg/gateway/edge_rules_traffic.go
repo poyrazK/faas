@@ -28,6 +28,8 @@ type EdgeRuleRetryResolved struct {
 	AllowNonIdempotent bool
 	MinRemaining       time.Duration
 	Backoff            time.Duration
+	BudgetPercent      int
+	BudgetMinRetries   int
 }
 
 // Policy converts the resolved rule into the runtime policy the retry loop
@@ -43,6 +45,8 @@ func (r *EdgeRuleRetryResolved) Policy() RetryPolicy {
 		AllowNonIdempotent: r.AllowNonIdempotent,
 		MinRemaining:       r.MinRemaining,
 		Backoff:            r.Backoff,
+		BudgetPercent:      r.BudgetPercent,
+		BudgetMinRetries:   r.BudgetMinRetries,
 	}
 }
 

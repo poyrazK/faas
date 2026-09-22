@@ -6562,6 +6562,53 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	}
 
 	now := time.Now()
+	if IsServiceRollout(*target) {
+		if action != "abort" {
+			return *target, 0, ErrRolloutStateInvalid
+		}
+		handoff := target.ServiceRolloutHandoff
+		if !handoff.ActiveAbort() {
+			var predecessor Deployment
+			found := false
+			for _, other := range m.deployments {
+				if other.AppID != appID || other.ID == target.ID || other.Status != DeployLive ||
+					normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) ||
+					IsServiceRollout(other) || !other.CreatedAt.Before(target.CreatedAt) {
+					continue
+				}
+				if !found || other.CreatedAt.After(predecessor.CreatedAt) ||
+					(other.CreatedAt.Equal(predecessor.CreatedAt) && other.ID > predecessor.ID) {
+					predecessor = other
+					found = true
+				}
+			}
+			if !found {
+				return *target, 0, ErrRolloutStateInvalid
+			}
+			handoff = ServiceRolloutHandoff{
+				Action:                  ServiceRolloutActionAbort,
+				Phase:                   ServiceRolloutPhasePending,
+				PredecessorDeploymentID: predecessor.ID,
+				Reason:                  reason,
+				StartedAt:               &now,
+				UpdatedAt:               &now,
+			}
+			target.ServiceRolloutHandoff = handoff
+			m.deployments[target.ID] = *target
+		}
+		auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
+			DeploymentID: uuid.MustParse(target.ID),
+			AccountID:    nil,
+			Kind:         DeployRolledBack,
+			Actor:        "operator:cli:recover_rollout",
+			At:           now,
+			Data:         json.RawMessage(rolloutAuditData("abort_requested", reason)),
+		})
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: append service abort request audit: %w", err)
+		}
+		return *target, auditID, nil
+	}
 
 	switch action {
 	case "advance":
@@ -11541,6 +11588,66 @@ func (m *MemStore) ListInvocationsForApp(_ context.Context, appID string, states
 		}
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
+	return out, nil
+}
+
+// ListEventDeliveriesForApp mirrors the PostgreSQL event-delivery projection.
+// MemStore keeps the filter in-process so handler tests exercise the same
+// account/app isolation and cursor semantics as production.
+func (m *MemStore) ListEventDeliveriesForApp(_ context.Context, appID string, limit int, before, eventID, deliveryState string) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	var cursor Invocation
+	if before != "" {
+		var ok bool
+		cursor, ok = m.invocations[before]
+		if !ok || cursor.AppID != appID || cursor.Source != InvocationAsyncInvoke {
+			return []Invocation{}, nil
+		}
+		var cursorHeaders map[string]string
+		if json.Unmarshal(cursor.Headers, &cursorHeaders) != nil {
+			return []Invocation{}, nil
+		}
+		if _, ok := cursorHeaders["x-gregale-event-id"]; !ok {
+			return []Invocation{}, nil
+		}
+	}
+	var out []Invocation
+	for _, inv := range m.invocations {
+		if inv.AppID != appID || inv.Source != InvocationAsyncInvoke {
+			continue
+		}
+		if before != "" && (inv.CreatedAt.After(cursor.CreatedAt) ||
+			(inv.CreatedAt.Equal(cursor.CreatedAt) && inv.ID >= cursor.ID)) {
+			continue
+		}
+		var headers map[string]string
+		if len(inv.Headers) == 0 || json.Unmarshal(inv.Headers, &headers) != nil {
+			continue
+		}
+		if strings.TrimSpace(headers["x-gregale-event-id"]) == "" {
+			continue
+		}
+		if eventID != "" && headers["x-gregale-event-id"] != eventID {
+			continue
+		}
+		if deliveryState != "" && string(inv.State) != deliveryState {
+			continue
+		}
+		out = append(out, inv)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 

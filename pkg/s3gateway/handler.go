@@ -38,7 +38,11 @@ const CredentialSecretNamespace = "object_s3_credential"
 
 const defaultMaxConcurrentPuts = 4
 
-const maxDeleteObjectsBodyBytes = 2 << 20
+const (
+	maxDeleteObjectsBodyBytes     = 2 << 20
+	maxCompleteMultipartBodyBytes = 4 << 20
+	maxObjectTaggingBodyBytes     = 16 << 10
+)
 
 type Store interface {
 	state.ObjectS3CredentialStore
@@ -288,6 +292,10 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestConte
 	bucketName, key, hasBucket, hasKey, err := parsePath(r.URL.EscapedPath())
 	if err != nil {
 		writeS3Error(w, http.StatusBadRequest, "InvalidURI", "Could not parse the specified URI.", r.URL.Path, req.requestID)
+		return
+	}
+	if hasUnsupportedS3Semantics(r) {
+		h.unsupported(w, r, req.requestID)
 		return
 	}
 	if !hasBucket {
@@ -658,7 +666,7 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed or did not validate against the published schema.", r.URL.Path, req.requestID)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDeleteObjectsBodyBytes))
+	body, err := readVerifiedRequestBody(w, r, req.signature.PayloadHash, maxDeleteObjectsBodyBytes)
 	if err != nil {
 		if h.writeAWSChunkedError(w, r, req.requestID, err) {
 			return
@@ -666,26 +674,6 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed or did not validate against the published schema.", r.URL.Path, req.requestID)
 		return
 	}
-	if !isStreamingPayloadHash(req.signature.PayloadHash) && req.signature.PayloadHash != "UNSIGNED-PAYLOAD" {
-		sum := sha256.Sum256(body)
-		if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(req.signature.PayloadHash)) != 1 {
-			writeS3Error(w, http.StatusBadRequest, "XAmzContentSHA256Mismatch", "The provided x-amz-content-sha256 does not match the request body.", r.URL.Path, req.requestID)
-			return
-		}
-	}
-	if expected := r.Header.Get("Content-MD5"); expected != "" {
-		decoded, decodeErr := base64.StdEncoding.DecodeString(expected)
-		sum := md5.Sum(body) // #nosec G401 -- S3 Content-MD5 compatibility.
-		if decodeErr != nil || len(decoded) != md5.Size || subtle.ConstantTimeCompare(decoded, sum[:]) != 1 {
-			writeS3Error(w, http.StatusBadRequest, "BadDigest", "The Content-MD5 you specified did not match what Gregale received.", r.URL.Path, req.requestID)
-			return
-		}
-	}
-	if err := verifyRequestChecksum(r.Header, body); err != nil {
-		h.writeAWSChunkedError(w, r, req.requestID, err)
-		return
-	}
-
 	checksum, _, checksumErr := requestChecksum(r.Header)
 	if checksumErr != nil {
 		h.writeAWSChunkedError(w, r, req.requestID, checksumErr)
@@ -911,7 +899,7 @@ func objectMetadataFromHeaders(r *http.Request) (objectstorage.ObjectMetadata, e
 }
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
-	signed, err := req.provider.Presign(r.Context(), req.bucket.PhysicalName, objectstorage.SignRequest{Method: r.Method, Key: key, ExpiresIn: 60})
+	signed, err := objectstorage.PresignObjectRead(r.Context(), req.provider, req.bucket.PhysicalName, r.Method, key, 60)
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return
@@ -976,8 +964,11 @@ func (h *Handler) objectTags(w http.ResponseWriter, r *http.Request, req request
 		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) || !h.admit(w, r, req, key, 0, false) {
 			return
 		}
-		tags, err := decodeObjectTags(w, r)
+		tags, err := decodeObjectTags(w, r, req.signature.PayloadHash)
 		if err != nil {
+			if h.writeAWSChunkedError(w, r, req.requestID, err) {
+				return
+			}
 			writeS3Error(w, http.StatusBadRequest, "InvalidTag", "The object tags are invalid.", r.URL.Path, req.requestID)
 			return
 		}
@@ -1003,11 +994,16 @@ func (h *Handler) objectTags(w http.ResponseWriter, r *http.Request, req request
 	}
 }
 
-func decodeObjectTags(w http.ResponseWriter, r *http.Request) (map[string]string, error) {
+func decodeObjectTags(w http.ResponseWriter, r *http.Request, payloadHash string) (map[string]string, error) {
 	if r.ContentLength > 16<<10 {
 		return nil, objectstorage.ErrInvalid
 	}
-	decoder := xml.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	bodyBytes, err := readVerifiedRequestBody(w, r, payloadHash, maxObjectTaggingBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(bodyBytes))
+	decoder.Strict = true
 	var body objectTaggingRequest
 	if err := decoder.Decode(&body); err != nil {
 		return nil, objectstorage.ErrInvalid
@@ -1030,6 +1026,69 @@ func decodeObjectTags(w http.ResponseWriter, r *http.Request) (map[string]string
 		return nil, err
 	}
 	return tags, nil
+}
+
+func readVerifiedRequestBody(w http.ResponseWriter, r *http.Request, payloadHash string, maxBytes int64) ([]byte, error) {
+	if r.ContentLength > maxBytes {
+		return nil, objectstorage.ErrInvalid
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes))
+	if err != nil {
+		return nil, err
+	}
+	if !isStreamingPayloadHash(payloadHash) && payloadHash != "UNSIGNED-PAYLOAD" {
+		sum := sha256.Sum256(body)
+		if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(payloadHash)) != 1 {
+			return nil, contentSHA256Mismatch()
+		}
+	}
+	if expected := r.Header.Get("Content-MD5"); expected != "" {
+		decoded, decodeErr := base64.StdEncoding.DecodeString(expected)
+		sum := md5.Sum(body) // #nosec G401 -- S3 Content-MD5 compatibility.
+		if decodeErr != nil || len(decoded) != md5.Size || subtle.ConstantTimeCompare(decoded, sum[:]) != 1 {
+			return nil, badAWSChunkDigest()
+		}
+	}
+	if err := verifyRequestChecksum(r.Header, body); err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+func hasUnsupportedS3Semantics(r *http.Request) bool {
+	if r.Header.Get("X-Amz-Copy-Source") == "" && (r.Header.Get("X-Amz-Metadata-Directive") != "" || r.Header.Get("X-Amz-Tagging-Directive") != "") {
+		return true
+	}
+	for name := range r.Header {
+		if unsupportedS3SemanticName(name) {
+			return true
+		}
+	}
+	for name := range r.URL.Query() {
+		if unsupportedS3SemanticName(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func unsupportedS3SemanticName(name string) bool {
+	name = strings.ToLower(name)
+	return name == "x-amz-acl" ||
+		strings.HasPrefix(name, "x-amz-grant-") ||
+		strings.HasPrefix(name, "x-amz-server-side-encryption") ||
+		name == "x-amz-storage-class" ||
+		strings.HasPrefix(name, "x-amz-object-lock-") ||
+		name == "x-amz-website-redirect-location" ||
+		name == "x-amz-request-payer" ||
+		name == "x-amz-expected-bucket-owner" ||
+		name == "x-amz-source-expected-bucket-owner" ||
+		strings.HasPrefix(name, "x-amz-copy-source-if-") ||
+		name == "x-amz-copy-source-range" ||
+		name == "x-amz-checksum-mode" ||
+		name == "x-amz-checksum-algorithm" ||
+		name == "x-amz-bypass-governance-retention" ||
+		name == "x-amz-mfa"
 }
 
 // recordProviderRequest commits the outbound request attempt before it is

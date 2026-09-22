@@ -46,6 +46,22 @@ the oldest unavailable handoffs cannot starve newer rows; retries never create
 one goroutine per stuck rollout. PG notifications remain an acceleration and
 acknowledgement transport, not the durable source of truth.
 
+Operator abort uses the same protocol in reverse. The API records an
+idempotent `abort/pending` intent instead of changing traffic or rollout state.
+schedd restores the recorded predecessor's weight while retaining the
+candidate as live, waits for the predecessor route generation to be
+acknowledged, drains requests selected on the candidate, and only then marks
+the candidate aborted and superseded. Generic `advance` and `promote` recovery
+remain invalid for zero-step service rollouts.
+
+The deployment's bounded `service_rollout_handoff` JSON object persists the
+action, phase, predecessor, route generation, expected/acknowledged/missing
+gateways, retry count, last error, and barrier timestamps. API, CLI, and the
+Safe-releases dashboard expose that object. schedd also emits a closed-label
+phase-duration histogram; timeout/error observations page through the
+`FaasServiceRolloutHandoffBlocked` alert. These are operational projections of
+the database state, not a second coordination mechanism.
+
 Legacy single-box installations with no named serving gateways keep the
 existing notification refresh path and skip the fleet acknowledgement and
 telemetry barriers. This exception is explicit: it preserves local developer
