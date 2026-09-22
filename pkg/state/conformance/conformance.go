@@ -334,7 +334,8 @@ func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
 		t.Fatalf("CreateProjectEnvironment app: %v", err)
 	}
 	live, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
-		AppID: projectApp.ID, Scope: staging.Slug, Status: state.DeployLive,
+		AppID: projectApp.ID, Scope: staging.Slug, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:environment-api-live", Status: state.DeployLive,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(live staging): %v", err)
