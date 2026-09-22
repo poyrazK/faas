@@ -24,14 +24,14 @@ class SidecarTimelineResponse:
     sidecar_name: str
     """Echo of the sidecar_name path segment."""
     app_id: UUID
-    """Resolved app id (the slug's owning app)."""
+    """Identifier of the app that owns this sidecar timeline (resolved from the slug)."""
     events: list[WakeTimelineEvent]
     limit: int
-    """Effective limit applied (always 1..1000)."""
+    """Number of sidecar frames returned, from 1 through 1000."""
     latest: SidecarTimelineStatus | Unset = UNSET
     """Most recent health transition for a sidecar, if one has been recorded."""
     next_cursor: str | Unset = UNSET
-    """Opaque RFC 3339 cursor for the next page. Empty when this is the last page."""
+    """RFC 3339 timestamp cursor for the next sidecar page; empty when no more frames remain."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

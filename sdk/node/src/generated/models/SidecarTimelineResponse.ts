@@ -13,17 +13,17 @@ export type SidecarTimelineResponse = {
    */
   sidecar_name: string;
   /**
-   * Resolved app id (the slug's owning app).
+   * Identifier of the app that owns this sidecar timeline (resolved from the slug).
    */
   app_id: string;
   latest?: SidecarTimelineStatus;
   events: Array<WakeTimelineEvent>;
   /**
-   * Opaque RFC 3339 cursor for the next page. Empty when this is the last page.
+   * RFC 3339 timestamp cursor for the next sidecar page; empty when no more frames remain.
    */
   next_cursor?: string;
   /**
-   * Effective limit applied (always 1..1000).
+   * Number of sidecar frames returned, from 1 through 1000.
    */
   limit: number;
 };

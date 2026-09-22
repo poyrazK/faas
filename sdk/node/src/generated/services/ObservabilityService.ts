@@ -393,7 +393,7 @@ export class ObservabilityService {
     limit = 200,
   }: {
     /**
-     * App slug (lowercase, kebab-case; per-account unique).
+     * App slug that owns this sidecar timeline (lowercase, kebab-case; per-account unique).
      */
     slug: string,
     /**
