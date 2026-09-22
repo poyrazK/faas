@@ -102,6 +102,9 @@ type App struct {
 	// Function/default budget posture by limits.RequestBudgetForType.
 	Type AppType
 	Plan api.Plan
+	// RequestInvocationsEnabled is true for request-serving apps/functions and
+	// false for worker/job workloads, which have no HTTP invocation listener.
+	RequestInvocationsEnabled bool
 	// OnlyAllowDeclaredRoutes enables the pre-wake route contract. When set,
 	// the gateway asks DeclaredRouteMatcher before authentication, rate
 	// limiting, or capacity admission. Undeclared paths are answered directly
@@ -1094,6 +1097,9 @@ type Handler struct {
 	// proxy all see the *target* app's context, not the
 	// inbound host's (auth remains per-app).
 	edgeRules EdgeRuleMatcher
+	// asyncRoutes persists requests matched by kind=async. Nil is a fail-closed
+	// runtime wiring error only when such a rule actually matches.
+	asyncRoutes AsyncRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -1601,6 +1607,12 @@ func (h *Handler) WithEdgeRules(matcher EdgeRuleMatcher, resolve ResolveTargetAp
 	h.edgeRules = matcher
 	h.resolveTargetApp = resolve
 	h.edgeRuleAudit = audit
+	return h
+}
+
+// WithAsyncRouteEnqueuer arms durable enqueue for kind=async rules.
+func (h *Handler) WithAsyncRouteEnqueuer(enqueuer AsyncRouteEnqueuer) *Handler {
+	h.asyncRoutes = enqueuer
 	return h
 }
 
@@ -5780,7 +5792,11 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	if served, rule := h.applyEdgeRuleCache(w, r, app, rec); served {
+	var asyncRule *EdgeRuleAsyncResolved
+	if !deploymentSmoke {
+		asyncRule = h.matchAsyncRoute(r, sidecarName)
+	}
+	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule); served {
 		return
 	} else if isNonUserTriggerClass(triggerClass) && normalizeCrawlerPolicy(app.CrawlerPolicy) == "cached" {
 		// A fresh kind=cache hit returned above. A miss (including a stale
@@ -5972,6 +5988,10 @@ haveApp:
 	if r.Body != nil && r.Body != http.NoBody && !isUpgradeRequest(r) {
 		admittedBody := r.Body
 		defer func() { _ = admittedBody.Close() }()
+	}
+	if h.applyEdgeRuleAsync(w, r, app, asyncRule) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
 	}
 
 	burstDone := h.burstPressure.begin(app.ID)

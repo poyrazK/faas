@@ -456,6 +456,7 @@ type HostEntry struct {
 	// threads one slice per kind into the HostEntry.
 	Retry          []EdgeRuleRetryResolved
 	CircuitBreaker []EdgeRuleCircuitBreakerResolved
+	Async          []EdgeRuleAsyncResolved
 	PathGlobErrs   []PathGlobError
 }
 
@@ -493,6 +494,7 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 	out.Respond = slices.Clone(entry.Respond)
 	out.Retry = slices.Clone(entry.Retry)
 	out.CircuitBreaker = slices.Clone(entry.CircuitBreaker)
+	out.Async = slices.Clone(entry.Async)
 	for i := range out.Respond {
 		out.Respond[i].Body = slices.Clone(entry.Respond[i].Body)
 	}
@@ -830,6 +832,18 @@ func (c *EdgeRuleCache) GetRespond(host string) ([]EdgeRuleRespondResolved, bool
 		out[i].Body = slices.Clone(entry.Respond[i].Body)
 	}
 	return out, true
+}
+
+// GetAsync returns a defensive copy of the compiled kind=async rules.
+func (c *EdgeRuleCache) GetAsync(host string) ([]EdgeRuleAsyncResolved, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	if entry.Async == nil {
+		return nil, true
+	}
+	return slices.Clone(entry.Async), true
 }
 
 // getEntry promotes the entry on hit and returns it. Internal —

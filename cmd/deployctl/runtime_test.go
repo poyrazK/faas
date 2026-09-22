@@ -244,7 +244,7 @@ func TestIsCanaryExecOverrideIgnoresCommentsAndEnvironment(t *testing.T) {
 	}
 }
 
-func TestReconcileServiceTopologyRemovesOppositeRoleResidue(t *testing.T) {
+func TestReconcileServiceTopologyRemovesOppositeRoleResidueAndPreservesOptionalServices(t *testing.T) {
 	unitDir := t.TempDir()
 	for _, name := range []string{"faas-vmmd.service", "faas-s3-gatewayd.service", "faas-gatewayd.service"} {
 		if err := os.WriteFile(filepath.Join(unitDir, name), []byte("[Unit]\n"), 0o644); err != nil {
@@ -282,21 +282,28 @@ func TestReconcileServiceTopologyRemovesOppositeRoleResidue(t *testing.T) {
 	if hasCall("systemctl", "disable", "--now", "faas-builderd.service") {
 		t.Errorf("already-masked builderd was sent through disable --now: %v", calls)
 	}
-	for _, service := range []string{"vmmd", "s3-gatewayd", "gatewayd"} {
+	for _, service := range []string{"vmmd", "gatewayd"} {
 		if _, err := os.Lstat(filepath.Join(unitDir, "faas-"+service+".service")); !os.IsNotExist(err) {
 			t.Errorf("stale %s unit still exists, err=%v", service, err)
 		}
 	}
+	if _, err := os.Stat(filepath.Join(unitDir, "faas-s3-gatewayd.service")); err != nil {
+		t.Errorf("optional s3-gatewayd unit changed: %v", err)
+	}
 	if target, err := os.Readlink(filepath.Join(unitDir, "faas-builderd.service")); err != nil || target != "/dev/null" {
 		t.Errorf("existing builderd mask was removed or changed, target=%q err=%v", target, err)
 	}
-	for _, service := range []string{"vmmd", "builderd", "s3-gatewayd", "gatewayd", "spool-sync"} {
+	for _, service := range []string{"vmmd", "builderd", "gatewayd", "spool-sync"} {
 		if !hasCall("systemctl", "mask", "--force", "faas-"+service+".service") {
 			t.Errorf("missing mask for omitted %s: %v", service, calls)
 		}
 		if !hasCall("systemctl", "reset-failed", "faas-"+service+".service") {
 			t.Errorf("missing failed-state reset for omitted %s: %v", service, calls)
 		}
+	}
+	if hasCall("systemctl", "disable", "--now", "faas-s3-gatewayd.service") ||
+		hasCall("systemctl", "mask", "--force", "faas-s3-gatewayd.service") {
+		t.Errorf("optional s3-gatewayd was reconciled as core topology residue: %v", calls)
 	}
 }
 
@@ -337,11 +344,11 @@ func TestReconcileSocketTopologyRetiresSocketOmittedFromRollback(t *testing.T) {
 	}
 }
 
-func TestManagedServiceNamesIncludesOptionalRegistry(t *testing.T) {
+func TestManagedServiceNamesExcludesOptionalRegistry(t *testing.T) {
 	managed := managedServiceNames()
 	for _, entry := range daemonunitspec.OptionalRegistry {
-		if !slices.Contains(managed, entry.Name) {
-			t.Errorf("managed service names omit optional daemon %q: %v", entry.Name, managed)
+		if slices.Contains(managed, entry.Name) {
+			t.Errorf("managed service names include operator-owned optional daemon %q: %v", entry.Name, managed)
 		}
 	}
 }
