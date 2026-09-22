@@ -2869,11 +2869,12 @@ const (
 type AlertFailureSource string
 
 const (
-	AlertFailureAny         AlertFailureSource = "any"
-	AlertFailureCron        AlertFailureSource = "cron"
-	AlertFailureQueue       AlertFailureSource = "queue"
-	AlertFailureDelayedTask AlertFailureSource = "delayed_task"
-	AlertFailureAsyncInvoke AlertFailureSource = "async_invoke"
+	AlertFailureAny            AlertFailureSource = "any"
+	AlertFailureCron           AlertFailureSource = "cron"
+	AlertFailureQueue          AlertFailureSource = "queue"
+	AlertFailureDelayedTask    AlertFailureSource = "delayed_task"
+	AlertFailureAsyncInvoke    AlertFailureSource = "async_invoke"
+	AlertFailureInboundWebhook AlertFailureSource = "inbound_webhook"
 )
 
 // AlertState is the cool-down state machine (issue #396 criterion 4).
@@ -3416,9 +3417,13 @@ type InvocationSource string
 
 const (
 	InvocationAsyncInvoke InvocationSource = "async_invoke"
-	InvocationQueue       InvocationSource = "queue"
-	InvocationDelayedTask InvocationSource = "delayed_task"
-	InvocationCron        InvocationSource = "cron"
+	// InvocationInboundWebhook is a provider-verified public callback that
+	// apid accepted durably before acknowledgement. Keeping it distinct from
+	// async_invoke gives the guest an unspoofable platform-owned source marker.
+	InvocationInboundWebhook InvocationSource = "inbound_webhook"
+	InvocationQueue          InvocationSource = "queue"
+	InvocationDelayedTask    InvocationSource = "delayed_task"
+	InvocationCron           InvocationSource = "cron"
 	// InvocationReplay (issue #315 / tier-2 DX) is the source
 	// stamped on a replayed invocation. The dashboard's
 	// per-invocation detail page renders this so a customer
