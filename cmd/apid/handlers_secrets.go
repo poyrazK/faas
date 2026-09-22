@@ -232,6 +232,15 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
+	if err != nil {
+		s.log.Error("secret set: invalidate snapshots", "app", app.Slug, "err", err)
+		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
+			"app_id": app.ID, "scope": scope, "name": key, "operation": "set",
+		})
+		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+		return
+	}
 	// Audit + log. VALUE never reaches slog. logsanitize.RedactValue is
 	// used defensively even though we never log req.Value directly — a
 	// future refactor that adds a "request echo" log line won't leak.
@@ -248,9 +257,10 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// the secret key (not the value); data.scope is the env-scope
 	// the row was written to (ADR-092 PR-B).
 	s.audit.Emit(r.Context(), "secret.set", &acct.ID, map[string]any{
-		"app_id": app.ID,
-		"name":   key,
-		"scope":  scope,
+		"app_id":                app.ID,
+		"name":                  key,
+		"scope":                 scope,
+		"snapshots_invalidated": invalidated,
 	})
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "set", scope, key)
 	writeJSON(w, http.StatusOK, struct {
@@ -429,6 +439,15 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("could not delete secret"))
 		return
 	}
+	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
+	if err != nil {
+		s.log.Error("secret delete: invalidate snapshots", "app", app.Slug, "err", err)
+		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
+			"app_id": app.ID, "scope": scope, "name": key, "operation": "delete",
+		})
+		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+		return
+	}
 	s.log.Info("secret deleted",
 		"app", app.Slug,
 		"key", logsanitize.Field(key),
@@ -438,9 +457,10 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 	// IAM-4 (ADR-035): record the secret delete. data.scope is the
 	// env-scope the row was deleted from (ADR-092 PR-B).
 	s.audit.Emit(r.Context(), "secret.deleted", &acct.ID, map[string]any{
-		"app_id": app.ID,
-		"name":   key,
-		"scope":  scope,
+		"app_id":                app.ID,
+		"name":                  key,
+		"scope":                 scope,
+		"snapshots_invalidated": invalidated,
 	})
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "delete", scope, key)
 	w.WriteHeader(http.StatusNoContent)

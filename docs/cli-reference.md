@@ -1973,6 +1973,7 @@ Set a sealed secret
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
+| `--restart` | restart the app and apply updated secrets now |  |
 
 ### secrets unset
 
@@ -1993,6 +1994,7 @@ Re-seal one secret under the current host key
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
+| `--restart` | restart the app and apply the rotated secret now |  |
 
 
 ## slo

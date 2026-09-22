@@ -2243,11 +2243,20 @@ func (s *server) enqueueExplicitAppWake(ctx context.Context, acct state.Account,
 	return wakeID, nil
 }
 
-// restartApp queues a park followed by a fresh wake from the newly captured
-// snapshot. The request is asynchronous because snapshot/VM work belongs to
-// schedd; the returned wake_id is propagated through the notification so the
-// caller can correlate the replacement wake with its timeline and audit row.
+// restartApp queues either a normal snapshot restart or, with ?fresh=true, a
+// runtime-configuration restart that destroys live VMs without capturing their
+// old process environment. The fresh variant uses a durable notification so an
+// accepted secret rotation cannot be lost across a LISTEN interruption.
 func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	fresh := false
+	if raw := r.URL.Query().Get("fresh"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			api.WriteProblem(w, api.ErrValidation("fresh must be true or false"))
+			return
+		}
+		fresh = parsed
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -2273,20 +2282,37 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 		s.log.Warn("app restart: uuid.NewV7 failed, fell back to v4", "app", app.ID, "err", err)
 	}
 	wakeID := wakeUUID.String()
-	if err := s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"kind":"restart","slug":"%s","app_id":"%s","wake_id":"%s"}`,
-			app.Slug, app.ID, wakeID)); err != nil {
+	channel := db.NotifyAppChanged
+	payload := fmt.Sprintf(`{"kind":"restart","slug":"%s","app_id":"%s","wake_id":"%s"}`,
+		app.Slug, app.ID, wakeID)
+	if fresh {
+		channel = db.NotifyRuntimeConfigRestart
+		payload = fmt.Sprintf(`{"app_id":"%s","wake_id":"%s"}`, app.ID, wakeID)
+	}
+	if err := s.notif.Notify(r.Context(), channel, payload); err != nil {
+		if fresh {
+			if releaseErr := releaseAppRestartClaim(r.Context(), s.store, app.ID); releaseErr != nil {
+				s.log.Error("runtime config restart: release failed claim", "app", app.ID, "err", releaseErr)
+			}
+			api.WriteProblem(w, api.ErrCapacity("could not queue runtime configuration restart"))
+			return
+		}
 		// pg_notify is a hint like the existing park/wake endpoints. The
 		// app remains safely parked and the reaper reconciles that state;
 		// preserve the accepted response and log the transient failure.
 		s.log.Warn("app restart: notify schedd failed", "app", app.ID, "err", err)
 	}
-	s.audit.Emit(r.Context(), "app.restart_requested", &acct.ID, map[string]any{
+	auditKind := "app.restart_requested"
+	if fresh {
+		auditKind = "app.runtime_config_restart_requested"
+	}
+	s.audit.Emit(r.Context(), auditKind, &acct.ID, map[string]any{
 		"app_id":  app.ID,
 		"slug":    app.Slug,
 		"wake_id": wakeID,
+		"fresh":   fresh,
 	})
-	s.log.Info("app restart requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID)
+	s.log.Info("app restart requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID, "fresh", fresh)
 	writeJSON(w, http.StatusAccepted, api.AppRestartResponse{WakeID: wakeID})
 }
 
@@ -2305,6 +2331,16 @@ func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool
 		return false, err
 	}
 	return true, nil
+}
+
+func releaseAppRestartClaim(ctx context.Context, store state.Store, appID string) error {
+	if atomicStore, ok := store.(appStatusCompareAndSetter); ok {
+		_, err := atomicStore.CompareAndSetAppStatus(ctx, appID, state.AppEvictedCold, state.AppActive)
+		return err
+	}
+	active := state.AppActive
+	_, err := store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &active})
+	return err
 }
 
 // renameApp swaps an app's slug atomically (issue #63). Body is

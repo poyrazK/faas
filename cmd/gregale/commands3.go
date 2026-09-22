@@ -173,6 +173,7 @@ func secretsSet(args []string) int {
 	app := fs.String("app", "", "app slug")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (defaults to linked project environment)")
+	restart := fs.Bool("restart", false, "restart app with the updated secrets")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret set:", err)
@@ -182,7 +183,7 @@ func secretsSet(args []string) int {
 		return 1
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale secrets set --app <slug> KEY=VALUE [...] [--from-stdin] [--scope <name>]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregale secrets set --app <slug> KEY=VALUE [...] [--from-stdin] [--scope <name>] [--restart]", "secrets")
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -247,33 +248,6 @@ func secretsSet(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
-	// Snapshot-rotation hint (ADR-020 D5): drive1's cleartext env is
-	// frozen into every parked snapshot. When a customer rotates a
-	// secret value, the old value remains visible to anyone restoring
-	// from a previously-parked snapshot — the new value reaches the
-	// guest only at the next wake. Surface that fact before the PUT
-	// so a hasty rotation doesn't leave the customer thinking the
-	// new value is live everywhere.
-	existing := map[string]bool{}
-	if list, err := client.ListSecretsWithScope(context.Background(), *app, *scope); err == nil {
-		for _, s := range list.Secrets {
-			existing[s.Key] = true
-		}
-	}
-	rotated := 0
-	for _, p := range pairs {
-		if existing[p.Key] {
-			rotated++
-		}
-	}
-	if rotated > 0 {
-		_, _ = fmt.Fprintf(osStdout,
-			"note: %d secret(s) already existed in scope=%q and are being rotated.\n"+
-				"  Any parked snapshots still hold the previous plaintext until the next wake.\n"+
-				"  Deploy, or call `gregale wake %s`, to force an overstamp.\n",
-			rotated, scopeOrDefault(*scope), *app)
-	}
-
 	for _, p := range pairs {
 		if err := client.SetSecretWithScope(context.Background(), *app, p.Key, p.Value, *scope); err != nil {
 			return printErr("Set "+p.Key+" failed", err)
@@ -301,6 +275,15 @@ func secretsSet(args []string) int {
 	// scopes posture — pkg/api/limits.go::SecretCountMax doc). Pass
 	// scope="" to ListSecretsWithScope for the cross-scope total.
 	printSecretsQuotaStamp(client, *app, *scope)
+	if *restart {
+		out, err := client.RestartAppFresh(context.Background(), *app)
+		if err != nil {
+			return printErr("Restart failed", err)
+		}
+		PrintOK(osStdout, "Restart requested after secret update (wake_id=%s)", out.WakeID)
+		return 0
+	}
+	PrintWarn(osStdout, "Updated secrets apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	return 0
 }
 
@@ -327,7 +310,9 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 		case strings.HasPrefix(a, "--app=") || strings.HasPrefix(a, "-app=") ||
 			strings.HasPrefix(a, "--scope=") || strings.HasPrefix(a, "-scope=") ||
 			a == "--from-stdin" || a == "-from-stdin" ||
-			strings.HasPrefix(a, "--from-stdin=") || strings.HasPrefix(a, "-from-stdin="):
+			strings.HasPrefix(a, "--from-stdin=") || strings.HasPrefix(a, "-from-stdin=") ||
+			a == "--restart" || a == "-restart" ||
+			strings.HasPrefix(a, "--restart=") || strings.HasPrefix(a, "-restart="):
 			flags = append(flags, a)
 		default:
 			pairs = append(pairs, a)

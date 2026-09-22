@@ -58,7 +58,9 @@ export class SecretsService {
   /**
    * Set a sealed secret.
    * Seals the plaintext value against the host X25519 recipient and
-   * persists the ciphertext. The plaintext never lands in PG.
+   * persists the ciphertext. The plaintext never lands in PG. Existing
+   * snapshots are invalidated; running processes retain their current
+   * environment until a cold wake or `POST /restart?fresh=true`.
    *
    * @returns AppSecretResponse The stored sealed-secret envelope.
    * @throws ApiError
@@ -172,7 +174,8 @@ export class SecretsService {
    * recipient and stamps the kid column. Emits `secret.rotated`
    * audit kind when the row already had a value; emits `secret.set`
    * when the row was previously empty (first-time rotation). The
-   * same byte cap as PUT applies (`SecretValueMaxBytes`).
+   * same byte cap as PUT applies (`SecretValueMaxBytes`). Existing
+   * snapshots are invalidated after the write.
    *
    * @returns RotateAppSecretResponse The rotated sealed-secret envelope.
    * @throws ApiError

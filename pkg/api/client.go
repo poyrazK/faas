@@ -2071,6 +2071,14 @@ func (c *Client) RestartApp(ctx context.Context, slug string) (AppRestartRespons
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restart", nil, &out)
 }
 
+// RestartAppFresh destroys live instances without snapshotting their process
+// memory, invalidates cached snapshots, and cold-wakes with current runtime
+// configuration. Use this after environment or secret mutations.
+func (c *Client) RestartAppFresh(ctx context.Context, slug string) (AppRestartResponse, error) {
+	var out AppRestartResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restart?fresh=true", nil, &out)
+}
+
 // PurgeAppCache asks the gateways to evict cached responses for an app. An
 // empty pathGlob purges the complete app cache; otherwise it is sent as the
 // optional path glob accepted by the API.

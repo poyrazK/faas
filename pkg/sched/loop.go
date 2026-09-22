@@ -715,6 +715,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	notif, err := db.SubscribeWithReconnect(ctx, l.pool, []string{
 		db.NotifyAppChanged,
 		db.NotifyAppWake,
+		db.NotifyRuntimeConfigRestart,
 		db.NotifyDeploymentChanged,
 		db.NotifySnapshotPrime,
 		db.NotifyCronRunNow,                      // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
@@ -1083,6 +1084,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			if n.Channel == db.NotifyAppWake {
 				if err := l.handleAppWake(ctx, n); err != nil {
 					l.log.Warn("sched: explicit app wake failed; leaving durable request pending", "err", err)
+					continue
+				}
+			} else if n.Channel == db.NotifyRuntimeConfigRestart {
+				if err := l.handleRuntimeConfigRestart(ctx, n); err != nil {
+					l.log.Warn("sched: runtime config restart failed; leaving durable request pending", "err", err)
 					continue
 				}
 			} else if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
@@ -1794,6 +1800,9 @@ func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification)
 	if n.Channel == db.NotifyAppWake {
 		return l.handleAppWake(ctx, n)
 	}
+	if n.Channel == db.NotifyRuntimeConfigRestart {
+		return l.handleRuntimeConfigRestart(ctx, n)
+	}
 	if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
 		if l.privateNetwork == nil {
 			return nil
@@ -1812,6 +1821,28 @@ func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification)
 		return l.privateNetworkPeering.Handle(ctx, n)
 	}
 	l.handleNotification(ctx, n)
+	return nil
+}
+
+func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification) error {
+	var payload struct {
+		AppID  string `json:"app_id"`
+		WakeID string `json:"wake_id"`
+	}
+	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
+		return fmt.Errorf("sched: decode runtime config restart payload: %w", err)
+	}
+	if payload.AppID == "" || payload.WakeID == "" {
+		return errors.New("sched: runtime config restart payload requires app_id and wake_id")
+	}
+	out, err := l.engine.RefreshRuntimeConfig(ctx, payload.AppID, payload.WakeID)
+	if err != nil {
+		return fmt.Errorf("sched: runtime config restart %s: %w", payload.WakeID, err)
+	}
+	if out.Instance != nil {
+		l.log.Info("sched: runtime configuration applied", "app", payload.AppID,
+			"wake_id", out.Instance.WakeID, "instance", out.Instance.InstanceID)
+	}
 	return nil
 }
 

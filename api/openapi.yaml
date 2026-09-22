@@ -197,7 +197,7 @@ tags:
   - name: audit
     description: Customer-facing security event timeline (IAM-4, ADR-035). Append-only; read-only.
   - name: secrets
-    description: Per-app sealed secrets (sealed at rest).
+    description: Per-app sealed secrets, injected into authorized app VMs at wake.
   - name: registry
     description: |
       Per-app private-registry Basic Auth credentials (issue #461 / ADR-062).
@@ -6594,13 +6594,23 @@ paths:
     post:
       tags: [apps]
       operationId: restartApp
-      summary: Restart an app from a fresh snapshot.
+      summary: Restart an app.
       description: |
         Parks every live instance, captures a fresh snapshot, and queues one
         replacement wake. Requests are single-flight per app; the returned
-        wake_id identifies the replacement wake in the wake timeline.
+        wake_id identifies the replacement wake in the wake timeline. With
+        `fresh=true`, destroys live instances without capturing process memory,
+        invalidates cached snapshots, and cold-boots with the latest environment
+        and secrets. The fresh path is durably queued.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: fresh
+          in: query
+          required: false
+          description: Cold-boot with current runtime configuration instead of capturing/restoring process memory.
+          schema:
+            type: boolean
+            default: false
       responses:
         '202':
           description: Restart accepted.
@@ -7469,7 +7479,9 @@ paths:
       summary: Set a sealed secret.
       description: |
         Seals the plaintext value against the host X25519 recipient and
-        persists the ciphertext. The plaintext never lands in PG.
+        persists the ciphertext. The plaintext never lands in PG. Existing
+        snapshots are invalidated; running processes retain their current
+        environment until a cold wake or `POST /restart?fresh=true`.
       requestBody:
         required: true
         description: "Secret payload — key name + plaintext. Sealed at rest; plaintext never returned."
@@ -7530,9 +7542,9 @@ paths:
   # secrets:write — losing the new plaintext is the loss-bearing
   # case; the old plaintext was never in a loss position because
   # the row being overwritten is already in the customer's hand.
-  # Any previously-parked snapshot still holds the prior
-  # plaintext until the next wake (drive1's cleartext env is
-  # frozen at park time).
+  # A successful mutation marks previously parked snapshots stale so the old
+  # plaintext cannot be restored. Running processes retain their environment
+  # until a cold wake or fresh restart.
 
   /v1/apps/{slug}/secrets/{key}/rotate:
     parameters:
@@ -7549,7 +7561,8 @@ paths:
         recipient and stamps the kid column. Emits `secret.rotated`
         audit kind when the row already had a value; emits `secret.set`
         when the row was previously empty (first-time rotation). The
-        same byte cap as PUT applies (`SecretValueMaxBytes`).
+        same byte cap as PUT applies (`SecretValueMaxBytes`). Existing
+        snapshots are invalidated after the write.
       requestBody:
         required: true
         description: "New plaintext value. Sealed at rest server-side; plaintext never returned."
@@ -8558,8 +8571,8 @@ paths:
         Persists the plaintext value verbatim in the app_envs table (no
         seal step). Env vars are non-sensitive runtime config by contract
         — credentials stay on `/v1/apps/{slug}/secrets/{key}`. Applies on
-        next wake (cold-boot OR snapshot-restore); the running instance
-        is unaffected.
+        next cold wake; cached snapshots are invalidated and the running
+        instance is unaffected. Use `POST /restart?fresh=true` to apply now.
 
         **ADR-090 PR-B scope filter.** The optional `?scope=`
         query param selects which scope to write. Omitted = the

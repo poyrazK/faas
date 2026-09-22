@@ -2177,6 +2177,75 @@ func TestRestartApp_EmitsCorrelatedAuditOnlyAfterAcceptedTransition(t *testing.T
 	assertLifecycleAudit(t, e, "app.restart_requested", dep.AppID, response.WakeID)
 }
 
+type runtimeConfigRestartNotifier struct {
+	channel string
+	payload string
+	err     error
+}
+
+func (n *runtimeConfigRestartNotifier) Notify(_ context.Context, channel, payload string) error {
+	n.channel = channel
+	n.payload = payload
+	return n.err
+}
+
+func (n *runtimeConfigRestartNotifier) Subscribe(_ context.Context, _ []string) (<-chan db.Notification, func(), error) {
+	return nil, func() {}, nil
+}
+
+func (n *runtimeConfigRestartNotifier) WaitFor(_ context.Context, _ string, _ func(string) bool, _ time.Duration) (string, error) {
+	return "", db.ErrWaitTimeout
+}
+
+func TestRestartAppFreshQueuesDurableRuntimeConfigRefresh(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	deployment := mustSeedDeployment(t, e, "refresh-secrets")
+	if err := e.store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
+		t.Fatalf("mark deployment live: %v", err)
+	}
+	notifier := &runtimeConfigRestartNotifier{}
+	e.s.notif = notifier
+
+	recorder := e.do(t, http.MethodPost, "/v1/apps/refresh-secrets/restart?fresh=true", nil, nil)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("fresh restart status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if notifier.channel != db.NotifyRuntimeConfigRestart {
+		t.Fatalf("notification channel = %q, want %q", notifier.channel, db.NotifyRuntimeConfigRestart)
+	}
+	var payload struct {
+		AppID  string `json:"app_id"`
+		WakeID string `json:"wake_id"`
+	}
+	if err := json.Unmarshal([]byte(notifier.payload), &payload); err != nil {
+		t.Fatalf("decode notification: %v", err)
+	}
+	if payload.AppID != deployment.AppID || payload.WakeID == "" {
+		t.Fatalf("notification = %+v, want app %s and wake id", payload, deployment.AppID)
+	}
+	assertLifecycleAudit(t, e, "app.runtime_config_restart_requested", deployment.AppID, payload.WakeID)
+}
+
+func TestRestartAppFreshReleasesClaimWhenDurableEnqueueFails(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	deployment := mustSeedDeployment(t, e, "refresh-enqueue-fails")
+	if err := e.store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
+		t.Fatalf("mark deployment live: %v", err)
+	}
+	e.s.notif = &runtimeConfigRestartNotifier{err: errors.New("outbox unavailable")}
+
+	recorder := e.do(t, http.MethodPost, "/v1/apps/refresh-enqueue-fails/restart?fresh=true", nil, nil)
+	assertProblem(t, recorder, http.StatusServiceUnavailable, api.CodeCapacity)
+	app, err := e.store.AppByID(t.Context(), deployment.AppID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if app.Status != state.AppActive {
+		t.Fatalf("app status = %q, want active after enqueue rollback", app.Status)
+	}
+	assertLifecycleAuditCount(t, e, "app.runtime_config_restart_requested", 0)
+}
+
 func assertLifecycleAudit(t *testing.T, e testEnv, kind, appID, wakeID string) {
 	t.Helper()
 	rows, err := e.store.ListEvents(t.Context(), e.acct.ID, 100)

@@ -1773,15 +1773,28 @@ func requestedWakeID(ctx context.Context) string {
 }
 
 // RestartApp parks every live instance for an app, then ensures one fresh
-// instance is awake from the snapshot just captured. The app-level lock
-// serializes the park phase with normal wake/reaper work; EnsureWake provides
-// the existing per-app single-flight and wake-rate-limit behavior for the
-// replacement instance.
+// instance is awake from the snapshot just captured.
+func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (CoordOutcome, error) {
+	return e.restartApp(ctx, appID, wakeID, false)
+}
+
+// RefreshRuntimeConfig destroys resident VMs without capturing process memory,
+// invalidates every cached snapshot, and cold-wakes the app with its current
+// environment and secrets. Restoring or snapshotting here would preserve the
+// old process environment and defeat apply-now semantics.
+func (e *Engine) RefreshRuntimeConfig(ctx context.Context, appID, wakeID string) (CoordOutcome, error) {
+	return e.restartApp(ctx, appID, wakeID, true)
+}
+
+// restartApp serializes both restart policies behind the same app-level and
+// notification single-flight. EnsureWake retains the existing admission,
+// ownership, wake-correlation, and rate-limit behavior for the replacement.
 //
-// This is invoked by schedd after apid emits app_changed{kind:"restart"}.
-// Apid writes the initial park intent; schedd owns instance transitions and
-// snapshot/VM operations, then reactivates the app before the replacement wake.
-func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (out CoordOutcome, err error) {
+// This is invoked by schedd after apid emits app_changed{kind:"restart"} or
+// the durable runtime_config_restart event. Apid writes the initial park
+// intent; schedd owns instance transitions and snapshot/VM operations, then
+// reactivates the app before the replacement wake.
+func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRuntimeConfig bool) (out CoordOutcome, err error) {
 	if e == nil || appID == "" {
 		return CoordOutcome{}, fmt.Errorf("sched: restart app: empty app id")
 	}
@@ -1827,6 +1840,9 @@ func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (out Coor
 		return CoordOutcome{}, fmt.Errorf("sched: restart app: load app %s: %w", appID, err)
 	}
 	if !e.ownsApp(app) {
+		if refreshRuntimeConfig {
+			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: app %s is owned by node %s", appID, app.NodeID)
+		}
 		return CoordOutcome{}, nil
 	}
 	if app.Status != state.AppActive && app.Status != state.AppEvictedCold {
@@ -1865,18 +1881,41 @@ func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (out Coor
 			return CoordOutcome{}, fmt.Errorf("sched: restart app: reload instance %s: %w", candidate.ID, readErr)
 		}
 		switch state.State(fresh.State) {
-		case state.StateRunning:
+		case state.StateRunning, state.StateWarm:
+			if refreshRuntimeConfig {
+				if destroyErr := e.destroyForRuntimeConfigRestart(ctx, fresh); destroyErr != nil {
+					release()
+					return CoordOutcome{}, fmt.Errorf("sched: restart app: destroy instance %s: %w", fresh.ID, destroyErr)
+				}
+				continue
+			}
+			if state.State(fresh.State) == state.StateWarm {
+				continue
+			}
 			if parkErr := e.snapshotAndPark(ctx, fresh); parkErr != nil {
 				release()
 				return CoordOutcome{}, fmt.Errorf("sched: restart app: park instance %s: %w", fresh.ID, parkErr)
 			}
 		case state.StateWaking, state.StateColdBooting:
+			if refreshRuntimeConfig {
+				if destroyErr := e.destroyForRuntimeConfigRestart(ctx, fresh); destroyErr != nil {
+					release()
+					return CoordOutcome{}, fmt.Errorf("sched: restart app: destroy instance %s: %w", fresh.ID, destroyErr)
+				}
+				continue
+			}
 			if destroyErr := e.timedDestroy(ctx, fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
 				release()
 				return CoordOutcome{}, fmt.Errorf("sched: restart app: destroy instance %s: %w", fresh.ID, destroyErr)
 			}
 			e.ledger.Release(fresh.ID)
 			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+		}
+	}
+	if refreshRuntimeConfig {
+		if _, err := state.InvalidateAppSnapshots(ctx, e.store, appID); err != nil {
+			release()
+			return CoordOutcome{}, fmt.Errorf("sched: restart app: invalidate snapshots for %s: %w", appID, err)
 		}
 	}
 	active := state.AppActive
@@ -1888,13 +1927,40 @@ func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (out Coor
 
 	out, err = e.EnsureWake(withRequestedWakeID(ctx, wakeID), appID, TriggerAppRestart)
 	if err == nil && out.Instance != nil && e.audit != nil {
-		e.audit.Emit(ctx, "app.restarted", &app.AccountID, map[string]any{
+		auditKind := "app.restarted"
+		if refreshRuntimeConfig {
+			auditKind = "app.runtime_config_restarted"
+		}
+		e.audit.Emit(ctx, auditKind, &app.AccountID, map[string]any{
 			"app_id":  appID,
 			"slug":    app.Slug,
 			"wake_id": out.Instance.WakeID,
+			"fresh":   refreshRuntimeConfig,
 		})
 	}
 	return out, err
+}
+
+func (e *Engine) destroyForRuntimeConfigRestart(ctx context.Context, instance state.Instance) error {
+	if err := e.timedDestroy(ctx, instance.NodeID, instance.ID, DestroyTimeout); err != nil {
+		return err
+	}
+	changed, err := e.transitionWithKindCAS(ctx, instance.ID, instance.AppID, state.StateStopped,
+		"runtime_config_restart", "runtime_configuration_changed")
+	if err != nil {
+		return err
+	}
+	if !changed {
+		current, readErr := e.store.InstanceByID(ctx, instance.ID)
+		if readErr != nil {
+			return readErr
+		}
+		if state.State(current.State) != state.StateStopped {
+			return fmt.Errorf("instance state remained %s", current.State)
+		}
+	}
+	e.ledger.Release(instance.ID)
+	return nil
 }
 
 func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, ins state.Instance) bool {

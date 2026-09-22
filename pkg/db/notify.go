@@ -333,6 +333,9 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         "lifecycle_changed":bool} // lifecycle fields changed
 //	NotifyAppWake           {"app_id":uuid,"wake_id":uuid}
 //	                         apid → schedd: durable explicit pre-warm request.
+//	NotifyRuntimeConfigRestart {"app_id":uuid,"wake_id":uuid}
+//	                         apid → schedd: durable destroy-without-snapshot
+//	                         followed by a cold wake.
 //	NotifyDeploymentChanged {"kind":"image|tarball|dockerfile|function|
 //	                         rollback|superseded",
 //	                         "app_id":uuid, "deployment_id":uuid,
@@ -488,6 +491,10 @@ const (
 	// the original rotation contract.
 	NotifySecretRotated = "secret_rotated"
 	NotifyAppWake       = "app_wake"
+	// NotifyRuntimeConfigRestart applies a changed environment or secret to a
+	// live app. It is deliberately separate from app_changed/restart: restoring
+	// or capturing process memory would preserve the previous environment.
+	NotifyRuntimeConfigRestart = "runtime_config_restart"
 	// NotifyPrivateNetworkAttachmentChanged carries the durable cleanup
 	// event emitted when an app attachment is detached. Unlike the broad
 	// app_changed stream, this channel is replayed so a schedd restart or

@@ -598,7 +598,7 @@ func TestCmdEnvPush_ForwardsEveryKeyValue(t *testing.T) {
 	if !strings.Contains(stdout.String(), "A set") || !strings.Contains(stdout.String(), "B set") {
 		t.Errorf("stdout should confirm both keys set: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "apply on the next wake") {
+	if !strings.Contains(stdout.String(), "apply on the next cold wake") {
 		t.Errorf("stdout should explain default next-wake semantics: %q", stdout.String())
 	}
 }
@@ -645,11 +645,14 @@ func TestCmdEnvPush_RestartAfterSuccessfulUpdate(t *testing.T) {
 	if calls[len(calls)-1] != "restart" {
 		t.Fatalf("last request = %q, want restart after all PUTs", calls[len(calls)-1])
 	}
+	if sink.lastQuery != "fresh=true" {
+		t.Fatalf("restart query = %q, want fresh=true", sink.lastQuery)
+	}
 	if !strings.Contains(stdout.String(), "Restart requested after env update") ||
 		!strings.Contains(stdout.String(), "wake-env-123") {
 		t.Errorf("stdout should include restart correlation id: %q", stdout.String())
 	}
-	if strings.Contains(stdout.String(), "apply on the next wake") {
+	if strings.Contains(stdout.String(), "apply on the next cold wake") {
 		t.Errorf("--restart output should not claim lazy next-wake semantics: %q", stdout.String())
 	}
 }

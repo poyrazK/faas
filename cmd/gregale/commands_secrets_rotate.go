@@ -46,12 +46,18 @@ func secretsRotate(args []string) int {
 	app := fs.String("app", "", "app slug")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE from stdin (one pair)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to rotate (defaults to linked project environment)")
-	if err := fs.Parse(args); err != nil {
+	restart := fs.Bool("restart", false, "restart app with the rotated secret")
+	orderedArgs, err := reorderSecretsSetArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "secret rotate:", err)
+		return 1
+	}
+	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
 	if *app == "" {
 		PrintUsage(os.Stderr,
-			"usage: gregale secrets rotate --app <slug> KEY=VALUE [--from-stdin] [--scope <name>]", "secrets")
+			"usage: gregale secrets rotate --app <slug> KEY=VALUE [--from-stdin] [--scope <name>] [--restart]", "secrets")
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -111,16 +117,6 @@ func secretsRotate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
-	// Same parked-snapshot caveat as `secrets set` (commands3.go
-	// rotation-hint). Any previously-parked snapshot still holds
-	// the prior plaintext until the next wake. Surface that fact
-	// so the customer doesn't think the new value is live
-	// everywhere.
-	_, _ = fmt.Fprintf(osStdout,
-		"note: rotating %s in scope=%q. Any parked snapshots still hold the previous plaintext until the next wake.\n"+
-			"  Deploy, or call `gregale wake %s`, to force an overstamp.\n",
-		pair.Key, scopeOrDefault(*scope), *app)
-
 	resp, err := client.RotateSecretWithScope(context.Background(), *app, pair.Key, pair.Value, *scope)
 	if err != nil {
 		return printErr("Rotate "+pair.Key+" failed", err)
@@ -136,5 +132,14 @@ func secretsRotate(args []string) int {
 	}
 	PrintOK(osStdout, "%s rotated at %s (kid %s)",
 		resp.Key, resp.RotatedAt, shortKid)
+	if *restart {
+		out, err := client.RestartAppFresh(context.Background(), *app)
+		if err != nil {
+			return printErr("Restart failed", err)
+		}
+		PrintOK(osStdout, "Restart requested after secret rotation (wake_id=%s)", out.WakeID)
+		return 0
+	}
+	PrintWarn(osStdout, "The rotated secret applies on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	return 0
 }

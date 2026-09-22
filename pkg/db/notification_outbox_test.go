@@ -3,7 +3,7 @@ package db
 import "testing"
 
 func TestDurableNotificationChannelSet(t *testing.T) {
-	for _, channel := range []string{NotifyAppWake, NotifyPrivateNetworkAttachmentChanged, NotifyPrivateNetworkChanged, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady} {
+	for _, channel := range []string{NotifyAppWake, NotifyRuntimeConfigRestart, NotifyPrivateNetworkAttachmentChanged, NotifyPrivateNetworkChanged, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady} {
 		if !IsDurableNotificationChannel(channel) {
 			t.Fatalf("%q is not marked durable", channel)
 		}
