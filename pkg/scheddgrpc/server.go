@@ -669,9 +669,10 @@ func (s *Server) ReportActivity(ctx context.Context, req *scheddpb.ReportActivit
 	// ownership is per-instance (load the parent app + compare
 	// node_id). A bad-routed touch is dropped silently via the
 	// for-loop below rather than failing the whole batch —
-	// the gateway already partitions touches by owner via
-	// instance.node_id before dialling, so this loop is the
-	// second-line check (defence-in-depth).
+	// the gateway already partitions touches by the app's owner
+	// (apps.node_id, not the instance's host node, issue #3359)
+	// before dialling, so this loop is the second-line check
+	// (defence-in-depth).
 	in := req.GetTouches()
 	touches := make([]state.InstanceTouch, 0, len(in))
 	for _, t := range in {
