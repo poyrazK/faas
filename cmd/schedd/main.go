@@ -1637,6 +1637,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// from terminal_at and obsolete PARKED history from parked_at after
 		// cfg.RetentionDuration (default api.DefaultInstanceRetention).
 		WithRetention(sched.NewRetention(store, log).WithRetention(time.Duration(cfg.RetentionDuration))).
+		// Failed Events projection retention shares the hourly retention ticker;
+		// source rows and append-only audit events remain untouched.
+		WithDeadLetterRetention(sched.NewDeadLetterRetention(store, log).
+			WithRetention(time.Duration(cfg.DeadLetterRetentionDuration)).
+			WithOpsMetrics(ops)).
 		// ADR-134 PR-B / EPIC #1278: expire async invocations and route
 		// deadline-breached rows through their configured failure destination.
 		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).

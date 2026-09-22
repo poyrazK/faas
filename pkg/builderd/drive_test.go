@@ -4,6 +4,8 @@ package builderd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -80,8 +82,13 @@ func TestCopySourceTarball_RoundTrip(t *testing.T) {
 	if err := os.WriteFile(src, payload, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	if err := copySourceTarball(mp, src); err != nil {
-		t.Fatalf("copySourceTarball: %v", err)
+	digest, err := copySourceTarballAndHash(mp, src)
+	if err != nil {
+		t.Fatalf("copySourceTarballAndHash: %v", err)
+	}
+	wantDigest := sha256.Sum256(payload)
+	if digest != hex.EncodeToString(wantDigest[:]) {
+		t.Fatalf("staged digest = %q, want %x", digest, wantDigest)
 	}
 	got, err := os.ReadFile(filepath.Join(mp, "build", "src.tar"))
 	if err != nil {

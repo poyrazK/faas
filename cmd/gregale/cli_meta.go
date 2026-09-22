@@ -1670,7 +1670,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "mirror",
 		DocSlug: "mirror",
-		Short:   "Manage traffic mirroring (mirror list|create|info|update|rm|summary --app <slug>; issue #72 / ADR-124; Pro/Scale only)",
+		Short:   "Manage traffic mirroring and sanitized replay (Pro/Scale only)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List mirror rules", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -1680,7 +1680,7 @@ var cliCommands = []cliCommand{
 				{Name: "source", Short: "source deployment id or vN revision (live)", Req: true, Value: "ID"},
 				{Name: "mirror", Short: "mirror deployment id or vN revision (live; same app)", Req: true, Value: "ID"},
 				{Name: "percent", Short: "fan-out percent in [0, 100]; 100 = every request", Value: "N"},
-				{Name: "include-body", Short: "include request/response bodies in the comparison ledger"},
+				{Name: "include-body", Short: "include request/response body hashes in the comparison ledger"},
 				{Name: "redact-header", Short: "extra header name to redact (repeatable)", Value: "NAME"},
 			}},
 			{Name: "info", Short: "Show one mirror rule", Flags: []cliFlag{
@@ -1693,8 +1693,8 @@ var cliCommands = []cliCommand{
 				{Name: "percent", Short: "new percent in [0, 100]", Value: "N"},
 				{Name: "enable", Short: "enable the rule (mutually exclusive with --disable)"},
 				{Name: "disable", Short: "disable the rule (mutually exclusive with --enable)"},
-				{Name: "include-body", Short: "enable body capture (mutually exclusive with --no-include-body)"},
-				{Name: "no-include-body", Short: "disable body capture"},
+				{Name: "include-body", Short: "enable body-hash comparison (mutually exclusive with --no-include-body)"},
+				{Name: "no-include-body", Short: "disable body-hash comparison"},
 				{Name: "redact-header", Short: "extra header name to redact (repeatable)", Value: "NAME"},
 				{Name: "clear-redact", Short: "clear the customer's redact_headers list (drop to always-stripped only)"},
 			}},
@@ -1706,6 +1706,12 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "id", Short: "mirror rule id", Req: true, Value: "ID"},
 				{Name: "window", Short: "summary window: 1h | 24h | 7d (default 1h)", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
+			}},
+			{Name: "replay", Short: "Replay a sanitized historical request corpus", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "id", Short: "mirror rule id", Req: true, Value: "ID"},
+				{Name: "file", Short: "corpus JSON file, or - for stdin", Req: true, Value: "PATH"},
+				{Name: "allow-unsafe-methods", Short: "allow POST, PUT, PATCH, and DELETE"},
 			}},
 		},
 	},

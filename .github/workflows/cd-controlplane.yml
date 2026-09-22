@@ -228,7 +228,7 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE_ROOT="${RUNNER_TEMP}/faas-release/${RELEASE_ID}"
-          mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/tmpfiles.d" "${BUNDLE_ROOT}/prometheus" "${BUNDLE_ROOT}/statuspage"
+          mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/optional-systemd" "${BUNDLE_ROOT}/tmpfiles.d" "${BUNDLE_ROOT}/prometheus" "${BUNDLE_ROOT}/statuspage"
           PROM_BOX_LABEL="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" hostname)"
           ansible localhost -i localhost, -c local \
             -e @deploy/ansible/roles/prometheus/defaults/main.yml \
@@ -303,6 +303,12 @@ jobs:
             fi
             install -m 0644 "${src}" "${BUNDLE_ROOT}/systemd/${unit}"
           done
+          # Optional services are not members of the core activation set, but
+          # a configured service still needs its unit updated with the release
+          # and recoverable if an older deployctl incorrectly masked it.
+          install -m 0644 \
+            deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service \
+            "${BUNDLE_ROOT}/optional-systemd/faas-s3-gatewayd.service"
           # Files required before deployctl can activate outboundd. Keep the
           # role/billing overrides inside the signed bundle so the standalone
           # control-plane path applies the same public-beta posture as Ansible.
@@ -883,20 +889,56 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            root@${{ env.CP_HOST }} 'set -euo pipefail
-            if ! systemctl is-enabled --quiet faas-s3-gatewayd.service; then
-              echo "faas-s3-gatewayd is not enabled; optional object storage remains unchanged"
+            root@${{ env.CP_HOST }} "bash -s -- '${RELEASE_ID}'" <<'REMOTE'
+          set -euo pipefail
+          release_id="$1"
+          registry=/etc/faas/object-storage.json
+          apid_dropin=/etc/systemd/system/faas-apid.service.d/99-faas-object-storage.conf
+          source_unit="/opt/faas/releases/${release_id}/optional-systemd/faas-s3-gatewayd.service"
+          installed_unit=/etc/systemd/system/faas-s3-gatewayd.service
+
+          # The Ansible role creates both markers only for an explicitly
+          # enabled provider. A merely disabled unit is not enough evidence to
+          # turn storage on during an unrelated platform release.
+          if [[ ! -s "$registry" || ! -s "$apid_dropin" ]]; then
+            echo "faas-s3-gatewayd is not configured; optional object storage remains unchanged"
+            exit 0
+          fi
+          test -f "$source_unit"
+
+          # deployctl releases before this fix treated the optional daemon as
+          # opposite-role residue, replacing its unit with /dev/null. Recover
+          # that exact state but refuse to overwrite any unexpected symlink or
+          # non-regular operator-owned path.
+          if [[ -L "$installed_unit" ]]; then
+            [[ "$(readlink "$installed_unit")" == /dev/null ]] || {
+              echo "unexpected faas-s3-gatewayd unit symlink" >&2
+              exit 1
+            }
+            rm -f -- "$installed_unit"
+          elif [[ -e "$installed_unit" && ! -f "$installed_unit" ]]; then
+            echo "faas-s3-gatewayd unit path is not a regular file" >&2
+            exit 1
+          fi
+          staged_unit="${installed_unit}.new-${release_id}"
+          trap 'rm -f -- "$staged_unit"' EXIT
+          install -o root -g root -m 0644 "$source_unit" "$staged_unit"
+          mv -Tf "$staged_unit" "$installed_unit"
+          trap - EXIT
+
+          systemctl daemon-reload
+          systemctl unmask faas-s3-gatewayd.service
+          systemctl enable faas-s3-gatewayd.service
+          systemctl restart faas-s3-gatewayd.service
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:9096/readyz >/dev/null; then
               exit 0
             fi
-            systemctl restart faas-s3-gatewayd.service
-            for attempt in $(seq 1 30); do
-              if curl --fail --silent --max-time 2 http://127.0.0.1:9096/readyz >/dev/null; then
-                exit 0
-              fi
-              sleep 2
-            done
-            journalctl -u faas-s3-gatewayd.service -n 100 --no-pager >&2
-            exit 1'
+            sleep 2
+          done
+          journalctl -u faas-s3-gatewayd.service -n 100 --no-pager >&2
+          exit 1
+          REMOTE
 
       - name: Accept activated release SBOM baseline
         run: |

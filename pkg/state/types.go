@@ -4188,14 +4188,15 @@ type MirrorInvocationResult struct {
 // = mirror is slower). `P99LatencyDiffMs` is signed and is the
 // operator's drift signal.
 type MirrorSummary struct {
-	TotalInvocations  int
-	StatusDiffCount   int
-	SchemaDiffCount   int
-	BodyDiffCount     int
-	MeanLatencyDiffMs int
-	P99LatencyDiffMs  int
-	CrashCount        int
-	WindowSeconds     int
+	TotalInvocations     int
+	ChangedResponseCount int
+	StatusDiffCount      int
+	SchemaDiffCount      int
+	BodyDiffCount        int
+	MeanLatencyDiffMs    int
+	P99LatencyDiffMs     int
+	CrashCount           int
+	WindowSeconds        int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
