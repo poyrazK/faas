@@ -1158,7 +1158,7 @@ Per-app edge rules (edge-rules list|create|get|update|rm --app &lt;slug&gt;)
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--kind <value>` | rule kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` |
+| `--kind <value>` | rule kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
 
 ### edge-rules list
 
@@ -1167,7 +1167,7 @@ List edge rules
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | filter to a single app slug |  |
-| `--kind <value>` | filter to a single kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` |
+| `--kind <value>` | filter to a single kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
 
 ### edge-rules create
 
@@ -1413,7 +1413,13 @@ Export a redacted incident bundle with coverage (bundle &lt;slug&gt; &lt;request
 
 Look up a W3C trace through the account trace index
 
-`gregale trace <trace-id>`
+`gregale trace <trace-id> [--watch] [--interval <DURATION>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--watch` | poll until linked invocations reach a terminal state |  |
+| `--interval <DURATION>` | poll interval (default 1s) |  |
+| `--timeout <DURATION>` | maximum watch duration (default 5m) |  |
 
 
 ## invitations

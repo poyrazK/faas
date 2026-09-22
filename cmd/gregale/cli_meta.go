@@ -1120,9 +1120,14 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"[flags]", "<slug>", "[<request-id>]"},
 	},
 	{
-		Name:        "trace",
-		DocSlug:     "trace",
-		Short:       "Look up a W3C trace through the account trace index",
+		Name:    "trace",
+		DocSlug: "trace",
+		Short:   "Look up a W3C trace through the account trace index",
+		Flags: []cliFlag{
+			{Name: "watch", Short: "poll until linked invocations reach a terminal state"},
+			{Name: "interval", Short: "poll interval (default 1s)", Value: "DURATION"},
+			{Name: "timeout", Short: "maximum watch duration (default 5m)", Value: "DURATION"},
+		},
 		Positionals: []string{"<trace-id>"},
 	},
 	{

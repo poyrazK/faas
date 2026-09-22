@@ -6972,6 +6972,18 @@ type EdgeRuleRespondAction struct {
 	Body       json.RawMessage `json:"body,omitempty"`
 }
 
+// EdgeRuleAsyncAction has no knobs in v1. The durable invocation subsystem
+// supplies retry, deadline, retention, and payload limits from the app and
+// account plan, keeping an async route's behavior aligned with /invoke/async.
+type EdgeRuleAsyncAction struct{}
+
+func (a *EdgeRuleAsyncAction) Validate() *Problem {
+	if a == nil {
+		return ErrValidation("async action is required")
+	}
+	return nil
+}
+
 func (a *EdgeRuleRespondAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("respond action is required")
