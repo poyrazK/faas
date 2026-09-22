@@ -831,11 +831,12 @@ var cliCommands = []cliCommand{
 			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
 			{Name: "canary-stages", Short: "custom percent@duration canary stages", Value: "STAGES"},
-			{Name: "safe", Short: "deploy with the balanced health-gated rollout and first-wake 5xx rollback (Pro/Scale only)"},
+			{Name: "safe", Short: "deploy with the balanced health-gated rollout and first-wake 5xx rollback"},
 			{Name: "require-authn", Short: "require bearer auth on every request"},
 			{Name: "no-require-authn", Short: "drop the token requirement"},
 			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
 			{Name: "traffic-percent", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
+			{Name: "no-traffic", Short: "stage with 0% production traffic and print the preview URL"},
 			{Name: "no-triggers", Short: "skip gregale.yaml trigger fan-out"},
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
@@ -1657,7 +1658,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "traffic",
 		DocSlug: "traffic",
-		Short:   "Manage deployment traffic split (issue #556; Pro/Scale only)",
+		Short:   "Manage deployment traffic split (available on every plan)",
 		Subcommands: []cliSub{
 			{
 				Name:  "set",
@@ -1677,7 +1678,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "mirror",
 		DocSlug: "mirror",
-		Short:   "Manage traffic mirroring (mirror list|create|info|update|rm|summary --app <slug>; issue #72 / ADR-124; Pro/Scale only)",
+		Short:   "Manage traffic mirroring and sanitized replay (Pro/Scale only)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List mirror rules", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -1687,7 +1688,7 @@ var cliCommands = []cliCommand{
 				{Name: "source", Short: "source deployment id or vN revision (live)", Req: true, Value: "ID"},
 				{Name: "mirror", Short: "mirror deployment id or vN revision (live; same app)", Req: true, Value: "ID"},
 				{Name: "percent", Short: "fan-out percent in [0, 100]; 100 = every request", Value: "N"},
-				{Name: "include-body", Short: "include request/response bodies in the comparison ledger"},
+				{Name: "include-body", Short: "include request/response body hashes in the comparison ledger"},
 				{Name: "redact-header", Short: "extra header name to redact (repeatable)", Value: "NAME"},
 			}},
 			{Name: "info", Short: "Show one mirror rule", Flags: []cliFlag{
@@ -1700,8 +1701,8 @@ var cliCommands = []cliCommand{
 				{Name: "percent", Short: "new percent in [0, 100]", Value: "N"},
 				{Name: "enable", Short: "enable the rule (mutually exclusive with --disable)"},
 				{Name: "disable", Short: "disable the rule (mutually exclusive with --enable)"},
-				{Name: "include-body", Short: "enable body capture (mutually exclusive with --no-include-body)"},
-				{Name: "no-include-body", Short: "disable body capture"},
+				{Name: "include-body", Short: "enable body-hash comparison (mutually exclusive with --no-include-body)"},
+				{Name: "no-include-body", Short: "disable body-hash comparison"},
 				{Name: "redact-header", Short: "extra header name to redact (repeatable)", Value: "NAME"},
 				{Name: "clear-redact", Short: "clear the customer's redact_headers list (drop to always-stripped only)"},
 			}},
@@ -1713,6 +1714,12 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "id", Short: "mirror rule id", Req: true, Value: "ID"},
 				{Name: "window", Short: "summary window: 1h | 24h | 7d (default 1h)", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
+			}},
+			{Name: "replay", Short: "Replay a sanitized historical request corpus", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "id", Short: "mirror rule id", Req: true, Value: "ID"},
+				{Name: "file", Short: "corpus JSON file, or - for stdin", Req: true, Value: "PATH"},
+				{Name: "allow-unsafe-methods", Short: "allow POST, PUT, PATCH, and DELETE"},
 			}},
 		},
 	},

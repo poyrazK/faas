@@ -271,6 +271,13 @@ func (s *server) getAppErrorSample(w http.ResponseWriter, r *http.Request, acct 
 	if row.DeploymentID != nil {
 		item.DeploymentID = row.DeploymentID.String()
 	}
+	item.InstanceID = row.InstanceID
+	item.NodeID = row.NodeID
+	item.Region = row.Region
+	item.CommitSHA = row.CommitSHA
+	item.DeploymentTag = row.DeploymentTag
+	item.DeploymentCreatedAt = row.DeploymentCreatedAt
+	item.ImageDigest = row.ImageDigest
 	writeJSON(w, http.StatusOK, api.AppErrorSampleResponse{
 		AppErrorRequestItem: item,
 		HeadersSample:       headers,

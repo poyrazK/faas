@@ -172,7 +172,11 @@ func (s *server) renderAppMirrors(w http.ResponseWriter, r *http.Request, log *s
 					data.ErrorMessage = "Some mirror summary counters are temporarily unavailable."
 					log.Warn("dashboard mirrors: summary", "account_id", acct.ID, "app_id", app.ID, "rule_id", row.ID, "err", summaryErr)
 				} else {
-					item.Summary = dashboard.MirrorSummaryPageItem{TotalInvocations: int64(summary.TotalInvocations), StatusDiffCount: int64(summary.StatusDiffCount), SchemaDiffCount: int64(summary.SchemaDiffCount), BodyDiffCount: int64(summary.BodyDiffCount), MeanLatencyDiffMs: int64(summary.MeanLatencyDiffMs), P99LatencyDiffMs: int64(summary.P99LatencyDiffMs), CrashCount: int64(summary.CrashCount), WindowLabel: "last 1h"}
+					changedPercent := 0.0
+					if summary.TotalInvocations > 0 {
+						changedPercent = float64(summary.ChangedResponseCount) * 100 / float64(summary.TotalInvocations)
+					}
+					item.Summary = dashboard.MirrorSummaryPageItem{TotalInvocations: int64(summary.TotalInvocations), ChangedResponseCount: int64(summary.ChangedResponseCount), ChangedResponsePct: changedPercent, StatusDiffCount: int64(summary.StatusDiffCount), SchemaDiffCount: int64(summary.SchemaDiffCount), BodyDiffCount: int64(summary.BodyDiffCount), MeanLatencyDiffMs: int64(summary.MeanLatencyDiffMs), P99LatencyDiffMs: int64(summary.P99LatencyDiffMs), CrashCount: int64(summary.CrashCount), WindowLabel: "last 1h"}
 				}
 				data.Rules = append(data.Rules, item)
 			}

@@ -46,6 +46,18 @@ class DebugTelemetryRequestItem:
     """Opaque instance identifier that served the request; omitted when no target was reached."""
     consumer_id: UUID | Unset = UNSET
     """Stable API consumer identity; omitted for anonymous or legacy traffic."""
+    node_id: str | Unset = UNSET
+    """Compute node that served the request."""
+    region: str | Unset = UNSET
+    """Region associated with the deployment target."""
+    commit_sha: str | Unset = UNSET
+    """Source revision associated with the deployment."""
+    deployment_tag: str | Unset = UNSET
+    """Deployment tag associated with the request."""
+    deployment_created_at: str | Unset = UNSET
+    """Deployment creation timestamp supplied by the platform."""
+    image_digest: str | Unset = UNSET
+    """Immutable image/artifact digest associated with the deployment."""
     guest: DebugGuestExecutionEvidence | Unset = UNSET
     """Bounded, platform-owned runtime execution evidence. Omitted when the runner signal was unavailable."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -83,6 +95,18 @@ class DebugTelemetryRequestItem:
         if not isinstance(self.consumer_id, Unset):
             consumer_id = str(self.consumer_id)
 
+        node_id = self.node_id
+
+        region = self.region
+
+        commit_sha = self.commit_sha
+
+        deployment_tag = self.deployment_tag
+
+        deployment_created_at = self.deployment_created_at
+
+        image_digest = self.image_digest
+
         guest: dict[str, Any] | Unset = UNSET
         if not isinstance(self.guest, Unset):
             guest = self.guest.to_dict()
@@ -110,6 +134,18 @@ class DebugTelemetryRequestItem:
             field_dict["instance_id"] = instance_id
         if consumer_id is not UNSET:
             field_dict["consumer_id"] = consumer_id
+        if node_id is not UNSET:
+            field_dict["node_id"] = node_id
+        if region is not UNSET:
+            field_dict["region"] = region
+        if commit_sha is not UNSET:
+            field_dict["commit_sha"] = commit_sha
+        if deployment_tag is not UNSET:
+            field_dict["deployment_tag"] = deployment_tag
+        if deployment_created_at is not UNSET:
+            field_dict["deployment_created_at"] = deployment_created_at
+        if image_digest is not UNSET:
+            field_dict["image_digest"] = image_digest
         if guest is not UNSET:
             field_dict["guest"] = guest
 
@@ -158,6 +194,18 @@ class DebugTelemetryRequestItem:
         else:
             consumer_id = UUID(_consumer_id)
 
+        node_id = d.pop("node_id", UNSET)
+
+        region = d.pop("region", UNSET)
+
+        commit_sha = d.pop("commit_sha", UNSET)
+
+        deployment_tag = d.pop("deployment_tag", UNSET)
+
+        deployment_created_at = d.pop("deployment_created_at", UNSET)
+
+        image_digest = d.pop("image_digest", UNSET)
+
         _guest = d.pop("guest", UNSET)
         guest: DebugGuestExecutionEvidence | Unset
         if isinstance(_guest, Unset):
@@ -179,6 +227,12 @@ class DebugTelemetryRequestItem:
             wake_id=wake_id,
             instance_id=instance_id,
             consumer_id=consumer_id,
+            node_id=node_id,
+            region=region,
+            commit_sha=commit_sha,
+            deployment_tag=deployment_tag,
+            deployment_created_at=deployment_created_at,
+            image_digest=image_digest,
             guest=guest,
         )
 
