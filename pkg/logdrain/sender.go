@@ -291,15 +291,14 @@ func waitForQueueWake(ctx context.Context, wake <-chan struct{}, retry time.Dura
 }
 
 func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) {
+	if ctx.Err() != nil {
+		return
+	}
 	record := item.Record
 	attempts := item.Attempts
 	var lastErr error
 	for attempts < s.cfg.MaxAttempts {
 		attempts++
-		if err := s.durable.MarkAttempt(item, attempts); err != nil {
-			s.queueStorageError(err)
-			return
-		}
 		if attempts > 1 {
 			if s.cfg.OnRetry != nil {
 				s.cfg.OnRetry(record, attempts)
@@ -312,6 +311,16 @@ func (s *Sender) deliverDurable(ctx context.Context, item QueueItem) {
 				return
 			case <-timer.C:
 			}
+		}
+		// Shutdown during backoff has not attempted delivery. Persist the
+		// attempt only when the request is about to start, preserving retries
+		// across worker restarts and configuration changes.
+		if ctx.Err() != nil {
+			return
+		}
+		if err := s.durable.MarkAttempt(item, attempts); err != nil {
+			s.queueStorageError(err)
+			return
 		}
 		status, err := s.post(ctx, record)
 		if err == nil && status >= 200 && status < 300 {
