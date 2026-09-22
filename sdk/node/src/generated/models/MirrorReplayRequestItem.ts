@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One sanitized historical request and its optional expected source-response metadata.
+ */
 export type MirrorReplayRequestItem = {
   /**
    * Optional correlation id; generated when omitted.
