@@ -1411,7 +1411,13 @@ Export a redacted incident bundle with coverage (bundle &lt;slug&gt; &lt;request
 
 Look up a W3C trace through the account trace index
 
-`gregale trace <trace-id>`
+`gregale trace <trace-id> [--watch] [--interval <DURATION>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--watch` | poll until linked invocations reach a terminal state |  |
+| `--interval <DURATION>` | poll interval (default 1s) |  |
+| `--timeout <DURATION>` | maximum watch duration (default 5m) |  |
 
 
 ## invitations
