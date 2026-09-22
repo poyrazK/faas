@@ -214,7 +214,9 @@ var routeExclude = map[string]bool{
 	// by the session cookie and CSRF token. The public SDK does not model
 	// browser form surfaces; these routes intentionally have no SDK twin.
 	"POST /dashboard/failed-events/discard-all":          true,
+	"POST /dashboard/failed-events/discard-selected":     true,
 	"POST /dashboard/failed-events/replay-all":           true,
+	"POST /dashboard/failed-events/replay-selected":      true,
 	"POST /dashboard/failed-events/{slug}/{id}/discard":  true,
 	"POST /dashboard/failed-events/{slug}/{id}/replay":   true,
 	"POST /dashboard/failed-events/account/{id}/discard": true,
@@ -657,6 +659,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/account/dlq/{id}":                         "DeleteAccountDlqId",
 	"POST /v1/account/dlq/{id}/replay":                    "PostAccountDlqIdReplay",
 	"POST /v1/apps/{slug}/delayed-tasks":                  "CreateDelayedTask",
+	"GET /v1/apps/{slug}/delayed-tasks":                   "ListDelayedTasks",
 	"GET /v1/delayed-tasks/{id}":                          "GetDelayedTask",
 	"DELETE /v1/delayed-tasks/{id}":                       "CancelDelayedTask",
 	"GET /v1/invocations":                                 "ListInvocations",
@@ -703,7 +706,8 @@ var methodRouteMap = map[string]string{
 	// (literal hyphens preserved in the path segment). The explicit
 	// map drops the path-separator noise and conforms to the SDK's
 	// flat verb naming.
-	"GET /v1/apps/{slug}/wakes/{wake_id}/timeline": "ListWakeTimeline",
+	"GET /v1/apps/{slug}/wakes/{wake_id}/timeline":         "ListWakeTimeline",
+	"GET /v1/apps/{slug}/sidecars/{sidecar_name}/timeline": "ListSidecarTimeline",
 
 	// ADR-050 Phase 3 — repo decomposition. The two routes take
 	// multipart bodies so the SDK verb is named after the action
@@ -1019,6 +1023,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/networks":                            "ListPrivateNetworks",
 	"POST /v1/networks":                           "CreatePrivateNetwork",
 	"GET /v1/networks/{id}":                       "GetPrivateNetwork",
+	"GET /v1/networks/{id}/members":               "ListPrivateNetworkMembers",
 	"PUT /v1/networks/{id}/policy":                "UpdatePrivateNetworkPolicy",
 	"DELETE /v1/networks/{id}":                    "DeletePrivateNetwork",
 	"GET /v1/networks/{id}/peerings":              "ListPrivateNetworkPeerings",

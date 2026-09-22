@@ -71,6 +71,8 @@ const (
 	CodeCliAuthPending                 = api.CodeCliAuthPending
 	CodeCliAuthUnavailable             = api.CodeCliAuthUnavailable
 	CodeAppConcurReached               = api.CodeAppConcurReached
+	CodeConcurrencyQueueFull           = api.CodeConcurrencyQueueFull
+	CodeConcurrencyQueueTimeout        = api.CodeConcurrencyQueueTimeout
 	CodeInvalidCredentials             = api.CodeInvalidCredentials
 	CodeEmailNotVerified               = api.CodeEmailNotVerified
 	CodeEmailVerificationRequired      = api.CodeEmailVerificationRequired

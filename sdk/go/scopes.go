@@ -36,12 +36,14 @@ const (
 // constraint; the SDK re-exports the constants so customers can
 // pass them to CreateKey without a string-literal risk.
 const (
-	ScopeAdmin        = api.ScopeAdmin
-	ScopeAppsRead     = api.ScopeAppsRead
-	ScopeDeployWrite  = api.ScopeDeployWrite
-	ScopeSecretsRead  = api.ScopeSecretsRead
-	ScopeSecretsWrite = api.ScopeSecretsWrite
-	ScopeUsageRead    = api.ScopeUsageRead
+	ScopeAdmin             = api.ScopeAdmin
+	ScopeAppsRead          = api.ScopeAppsRead
+	ScopeDeployWrite       = api.ScopeDeployWrite
+	ScopeSecretsRead       = api.ScopeSecretsRead
+	ScopeSecretsWrite      = api.ScopeSecretsWrite
+	ScopeUsageRead         = api.ScopeUsageRead
+	ScopeDelayedTasksRead  = api.ScopeDelayedTasksRead
+	ScopeDelayedTasksWrite = api.ScopeDelayedTasksWrite
 )
 
 // IsValidScope wraps api.IsValidScope (canonical definition). Use the

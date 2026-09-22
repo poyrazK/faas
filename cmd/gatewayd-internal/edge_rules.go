@@ -1590,11 +1590,17 @@ func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrott
 			// KeyBy + empty JWTClaimName + clamped MaxKeys
 			// preserve PR #887 behaviour bit-for-bit (the
 			// per-consumer branch in applyEdgeRuleThrottle
-			// only fires when KeyBy ∈
-			// {api_key, consumer_id, jwt_subject, jwt_claim}).
+			// only fires when KeyBy ∈ {api_key, consumer_id,
+			// jwt_subject, jwt_claim, country}).
 			KeyBy:          r.Action.Throttle.KeyBy,
 			JWTClaimName:   r.Action.Throttle.JWTClaimName,
 			MaxKeysPerRule: maxKeys,
+			MissingKeyPolicy: func() string {
+				if r.Action.Throttle.MissingKeyPolicy == api.ThrottleMissingKeyReject {
+					return api.ThrottleMissingKeyReject
+				}
+				return api.ThrottleMissingKeyShared
+			}(),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

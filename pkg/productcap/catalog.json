@@ -43,6 +43,20 @@
       "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
     },
     {
+      "id": "delayed-execution",
+      "name": "Delayed execution",
+      "category": "async",
+      "description": "Schedule a durable one-shot app invocation for a future time without operating a queue, cron service, or external scheduler.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven#delayed-tasks",
+      "acceptance_test": "cmd/e2e/normal_path_e2e_test.go::TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge"
+    },
+    {
       "id": "disposable-runs",
       "name": "Disposable isolated runs",
       "category": "runtime",

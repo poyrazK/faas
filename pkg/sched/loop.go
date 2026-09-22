@@ -161,6 +161,10 @@ type Loop struct {
 	// process-local: the durable event row is the source of truth and a schedd
 	// restart may emit one fresh observation.
 	runningReasonStates map[string]runningReasonState
+	// serviceRolloutRecoveryCursor rotates the durable recovery walk so a
+	// permanently unavailable gateway cannot let the oldest eight rollouts
+	// monopolise the deployment-reconcile worker slots forever.
+	serviceRolloutRecoveryCursor int
 	// brokerAccountor (issue #757 / ADR-118 commit 8) — the
 	// per-tick broker-egress accounting seam. nil opts out
 	// (noop-on-nil semantics; the dispatch hot path guards
@@ -715,6 +719,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	notif, err := db.SubscribeWithReconnect(ctx, l.pool, []string{
 		db.NotifyAppChanged,
 		db.NotifyAppWake,
+		db.NotifyRuntimeConfigRestart,
 		db.NotifyDeploymentChanged,
 		db.NotifySnapshotPrime,
 		db.NotifyCronRunNow,                      // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
@@ -757,6 +762,12 @@ func (l *Loop) Run(ctx context.Context) error {
 	// two SELECTs over partial indexes — and bounded by the
 	// completeness ticker that fires every 60s afterward.
 	l.runOperatorIntentCompletenessTick(ctx)
+
+	// Service rollout rows are the durable recovery ledger for a routing
+	// handoff. Reconcile once at startup so a schedd exit between publishing
+	// weights, collecting gateway acknowledgements, draining requests, and
+	// finalising does not strand the rollout until another deployment event.
+	l.runServiceRolloutRecovery(ctx)
 
 	reaperT := time.NewTicker(10 * time.Second)
 	defer reaperT.Stop()
@@ -1052,6 +1063,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	eventFanoutT := time.NewTicker(5 * time.Second)
 	defer eventFanoutT.Stop()
 	l.runEventFanoutSweep(ctx)
+	serviceRolloutRecoveryT := time.NewTicker(time.Duration(api.ServiceRolloutRecoveryIntervalSeconds) * time.Second)
+	defer serviceRolloutRecoveryT.Stop()
 
 	// Make sure the triggerWakeup channel exists before any
 	// wakeup can race the first select iteration. WakeupTriggers
@@ -1083,6 +1096,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			if n.Channel == db.NotifyAppWake {
 				if err := l.handleAppWake(ctx, n); err != nil {
 					l.log.Warn("sched: explicit app wake failed; leaving durable request pending", "err", err)
+					continue
+				}
+			} else if n.Channel == db.NotifyRuntimeConfigRestart {
+				if err := l.handleRuntimeConfigRestart(ctx, n); err != nil {
+					l.log.Warn("sched: runtime config restart failed; leaving durable request pending", "err", err)
 					continue
 				}
 			} else if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
@@ -1187,6 +1205,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runTriggerTick(ctx)
 		case <-eventFanoutT.C:
 			l.runEventFanoutSweep(ctx)
+		case <-serviceRolloutRecoveryT.C:
+			l.runServiceRolloutRecovery(ctx)
 		case <-l.triggerWakeup:
 			// Same arm as the 1s ticker. The wake channel is
 			// buffered-size-1 so a burst of broker deliveries
@@ -1194,6 +1214,40 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runTriggerTick(ctx)
 		}
 	}
+}
+
+// runServiceRolloutRecovery replays every durable zero-step rollout through
+// the same bounded worker and per-app mutex used by notification-driven
+// reconciliation. Submitting with the deployment id coalesces a concurrent
+// deployment_changed delivery instead of running a duplicate handoff.
+func (l *Loop) runServiceRolloutRecovery(ctx context.Context) {
+	if l == nil || l.engine == nil || l.engine.store == nil {
+		return
+	}
+	rollouts, err := l.engine.store.ListServiceRolloutsInFlight(ctx, l.engine.OwnerNodeID())
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			l.log.Warn("sched: list service rollouts for recovery", "err", err)
+		}
+		return
+	}
+	if len(rollouts) == 0 {
+		l.serviceRolloutRecoveryCursor = 0
+		return
+	}
+	start := l.serviceRolloutRecoveryCursor % len(rollouts)
+	limit := workSpecs[workDeploymentReconcile].slots
+	if limit > len(rollouts) {
+		limit = len(rollouts)
+	}
+	for i := 0; i < limit; i++ {
+		rollout := rollouts[(start+i)%len(rollouts)]
+		deploymentID := rollout.ID
+		l.submitWork(workDeploymentReconcile, deploymentID, func() {
+			l.engine.ReconcileServiceDeployment(context.WithoutCancel(ctx), deploymentID)
+		})
+	}
+	l.serviceRolloutRecoveryCursor = (start + limit) % len(rollouts)
 }
 
 // watchdogTick is a helper that turns a nil-ticker's channel into a
@@ -1794,6 +1848,9 @@ func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification)
 	if n.Channel == db.NotifyAppWake {
 		return l.handleAppWake(ctx, n)
 	}
+	if n.Channel == db.NotifyRuntimeConfigRestart {
+		return l.handleRuntimeConfigRestart(ctx, n)
+	}
 	if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
 		if l.privateNetwork == nil {
 			return nil
@@ -1812,6 +1869,28 @@ func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification)
 		return l.privateNetworkPeering.Handle(ctx, n)
 	}
 	l.handleNotification(ctx, n)
+	return nil
+}
+
+func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification) error {
+	var payload struct {
+		AppID  string `json:"app_id"`
+		WakeID string `json:"wake_id"`
+	}
+	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
+		return fmt.Errorf("sched: decode runtime config restart payload: %w", err)
+	}
+	if payload.AppID == "" || payload.WakeID == "" {
+		return errors.New("sched: runtime config restart payload requires app_id and wake_id")
+	}
+	out, err := l.engine.RefreshRuntimeConfig(ctx, payload.AppID, payload.WakeID)
+	if err != nil {
+		return fmt.Errorf("sched: runtime config restart %s: %w", payload.WakeID, err)
+	}
+	if out.Instance != nil {
+		l.log.Info("sched: runtime configuration applied", "app", payload.AppID,
+			"wake_id", out.Instance.WakeID, "instance", out.Instance.InstanceID)
+	}
 	return nil
 }
 

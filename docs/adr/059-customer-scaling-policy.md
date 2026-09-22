@@ -2,6 +2,7 @@
 
 - **Status:** proposed
 - **Date:** 2026-08-01
+- **Amended:** 2026-09-22 (bounded warm-saturation admission queue)
 - **Issue:** #462
 - **Decision:** ship a per-app `ScalingPolicy` (DTO + persistence +
   inflight signal + engine cooldown + worker carve-out + 503 wire
@@ -133,6 +134,23 @@ distinguish 429 from 503 on the gRPC side.
   field only; admin tier-up stays on `MinInstancesAllowed` etc.
 - **No new migration.** PR-A's `apps.last_scale_out_at` is on main
   (slot 82). No schema changes; PR-D renumbers nothing.
+
+**9. Bounded warm-saturation admission queue (2026-09-22 amendment).**
+`ScalingPolicy` gains `concurrency_overflow`, `max_queue_depth`, and
+`max_queue_wait_ms`. `drop` retains immediate rejection; `queue` admits
+requests through a per-app FIFO that is separate from the cold-wake queue.
+Both depth and time are bounded by plan defaults in `pkg/api/limits.go`:
+Free 8 / 1 s, Hobby 32 / 2 s, Pro 128 / 2 s, and Scale 512 / 2 s.
+Per-app overrides may lower or raise the depth up to 8× the plan default and
+may set a wait up to 30 s; zero selects the plan default.
+
+Queue overflow is HTTP 429 `concurrency_queue_full`; wait expiry is HTTP 503
+`concurrency_queue_timeout`. Both include `Retry-After`. Successfully admitted
+requests expose `X-Gregale-Queue-Wait-Ms` and `Server-Timing: gregale_queue`,
+and operators receive bounded-cardinality queue depth and wait histograms.
+The effective values are returned by the API and shown by the CLI so users do
+not need to reconstruct plan defaults. This amendment does not change instance
+ceilings, cold-wake admission, billing, or scheduler placement.
 
 ## Failure modes
 

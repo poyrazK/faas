@@ -37,6 +37,10 @@ class AppEffectiveLimits:
     concurrency_per_instance: int
     """Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's
     responsibility."""
+    concurrency_queue_depth: int
+    """Effective maximum number of requests allowed to wait for warm instance capacity."""
+    concurrency_queue_wait_ms: int
+    """Effective maximum warm saturation wait in milliseconds."""
     app_request_rate_rps: int
     """Per-app edge token-bucket refill rate, in requests per second."""
     app_request_burst: int
@@ -72,6 +76,10 @@ class AppEffectiveLimits:
 
         concurrency_per_instance = self.concurrency_per_instance
 
+        concurrency_queue_depth = self.concurrency_queue_depth
+
+        concurrency_queue_wait_ms = self.concurrency_queue_wait_ms
+
         app_request_rate_rps = self.app_request_rate_rps
 
         app_request_burst = self.app_request_burst
@@ -99,6 +107,8 @@ class AppEffectiveLimits:
                 "cpu_weight": cpu_weight,
                 "max_instances": max_instances,
                 "concurrency_per_instance": concurrency_per_instance,
+                "concurrency_queue_depth": concurrency_queue_depth,
+                "concurrency_queue_wait_ms": concurrency_queue_wait_ms,
                 "app_request_rate_rps": app_request_rate_rps,
                 "app_request_burst": app_request_burst,
                 "account_request_rate_rpm": account_request_rate_rpm,
@@ -132,6 +142,10 @@ class AppEffectiveLimits:
 
         concurrency_per_instance = d.pop("concurrency_per_instance")
 
+        concurrency_queue_depth = d.pop("concurrency_queue_depth")
+
+        concurrency_queue_wait_ms = d.pop("concurrency_queue_wait_ms")
+
         app_request_rate_rps = d.pop("app_request_rate_rps")
 
         app_request_burst = d.pop("app_request_burst")
@@ -156,6 +170,8 @@ class AppEffectiveLimits:
             cpu_weight=cpu_weight,
             max_instances=max_instances,
             concurrency_per_instance=concurrency_per_instance,
+            concurrency_queue_depth=concurrency_queue_depth,
+            concurrency_queue_wait_ms=concurrency_queue_wait_ms,
             app_request_rate_rps=app_request_rate_rps,
             app_request_burst=app_request_burst,
             account_request_rate_rpm=account_request_rate_rpm,

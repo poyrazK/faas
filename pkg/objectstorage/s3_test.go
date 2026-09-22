@@ -211,8 +211,8 @@ func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Query().Has("uploads"):
 			_, _ = io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>`)
 		case r.Method == http.MethodPost && r.URL.Query().Has("uploads"):
-			if r.Header.Get("X-Amz-Meta-Gregale-Upload-Id") != "session-1" {
-				t.Errorf("missing recovery metadata: %q", r.Header.Get("X-Amz-Meta-Gregale-Upload-Id"))
+			if r.Header.Get("X-Amz-Meta-Gregale-Upload-Id") != "session-1" || r.Header.Get("X-Amz-Meta-Owner") != "platform" || r.Header.Get("Cache-Control") != "public, max-age=60" || r.Header.Get("Content-Disposition") != `attachment; filename="large.bin"` || r.Header.Get("Content-Encoding") != "gzip" || r.Header.Get("Content-Language") != "en" || r.Header.Get("X-Amz-Tagging") != "env=prod&team=core" {
+				t.Errorf("missing multipart metadata: %#v", r.Header)
 			}
 			_, _ = io.WriteString(w, `<InitiateMultipartUploadResult><Bucket>gregale-test</Bucket><Key>large.bin</Key><UploadId>provider-id</UploadId></InitiateMultipartUploadResult>`)
 		case r.Method == http.MethodPost && r.URL.Query().Get("uploadId") == "provider-id":
@@ -242,7 +242,10 @@ func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	providerID, err := provider.EnsureMultipartUpload(context.Background(), "gregale-test", MultipartCreateRequest{SessionID: "session-1", Key: "large.bin", SizeBytes: 10})
+	providerID, err := provider.EnsureMultipartUpload(context.Background(), "gregale-test", MultipartCreateRequest{
+		SessionID: "session-1", Key: "large.bin", SizeBytes: 10,
+		Metadata: ObjectMetadata{ContentType: "application/octet-stream", CacheControl: "public, max-age=60", ContentDisposition: `attachment; filename="large.bin"`, ContentEncoding: "gzip", ContentLanguage: "en", Metadata: map[string]string{"owner": "platform"}, Tags: map[string]string{"env": "prod", "team": "core"}},
+	})
 	if err != nil || providerID != "provider-id" {
 		t.Fatal(providerID, err)
 	}

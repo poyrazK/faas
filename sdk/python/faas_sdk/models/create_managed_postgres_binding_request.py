@@ -15,12 +15,16 @@ T = TypeVar("T", bound="CreateManagedPostgresBindingRequest")
 
 @_attrs_define
 class CreateManagedPostgresBindingRequest:
-    """Request to inject a managed database credential into an app environment."""
+    """Request to inject a managed database credential into an app environment. Access values are provider-neutral; the
+    selected database backend may support only a subset.
+
+    """
 
     app_id: str
     scope: str
     environment_key: str
     access: CreateManagedPostgresBindingRequestAccess
+    """Portable credential mode. Unsupported modes are rejected before a binding is reserved."""
 
     def to_dict(self) -> dict[str, Any]:
         app_id = self.app_id

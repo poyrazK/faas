@@ -197,7 +197,7 @@ tags:
   - name: audit
     description: Customer-facing security event timeline (IAM-4, ADR-035). Append-only; read-only.
   - name: secrets
-    description: Per-app sealed secrets (sealed at rest).
+    description: Per-app sealed secrets, injected into authorized app VMs at wake.
   - name: registry
     description: |
       Per-app private-registry Basic Auth credentials (issue #461 / ADR-062).
@@ -695,6 +695,7 @@ paths:
     post:
       operationId: createManagedPostgresBinding
       summary: Bind a workload app to a database
+      description: The selected database backend must advertise the requested credential access. Unsupported access is rejected before a durable binding is reserved or provider credentials are requested.
       tags: [managed_postgres]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -6594,13 +6595,23 @@ paths:
     post:
       tags: [apps]
       operationId: restartApp
-      summary: Restart an app from a fresh snapshot.
+      summary: Restart an app.
       description: |
         Parks every live instance, captures a fresh snapshot, and queues one
         replacement wake. Requests are single-flight per app; the returned
-        wake_id identifies the replacement wake in the wake timeline.
+        wake_id identifies the replacement wake in the wake timeline. With
+        `fresh=true`, destroys live instances without capturing process memory,
+        invalidates cached snapshots, and cold-boots with the latest environment
+        and secrets. The fresh path is durably queued.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: fresh
+          in: query
+          required: false
+          description: Cold-boot with current runtime configuration instead of capturing/restoring process memory.
+          schema:
+            type: boolean
+            default: false
       responses:
         '202':
           description: Restart accepted.
@@ -7469,7 +7480,9 @@ paths:
       summary: Set a sealed secret.
       description: |
         Seals the plaintext value against the host X25519 recipient and
-        persists the ciphertext. The plaintext never lands in PG.
+        persists the ciphertext. The plaintext never lands in PG. Existing
+        snapshots are invalidated; running processes retain their current
+        environment until a cold wake or `POST /restart?fresh=true`.
       requestBody:
         required: true
         description: "Secret payload — key name + plaintext. Sealed at rest; plaintext never returned."
@@ -7530,9 +7543,9 @@ paths:
   # secrets:write — losing the new plaintext is the loss-bearing
   # case; the old plaintext was never in a loss position because
   # the row being overwritten is already in the customer's hand.
-  # Any previously-parked snapshot still holds the prior
-  # plaintext until the next wake (drive1's cleartext env is
-  # frozen at park time).
+  # A successful mutation marks previously parked snapshots stale so the old
+  # plaintext cannot be restored. Running processes retain their environment
+  # until a cold wake or fresh restart.
 
   /v1/apps/{slug}/secrets/{key}/rotate:
     parameters:
@@ -7549,7 +7562,8 @@ paths:
         recipient and stamps the kid column. Emits `secret.rotated`
         audit kind when the row already had a value; emits `secret.set`
         when the row was previously empty (first-time rotation). The
-        same byte cap as PUT applies (`SecretValueMaxBytes`).
+        same byte cap as PUT applies (`SecretValueMaxBytes`). Existing
+        snapshots are invalidated after the write.
       requestBody:
         required: true
         description: "New plaintext value. Sealed at rest server-side; plaintext never returned."
@@ -7980,6 +7994,38 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503':
           description: Gregale-owned network fabric is disabled for this network deletion.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/networks/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable Gregale network identifier whose members are listed.
+        schema:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+    get:
+      tags: [networking]
+      operationId: listPrivateNetworkMembers
+      summary: List members and address capacity for a private network.
+      description: |
+        Returns the account-scoped stable address reservations for this
+        Gregale-owned network. Capacity excludes the network address, gateway,
+        and broadcast address; this endpoint is inventory only and does not
+        probe workloads or call DigitalOcean APIs.
+      responses:
+        '200':
+          description: Private-network member inventory.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateNetworkMembersResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Gregale-owned network fabric is disabled for this network inventory read.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -8558,8 +8604,8 @@ paths:
         Persists the plaintext value verbatim in the app_envs table (no
         seal step). Env vars are non-sensitive runtime config by contract
         — credentials stay on `/v1/apps/{slug}/secrets/{key}`. Applies on
-        next wake (cold-boot OR snapshot-restore); the running instance
-        is unaffected.
+        next cold wake; cached snapshots are invalidated and the running
+        instance is unaffected. Use `POST /restart?fresh=true` to apply now.
 
         **ADR-090 PR-B scope filter.** The optional `?scope=`
         query param selects which scope to write. Omitted = the
@@ -11600,6 +11646,23 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [projects]
+      operationId: deleteProjectEnvironment
+      summary: Delete an unused project environment.
+      description: |
+        Deletes only an unprotected, non-production environment that has no
+        live releases. Configuration and approval history for the registry
+        entry is removed with it. Production, protected environments, and
+        environments still serving a live release return 409.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Project environment deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/config:
@@ -14651,13 +14714,42 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/delayed-tasks:
+    get:
+      tags: [delayed_tasks]
+      operationId: listDelayedTasks
+      summary: List delayed tasks for an app.
+      description: Newest-first, cursor-paginated delayed-task history.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: before
+          in: query
+          required: false
+          schema: { type: string }
+          description: Invocation id returned as next_before by a prior page.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
+          description: Page size from 1 to 200; defaults to 20.
+      responses:
+        '200':
+          description: One page of delayed tasks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListDelayedTasksResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [delayed_tasks]
       operationId: delayedTaskCreate
       summary: Schedule a delayed task to fire at a future time.
       description: |
-        Cap-checked against the plan's MaxDelayedTasksPerApp (Hobby 5,
-        Pro 50, Scale 1_000_000). The drain re-checks at dispatch.
+        Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
+        bounded to one year. Cap-checked against the plan's
+        MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
+        re-checks at dispatch. Delivery is at least once; handlers should use
+        the invocation id to make side effects idempotent.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -15711,6 +15803,75 @@ paths:
         '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
         '404':
           description: No such app (slug) or wake_id is unknown.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ─── Sidecar lifecycle timeline (issue #463 / ADR-069) ───────────────────
+
+  /v1/apps/{slug}/sidecars/{sidecar_name}/timeline:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "App slug that owns this sidecar timeline (lowercase, kebab-case; per-account unique)."
+      - name: sidecar_name
+        in: path
+        required: true
+        schema: { type: string }
+        description: "The sidecar name from the app deployment's sidecar set."
+    get:
+      tags: [apps, observability]
+      operationId: listSidecarTimeline
+      summary: List the lifecycle timeline for one sidecar.
+      description: |
+        Oldest-first (forward narrative). Returns the sidecar's init-exit,
+        restart, and health-transition frames. The `latest` field is the
+        most recent `wake.sidecar_health` status (`starting`, `healthy`,
+        `unhealthy`, `restarting`, or `failed`) when one is available.
+
+        The endpoint is a sub-resource of `/v1/apps/{slug}` and uses the
+        same MFA, scope, per-app rate-limit, and Hobby+ observability gates
+        as the wake timeline. Cross-account rows are dropped by verifying
+        every event's `data.app_id` against the slug's resolved app.
+      parameters:
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+          description: "Only return rows with `at > since` (RFC 3339)."
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+          description: "Max frames to return. Values above 1000 are rejected."
+      responses:
+        '200':
+          description: Sidecar lifecycle frames and the latest health snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SidecarTimelineResponse'
+              example:
+                sidecar_name: metrics
+                app_id: "0123456789abcdef0123456789abcdef"
+                limit: 200
+                next_cursor: ""
+                latest: { at: "2026-07-25T13:25:02.100Z", status: healthy }
+                events:
+                  - at: "2026-07-25T13:25:00.420Z"
+                    kind: wake.sidecar_health
+                    actor: vmmd
+                    data: { app_id: "0123456789abcdef0123456789abcdef", sidecar_name: metrics, status: starting, reason: init }
+                  - at: "2026-07-25T13:25:02.100Z"
+                    kind: wake.sidecar_health
+                    actor: vmmd
+                    data: { app_id: "0123456789abcdef0123456789abcdef", sidecar_name: metrics, status: healthy, reason: healthcheck_ok }
+        '400':
+          description: Malformed query parameter — `since` is not RFC 3339 or `limit` is out of range.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
+        '404':
+          description: No such app (slug) or sidecar timeline is unknown.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -18244,7 +18405,7 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresBinding' } }
     CreateManagedPostgresBindingRequest:
-      description: Request to inject a managed database credential into an app environment.
+      description: Request to inject a managed database credential into an app environment. Access values are provider-neutral; the selected database backend may support only a subset.
       type: object
       additionalProperties: false
       required: [app_id, scope, environment_key, access]
@@ -18252,7 +18413,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only] }
+        access: { type: string, enum: [read_write, read_only], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
 
     ObjectBucket:
       description: Logical bucket metadata without upstream credentials or placement details.
@@ -19745,7 +19906,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
@@ -19790,7 +19951,7 @@ components:
     AppEffectiveLimits:
       description: "The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone."
       type: object
-      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s, request_body_max_bytes]
+      required: [memory_limit_mb, plan_memory_max_mb, ephemeral_disk_max_mb, guest_vcpus, cpu_limit_millicores, plan_cpu_max_millicores, cpu_weight, max_instances, concurrency_per_instance, concurrency_queue_depth, concurrency_queue_wait_ms, app_request_rate_rps, app_request_burst, account_request_rate_rpm, request_budget_ms, request_budget_max_ms, response_write_timeout_s, request_body_max_bytes]
       properties:
         memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
         plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
@@ -19801,6 +19962,8 @@ components:
         cpu_weight: { type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended." }
         max_instances: { type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy." }
         concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
+        concurrency_queue_depth: { type: integer, description: "Effective maximum number of requests allowed to wait for warm instance capacity." }
+        concurrency_queue_wait_ms: { type: integer, format: int64, description: "Effective maximum warm saturation wait in milliseconds." }
         app_request_rate_rps: { type: integer, description: "Per-app edge token-bucket refill rate, in requests per second." }
         app_request_burst: { type: integer, description: "Per-app edge token-bucket burst capacity." }
         account_request_rate_rpm: { type: integer, description: "Account-wide edge token-bucket refill rate across all apps, in requests per minute." }
@@ -21190,6 +21353,11 @@ components:
           minimum: 0
           maximum: 120000
           example: 5000
+        max_queue_depth:
+          description: "Per-app warm saturation waiter cap. 0 uses the plan default; positive values are plan-capped. This is independent from the cold-wake queue."
+          type: integer
+          minimum: 0
+          example: 64
         wake_max_queue_depth:
           description: "Per-app cold-wake waiter cap. 0 uses the plan default; positive values are capped at 8x the plan default."
           type: integer
@@ -27048,11 +27216,12 @@ components:
         BEFORE any DB write — a customer cannot raise their
         plan limit by registering a throttle rule.
 
-        Per-IP sub-keying is deliberately absent in v1 — see
-        the package doc on `pkg/state.EdgeRuleThrottleAction`
-        for the design rationale (memory-bounded limiter +
-        attacker-controlled IP cardinality = unbounded bucket
-        growth).
+        Per-IP sub-keying is deliberately absent — see the package
+        doc on `pkg/state.EdgeRuleThrottleAction` for the design
+        rationale (memory-bounded limiter + attacker-controlled IP
+        cardinality = unbounded bucket growth). Country keying uses
+        the existing trusted GeoIP lookup and therefore has bounded
+        cardinality.
 
         Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881
         Phase 3) extends the wire shape with optional per-consumer
@@ -27084,7 +27253,7 @@ components:
           example: 200
         key_by:
           type: string
-          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim"]
+          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"]
           default: ""
           description: |
             Per-consumer keying dimension (ADR-104 / issue #881
@@ -27095,7 +27264,9 @@ components:
             identity (all rotated keys for that consumer share a bucket).
             When `"jwt_subject"`, one bucket per JWT `sub`.
             When `"jwt_claim"`, one bucket per value of the
-            claim named by `jwt_claim_name`. Each non-empty
+            claim named by `jwt_claim_name`. When `"country"`, one
+            bucket per ISO 3166-1 alpha-2 country resolved from the
+            gateway's trusted client IP. Each non-empty
             value activates the bounded design: when the
             per-rule consumer set exceeds
             `max_keys_per_rule`, all over-cap callers collapse
@@ -27111,9 +27282,12 @@ components:
             custom claim to extract (e.g., `"tier"`,
             `"org_id"`). Format is a CodeQL safe-identifier:
             leading letter or underscore, then `[A-Za-z0-9_]`,
-            max 64 chars. Anything looser risks label-cardinality
-            explosion in metric series or a CodeQL go-clear-
-            text-logging finding on a future refactor.
+            max 64 chars. Top-level string, number, and boolean
+            values are supported and normalized to their JSON scalar
+            representation. Arrays, objects, empty strings, and values
+            longer than 256 bytes are treated as missing. The configured
+            claim is retained first within the verifier's 64-claim
+            request-context bound.
           example: "tier"
         max_keys_per_rule:
           type: integer
@@ -27129,6 +27303,19 @@ components:
             `plan.ThrottleMaxKeysPerRule`. Must be 0 when
             `key_by` is `""` or `"none"` — the cap is moot for
             non-per-consumer rules.
+        missing_key_policy:
+          type: string
+          enum: ["shared", "reject"]
+          default: "shared"
+          description: |
+            Behavior when an authentication-backed dimension is not
+            available on the request. `"shared"` places all such
+            requests in one bounded `__anonymous__` bucket (the
+            backward-compatible default). `"reject"` returns 401
+            before consuming a route token. This field requires a
+            dimensional `key_by` value. Country lookup dependency
+            failures remain fail-closed with 503 rather than being
+            treated as an anonymous identity.
 
     EdgeRuleBudgetAction:
       description: |
@@ -27450,7 +27637,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
@@ -27531,7 +27718,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
@@ -27558,7 +27745,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 
@@ -27842,6 +28029,48 @@ components:
         limit:
           type: integer
           description: "Effective limit applied (always 1..1000)."
+          example: 200
+
+    SidecarTimelineStatus:
+      description: "Most recent health transition for a sidecar, if one has been recorded."
+      type: object
+      required: [at, status]
+      properties:
+        at:
+          type: string
+          format: date-time
+          description: "RFC 3339 UTC timestamp of the health transition."
+        status:
+          type: string
+          enum: [starting, healthy, unhealthy, restarting, failed]
+          description: "Closed sidecar health state emitted by guest-init."
+        reason:
+          type: string
+          description: "Optional producer-supplied transition reason."
+
+    SidecarTimelineResponse:
+      description: "Envelope for GET /v1/apps/{slug}/sidecars/{sidecar_name}/timeline."
+      type: object
+      required: [sidecar_name, app_id, events, limit]
+      properties:
+        sidecar_name:
+          type: string
+          description: "Echo of the sidecar_name path segment."
+        app_id:
+          type: string
+          format: uuid
+          description: "Identifier of the app that owns this sidecar timeline (resolved from the slug)."
+        latest:
+          $ref: '#/components/schemas/SidecarTimelineStatus'
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/WakeTimelineEvent' }
+        next_cursor:
+          type: string
+          description: "RFC 3339 timestamp cursor for the next sidecar page; empty when no more frames remain."
+        limit:
+          type: integer
+          description: "Number of sidecar frames returned, from 1 through 1000."
           example: 200
 
     # ─── Secrets ──────────────────────────────────────────────────────────
@@ -30382,13 +30611,31 @@ components:
         purged: { type: integer, minimum: 0 }
 
     DelayedTaskResponse:
-      description: "Delayed task create/get shape. ScheduledAt is the customer-facing UTC dispatch time. State is populated on get, omitted on create (always `pending` there)."
+      description: "Delayed task create/get/list shape with lifecycle and result metadata."
       type: object
-      required: [id, scheduled_at]
+      required: [id, scheduled_at, state]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         scheduled_at: { type: string, format: date-time }
         state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
+        method: { type: string }
+        path: { type: string }
+        attempts: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        result: {}
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    ListDelayedTasksResponse:
+      description: One newest-first page of delayed tasks for an app.
+      type: object
+      required: [tasks]
+      properties:
+        tasks:
+          type: array
+          items: { $ref: '#/components/schemas/DelayedTaskResponse' }
+        next_before: { type: string, pattern: '^[a-f0-9]{32}$' }
 
     CreateExecutionRequest:
       description: |
@@ -30748,12 +30995,21 @@ components:
         jitter_seconds:  { type: number, description: "Fraction (0..1) added to the backoff delay. 0.2 means ±20% jitter on top of the exponential curve." }
 
     DelayedTaskRequest:
-      description: "Body for POST /v1/apps/{slug}/delayed-tasks. scheduled_at must be in the future (UTC)."
+      description: "Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling form; the maximum delay is 31,536,000 seconds (365 days)."
       type: object
-      required: [scheduled_at]
+      oneOf:
+        - required: [scheduled_at]
+        - required: [delay_seconds]
       properties:
         payload: { type: object, additionalProperties: true }
         scheduled_at: { type: string, format: date-time }
+        delay_seconds: { type: integer, format: int64, minimum: 1, maximum: 31536000 }
+        headers: { type: object, additionalProperties: true }
+        method: { type: string, default: POST }
+        path: { type: string, default: "/" }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+        retention_seconds: { type: integer, minimum: 0 }
+        destinations: { $ref: '#/components/schemas/InvocationDestinations' }
 
     # ─── IAM-3 (ADR-039) dashboard session surface ────────────────────────
 
@@ -31800,6 +32056,50 @@ components:
         networks:
           type: array
           items: { $ref: '#/components/schemas/PrivateNetwork' }
+
+    PrivateNetworkMember:
+      description: Stable address reservation for one member of a Gregale-owned network.
+      type: object
+      required: [id, owner_type, owner_id, address]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_type:
+          type: string
+          description: Platform resource kind that owns the reservation, such as app.
+        owner_id:
+          type: string
+          description: Opaque platform resource identifier.
+        address:
+          type: string
+          format: ipv4
+        created_at: { type: string, format: date-time }
+
+    PrivateNetworkMembersResponse:
+      description: Account-scoped member inventory and address capacity for one network.
+      type: object
+      required: [network_id, cidr, capacity, used, available, members]
+      properties:
+        network_id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        cidr:
+          type: string
+          format: ipv4-cidr
+        capacity:
+          type: integer
+          minimum: 0
+          description: Allocatable member addresses after network, gateway, and broadcast reservations.
+        used:
+          type: integer
+          minimum: 0
+        available:
+          type: integer
+          minimum: 0
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/PrivateNetworkMember' }
 
     CreatePrivateNetworkRequest:
       description: POST /v1/networks body for a Gregale-owned network.
@@ -34028,7 +34328,7 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
     InvalidScheduledAt:
-      description: 'code: invalid_scheduled_at — delayed-task scheduled_at is in the past.'
+      description: 'code: invalid_scheduled_at — the schedule is missing, ambiguous, in the past, or beyond the one-year horizon.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

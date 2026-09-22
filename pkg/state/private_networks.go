@@ -71,6 +71,15 @@ type PrivateNetworkStore interface {
 	ReleasePrivateNetworkAddress(context.Context, string, string, string, string) error
 }
 
+// PrivateNetworkAddressListStore is the additive read surface for network
+// member inventory. Keeping it separate lets older Store adapters continue to
+// serve network creation and app attachments while the inventory endpoint is
+// rolled out.
+type PrivateNetworkAddressListStore interface {
+	PrivateNetworkStore
+	ListPrivateNetworkAddresses(context.Context, string, string) ([]PrivateNetworkAddress, error)
+}
+
 // PrivateNetworkPeeringStore is an additive extension for the customer-facing
 // peering lifecycle. Keeping it separate preserves compatibility with older
 // stores and test doubles that only implement network attachments.
@@ -109,6 +118,8 @@ type PrivateNetworkFirewallPolicyStore interface {
 
 var _ PrivateNetworkStore = (*MemStore)(nil)
 var _ PrivateNetworkStore = (*PgStore)(nil)
+var _ PrivateNetworkAddressListStore = (*MemStore)(nil)
+var _ PrivateNetworkAddressListStore = (*PgStore)(nil)
 var _ PrivateNetworkPeeringStore = (*MemStore)(nil)
 var _ PrivateNetworkPeeringStore = (*PgStore)(nil)
 var _ PrivateNetworkPeeringReconcileStore = (*MemStore)(nil)
@@ -278,6 +289,17 @@ func allocatePrivateNetworkAddress(prefix netip.Prefix, used map[netip.Addr]stru
 		return candidate, true
 	}
 	return netip.Addr{}, false
+}
+
+// PrivateNetworkAddressCapacity returns the number of allocatable member
+// addresses in a Gregale-owned network. The network address, gateway (+1),
+// and broadcast address are reserved by the fabric.
+func PrivateNetworkAddressCapacity(prefix netip.Prefix) int {
+	first, last, ok := firstPrivateNetworkAddress(prefix)
+	if !ok || last <= first {
+		return 0
+	}
+	return int(last - first)
 }
 
 func validPrivateNetworkOwner(ownerType, ownerID string) bool {
@@ -643,4 +665,30 @@ func (m *MemStore) ReleasePrivateNetworkAddress(ctx context.Context, accountID, 
 		}
 	}
 	return ErrNotFound
+}
+
+func (m *MemStore) ListPrivateNetworkAddresses(ctx context.Context, accountID, networkID string) ([]PrivateNetworkAddress, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	accountID = strings.TrimSpace(accountID)
+	networkID = strings.TrimSpace(networkID)
+	if accountID == "" || networkID == "" {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]PrivateNetworkAddress, 0)
+	for _, address := range m.privateNetworkAddresses {
+		if address.AccountID == accountID && address.NetworkID == networkID {
+			out = append(out, clonePrivateNetworkAddress(address))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Address.String() == out[j].Address.String() {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Address.String() < out[j].Address.String()
+	})
+	return out, nil
 }

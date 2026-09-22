@@ -43,6 +43,14 @@ export type AppEffectiveLimits = {
    */
   concurrency_per_instance: number;
   /**
+   * Effective maximum number of requests allowed to wait for warm instance capacity.
+   */
+  concurrency_queue_depth: number;
+  /**
+   * Effective maximum warm saturation wait in milliseconds.
+   */
+  concurrency_queue_wait_ms: number;
+  /**
    * Per-app edge token-bucket refill rate, in requests per second.
    */
   app_request_rate_rps: number;

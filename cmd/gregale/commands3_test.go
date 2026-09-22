@@ -387,97 +387,97 @@ func TestCmdSecrets_DispatchUnknownSubcommand(t *testing.T) {
 	}
 }
 
-// TestCmdSecrets_Set_RotationHint exercises the ADR-020 D5 warning
-// (commands3.go secretsSet): when the key being set already exists,
-// the CLI prints a notice that parked snapshots still hold the old
-// plaintext until the next wake. We assert both directions:
-//
-//   - existing key  → hint is printed BEFORE the PUT
-//   - new key       → hint is NOT printed (no false alarm)
-func TestCmdSecrets_Set_RotationHint(t *testing.T) {
-	cases := []struct {
-		name       string
-		existing   []api.AppSecretResponse
-		pairs      []string
-		wantHint   bool
-		wantSubstr []string // substrings the hint must contain when wantHint=true
-		unwantSub  string   // substring that must NOT appear when wantHint=false
-	}{
-		{
-			name:     "fresh_add_silent",
-			existing: nil,
-			pairs:    []string{"NEW_KEY=v1"},
-			wantHint: false,
-		},
-		{
-			name:     "existing_key_prints_hint",
-			existing: []api.AppSecretResponse{{Key: "STRIPE_KEY"}},
-			pairs:    []string{"STRIPE_KEY=sk_live_NEW"},
-			wantHint: true,
-			wantSubstr: []string{
-				"rotated",
-				"STRIPE_KEY",
-				"parked snapshots",
-				"next wake",
-			},
-		},
-		{
-			name:     "mixed_one_rotated_one_fresh",
-			existing: []api.AppSecretResponse{{Key: "STRIPE_KEY"}},
-			pairs:    []string{"STRIPE_KEY=new", "FRESH_KEY=fresh"},
-			wantHint: true,
-			wantSubstr: []string{
-				"1 secret(s)",
-			},
-		},
+func TestCmdSecretsSetExplainsDefaultNextColdWake(t *testing.T) {
+	sink := &secretsSink{
+		onGet: func() (int, any) { return http.StatusOK, api.AppSecretListResponse{Quota: 25, Count: 1} },
+		onPut: func([]byte) (int, any) { return http.StatusOK, nil },
 	}
+	server := httptest.NewServer(sink)
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			sink := &secretsSink{
-				onGet: func() (int, any) {
-					return http.StatusOK, api.AppSecretListResponse{
-						Secrets: tc.existing,
-						Quota:   25,
-						Count:   len(tc.existing),
-					}
-				},
-				onPut: func(body []byte) (int, any) {
-					return http.StatusOK, nil
-				},
-			}
-			srv := httptest.NewServer(sink)
-			defer srv.Close()
+	if code := cmdSecrets([]string{"set", "--app", "x", "API_TOKEN=v1"}); code != 0 {
+		t.Fatalf("cmdSecrets set = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "next cold wake") || !strings.Contains(stdout.String(), "--restart") {
+		t.Fatalf("default output lacks apply semantics: %q", stdout.String())
+	}
+}
 
-			t.Setenv("FAAS_API", srv.URL)
-			t.Setenv("FAAS_TOKEN", "fp_live_x")
+func TestCmdSecretsSetRestartUsesFreshRestartAfterWrites(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/secrets/"):
+			calls = append(calls, "put")
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/x/secrets":
+			writeJSONTest(w, api.AppSecretListResponse{Quota: 25, Count: 1})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/account":
+			writeJSONTest(w, api.AccountResponse{Plan: string(api.PlanHobby)})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/restart":
+			calls = append(calls, "restart:"+r.URL.Query().Get("fresh"))
+			writeJSONTestStatus(w, http.StatusAccepted, api.AppRestartResponse{WakeID: "wake-secret-1"})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
 
-			var stdout bytes.Buffer
-			old := osStdout
-			osStdout = &stdout
-			defer func() { osStdout = old }()
+	if code := cmdSecrets([]string{"set", "--app", "x", "API_TOKEN=v2", "--restart"}); code != 0 {
+		t.Fatalf("cmdSecrets set --restart = %d, want 0", code)
+	}
+	if len(calls) != 2 || calls[0] != "put" || calls[1] != "restart:true" {
+		t.Fatalf("calls = %v, want [put restart:true]", calls)
+	}
+	if !strings.Contains(stdout.String(), "wake-secret-1") || strings.Contains(stdout.String(), "next cold wake") {
+		t.Fatalf("restart output = %q", stdout.String())
+	}
+}
 
-			args := append([]string{"set", "--app", "x"}, tc.pairs...)
-			if code := cmdSecrets(args); code != 0 {
-				t.Fatalf("cmdSecrets set = %d, want 0", code)
-			}
-			out := stdout.String()
+func TestCmdSecretsRotateRestartUsesFreshRestart(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/secrets/API_TOKEN/rotate":
+			calls = append(calls, "rotate")
+			writeJSONTest(w, api.RotateAppSecretResponse{
+				Key: "API_TOKEN", RotatedAt: "2026-09-22T12:00:00Z", Kid: "age1examplekey",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/restart":
+			calls = append(calls, "restart:"+r.URL.Query().Get("fresh"))
+			writeJSONTestStatus(w, http.StatusAccepted, api.AppRestartResponse{WakeID: "wake-rotate-1"})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
 
-			if tc.wantHint {
-				if !strings.Contains(out, "note:") {
-					t.Errorf("hint not printed:\n%s", out)
-				}
-				for _, s := range tc.wantSubstr {
-					if !strings.Contains(out, s) {
-						t.Errorf("hint missing %q in output:\n%s", s, out)
-					}
-				}
-			} else {
-				if strings.Contains(out, "note:") {
-					t.Errorf("hint printed for fresh add:\n%s", out)
-				}
-			}
-		})
+	if code := cmdSecrets([]string{"rotate", "--app", "x", "API_TOKEN=v2", "--restart"}); code != 0 {
+		t.Fatalf("cmdSecrets rotate --restart = %d, want 0", code)
+	}
+	if len(calls) != 2 || calls[0] != "rotate" || calls[1] != "restart:true" {
+		t.Fatalf("calls = %v, want [rotate restart:true]", calls)
+	}
+	if !strings.Contains(stdout.String(), "wake-rotate-1") {
+		t.Fatalf("restart output = %q", stdout.String())
 	}
 }
 
@@ -611,7 +611,7 @@ func TestCmdSecrets_Set_QuotaStamp(t *testing.T) {
 			list: fakeList{err: true},
 			// The PUT-OK message still prints; the quota stamp is silent.
 			wantSub: []string{"K1 set"},
-			wantNot: []string{"secrets"},
+			wantNot: []string{"x:"},
 		},
 	}
 

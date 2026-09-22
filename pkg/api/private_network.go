@@ -50,6 +50,27 @@ type PrivateNetworkListResponse struct {
 	Networks []PrivateNetwork `json:"networks"`
 }
 
+// PrivateNetworkMember is one stable address reservation in a Gregale-owned
+// private network. OwnerID is an opaque platform resource identifier.
+type PrivateNetworkMember struct {
+	ID        string     `json:"id"`
+	OwnerType string     `json:"owner_type"`
+	OwnerID   string     `json:"owner_id"`
+	Address   string     `json:"address"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+}
+
+// PrivateNetworkMembersResponse is the account-scoped member inventory and
+// address capacity for one Gregale-owned private network.
+type PrivateNetworkMembersResponse struct {
+	NetworkID string                 `json:"network_id"`
+	CIDR      string                 `json:"cidr"`
+	Capacity  int                    `json:"capacity"`
+	Used      int                    `json:"used"`
+	Available int                    `json:"available"`
+	Members   []PrivateNetworkMember `json:"members"`
+}
+
 // PrivateNetworkPeering is a durable, account-scoped request to connect two
 // Gregale-owned networks. Pending and error peerings remain fail-closed until
 // the node fabric has converged the symmetric route set.

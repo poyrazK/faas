@@ -14,6 +14,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -120,6 +121,48 @@ func TestVerify_ValidToken(t *testing.T) {
 	}
 	if claims.Issuer != "https://idp.example.com/" {
 		t.Fatalf("expected iss=..., got %q", claims.Issuer)
+	}
+}
+
+func TestVerify_ExtractsBoundedScalarCustomClaimsWithoutRequiredClaims(t *testing.T) {
+	t.Parallel()
+	priv, pub := rs256Fixture(t, "k1")
+	url, _ := jwksServer(t, pub, nil)
+	v := newVerifier(t, url, "k1", pub)
+	custom := map[string]any{
+		"tenant_id": "tenant-42",
+		"tier":      7,
+		"active":    true,
+		"roles":     []string{"admin"},
+		"profile":   map[string]any{"region": "eu"},
+	}
+	// Fill the generic extraction set ahead of tenant_id lexicographically.
+	// ExtractClaims must keep the configured throttle dimensions anyway.
+	for i := 0; i < 70; i++ {
+		custom[fmt.Sprintf("a_claim_%02d", i)] = fmt.Sprintf("value-%02d", i)
+	}
+	tok := mintToken(t, priv, "k1", jwt.Claims{
+		Issuer:  "https://idp.example.com/",
+		Subject: "alice",
+		Expiry:  jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+	}, custom)
+	claims, err := v.Verify(context.Background(), tok, edgejwks.VerifierRule{
+		JWKSURL: url, Issuer: "https://idp.example.com/", Algorithms: []string{"RS256"},
+		ExtractClaims: []string{"tenant_id", "tier", "active"},
+	})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	want := map[string]string{"tenant_id": "tenant-42", "tier": "7", "active": "true"}
+	for key, value := range want {
+		if got := claims.Custom[key]; got != value {
+			t.Errorf("Custom[%q] = %q, want %q", key, got, value)
+		}
+	}
+	for _, absent := range []string{"sub", "iss", "exp", "roles", "profile"} {
+		if _, ok := claims.Custom[absent]; ok {
+			t.Errorf("Custom unexpectedly retained %q", absent)
+		}
 	}
 }
 

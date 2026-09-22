@@ -158,7 +158,8 @@ scaling:
   scale_out_cooldown_s: 5
   scale_in_cooldown_s: 60
   concurrency_overflow: queue # queue or drop
-  max_queue_wait_ms: 2500 # 0 uses the plan default
+  max_queue_depth: 32 # warm-saturation waiters; 0 uses the plan default
+  max_queue_wait_ms: 2000 # warm-saturation wait; 0 uses the plan default
 ```
 
 `min_instances` and `max_instances` use the platform's plan limits; `0`
@@ -176,7 +177,9 @@ server-side from the immutable archive before enqueueing the deployment. A local
 single-app deploy reads the block from the uploaded source.
 
 `concurrency_overflow: drop` returns HTTP 429 immediately when the app's
-concurrency boundary is saturated; `queue` preserves bounded waiting.
+concurrency boundary is saturated; `queue` preserves bounded FIFO waiting.
+The warm queue's effective plan defaults are shown by `gregale app APP`, and
+are independent of the longer `wake_max_queue_*` cold-wake limits.
 
 ## Declarative worker lifecycle
 

@@ -631,6 +631,18 @@ func TestEdgeRuleThrottleAction_Validate_PinBackCompat(t *testing.T) {
 			name: "key_by=jwt_subject with no other Phase-3 fields",
 			a:    EdgeRuleThrottleAction{RequestsPerSecond: 10, Burst: 20, KeyBy: ThrottleKeyByJWTSubject},
 		},
+		{
+			name: "key_by=country",
+			a:    EdgeRuleThrottleAction{RequestsPerSecond: 10, Burst: 20, KeyBy: ThrottleKeyByCountry},
+		},
+		{
+			name: "strict missing JWT claim",
+			a: EdgeRuleThrottleAction{
+				RequestsPerSecond: 10, Burst: 20,
+				KeyBy: ThrottleKeyByJWTClaim, JWTClaimName: "tenant_id",
+				MissingKeyPolicy: ThrottleMissingKeyReject,
+			},
+		},
 	}
 	ctx := ThrottleValidationContext{
 		PlanMaxRPS: 100, PlanMaxBurst: 500,
@@ -734,6 +746,21 @@ func TestEdgeRuleThrottleAction_Validate_Rejects(t *testing.T) {
 				a.KeyBy = ThrottleKeyByJWTClaim
 			},
 			want: `jwt_claim_name is required when key_by="jwt_claim"`,
+		},
+		{
+			name: "unknown missing_key_policy",
+			mutate: func(a *EdgeRuleThrottleAction) {
+				a.KeyBy = ThrottleKeyByAPIKey
+				a.MissingKeyPolicy = "bypass"
+			},
+			want: `missing_key_policy "bypass" is not in the closed vocab`,
+		},
+		{
+			name: "missing_key_policy without dimension",
+			mutate: func(a *EdgeRuleThrottleAction) {
+				a.MissingKeyPolicy = ThrottleMissingKeyReject
+			},
+			want: `missing_key_policy requires a dimensional key_by`,
 		},
 	}
 	for _, tc := range cases {

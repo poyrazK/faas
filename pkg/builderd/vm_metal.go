@@ -73,8 +73,9 @@ type VMMDriver struct {
 	// <exportDir>/<build_id>/build-done.json and /build/out/* here.
 	exportDir string
 
-	// dependencyCacheMu serializes seed-copy and atomic publication. Only
-	// developer sessions use it; the platform has at most two builder slots.
+	// dependencyCacheMu serializes the short cache link-snapshot boundary and
+	// atomic publication. The immutable hard links remain valid after unlock,
+	// so source staging and mke2fs do not serialize the two builder slots.
 	dependencyCacheMu sync.Mutex
 }
 
@@ -263,9 +264,12 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	if cachePath == "" {
 		cacheRestored, driveErr = createBuildDrive1(ctx, drive1Path, bManifest, req.SourcePath, "")
 	} else {
-		d.dependencyCacheMu.Lock()
-		cacheRestored, driveErr = createBuildDrive1(ctx, drive1Path, bManifest, req.SourcePath, cachePath)
-		d.dependencyCacheMu.Unlock()
+		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, cachePath,
+			func(src, dst string, maxBytes int64) error {
+				d.dependencyCacheMu.Lock()
+				defer d.dependencyCacheMu.Unlock()
+				return stageDependencyCacheForDrive(src, dst, maxBytes, os.Link)
+			})
 	}
 	if driveErr != nil {
 		os.Remove(drive1Path)
@@ -855,10 +859,10 @@ func (d *VMMDriver) Cancel(ctx context.Context, buildID string) error {
 	return nil
 }
 
-// runJanitor scans d.driveDir for *.ext4 older than 1h and removes them.
-// Best-effort: no error returned. Per the plan's Risks, vmmd crashes
-// between boot and destroy would otherwise leak 28 GiB scratch files; this
-// is the cheap, conservative cleanup.
+// runJanitor scans d.driveDir for *.ext4 files and cache-link staging trees
+// older than 1h and removes them. Best-effort: no error returned. Per the
+// plan's Risks, vmmd or builderd crashes would otherwise leak 28 GiB scratch
+// files or retain cache inodes through abandoned hard links.
 func (d *VMMDriver) runJanitor() {
 	cutoff := time.Now().Add(-1 * time.Hour)
 	entries, err := os.ReadDir(d.driveDir)
@@ -866,10 +870,9 @@ func (d *VMMDriver) runJanitor() {
 		return
 	}
 	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if filepath.Ext(e.Name()) != ".ext4" {
+		stagingDir := e.IsDir() && strings.HasPrefix(e.Name(), ".faas-buildstage-")
+		driveFile := !e.IsDir() && filepath.Ext(e.Name()) == ".ext4"
+		if !stagingDir && !driveFile {
 			continue
 		}
 		info, err := e.Info()
@@ -877,7 +880,12 @@ func (d *VMMDriver) runJanitor() {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			_ = os.Remove(filepath.Join(d.driveDir, e.Name()))
+			path := filepath.Join(d.driveDir, e.Name())
+			if stagingDir {
+				_ = os.RemoveAll(path)
+			} else {
+				_ = os.Remove(path)
+			}
 		}
 	}
 	d.dependencyCacheMu.Lock()

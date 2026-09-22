@@ -2085,7 +2085,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// worker only sees rows that remain pending after the wakeup grace period.
 	go func() {
 		err := db.RunNotificationOutbox(ctx, pool, "schedd",
-			[]string{db.NotifyAppWake, db.NotifySnapshotPrime}, loop.HandleDurableNotification, log)
+			[]string{db.NotifyAppWake, db.NotifyRuntimeConfigRestart, db.NotifySnapshotPrime}, loop.HandleDurableNotification, log)
 		if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}

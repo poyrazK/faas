@@ -20,6 +20,49 @@ invocation permanently fails or exhausts its retry budget. Webhook delivery
 has its own retry and dead-letter lifecycle, so a downstream outage does not
 change the invocation result.
 
+## Delayed tasks
+
+Delayed tasks are durable one-shot invocations. The producer asks Gregale to
+invoke an app at a future time, so it does not need to operate Redis, SQS,
+EventBridge, or cron infrastructure.
+
+Use either an absolute timestamp or a relative delay:
+
+```bash
+gregale delayed-task add --app billing --delay 30m \
+  --path /internal/send-reminder --payload '{"invoice_id":"inv_123"}' \
+  --idempotency-key reminder-inv-123
+
+gregale delayed-task add --app billing \
+  --scheduled-at 2026-10-01T09:00:00Z --method POST --path /month-close
+```
+
+The API accepts the same target envelope as an asynchronous invocation:
+`method`, `path`, `headers`, `payload`, `retry_policy`, `retention_seconds`,
+and optional success/failure webhook destinations. Exactly one of
+`scheduled_at` or `delay_seconds` is required. The time must be in the future
+and no more than 365 days away.
+
+List, inspect, or cancel work without querying the general invocation ledger:
+
+```bash
+gregale delayed-task list --app billing
+gregale delayed-task get TASK_ID
+gregale delayed-task cancel TASK_ID
+```
+
+Cancellation prevents execution only while a task is still `pending`. A task
+already `dispatching` may complete. Dispatch is at least once: retries after a
+worker or network failure can invoke the target more than once, so application
+side effects must be idempotent. Use a stable `Idempotency-Key` (or the CLI's
+`--idempotency-key`) when retrying creation after an uncertain response; that
+prevents duplicate task rows during the API's 24-hour replay window.
+
+Paid plans support delayed tasks. The per-app pending limits are Hobby 5, Pro
+50, and Scale 1,000,000. A purpose-built API key can use
+`delayed_tasks:write` to create/cancel and `delayed_tasks:read` to list/get;
+existing `deploy:write` and `apps:read` keys remain compatible.
+
 ## Internal event subscriptions
 
 Applications can subscribe to events published through Gregale's internal

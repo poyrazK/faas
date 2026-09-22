@@ -515,3 +515,32 @@ func (s *PgStore) ReleasePrivateNetworkAddress(ctx context.Context, accountID, n
 	}
 	return nil
 }
+
+func (s *PgStore) ListPrivateNetworkAddresses(ctx context.Context, accountID, networkID string) ([]PrivateNetworkAddress, error) {
+	accountID = strings.TrimSpace(accountID)
+	networkID = strings.TrimSpace(networkID)
+	if accountID == "" || networkID == "" {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := s.pool.Query(ctx, `
+		select id, account_id, network_id, owner_type, owner_id, address::text, created_at
+		  from private_network_addresses
+		 where account_id = $1 and network_id = $2
+		 order by address, owner_type, owner_id`, mustPgUUID(accountID), networkID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := make([]PrivateNetworkAddress, 0)
+	for rows.Next() {
+		address, scanErr := scanPrivateNetworkAddress(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, address)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return out, nil
+}

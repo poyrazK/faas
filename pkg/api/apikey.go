@@ -336,6 +336,12 @@ const (
 	// or the customer's own infrastructure, and that token should not be
 	// able to ship code.
 	ScopeMetricsWrite = "metrics:write"
+	// Delayed-task scopes let an application or automation schedule and
+	// inspect one-shot work without receiving the much broader deploy:write
+	// permission. deploy:write remains accepted on these routes for backwards
+	// compatibility with keys minted before the narrow scopes existed.
+	ScopeDelayedTasksRead  = "delayed_tasks:read"
+	ScopeDelayedTasksWrite = "delayed_tasks:write"
 	// Object storage separates control-plane management from data-plane
 	// access. Data-plane keys also need an explicit grant for the target
 	// bucket; these scopes alone never expose a bucket.
@@ -366,6 +372,8 @@ var validScopes = map[string]struct{}{
 	ScopeRegistryCredentialsWrite: {},
 	ScopeUpstreamsWrite:           {},
 	ScopeMetricsWrite:             {},
+	ScopeDelayedTasksRead:         {},
+	ScopeDelayedTasksWrite:        {},
 	ScopeStorageManage:            {},
 	ScopeStorageRead:              {},
 	ScopeStorageWrite:             {},
@@ -467,6 +475,12 @@ var (
 	// runtime telemetry on the same trust model as env vars, and the
 	// pusher is typically unattended automation that cannot satisfy MFA.
 	ScopesMetricsWriteSurface = []string{ScopeAdmin, ScopeMetricsWrite}
+
+	// Delayed-task routes retain deploy:write/apps:read compatibility while
+	// allowing unattended schedulers to use a purpose-built credential.
+	// Write includes read so a producer can inspect or cancel work it created.
+	ScopesDelayedTasksReadSurface  = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite, ScopeDelayedTasksRead, ScopeDelayedTasksWrite}
+	ScopesDelayedTasksWriteSurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeDelayedTasksWrite}
 
 	// ScopesRegistryCredentialsReadSurface: GET on
 	// /v1/apps/{slug}/registry-credentials (issue #461 / ADR-062).

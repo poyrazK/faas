@@ -734,6 +734,76 @@ func TestEdgeRuleThrottleReturns429(t *testing.T) {
 	}
 }
 
+type stubCountryReader struct {
+	country string
+	found   bool
+	err     error
+}
+
+func (s stubCountryReader) Lookup(net.IP) (string, bool, error) {
+	return s.country, s.found, s.err
+}
+
+func TestResolveThrottleDimension_CountryAndJWTClaim(t *testing.T) {
+	h := (&Handler{}).WithGeoReader(stubCountryReader{country: "tr", found: true})
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.10")
+
+	value, ok, unavailable := h.resolveThrottleDimension(req, &EdgeRuleThrottleResolved{KeyBy: api.ThrottleKeyByCountry})
+	if value != "TR" || !ok || unavailable != "" {
+		t.Fatalf("country dimension = (%q, %v, %q), want (TR, true, empty)", value, ok, unavailable)
+	}
+
+	ctx := withAuthenticated(req.Context(), Authenticated{JWTClaims: map[string]string{"tenant_id": "tenant-42"}})
+	req = req.WithContext(ctx)
+	value, ok, unavailable = h.resolveThrottleDimension(req, &EdgeRuleThrottleResolved{
+		KeyBy: api.ThrottleKeyByJWTClaim, JWTClaimName: "tenant_id",
+	})
+	if value != "tenant-42" || !ok || unavailable != "" {
+		t.Fatalf("JWT claim dimension = (%q, %v, %q), want (tenant-42, true, empty)", value, ok, unavailable)
+	}
+}
+
+func TestEdgeRuleThrottle_MissingIdentityRejectsBeforeTokenConsume(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.edgeRules = stubEdgeRuleMatcher{throttle: &EdgeRuleThrottleResolved{
+		ID: "rule-strict", AccountID: "acct-1", AppID: "app-1",
+		RequestsPerSecond: 10, Burst: 20,
+		KeyBy: api.ThrottleKeyByJWTClaim, JWTClaimName: "tenant_id",
+		MaxKeysPerRule: 100, MissingKeyPolicy: api.ThrottleMissingKeyReject,
+	}}
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	rec := httptest.NewRecorder()
+	if handled := h.applyEdgeRuleThrottle(rec, req, App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}); !handled {
+		t.Fatal("strict missing identity did not short-circuit")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := h.routeLimiter.BucketCount(); got != 0 {
+		t.Errorf("parent route bucket count = %d, want 0 (rejected requests must not consume tokens)", got)
+	}
+}
+
+func TestEdgeRuleThrottle_MissingIdentitySharedBucket(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.edgeRules = stubEdgeRuleMatcher{throttle: &EdgeRuleThrottleResolved{
+		ID: "rule-shared", AccountID: "acct-1", AppID: "app-1",
+		RequestsPerSecond: 10, Burst: 20,
+		KeyBy: api.ThrottleKeyByAPIKey, MaxKeysPerRule: 100,
+		MissingKeyPolicy: api.ThrottleMissingKeyShared,
+	}}
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	rec := httptest.NewRecorder()
+	if handled := h.applyEdgeRuleThrottle(rec, req, App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}); handled {
+		t.Fatalf("shared missing identity unexpectedly short-circuited: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	ruleKey := "app-1\x00rule-shared"
+	if !h.routeConsumerLimiter.ConsumerIsTracked(ruleKey, "__anonymous__") {
+		t.Fatal("missing identities were not placed in the shared anonymous bucket")
+	}
+}
+
 // TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse — ADR-104
 // amendment 5 (issue #881 Phase 4 H1): when a per-consumer rule
 // (KeyBy="api_key") collapses the consumer into the __other__
@@ -877,9 +947,10 @@ func TestAccountRateLimitReturns429(t *testing.T) {
 
 // TestConcurrentColdRequestsRespectPlanWakeWaiterCap (issue #168) — at the
 // Free-plan cap of max_concurrency=1, concurrent cold requests still
-// coalesce to exactly ONE admit. The plan-derived wake waiter budget is four,
-// so excess followers receive bounded 503 responses instead of creating an
-// unbounded queue. Higher plans admit more; covered by
+// coalesce to exactly ONE admit. The plan-derived wake waiter budget is four.
+// Once the app is warm, its separate saturation queue is also bounded, so
+// excess followers receive typed 429s (or a bounded 503 on timeout) instead
+// of creating an unbounded queue. Higher plans admit more; covered by
 // TestCapThreeAdmitsThreeDistinctInstances.
 func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 	h, b, _ := newTestHandler(t)
@@ -900,10 +971,10 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 			switch rec.Code {
 			case http.StatusOK:
 				successes.Add(1)
-			case http.StatusServiceUnavailable:
+			case http.StatusTooManyRequests, http.StatusServiceUnavailable:
 				rejected.Add(1)
 			default:
-				t.Errorf("status = %d, want 200 or bounded 503", rec.Code)
+				t.Errorf("status = %d, want 200, bounded 429, or bounded 503", rec.Code)
 			}
 		}()
 	}
@@ -912,7 +983,7 @@ func TestConcurrentColdRequestsCoalesceToOneWake(t *testing.T) {
 		t.Errorf("50 concurrent cold requests should trigger 1 admit, got %d", got)
 	}
 	if got := successes.Load() + rejected.Load(); got != 50 {
-		t.Errorf("all concurrent cold requests should finish with 200 or bounded 503, got %d/50", got)
+		t.Errorf("all concurrent cold requests should finish with 200 or bounded overload response, got %d/50", got)
 	}
 }
 
@@ -2350,6 +2421,37 @@ func TestApplyEdgeRuleJWT_VerifierSuccess_EmitsApplySuccess(t *testing.T) {
 	}
 	if !strings.Contains(body, `gateway_edge_rule_match_total{kind="jwt",outcome="match"} 1`) {
 		t.Errorf("match_total{jwt,match} != 1; body:\n%s", body)
+	}
+}
+
+func TestApplyEdgeRuleJWT_PrioritizesMatchedThrottleClaim(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.edgeRules = stubEdgeRuleMatcher{
+		jwt: &EdgeRuleJWTResolved{
+			ID: "rule-jwt", AccountID: "acct-1", AppID: "app-1",
+			Issuer: "https://idp.example.com", JWKSURL: "https://idp.example.com/jwks",
+			Algorithms: []string{"RS256"},
+		},
+		throttle: &EdgeRuleThrottleResolved{
+			ID: "rule-throttle", AccountID: "acct-1", AppID: "app-1",
+			KeyBy: api.ThrottleKeyByJWTClaim, JWTClaimName: "tenant_id",
+		},
+	}
+	h.jwtVerifier = &countingJWTVerifier{onVerify: func(_ context.Context, _ string, rule *EdgeRuleJWTResolved) (*JWTClaims, error) {
+		if len(rule.ExtractClaims) != 1 || rule.ExtractClaims[0] != "tenant_id" {
+			t.Fatalf("ExtractClaims = %v, want [tenant_id]", rule.ExtractClaims)
+		}
+		return &JWTClaims{Subject: "user-1", Custom: map[string]string{"tenant_id": "tenant-42"}}, nil
+	}}
+
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil)
+	req.Header.Set("Authorization", "Bearer good")
+	rec := httptest.NewRecorder()
+	if handled := h.applyEdgeRuleJWT(rec, req, App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}); handled {
+		t.Fatalf("verified JWT unexpectedly short-circuited: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := authenticatedFrom(req.Context()).JWTClaims["tenant_id"]; got != "tenant-42" {
+		t.Fatalf("authenticated tenant_id = %q, want tenant-42", got)
 	}
 }
 

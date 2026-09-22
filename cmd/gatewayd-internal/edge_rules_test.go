@@ -201,6 +201,38 @@ func TestCompileRouteRules_EmptyInputProducesEmptyOutput(t *testing.T) {
 	}
 }
 
+func TestCompileThrottleRules_PreservesDimensionalPolicy(t *testing.T) {
+	in := []state.EdgeRule{{
+		ID: "rule-throttle", AccountID: "acct-1", AppID: "app-1",
+		MatchHost: "api.example.com", MatchPath: "/v1/*", Priority: 10, Enabled: true,
+		Kind: state.EdgeRuleKindThrottle,
+		Action: state.EdgeRuleAction{
+			Kind: state.EdgeRuleKindThrottle,
+			Throttle: &state.EdgeRuleThrottleAction{
+				RequestsPerSecond: 10,
+				Burst:             20,
+				KeyBy:             api.ThrottleKeyByCountry,
+				MaxKeysPerRule:    250,
+				MissingKeyPolicy:  api.ThrottleMissingKeyReject,
+			},
+		},
+	}}
+
+	got, parseErrs := compileThrottleRules(in)
+	if len(parseErrs) != 0 {
+		t.Fatalf("compileThrottleRules parse errors = %v", parseErrs)
+	}
+	if len(got) != 1 {
+		t.Fatalf("compileThrottleRules length = %d, want 1", len(got))
+	}
+	if got[0].KeyBy != api.ThrottleKeyByCountry || got[0].MaxKeysPerRule != 250 {
+		t.Errorf("dimension = (%q, %d), want (%q, 250)", got[0].KeyBy, got[0].MaxKeysPerRule, api.ThrottleKeyByCountry)
+	}
+	if got[0].MissingKeyPolicy != api.ThrottleMissingKeyReject {
+		t.Errorf("missing_key_policy = %q, want %q", got[0].MissingKeyPolicy, api.ThrottleMissingKeyReject)
+	}
+}
+
 // TestCompileRouteRules_MalformedGlobDroppedAndReported (review fix R3)
 // pins the new behaviour: a rule whose MatchPath fails stdlib
 // path.Match validation (unmatched bracket, etc.) is dropped

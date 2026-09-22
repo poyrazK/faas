@@ -377,6 +377,8 @@ type AppEffectiveLimits struct {
 	CPUWeight              int   `json:"cpu_weight"`
 	MaxInstances           int   `json:"max_instances"`
 	ConcurrencyPerInstance int   `json:"concurrency_per_instance"`
+	ConcurrencyQueueDepth  int   `json:"concurrency_queue_depth"`
+	ConcurrencyQueueWaitMS int64 `json:"concurrency_queue_wait_ms"`
 	AppRequestRateRPS      int   `json:"app_request_rate_rps"`
 	AppRequestBurst        int   `json:"app_request_burst"`
 	AccountRequestRateRPM  int   `json:"account_request_rate_rpm"`
@@ -1241,13 +1243,24 @@ type QueueReceiveResponse struct {
 	Result  json.RawMessage `json:"result,omitempty"`
 }
 
-// DelayedTaskResponse is the create/get shape for delayed tasks.
-// ScheduledAt is the customer-facing UTC dispatch time; State is
-// populated on get, omitted on create (always "pending" there).
+// DelayedTaskResponse is the create/get/list shape for delayed tasks.
 type DelayedTaskResponse struct {
-	ID          string    `json:"id"`
-	ScheduledAt time.Time `json:"scheduled_at"`
-	State       string    `json:"state,omitempty"`
+	ID          string          `json:"id"`
+	AppID       string          `json:"app_id,omitempty"`
+	ScheduledAt time.Time       `json:"scheduled_at"`
+	State       string          `json:"state"`
+	Method      string          `json:"method,omitempty"`
+	Path        string          `json:"path,omitempty"`
+	Attempts    int             `json:"attempts,omitempty"`
+	LastError   string          `json:"last_error,omitempty"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	CreatedAt   time.Time       `json:"created_at,omitempty"`
+	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+}
+
+type ListDelayedTasksResponse struct {
+	Tasks      []DelayedTaskResponse `json:"tasks"`
+	NextBefore string                `json:"next_before,omitempty"`
 }
 
 // ListInvocationsResponse lives in cmd/apid because pkg/api cannot
@@ -1274,8 +1287,20 @@ type QueueSendRequest struct {
 // ScheduledAt must be in the future (UTC); the handler rejects past
 // timestamps with invalid_scheduled_at.
 type DelayedTaskRequest struct {
-	Payload     json.RawMessage `json:"payload,omitempty"`
-	ScheduledAt time.Time       `json:"scheduled_at"`
+	Payload          json.RawMessage         `json:"payload,omitempty"`
+	ScheduledAt      time.Time               `json:"scheduled_at,omitzero"`
+	DelaySeconds     int64                   `json:"delay_seconds,omitempty"`
+	Headers          json.RawMessage         `json:"headers,omitempty"`
+	Method           string                  `json:"method,omitempty"`
+	Path             string                  `json:"path,omitempty"`
+	RetryPolicy      *RetryPolicyDTO         `json:"retry_policy,omitempty"`
+	RetentionSeconds *int                    `json:"retention_seconds,omitempty"`
+	Destinations     *InvocationDestinations `json:"destinations,omitempty"`
+}
+
+type InvocationDestinations struct {
+	OnSuccess string `json:"on_success,omitempty"`
+	OnFailure string `json:"on_failure,omitempty"`
 }
 
 // Invocation is the SDK-side mirror of state.Invocation. The wire

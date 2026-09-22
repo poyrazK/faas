@@ -944,6 +944,15 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	if !ok {
 		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency, RequestBodyMaxBytes: plan.MaxRequestBodyBytes()}
 	}
+	queueDepth, queueWait, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	if a.ScalingPolicy != nil {
+		if a.ScalingPolicy.MaxQueueDepth > 0 {
+			queueDepth = a.ScalingPolicy.MaxQueueDepth
+		}
+		if a.ScalingPolicy.MaxQueueWaitMS > 0 {
+			queueWait = time.Duration(a.ScalingPolicy.MaxQueueWaitMS) * time.Millisecond
+		}
+	}
 	maxInstances := a.MaxConcurrency
 	if a.ScalingPolicy != nil && a.ScalingPolicy.MaxInstances > 0 {
 		maxInstances = a.ScalingPolicy.MaxInstances
@@ -955,6 +964,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
 		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
 		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
+		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
 		AppRequestRateRPS: limits.RateLimitRPS, AppRequestBurst: limits.RateLimitBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
 		RequestBudgetMS:       limits.RequestBudgetForType(string(a.Type)).Milliseconds(),
@@ -1030,6 +1040,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 		ScaleInCooldownS:        p.ScaleInCooldownS,
 		ConcurrencyOverflow:     p.ConcurrencyOverflow,
 		MaxQueueWaitMS:          p.MaxQueueWaitMS,
+		MaxQueueDepth:           p.MaxQueueDepth,
 		WakeMaxQueueDepth:       p.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: p.WakeMaxQueueWaitSeconds,
 	}

@@ -335,7 +335,7 @@ func envPush(args []string) int {
 	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
 	in := fs.String("f", ".env", "input file (default .env)")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
-	restart := fs.Bool("restart", false, "restart app after applying changes (otherwise changes apply on next wake)")
+	restart := fs.Bool("restart", false, "restart app after applying changes (otherwise changes apply on next cold wake)")
 	// --secret-scan mirrors the deploy-side flag. Default ON because the
 	// failure mode (a Stripe key pasted into a `gregale env push`
 	// heredoc) is the same as the deploy-side case — the value lands in
@@ -505,26 +505,6 @@ func envPush(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	// Same rotation-hint flow as secretsSet (commands3.go).
-	existing := map[string]bool{}
-	if list, err := client.ListSecretsWithScope(context.Background(), *app, *scope); err == nil {
-		for _, s := range list.Secrets {
-			existing[s.Key] = true
-		}
-	}
-	rotated := 0
-	for _, p := range pairs {
-		if existing[p.k] {
-			rotated++
-		}
-	}
-	if rotated > 0 {
-		_, _ = fmt.Fprintf(osStdout,
-			"note: %d secret(s) already existed in scope=%q and are being rotated.\n"+
-				"  Any parked snapshots still hold the previous plaintext until the next wake.\n"+
-				"  Deploy, or call `gregale wake %s`, to force an overstamp.\n",
-			rotated, scopeOrDefault(*scope), *app)
-	}
 	for _, p := range pairs {
 		if err := client.SetSecretWithScope(context.Background(), *app, p.k, p.v, *scope); err != nil {
 			return printErr("Set "+p.k+" failed", err)
@@ -532,11 +512,9 @@ func envPush(args []string) int {
 		PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
 	}
 	if *restart {
-		// The env PUT invalidates parked snapshots, but running instances
-		// intentionally keep their old process environment. Reuse the
-		// customer restart endpoint so `--restart` has the same durable
-		// park-and-replacement-wake semantics as `gregale app <slug> restart`.
-		out, err := client.RestartApp(context.Background(), *app)
+		// Runtime configuration must not use the ordinary snapshot restart:
+		// capturing process memory would preserve the previous environment.
+		out, err := client.RestartAppFresh(context.Background(), *app)
 		if err != nil {
 			return printErr("Restart failed", err)
 		}
@@ -544,10 +522,10 @@ func envPush(args []string) int {
 		return 0
 	}
 	// Default semantics are deliberately lazy: the API keeps live
-	// instances on their existing environment and the next wake picks up
+	// instances on their existing environment and the next cold wake picks up
 	// the persisted values. Say this even when no key was a re-PUT — a new
 	// key is just as invisible to already-running processes as a rotation.
-	PrintWarn(osStdout, "Updated env values apply on the next wake; running instances keep their current environment. Use --restart to apply now.")
+	PrintWarn(osStdout, "Updated env values apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	return 0
 }
 
@@ -661,7 +639,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Mirrors cmdApp (commands2.go:53-126) but with no --plan — plan
@@ -678,6 +656,8 @@ func cmdAppScale(slug string, args []string) int {
 	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
 	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
 	concurrencyOverflow := fs.String("concurrency-overflow", "", "saturated concurrency behavior: queue|drop")
+	maxQueueDepth := fs.Int("max-queue-depth", 0, "maximum queued requests at warm saturation (0 = plan default)")
+	maxQueueWait := fs.Duration("max-queue-wait", 0, "maximum warm-saturation wait as a duration, for example 750ms or 2s (0 = plan default)")
 	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	wakeMaxQueueDepth := fs.Int("wake-max-queue-depth", 0, "per-app cold-wake waiter cap (0 = plan default)")
 	wakeMaxQueueWaitSeconds := fs.Int("wake-max-queue-wait-seconds", 0, "per-app cold-wake wait budget in seconds (0 = plan default, max 60)")
@@ -731,6 +711,10 @@ func cmdAppScale(slug string, args []string) int {
 	}
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	queueWaitMS, setQueueWait, err := cliQueueWaitMilliseconds(*maxQueueWaitMS, *maxQueueWait, explicit["max-queue-wait-ms"], explicit["max-queue-wait"])
+	if err != nil {
+		return printErr("Invalid concurrency policy", err)
+	}
 	var req api.UpdateAppRequest
 	if explicit["ram"] {
 		if *ram <= 0 {
@@ -750,12 +734,12 @@ func cmdAppScale(slug string, args []string) int {
 		v := *conc
 		req.MaxConcurrency = &v
 	}
-	if explicit["concurrency-overflow"] || explicit["max-queue-wait-ms"] || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
+	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		policy, err := cliScalingPolicyPatchWithWake(context.Background(), client, slug, *concurrencyOverflow, *maxQueueWaitMS, explicit["concurrency-overflow"], explicit["max-queue-wait-ms"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
+		policy, err := cliScalingPolicyPatchWithQueues(context.Background(), client, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
 		}

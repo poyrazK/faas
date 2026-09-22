@@ -746,42 +746,30 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 		return
 	}
 	request := p.guestRequest(r, targetPath, target, caller)
-	api.PlatformIdentity{
-		RequestID:  request.Header.Get(api.RequestIDHeader),
-		AppID:      target.AppID,
-		InstanceID: endpoint.InstanceID,
-		NodeID:     endpoint.NodeID,
-	}.ApplyGuestHeaders(request.Header)
+	applyServiceEndpointIdentity(request, target, endpoint, caller)
 	// Mirrors the public edge (ADR-080): the wake-timeline vocabulary marks a
 	// raw-bytes session so observability does not have to re-derive it from
 	// the Connection/Upgrade pair.
 	request.Header.Set("x-faas-upgrade", "true")
-	p.rawForward(Target{NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, Port: endpoint.Port}).ServeHTTP(w, request)
+	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(w, request)
 }
 
 func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, retry bool) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
-	requestID := request.Header.Get(api.RequestIDHeader)
 	for attempt := 0; attempt < ServiceProxyMaxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
 		if !ok {
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
 			return
 		}
-		identity := api.PlatformIdentity{
-			RequestID:  requestID,
-			AppID:      appID,
-			InstanceID: endpoint.InstanceID,
-			NodeID:     endpoint.NodeID,
-		}
-		identity.ApplyGuestHeaders(request.Header)
+		applyServiceEndpointIdentity(request, target, endpoint, caller)
 		signal := &staleTargetSignal{onStale: func() { p.quarantine(appID, endpoint.InstanceID) }}
 		buffer := newServiceProxyResponseWriter(w)
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq := request.WithContext(withStaleTargetSignal(request.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
-		p.forward(Target{NodeID: endpoint.NodeID, InstanceID: endpoint.InstanceID, Port: endpoint.Port}).ServeHTTP(buffer, forwardReq)
+		p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
 		if !signal.stale.Load() {
 			// Report the healthy transport. Without this the breaker only
 			// ever observes failures, the rolling ratio is a constant 1.0,
@@ -795,6 +783,45 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		buffer.commit()
 		buffer.commitTrailers()
 		return
+	}
+}
+
+// applyServiceEndpointIdentity replaces guest-controlled identity claims with
+// the authoritative target replica and the account already checked by the
+// service authorizer. The same helper is used by HTTP and Upgrade paths so a
+// raw-bytes bridge cannot silently lose deployment provenance.
+func applyServiceEndpointIdentity(request *http.Request, target ServiceTarget, endpoint ServiceEndpoint, caller ServiceCaller) {
+	if request == nil {
+		return
+	}
+	identity := api.PlatformIdentity{
+		RequestID:           request.Header.Get(api.RequestIDHeader),
+		AppID:               target.AppID,
+		DeploymentID:        endpoint.DeploymentID,
+		TenantID:            caller.AccountID,
+		InstanceID:          endpoint.InstanceID,
+		NodeID:              endpoint.NodeID,
+		Region:              endpoint.Region,
+		CommitSHA:           endpoint.CommitSHA,
+		DeploymentTag:       endpoint.DeploymentTag,
+		DeploymentCreatedAt: endpoint.DeploymentCreatedAt,
+		ImageDigest:         endpoint.ImageDigest,
+	}
+	identity.ApplyGuestHeaders(request.Header)
+}
+
+func serviceEndpointTarget(appID string, endpoint ServiceEndpoint) Target {
+	return Target{
+		AppID:               appID,
+		NodeID:              endpoint.NodeID,
+		InstanceID:          endpoint.InstanceID,
+		DeploymentID:        endpoint.DeploymentID,
+		Region:              endpoint.Region,
+		CommitSHA:           endpoint.CommitSHA,
+		DeploymentTag:       endpoint.DeploymentTag,
+		DeploymentCreatedAt: endpoint.DeploymentCreatedAt,
+		ImageDigest:         endpoint.ImageDigest,
+		Port:                endpoint.Port,
 	}
 }
 

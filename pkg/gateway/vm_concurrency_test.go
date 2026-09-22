@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestVMConcurrencyManagerEnforcesPerInstanceLimit(t *testing.T) {
@@ -166,6 +168,65 @@ func TestVMConcurrencyManagerWakesWaiterOnRelease(t *testing.T) {
 	}
 	if len(m.gates) != 0 {
 		t.Fatalf("gate remained after all requests drained, gates=%d", len(m.gates))
+	}
+}
+
+func TestVMConcurrencyWarmQueueIsBoundedFIFO(t *testing.T) {
+	m := newVMConcurrencyManager(nil)
+	first, depth, ok := m.enterQueue("app", "pro", 2)
+	if !ok || depth != 1 {
+		t.Fatalf("first queue entry = depth %d ok %v", depth, ok)
+	}
+	second, depth, ok := m.enterQueue("app", "pro", 2)
+	if !ok || depth != 2 {
+		t.Fatalf("second queue entry = depth %d ok %v", depth, ok)
+	}
+	if _, depth, ok := m.enterQueue("app", "pro", 2); ok || depth != 2 {
+		t.Fatalf("overflow queue entry = depth %d ok %v, want full at 2", depth, ok)
+	}
+
+	select {
+	case <-first.ready:
+	default:
+		t.Fatal("queue head was not made runnable")
+	}
+	select {
+	case <-second.ready:
+		t.Fatal("second waiter bypassed the queue head")
+	default:
+	}
+	first.leave()
+	select {
+	case <-second.ready:
+	case <-time.After(time.Second):
+		t.Fatal("leaving queue head did not release the next waiter")
+	}
+	second.leave()
+	if got := m.queueDepth("app"); got != 0 {
+		t.Fatalf("queue depth after drain = %d, want 0", got)
+	}
+}
+
+func TestAcquireVMTargetReturnsTypedWarmQueueTimeout(t *testing.T) {
+	b := &fakeBackend{app: App{ID: "app", Type: AppTypeFunction, Plan: api.PlanFree, MaxQueueDepth: 1}, targets: []Target{{NodeID: "node", InstanceID: "first"}}}
+	h := NewHandlerWith(b, NewMetrics(), nil)
+	held, ok := h.vmConcurrency.tryAcquire("first", "free", 1)
+	if !ok {
+		t.Fatal("failed to occupy first target")
+	}
+	defer held()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	_, release, waited, err := h.acquireVMTarget(ctx, b.app, PickResult{Target: b.targets[0], OK: true}, 1, "")
+	if release != nil {
+		release()
+	}
+	if !waited || !errors.Is(err, ErrConcurrencyQueueWaitTimeout) {
+		t.Fatalf("waited=%v err=%v, want typed warm queue timeout", waited, err)
+	}
+	if got := h.vmConcurrency.queueDepth("app"); got != 0 {
+		t.Fatalf("queue depth after timeout = %d, want 0", got)
 	}
 }
 

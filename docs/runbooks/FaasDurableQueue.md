@@ -45,9 +45,12 @@ For the common worker/job case, `gregale queue setup <slug>` (or
 idempotently converges the app's `default` push binding, consumer projection,
 and `queue_depth` scaling target (defaults: queue `default`, target depth 10,
 per-worker concurrency 1). Use `--queue-name`, `--target-depth`, and
-`--max-concurrency` for routine overrides; `--force` is required to move an
-existing default binding to another queue. Advanced bindings and policies
-remain available through the individual queue APIs.
+`--max-concurrency` for routine overrides. Retry behavior can be configured in
+the same command with `--max-attempts`, `--retry-base-seconds`,
+`--retry-max-seconds`, and `--retry-jitter-seconds`; omitted retry flags keep
+the plan defaults. `--force` is required to move an existing default binding
+to another queue. Advanced bindings and policies remain available through the
+individual queue APIs.
 
 `FaasDurableQueueStalled` means work is present but the oldest pending item
 has been waiting for more than five minutes. Check queue-depth scaling,

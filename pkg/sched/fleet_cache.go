@@ -190,6 +190,35 @@ func (c *NodeTelemetryCache) LookupOpenConns(instanceID string, now time.Time) (
 	return 0, false
 }
 
+// LookupInflightRequests returns a fresh per-instance request count and the
+// scheduler-local receipt timestamp. Using the receipt clock lets rollout
+// draining reject a pre-handoff zero without trusting cross-node clock sync.
+func (c *NodeTelemetryCache) LookupInflightRequests(instanceID string, now time.Time) (inflight int64, receivedAt time.Time, ok bool) {
+	if c == nil || instanceID == "" {
+		return 0, time.Time{}, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	var (
+		bestInflight int64
+		bestReceived time.Time
+		found        bool
+	)
+	for _, entry := range c.nodes {
+		if now.Sub(entry.lastSeen) > TelemetryFreshness {
+			continue
+		}
+		for _, row := range entry.rows {
+			if row.InstanceID == instanceID && (!found || entry.lastSeen.After(bestReceived)) {
+				bestInflight = row.InflightRequests
+				bestReceived = entry.lastSeen
+				found = true
+			}
+		}
+	}
+	return bestInflight, bestReceived, found
+}
+
 // LookupFlowSummaries returns the freshest bounded endpoint summaries for an
 // instance. A fresh report with no summaries is a successful empty result;
 // callers should use the boolean to distinguish it from a stale/missing row.

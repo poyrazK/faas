@@ -362,6 +362,58 @@ func (s *server) getPrivateNetwork(w http.ResponseWriter, r *http.Request, acct 
 	writeJSON(w, http.StatusOK, privateNetworkResponse(network))
 }
 
+func (s *server) listPrivateNetworkMembers(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	baseStore, ok := s.privateNetworkFabricStore(w, r)
+	if !ok {
+		return
+	}
+	store, ok := baseStore.(state.PrivateNetworkAddressListStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrPrivateNetworkNotEnabled())
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if err := api.ValidatePrivateNetworkIdentifier(id); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+		return
+	}
+	network, err := store.GetPrivateNetwork(r.Context(), acct.ID, id)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network not found", "the requested network does not exist"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not read private network"))
+		return
+	}
+	addresses, err := store.ListPrivateNetworkAddresses(r.Context(), acct.ID, id)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list private network members"))
+		return
+	}
+	members := make([]api.PrivateNetworkMember, 0, len(addresses))
+	for _, address := range addresses {
+		member := api.PrivateNetworkMember{
+			ID: address.ID, OwnerType: address.OwnerType, OwnerID: address.OwnerID,
+			Address: address.Address.String(),
+		}
+		if !address.CreatedAt.IsZero() {
+			createdAt := address.CreatedAt.UTC()
+			member.CreatedAt = &createdAt
+		}
+		members = append(members, member)
+	}
+	capacity := state.PrivateNetworkAddressCapacity(network.CIDR)
+	available := capacity - len(members)
+	if available < 0 {
+		available = 0
+	}
+	writeJSON(w, http.StatusOK, api.PrivateNetworkMembersResponse{
+		NetworkID: id, CIDR: network.CIDR.String(), Capacity: capacity,
+		Used: len(members), Available: available, Members: members,
+	})
+}
+
 func (s *server) deletePrivateNetwork(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, ok := s.privateNetworkFabricStore(w, r)
 	if !ok {

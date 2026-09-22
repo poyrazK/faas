@@ -370,6 +370,7 @@ export type { LatestDeploymentsByAppResponse } from './models/LatestDeploymentsB
 export type { ListAuditEventsResponse } from './models/ListAuditEventsResponse.js';
 export type { ListAuditLogResponse } from './models/ListAuditLogResponse.js';
 export type { ListCronRunsResponse } from './models/ListCronRunsResponse.js';
+export type { ListDelayedTasksResponse } from './models/ListDelayedTasksResponse.js';
 export type { ListDeploymentAuditResponse } from './models/ListDeploymentAuditResponse.js';
 export type { ListDeployTokensResponse } from './models/ListDeployTokensResponse.js';
 export type { ListInstancesResponse } from './models/ListInstancesResponse.js';
@@ -498,6 +499,8 @@ export type { PrewarmRequest } from './models/PrewarmRequest.js';
 export type { PrivateNetwork } from './models/PrivateNetwork.js';
 export type { PrivateNetworkFirewallRule } from './models/PrivateNetworkFirewallRule.js';
 export type { PrivateNetworkListResponse } from './models/PrivateNetworkListResponse.js';
+export type { PrivateNetworkMember } from './models/PrivateNetworkMember.js';
+export type { PrivateNetworkMembersResponse } from './models/PrivateNetworkMembersResponse.js';
 export type { PrivateNetworkPeering } from './models/PrivateNetworkPeering.js';
 export type { PrivateNetworkPeeringListResponse } from './models/PrivateNetworkPeeringListResponse.js';
 export type { Problem } from './models/Problem.js';
@@ -617,6 +620,8 @@ export type { SetObjectBucketAccessGrantRequest } from './models/SetObjectBucket
 export type { SetPasswordRequest } from './models/SetPasswordRequest.js';
 export type { SeverityCounts } from './models/SeverityCounts.js';
 export type { Sidecar } from './models/Sidecar.js';
+export type { SidecarTimelineResponse } from './models/SidecarTimelineResponse.js';
+export type { SidecarTimelineStatus } from './models/SidecarTimelineStatus.js';
 export type { SLODuration } from './models/SLODuration.js';
 export type { Slug } from './models/Slug.js';
 export type { SourceRefDeployRequest } from './models/SourceRefDeployRequest.js';

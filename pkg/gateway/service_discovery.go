@@ -13,10 +13,15 @@ import (
 // plane addresses to workloads. Port is the effective workload HTTP port;
 // legacy targets that carry zero use the vmmd default of 8080.
 type ServiceEndpoint struct {
-	InstanceID   string `json:"instance_id"`
-	NodeID       string `json:"node_id"`
-	DeploymentID string `json:"deployment_id,omitempty"`
-	Port         int    `json:"port"`
+	InstanceID          string `json:"instance_id"`
+	NodeID              string `json:"node_id"`
+	DeploymentID        string `json:"deployment_id,omitempty"`
+	Region              string `json:"region,omitempty"`
+	CommitSHA           string `json:"commit_sha,omitempty"`
+	DeploymentTag       string `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string `json:"deployment_created_at,omitempty"`
+	ImageDigest         string `json:"image_digest,omitempty"`
+	Port                int    `json:"port"`
 }
 
 // ServiceEndpointsSnapshot is the immutable, point-in-time endpoint view for
@@ -78,10 +83,15 @@ func (b *PGBackend) ServiceEndpoints(ctx context.Context, appID string) (Service
 				port = 8080
 			}
 			candidate := ServiceEndpoint{
-				InstanceID:   target.InstanceID,
-				NodeID:       target.NodeID,
-				DeploymentID: deploymentID,
-				Port:         port,
+				InstanceID:          target.InstanceID,
+				NodeID:              target.NodeID,
+				DeploymentID:        deploymentID,
+				Region:              target.Region,
+				CommitSHA:           target.CommitSHA,
+				DeploymentTag:       target.DeploymentTag,
+				DeploymentCreatedAt: target.DeploymentCreatedAt,
+				ImageDigest:         target.ImageDigest,
+				Port:                port,
 			}
 			current, exists := byInstance[target.InstanceID]
 			if !exists || serviceEndpointLess(candidate, current) {

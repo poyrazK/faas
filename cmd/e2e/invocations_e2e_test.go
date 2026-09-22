@@ -138,6 +138,116 @@ func TestE2E_AsyncInvoke_PostEnqueuesRowAndDrainCompletesIt(t *testing.T) {
 	}
 }
 
+// TestE2E_TraceCorrelation_AsyncAndQueueAppearInAccountTrace pins the
+// customer-visible correlation contract across both durable invocation
+// producers. A single W3C traceparent must survive the APID boundary, be
+// indexed on each invocation, and be returned by the account trace lookup
+// used by `gregale trace`.
+func TestE2E_TraceCorrelation_AsyncAndQueueAppearInAccountTrace(t *testing.T) {
+	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
+		t.Skip("FAAS_SKIP_PG_TESTS set")
+	}
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		t.Skip("pgtest.Open returned nil")
+	}
+	ctx := context.Background()
+	if err := dbMigrateUp(t, pool); err != nil {
+		t.Fatalf("dbMigrateUp: %v", err)
+	}
+
+	h := e2etest.Start(t, pool,
+		e2etest.APID|e2etest.Schedd|e2etest.GatewaySynthStub)
+	key := h.SeedAccount(ctx, api.PlanPro, "trace-correlation")
+	store := state.NewPgStore(h.Pool)
+	nodeID := defaultLocalComputeNodeID(t, ctx, store)
+
+	slug := "tracecorrelation"
+	body, status := doReq(t, h, key, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+		Slug: slug, Type: string(state.AppTypeApp),
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create app: status=%d body=%s", status, body)
+	}
+	var appResp api.AppResponse
+	if err := json.Unmarshal(body, &appResp); err != nil {
+		t.Fatalf("decode app response: %v body=%s", err, body)
+	}
+	seedLiveDeployment(t, ctx, store, appResp.ID, nodeID)
+
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	traceparent := "00-" + traceID + "-00f067aa0ba902b7-01"
+	traceHeaders := map[string]string{"traceparent": traceparent}
+
+	body, status = doReq(t, h, key, http.MethodPost,
+		"/v1/apps/"+slug+"/invoke/async",
+		api.InvokeRequest{Payload: json.RawMessage(`{"kind":"async"}`)}, traceHeaders)
+	if status != http.StatusAccepted {
+		t.Fatalf("POST /invoke/async: status=%d want 202; body=%s", status, body)
+	}
+	var asyncResp api.AsyncInvokeResponse
+	if err := json.Unmarshal(body, &asyncResp); err != nil {
+		t.Fatalf("decode async response: %v body=%s", err, body)
+	}
+	if asyncResp.ID == "" {
+		t.Fatalf("async invocation ID empty: %s", body)
+	}
+
+	body, status = doReq(t, h, key, http.MethodPost,
+		"/v1/apps/"+slug+"/queues/send",
+		api.QueueSendRequest{Payload: json.RawMessage(`{"kind":"queue"}`)}, traceHeaders)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /queues/send: status=%d want 201; body=%s", status, body)
+	}
+	var queueResp api.QueueSendResponse
+	if err := json.Unmarshal(body, &queueResp); err != nil {
+		t.Fatalf("decode queue response: %v body=%s", err, body)
+	}
+	if queueResp.ID == "" || queueResp.TraceID != traceID {
+		t.Fatalf("queue response=(id:%q trace_id:%q), want non-empty id and %s", queueResp.ID, queueResp.TraceID, traceID)
+	}
+
+	assertTraceInvocations(t, h, key, traceID, traceparent, asyncResp.ID, queueResp.ID)
+
+	// Complete both rows through the real schedd + synth stub path. The
+	// second lookup below proves the lifecycle timestamps remain visible after
+	// dispatch, which is what makes the CLI waterfall useful in practice.
+	_ = pollUntilCompleted(t, h, key, asyncResp.ID, 10*time.Second)
+	_ = pollUntilCompleted(t, h, key, queueResp.ID, 10*time.Second)
+	assertTraceInvocations(t, h, key, traceID, traceparent, asyncResp.ID, queueResp.ID)
+}
+
+func assertTraceInvocations(t *testing.T, h *e2etest.Harness, key, traceID, traceparent string, ids ...string) {
+	t.Helper()
+	body, status := doReq(t, h, key, http.MethodGet, "/v1/account/traces/"+traceID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET /v1/account/traces/%s: status=%d want 200; body=%s", traceID, status, body)
+	}
+	var result api.AccountTraceLookupResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decode account trace: %v body=%s", err, body)
+	}
+	if result.TraceID != traceID {
+		t.Fatalf("account trace id=%q want %q", result.TraceID, traceID)
+	}
+	if len(result.Invocations) != len(ids) {
+		t.Fatalf("account trace invocations=%d want %d; body=%s", len(result.Invocations), len(ids), body)
+	}
+	byID := make(map[string]api.AccountTraceInvocation, len(result.Invocations))
+	for _, invocation := range result.Invocations {
+		byID[invocation.ID] = invocation
+	}
+	for _, id := range ids {
+		invocation, ok := byID[id]
+		if !ok {
+			t.Fatalf("account trace missing invocation %s; body=%s", id, body)
+		}
+		if invocation.Traceparent != traceparent {
+			t.Errorf("invocation %s traceparent=%q want %q", id, invocation.Traceparent, traceparent)
+		}
+	}
+}
+
 // TestE2E_AsyncInvoke_PlanCap_FreePlanRejects asserts the plan gate on
 // async-invoke. Free plan has AsyncInvokeAllowed=false (pkg/api/limits.go).
 // The handler short-circuits before EnqueueInvocation; no drain needed.

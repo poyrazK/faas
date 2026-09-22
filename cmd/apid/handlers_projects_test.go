@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -141,6 +142,23 @@ func TestProjectEnvironmentRegistryLifecycleAndOwnership(t *testing.T) {
 	var listed []api.ProjectEnvironmentResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil || len(listed) != 2 {
 		t.Fatalf("listed environments=%+v err=%v", listed, err)
+	}
+
+	req, rec = projectRequest(http.MethodDelete, "/v1/projects/shop/environments/staging", "shop", nil)
+	req.SetPathValue("environment", "staging")
+	srv.deleteProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("deleted staging lookup err=%v, want ErrNotFound", err)
+	}
+
+	req, rec = projectRequest(http.MethodDelete, "/v1/projects/shop/environments/production", "shop", nil)
+	req.SetPathValue("environment", "production")
+	srv.deleteProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("production delete status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
 	other, err := store.CreateAccount(ctx, "other-environment-owner@example.com", api.PlanPro)

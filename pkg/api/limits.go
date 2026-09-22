@@ -62,6 +62,10 @@ const (
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
+	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
+	// scheduled into the future. A one-year ceiling prevents effectively
+	// immortal pending rows while still covering annual workflows.
+	MaxDelayedTaskDelaySeconds = 365 * 24 * 60 * 60
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -3460,6 +3464,19 @@ const (
 	// waiter budget. A zero value means "use the plan default".
 	WakeQueueMaxDepthMultiplier = 8
 	WakeQueueMaxWaitSeconds     = 60
+	// Warm concurrency-overflow queues are intentionally much shorter than
+	// cold-wake queues. A running API that is saturated should get a brief
+	// chance to reuse a released slot or a newly-scaled sibling, not inherit the
+	// 10-30 second cold-boot allowance and surprise callers with extreme tail
+	// latency. Depth defaults bound the memory/socket footprint independently
+	// of the wait deadline; customer overrides remain plan-capped below.
+	ConcurrencyQueueFreeDefaultDepth   = 8
+	ConcurrencyQueueHobbyDefaultDepth  = 32
+	ConcurrencyQueueProDefaultDepth    = 128
+	ConcurrencyQueueScaleDefaultDepth  = 512
+	ConcurrencyQueueFreeDefaultWait    = time.Second
+	ConcurrencyQueuePaidDefaultWait    = 2 * time.Second
+	ConcurrencyQueueMaxDepthMultiplier = 8
 	// MaxConcurrencyQueueWaitMS bounds the customer-controlled admission
 	// wait override. The zero value keeps the plan-derived default.
 	MaxConcurrencyQueueWaitMS = 120_000
@@ -4355,6 +4372,28 @@ const (
 	GatewayDrainGraceSeconds        = 25
 	ReplicaHeartbeatIntervalSeconds = 5
 	WarmHintCacheSize               = 1000
+	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
+	// acknowledgement round. A timeout does not retire the predecessor; the
+	// scheduler leaves it serving and retries reconciliation.
+	ServiceRouteConvergenceTimeoutSeconds = 5
+	// ServiceRouteNotificationRetryMilliseconds is the retry cadence for the
+	// idempotent routing-generation notification while a gateway reconnects.
+	ServiceRouteNotificationRetryMilliseconds = 250
+	// ServiceReplicaDrainTimeoutSeconds bounds one attempt to observe every
+	// predecessor replica idle after all gateways adopted the new generation.
+	// Timeout is fail-safe: the predecessor remains resident and routable only
+	// to already-established requests, and reconciliation retries later.
+	ServiceReplicaDrainTimeoutSeconds = GatewayDrainGraceSeconds
+	// ServiceReplicaDrainQuietSeconds requires more than one fresh telemetry
+	// sample at zero in-flight requests before a VM can be retired.
+	ServiceReplicaDrainQuietSeconds = 2
+	// ServiceReplicaDrainPollMilliseconds is intentionally shorter than the
+	// one-second vmmd telemetry cadence without becoming a busy loop.
+	ServiceReplicaDrainPollMilliseconds = 200
+	// ServiceRolloutRecoveryIntervalSeconds bounds retry latency after a
+	// transient handoff failure or a schedd exit before finalisation. The
+	// database rollout row is the durable retry ledger.
+	ServiceRolloutRecoveryIntervalSeconds = 30
 	// WarmHintHeartbeatInterval keeps idle hint streams observable without tenant traffic.
 	WarmHintHeartbeatInterval = 30 * time.Second
 	CertSyncIntervalSeconds   = 30
@@ -4898,6 +4937,35 @@ func WakeQueueMaxDepthForPlan(p Plan) int {
 		depth = 1
 	}
 	return depth * WakeQueueMaxDepthMultiplier
+}
+
+// ConcurrencyQueueDefaultsForPlan returns the warm-instance saturation queue
+// defaults. This is deliberately separate from WakeQueueDefaultsForPlan:
+// cold boots need seconds, while an already-running API should shed overload
+// quickly enough to preserve its latency budget.
+func ConcurrencyQueueDefaultsForPlan(p Plan) (maxDepth int, maxWait time.Duration, ok bool) {
+	switch p {
+	case PlanFree:
+		return ConcurrencyQueueFreeDefaultDepth, ConcurrencyQueueFreeDefaultWait, true
+	case PlanHobby:
+		return ConcurrencyQueueHobbyDefaultDepth, ConcurrencyQueuePaidDefaultWait, true
+	case PlanPro:
+		return ConcurrencyQueueProDefaultDepth, ConcurrencyQueuePaidDefaultWait, true
+	case PlanScale:
+		return ConcurrencyQueueScaleDefaultDepth, ConcurrencyQueuePaidDefaultWait, true
+	default:
+		return 1, ConcurrencyQueueFreeDefaultWait, false
+	}
+}
+
+// ConcurrencyQueueMaxDepthForPlan is the largest customer-configurable warm
+// saturation backlog. Zero continues to mean "use the plan default".
+func ConcurrencyQueueMaxDepthForPlan(p Plan) int {
+	depth, _, ok := ConcurrencyQueueDefaultsForPlan(p)
+	if !ok {
+		depth = 1
+	}
+	return depth * ConcurrencyQueueMaxDepthMultiplier
 }
 
 // MustLimitsFor returns the limits for a plan and panics on an unknown plan.

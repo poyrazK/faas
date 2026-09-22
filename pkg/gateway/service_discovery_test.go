@@ -10,7 +10,11 @@ import (
 
 func TestPGBackendServiceEndpointsDeterministicAndEffectivePort(t *testing.T) {
 	b := NewPGBackend(nil, nil, nil)
-	b.RecordTarget("app-1", Target{NodeID: "node-b", InstanceID: "instance-2", DeploymentID: "dep-b", Port: 9090})
+	b.RecordTarget("app-1", Target{
+		NodeID: "node-b", InstanceID: "instance-2", DeploymentID: "dep-b", Port: 9090,
+		Region: "eu-west", CommitSHA: "sha-b", DeploymentTag: "stable",
+		DeploymentCreatedAt: "2026-09-22T12:00:00Z", ImageDigest: "sha256:b",
+	})
 	b.RecordTarget("app-1", Target{NodeID: "node-a", InstanceID: "instance-3", DeploymentID: "dep-a"})
 	b.RecordTarget("app-1", Target{NodeID: "node-a", InstanceID: "instance-1", DeploymentID: "dep-a", Port: 8081})
 
@@ -21,7 +25,11 @@ func TestPGBackendServiceEndpointsDeterministicAndEffectivePort(t *testing.T) {
 	want := []ServiceEndpoint{
 		{InstanceID: "instance-1", NodeID: "node-a", DeploymentID: "dep-a", Port: 8081},
 		{InstanceID: "instance-3", NodeID: "node-a", DeploymentID: "dep-a", Port: 8080},
-		{InstanceID: "instance-2", NodeID: "node-b", DeploymentID: "dep-b", Port: 9090},
+		{
+			InstanceID: "instance-2", NodeID: "node-b", DeploymentID: "dep-b",
+			Region: "eu-west", CommitSHA: "sha-b", DeploymentTag: "stable",
+			DeploymentCreatedAt: "2026-09-22T12:00:00Z", ImageDigest: "sha256:b", Port: 9090,
+		},
 	}
 	if len(got.Endpoints) != len(want) {
 		t.Fatalf("endpoint count = %d, want %d: %+v", len(got.Endpoints), len(want), got.Endpoints)

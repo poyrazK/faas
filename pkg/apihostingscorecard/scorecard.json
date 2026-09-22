@@ -31,6 +31,19 @@
       ]
     },
     {
+      "id": "delayed-execution-reliability",
+      "name": "Delayed execution reliability",
+      "category": "reliability",
+      "description": "A delayed invocation is durably scheduled for a bounded future time, reaches the app through the normal gateway bridge, and can be cancelled before dispatch without reaching the workload.",
+      "capabilities": ["delayed-execution"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/apid/handlers_delayed_task_product_test.go::TestDelayedTaskScheduleAcceptsRelativeDelay"},
+        {"kind": "test", "locator": "cmd/e2e/normal_path_e2e_test.go::TestE2E_NormalPath_CancelledDelayedTaskNeverReachesBridge"},
+        {"kind": "test", "locator": "cmd/e2e/normal_path_e2e_test.go::TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge"}
+      ]
+    },
+    {
       "id": "disposable-runs",
       "name": "Disposable isolated execution",
       "category": "security",

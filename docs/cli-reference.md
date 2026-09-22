@@ -25,7 +25,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`workflows`](#workflows) | Manage durable execution workflows |
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
-| [`delayed-task`](#delayed-task) | Schedule a deferred invocation (delayed-task add\|get\|cancel) |
+| [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
 | [`deployments`](#deployments) | List deployments (--app SLUG or linked context \| --limit N \| --before C \| --all \| --wide) |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
@@ -310,7 +310,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
-`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -318,6 +318,8 @@ Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|-
 | `--ram <MB>` | set RAM in MB |  |
 | `--max-concurrency <N>` | set max_concurrency |  |
 | `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
+| `--max-queue-depth <N>` | set maximum warm-saturation waiters |  |
+| `--max-queue-wait <DURATION>` | set maximum warm-saturation wait as a duration |  |
 | `--max-queue-wait-ms <N>` | set maximum queued concurrency wait |  |
 | `--wake-max-queue-depth <N>` | set per-app cold-wake waiter cap |  |
 | `--wake-max-queue-wait-seconds <N>` | set per-app cold-wake wait budget |  |
@@ -815,13 +817,33 @@ Preflight local source or OCI image metadata; runtime checks are skipped
 
 ## delayed-task
 
-Schedule a deferred invocation (delayed-task add|get|cancel)
+Schedule and inspect deferred invocations
 
 `gregale delayed-task [<subcommand>]`
 
 ### delayed-task add
 
 Schedule a deferred invocation
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--scheduled-at <RFC3339>` | absolute dispatch time; exclusive with --delay |  |
+| `--delay <DURATION>` | relative delay such as 30m; exclusive with --scheduled-at |  |
+| `--payload <JSON|@FILE|->` | JSON request payload |  |
+| `--method <METHOD>` | HTTP method (default POST) |  |
+| `--path <PATH>` | app path (default /) |  |
+| `--idempotency-key <KEY>` | stable create retry key |  |
+
+### delayed-task list
+
+List delayed tasks for an app
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--limit <N>` | page size (1-200) |  |
+| `--before <ID>` | pagination cursor |  |
 
 ### delayed-task get
 
@@ -1237,7 +1259,7 @@ Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
-| `--restart` | restart app after applying changes (otherwise changes apply on next wake) |  |
+| `--restart` | restart app after applying changes (otherwise changes apply on next cold wake) |  |
 
 ### env diff
 
@@ -1719,6 +1741,10 @@ Configure a simple push workload with queue-depth scaling
 | `--queue-name <QUEUE>` | logical queue name |  |
 | `--target-depth <N>` | messages per worker before scaling out |  |
 | `--max-concurrency <N>` | maximum concurrent deliveries per worker |  |
+| `--max-attempts <N>` | maximum delivery attempts (0 uses the plan default) |  |
+| `--retry-base-seconds <N>` | base retry delay in seconds |  |
+| `--retry-max-seconds <N>` | maximum retry delay in seconds |  |
+| `--retry-jitter-seconds <N>` | retry jitter in seconds (0..1) |  |
 | `--force` | replace an existing default binding on another queue |  |
 
 ### queue bindings
@@ -1973,6 +1999,7 @@ Set a sealed secret
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
+| `--restart` | restart the app and apply updated secrets now |  |
 
 ### secrets unset
 
@@ -1993,6 +2020,7 @@ Re-seal one secret under the current host key
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
+| `--restart` | restart the app and apply the rotated secret now |  |
 
 
 ## slo

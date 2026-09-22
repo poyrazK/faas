@@ -84,6 +84,7 @@ func Run(t *testing.T, open Open) {
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
+		{"delayed_task_listing_is_scoped_filtered_and_paginated", testDelayedTaskListing},
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
@@ -319,6 +320,41 @@ func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
 	}
 	if _, err := fx.Store.ListProjectEnvironments(fx.Ctx, uuid.NewString(), project.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account environment list err = %v, want ErrNotFound", err)
+	}
+	if err := fx.Store.DeleteProjectEnvironment(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("protected environment delete err = %v, want ErrConflict", err)
+	}
+	if _, err := fx.Store.UpdateProjectEnvironmentProtection(fx.Ctx, fx.Account.ID, project.ID, staging.Slug, false); err != nil {
+		t.Fatalf("unprotect staging: %v", err)
+	}
+	projectApp, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, ProjectID: project.ID,
+		Slug: "environment-api-" + uuid.NewString()[:8], WorkloadName: "api", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectEnvironment app: %v", err)
+	}
+	live, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: projectApp.ID, Scope: staging.Slug, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:environment-api-live",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(live staging): %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, live.ID, state.DeployLive, ""); err != nil {
+		t.Fatalf("mark staging release live: %v", err)
+	}
+	if err := fx.Store.DeleteProjectEnvironment(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("live environment delete err = %v, want ErrConflict", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, live.ID, state.DeploySuperseded, ""); err != nil {
+		t.Fatalf("retire staging release: %v", err)
+	}
+	if err := fx.Store.DeleteProjectEnvironment(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); err != nil {
+		t.Fatalf("DeleteProjectEnvironment: %v", err)
+	}
+	if _, err := fx.Store.ProjectEnvironmentBySlug(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("deleted environment lookup err = %v, want ErrNotFound", err)
 	}
 }
 
@@ -1188,6 +1224,61 @@ func testPendingInvocationCancel(t *testing.T, fx *Fixture) {
 	result, err = fx.Store.CancelPendingInvocation(fx.Ctx, dispatching.ID)
 	if err != nil || result != state.InvocationDispatching {
 		t.Fatalf("CancelPendingInvocation(dispatching) = (%q, %v), want dispatching", result, err)
+	}
+}
+
+func testDelayedTaskListing(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC()
+	first, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(first delayed task): %v", err)
+	}
+	if _, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: now,
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation(async control): %v", err)
+	}
+	second, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: now.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(second delayed task): %v", err)
+	}
+
+	limits := api.MustLimitsFor(api.PlanPro)
+	foreignApp, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "delayed-list-foreign-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: limits.RAMMB,
+		MaxConcurrency: limits.MaxConcurrency, IdleTimeoutS: limits.IdleTimeoutS,
+	}, limits)
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota(foreign): %v", err)
+	}
+	if _, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: foreignApp.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationDelayedTask, DueAt: now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation(foreign delayed task): %v", err)
+	}
+
+	page, err := fx.Store.ListDelayedTasksForApp(fx.Ctx, fx.App.ID, 1, "")
+	if err != nil {
+		t.Fatalf("ListDelayedTasksForApp(first page): %v", err)
+	}
+	if len(page) != 1 || page[0].ID != second.ID {
+		t.Fatalf("first delayed-task page = %+v, want newest task %s", page, second.ID)
+	}
+	next, err := fx.Store.ListDelayedTasksForApp(fx.Ctx, fx.App.ID, 1, page[0].ID)
+	if err != nil {
+		t.Fatalf("ListDelayedTasksForApp(next page): %v", err)
+	}
+	if len(next) != 1 || next[0].ID != first.ID {
+		t.Fatalf("next delayed-task page = %+v, want older task %s", next, first.ID)
 	}
 }
 
@@ -2530,6 +2621,7 @@ func testScalingPolicyRoundTrip(t *testing.T, fx *Fixture) {
 		ScaleInCooldownS:        77,
 		ConcurrencyOverflow:     api.ConcurrencyOverflowDrop,
 		MaxQueueWaitMS:          1234,
+		MaxQueueDepth:           17,
 		WakeMaxQueueDepth:       31,
 		WakeMaxQueueWaitSeconds: 41,
 		Timezone:                "Europe/Istanbul",

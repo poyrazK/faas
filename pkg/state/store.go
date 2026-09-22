@@ -2207,6 +2207,12 @@ type Store interface {
 	ProjectEnvironmentBySlug(ctx context.Context, accountID, projectID, slug string) (ProjectEnvironment, error)
 	CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error)
 	UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error)
+	// DeleteProjectEnvironment removes an unprotected, non-production
+	// environment when it has no live releases. Related configuration and
+	// approval rows are removed with the registry entry. ErrConflict protects
+	// production, protected environments, and environments still serving a
+	// live release.
+	DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error
 	CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error)
 	ProjectEnvironmentApprovalByID(ctx context.Context, accountID, projectSlug, environmentSlug, id string) (ProjectEnvironmentApproval, error)
 	ProjectEnvironmentApprovalByToken(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error)
@@ -2427,6 +2433,12 @@ type Store interface {
 	// canaries are in flight — both consumers treat (nil, nil) as a
 	// no-op.
 	ListCanaryInFlight(ctx context.Context) ([]Deployment, error)
+	// ListServiceRolloutsInFlight returns readiness-gated zero-step service
+	// rollouts that still need scheduler reconciliation. Unlike the canary
+	// orchestrator's walk set, this deliberately includes rows left at the
+	// routing handoff after a schedd restart. A non-empty ownerNodeID scopes the
+	// recovery walk to apps owned by that schedd; empty preserves single-box.
+	ListServiceRolloutsInFlight(ctx context.Context, ownerNodeID string) ([]Deployment, error)
 	// SafedeployListPendingRollouts (issue #976 / ADR-122 /
 	// SAFE-RELEASES-F) returns the orchestrator's walk set: rows
 	// whose rollout_state is 'pending' or 'rolling_out' AND
@@ -2462,6 +2474,11 @@ type Store interface {
 	// the same app/scope. The target must be a live zero-step row marked
 	// rollout_state='rolling_out'.
 	FinalizeServiceRollout(ctx context.Context, id string) (Deployment, error)
+	// BeginServiceRolloutCutover publishes the candidate as the sole
+	// positive-weight live generation without superseding its predecessor. The
+	// predecessor remains available until every serving gateway acknowledges
+	// the routing generation and its in-flight requests drain.
+	BeginServiceRolloutCutover(ctx context.Context, id string) (Deployment, error)
 	// AbortServiceRollout atomically removes a failed service rollout and
 	// restores the newest older live deployment in the same app/scope to 100%
 	// traffic. The target must be a live zero-step row marked
@@ -3920,6 +3937,10 @@ type Store interface {
 	// Move 2 cursor change: was time.Time (drifted across equal-second
 	// rows); id is stable across ties.
 	ListInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error)
+	// ListDelayedTasksForApp is the customer-facing delayed-task collection.
+	// It is app- and source-scoped and uses the same stable invocation-id cursor
+	// ordering as ListInvocationsForAccount.
+	ListDelayedTasksForApp(ctx context.Context, appID string, limit int, before string) ([]Invocation, error)
 	// ListInvocationsByTraceID returns bounded, metadata-only invocation rows
 	// linked to a platform trace across all durable invocation sources. The
 	// account predicate is mandatory; the implementation reads only the

@@ -550,6 +550,74 @@ func newEngine(t *testing.T, store state.Store, vmm RoutedVMM, notif Notifier, f
 	return e
 }
 
+func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, deployment := seedApp(t, store, api.PlanPro, 256, 5)
+	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: deployment.ID,
+		Tier:         state.SnapshotTierInit,
+		FCVersion:    "1.10.0",
+		MemBytes:     256 << 20,
+		StorageKey:   state.SnapshotCaptureMemKey(deployment.ID, state.SnapshotTierInit, "old-config"),
+	}); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	first, err := engine.EnsureWake(context.Background(), app.ID, TriggerAppWake)
+	if err != nil {
+		t.Fatalf("initial wake: %v", err)
+	}
+	if first.Instance == nil || vmm.restores != 1 {
+		t.Fatalf("initial wake = %+v, restores = %d; want snapshot restore", first.Instance, vmm.restores)
+	}
+	wakeID := uuid.NewString()
+	refreshed, err := engine.RefreshRuntimeConfig(context.Background(), app.ID, wakeID)
+	if err != nil {
+		t.Fatalf("RefreshRuntimeConfig: %v", err)
+	}
+	if refreshed.Instance == nil || refreshed.Instance.WakeID != wakeID {
+		t.Fatalf("replacement = %+v, want wake_id %s", refreshed.Instance, wakeID)
+	}
+	if vmm.destroys != 1 {
+		t.Errorf("destroys = %d, want 1", vmm.destroys)
+	}
+	if vmm.snapshots != 0 || vmm.warmSnapshots != 0 {
+		t.Errorf("snapshot calls = init:%d warm:%d, want zero", vmm.snapshots, vmm.warmSnapshots)
+	}
+	if vmm.coldBoots != 1 || vmm.restores != 1 {
+		t.Errorf("wake methods = cold:%d restore:%d, want cold:1 restore:1", vmm.coldBoots, vmm.restores)
+	}
+	if _, err := store.LatestSnapshotForTier(context.Background(), deployment.ID, state.SnapshotTierInit); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old snapshot remained restorable: %v", err)
+	}
+	old, err := store.InstanceByID(context.Background(), first.Instance.InstanceID)
+	if err != nil {
+		t.Fatalf("old InstanceByID: %v", err)
+	}
+	if old.State != string(state.StateStopped) {
+		t.Fatalf("old instance state = %q, want stopped", old.State)
+	}
+}
+
+func TestRefreshRuntimeConfigForeignOwnerRemainsReplayable(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 256, 5)
+	if err := store.SetAppNodeID(context.Background(), app.ID, "box-a"); err != nil {
+		t.Fatalf("SetAppNodeID: %v", err)
+	}
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("box-b")
+
+	if _, err := engine.RefreshRuntimeConfig(context.Background(), app.ID, uuid.NewString()); err == nil {
+		t.Fatal("foreign-owned runtime config restart returned nil; durable delivery would be acknowledged")
+	}
+	if vmm.destroys != 0 || vmm.coldBoots != 0 || vmm.restores != 0 {
+		t.Fatalf("foreign owner touched VMM: destroys=%d cold=%d restores=%d", vmm.destroys, vmm.coldBoots, vmm.restores)
+	}
+}
+
 // readScaleUp is a test helper that scrapes the closed-set
 // schedd_scale_up_decisions_total{app, outcome} counter from the
 // OpsMetrics HTTP handler. Returns 0 when the line is missing

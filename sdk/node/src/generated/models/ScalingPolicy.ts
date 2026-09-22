@@ -41,6 +41,10 @@ export type ScalingPolicy = {
    */
   max_queue_wait_ms?: number;
   /**
+   * Per-app warm saturation waiter cap. 0 uses the plan default; positive values are plan-capped. This is independent from the cold-wake queue.
+   */
+  max_queue_depth?: number;
+  /**
    * Per-app cold-wake waiter cap. 0 uses the plan default; positive values are capped at 8x the plan default.
    */
   wake_max_queue_depth?: number;

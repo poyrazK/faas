@@ -519,6 +519,41 @@ func TestTierD_DelayedTaskAdd_HappyPath(t *testing.T) {
 	}
 }
 
+func TestTierD_DelayedTaskAdd_RelativeDelayAndStableIdempotencyKey(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
+	if code := cmdDelayedTaskAdd([]string{
+		"--app", "demo", "--delay", "30m", "--path", "/remind",
+		"--idempotency-key", "invoice-123-reminder",
+	}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if got := f.sawHeader.Get("Idempotency-Key"); got != "invoice-123-reminder" {
+		t.Fatalf("Idempotency-Key = %q", got)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["delay_seconds"] != float64(1800) || got["path"] != "/remind" {
+		t.Fatalf("body = %v", got)
+	}
+	if _, present := got["scheduled_at"]; present {
+		t.Fatalf("relative request unexpectedly serialized scheduled_at: %v", got)
+	}
+}
+
+func TestTierD_DelayedTaskList_HappyPath(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"tasks":[]}`, http.StatusOK)
+	if code := cmdDelayedTaskList([]string{"--app", "demo", "--limit", "10"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/delayed-tasks" {
+		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
 func TestTierD_DelayedTaskGet_NoArgExitsOne(t *testing.T) {
 	resetJSONOut(t)
 	if code := cmdDelayedTaskGet(nil); code != 1 {

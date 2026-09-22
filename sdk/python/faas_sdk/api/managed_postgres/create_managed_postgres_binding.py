@@ -69,11 +69,15 @@ def sync_detailed(
 ) -> Response[ManagedPostgresBinding | Problem]:
     """Bind a workload app to a database
 
+     The selected database backend must advertise the requested credential access. Unsupported access is
+    rejected before a durable binding is reserved or provider credentials are requested.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
         body (CreateManagedPostgresBindingRequest): Request to inject a managed database
-            credential into an app environment.
+            credential into an app environment. Access values are provider-neutral; the selected
+            database backend may support only a subset.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,11 +109,15 @@ def sync(
 ) -> ManagedPostgresBinding | Problem | None:
     """Bind a workload app to a database
 
+     The selected database backend must advertise the requested credential access. Unsupported access is
+    rejected before a durable binding is reserved or provider credentials are requested.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
         body (CreateManagedPostgresBindingRequest): Request to inject a managed database
-            credential into an app environment.
+            credential into an app environment. Access values are provider-neutral; the selected
+            database backend may support only a subset.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -136,11 +144,15 @@ async def asyncio_detailed(
 ) -> Response[ManagedPostgresBinding | Problem]:
     """Bind a workload app to a database
 
+     The selected database backend must advertise the requested credential access. Unsupported access is
+    rejected before a durable binding is reserved or provider credentials are requested.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
         body (CreateManagedPostgresBindingRequest): Request to inject a managed database
-            credential into an app environment.
+            credential into an app environment. Access values are provider-neutral; the selected
+            database backend may support only a subset.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,11 +182,15 @@ async def asyncio(
 ) -> ManagedPostgresBinding | Problem | None:
     """Bind a workload app to a database
 
+     The selected database backend must advertise the requested credential access. Unsupported access is
+    rejected before a durable binding is reserved or provider credentials are requested.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
         body (CreateManagedPostgresBindingRequest): Request to inject a managed database
-            credential into an app environment.
+            credential into an app environment. Access values are provider-neutral; the selected
+            database backend may support only a subset.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

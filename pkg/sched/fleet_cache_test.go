@@ -32,11 +32,14 @@ func TestNodeRegistryRefreshAndRemove(t *testing.T) {
 	}
 }
 
+// adr: 208 — request draining uses fresh scheduler-receipt timestamps and the
+// freshest per-instance in-flight sample, independent of source clock skew.
 func TestNodeTelemetryCacheReplacesAsOneBatchAndExpires(t *testing.T) {
 	cache := NewNodeTelemetryCache()
 	base := time.Unix(100, 0)
+	sourceSample := base.Add(-time.Hour)
 	resident := int64(128 << 20)
-	cache.Replace("node-a", base, base, []NodeTelemetry{{InstanceID: "vm-1", ResidentBytes: &resident}})
+	cache.Replace("node-a", sourceSample, base, []NodeTelemetry{{InstanceID: "vm-1", ResidentBytes: &resident, InflightRequests: 3}})
 
 	rows := cache.Snapshot(base.Add(time.Second))
 	if len(rows) != 1 || rows[0].NodeID != "node-a" || rows[0].Telemetry.InstanceID != "vm-1" {
@@ -51,6 +54,17 @@ func TestNodeTelemetryCacheReplacesAsOneBatchAndExpires(t *testing.T) {
 	}
 	if _, ok := cache.LookupOpenConns("vm-1", base.Add(TelemetryFreshness+time.Nanosecond)); ok {
 		t.Fatal("stale open-conns lookup unexpectedly hit")
+	}
+	if inflight, receivedAt, ok := cache.LookupInflightRequests("vm-1", base.Add(time.Second)); !ok || inflight != 3 || !receivedAt.Equal(base) {
+		t.Fatalf("fresh in-flight lookup = (%d, %v, %v), want (3, %v, true)", inflight, receivedAt, ok, base)
+	}
+	if _, _, ok := cache.LookupInflightRequests("vm-1", base.Add(TelemetryFreshness+time.Nanosecond)); ok {
+		t.Fatal("stale in-flight lookup unexpectedly hit")
+	}
+	newerReceipt := base.Add(500 * time.Millisecond)
+	cache.Replace("node-b", sourceSample, newerReceipt, []NodeTelemetry{{InstanceID: "vm-1", InflightRequests: 1}})
+	if inflight, receivedAt, ok := cache.LookupInflightRequests("vm-1", base.Add(time.Second)); !ok || inflight != 1 || !receivedAt.Equal(newerReceipt) {
+		t.Fatalf("duplicate in-flight lookup = (%d, %v, %v), want freshest (1, %v, true)", inflight, receivedAt, ok, newerReceipt)
 	}
 	if summaries, ok := cache.LookupFlowSummaries("vm-1", base.Add(time.Second)); !ok || summaries != nil {
 		t.Fatalf("fresh empty flow lookup = (%v, %v), want (nil, true)", summaries, ok)

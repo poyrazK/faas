@@ -183,14 +183,16 @@ SELECT l.sdk_version, count(*) FROM access_log l
   window. Because `apps` stores `account_id` rather than a plan snapshot,
   the migration uses a stable helper in the CHECK and a constraint trigger
   to reject paid → Free downgrades while an app is still streaming-enabled.
+- **Response-cap validation** — the `s ≥ b` invariant for
+  `max_body_bytes_streaming` is enforced by `EdgeRuleLimitAction.Validate`
+  on both edge-rule create and update. The apid contract is pinned by
+  `TestEdgeRuleLimitStreamingCapValidation_CreateAndUpdate`; the gateway
+  clamp remains defense-in-depth for direct database writes.
 
 ## Deferred work
 
 - **`accept-json-downgrade` enum variant deletion** — after one
   release cycle (~30 days post-merge). Advisory header drops with it.
-- **Per-endpoint response cap validation** at apid — verify the `s ≥
-  b` invariant from `pkg/api/dto.go:4188` applies to the response cap
-  at validate-time (not just runtime trust). Track in §17 gaps.
 
 ## References
 

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -62,6 +63,34 @@ func edgeRuleRouteReq(slug string) api.CreateEdgeRuleRequest {
 // reused here to keep the helper single-sourced. boolPtr is local
 // because no other test file needs it today.
 func boolPtr(b bool) *bool { return &b }
+
+// The throttle action carries its dimensional policy inside the jsonb action
+// column. Dropping any field at this DTO→state boundary silently turns an
+// authenticated rule back into a shared route bucket, so pin the full mapping.
+func TestActionFromBody_ThrottlePreservesDimensionalFields(t *testing.T) {
+	raw := json.RawMessage(`{
+		"requests_per_second":10,
+		"burst":20,
+		"key_by":"jwt_claim",
+		"jwt_claim_name":"tenant_id",
+		"max_keys_per_rule":250,
+		"missing_key_policy":"reject"
+	}`)
+	action := actionFromBody(string(state.EdgeRuleKindThrottle), raw)
+	if action.Throttle == nil {
+		t.Fatal("actionFromBody(throttle) returned nil throttle action")
+	}
+	got := action.Throttle
+	if got.KeyBy != api.ThrottleKeyByJWTClaim || got.JWTClaimName != "tenant_id" {
+		t.Errorf("identity fields = (%q, %q), want (%q, tenant_id)", got.KeyBy, got.JWTClaimName, api.ThrottleKeyByJWTClaim)
+	}
+	if got.MaxKeysPerRule != 250 {
+		t.Errorf("max_keys_per_rule = %d, want 250", got.MaxKeysPerRule)
+	}
+	if got.MissingKeyPolicy != api.ThrottleMissingKeyReject {
+		t.Errorf("missing_key_policy = %q, want %q", got.MissingKeyPolicy, api.ThrottleMissingKeyReject)
+	}
+}
 
 // TestCreateEdgeRule_HappyPath confirms the canonical create flow:
 // 201, the response carries the seeded fields, and a follow-up
@@ -612,6 +641,80 @@ func TestCreateEdgeRule_InvalidAction_Returns400(t *testing.T) {
 	rec := e.do(t, "POST", "/v1/apps/"+slug+"/edge-rules", req, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestEdgeRuleLimitStreamingCapValidation_CreateAndUpdate pins ADR-102's
+// response-cap contract at both mutation boundaries. The streaming cap is
+// shared by the request and response paths, so a value tighter than the
+// buffered cap must be rejected before the row reaches the store.
+func TestEdgeRuleLimitStreamingCapValidation_CreateAndUpdate(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	slug := mustSeedEdgeRuleApp(t, e, "limit-cap")
+	const (
+		bufferedCap  = 5 * 1024 * 1024
+		streamingCap = 8 * 1024 * 1024
+	)
+
+	invalidAction := func() json.RawMessage {
+		return json.RawMessage(fmt.Sprintf(
+			`{"max_body_bytes":%d,"max_body_bytes_streaming":%d}`,
+			bufferedCap, bufferedCap-1))
+	}
+	validReq := api.CreateEdgeRuleRequest{
+		MatchHost: "limit-cap.example.com",
+		MatchPath: "/api/*",
+		Kind:      string(state.EdgeRuleKindLimit),
+		Action: json.RawMessage(fmt.Sprintf(
+			`{"max_body_bytes":%d,"max_body_bytes_streaming":%d}`,
+			bufferedCap, streamingCap)),
+	}
+
+	// Create validates the response-cap shape before persisting it.
+	createInvalid := validReq
+	createInvalid.MatchHost = "limit-cap-create-invalid.example.com"
+	createInvalid.Action = invalidAction()
+	rec := e.do(t, "POST", "/v1/apps/"+slug+"/edge-rules", createInvalid, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create invalid cap: status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "max_body_bytes_streaming") {
+		t.Fatalf("create invalid cap: response omitted field detail: %s", rec.Body.String())
+	}
+
+	created := mustCreateEdgeRule(t, e, slug, validReq)
+
+	// Update runs the same validator and must leave the valid row untouched.
+	badUpdate := invalidAction()
+	rec = e.do(t, "PATCH", "/v1/edge-rules/"+created.ID, api.UpdateEdgeRuleRequest{Action: &badUpdate}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("update invalid cap: status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "max_body_bytes_streaming") {
+		t.Fatalf("update invalid cap: response omitted field detail: %s", rec.Body.String())
+	}
+
+	rec = e.do(t, "GET", "/v1/edge-rules/"+created.ID, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET after rejected update: status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var got api.EdgeRuleResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal GET after rejected update: %v", err)
+	}
+	var envelope struct {
+		Limit *api.EdgeRuleLimitAction `json:"limit"`
+	}
+	if err := json.Unmarshal(got.Action, &envelope); err != nil {
+		t.Fatalf("unmarshal stored limit action: %v", err)
+	}
+	if envelope.Limit == nil {
+		t.Fatalf("stored action has no limit payload: %s", got.Action)
+	}
+	if envelope.Limit.MaxBodyBytes != bufferedCap || envelope.Limit.MaxBodyBytesStreaming != streamingCap {
+		t.Fatalf("stored caps = (%d, %d), want (%d, %d)",
+			envelope.Limit.MaxBodyBytes, envelope.Limit.MaxBodyBytesStreaming,
+			bufferedCap, streamingCap)
 	}
 }
 

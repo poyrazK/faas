@@ -75,6 +75,7 @@ func (a *edgeJWKSAdapter) Verify(ctx context.Context, rawToken string, rule *gat
 		Audience:       rule.Audience,
 		Algorithms:     rule.Algorithms,
 		RequiredClaims: rule.RequiredClaims,
+		ExtractClaims:  rule.ExtractClaims,
 	})
 	if err != nil {
 		return nil, err
@@ -86,8 +87,8 @@ func (a *edgeJWKSAdapter) Verify(ctx context.Context, rawToken string, rule *gat
 		Exp:     src.Exp,
 		// Phase 3 (ADR-104, issue #881): thread the resolved
 		// custom-claim map through to the gateway-side struct so
-		// applyEdgeRuleThrottle can key on it. Nil when the rule
-		// did not require any custom claims.
+		// applyEdgeRuleThrottle can key on it. The verifier extracts
+		// the bounded scalar subset independently of required_claims.
 		Custom: src.Custom,
 	}, nil
 }

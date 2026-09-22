@@ -15,11 +15,12 @@
  * BEFORE any DB write — a customer cannot raise their
  * plan limit by registering a throttle rule.
  *
- * Per-IP sub-keying is deliberately absent in v1 — see
- * the package doc on `pkg/state.EdgeRuleThrottleAction`
- * for the design rationale (memory-bounded limiter +
- * attacker-controlled IP cardinality = unbounded bucket
- * growth).
+ * Per-IP sub-keying is deliberately absent — see the package
+ * doc on `pkg/state.EdgeRuleThrottleAction` for the design
+ * rationale (memory-bounded limiter + attacker-controlled IP
+ * cardinality = unbounded bucket growth). Country keying uses
+ * the existing trusted GeoIP lookup and therefore has bounded
+ * cardinality.
  *
  * Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881
  * Phase 3) extends the wire shape with optional per-consumer
@@ -55,7 +56,9 @@ export type EdgeRuleThrottleAction = {
    * identity (all rotated keys for that consumer share a bucket).
    * When `"jwt_subject"`, one bucket per JWT `sub`.
    * When `"jwt_claim"`, one bucket per value of the
-   * claim named by `jwt_claim_name`. Each non-empty
+   * claim named by `jwt_claim_name`. When `"country"`, one
+   * bucket per ISO 3166-1 alpha-2 country resolved from the
+   * gateway's trusted client IP. Each non-empty
    * value activates the bounded design: when the
    * per-rule consumer set exceeds
    * `max_keys_per_rule`, all over-cap callers collapse
@@ -64,15 +67,18 @@ export type EdgeRuleThrottleAction = {
    * property — see ADR-104 §"Consequences").
    *
    */
-  key_by?: '' | 'none' | 'api_key' | 'consumer_id' | 'jwt_subject' | 'jwt_claim';
+  key_by?: '' | 'none' | 'api_key' | 'consumer_id' | 'jwt_subject' | 'jwt_claim' | 'country';
   /**
    * Required iff `key_by="jwt_claim"`. Names the JWT
    * custom claim to extract (e.g., `"tier"`,
    * `"org_id"`). Format is a CodeQL safe-identifier:
    * leading letter or underscore, then `[A-Za-z0-9_]`,
-   * max 64 chars. Anything looser risks label-cardinality
-   * explosion in metric series or a CodeQL go-clear-
-   * text-logging finding on a future refactor.
+   * max 64 chars. Top-level string, number, and boolean
+   * values are supported and normalized to their JSON scalar
+   * representation. Arrays, objects, empty strings, and values
+   * longer than 256 bytes are treated as missing. The configured
+   * claim is retained first within the verifier's 64-claim
+   * request-context bound.
    *
    */
   jwt_claim_name?: string;
@@ -88,5 +94,17 @@ export type EdgeRuleThrottleAction = {
    *
    */
   max_keys_per_rule?: number;
+  /**
+   * Behavior when an authentication-backed dimension is not
+   * available on the request. `"shared"` places all such
+   * requests in one bounded `__anonymous__` bucket (the
+   * backward-compatible default). `"reject"` returns 401
+   * before consuming a route token. This field requires a
+   * dimensional `key_by` value. Country lookup dependency
+   * failures remain fail-closed with 503 rather than being
+   * treated as an anonymous identity.
+   *
+   */
+  missing_key_policy?: 'shared' | 'reject';
 };
 
