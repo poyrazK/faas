@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-222: durable commands attached to an immutable app deployment. Public
+-- ADR-230: durable commands attached to an immutable app deployment. Public
 -- API admission remains disabled until the scheduler/VM execution path lands.
 CREATE TABLE IF NOT EXISTS app_tasks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -24,7 +24,7 @@ func (k AppTaskKind) Valid() bool {
 	return k == AppTaskKindManual || k == AppTaskKindRelease
 }
 
-// AppTaskStatus is the durable scheduler lifecycle from ADR-222.
+// AppTaskStatus is the durable scheduler lifecycle from ADR-230.
 type AppTaskStatus string
 
 const (
