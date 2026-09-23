@@ -77,6 +77,59 @@ func TestCacheWriter_SkipsSetCookie(t *testing.T) {
 	}
 }
 
+func TestCacheWriter_ManagedCookieExcludedButOriginCookiesStillVeto(t *testing.T) {
+	const edgeCookie = "__Host-gregale_version=00112233445566778899aabbccddeeff; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax"
+	tests := []struct {
+		name         string
+		additional   []string
+		allowEdge    bool
+		cacheControl string
+		wantStore    bool
+	}{
+		{name: "edge cookie only", allowEdge: true, wantStore: true},
+		{name: "edge cookie not identified", wantStore: false},
+		{name: "origin session cookie", additional: []string{"session=private"}, allowEdge: true},
+		{name: "origin cookie using reserved name", additional: []string{"__Host-gregale_version=origin; Path=/"}, allowEdge: true},
+		{name: "duplicate edge cookie", additional: []string{edgeCookie}, allowEdge: true},
+		{name: "empty origin cookie", additional: []string{""}, allowEdge: true},
+		{name: "private origin response", allowEdge: true, cacheControl: "private"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+			rule := EdgeRuleCacheResolved{ID: "rule-1", PathGlob: "/catalog", MaxAgeSeconds: 60}
+			rec := newTestStatusRecorder(httptest.NewRecorder())
+			rec.Header().Add("Set-Cookie", edgeCookie)
+			cw := newCacheWriter(rec, rec, &rule, ResponseCachePerEntryMaxBytes)
+			if tc.allowEdge {
+				cw.excludeManagedVersionCookie(edgeCookie)
+			}
+			for _, cookie := range tc.additional {
+				cw.Header().Add("Set-Cookie", cookie)
+			}
+			if tc.cacheControl != "" {
+				cw.Header().Set("Cache-Control", tc.cacheControl)
+			}
+			cw.WriteHeader(200)
+			_, _ = cw.Write([]byte("public body"))
+			key := CacheKey{AppID: "app-1", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hashStable("")}
+			if stored := cw.finishCacheCapture(cache, key, now); stored != tc.wantStore {
+				t.Fatalf("stored = %v, want %v", stored, tc.wantStore)
+			}
+			if len(rec.Header().Values("Set-Cookie")) != 1+len(tc.additional) {
+				t.Fatalf("live response cookie changed: %q", rec.Header().Values("Set-Cookie"))
+			}
+			if tc.wantStore {
+				state, entry := cache.Get(key)
+				if state != "fresh" || entry == nil || len(entry.header["Set-Cookie"]) != 0 {
+					t.Fatalf("cached entry = %q/%+v", state, entry)
+				}
+			}
+		})
+	}
+}
+
 // TestCacheWriter_SkipsNoStore verifies origin Cache-Control:
 // no-store is honoured — the app opted out, even if a
 // platform-level rule matched.

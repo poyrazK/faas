@@ -5878,14 +5878,17 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	managedVersionSetCookie := ""
 	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
 		stripManagedVersionAffinityCookie(r)
 		if managedVersionToken != "" {
-			http.SetCookie(w, &http.Cookie{
+			cookie := &http.Cookie{
 				Name: api.ManagedVersionAffinityCookieName, Value: managedVersionToken,
 				Path: "/", MaxAge: 7 * 24 * 60 * 60, Secure: true,
 				HttpOnly: true, SameSite: http.SameSiteLaxMode,
-			})
+			}
+			http.SetCookie(w, cookie)
+			managedVersionSetCookie = cookie.String()
 		}
 	}
 
@@ -5950,6 +5953,7 @@ haveApp:
 		// cannot reach the tee even if applyEdgeRuleCache
 		// itself short-circuited to a miss.
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
+		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		w = cw
 		defer func() {
 			if cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {

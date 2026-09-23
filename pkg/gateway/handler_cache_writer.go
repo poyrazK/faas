@@ -34,7 +34,8 @@ import (
 //
 //   - status code is in the cacheable set
 //     {200, 203, 300, 301, 308, 404, 410}
-//   - response did NOT carry Set-Cookie
+//   - response did NOT carry an origin Set-Cookie (the one exact edge-issued
+//     rollout cookie is stripped from the captured copy, not the live reply)
 //   - response did NOT carry Cache-Control: no-store / private
 //   - bypass did NOT fire (i.e., we buffered the full body)
 //   - the body is non-empty (empty bodies are still stored on
@@ -66,6 +67,10 @@ type cacheWriter struct {
 	headerOK  bool // WriteHeader was called
 	bypass    bool // exceeded cap; stop buffering
 	wroteBody bool
+	// managedVersionSetCookie is the exact per-request cookie the gateway
+	// added before installing the tee. Only this value may be omitted from
+	// the captured copy; origin cookies still veto storage.
+	managedVersionSetCookie string
 
 	// ruleAction is the state-typed view of the rule, captured
 	// once at install time so Put on the cache has the
@@ -111,6 +116,22 @@ func newCacheWriter(w http.ResponseWriter, rec *statusRecorder, rule *EdgeRuleCa
 	}
 }
 
+// excludeManagedVersionCookie records the one platform-authored cookie that
+// was already present on the live response before the origin ran. Matching
+// its full value (including the random token and attributes), then removing
+// only one occurrence, prevents an origin Set-Cookie from becoming cacheable.
+func (c *cacheWriter) excludeManagedVersionCookie(value string) {
+	if value == "" {
+		return
+	}
+	for _, existing := range c.Header().Values("Set-Cookie") {
+		if existing == value {
+			c.managedVersionSetCookie = value
+			return
+		}
+	}
+}
+
 // WriteHeader captures the status code + a defensive copy of
 // the header map at the moment the upstream commits. The cache
 // store uses header to replay the response verbatim on a hit;
@@ -135,11 +156,17 @@ func (c *cacheWriter) WriteHeader(code int) {
 	// own Header() override (e.g. capWriter). The embedded
 	// ResponseWriter is the lowest-level writer in the
 	// chain — its Header() is the canonical live map.
+	excludedManagedCookie := false
 	for k, vs := range c.Header() {
 		if isPerRequestPlatformHeader(k) {
 			continue
 		}
 		for _, v := range vs {
+			if strings.EqualFold(k, "Set-Cookie") && !excludedManagedCookie &&
+				c.managedVersionSetCookie != "" && v == c.managedVersionSetCookie {
+				excludedManagedCookie = true
+				continue
+			}
 			c.header.Add(k, v)
 		}
 	}
@@ -201,9 +228,9 @@ func (c *cacheWriter) Flush() {
 //     method-preserving-temporarily-redirecting kind, and
 //     caching a 302 would re-route a POST that the platform
 //     only just re-routed.
-//   - no Set-Cookie: a Set-Cookie on the response binds the
-//     response to a single client session; caching it would
-//     leak that session to other callers behind the cache.
+//   - no origin Set-Cookie: a Set-Cookie on the origin response binds it to a
+//     client session. The exact edge-issued rollout cookie is excluded from
+//     the stored copy while remaining on this caller's live response.
 //   - no Cache-Control: no-store / private: the app opted
 //     out of caching; honour the opt-out. Other directives
 //     (max-age, public) are advisory only — the cache TTL is
@@ -226,7 +253,7 @@ func (c *cacheWriter) shouldStore() bool {
 	default:
 		return false
 	}
-	if c.header.Get("Set-Cookie") != "" {
+	if len(c.header.Values("Set-Cookie")) != 0 {
 		return false
 	}
 	cc := c.header.Get("Cache-Control")
