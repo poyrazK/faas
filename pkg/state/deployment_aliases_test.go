@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,14 @@ func TestMemStoreDeploymentAliasesPinImmutableDeployment(t *testing.T) {
 	if created.DeploymentID != first.ID || created.Revision != first.Revision || created.CreatedAt.IsZero() {
 		t.Fatalf("created alias = %+v", created)
 	}
+	hostLabel, ok := api.DeploymentAliasHostLabel(app.ID, "candidate")
+	if !ok {
+		t.Fatal("host label rejected valid app alias")
+	}
+	routed, err := store.DeploymentAliasByHostLabel(ctx, hostLabel)
+	if err != nil || routed.AppID != app.ID || routed.DeploymentID != first.ID {
+		t.Fatalf("DeploymentAliasByHostLabel = %+v, %v", routed, err)
+	}
 	updated, err := store.SetDeploymentAlias(ctx, app.ID, "candidate", second.ID)
 	if err != nil {
 		t.Fatalf("update alias: %v", err)
@@ -57,6 +66,9 @@ func TestMemStoreDeploymentAliasesPinImmutableDeployment(t *testing.T) {
 	if _, err := store.SetDeploymentAlias(ctx, app.ID, "Bad_Name", first.ID); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("invalid name = %v, want ErrInvalidArgument", err)
 	}
+	if _, err := store.SetDeploymentAlias(ctx, app.ID, strings.Repeat("a", 27), first.ID); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("too-long hostname alias = %v, want ErrInvalidArgument", err)
+	}
 	if _, err := store.SetDeploymentAlias(ctx, app.ID, "failed", "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing target = %v, want ErrNotFound", err)
 	}
@@ -67,7 +79,37 @@ func TestMemStoreDeploymentAliasesPinImmutableDeployment(t *testing.T) {
 	if err := store.DeleteDeploymentAlias(ctx, app.ID, "candidate"); err != nil {
 		t.Fatalf("DeleteDeploymentAlias: %v", err)
 	}
+	if _, err := store.DeploymentAliasByHostLabel(ctx, hostLabel); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted host lookup = %v, want ErrNotFound", err)
+	}
 	if err := store.DeleteDeploymentAlias(ctx, app.ID, "candidate"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second DeleteDeploymentAlias = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemStoreDeploymentAliasRejectsExistingAppHostnameCollision(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	account, err := store.CreateAccount(ctx, "deployment-alias-host-conflict@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "orders-api", Status: AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Status: DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostLabel, ok := api.DeploymentAliasHostLabel(app.ID, "x")
+	if !ok {
+		t.Fatal("host label rejected valid alias")
+	}
+	if _, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: hostLabel, Status: AppActive}); err != nil {
+		t.Fatalf("seed legacy app using reserved alias host: %v", err)
+	}
+	if _, err := store.SetDeploymentAlias(ctx, app.ID, "x", deployment.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("SetDeploymentAlias collision = %v, want ErrConflict", err)
 	}
 }

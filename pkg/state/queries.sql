@@ -3849,6 +3849,22 @@ SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
  WHERE a.app_id = sqlc.arg(app_id)
  ORDER BY a.name;
 
+-- name: DeploymentAliasByHostLabel :many
+-- The hostname label uses the app's immutable UUID so aliases remain stable
+-- across app slug renames. Keep the deployment join app-scoped and hide
+-- soft-deleted owners/targets.
+SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
+  FROM deployment_aliases a
+  JOIN apps p ON p.id = a.app_id
+             AND p.status <> 'deleted'
+             AND p.deleted_at IS NULL
+  JOIN deployments d ON d.id = a.deployment_id
+                    AND d.app_id = a.app_id
+                    AND d.deleted_at IS NULL
+ WHERE ('tag-' || a.name || '-' || replace(a.app_id::text, '-', ''))
+       = sqlc.arg(host_label)
+ ORDER BY a.app_id, a.name;
+
 -- name: UpsertDeploymentAlias :one
 -- Accept only a routable target on this app. Using INSERT .. SELECT makes the
 -- ownership/status check atomic with writing the alias.
@@ -3860,6 +3876,7 @@ WITH upserted AS (
      WHERE d.app_id = sqlc.arg(app_id)
        AND d.id = sqlc.arg(deployment_id)
        AND a.deleted_at IS NULL
+       AND a.status <> 'deleted'
        AND d.deleted_at IS NULL
        AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live')
     ON CONFLICT (app_id, name) DO UPDATE

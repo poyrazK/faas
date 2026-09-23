@@ -11,6 +11,9 @@ import type { WorkloadPort } from './WorkloadPort.js';
  * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
 export type CreateAppRequest = {
+  /**
+   * The tag- prefix is reserved for stable deployment-alias hostnames.
+   */
   slug: string;
   type?: 'app' | 'function';
   /**

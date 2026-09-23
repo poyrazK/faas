@@ -34,7 +34,7 @@ import { request as __request } from '../core/request.js';
 export class DeploymentsService {
   /**
    * List named deployment aliases for an app.
-   * Returns customer-managed names that point to exact immutable deployment rows. Changing an alias does not alter production traffic.
+   * Returns customer-managed names that point to exact immutable deployment rows, with their stable routing hosts. Changing an alias does not alter production traffic.
    * @returns DeploymentAliasListResponse Alias names and their pinned deployment revisions.
    * @throws ApiError
    */
@@ -64,7 +64,7 @@ export class DeploymentsService {
   }
   /**
    * Point a named alias at an immutable deployment.
-   * The target must be a routable deployment that belongs to the app. This updates only the alias mapping; it does not shift production traffic.
+   * The target must be a routable deployment that belongs to the app. This updates only the alias mapping; it does not shift production traffic. The alias name and app identifier must fit together in one DNS label.
    * @returns DeploymentAliasResponse Alias mapping after the update.
    * @throws ApiError
    */

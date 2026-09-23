@@ -29,7 +29,15 @@ type DeploymentAliasStore interface {
 	DeleteDeploymentAlias(ctx context.Context, appID, name string) error
 }
 
+// DeploymentAliasRoutingStore resolves the public one-label alias hostname
+// to its app-scoped immutable deployment mapping. It stays separate from
+// DeploymentAliasStore so API-only adapters do not need gateway routing reads.
+type DeploymentAliasRoutingStore interface {
+	DeploymentAliasByHostLabel(ctx context.Context, hostLabel string) (DeploymentAlias, error)
+}
+
 var _ DeploymentAliasStore = (*MemStore)(nil)
+var _ DeploymentAliasRoutingStore = (*MemStore)(nil)
 
 func deploymentAliasKey(appID, name string) string { return appID + "\x00" + name }
 
@@ -57,8 +65,17 @@ func (m *MemStore) SetDeploymentAlias(_ context.Context, appID, name, deployment
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[appID]
-	if !ok || app.DeletedAt != nil {
+	if !ok || app.Status == AppDeleted || app.DeletedAt != nil {
 		return DeploymentAlias{}, ErrNotFound
+	}
+	hostLabel, ok := api.DeploymentAliasHostLabel(app.ID, name)
+	if !ok {
+		return DeploymentAlias{}, ErrInvalidArgument
+	}
+	for otherID, candidate := range m.apps {
+		if otherID != appID && candidate.Status != AppDeleted && candidate.DeletedAt == nil && candidate.Slug == hostLabel {
+			return DeploymentAlias{}, ErrConflict
+		}
 	}
 	deployment, ok := m.deployments[deploymentID]
 	if !ok || deployment.AppID != appID || deployment.DeletedAt != nil || !deployment.DeploymentPreviewActive() {
@@ -86,4 +103,33 @@ func (m *MemStore) DeleteDeploymentAlias(_ context.Context, appID, name string) 
 	}
 	delete(m.deploymentAliases, key)
 	return nil
+}
+
+func (m *MemStore) DeploymentAliasByHostLabel(_ context.Context, hostLabel string) (DeploymentAlias, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var found DeploymentAlias
+	for _, alias := range m.deploymentAliases {
+		app, ok := m.apps[alias.AppID]
+		if !ok || app.Status == AppDeleted || app.DeletedAt != nil {
+			continue
+		}
+		label, ok := api.DeploymentAliasHostLabel(app.ID, alias.Name)
+		if !ok || label != hostLabel {
+			continue
+		}
+		deployment, ok := m.deployments[alias.DeploymentID]
+		if !ok || deployment.DeletedAt != nil || deployment.AppID != app.ID {
+			continue
+		}
+		if found.AppID != "" {
+			return DeploymentAlias{}, ErrConflict
+		}
+		found = alias
+		found.Revision = deployment.Revision
+	}
+	if found.AppID == "" {
+		return DeploymentAlias{}, ErrNotFound
+	}
+	return found, nil
 }

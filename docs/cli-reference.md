@@ -29,7 +29,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
-| [`deployments`](#deployments) | List deployments (--app SLUG or linked context \| --limit N \| --before C \| --all \| --wide) |
+| [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
@@ -920,9 +920,9 @@ Cancel a delayed task
 
 ## deployments
 
-List deployments (--app SLUG or linked context | --limit N | --before C | --all | --wide)
+List deployments or manage stable named URLs for immutable revisions
 
-`gregale deployments [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
+`gregale deployments [<subcommand>] [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -931,6 +931,43 @@ List deployments (--app SLUG or linked context | --limit N | --before C | --all 
 | `--before <cursor>` | pagination cursor (RFC3339Nano) |  |
 | `--all` | walk every page |  |
 | `--wide` | include annotation columns (by / pr / tag / reason) |  |
+
+### deployments alias
+
+Manage stable named URLs for immutable deployments
+
+#### deployments alias list
+
+List deployment aliases for an app
+
+`gregale deployments alias list [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+
+#### deployments alias set
+
+Point an alias at an exact deployment revision
+
+`gregale deployments alias set [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+| `--name <NAME>` | lowercase DNS-label alias name | required |
+| `--deployment <ID|vN>` | deployment ID or app revision (vN) | required |
+
+#### deployments alias delete
+
+Remove an alias without deleting its deployment
+
+`gregale deployments alias delete [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+| `--name <NAME>` | lowercase DNS-label alias name | required |
 
 
 ## deployment

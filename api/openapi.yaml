@@ -5516,7 +5516,7 @@ paths:
       tags: [deployments]
       operationId: listDeploymentAliases
       summary: List named deployment aliases for an app.
-      description: Returns customer-managed names that point to exact immutable deployment rows. Changing an alias does not alter production traffic.
+      description: Returns customer-managed names that point to exact immutable deployment rows, with their stable routing hosts. Changing an alias does not alter production traffic.
       security: [{ bearerAuth: [] }]
       responses:
         '200':
@@ -5540,7 +5540,7 @@ paths:
       tags: [deployments]
       operationId: setDeploymentAlias
       summary: Point a named alias at an immutable deployment.
-      description: The target must be a routable deployment that belongs to the app. This updates only the alias mapping; it does not shift production traffic.
+      description: The target must be a routable deployment that belongs to the app. This updates only the alias mapping; it does not shift production traffic. The alias name and app identifier must fit together in one DNS label.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -21061,7 +21061,14 @@ components:
       type: object
       required: [slug]
       properties:
-        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world" }
+        slug:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          not: { pattern: '^tag-' }
+          minLength: 3
+          maxLength: 40
+          example: "hello-world"
+          description: The tag- prefix is reserved for stable deployment-alias hostnames.
         type: { type: string, enum: [app, function] , example: "app"}
         visibility: { type: string, enum: [public, internal], default: public, description: "Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro and Scale." }
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
@@ -21733,7 +21740,14 @@ components:
       type: object
       required: [new_slug]
       properties:
-        new_slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world-v2" }
+        new_slug:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          not: { pattern: '^tag-' }
+          minLength: 3
+          maxLength: 40
+          example: "hello-world-v2"
+          description: App slugs beginning with tag- are reserved for deployment-alias hostnames.
 
     RaiseOverageCapRequest:
       description: |
@@ -24329,7 +24343,7 @@ components:
           description: Exact immutable deployment row to associate with this alias.
 
     DeploymentAliasResponse:
-      description: A customer's named pointer to one per-app deployment revision.
+      description: A customer's named pointer to one per-app deployment revision, including its stable host when the platform apps domain is configured.
       type: object
       required: [name, deployment_id, revision, created_at, updated_at]
       properties:
@@ -24343,6 +24357,13 @@ components:
           type: integer
           minimum: 1
           description: Per-app revision number; rendered in CLI output as vN.
+        host:
+          type: string
+          description: Stable one-label hostname for this alias. It is keyed by an immutable app identifier and remains stable if the app slug is renamed.
+        url:
+          type: string
+          format: uri
+          description: HTTPS URL for the alias host; omitted when the platform apps domain is not configured.
         created_at:
           type: string
           format: date-time
