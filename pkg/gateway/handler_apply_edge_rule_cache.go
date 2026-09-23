@@ -94,11 +94,12 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		h.metricsIncCacheOutcome(app.ID, "bypass_authed")
 		return false, nil
 	}
-	// Bind deployment-preview responses to their immutable target so an
-	// alias URL can never replay a production deployment's cached body.
+	// Keyed rollout traffic is partitioned by the deployment cohort before
+	// the wake/picker path. Unkeyed traffic retains the existing empty
+	// deployment dimension and its cursor-based behavior.
 	key := CacheKey{
 		AppID:          app.ID,
-		DeploymentID:   app.PinnedDeploymentID,
+		DeploymentID:   versionAffinityDeploymentForRequest(h.backend, app.ID, r),
 		RuleID:         rule.ID,
 		Method:         method,
 		NormalizedPath: path,

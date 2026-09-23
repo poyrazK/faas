@@ -52,6 +52,50 @@ func TestCreateApp_RequestTimeoutIsBounded(t *testing.T) {
 	assertProblem(t, rec, 422, api.CodeValidation)
 }
 
+func TestAppVersionAffinityCookieRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "cookie-app", VersionAffinityCookie: "visitor_id"}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.VersionAffinityCookie != "visitor_id" || out.Manifest.VersionAffinityCookie != "visitor_id" {
+		t.Fatalf("create response cookie = %q / %q", out.VersionAffinityCookie, out.Manifest.VersionAffinityCookie)
+	}
+	name := "session_id"
+	rec = e.do(t, "PATCH", "/v1/apps/cookie-app", api.UpdateAppRequest{VersionAffinityCookie: &name}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body)
+	}
+	stored, err := e.store.AppBySlug(t.Context(), "cookie-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Manifest.VersionAffinityCookie != name {
+		t.Fatalf("stored cookie = %q, want %q", stored.Manifest.VersionAffinityCookie, name)
+	}
+	bad := "bad cookie"
+	rec = e.do(t, "PATCH", "/v1/apps/cookie-app", api.UpdateAppRequest{VersionAffinityCookie: &bad}, nil)
+	if rec.Code != 400 {
+		t.Fatalf("invalid cookie name: %d %s", rec.Code, rec.Body)
+	}
+	empty := ""
+	rec = e.do(t, "PATCH", "/v1/apps/cookie-app", api.UpdateAppRequest{VersionAffinityCookie: &empty}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("clear: %d %s", rec.Code, rec.Body)
+	}
+	stored, err = e.store.AppBySlug(t.Context(), "cookie-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Manifest.VersionAffinityCookie != "" {
+		t.Fatalf("stored cookie after clear = %q", stored.Manifest.VersionAffinityCookie)
+	}
+}
+
 func TestUpdateApp_LifecycleIsPartialAndValidated(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	if rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "lifecycle-app"}, nil); rec.Code != 201 {

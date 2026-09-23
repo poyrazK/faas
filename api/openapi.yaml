@@ -340,6 +340,66 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublicStatusOverview' }
 
+  /v1/preflight:
+    get:
+      tags: [status]
+      operationId: getMigrationPreflight
+      summary: Check whether a public GitHub repository would run on Gregale.
+      description: |
+        Unauthenticated static analysis of a public repository. Nothing is
+        built, deployed, or executed: the source is inspected for a detectable
+        framework and for hard disqualifiers from the container compatibility
+        contract.
+
+        The verdict is deliberately conservative. `green` means the source
+        already satisfies the contract, `amber` means it runs once a declared
+        change is supplied, and `red` means a disqualifier applies and the app
+        cannot run as written.
+
+        Only public github.com repositories are accepted. A private or missing
+        repository returns the same `preflight_repo_not_found` response so the
+        endpoint cannot be used to probe for private repositories.
+      security: []
+      parameters:
+        - name: source
+          in: query
+          required: true
+          description: A github.com repository URL, or an `owner/repo` pair.
+          schema: { type: string, maxLength: 512 }
+        - name: ref
+          in: query
+          required: false
+          description: |
+            Branch, tag, or commit SHA. A full commit SHA pins the verdict and
+            makes the result permanently reproducible.
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: The preflight verdict for the resolved commit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreflightReport' }
+        '404':
+          description: Repository not found, or private.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: Not a public github.com repository, or the source is too large.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many checks from this client.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The upstream repository host is rate limiting Gregale.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/status/incidents/{public_id}:
     get:
       tags: [status]
@@ -18497,6 +18557,93 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    PreflightLevel:
+      type: string
+      enum: [green, amber, red]
+      description: |
+        `green` satisfies the container contract as written, `amber` needs a
+        declared change, `red` cannot run.
+    PreflightSource:
+      type: object
+      description: |
+        A validated public GitHub repository reference. Every field has passed
+        the character and length rules, so it is safe to interpolate upstream.
+      required: [owner, repo]
+      properties:
+        owner: { type: string }
+        repo: { type: string }
+        ref: { type: string, description: Branch or tag parsed from the input; empty means the default branch. }
+    PreflightFinding:
+      type: object
+      description: |
+        One actionable observation about the source. `detail` says what was
+        observed; `remedy` says what to change about it.
+      required: [code, level, title, detail]
+      properties:
+        code: { type: string, description: Stable machine-readable finding code. }
+        level: { $ref: '#/components/schemas/PreflightLevel' }
+        title: { type: string }
+        detail: { type: string, description: What was observed in the source. }
+        remedy: { type: string, description: What to change. Empty for informational findings. }
+        sources:
+          type: array
+          description: Repository-relative paths the finding came from. Never file contents.
+          items: { type: string }
+    PreflightProfile:
+      type: object
+      description: The run contract inferred from the source tree.
+      properties:
+        version: { type: string }
+        framework: { type: string }
+        framework_version: { type: string }
+        package_manager: { type: string }
+        dockerfile_path: { type: string }
+        start_command: { type: string }
+        port: { type: integer }
+        health_path: { type: string }
+        config_file: { type: string }
+        inferred: { type: boolean }
+    PreflightVerdict:
+      type: object
+      description: |
+        The assessed result for one source tree: a headline level, the findings
+        behind it, and the run contract that was inferred.
+      required: [level, profile]
+      properties:
+        level: { $ref: '#/components/schemas/PreflightLevel' }
+        findings:
+          type: array
+          items: { $ref: '#/components/schemas/PreflightFinding' }
+        profile: { $ref: '#/components/schemas/PreflightProfile' }
+    PreflightPlanBudget:
+      type: object
+      description: |
+        What one plan includes, expressed as running time. Preflight does not
+        estimate an app's memory use, so it reports each tier's allowance
+        rather than recommending one.
+      required: [plan, ram_mb, billed_ram_mb, included_running_minutes, included_gb_hours, price_millicents]
+      properties:
+        plan: { type: string }
+        ram_mb: { type: integer }
+        billed_ram_mb: { type: integer, description: Plan RAM plus the fixed per-VM overhead. }
+        included_running_minutes: { type: integer, description: The included allowance as wall-clock running time at this plan's billed RAM. }
+        included_gb_hours: { type: integer }
+        price_millicents: { type: integer, format: int64, description: Monthly subscription price in millicents. }
+        overage_millicents_per_gb_hour: { type: integer, format: int64 }
+    PreflightReport:
+      type: object
+      description: |
+        One complete preflight answer, pinned to the commit it was computed
+        from so a permalink always re-renders the same verdict.
+      required: [source, commit_sha, verdict, plan_budgets, checked_at]
+      properties:
+        source: { $ref: '#/components/schemas/PreflightSource' }
+        commit_sha: { type: string, description: The commit the verdict was computed from. }
+        verdict: { $ref: '#/components/schemas/PreflightVerdict' }
+        plan_budgets:
+          type: array
+          items: { $ref: '#/components/schemas/PreflightPlanBudget' }
+        checked_at: { type: string, format: date-time }
     StatusUptimeBucket:
       description: Daily platform-availability point. Successful and total count available and observed complete five-minute platform intervals; customer workload outcomes are excluded.
       type: object
@@ -20635,6 +20782,10 @@ components:
           description: "Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy instances are bypassed automatically."
           type: boolean
           example: false
+        version_affinity_cookie:
+          description: "Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes the value before forwarding it as a key."
+          type: string
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -21194,6 +21345,10 @@ components:
           description: "Enable best-effort cookie-based routing to the same running instance. Omitted uses false."
           type: boolean
           default: false
+        version_affinity_cookie:
+          description: "Use a stable, non-secret browser cookie for rollout affinity. Omit to disable."
+          type: string
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -21572,6 +21727,9 @@ components:
         session_affinity:
           description: "Toggle best-effort cookie-based routing to the same running instance. Omit for no change."
           type: [boolean, "null"]
+        version_affinity_cookie:
+          description: "Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change."
+          type: [string, "null"]
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -22180,6 +22338,9 @@ components:
           description: "Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically."
           type: boolean
           default: false
+        version_affinity_cookie:
+          description: "Configured browser cookie name for rollout affinity; omitted when disabled."
+          type: string
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."

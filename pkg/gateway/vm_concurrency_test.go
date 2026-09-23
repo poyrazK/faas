@@ -290,7 +290,7 @@ func TestAcquireVMTargetReturnsTypedWarmQueueTimeout(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
-	_, release, waited, err := h.acquireVMTarget(ctx, b.app, PickResult{Target: b.targets[0], OK: true}, 1, "")
+	_, release, waited, err := h.acquireVMTarget(ctx, b.app, PickResult{Target: b.targets[0], OK: true}, 1, "", "")
 	if release != nil {
 		release()
 	}
@@ -376,7 +376,7 @@ func TestAcquireVMTargetMovesWaiterToNewSibling(t *testing.T) {
 	defer cancel()
 	done := make(chan result, 1)
 	go func() {
-		pick, release, waited, err := h.acquireVMTarget(ctx, b.app, PickResult{Target: b.targets[0], OK: true}, 1, "")
+		pick, release, waited, err := h.acquireVMTarget(ctx, b.app, PickResult{Target: b.targets[0], OK: true}, 1, "", "")
 		done <- result{pick: pick, release: release, waited: waited, err: err}
 	}()
 
@@ -391,5 +391,96 @@ func TestAcquireVMTargetMovesWaiterToNewSibling(t *testing.T) {
 	}
 	if !got.waited || got.pick.Target.InstanceID != "second" {
 		t.Fatalf("waited=%v target=%q, want waited sibling", got.waited, got.pick.Target.InstanceID)
+	}
+}
+
+type versionAffinityRetryBackend struct {
+	*fakeBackend
+	keyedTarget    Target
+	exactTarget    Target
+	keyedCalls     atomic.Int32
+	exactPickCalls atomic.Int32
+}
+
+func (b *versionAffinityRetryBackend) PickForVersionKey(_, key, _ string) PickResult {
+	if key != "customer-42" {
+		return PickResult{}
+	}
+	b.keyedCalls.Add(1)
+	return PickResult{Target: b.keyedTarget, OK: true, Picked: b.keyedTarget.DeploymentID}
+}
+
+func (b *versionAffinityRetryBackend) PickForDeployment(_, deploymentID string) PickResult {
+	if b.exactTarget.InstanceID == "" || b.exactTarget.DeploymentID != deploymentID {
+		return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+	}
+	b.exactPickCalls.Add(1)
+	return PickResult{Target: b.exactTarget, OK: true, Picked: deploymentID}
+}
+
+func TestAcquireVMTargetRepicksInsideVersionAffinityCohort(t *testing.T) {
+	first := Target{NodeID: "node-a", InstanceID: "candidate-1", DeploymentID: "dep-candidate"}
+	second := Target{NodeID: "node-b", InstanceID: "candidate-2", DeploymentID: "dep-candidate"}
+	backend := &versionAffinityRetryBackend{
+		fakeBackend: &fakeBackend{app: App{ID: "app", Type: AppTypeFunction}, targets: []Target{
+			first,
+			// A normal backend.Pick retry would be able to select this stable
+			// sibling; the keyed seam must win before ordinary picking.
+			{NodeID: "node-c", InstanceID: "stable-1", DeploymentID: "dep-stable"},
+		}},
+		keyedTarget: second,
+	}
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	held, ok := h.vmConcurrency.tryAcquire(first.InstanceID, "scale", 1)
+	if !ok {
+		t.Fatal("failed to occupy first keyed target")
+	}
+	defer held()
+
+	pick, release, _, err := h.acquireVMTarget(context.Background(), backend.app, PickResult{Target: first, OK: true}, 1, "", "customer-42")
+	if err != nil {
+		t.Fatalf("acquireVMTarget: %v", err)
+	}
+	if release != nil {
+		defer release()
+	}
+	if pick.Target.InstanceID != second.InstanceID || pick.Target.DeploymentID != "dep-candidate" {
+		t.Fatalf("repick = %+v, want second candidate target", pick)
+	}
+	if backend.keyedCalls.Load() == 0 {
+		t.Fatal("version-affinity picker was not consulted")
+	}
+}
+
+func TestAcquireVMTargetExactDeploymentPrecedesVersionAffinity(t *testing.T) {
+	first := Target{NodeID: "node-a", InstanceID: "preview-1", DeploymentID: "dep-preview"}
+	second := Target{NodeID: "node-b", InstanceID: "preview-2", DeploymentID: "dep-preview"}
+	backend := &versionAffinityRetryBackend{
+		fakeBackend: &fakeBackend{app: App{ID: "app", Type: AppTypeFunction}, targets: []Target{
+			first,
+			{NodeID: "node-c", InstanceID: "candidate-1", DeploymentID: "dep-candidate"},
+		}},
+		exactTarget: second,
+		keyedTarget: Target{NodeID: "node-c", InstanceID: "candidate-1", DeploymentID: "dep-candidate"},
+	}
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	held, ok := h.vmConcurrency.tryAcquire(first.InstanceID, "scale", 1)
+	if !ok {
+		t.Fatal("failed to occupy first exact-deployment target")
+	}
+	defer held()
+
+	pick, release, _, err := h.acquireVMTarget(context.Background(), backend.app, PickResult{Target: first, OK: true}, 1, "dep-preview", "customer-42")
+	if err != nil {
+		t.Fatalf("acquireVMTarget: %v", err)
+	}
+	if release != nil {
+		defer release()
+	}
+	if pick.Target.InstanceID != second.InstanceID || pick.Target.DeploymentID != "dep-preview" {
+		t.Fatalf("repick = %+v, want exact preview deployment", pick)
+	}
+	if backend.exactPickCalls.Load() == 0 || backend.keyedCalls.Load() != 0 {
+		t.Fatalf("exact picks=%d keyed picks=%d, want exact only", backend.exactPickCalls.Load(), backend.keyedCalls.Load())
 	}
 }

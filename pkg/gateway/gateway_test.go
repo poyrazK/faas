@@ -322,17 +322,19 @@ func TestRouteCacheInvalidate(t *testing.T) {
 
 func TestRouteCacheKeepsPinnedDeploymentHostSpecific(t *testing.T) {
 	c := NewRouteCache(10)
-	c.PutTarget("app.gregale.dev", "app-1", "", "")
-	c.PutTarget("deploy-7-app.gregale.dev", "app-1", "dep-7", "qa")
+	production := RouteTarget{AppID: "app-1"}
+	preview := RouteTarget{AppID: "app-1", PinnedDeploymentID: "dep-7", PinnedDeploymentScope: "qa"}
+	c.PutTarget("app.gregale.dev", production)
+	c.PutTarget("deploy-7-app.gregale.dev", preview)
 
-	if appID, deploymentID, scope, ok := c.PeekTarget("app.gregale.dev"); !ok || appID != "app-1" || deploymentID != "" || scope != "" {
-		t.Fatalf("production route = (%q, %q, %q, %v), want app-1 with no pin", appID, deploymentID, scope, ok)
+	if got, ok := c.PeekTarget("app.gregale.dev"); !ok || got != production {
+		t.Fatalf("production route = (%+v, %v), want %+v", got, ok, production)
 	}
-	if appID, deploymentID, scope, ok := c.PeekTarget("deploy-7-app.gregale.dev"); !ok || appID != "app-1" || deploymentID != "dep-7" || scope != "qa" {
-		t.Fatalf("preview route = (%q, %q, %q, %v), want app-1 pinned to dep-7 in qa", appID, deploymentID, scope, ok)
+	if got, ok := c.PeekTarget("deploy-7-app.gregale.dev"); !ok || got != preview {
+		t.Fatalf("preview route = (%+v, %v), want %+v", got, ok, preview)
 	}
 	c.InvalidateApp("app-1")
-	if _, _, _, ok := c.PeekTarget("deploy-7-app.gregale.dev"); ok {
+	if _, ok := c.PeekTarget("deploy-7-app.gregale.dev"); ok {
 		t.Fatal("deployment change left its pinned host in the route cache")
 	}
 }
