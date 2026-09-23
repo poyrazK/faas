@@ -4,10 +4,45 @@
 /* eslint-disable */
 import type { AppResponse } from '../models/AppResponse.js';
 import type { CreatePreviewRequest } from '../models/CreatePreviewRequest.js';
+import type { PreviewResourceResponse } from '../models/PreviewResourceResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class PreviewsService {
+  /**
+   * Get a first-class preview resource.
+   * Returns preview identity, public URL, expiration, latest preview and
+   * production deployments, safe changes from production, and links to
+   * the native streaming logs, time-windowed metrics, and configuration
+   * endpoints. Secret values and ciphertext are never included.
+   *
+   * @returns PreviewResourceResponse Preview resource and production comparison.
+   * @throws ApiError
+   */
+  public static getPreview({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<PreviewResourceResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/preview/{slug}',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
   /**
    * Tear down a preview app.
    * One-click destroy of a preview app row (issue #961 Mega-C PR-1,

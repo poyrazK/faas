@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.account_trace_lookup_error import AccountTraceLookupError
     from ..models.account_trace_match import AccountTraceMatch
     from ..models.debug_telemetry_span import DebugTelemetrySpan
+    from ..models.log_query_event import LogQueryEvent
 
 
 T = TypeVar("T", bound="AccountTraceLookupResponse")
@@ -28,6 +29,8 @@ class AccountTraceLookupResponse:
     limit: int
     matches: list[AccountTraceMatch]
     invocations: list[AccountTraceInvocation]
+    logs: list[LogQueryEvent]
+    logs_truncated: bool
     spans: list[DebugTelemetrySpan]
     spans_truncated: bool
     partial: bool | Unset = UNSET
@@ -50,6 +53,13 @@ class AccountTraceLookupResponse:
         for invocations_item_data in self.invocations:
             invocations_item = invocations_item_data.to_dict()
             invocations.append(invocations_item)
+
+        logs = []
+        for logs_item_data in self.logs:
+            logs_item = logs_item_data.to_dict()
+            logs.append(logs_item)
+
+        logs_truncated = self.logs_truncated
 
         spans = []
         for spans_item_data in self.spans:
@@ -76,6 +86,8 @@ class AccountTraceLookupResponse:
                 "limit": limit,
                 "matches": matches,
                 "invocations": invocations,
+                "logs": logs,
+                "logs_truncated": logs_truncated,
                 "spans": spans,
                 "spans_truncated": spans_truncated,
             }
@@ -93,6 +105,7 @@ class AccountTraceLookupResponse:
         from ..models.account_trace_lookup_error import AccountTraceLookupError
         from ..models.account_trace_match import AccountTraceMatch
         from ..models.debug_telemetry_span import DebugTelemetrySpan
+        from ..models.log_query_event import LogQueryEvent
 
         d = dict(src_dict)
         trace_id = d.pop("trace_id")
@@ -114,6 +127,15 @@ class AccountTraceLookupResponse:
             invocations_item = AccountTraceInvocation.from_dict(invocations_item_data)
 
             invocations.append(invocations_item)
+
+        logs = []
+        _logs = d.pop("logs")
+        for logs_item_data in _logs:
+            logs_item = LogQueryEvent.from_dict(logs_item_data)
+
+            logs.append(logs_item)
+
+        logs_truncated = d.pop("logs_truncated")
 
         spans = []
         _spans = d.pop("spans")
@@ -141,6 +163,8 @@ class AccountTraceLookupResponse:
             limit=limit,
             matches=matches,
             invocations=invocations,
+            logs=logs,
+            logs_truncated=logs_truncated,
             spans=spans,
             spans_truncated=spans_truncated,
             partial=partial,

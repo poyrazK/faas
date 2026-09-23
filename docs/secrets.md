@@ -21,10 +21,42 @@ from being captured into a replacement snapshot.
 
 By default, a running process keeps its current environment and the new value
 arrives on the next cold wake. Add `--restart` to `secrets set` or `secrets
-rotate` to apply immediately. Gregale durably queues a configuration restart,
-destroys live VMs without snapshotting their old environment, and cold-boots a
-replacement with the current secret set. This restarts the app; in-process
-reload without restart is not yet supported.
+rotate` to apply immediately. Gregale durably queues a rolling configuration
+refresh: it cold-boots replacements with the current environment, routes new
+requests to them, waits for route convergence and in-flight requests to drain,
+then destroys the old processes without snapshotting their old environment.
+The scheduler keeps app concurrency at or below its configured ceiling plus
+one temporary slot; node RAM and CPU limits still apply, so a refresh can
+remain pending until capacity is available. In a multi-node fleet, the drain
+waits for registered gateways to acknowledge the route update
+and fresh VM telemetry; legacy single-box installs use their existing local
+notification path.
+
+Apps that can reload credentials in-process may opt in via an OCI image label:
+
+```dockerfile
+LABEL com.gregale.secret-reload-signal="SIGHUP"
+```
+
+The supported signals are `SIGHUP`, `SIGUSR1`, and `SIGUSR2`; the selected
+signal must differ from the image's `STOPSIGNAL`. On rotation, guest-init polls
+the deployment's current secret scope, atomically replaces a JSON map at the
+path in `FAAS_SECRETS_FILE`, then forwards the configured signal to the main
+application. The file is mode `0400`, owned by the app user, and lives on the
+guest's `/tmp` tmpfs. The process environment itself cannot change after
+`exec`, so the application must handle the signal, reread the file, and update
+its own clients or connection pools. Refresh is checked every 10 seconds; use
+`--restart` when the app cannot implement that contract or when a rolling
+replacement is preferred.
+
+This opt-in currently supports single-workload deployments only. A deployment
+with sidecars is rejected when the image declares the reload label, preserving
+the existing boundary that sidecars do not receive the main workload's
+secrets. Secret reload requests are resolved against the live deployment's
+scope and `env_secrets` allowlist (legacy deployments without an allowlist keep
+their existing all-secrets-in-scope behavior). The application is responsible
+for confirming to itself that it successfully reloaded; `secrets list`
+continues to report wake-time delivery, not an application-level reload ack.
 
 `gregale secrets list` reports delivery for each key:
 

@@ -182,6 +182,8 @@ func run(args []string) (status int) {
 		return cmdBindings(args[1:])
 	case "deploy":
 		return cmdDeployTarball(args[1:])
+	case "diff":
+		return environmentDiff(args[1:])
 	case "dev":
 		return cmdDev(args[1:])
 	case "canary":

@@ -83,6 +83,13 @@ func TestPg_ApplyProjectPlan_HappyPath(t *testing.T) {
 	if insertedApps[0].ID == "" {
 		t.Errorf("inserted app.ID empty")
 	}
+	personalOrg, err := s.OrgByPersonalAccount(ctx, acct.ID)
+	if err != nil {
+		t.Fatalf("OrgByPersonalAccount: %v", err)
+	}
+	if insertedApps[0].OrgID != personalOrg.ID {
+		t.Errorf("inserted app.OrgID = %q, want personal org %q", insertedApps[0].OrgID, personalOrg.ID)
+	}
 	// scan_source round-trips verbatim (PR #454 — reposcan source pin).
 	if insertedProject.ScanSource != state.ProjectScanSourceCompose {
 		t.Errorf("ScanSource = %q, want compose", insertedProject.ScanSource)

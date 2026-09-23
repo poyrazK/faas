@@ -303,6 +303,50 @@ type CreatePreviewRequest struct {
 	TTLHours int `json:"ttl_hours,omitempty"`
 }
 
+// PreviewResourceResponse is the first-class preview read model. It keeps
+// streamed logs and time-windowed metrics behind their native endpoints while
+// making those endpoints, the effective app configuration, production
+// baseline, artifact comparison, and expiration discoverable from one object.
+type PreviewResourceResponse struct {
+	App                  AppResponse                      `json:"app"`
+	Parent               *AppResponse                     `json:"parent,omitempty"`
+	LatestDeployment     *DeploymentResponse              `json:"latest_deployment,omitempty"`
+	ProductionDeployment *DeploymentResponse              `json:"production_deployment,omitempty"`
+	Changes              PreviewProductionChangesResponse `json:"changes_from_production"`
+	Links                PreviewResourceLinksResponse     `json:"links"`
+}
+
+// PreviewProductionChangesResponse summarizes safe, non-secret differences
+// between a preview and its production parent.
+type PreviewProductionChangesResponse struct {
+	ArtifactChanged            bool                    `json:"artifact_changed"`
+	PreviewArtifact            PreviewArtifactResponse `json:"preview_artifact"`
+	ProductionArtifact         PreviewArtifactResponse `json:"production_artifact"`
+	ConfigurationChangedGroups []string                `json:"configuration_changed_groups"`
+}
+
+// PreviewArtifactResponse is the strongest available immutable identity for a
+// deployment plus enough provenance for a human-readable comparison.
+type PreviewArtifactResponse struct {
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Revision     int    `json:"revision,omitempty"`
+	Status       string `json:"status,omitempty"`
+	ImageDigest  string `json:"image_digest,omitempty"`
+	SourceSHA256 string `json:"source_sha256,omitempty"`
+	CommitSHA    string `json:"commit_sha,omitempty"`
+	BuildID      string `json:"build_id,omitempty"`
+}
+
+// PreviewResourceLinksResponse points to the preview's public URL and native
+// observability/configuration APIs. Logs remain SSE and metrics remain
+// time-windowed instead of being embedded as stale snapshots.
+type PreviewResourceLinksResponse struct {
+	URL           string `json:"url"`
+	Logs          string `json:"logs"`
+	Metrics       string `json:"metrics"`
+	Configuration string `json:"configuration"`
+}
+
 // UpsertDevSessionRequest describes the application shape for an expiring,
 // CLI-managed developer preview. The project identity lives in the URL path;
 // WorkspaceID separates developers and local source trees within that project.
@@ -2156,9 +2200,10 @@ type BuildResponse struct {
 	FinishedAt      string `json:"finished_at,omitempty"`
 	CancelledAt     string `json:"cancelled_at,omitempty"`
 	DurationSeconds int    `json:"duration_seconds,omitempty"`
-	// CacheStatus and CacheKeySHA256 are populated once builderd makes a
-	// cache decision. The status is hit|miss|invalidated; the key is the
-	// digest of the versioned BuildCacheRecipe.
+	// CacheStatus and CacheKeySHA256 are populated once builderd makes an
+	// exact-source artifact-cache decision. This is separate from the
+	// BuildKit dependency-layer cache. Status is hit|miss|invalidated; key is
+	// the digest of the versioned BuildCacheRecipe.
 	CacheStatus    string `json:"cache_status,omitempty"`
 	CacheKeySHA256 string `json:"cache_key_sha256,omitempty"`
 }
@@ -2255,7 +2300,8 @@ type DeploymentResponse struct {
 	Revision int    `json:"revision,omitempty"`
 	BuildID  string `json:"build_id,omitempty"`
 	// BuildCacheStatus and CacheKeySHA256 mirror the associated build's
-	// durable cache decision. They are populated on deployment detail reads
+	// exact-source artifact-cache decision (not the separate BuildKit
+	// dependency-layer cache). They are populated on deployment detail reads
 	// after builderd reaches the cache lookup.
 	BuildCacheStatus string `json:"build_cache_status,omitempty"`
 	CacheKeySHA256   string `json:"cache_key_sha256,omitempty"`
@@ -4399,15 +4445,44 @@ type QueueReceiveResponse struct {
 	Traceparent string          `json:"traceparent,omitempty"`
 }
 
+// LogQueryEvent is the stable, source-neutral shape emitted by database-backed
+// log queries. Fields that do not apply to a source are omitted so future
+// build, deploy, network, and DNS sources can join the same stream without
+// changing the existing HTTP event contract.
+type LogQueryEvent struct {
+	ID           string    `json:"id"`
+	App          string    `json:"app,omitempty"`
+	Timestamp    string    `json:"timestamp"`
+	Source       LogSource `json:"source"`
+	DeploymentID string    `json:"deployment_id,omitempty"`
+	InstanceID   string    `json:"instance_id,omitempty"`
+	RequestID    string    `json:"request_id,omitempty"`
+	TraceID      string    `json:"trace_id,omitempty"`
+	Route        string    `json:"route,omitempty"`
+	Method       string    `json:"method,omitempty"`
+	Status       int       `json:"status,omitempty"`
+	Level        string    `json:"level,omitempty"`
+	Stream       string    `json:"stream,omitempty"`
+	Message      string    `json:"message"`
+	LatencyMS    int       `json:"latency_ms,omitempty"`
+	Count        int       `json:"count,omitempty"`
+	ColdBoot     bool      `json:"cold_boot,omitempty"`
+}
+
 // AccountTraceLookupResponse is the tenant-scoped correlation envelope used
-// by `gregale trace`. It combines retained request evidence with durable queue
-// lifecycle rows without exposing request payloads or raw headers.
+// by `gregale trace`. It combines retained request evidence and safe access
+// log projections with durable queue lifecycle rows without exposing request
+// payloads or raw headers.
 type AccountTraceLookupResponse struct {
-	TraceID        string                    `json:"trace_id"`
-	GeneratedAt    time.Time                 `json:"generated_at"`
-	Limit          int                       `json:"limit"`
-	Matches        []AccountTraceMatch       `json:"matches"`
-	Invocations    []AccountTraceInvocation  `json:"invocations"`
+	TraceID     string                   `json:"trace_id"`
+	GeneratedAt time.Time                `json:"generated_at"`
+	Limit       int                      `json:"limit"`
+	Matches     []AccountTraceMatch      `json:"matches"`
+	Invocations []AccountTraceInvocation `json:"invocations"`
+	// Logs contains metadata-only HTTP access events within trace retention.
+	Logs []LogQueryEvent `json:"logs"`
+	// LogsTruncated indicates that the bounded per-trace log result omitted rows.
+	LogsTruncated  bool                      `json:"logs_truncated"`
 	Spans          []DebugTelemetrySpan      `json:"spans"`
 	SpansTruncated bool                      `json:"spans_truncated"`
 	Partial        bool                      `json:"partial,omitempty"`
@@ -6320,10 +6395,14 @@ type Sidecar struct {
 	// from "explicit true/false". PR-A only persists the field;
 	// the runtime effect is PR-B.
 	Essential *bool `json:"essential,omitempty"`
-	// StartupProbe optionally replaces the image's baked OCI HEALTHCHECK for
-	// this workload. The exec-style shape matches AppManifest.Healthcheck;
-	// use Test=["NONE"] to explicitly disable an image healthcheck.
-	StartupProbe *AppManifestHealthcheck `json:"startup_probe,omitempty"`
+	// StartupProbe gates this workload's healthy lifecycle state. If omitted,
+	// the image's OCI HEALTHCHECK remains the startup probe. The legacy OCI
+	// test/interval_s/retries shape remains accepted for compatibility.
+	StartupProbe *SidecarProbe `json:"startup_probe,omitempty"`
+	// LivenessProbe is an optional steady-state probe for long-running sidecars.
+	// When omitted, the effective startup probe is also used for liveness to
+	// preserve the pre-existing sidecar healthcheck behavior.
+	LivenessProbe *SidecarProbe `json:"liveness_probe,omitempty"`
 	// DependsOn gates this workload on another workload's lifecycle state.
 	// At most WorkloadDependencyCapMax unique targets are accepted. An omitted
 	// condition means started. Init workloads remain prerequisites of the main
@@ -6431,7 +6510,15 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	if !ValidSidecarDiskIOProfile(s.DiskIOProfile) {
 		return ErrSidecarInvalidDiskIOProfile(s.DiskIOProfile)
 	}
-	if p := validateSidecarStartupProbe(s.Name, s.StartupProbe); p != nil {
+	if p := validateSidecarProbe(s.Name, "startup_probe", s.StartupProbe); p != nil {
+		return p
+	}
+	if s.LivenessProbe != nil && s.Type != SidecarTypeSidecar {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar liveness probe",
+			fmt.Sprintf("sidecar[%q].liveness_probe is only valid for type=sidecar.", s.Name))
+	}
+	if p := validateSidecarProbe(s.Name, "liveness_probe", s.LivenessProbe); p != nil {
 		return p
 	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {
@@ -6468,50 +6555,116 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	return nil
 }
 
-func validateSidecarStartupProbe(name string, probe *AppManifestHealthcheck) *Problem {
+// SidecarProbe describes one container-local probe. The Test and legacy timing
+// fields retain the original OCI HEALTHCHECK-shaped startup_probe contract;
+// new callers should use exactly one of Exec, HTTPGet, or TCPSocket.
+// SidecarProbe aliases the OCI healthcheck wire model so callers compiled
+// against the original startup_probe Go field type remain source-compatible.
+type SidecarProbe = AppManifestHealthcheck
+
+type SidecarExecProbe struct {
+	Command []string `json:"command" yaml:"command" toml:"command"`
+}
+
+type SidecarHTTPGetProbe struct {
+	Path string `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
+	Port int    `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+}
+
+type SidecarTCPSocketProbe struct {
+	Port int `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+}
+
+func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 	if probe == nil {
 		return nil
 	}
-	if len(probe.Test) == 0 {
+	invalid := func(detail string) *Problem {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe.test must contain CMD, CMD-SHELL, or NONE; use [\"NONE\"] to disable the image probe.", name))
+			"Invalid sidecar probe",
+			fmt.Sprintf("sidecar[%q].%s %s", name, field, detail))
 	}
-	switch probe.Test[0] {
-	case "NONE":
-		if len(probe.Test) != 1 {
-			return NewProblem(http.StatusBadRequest, CodeValidation,
-				"Invalid sidecar startup probe",
-				fmt.Sprintf("sidecar[%q].startup_probe.test with NONE must contain exactly one element.", name))
-		}
-	case "CMD", "CMD-SHELL":
-		if len(probe.Test) < 2 || probe.Test[1] == "" {
-			return NewProblem(http.StatusBadRequest, CodeValidation,
-				"Invalid sidecar startup probe",
-				fmt.Sprintf("sidecar[%q].startup_probe.test %s requires a non-empty command.", name, probe.Test[0]))
-		}
-		if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
-			return NewProblem(http.StatusBadRequest, CodeValidation,
-				"Invalid sidecar startup probe",
-				fmt.Sprintf("sidecar[%q].startup_probe.test CMD-SHELL requires exactly one command string.", name))
-		}
-	default:
-		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe.test must start with CMD, CMD-SHELL, or NONE.", name))
+	actions := 0
+	if len(probe.Test) > 0 {
+		actions++
 	}
-	if probe.IntervalS < 0 || probe.TimeoutS < 0 || probe.Retries < 0 || probe.StartPeriodS < 0 {
-		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe interval_s, timeout_s, retries, and start_period_s must be >= 0.", name))
+	if probe.Exec != nil {
+		actions++
 	}
-	// These values cross the vmmd protobuf boundary as int32. Reject values
-	// that would wrap and change the guest's probe timing or retry budget.
-	const maxProtoInt32 = 1<<31 - 1
-	if probe.IntervalS > maxProtoInt32 || probe.TimeoutS > maxProtoInt32 || probe.Retries > maxProtoInt32 || probe.StartPeriodS > maxProtoInt32 {
-		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe timing and retry values must fit in int32.", name))
+	if probe.HTTPGet != nil {
+		actions++
+	}
+	if probe.TCPSocket != nil {
+		actions++
+	}
+	if actions != 1 {
+		return invalid("must specify exactly one of exec, http_get, tcp_socket, or the legacy test field.")
+	}
+	if len(probe.Test) > 0 {
+		switch probe.Test[0] {
+		case "NONE":
+			if len(probe.Test) != 1 {
+				return invalid("test with NONE must contain exactly one element.")
+			}
+		case "CMD", "CMD-SHELL":
+			if len(probe.Test) < 2 || probe.Test[1] == "" {
+				return invalid(fmt.Sprintf("test %s requires a non-empty command.", probe.Test[0]))
+			}
+			if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
+				return invalid("test CMD-SHELL requires exactly one command string.")
+			}
+		default:
+			return invalid("test must start with CMD, CMD-SHELL, or NONE.")
+		}
+	}
+	if probe.Exec != nil {
+		if len(probe.Exec.Command) == 0 {
+			return invalid("exec.command must contain at least one non-empty argv element.")
+		}
+		for _, arg := range probe.Exec.Command {
+			if arg == "" {
+				return invalid("exec.command elements must be non-empty.")
+			}
+		}
+	}
+	if probe.HTTPGet != nil {
+		if probe.HTTPGet.Path != "" && !strings.HasPrefix(probe.HTTPGet.Path, "/") {
+			return invalid("http_get.path must start with '/'.")
+		}
+		if probe.HTTPGet.Port < 0 || probe.HTTPGet.Port > 65535 {
+			return invalid("http_get.port must be 0 (container port) or in 1..65535.")
+		}
+	}
+	if probe.TCPSocket != nil && (probe.TCPSocket.Port < 0 || probe.TCPSocket.Port > 65535) {
+		return invalid("tcp_socket.port must be 0 (container port) or in 1..65535.")
+	}
+	period := probe.PeriodS
+	if period == 0 {
+		period = probe.IntervalS
+	} else if probe.IntervalS != 0 && probe.IntervalS != period {
+		return invalid("period_s and legacy interval_s cannot disagree.")
+	}
+	failures := probe.FailureThreshold
+	if failures == 0 {
+		failures = probe.Retries
+	} else if probe.Retries != 0 && probe.Retries != failures {
+		return invalid("failure_threshold and legacy retries cannot disagree.")
+	}
+	if period < 0 || period > 300 || probe.TimeoutS < 0 || probe.TimeoutS > 120 ||
+		probe.InitialDelayS < 0 || probe.InitialDelayS > 600 || probe.StartPeriodS < 0 || probe.StartPeriodS > 600 ||
+		failures < 0 || failures > 20 || probe.SuccessThreshold < 0 || probe.SuccessThreshold > 20 {
+		return invalid("period, timeout, delay, and threshold values are outside their supported ranges.")
+	}
+	effectivePeriod := period
+	if effectivePeriod == 0 {
+		if len(probe.Test) > 0 {
+			effectivePeriod = 30
+		} else {
+			effectivePeriod = 10
+		}
+	}
+	if probe.TimeoutS > 0 && probe.TimeoutS > effectivePeriod {
+		return invalid("timeout_s cannot exceed period_s.")
 	}
 	return nil
 }

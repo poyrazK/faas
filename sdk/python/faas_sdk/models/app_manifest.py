@@ -73,9 +73,8 @@ class AppManifest:
     healthz: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
     healthcheck: AppManifestHealthcheck | Unset = UNSET
-    """AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer
-    seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1
-    surfaces the field for the registry-pull path."""
+    """AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations
+    are integer seconds at the JSON boundary to match OCI/Docker conventions."""
     stop_signal: None | str | Unset = UNSET
     """OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2."""
     stop_grace_period: None | str | Unset = UNSET

@@ -550,12 +550,20 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.SetPreviewPrState(fx.Ctx, pr.ID, "invalid"); !errors.Is(err, state.ErrInvalidPreviewPrState) {
 		t.Fatalf("SetPreviewPrState(invalid) = %v, want ErrInvalidPreviewPrState", err)
 	}
-	updated, err := fx.Store.SetPreviewPrState(fx.Ctx, pr.ID, state.PreviewPrStateClosed)
+	closedDeadline := time.Date(2026, 9, 17, 11, 0, 0, 0, time.UTC)
+	updated, err := fx.Store.ClosePRPreview(fx.Ctx, pr.ID, closedDeadline)
 	if err != nil {
-		t.Fatalf("SetPreviewPrState(closed): %v", err)
+		t.Fatalf("ClosePRPreview: %v", err)
 	}
-	if updated.PreviewPrState != state.PreviewPrStateClosed {
-		t.Fatalf("preview state = %q, want %q", updated.PreviewPrState, state.PreviewPrStateClosed)
+	if updated.PreviewPrState != state.PreviewPrStateClosed || updated.PreviewExpiresAt == nil || !updated.PreviewExpiresAt.Equal(closedDeadline) {
+		t.Fatalf("closed preview = state %q expiry %v, want closed at %v", updated.PreviewPrState, updated.PreviewExpiresAt, closedDeadline)
+	}
+	replayedClose, err := fx.Store.ClosePRPreview(fx.Ctx, pr.ID, closedDeadline.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ClosePRPreview replay: %v", err)
+	}
+	if replayedClose.PreviewExpiresAt == nil || !replayedClose.PreviewExpiresAt.Equal(closedDeadline) {
+		t.Fatalf("replayed close deadline = %v, want original %v", replayedClose.PreviewExpiresAt, closedDeadline)
 	}
 
 	commentedAt := time.Date(2026, 9, 17, 11, 0, 0, 0, time.UTC)

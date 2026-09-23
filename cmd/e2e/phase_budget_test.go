@@ -203,3 +203,26 @@ func TestSmokeLaneAndFullPhasesAreExclusive(t *testing.T) {
 		t.Error("the Verdict does not see the smoke step's outcome; a red smoke run would report green")
 	}
 }
+
+func TestFullLaneRunsFullAPIHostingRuntimeCatalog(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatalf("read e2e-native workflow: %v", err)
+	}
+	wf := string(body)
+	start := strings.Index(wf, "- name: Phase 2 — build")
+	if start < 0 {
+		t.Fatal("workflow has no source-build phase")
+	}
+	end := strings.Index(wf[start:], "- name: Phase 3 — deploy")
+	if end < 0 {
+		t.Fatal("workflow has no deploy phase after source-build phase")
+	}
+	buildPhase := wf[start : start+end]
+	if !strings.Contains(buildPhase, "CATALOG_MODE: ${{ inputs.lane == 'qualify' && 'qualify' || 'full' }}") {
+		t.Error("native build phase does not select full fixtures for the full lane and candidates for qualify")
+	}
+	if !strings.Contains(buildPhase, "--setenv=FAAS_E2E_API_HOSTING_CATALOG='$CATALOG_MODE'") {
+		t.Error("native build phase does not forward its selected catalog mode to the remote runner")
+	}
+}

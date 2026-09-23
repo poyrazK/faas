@@ -280,7 +280,7 @@ jobs:
             echo "generated Action ref $USES_REF does not match release major $EXPECTED" >&2
             exit 1
           fi
-          printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/build/source-ref"
+          printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/deploy-from-github"
           for path in .github/actions/deploy/action.yml .github/actions/deploy/bin/gregale; do
             gh api "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${MAJOR}" \
               | jq -e '.type == "file" and .size > 0' >/dev/null

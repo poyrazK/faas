@@ -1389,9 +1389,13 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 				Condition: string(dep.Condition),
 			})
 		}
+		startupProbe := sidecarProbeToProto(sc.StartupProbe)
+		livenessProbe := sidecarProbeToProto(sc.LivenessProbe)
+		// Preserve the original flat startup fields for old vmmd binaries
+		// during a rolling upgrade. New vmmd reads the typed message above.
 		var startupProbeTest []string
 		var startupProbeIntervalS, startupProbeTimeoutS, startupProbeRetries, startupProbeStartPeriodS int32
-		if sc.StartupProbe != nil {
+		if sc.StartupProbe != nil && len(sc.StartupProbe.Test) > 0 {
 			startupProbeTest = append([]string(nil), sc.StartupProbe.Test...)
 			startupProbeIntervalS = int32(sc.StartupProbe.IntervalS)
 			startupProbeTimeoutS = int32(sc.StartupProbe.TimeoutS)
@@ -1417,6 +1421,8 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			StartupProbeTimeoutS:     startupProbeTimeoutS,
 			StartupProbeRetries:      startupProbeRetries,
 			StartupProbeStartPeriodS: startupProbeStartPeriodS,
+			StartupProbe:             startupProbe,
+			LivenessProbe:            livenessProbe,
 		})
 	}
 	out := &vmmdpb.AppSpec{
@@ -1468,6 +1474,40 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			Direction: rule.Direction, Protocol: rule.Protocol,
 			Cidrs: append([]string(nil), rule.CIDRs...), Ports: append([]string(nil), rule.Ports...),
 		})
+	}
+	return out
+}
+
+func sidecarProbeToProto(in *api.SidecarProbe) *vmmdpb.SidecarProbeSpec {
+	if in == nil {
+		return nil
+	}
+	out := &vmmdpb.SidecarProbeSpec{
+		Test:             append([]string(nil), in.Test...),
+		PeriodS:          int32(in.PeriodS),
+		IntervalS:        int32(in.IntervalS),
+		TimeoutS:         int32(in.TimeoutS),
+		FailureThreshold: int32(in.FailureThreshold),
+		SuccessThreshold: int32(in.SuccessThreshold),
+		InitialDelayS:    int32(in.InitialDelayS),
+		Retries:          int32(in.Retries),
+		StartPeriodS:     int32(in.StartPeriodS),
+	}
+	switch {
+	case len(in.Test) > 0 && in.Test[0] == "NONE":
+		out.ProbeType = "none"
+	case in.Exec != nil:
+		out.ProbeType = "exec"
+		out.Command = append([]string(nil), in.Exec.Command...)
+	case in.HTTPGet != nil:
+		out.ProbeType = "http"
+		out.Path = in.HTTPGet.Path
+		out.Port = uint32(in.HTTPGet.Port)
+	case in.TCPSocket != nil:
+		out.ProbeType = "tcp"
+		out.Port = uint32(in.TCPSocket.Port)
+	case len(in.Test) > 0:
+		out.ProbeType = "exec"
 	}
 	return out
 }

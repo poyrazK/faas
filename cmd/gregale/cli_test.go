@@ -517,7 +517,7 @@ func TestCmdDeploy_HappyPath_PrintsHostingReceipt(t *testing.T) {
 		t.Fatalf("cmdDeploy exit = %d, want 0", code)
 	}
 	out := stdout.String()
-	for _, want := range []string{"profile:", "fastapi (port 8000)", "package_manager:", "pip", "start_command:", "uvicorn app:app", "Build cache:", "hit (sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd)", "hosting_status:", "verified", "health_status:", "200", "health_latency:", "42ms"} {
+	for _, want := range []string{"profile:", "fastapi (port 8000)", "package_manager:", "pip", "start_command:", "uvicorn app:app", "Artifact cache:", "hit (sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd)", "hosting_status:", "verified", "health_status:", "200", "health_latency:", "42ms"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q\nfull: %s", want, out)
 		}

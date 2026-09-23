@@ -643,6 +643,12 @@ func TestRender_OrgsPage(t *testing.T) {
 				{Email: "bob@acme.test", Role: "developer", Status: "consumed", TokenPrefix: "efgh5678"},
 				{Email: "carol@acme.test", Role: "developer", Status: "revoked", TokenPrefix: "ijkl9012"},
 			},
+			ActivityKindPrefix: "app.",
+			ActivityActorType:  "user",
+			Activity: []dashboard.OrgActivityItem{
+				{OccurredAt: "2026-09-23 14:32 UTC", Kind: "app.deployed", Summary: "Bahadir deployed payments"},
+			},
+			ActivityNextURL: "/dashboard/orgs/acme?activity_kind_prefix=app.&activity_actor_type=user&activity_before=cursor",
 		},
 	}
 	if err := dashboard.Render(rec3, log, "", detailPage); err != nil {
@@ -667,6 +673,12 @@ func TestRender_OrgsPage(t *testing.T) {
 		// Token prefix survives the 8-char clip; full hash does
 		// not appear.
 		"<code>abcd1234</code>",
+		// Organization activity timeline + persisted filter selections.
+		"Recent infrastructure changes across this organization.",
+		"Bahadir deployed payments",
+		`<option value="app." selected>Deployments</option>`,
+		`<option value="user" selected>User</option>`,
+		"Older activity",
 		// Owner-only nudge surfaces only when CallersRole == owner.
 		"transfer_ownership",
 		// Back link.

@@ -158,6 +158,31 @@ func TestGithubDeployActionSafeRolloutWiring(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowGithubSnippetDocsGate(t *testing.T) {
+	root, err := findRepoRoot(".")
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	const prefix = "# For production safety, see "
+	var docsURL string
+	for _, line := range strings.Split(renderGithubSnippet(githubSnippetEnv{}, "action-ref-canary", ""), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			docsURL = strings.TrimSuffix(strings.TrimPrefix(line, prefix), ".")
+			break
+		}
+	}
+	if docsURL == "" {
+		t.Fatal("generated deploy snippet has no production-safety documentation URL")
+	}
+	if !strings.Contains(string(workflow), `grep -Fq "`+docsURL+`"`) {
+		t.Errorf("release workflow does not verify generated snippet URL %q", docsURL)
+	}
+}
+
 func TestRenderGithubSnippet(t *testing.T) {
 	cases := []struct {
 		name      string

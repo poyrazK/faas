@@ -262,6 +262,20 @@ func TestRouteCacheGetPut(t *testing.T) {
 	}
 }
 
+func TestRouteCacheTargetPreservesDeploymentPin(t *testing.T) {
+	c := NewRouteCache(10)
+	want := RouteTarget{
+		AppID: "app-1", PinnedDeploymentID: "deployment-42", PinnedDeploymentScope: "staging",
+	}
+	c.PutTarget("deploy-42-app.gregale.dev", want)
+	if got, ok := c.PeekTarget("deploy-42-app.gregale.dev"); !ok || got != want {
+		t.Fatalf("PeekTarget = %+v, %v; want %+v, true", got, ok, want)
+	}
+	if appID, ok := c.Get("deploy-42-app.gregale.dev"); !ok || appID != want.AppID {
+		t.Fatalf("legacy Get = %q, %v; want %q, true", appID, ok, want.AppID)
+	}
+}
+
 func TestRouteCachePeekDoesNotPromote(t *testing.T) {
 	c := NewRouteCache(2)
 	c.Put("a", "1")

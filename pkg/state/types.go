@@ -892,7 +892,11 @@ type DeployToken struct {
 type App struct {
 	ID        string
 	AccountID string
-	Slug      string
+	// OrgID is the owning organization persisted on the app row. AccountID
+	// remains the creator/legacy authorization identity; activity attribution
+	// must follow OrgID, never the caller's active org or API-key scope.
+	OrgID string
+	Slug  string
 	// Visibility controls public edge exposure. Public is the default;
 	// internal apps are reachable only through authenticated service routing.
 	Visibility     api.AppVisibility

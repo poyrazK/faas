@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -78,6 +79,10 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 		t.Fatalf("first result = %+v, want three preview apps and builds", first)
 	}
 	assertBuilds(0, []string{"db", "worker", "api"}, 42)
+	set, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("a", 40) || len(set.MemberAppIDs) != 3 || set.RootAppID != first.Added[0].ID {
+		t.Fatalf("first preview revision set = (%+v, %v)", set, err)
+	}
 	for _, slug := range []string{"pr-42-db", "pr-42-worker", "pr-42-demo-app"} {
 		if _, err := rig.mem.AppBySlug(ctx, slug); err != nil {
 			t.Fatalf("missing preview %s: %v", slug, err)
@@ -106,6 +111,10 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 		t.Fatalf("synchronize PR #42 = (%+v, %v)", second, err)
 	}
 	assertBuilds(3, []string{"db", "worker", "api"}, 42)
+	set, err = rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("b", 40) || len(set.MemberAppIDs) != 3 || set.Closed {
+		t.Fatalf("synchronized preview revision set = (%+v, %v)", set, err)
+	}
 	for i := 0; i < 3; i++ {
 		if enqueuer.specs[i].App.ID != enqueuer.specs[i+3].App.ID {
 			t.Errorf("retry changed app ID for %s", enqueuer.specs[i].App.WorkloadName)
@@ -114,10 +123,16 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	if _, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(43, strings.Repeat("c", 40))); err != nil {
 		t.Fatalf("open sibling PR #43: %v", err)
 	}
+	closeStarted := time.Now()
 	closed, err := svc.handlePullRequest(ctx, pullRequestClosedBody(42, strings.Repeat("b", 40)))
 	if err != nil || len(closed.BuildIDs) != 0 {
 		t.Fatalf("close PR #42 = (%+v, %v)", closed, err)
 	}
+	set, err = rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || !set.Closed {
+		t.Fatalf("closed preview revision set = (%+v, %v)", set, err)
+	}
+	var closeDeadline *time.Time
 	for _, pr := range []int{42, 43} {
 		for _, parentSlug := range []string{"db", "worker", "demo-app"} {
 			preview, err := rig.mem.AppBySlug(ctx, fmt.Sprintf("pr-%d-%s", pr, parentSlug))
@@ -130,6 +145,17 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 			}
 			if preview.PreviewPrState != want {
 				t.Errorf("PR #%d %s state = %q, want %q", pr, parentSlug, preview.PreviewPrState, want)
+			}
+			if pr == 42 {
+				if preview.PreviewExpiresAt == nil || preview.PreviewExpiresAt.Before(closeStarted.Add(state.PRPreviewClosedGrace-time.Second)) ||
+					preview.PreviewExpiresAt.After(time.Now().Add(state.PRPreviewClosedGrace+time.Second)) {
+					t.Errorf("PR #%d %s expiry = %v, want close time + %s", pr, parentSlug, preview.PreviewExpiresAt, state.PRPreviewClosedGrace)
+				} else if closeDeadline == nil {
+					deadline := *preview.PreviewExpiresAt
+					closeDeadline = &deadline
+				} else if !preview.PreviewExpiresAt.Equal(*closeDeadline) {
+					t.Errorf("PR #%d %s expiry = %v, want shared close deadline %v", pr, parentSlug, preview.PreviewExpiresAt, closeDeadline)
+				}
 			}
 		}
 	}
@@ -191,6 +217,9 @@ func TestHandlePullRequest_DependencyQuotaStopsBuilds(t *testing.T) {
 	result, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40)))
 	if !IsIgnored(err) || !result.WasIgnored || len(enqueuer.specs) != 0 {
 		t.Fatalf("quota result = (%+v, %v), builds = %d; want ignored without builds", result, err, len(enqueuer.specs))
+	}
+	if _, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("quota refusal recorded preview set: %v", err)
 	}
 	if len(rec.checks) != 1 || rec.checks[0].phase != githubdgrpc.CheckPhaseFailed {
 		t.Fatalf("checks = %+v, want failed quota check", rec.checks)

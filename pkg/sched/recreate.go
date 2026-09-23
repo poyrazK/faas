@@ -109,6 +109,20 @@ func (e *Engine) RecreateInstance(ctx context.Context, instanceID string) error 
 		}
 		return fmt.Errorf("sched: recreate: load %s: %w", instanceID, err)
 	}
+	if state.State(ins.State) == state.StateDraining {
+		// A draining runtime-config predecessor must never be restored after
+		// node loss: its process carries the superseded environment, and the
+		// replacement is already the routable copy. Close the dead VM's row.
+		changed, stopErr := e.transitionWithKindCAS(ctx, ins.ID, ins.AppID, state.StateStopped,
+			"runtime_config_restart", "draining_node_lost")
+		if stopErr != nil {
+			return fmt.Errorf("sched: recreate: stop lost draining instance %s: %w", ins.ID, stopErr)
+		}
+		if changed && e.ledger != nil {
+			e.ledger.Release(ins.ID)
+		}
+		return nil
+	}
 	// Validate the row is in a state the arbiter's recreate
 	// verdict covers. PARKED rows skip — the rebalancer owns
 	// parked-row pickup. STOPPED / FAILED rows skip — they're

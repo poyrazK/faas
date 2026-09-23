@@ -2295,9 +2295,10 @@ func (s *server) enqueueExplicitAppWake(ctx context.Context, acct state.Account,
 }
 
 // restartApp queues either a normal snapshot restart or, with ?fresh=true, a
-// runtime-configuration restart that destroys live VMs without capturing their
-// old process environment. The fresh variant uses a durable notification so an
-// accepted secret rotation cannot be lost across a LISTEN interruption.
+// rolling runtime-configuration refresh that boots replacements before
+// withdrawing old VMs and never captures their old process environment. The
+// fresh variant uses a durable notification so an accepted secret rotation
+// cannot be lost across a LISTEN interruption.
 func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	fresh := false
 	if raw := r.URL.Query().Get("fresh"); raw != "" {
@@ -2326,6 +2327,18 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Restart already in progress", "wait for the accepted restart to finish before retrying"))
 		return
+	}
+	if fresh {
+		// Stamp the operation boundary in the API request, once. The durable
+		// scheduler handoff may replay; restamping there would make each retry's
+		// already-booted replacement look stale again.
+		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			if releaseErr := releaseAppRestartClaim(r.Context(), s.store, app.ID); releaseErr != nil {
+				s.log.Error("runtime config restart: release failed claim", "app", app.ID, "err", releaseErr)
+			}
+			api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
+			return
+		}
 	}
 	wakeUUID, err := uuid.NewV7()
 	if err != nil {

@@ -161,6 +161,7 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
+	previewSets               map[string]PRPreviewSet
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
 
 	privateNetworkAttachmentNodeStatuses map[string]PrivateNetworkAttachmentNodeStatus
@@ -550,6 +551,11 @@ type MemStore struct {
 	// projection. Source keys are deduplicated on append, matching the
 	// database unique constraint.
 	orgActivity []OrgActivity
+	// orgActivityOutbox mirrors org_activity_outbox. Queue state is kept
+	// separate from the projection so tests can exercise retry/replay paths.
+	orgActivityOutbox       map[int64]orgActivityOutboxRow
+	orgActivityOutboxByKey  map[string]int64
+	nextOrgActivityOutboxID int64
 	// usage holds one row per (instance, minute) — mirrors PgStore's
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
@@ -716,6 +722,7 @@ type MemStore struct {
 	projectsByAccountSlug                map[string]map[string]string // account_id → slug → id
 	projectsByInstallRepo                map[installRepoKey]string    // install_id, repo_full_name → id
 	projectEnvironments                  map[string]ProjectEnvironment
+	projectEnvironmentCleanupJobs        map[string]ProjectEnvironmentCleanupJob
 	projectEnvironmentApprovals          map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
 	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
@@ -1059,6 +1066,9 @@ func NewMemStore() *MemStore {
 		auditOutbox:                       map[int64]auditEventOutboxRow{},
 		auditOutboxByKey:                  map[string]int64{},
 		nextAuditOutboxID:                 1,
+		orgActivityOutbox:                 map[int64]orgActivityOutboxRow{},
+		orgActivityOutboxByKey:            map[string]int64{},
+		nextOrgActivityOutboxID:           1,
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
@@ -1143,6 +1153,7 @@ func NewMemStore() *MemStore {
 		projectsByAccountSlug:                map[string]map[string]string{},
 		projectsByInstallRepo:                map[installRepoKey]string{},
 		projectEnvironments:                  map[string]ProjectEnvironment{},
+		projectEnvironmentCleanupJobs:        map[string]ProjectEnvironmentCleanupJob{},
 		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
 		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
@@ -2929,13 +2940,27 @@ func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, account
 	return ProjectEnvironment{}, ErrNotFound
 }
 
-func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projectID, slug string) error {
+func (m *MemStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {
+	_, err := m.DeleteProjectEnvironmentWithCleanup(ctx, accountID, projectID, slug, ProjectEnvironmentCleanupResources{}, "", 0)
+	return err
+}
+
+func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
+	_ context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
+	if !resources.Empty() && (leaseToken == "" || leaseDuration <= 0 || resources.ValidateForEnvironment(slug) != nil) {
+		return ProjectEnvironmentCleanupJob{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	project, ok := m.projects[projectID]
 	if !ok || project.AccountID != accountID {
-		return ErrNotFound
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
 	}
 
 	var environmentID string
@@ -2948,10 +2973,10 @@ func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projec
 		}
 	}
 	if environmentID == "" {
-		return ErrNotFound
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
 	}
-	if slug == "production" || environment.Protected {
-		return ErrConflict
+	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 
 	for _, app := range m.apps {
@@ -2961,11 +2986,37 @@ func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projec
 		for _, deployment := range m.deployments {
 			if deployment.AppID == app.ID && deployment.Status == DeployLive &&
 				normalizedDeploymentScope(deployment.Scope) == slug {
-				return ErrConflict
+				return ProjectEnvironmentCleanupJob{}, ErrConflict
 			}
 		}
 	}
 
+	var job ProjectEnvironmentCleanupJob
+	if !resources.Empty() {
+		now := time.Now().UTC()
+		job = ProjectEnvironmentCleanupJob{
+			ID: newID(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: slug,
+			Resources: cloneProjectEnvironmentCleanupResources(resources), NextAttemptAt: now,
+			LeaseToken: leaseToken, LeaseUntil: now.Add(leaseDuration), CreatedAt: now,
+		}
+	}
+
+	for key, env := range m.envs {
+		if env.Scope != slug {
+			continue
+		}
+		if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
+			delete(m.envs, key)
+		}
+	}
+	for key, secret := range m.secrets {
+		if secret.Scope != slug || secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" {
+			continue
+		}
+		if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
+			delete(m.secrets, key)
+		}
+	}
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
 	for id, approval := range m.projectEnvironmentApprovals {
@@ -2973,7 +3024,79 @@ func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projec
 			delete(m.projectEnvironmentApprovals, id)
 		}
 	}
+	if job.ID != "" {
+		m.projectEnvironmentCleanupJobs[job.ID] = cloneProjectEnvironmentCleanupJob(job)
+	}
+	return job, nil
+}
+
+func (m *MemStore) ClaimNextProjectEnvironmentCleanup(_ context.Context, leaseToken string, now time.Time, leaseDuration time.Duration) (ProjectEnvironmentCleanupJob, error) {
+	if leaseToken == "" || leaseDuration <= 0 {
+		return ProjectEnvironmentCleanupJob{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var selected ProjectEnvironmentCleanupJob
+	for _, job := range m.projectEnvironmentCleanupJobs {
+		if job.NextAttemptAt.After(now) || job.LeaseUntil.After(now) {
+			continue
+		}
+		if selected.ID == "" || job.NextAttemptAt.Before(selected.NextAttemptAt) ||
+			(job.NextAttemptAt.Equal(selected.NextAttemptAt) && job.ID < selected.ID) {
+			selected = job
+		}
+	}
+	if selected.ID == "" {
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
+	}
+	selected.LeaseToken = leaseToken
+	selected.LeaseUntil = now.Add(leaseDuration)
+	selected.AttemptCount++
+	m.projectEnvironmentCleanupJobs[selected.ID] = cloneProjectEnvironmentCleanupJob(selected)
+	return cloneProjectEnvironmentCleanupJob(selected), nil
+}
+
+func (m *MemStore) RetryProjectEnvironmentCleanup(_ context.Context, id, leaseToken string, nextAttemptAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job, ok := m.projectEnvironmentCleanupJobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if leaseToken == "" || job.LeaseToken != leaseToken {
+		return ErrConflict
+	}
+	job.NextAttemptAt = nextAttemptAt.UTC()
+	job.LeaseToken = ""
+	job.LeaseUntil = time.Time{}
+	m.projectEnvironmentCleanupJobs[id] = job
 	return nil
+}
+
+func (m *MemStore) CompleteProjectEnvironmentCleanup(_ context.Context, id, leaseToken string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job, ok := m.projectEnvironmentCleanupJobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if leaseToken == "" || job.LeaseToken != leaseToken {
+		return ErrConflict
+	}
+	delete(m.projectEnvironmentCleanupJobs, id)
+	return nil
+}
+
+func cloneProjectEnvironmentCleanupResources(resources ProjectEnvironmentCleanupResources) ProjectEnvironmentCleanupResources {
+	resources.Postgres = append([]ProjectEnvironmentPostgresCleanupResource(nil), resources.Postgres...)
+	resources.ObjectStorage = append([]ProjectEnvironmentObjectStorageCleanupResource(nil), resources.ObjectStorage...)
+	return resources
+}
+
+func cloneProjectEnvironmentCleanupJob(job ProjectEnvironmentCleanupJob) ProjectEnvironmentCleanupJob {
+	job.Resources = cloneProjectEnvironmentCleanupResources(job.Resources)
+	return job
 }
 
 func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
@@ -3133,6 +3256,7 @@ func (m *MemStore) ApplyProjectPlan(
 		}
 		a.AccountID = project.AccountID
 		a.ProjectID = project.ID
+		m.ensureAppOrgLocked(&a)
 		if a.Status == "" {
 			a.Status = AppActive
 		}
@@ -3324,6 +3448,7 @@ func (m *MemStore) ApplyProjectReconcile(
 				}
 			}
 			if tombstone.ID != "" {
+				m.ensureAppOrgLocked(&tombstone)
 				tombstone.RootDir = app.RootDir
 				tombstone.WorkloadName = app.WorkloadName
 				tombstone.WorkloadClass = app.WorkloadClass
@@ -3341,6 +3466,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			}
 			app.AccountID = project.AccountID
 			app.ProjectID = project.ID
+			m.ensureAppOrgLocked(&app)
 			if app.Status == "" {
 				app.Status = AppActive
 			}
@@ -3456,6 +3582,22 @@ func (m *MemStore) ApplyProjectReconcile(
 
 // --- Apps -------------------------------------------------------------------
 
+// ensureAppOrgLocked fills the account-owned legacy default when a caller
+// hasn't explicitly attached an app to an organization. The caller holds
+// m.mu; the owner snapshot is stored on the app rather than re-inferred from
+// request credentials when activity is later emitted.
+func (m *MemStore) ensureAppOrgLocked(app *App) {
+	if app.OrgID != "" {
+		return
+	}
+	for _, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == app.AccountID {
+			app.OrgID = org.ID
+			return
+		}
+	}
+}
+
 func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -3512,6 +3654,7 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.WorkloadClass == "" {
 		app.WorkloadClass = WorkloadClassHTTP
 	}
+	m.ensureAppOrgLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -3539,6 +3682,9 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for i := range apps {
+		m.ensureAppOrgLocked(&apps[i])
+	}
 	created := make([]App, 0, len(apps))
 	insertedIDs := make([]string, 0, len(apps))
 	rollback := func(err error) ([]App, error) {
@@ -3648,6 +3794,7 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	if app.WorkloadClass == "" {
 		app.WorkloadClass = WorkloadClassHTTP
 	}
+	m.ensureAppOrgLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -3801,6 +3948,26 @@ func (m *MemStore) SetPreviewPrState(_ context.Context, appID, prState string) (
 		return App{}, ErrNotFound
 	}
 	a.PreviewPrState = prState
+	m.apps[appID] = a
+	return a, nil
+}
+
+// ClosePRPreview atomically starts the post-close grace period. Duplicate
+// close deliveries preserve the first deadline, and stale/torn-down rows
+// cannot be revived by delayed webhook events.
+func (m *MemStore) ClosePRPreview(_ context.Context, appID string, expiresAt time.Time) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[appID]
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber <= 0 || a.Status == AppDeleted ||
+		(a.PreviewPrState != PreviewPrStateOpen && a.PreviewPrState != PreviewPrStateClosed) {
+		return App{}, ErrNotFound
+	}
+	if a.PreviewPrState == PreviewPrStateOpen || a.PreviewExpiresAt == nil {
+		expiry := expiresAt
+		a.PreviewExpiresAt = &expiry
+	}
+	a.PreviewPrState = PreviewPrStateClosed
 	m.apps[appID] = a
 	return a, nil
 }
@@ -4097,12 +4264,10 @@ func (m *MemStore) ListDeploymentsByNodeID(_ context.Context, nodeID string) ([]
 	return out, nil
 }
 
-// isInstanceStateLive reports whether the given instance state is
-// in the §6.2 invariant #1 set — {WAKING, COLD_BOOTING, RUNNING}.
-// The bash triple appears in:
-//   - pgstore.go (the predicate is a SQL IN clause)
-//   - memstore.go's ConcurrencyForDeployment (this file)
-//   - memstore.go's PerNodeLiveStats (PR #4)
+// isInstanceStateLive reports whether the given instance holds resident node
+// capacity for MemStore's per-node operator projections. The set is
+// {WAKING, COLD_BOOTING, RUNNING, DRAINING, WARM}; unlike concurrency,
+// warm VMs consume node RAM but do not occupy app concurrency.
 //
 // Extracted so the goconst lint rule (3+ literals) and the
 // state-machine spec (§6.1) share a single source of truth in the
@@ -4111,7 +4276,7 @@ func (m *MemStore) ListDeploymentsByNodeID(_ context.Context, nodeID string) ([]
 // in-memory twin's mirror.
 func isInstanceStateLive(state string) bool {
 	switch state {
-	case instanceStateRunning, instanceStateWaking, instanceStateColdBooting, string(StateWarm):
+	case instanceStateRunning, instanceStateWaking, instanceStateColdBooting, string(StateWarm), string(StateDraining):
 		return true
 	}
 	return false
@@ -4135,8 +4300,8 @@ const (
 )
 
 // ConcurrencyForDeployment mirrors PgStore.ConcurrencyForDeployment.
-// Reads the in-memory instances slice with the same predicate the
-// SQL uses (state IN {'waking','cold_booting','running'}).
+// Reads the in-memory instances slice with State.CountsForConcurrency,
+// including draining predecessors until their VMs are destroyed.
 func (m *MemStore) ConcurrencyForDeployment(_ context.Context, appID, deploymentID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -4145,7 +4310,7 @@ func (m *MemStore) ConcurrencyForDeployment(_ context.Context, appID, deployment
 		if inst.AppID != appID || inst.DeploymentID != deploymentID {
 			continue
 		}
-		if isInstanceStateLive(inst.State) {
+		if State(inst.State).CountsForConcurrency() {
 			n++
 		}
 	}
@@ -6983,7 +7148,7 @@ func (m *MemStore) CountLiveInstancesByDeployment(_ context.Context, deploymentI
 			continue
 		}
 		switch State(ins.State) {
-		case StateWaking, StateColdBooting, StateRunning:
+		case StateWaking, StateColdBooting, StateRunning, StateDraining:
 			n++
 		}
 	}
@@ -12224,7 +12389,7 @@ func (m *MemStore) ReadActiveInstanceForWakeID(_ context.Context, wakeID string)
 		if ins.WakeID != wakeID {
 			continue
 		}
-		if !isInstanceStateLive(ins.State) {
+		if State(ins.State) != StateWaking && State(ins.State) != StateColdBooting && State(ins.State) != StateRunning {
 			continue
 		}
 		if best == nil || ins.StartedAt.After(best.StartedAt) {
@@ -12403,7 +12568,7 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm):
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateDraining):
 			out = append(out, ins)
 		}
 	}
@@ -12480,7 +12645,7 @@ func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID str
 			continue
 		}
 		switch State(ins.State) {
-		case StateWaking, StateColdBooting, StateRunning, StateSnapshotting, StateWarm:
+		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm:
 		default:
 			continue
 		}
@@ -13576,7 +13741,7 @@ func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, e
 			continue
 		}
 		switch ins.State {
-		case "waking", "cold_booting", "running", "warm":
+		case "waking", "cold_booting", "running", "draining", "warm":
 			used += int64(ins.RAMMB + api.PerVMOverheadMB)
 		}
 	}
@@ -13614,7 +13779,7 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 			continue
 		}
 		switch ins.State {
-		case "waking", "cold_booting", "running", "warm":
+		case "waking", "cold_booting", "running", "draining", "warm":
 			app, ok := m.apps[ins.AppID]
 			if !ok {
 				continue
@@ -14151,7 +14316,7 @@ func (m *MemStore) InstanceListByNodeForRecovery(_ context.Context, nodeID strin
 			continue
 		}
 		switch State(strings.ToLower(ins.State)) {
-		case StateRunning, StateColdBooting, StateWaking, StateSnapshotting, StateMigrating:
+		case StateRunning, StateColdBooting, StateWaking, StateDraining, StateSnapshotting, StateMigrating:
 			out = append(out, RecoveryInstance{
 				ID:           ins.ID,
 				State:        ins.State,

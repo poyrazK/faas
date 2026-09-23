@@ -410,25 +410,42 @@ func (g *githubdBridge) recordDeploymentActivity(ctx context.Context, acct state
 	if !ok {
 		return
 	}
-	org, err := store.OrgByPersonalAccount(ctx, acct.ID)
-	if err != nil {
-		g.log.Warn("githubd bridge: resolve activity organization", "deployment", res.DeploymentID, "err", err)
-		return
+	var orgID uuid.UUID
+	var orgErr error
+	if app.OrgID != "" {
+		orgID, orgErr = uuid.Parse(app.OrgID)
+	} else {
+		org, err := store.OrgByPersonalAccount(ctx, acct.ID)
+		if err != nil {
+			g.log.Warn("githubd bridge: resolve activity organization", "deployment", res.DeploymentID, "err", err)
+			return
+		}
+		orgID, orgErr = uuid.Parse(org.ID)
 	}
-	orgID, orgErr := uuid.Parse(org.ID)
 	appID, appErr := uuid.Parse(app.ID)
 	deploymentID, deploymentErr := uuid.Parse(res.DeploymentID)
 	if orgErr != nil || appErr != nil || deploymentErr != nil {
 		g.log.Warn("githubd bridge: invalid activity identifiers", "deployment", res.DeploymentID)
 		return
 	}
-	_, err = store.AppendOrgActivity(ctx, state.OrgActivity{
+	entry := state.OrgActivity{
 		OrgID: orgID, Kind: "app.deployed", ActorType: state.OrgActivityActorGitHub,
 		ActorLabel: "GitHub Actions", ResourceType: "app", ResourceID: app.ID,
 		ResourceLabel: app.Slug, AppID: &appID, DeploymentID: &deploymentID,
 		SourceType: "deployment", SourceID: res.DeploymentID,
 		Data: activityData(map[string]any{"source": "github", "repo": req.RepoFullName, "branch": req.Branch}),
-	})
+	}
+	if outbox, ok := g.store.(state.OrgActivityOutboxStore); ok {
+		id, err := outbox.EnqueueOrgActivityOutbox(ctx, entry)
+		if err == nil {
+			_, err = outbox.DeliverOrgActivityOutbox(ctx, id)
+		}
+		if err != nil {
+			g.log.Warn("githubd bridge: enqueue deployment activity", "deployment", res.DeploymentID, "err", err)
+		}
+		return
+	}
+	_, err := store.AppendOrgActivity(ctx, entry)
 	if err != nil {
 		g.log.Warn("githubd bridge: append deployment activity", "deployment", res.DeploymentID, "err", err)
 	}

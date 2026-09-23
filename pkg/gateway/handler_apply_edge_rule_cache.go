@@ -46,6 +46,14 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	if h == nil || h.responseCache == nil || h.edgeRules == nil {
 		return false, nil
 	}
+	// Deployment-preview URLs promise the exact immutable artifact named by
+	// the hostname. The response cache is currently populated before target
+	// selection and its v1 key is app-scoped, so consulting it here could replay
+	// a production sibling's body. Bypass both reads and writes until the cache
+	// key is deployment-aware end to end.
+	if app.PinnedDeploymentID != "" {
+		return false, nil
+	}
 	// Method gate is a cheap pre-flight: only {GET, HEAD} are
 	// cacheable per ADR-122 D3. We DO NOT count this as
 	// bypass_uncacheable here — that label only fires when a

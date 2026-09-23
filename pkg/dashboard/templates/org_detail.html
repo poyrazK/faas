@@ -22,6 +22,12 @@
     .badge-revoked { background: #fdd; }
     .badge-expired { background: #eee; }
     .banner { padding: 0.6rem 0.8rem; border: 1px solid #c33; background: #fee; margin: 0.5rem 0; }
+    .activity-filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 1rem 0; }
+    .activity-filters label { display: grid; gap: 0.25rem; }
+    .activity-filters select, .activity-filters button { font: inherit; padding: 0.35rem 0.5rem; }
+    .activity-list { list-style: none; padding: 0; }
+    .activity-list li { display: grid; grid-template-columns: 11rem 1fr auto; gap: 0.75rem; padding: 0.65rem 0; border-bottom: 1px solid #eee; }
+    @media (max-width: 620px) { .activity-list li { grid-template-columns: 1fr; gap: 0.2rem; } }
   </style>
 </head>
 <body>
@@ -57,6 +63,47 @@
         <div class="banner">
           Some sections failed to load: <code>{{$d.Error}}</code>
         </div>
+      {{end}}
+
+      <h2>Activity</h2>
+      <p class="muted">Recent infrastructure changes across this organization.</p>
+      <form class="activity-filters" method="get" action="/dashboard/orgs/{{$d.Org.Slug}}">
+        <label>Event type
+          <select name="activity_kind_prefix">
+            <option value="" {{if eq $d.ActivityKindPrefix ""}}selected{{end}}>All events</option>
+            <option value="app." {{if eq $d.ActivityKindPrefix "app."}}selected{{end}}>Deployments</option>
+            <option value="deploy." {{if eq $d.ActivityKindPrefix "deploy."}}selected{{end}}>Rollbacks</option>
+            <option value="env." {{if eq $d.ActivityKindPrefix "env."}}selected{{end}}>Environment</option>
+            <option value="domain." {{if eq $d.ActivityKindPrefix "domain."}}selected{{end}}>Domains and TLS</option>
+          </select>
+        </label>
+        <label>Actor
+          <select name="activity_actor_type">
+            <option value="" {{if eq $d.ActivityActorType ""}}selected{{end}}>Anyone</option>
+            <option value="user" {{if eq $d.ActivityActorType "user"}}selected{{end}}>User</option>
+            <option value="api_key" {{if eq $d.ActivityActorType "api_key"}}selected{{end}}>API key</option>
+            <option value="github" {{if eq $d.ActivityActorType "github"}}selected{{end}}>GitHub</option>
+            <option value="system" {{if eq $d.ActivityActorType "system"}}selected{{end}}>System</option>
+            <option value="operator" {{if eq $d.ActivityActorType "operator"}}selected{{end}}>Operator</option>
+          </select>
+        </label>
+        <button type="submit">Filter</button>
+      </form>
+      {{if $d.ActivityError}}
+        <p class="muted">Activity could not be loaded: {{$d.ActivityError}}</p>
+      {{else if $d.Activity}}
+        <ol class="activity-list">
+          {{range $d.Activity}}
+            <li>
+              <time class="muted">{{.OccurredAt}}</time>
+              <span>{{.Summary}}</span>
+              <span class="badge">{{.Kind}}</span>
+            </li>
+          {{end}}
+        </ol>
+        {{if $d.ActivityNextURL}}<p><a href="{{$d.ActivityNextURL}}">Older activity</a></p>{{end}}
+      {{else}}
+        <p class="muted">No activity matches these filters.</p>
       {{end}}
 
       <h2>Members</h2>

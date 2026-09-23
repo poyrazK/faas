@@ -27,8 +27,9 @@ type pgRouter struct {
 	// under it is a platform subdomain whose label is the app slug; anything
 	// else is a custom domain resolved through the domains table.
 	appsSuffix string
-	// deploySuffix is the dedicated immutable-deployment preview zone. Hosts in
-	// this zone resolve a stable deployment revision, not the app's live route.
+	// deploySuffix is the dedicated deployment-preview wildcard suffix. It is
+	// separate from appsSuffix because production app hosts may live under
+	// *.apps.gregale.dev while deployment URLs live under *.gregale.dev.
 	deploySuffix string
 	// tenantSurfacesEnabled is the durable runtime gate. Tests and legacy
 	// callers may leave it nil, in which case the historical environment
@@ -41,8 +42,8 @@ var _ gateway.Router = pgRouter{}
 // ResolveHost implements gateway.Router. A missing/unverified/deleted route is a
 // clean ok=false (404); only an actual store failure returns a non-nil error.
 func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bool, error) {
-	if revision, slug, ok := gateway.DeploymentScopeFromHost(r.deploySuffix, host); ok {
-		return r.deploymentPreviewByRevision(ctx, revision, slug)
+	if revision, slug, matched := gateway.DeploymentScopeFromHost(r.deploySuffix, host); matched {
+		return r.deploymentPreview(ctx, slug, revision)
 	}
 	if slug, ok := r.slugFor(host); ok {
 		return r.appBySlug(ctx, slug)
@@ -68,14 +69,20 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 	return r.customDomain(ctx, host)
 }
 
-// deploymentPreviewByRevision resolves an immutable deployment-preview host
-// to its owning app and pins the request to that exact deployment. Closed
-// deployments intentionally stop routing even when the hostname remains in a
-// local cache; deployment_changed invalidation rechecks this gate.
-func (r pgRouter) deploymentPreviewByRevision(ctx context.Context, revision int, slug string) (gateway.App, bool, error) {
-	app, ok, err := r.appBySlug(ctx, slug)
-	if err != nil || !ok {
-		return app, ok, err
+// deploymentPreview resolves a deployment-preview hostname to its parent app
+// plus an exact deployment pin. A syntactically valid preview hostname fails
+// closed when the app, revision, or active status is missing; it never falls
+// through to a custom-domain row with the same name.
+func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision int) (gateway.App, bool, error) {
+	app, err := r.store.AppBySlug(ctx, slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
 	}
 	deployment, err := r.store.DeploymentByRevision(ctx, app.ID, revision)
 	if errors.Is(err, state.ErrNotFound) {
@@ -84,14 +91,16 @@ func (r pgRouter) deploymentPreviewByRevision(ctx context.Context, revision int,
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if !deployment.DeploymentPreviewActive() {
+	if deployment.AppID != app.ID || !deployment.DeploymentPreviewActive() {
 		return gateway.App{}, false, nil
 	}
-	app.PinnedDeploymentID = deployment.ID
-	if deployment.Scope != "default" {
-		app.PinnedDeploymentScope = deployment.Scope
+	resolved, ok, err := r.toApp(ctx, app)
+	if err != nil || !ok {
+		return gateway.App{}, ok, err
 	}
-	return app, true, nil
+	resolved.PinnedDeploymentID = deployment.ID
+	resolved.PinnedDeploymentScope = deployment.Scope
+	return resolved, true, nil
 }
 
 // appBySlug — slugFor hit branch. Extracted to keep ResolveHost
@@ -546,6 +555,9 @@ type invalidator interface {
 	// key, which it doesn't. The cache is advisory so a
 	// brief staleness window is fine.
 	ResetEdgeRules()
+	// InvalidateRoutesForApp removes cached host routes and last-known-good
+	// entries for an app when its deployment state changes.
+	InvalidateRoutesForApp(appID string)
 	// ResetApp (ADR-091 amendment / §4.1.2.0) drops a single app
 	// from the apps LRU when its apps.maintenance_mode (or any
 	// other customer-visible column) flips. The companion trigger
@@ -557,7 +569,6 @@ type invalidator interface {
 	// flips are usually isolated to one app; wholesale FlushRoutes
 	// would also evict every other app's entry on every flip.
 	ResetApp(appID string)
-	InvalidateRoutesForApp(appID string)
 	// InvalidateResponseCacheByApp (ADR-122 §Decision) drops every
 	// kind=cache entry for an app on a per-app column flip (most
 	// importantly a deploy — the previous release's body must
@@ -815,7 +826,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 					log.Warn("gatewayd: reconcile running instance", "app_id", p.AppID, "instance_id", p.InstanceID, "err", err)
 				}
 			}
-		case "stopped", "failed", "parked", "snapshotting", "migrating":
+		case "stopped", "failed", "parked", "snapshotting", "migrating", "draining":
 			inv.EvictInstance(p.AppID, p.InstanceID)
 		}
 	case db.NotifyAppChanged:
@@ -921,11 +932,12 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				log.Warn("gatewayd: refresh mirror rules failed", "app", p.AppID, "err", err)
 			}
 		default:
-			inv.InvalidateRoutesForApp(p.AppID)
 			// Companion routes and primary ingress are hydrated from the live
 			// deployment set. The app cache has no TTL, so evict this app before
-			// refreshing weights; otherwise a new proxy route could remain stale
-			// for the lifetime of the gateway process.
+			// refreshing weights; otherwise a new proxy route, including an
+			// exact deployment-preview pin, could remain stale for the lifetime
+			// of the gateway process.
+			inv.InvalidateRoutesForApp(p.AppID)
 			inv.ResetApp(p.AppID)
 			// v1 cache lookup happens before target selection, so the
 			// deployment dimension is currently empty. Fence rollout and

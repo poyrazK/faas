@@ -573,14 +573,16 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 	out := make([]fcvm.WorkloadSpec, 0, len(pbs))
 	for _, p := range pbs {
 		sealedEnv := sealedFromProto(p.GetSealedEnv())
-		var startupProbe *api.AppManifestHealthcheck
-		if test := p.GetStartupProbeTest(); len(test) > 0 {
-			startupProbe = &api.AppManifestHealthcheck{
-				Test:         append([]string(nil), test...),
-				IntervalS:    int(p.GetStartupProbeIntervalS()),
-				TimeoutS:     int(p.GetStartupProbeTimeoutS()),
-				Retries:      int(p.GetStartupProbeRetries()),
-				StartPeriodS: int(p.GetStartupProbeStartPeriodS()),
+		startupProbe := sidecarProbeFromProto(p.GetStartupProbe())
+		if startupProbe == nil {
+			if test := p.GetStartupProbeTest(); len(test) > 0 {
+				startupProbe = &api.SidecarProbe{
+					Test:         append([]string(nil), test...),
+					IntervalS:    int(p.GetStartupProbeIntervalS()),
+					TimeoutS:     int(p.GetStartupProbeTimeoutS()),
+					Retries:      int(p.GetStartupProbeRetries()),
+					StartPeriodS: int(p.GetStartupProbeStartPeriodS()),
+				}
 			}
 		}
 		out = append(out, fcvm.WorkloadSpec{
@@ -596,9 +598,40 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 			Port:          int(p.GetPort()),
 			Essential:     p.GetEssential(),
 			StartupProbe:  startupProbe,
+			LivenessProbe: sidecarProbeFromProto(p.GetLivenessProbe()),
 			SealedEnv:     sealedEnv,
 			DependsOn:     workloadDependenciesFromProto(p.GetDependsOn()),
 		})
+	}
+	return out
+}
+
+func sidecarProbeFromProto(in *vmmdpb.SidecarProbeSpec) *api.SidecarProbe {
+	if in == nil {
+		return nil
+	}
+	out := &api.SidecarProbe{
+		Test:             append([]string(nil), in.GetTest()...),
+		PeriodS:          int(in.GetPeriodS()),
+		IntervalS:        int(in.GetIntervalS()),
+		TimeoutS:         int(in.GetTimeoutS()),
+		FailureThreshold: int(in.GetFailureThreshold()),
+		SuccessThreshold: int(in.GetSuccessThreshold()),
+		InitialDelayS:    int(in.GetInitialDelayS()),
+		Retries:          int(in.GetRetries()),
+		StartPeriodS:     int(in.GetStartPeriodS()),
+	}
+	switch in.GetProbeType() {
+	case "none":
+		out.Test = []string{"NONE"}
+	case "exec":
+		if len(in.GetCommand()) > 0 {
+			out.Exec = &api.SidecarExecProbe{Command: append([]string(nil), in.GetCommand()...)}
+		}
+	case "http":
+		out.HTTPGet = &api.SidecarHTTPGetProbe{Path: in.GetPath(), Port: int(in.GetPort())}
+	case "tcp":
+		out.TCPSocket = &api.SidecarTCPSocketProbe{Port: int(in.GetPort())}
 	}
 	return out
 }
