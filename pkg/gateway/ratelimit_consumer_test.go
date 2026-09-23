@@ -9,7 +9,7 @@
 //     invariant from ratelimit.go::evictOneLocked is strictly
 //     weaker than the pinned invariant: pinned trumps full. The
 //     safety property is that an attacker who pushes past the cap
-//     still pays the parent rule's rps cost on every subsequent
+//     still pays the rule's configured rps cost on every subsequent
 //     request — dropping a "fully-refilled" __other__ bucket would
 //     reset it to a fresh full bucket and let the attacker drain
 //     it again.

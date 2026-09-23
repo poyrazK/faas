@@ -1484,8 +1484,15 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
-	WorkingDir          string `json:"working_dir,omitempty"`
-	Port                int    `json:"port,omitempty"`
+	// ServiceBindings is the authoritative project-reconcile projection of
+	// Compose depends_on edges. Keeping it beside the generated service URL
+	// environment makes the declaration inspectable without parsing env text.
+	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
+
+	ServiceBindingPolicy api.ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+
+	WorkingDir string `json:"working_dir,omitempty"`
+	Port       int    `json:"port,omitempty"`
 	// Ports is the app-owned listener declaration. It is merged into every
 	// deployment manifest so the gateway can expose named TCP listeners while
 	// UDP listeners remain available to workloads through guest discovery.
@@ -1527,12 +1534,19 @@ func (m AppManifest) EffectiveCrawlerPolicy() string {
 	}
 }
 
+// EffectiveServiceBindingPolicy returns the runtime authorization policy.
+// Empty legacy manifests retain same-account reachability; unknown non-empty
+// values fail closed through api.ServiceBindingPolicy.Effective.
+func (m AppManifest) EffectiveServiceBindingPolicy() api.ServiceBindingPolicy {
+	return m.ServiceBindingPolicy.Effective()
+}
+
 // IsZero reports whether the manifest carries no runner or lifecycle fields.
 // It keeps the legacy empty-manifest JSON shape while allowing lifecycle-only
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1545,15 +1559,24 @@ func (m AppManifest) IsZero() bool {
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
-	if len(desired.Env) > 0 {
+	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
+	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
+	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
+			if strings.HasPrefix(key, "GREGALE_SERVICE_") && strings.HasSuffix(key, "_URL") {
+				continue
+			}
 			merged[key] = value
 		}
 		for key, value := range desired.Env {
 			merged[key] = value
 		}
-		existing.Env = merged
+		if len(merged) == 0 {
+			existing.Env = nil
+		} else {
+			existing.Env = merged
+		}
 	}
 	return existing
 }
@@ -2130,6 +2153,10 @@ type Deployment struct {
 	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// ServiceRolloutHandoff persists the scheduler-owned routing and drain
+	// barriers for zero-step service rollouts. Empty for ordinary canaries and
+	// stable deployments.
+	ServiceRolloutHandoff ServiceRolloutHandoff `json:"service_rollout_handoff,omitempty"`
 
 	// Parking reason + timestamp (issue #554 / ADR-079 follow-up).
 	// pkg/sched.Engine.ParkDeployment sets these before flipping
@@ -4724,6 +4751,64 @@ type DeploymentAudit struct {
 	AlertRuleID *uuid.UUID
 }
 
+// OrgActivityActorType is the stable, customer-facing identity class used by
+// the organization activity timeline. ActorLabel is the captured display
+// value; readers never need to join a possibly-deleted account or API key.
+type OrgActivityActorType string
+
+const (
+	OrgActivityActorUser     OrgActivityActorType = "user"
+	OrgActivityActorAPIKey   OrgActivityActorType = "api_key"
+	OrgActivityActorGitHub   OrgActivityActorType = "github"
+	OrgActivityActorSystem   OrgActivityActorType = "system"
+	OrgActivityActorOperator OrgActivityActorType = "operator"
+)
+
+// OrgActivity is one safe, display-ready fact in an organization's global
+// infrastructure history. Like AuditLog and DeploymentAudit, identifiers and
+// labels are copied at write time and intentionally have no foreign-key
+// dependency on resources that may later be deleted.
+//
+// Data must be a JSON object containing non-secret display metadata only.
+// Environment values, credentials, tokens, and provider payloads do not
+// belong in this read model.
+type OrgActivity struct {
+	ID             int64
+	OrgID          uuid.UUID
+	OccurredAt     time.Time
+	Kind           string
+	ActorType      OrgActivityActorType
+	ActorAccountID *uuid.UUID
+	ActorLabel     string
+	ResourceType   string
+	ResourceID     string
+	ResourceLabel  string
+	AppID          *uuid.UUID
+	ProjectID      *uuid.UUID
+	DeploymentID   *uuid.UUID
+	Data           json.RawMessage
+	SourceType     string
+	SourceID       string
+}
+
+// OrgActivityCursor is the exclusive keyset cursor for the stable
+// (occurred_at DESC, id DESC) ordering.
+type OrgActivityCursor struct {
+	OccurredAt time.Time
+	ID         int64
+}
+
+// OrgActivityFilter is always pinned to one organization. Optional filters
+// narrow the timeline without weakening that tenant boundary.
+type OrgActivityFilter struct {
+	OrgID      uuid.UUID
+	Before     *OrgActivityCursor
+	KindPrefix string
+	ActorType  OrgActivityActorType
+	AppID      *uuid.UUID
+	Limit      int
+}
+
 // AuditLogFilter is the read-side query shape for the audit_log table.
 // Handlers build one from the inbound query string; the store method
 // translates it into a single WHERE clause without string concatenation.
@@ -5684,8 +5769,51 @@ type AppSecret struct {
 	// object-storage binding. Customer secret mutations reject rows carrying
 	// this ownership marker until the binding is revoked and cleaned up.
 	ManagedObjectStorageCredentialID string
-	CreatedAt                        time.Time
-	UpdatedAt                        time.Time
+	// DeliveryVersion advances only when the runtime value changes. Host-key
+	// reseals deliberately preserve it because they do not change what the
+	// application receives. DeliveredVersion identifies the newest version
+	// confirmed by a successful runtime start.
+	DeliveryVersion         int64
+	DeliveredVersion        int64
+	DeliveryStatus          SecretDeliveryStatus
+	LastDeliveryAttemptAt   *time.Time
+	LastDeliveredAt         *time.Time
+	LastDeliveryErrorCode   string
+	LastDeliveredWakeID     string
+	LastDeliveredInstanceID string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+type SecretDeliveryStatus string
+
+const (
+	SecretDeliveryPending   SecretDeliveryStatus = "pending"
+	SecretDeliveryDelivered SecretDeliveryStatus = "delivered"
+	SecretDeliveryFailed    SecretDeliveryStatus = "failed"
+)
+
+// AppSecretDeliveryCandidate is the non-sensitive identity of one exact
+// secret version staged into a runtime. The version fence prevents a late
+// wake from marking a newer rotation as delivered.
+type AppSecretDeliveryCandidate struct {
+	Scope   string
+	Key     string
+	Version int64
+}
+
+// AppSecretDeliveryResult records one runtime-start attempt for the staged
+// candidates. ErrorCode is a closed, non-sensitive reason; secret values and
+// ciphertext are intentionally absent.
+type AppSecretDeliveryResult struct {
+	AccountID   string
+	AppID       string
+	WakeID      string
+	InstanceID  string
+	Status      SecretDeliveryStatus
+	ErrorCode   string
+	AttemptedAt time.Time
+	Candidates  []AppSecretDeliveryCandidate
 }
 
 // AccountAppSecret is the per-row shape returned by
@@ -6823,10 +6951,9 @@ type EdgeRuleAction struct {
 // EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).
 //
 // MaxAttempts counts attempts, not retries: 2 is the original plus one
-// replay. AllowNonIdempotent opts POST and PATCH into replay and is the one
-// field here that can cost a customer correctness rather than latency — a
-// replayed POST runs their side effect twice unless their handler is
-// idempotent — so it defaults false and the API documents the consequence.
+// replay. AllowNonIdempotent opts POST and PATCH into replay only when the
+// request carries an Idempotency-Key. The handler must honor that key, so the
+// field defaults false and the API documents the consequence.
 // MinRemainingMs is the request-budget floor below which a replay is skipped,
 // which is what stops a retry converting a 502 into a 504. BackoffMs defaults
 // to 0 because the failure being retried is a dead peer, not a loaded one.
@@ -6835,6 +6962,8 @@ type EdgeRuleRetryAction struct {
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
 	MinRemainingMs     int  `json:"min_remaining_ms,omitempty"`
 	BackoffMs          int  `json:"backoff_ms,omitempty"`
+	BudgetPercent      int  `json:"budget_percent,omitempty"`
+	BudgetMinRetries   int  `json:"budget_min_retries,omitempty"`
 }
 
 // EdgeRuleCircuitBreakerAction is the kind=circuit_breaker payload

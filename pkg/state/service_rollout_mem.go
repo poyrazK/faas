@@ -23,6 +23,25 @@ type memServiceRolloutLiveRow struct {
 	service   bool
 }
 
+func previousMemServiceRolloutRow(target Deployment, rows []memServiceRolloutLiveRow) (memServiceRolloutLiveRow, bool) {
+	var previous memServiceRolloutLiveRow
+	found := false
+	for _, row := range rows {
+		if row.id == target.ID || row.service {
+			continue
+		}
+		if !row.createdAt.Before(target.CreatedAt) && !target.CreatedAt.IsZero() {
+			continue
+		}
+		if !found || row.createdAt.After(previous.createdAt) ||
+			(row.createdAt.Equal(previous.createdAt) && row.id > previous.id) {
+			previous = row
+			found = true
+		}
+	}
+	return previous, found
+}
+
 func (m *MemStore) serviceRolloutTargetLocked(id string) (Deployment, []memServiceRolloutLiveRow, error) {
 	target, ok := m.deployments[id]
 	if !ok {
@@ -57,6 +76,9 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 	if err != nil {
 		return Deployment{}, err
 	}
+	if target.ServiceRolloutHandoff.ActiveAbort() {
+		return target, ErrServiceRolloutInvalid
+	}
 	for _, row := range rows {
 		if row.id == id {
 			continue
@@ -72,6 +94,13 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 	target.RolloutCompletedAt = &now
 	target.RolloutAbortedAt = nil
 	target.RolloutAbortedReason = ""
+	handoff := target.ServiceRolloutHandoff
+	handoff.Action = ServiceRolloutActionPromote
+	handoff.Phase = ServiceRolloutPhaseComplete
+	handoff.LastError = ""
+	handoff.UpdatedAt = &now
+	handoff.CompletedAt = &now
+	target.ServiceRolloutHandoff = handoff
 	m.deployments[id] = target
 	return target, nil
 }
@@ -86,6 +115,9 @@ func (m *MemStore) BeginServiceRolloutCutover(_ context.Context, id string) (Dep
 	if err != nil {
 		return Deployment{}, err
 	}
+	if target.ServiceRolloutHandoff.ActiveAbort() {
+		return target, ErrServiceRolloutInvalid
+	}
 	for _, row := range rows {
 		other := m.deployments[row.id]
 		if row.id == id {
@@ -95,7 +127,81 @@ func (m *MemStore) BeginServiceRolloutCutover(_ context.Context, id string) (Dep
 		}
 		m.deployments[row.id] = other
 	}
+	previous, _ := previousMemServiceRolloutRow(target, rows)
+	now := time.Now().UTC()
+	handoff := target.ServiceRolloutHandoff
+	if handoff.StartedAt == nil || handoff.Action != ServiceRolloutActionPromote {
+		handoff.StartedAt = &now
+	}
+	handoff.Action = ServiceRolloutActionPromote
+	handoff.Phase = ServiceRolloutPhaseRouting
+	handoff.PredecessorDeploymentID = previous.id
+	handoff.RetryCount++
+	handoff.LastError = ""
+	handoff.UpdatedAt = &now
+	handoff.CompletedAt = nil
+	target = m.deployments[target.ID]
+	target.ServiceRolloutHandoff = handoff
+	m.deployments[target.ID] = target
 	return m.deployments[target.ID], nil
+}
+
+func (m *MemStore) BeginServiceRolloutAbort(_ context.Context, id string) (Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, rows, err := m.serviceRolloutTargetLocked(id)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if !target.ServiceRolloutHandoff.ActiveAbort() {
+		return target, ErrServiceRolloutInvalid
+	}
+	previous, found := previousMemServiceRolloutRow(target, rows)
+	if !found || (target.ServiceRolloutHandoff.PredecessorDeploymentID != "" && target.ServiceRolloutHandoff.PredecessorDeploymentID != previous.id) {
+		return target, ErrServiceRolloutInvalid
+	}
+	for _, row := range rows {
+		other := m.deployments[row.id]
+		if row.id == previous.id {
+			other.TrafficPercent = 100
+		} else {
+			other.TrafficPercent = 0
+		}
+		m.deployments[row.id] = other
+	}
+	now := time.Now().UTC()
+	handoff := target.ServiceRolloutHandoff
+	handoff.Phase = ServiceRolloutPhaseRouting
+	handoff.PredecessorDeploymentID = previous.id
+	handoff.RetryCount++
+	handoff.LastError = ""
+	handoff.UpdatedAt = &now
+	handoff.CompletedAt = nil
+	target = m.deployments[target.ID]
+	target.ServiceRolloutHandoff = handoff
+	m.deployments[target.ID] = target
+	return target, nil
+}
+
+func (m *MemStore) UpdateServiceRolloutHandoff(_ context.Context, id string, handoff ServiceRolloutHandoff) (Deployment, error) {
+	if !validServiceRolloutHandoff(handoff) {
+		return Deployment{}, ErrServiceRolloutInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, ok := m.deployments[id]
+	if !ok {
+		return Deployment{}, ErrNotFound
+	}
+	if target.Status != DeployLive || !IsServiceRollout(target) {
+		return target, ErrServiceRolloutInvalid
+	}
+	if !serviceRolloutHandoffCanReplace(target.ServiceRolloutHandoff, handoff) {
+		return target, ErrServiceRolloutInvalid
+	}
+	target.ServiceRolloutHandoff = handoff
+	m.deployments[id] = target
+	return target, nil
 }
 
 // AbortServiceRollout is the in-memory mirror of PgStore's atomic rollback.
@@ -108,21 +214,8 @@ func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (De
 	if err != nil {
 		return Deployment{}, err
 	}
-	var previousID string
-	var previousAt time.Time
-	for _, row := range rows {
-		if row.id == id || row.service {
-			continue
-		}
-		if !row.createdAt.Before(target.CreatedAt) && !target.CreatedAt.IsZero() {
-			continue
-		}
-		if previousID == "" || row.createdAt.After(previousAt) ||
-			(row.createdAt.Equal(previousAt) && row.id > previousID) {
-			previousID = row.id
-			previousAt = row.createdAt
-		}
-	}
+	previous, _ := previousMemServiceRolloutRow(target, rows)
+	previousID := previous.id
 	for _, row := range rows {
 		if row.id == id {
 			continue
@@ -144,6 +237,14 @@ func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (De
 	target.RolloutCompletedAt = nil
 	target.RolloutAbortedAt = &now
 	target.RolloutAbortedReason = reason
+	handoff := target.ServiceRolloutHandoff
+	handoff.Action = ServiceRolloutActionAbort
+	handoff.Phase = ServiceRolloutPhaseComplete
+	handoff.Reason = reason
+	handoff.LastError = ""
+	handoff.UpdatedAt = &now
+	handoff.CompletedAt = &now
+	target.ServiceRolloutHandoff = handoff
 	m.deployments[id] = target
 	return target, nil
 }

@@ -164,6 +164,59 @@ func TestWaitForServiceRouteConvergenceFailsClosedWithoutFleetGateway(t *testing
 	}
 }
 
+// adr: 208 — an operator abort is executed as a reverse handoff. Even on the
+// single-box compatibility path, the predecessor is restored before the
+// candidate becomes terminal; the generic API request itself never performs
+// that terminal transition.
+func TestReverseServiceRolloutCompletesRequestedAbort(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, stable := seedApp(t, store, api.PlanPro, 128, 5)
+	if err := store.SetDeploymentCanaryState(context.Background(), stable.ID, "none", 0, 0, time.Time{}, "complete"); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().UTC().Add(-time.Minute)
+	rollout, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:            app.ID,
+		Kind:             state.DeploymentKindImage,
+		ImageDigest:      "sha256:service-next",
+		Status:           state.DeployLive,
+		Scope:            stable.Scope,
+		TrafficPercent:   0,
+		RolloutState:     "rolling_out",
+		RolloutStartedAt: &started,
+		CreatedAt:        stable.CreatedAt.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, _, err := store.RecoverRollout(context.Background(), app.ID, "abort", "operator stop")
+	if err != nil {
+		t.Fatalf("request abort: %v", err)
+	}
+	if requested.RolloutState != "rolling_out" || !requested.ServiceRolloutHandoff.ActiveAbort() {
+		t.Fatalf("requested rollout = %+v; want active abort intent", requested)
+	}
+
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if !e.reverseServiceRollout(context.Background(), app, requested) {
+		t.Fatal("reverseServiceRollout returned false")
+	}
+	got, err := store.DeploymentByID(context.Background(), rollout.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.DeploySuperseded || got.RolloutState != "aborted" || got.ServiceRolloutHandoff.Phase != state.ServiceRolloutPhaseComplete {
+		t.Fatalf("candidate after reverse handoff = %+v; want superseded/aborted/complete", got)
+	}
+	old, err := store.DeploymentByID(context.Background(), stable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.Status != state.DeployLive || old.TrafficPercent != 100 {
+		t.Fatalf("predecessor after reverse handoff = status:%s traffic:%d; want live/100", old.Status, old.TrafficPercent)
+	}
+}
+
 // adr: 137 — service replica readiness and desired-capacity projection.
 func TestObserveServiceReplicaStatusProjectsCapacity(t *testing.T) {
 	store := state.NewMemStore()

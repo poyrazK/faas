@@ -48,6 +48,9 @@ for its deployable dependencies (for example,
 `GREGALE_SERVICE_API_URL=http://api.svc.gregale:10080`). The private DNS and
 proxy path provides the endpoint even when the target app is cold; image-only
 managed services remain customer-provided and are not given a Gregale URL.
+Compose services may set `x-gregale-service-policy: declared` to make this
+dependency list an outbound authorization allowlist. The omitted/default
+`account` policy preserves same-account reachability for existing projects.
 
 On every subsequent `gregale deploy`, the same scan runs and renders a **diff**
 instead of a first-run list — the repo is the source of truth, so the deployed

@@ -42,9 +42,9 @@ export class AlertRulesService {
         401: `code: unauthorized`,
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -97,9 +97,9 @@ export class AlertRulesService {
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
         409: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -132,9 +132,9 @@ export class AlertRulesService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -177,9 +177,9 @@ export class AlertRulesService {
         401: `code: unauthorized`,
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -213,9 +213,9 @@ export class AlertRulesService {
         401: `code: unauthorized`,
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -257,9 +257,9 @@ export class AlertRulesService {
         401: `code: unauthorized`,
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -319,9 +319,9 @@ export class AlertRulesService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -345,9 +345,9 @@ export class AlertRulesService {
       url: '/v1/alert-presets',
       errors: {
         401: `code: unauthorized`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -413,9 +413,9 @@ export class AlertRulesService {
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
         404: `code: not_found`,
         409: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -463,9 +463,9 @@ export class AlertRulesService {
         401: `code: unauthorized`,
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -526,9 +526,9 @@ export class AlertRulesService {
         401: `code: unauthorized`,
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         502: `Webhook delivery failed after the dispatcher's retry
         budget (5 attempts, 2s/8s/32s/128s backoff). The audit
@@ -584,9 +584,9 @@ export class AlertRulesService {
         401: `code: unauthorized`,
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });

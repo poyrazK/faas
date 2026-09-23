@@ -94,7 +94,7 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := dashboard.Render(w, a.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		a.log.Error("dashboard render login form", "err", err)
-		http.Error(w, "render failed", http.StatusInternalServerError)
+		renderProblem(w, a.log, err)
 	}
 }
 
@@ -105,19 +105,19 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
 	if token == "" {
-		http.Error(w, "missing token", http.StatusBadRequest)
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
 	raw, err := hex.DecodeString(token)
 	if err != nil || len(raw) != 32 {
-		http.Error(w, "invalid token", http.StatusGone)
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
 	hash := api.HashToken(raw) // SHA-256 of the raw 32 bytes
 	accountID, err := a.srv.store.ConsumeLoginToken(r.Context(), hash)
 	if err != nil {
 		a.log.Info("auth.verify.invalid_token", "err", err)
-		http.Error(w, "link expired or already used", http.StatusGone)
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
 	// IAM-2 (issue #186): fetch the account so we can stamp the
@@ -128,7 +128,7 @@ func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	acct, err := a.srv.store.AccountByID(r.Context(), accountID)
 	if err != nil {
 		a.log.Info("auth.verify.account_missing", "err", err, "account", accountID)
-		http.Error(w, "link expired or already used", http.StatusGone)
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
 	// The magic link was delivered to acct.Email, so consuming it also
@@ -136,7 +136,9 @@ func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	// avoids sending passwordless customers through a second email loop.
 	if err := a.srv.store.MarkAccountEmailVerified(r.Context(), accountID); err != nil {
 		a.log.Error("auth.verify.mark_email_verified", "err", err, "account", accountID)
-		http.Error(w, "internal", http.StatusInternalServerError)
+		api.WriteProblemForRequest(w, r, api.ErrInternal(
+			"Gregale could not verify this email address.",
+		).WithHint("Retry the link; if it still fails, request a new verification email."))
 		return
 	}
 	mfaPending := mfaSessionPending(acct)
@@ -148,7 +150,9 @@ func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	cookie, _, err := a.srv.issueDashboardSession(r.Context(), r, accountID, mfaPending, "magic_link")
 	if err != nil {
 		a.log.Error("auth.verify.issue_session", "err", err)
-		http.Error(w, "internal", http.StatusInternalServerError)
+		api.WriteProblemForRequest(w, r, api.ErrInternal(
+			"Gregale could not start the dashboard session.",
+		).WithHint("Retry the link; if it still fails, return to sign in."))
 		return
 	}
 	http.SetCookie(w, &http.Cookie{

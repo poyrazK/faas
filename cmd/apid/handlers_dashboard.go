@@ -1851,12 +1851,18 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 	}
 }
 
-// renderProblem turns a dashboard-render error into a 500 RFC 7807.
+// renderProblem preserves an existing customer-safe Problem and otherwise
+// turns a dashboard render failure into the canonical internal-error shape.
+// Raw template/store errors stay in logs and never reach the browser.
 func renderProblem(w http.ResponseWriter, log *slog.Logger, err error) {
 	log.Error("dashboard render", "err", err)
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(http.StatusInternalServerError)
-	_, _ = w.Write([]byte(`{"type":"about:blank","title":"render","status":500,"detail":"dashboard render failed"}`))
+	if problem := api.AsProblem(err); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	api.WriteProblem(w, api.ErrInternal(
+		"Gregale could not render this dashboard page.",
+	).WithHint("Reload the page; if it still fails, contact support."))
 }
 
 // dashboardAccountView adapts state.Account into the dashboard's
@@ -3075,17 +3081,23 @@ func severityOrdinal(s string) int {
 func dashboardDeploymentItem(d state.Deployment) dashboard.DeploymentItem {
 	repoURL, commitURL, checksURL, commitSHA, commitShort := githubDeploymentLinks(d.SourceURL, d.CommitSHA)
 	return dashboard.DeploymentItem{
-		ID:                d.ID,
-		Revision:          d.Revision, // ADR-198
-		Status:            string(d.Status),
-		Kind:              string(d.Kind),
-		CreatedAt:         d.CreatedAt.UTC().Format(time.RFC3339),
-		Error:             d.Error,
-		ErrorCode:         d.ErrorCode,
-		ErrorHint:         d.ErrorHint,
-		ErrorWhy:          d.ErrorWhy,
-		ErrorFix:          d.ErrorFix,
-		ErrorRelevantLogs: d.ErrorRelevantLogs,
+		ID:                    d.ID,
+		Revision:              d.Revision, // ADR-198
+		Status:                string(d.Status),
+		Kind:                  string(d.Kind),
+		CreatedAt:             d.CreatedAt.UTC().Format(time.RFC3339),
+		RolloutState:          state.NormalizeRolloutState(d.RolloutState),
+		ServiceHandoffAction:  d.ServiceRolloutHandoff.Action,
+		ServiceHandoffPhase:   d.ServiceRolloutHandoff.Phase,
+		ServiceHandoffRetries: d.ServiceRolloutHandoff.RetryCount,
+		ServiceHandoffMissing: append([]string(nil), d.ServiceRolloutHandoff.MissingGateways...),
+		ServiceHandoffError:   d.ServiceRolloutHandoff.LastError,
+		Error:                 d.Error,
+		ErrorCode:             d.ErrorCode,
+		ErrorHint:             d.ErrorHint,
+		ErrorWhy:              d.ErrorWhy,
+		ErrorFix:              d.ErrorFix,
+		ErrorRelevantLogs:     d.ErrorRelevantLogs,
 		// Issue #606 / SAFE-RELEASES-E.1: structured deployer
 		// attribution surfaced on the dashboard deploy detail
 		// page. Server-stamped from the HTTP request context
@@ -3337,7 +3349,14 @@ func (s *server) renderDomainDoctor(w http.ResponseWriter, r *http.Request, log 
 	report, err := s.buildDoctorReport(ctx, d)
 	if err != nil {
 		log.Warn("dashboard renderDomainDoctor: buildDoctorReport failed", "domain", domain, "err", err)
-		http.Error(w, "doctor unavailable", http.StatusServiceUnavailable)
+		api.WriteProblemForRequest(w, r, api.NewProblem(
+			http.StatusServiceUnavailable,
+			api.CodeDoctorUnavailable,
+			"Domain diagnostics temporarily unavailable",
+			"Gregale could not complete the domain checks right now.",
+		).WithHeader("Retry-After", "30").
+			WithHint("Wait a moment, then run the domain check again.").
+			WithDocs("https://gregale.dev/docs/domains/doctor"))
 		return
 	}
 	view := dashboard.DomainDoctorView{

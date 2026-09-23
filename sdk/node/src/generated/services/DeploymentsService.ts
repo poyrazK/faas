@@ -71,9 +71,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -129,9 +129,9 @@ export class DeploymentsService {
         403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -170,9 +170,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -204,9 +204,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -293,9 +293,9 @@ export class DeploymentsService {
         409: `code: dev_source_base_missing. Retry with a complete source snapshot.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -358,9 +358,9 @@ export class DeploymentsService {
         (code: github_install_not_found).
         `,
         413: `code: source_too_large`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `githubd unreachable or source-ref tarball fetch failed
         (code: source_ref_unavailable). Retry in ~30s.
@@ -467,9 +467,9 @@ export class DeploymentsService {
         --name pointing at a row the caller doesn't own.
         `,
         413: `code: source_too_large`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -523,9 +523,9 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         404: `code: rollback_target_not_found — the named target_deployment_id does not match any deployment of this app (or does not exist).`,
         409: `code: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired — rollback was rejected; see the response body for the specific code and detail.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -549,10 +549,13 @@ export class DeploymentsService {
    * on the in-flight row + 0 on the siblings. No stuck-check;
    * this is the operator's "I'm sure, ship it" path.
    *
-   * - `abort`: flips `rollout_state = 'aborted'` with
-   * `rollout_aborted_reason = reason`. Legal from
-   * `rollout_state ∈ {pending, rolling_out}`. Emits a
-   * `deploy.rolled_back` audit row.
+   * - `abort`: ordinary canaries transition synchronously to
+   * `rollout_state = 'aborted'`. A zero-step service rollout instead
+   * records a durable abort request and returns 202; schedd restores
+   * the predecessor route, waits for gateway acknowledgement and
+   * candidate request drain, then finalises the abort. `advance` and
+   * `promote` are invalid for service rollouts. Emits a
+   * `deploy.rolled_back` audit row for the operator intent.
    *
    * Returns the post-transition Deployment + the audit row id
    * so the operator's terminal can echo `audit_id=…`. Plan-tier
@@ -597,9 +600,9 @@ export class DeploymentsService {
         404: `code: not_found`,
         409: `one of: rollout_not_stuck | rollout_state_invalid`,
         422: `action ∉ {advance, promote, abort} (closed-set check).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -635,9 +638,9 @@ export class DeploymentsService {
       },
       errors: {
         401: `code: unauthorized`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -657,9 +660,9 @@ export class DeploymentsService {
       url: '/v1/deployments/latest-by-app',
       errors: {
         401: `code: unauthorized`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -686,9 +689,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -740,9 +743,9 @@ export class DeploymentsService {
         Free app PATCHing \`min_instances=1\`). Stable code
         \`plan_min_instances_not_allowed\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -903,9 +906,9 @@ export class DeploymentsService {
       errors: {
         402: `code: plan_reorder_disabled — this plan does not include deployment queue controls.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -920,8 +923,10 @@ export class DeploymentsService {
    * Range-check [0, 100] is enforced at the handler (422
    * `invalid_traffic_percent`). The Σ invariant is asserted
    * post-write as a defensive backstop (409
-   * `traffic_percent_sum_invalid`) — structurally unreachable
-   * with zero-siblings, but pinned by the test suite.
+   * `traffic_percent_sum_invalid`).
+   * An optional expected_serving_deployment_id is checked under the
+   * same live-row locks before rebalance. A stale expectation returns
+   * 409 `traffic_serving_changed` without changing traffic.
    *
    * @returns DeploymentResponse The updated deployment with the new traffic_percent.
    * @throws ApiError
@@ -953,18 +958,19 @@ export class DeploymentsService {
         \`plan_traffic_split_not_allowed\`.
         `,
         404: `code: not_found`,
-        409: `\`409 Conflict\` — post-write Σ invariant check tripped.
-        Structurally unreachable with the zero-siblings rebalance
-        form, but pinned by the test suite as a defensive
-        backstop against future refactors.
+        409: `\`409 Conflict\` — either the post-write Σ invariant check
+        tripped (\`traffic_percent_sum_invalid\`) or the optional
+        expected_serving_deployment_id was stale
+        (\`traffic_serving_changed\`). A stale expectation is checked
+        before any traffic write.
         `,
         422: `\`422 Unprocessable Entity\` — \`traffic_percent\` was
         outside the inclusive \`[0, 100]\` range. Stable code
         \`invalid_traffic_percent\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1006,9 +1012,9 @@ export class DeploymentsService {
         403: `Plan tier gate tripped (Hobby / Free).`,
         404: `code: not_found`,
         409: `Stale canary step, invalid rollout state, or traffic sum conflict.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1075,9 +1081,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1133,9 +1139,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `Deployment row missing or cross-account probe (no account-existence leak).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1184,9 +1190,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `Deployment row missing, cross-account probe, or scan has not run yet.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1244,9 +1250,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `Deployment row missing, cross-account probe, or secret scan has not been stamped for this deploy yet (pre-PR-A rows return 404 because the \`secret_findings\` jsonb has never been written).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1310,9 +1316,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `Deployment row missing or cross-account probe (IDOR-safe; never 403).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1367,9 +1373,9 @@ export class DeploymentsService {
         does not satisfy the deploy-write surface.
         `,
         404: `Retry requested on a missing or cross-account deployment (IDOR-safe; never 403).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1420,9 +1426,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `Deployment row missing or cross-account probe on the preview URL seam (IDOR-safe; never 403).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1501,9 +1507,9 @@ export class DeploymentsService {
         (uniform 404 so cross-account probes can't enumerate).
         Stable code \`app_not_found\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1551,9 +1557,9 @@ export class DeploymentsService {
         \`build_not_found\`. The 404 surface is uniform so
         cross-account probes can't enumerate.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1595,9 +1601,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `Either the build row is missing, OR the build exists but the populator INSERT failed (code=build_provenance_not_found).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1646,9 +1652,9 @@ export class DeploymentsService {
       errors: {
         401: `code: unauthorized`,
         404: `Either the build row is missing, OR the build exists but belongs to a different account (code=not_found on every negative path so account-existence isn't probeable).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `The SBOM populator has not produced an artefact for this build (code=build_sbom_unavailable), or the storage backend failed (code=capacity_unavailable).`,
       },

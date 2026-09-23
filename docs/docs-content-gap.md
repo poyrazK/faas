@@ -41,7 +41,8 @@ CI can enforce before the docs site is published.
 | `/secrets` | 4 | `docs/secrets.md`; sealed secrets. |
 | `/registry-credentials` | 4 | `docs/registry-credentials.md`; private registry auth. |
 | `/admin` | 4 | Operator-facing; marked external in the catalog. |
-| `/sidecars` | 3 | `docs/sidecars.md`; stateless sidecar contract. |
+| `/companions` | capability catalog | `docs/companions.md`; preferred bounded helper-workload contract. |
+| `/sidecars` | 3 | Compatibility alias documented in `docs/sidecars.md`. |
 | `/builds` | 3 | Alias of `/build`. |
 | `/alerts` | 3 | `docs/alerts.md`; presets are a child route. |
 | `/billing` | 2 | `docs/billing.md`; provider details use the same guide. |

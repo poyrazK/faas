@@ -63,9 +63,9 @@ export class AppsService {
       url: '/v1/apps',
       errors: {
         401: `code: unauthorized`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -104,9 +104,9 @@ export class AppsService {
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied | email_verification_required`,
         409: `code: conflict`,
         422: `code: invalid_cpu_ram_pair — explicit ram_mb and vcpu do not match the canonical shape for the account plan.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -133,9 +133,9 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -172,9 +172,9 @@ export class AppsService {
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
         422: `code: invalid_min_instances — must be in [0, plan max_concurrency].`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -201,9 +201,9 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -234,9 +234,9 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -286,9 +286,9 @@ export class AppsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -327,9 +327,9 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -362,9 +362,9 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -392,9 +392,9 @@ export class AppsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -421,9 +421,9 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -455,9 +455,9 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -490,9 +490,9 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -530,9 +530,9 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -678,9 +678,9 @@ export class AppsService {
         404 (slug-leak guard).
         `,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -756,9 +756,9 @@ export class AppsService {
         flips both endpoints at once.
         `,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -830,9 +830,9 @@ export class AppsService {
         never gets a 404 (slug-leak guard).
         `,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -904,9 +904,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -979,9 +979,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1019,9 +1019,9 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1035,16 +1035,19 @@ export class AppsService {
    * representative request to this app, plus the effective
    * response-body cap (in bytes) and the per-gate flags.
    *
-   * The probe is a pure read against the apid cache (the
-   * per-account `Plan` and the per-app `streaming_enabled`
-   * flag). It does NOT dial gatewayd-internal — the operator
-   * opt-in (`FAAS_GATEWAY_STREAMING` env) and per-edge-rule
-   * cap override are gatewayd-side state, so `effective_cap_bytes`
-   * reflects the plan cap (`cap_kind="plan"`) on every probe.
+   * With no query parameters the probe is a pure read against the
+   * apid cache (the per-account `Plan` and the per-app
+   * `streaming_enabled` flag). Supplying `host`, `path`, and `method`
+   * together performs a bounded loopback read of gatewayd's compiled
+   * kind=limit rules and reports a matching streaming response cap with
+   * `cap_kind="endpoint-rule"`. If gatewayd is unavailable or no rule
+   * matches, the response falls back to the plan cap.
+   *
+   * The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
+   * gatewayd-side state, so the canonical signal is the
+   * `Streaming-Status` response header on a real request, not this probe.
    * A customer evaluating "will my next request stream?" must
-   * consider the operator-side flag separately; the canonical
-   * signal is the `Streaming-Status` response header on a real
-   * request, not this probe.
+   * consider the operator-side flag separately.
    *
    * `status=plan-disallows` means the customer's plan tier
    * forbids `streaming_enabled=true`; the CreateApp gate (D5)
@@ -1058,11 +1061,28 @@ export class AppsService {
    */
   public static getAppStreamingCap({
     slug,
+    host,
+    path,
+    method,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Request host to resolve a per-edge-rule cap. Supply together
+     * with `path` and `method`; omit all three for the plan-level cap.
+     *
+     */
+    host?: string,
+    /**
+     * Request path to resolve against kind=limit rules.
+     */
+    path?: string,
+    /**
+     * HTTP method to resolve against kind=limit rules.
+     */
+    method?: string,
   }): CancelablePromise<AppStreamingStatus> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1070,13 +1090,18 @@ export class AppsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'host': host,
+        'path': path,
+        'method': method,
+      },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1139,9 +1164,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1224,9 +1249,9 @@ export class AppsService {
         a 404 (slug-leak guard).
         `,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1280,9 +1305,9 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1321,9 +1346,9 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1432,9 +1457,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1498,9 +1523,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1545,9 +1570,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1597,9 +1622,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1648,9 +1673,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1701,9 +1726,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1745,9 +1770,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1790,9 +1815,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
@@ -1837,9 +1862,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
@@ -1880,9 +1905,9 @@ export class AppsService {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
       },
@@ -1923,9 +1948,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1974,9 +1999,9 @@ export class AppsService {
         409: `No enabled mirror rule targets the deployment that served the
         retained request. Returns \`debug_replay_unsupported\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -2004,9 +2029,9 @@ export class AppsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
@@ -2090,9 +2115,9 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
@@ -2141,9 +2166,9 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
@@ -2171,9 +2196,9 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
@@ -2207,9 +2232,9 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
@@ -2252,9 +2277,9 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -2408,9 +2433,9 @@ export class AppsService {
         402: `Plan does not include log archive read-back. This response is reserved for plans without archive entitlement.`,
         403: `Log archive retention cap exceeded; \`?date=\` is outside the per-plan window.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -2456,9 +2481,9 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -2535,9 +2560,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         404: `No such app (slug) or wake_id is unknown.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -2596,9 +2621,9 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         404: `No such app (slug) or sidecar timeline is unknown.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });

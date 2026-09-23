@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..models.plan_workload_action import PlanWorkloadAction, check_plan_workload_action
 from ..models.plan_workload_class import PlanWorkloadClass, check_plan_workload_class
 from ..models.plan_workload_tier import PlanWorkloadTier, check_plan_workload_tier
+from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -32,6 +33,9 @@ class PlanWorkload:
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
     GREGALE_SERVICE_<NAME>_URL for workload dependencies."""
+    service_binding_policy: ServiceBindingPolicy | Unset = UNSET
+    """Caller-side authorization policy for internal service requests. `account` preserves same-account
+    reachability; `declared` permits only targets present in the caller's service bindings."""
     class_: PlanWorkloadClass | Unset = UNSET
     schedule: str | Unset = UNSET
     """cron expression when declared (CronJob, render, serverless)"""
@@ -70,6 +74,10 @@ class PlanWorkload:
         depends_on: list[str] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
             depends_on = self.depends_on
+
+        service_binding_policy: str | Unset = UNSET
+        if not isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = self.service_binding_policy
 
         class_: str | Unset = UNSET
         if not isinstance(self.class_, Unset):
@@ -111,6 +119,8 @@ class PlanWorkload:
             field_dict["dockerfile"] = dockerfile
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
         if class_ is not UNSET:
             field_dict["class"] = class_
         if schedule is not UNSET:
@@ -146,6 +156,13 @@ class PlanWorkload:
         dockerfile = d.pop("dockerfile", UNSET)
 
         depends_on = cast(list[str], d.pop("depends_on", UNSET))
+
+        _service_binding_policy = d.pop("service_binding_policy", UNSET)
+        service_binding_policy: ServiceBindingPolicy | Unset
+        if isinstance(_service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        else:
+            service_binding_policy = check_service_binding_policy(_service_binding_policy)
 
         _class_ = d.pop("class", UNSET)
         class_: PlanWorkloadClass | Unset
@@ -190,6 +207,7 @@ class PlanWorkload:
             ports=ports,
             dockerfile=dockerfile,
             depends_on=depends_on,
+            service_binding_policy=service_binding_policy,
             class_=class_,
             schedule=schedule,
             env_keys=env_keys,

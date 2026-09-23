@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -35,6 +36,32 @@ func TestAppResponseSurfacesMaintenanceMode(t *testing.T) {
 	got := s.appResponse(state.App{MaintenanceMode: true}, api.PlanHobby)
 	if !got.MaintenanceMode {
 		t.Fatal("MaintenanceMode = false, want persisted true value")
+	}
+}
+
+func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
+	s := &server{}
+	bindings := []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"}}
+	got := s.appResponse(state.App{Manifest: state.AppManifest{
+		ServiceBindings:      bindings,
+		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+	}}, api.PlanHobby)
+	if !reflect.DeepEqual(got.ServiceBindings, bindings) {
+		t.Fatalf("service bindings = %#v, want %#v", got.ServiceBindings, bindings)
+	}
+	bindings[0].Service = "mutated"
+	if got.ServiceBindings[0].Service != "billing" {
+		t.Fatal("app response aliases persisted service bindings")
+	}
+	if got.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+		t.Fatalf("service binding policy = %q, want declared", got.ServiceBindingPolicy)
+	}
+}
+
+func TestAppResponseDefaultsServiceBindingPolicyToAccount(t *testing.T) {
+	got := (&server{}).appResponse(state.App{}, api.PlanHobby)
+	if got.ServiceBindingPolicy != api.ServiceBindingPolicyAccount {
+		t.Fatalf("service binding policy = %q, want account", got.ServiceBindingPolicy)
 	}
 }
 

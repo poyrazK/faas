@@ -1,32 +1,31 @@
 package state
 
-// Per-kind edge-rule quotas for the ADR-201 traffic primitives.
+// Per-kind edge-rule quotas whose zero value means "not available on this
+// plan". This includes the ADR-122 response cache and the ADR-201 traffic
+// primitives.
 //
 // These live in one place so MemStore and PgStore cannot drift — the class of
 // bug that produced the always-zero uppercase-state-literal queries, where
 // MemStore was right and PgStore's SQL was wrong and no test ran both.
 //
 // IMPORTANT — the zero-quota semantics here differ from the older per-kind
-// branches (throttle, geo, cache) on purpose. Those are written as:
+// branches (throttle and geo) on purpose. Those are written as:
 //
 //	if in.Kind == K && limits.XPerApp > 0 { ...count and compare... }
 //
-// which means a plan whose quota is ZERO skips the check entirely and the
-// rule is created. ADR-122 says "Free cannot cache", but with
-// EdgeRulesCachePerApp = 0 that is not actually enforced at the store layer —
-// a Free app can create unlimited kind=cache rules today.
-//
-// ADR-201 needs Free = 0 to genuinely mean "no retry rules", so these
-// helpers treat 0 as DENY. The older branches are deliberately left alone:
-// tightening them would revoke rules customers may already have created, and
-// that is a product decision, not a refactor.
+// which means a plan whose quota is ZERO skips the check entirely. Cache is
+// governed here because ADR-122 explicitly defines Free=0 as unavailable;
+// retry and circuit_breaker use the same closed-zero contract from ADR-201.
+// The throttle and geo branches retain their historical semantics.
 
 import "github.com/onebox-faas/faas/pkg/api"
 
-// edgeRuleKindQuota returns the per-app quota for an ADR-201 kind, and
+// edgeRuleKindQuota returns the per-app quota for a closed-zero kind, and
 // whether the kind is one this helper governs.
 func edgeRuleKindQuota(kind EdgeRuleKind, limits api.Limits) (int, bool) {
 	switch kind {
+	case EdgeRuleKindCache:
+		return limits.EdgeRulesCachePerApp, true
 	case EdgeRuleKindRetry:
 		return limits.EdgeRulesRetryPerApp, true
 	case EdgeRuleKindCircuitBreaker:

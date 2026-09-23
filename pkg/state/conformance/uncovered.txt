@@ -220,7 +220,6 @@ GetAppErrorSample
 GetAppOpenAPIDoc
 GetAppRegistryCredential
 GetAppSecret
-GetAppSecretInScope
 GetConsumerKeyByID
 GetCorsPresetByID
 GetDataUpstreamByID
@@ -675,7 +674,6 @@ UpsertAppOpenAPIDoc
 UpsertAppOpenAPIDocIfUnderQuota
 UpsertAppRegistryCredential
 UpsertAppSecret
-UpsertAppSecretInScope
 UpsertAppSecretWithKid
 UpsertAppSecretWithKidAndValueHashInScope
 UpsertAppSecretWithKidInScope

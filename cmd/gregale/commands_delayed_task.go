@@ -8,16 +8,15 @@
 // for the `--payload` triple-shape resolver (inline JSON / @file / -).
 //
 // Verb surface:
-//   - add     POST /v1/apps/{slug}/delayed-tasks (requires --scheduled-at
-//             + --app + optional --payload).
+//   - add     POST /v1/apps/{slug}/delayed-tasks (requires --app and exactly
+//             one of --scheduled-at / --delay; target options are optional).
 //   - get     GET /v1/delayed-tasks/{id} (account-scoped read, mirrors
 //             GetDelayedTask's "GetDelayedTask" call).
 //   - cancel  DELETE /v1/delayed-tasks/{id} (idempotent — a second
 //             cancel is a no-op 200 on the server).
 //
-// --scheduled-at is RFC 3339 (UTC recommended). Past timestamps fail
-// closed at the handler with `invalid_scheduled_at`; we mirror the
-// gate locally so a CLI typo is zero-latency.
+// --scheduled-at is RFC 3339 (UTC recommended); --delay is a whole-second Go
+// duration. Invalid or past schedules fail locally so a typo is zero-latency.
 //
 // The create command exposes an optional caller-controlled idempotency key;
 // reusing it after an uncertain response prevents duplicate scheduled work.
@@ -26,10 +25,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
+	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -97,6 +100,15 @@ func cmdDelayedTaskAdd(args []string) int {
 	method := fs.String("method", "POST", "HTTP method used to invoke the app")
 	path := fs.String("path", "/", "app path invoked when the task becomes due")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key to reuse when retrying this create")
+	var headers multiFlag
+	fs.Var(&headers, "header", "request header as Name:Value (repeatable)")
+	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts (0 uses the plan default)")
+	retryBaseSeconds := fs.Float64("retry-base-seconds", 0, "base retry delay in seconds")
+	retryMaxSeconds := fs.Float64("retry-max-seconds", 0, "maximum retry delay in seconds")
+	retryJitterSeconds := fs.Float64("retry-jitter-seconds", 0, "retry jitter fraction (0..1)")
+	retention := fs.Duration("retention", 0, "terminal result retention such as 1h or 168h")
+	onSuccessWebhook := fs.String("on-success-webhook", "", "webhook subscription id for successful completion")
+	onFailureWebhook := fs.String("on-failure-webhook", "", "webhook subscription id for terminal failure")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -111,7 +123,10 @@ func cmdDelayedTaskAdd(args []string) int {
 	if err != nil {
 		return printErr("Invalid --payload", err)
 	}
-	req := api.DelayedTaskRequest{Payload: body, Method: *method, Path: *path}
+	req, err := delayedTaskRequestFromFlags(fs, body, *method, *path, headers, *maxAttempts, *retryBaseSeconds, *retryMaxSeconds, *retryJitterSeconds, *retention, *onSuccessWebhook, *onFailureWebhook)
+	if err != nil {
+		return printErr("Invalid delayed-task options", err)
+	}
 	if *scheduledAt != "" {
 		when, err := time.Parse(time.RFC3339, *scheduledAt)
 		if err != nil {
@@ -141,6 +156,99 @@ func cmdDelayedTaskAdd(args []string) int {
 	}
 	PrintOK(osStdout, "Delayed task %s scheduled for %s.", resp.ID, resp.ScheduledAt.Format(time.RFC3339))
 	return 0
+}
+
+func delayedTaskRequestFromFlags(fs *flag.FlagSet, payload json.RawMessage, method, path string, headerValues []string, maxAttempts int, retryBaseSeconds, retryMaxSeconds, retryJitterSeconds float64, retention time.Duration, onSuccessWebhook, onFailureWebhook string) (api.DelayedTaskRequest, error) {
+	req := api.DelayedTaskRequest{Payload: payload, Method: method, Path: path}
+	headers, err := delayedTaskHeaderJSON(headerValues)
+	if err != nil {
+		return req, err
+	}
+	req.Headers = headers
+	req.RetryPolicy, err = delayedTaskRetryPolicyFromFlags(fs, maxAttempts, retryBaseSeconds, retryMaxSeconds, retryJitterSeconds)
+	if err != nil {
+		return req, err
+	}
+	if flagWasSet(fs, "retention") {
+		if retention < 0 || retention%time.Second != 0 {
+			return req, fmt.Errorf("--retention must be a non-negative whole-second duration")
+		}
+		seconds := int(retention / time.Second)
+		req.RetentionSeconds = &seconds
+	}
+	if onSuccessWebhook != "" || onFailureWebhook != "" {
+		req.Destinations = &api.InvocationDestinations{OnSuccess: onSuccessWebhook, OnFailure: onFailureWebhook}
+	}
+	return req, nil
+}
+
+func delayedTaskRetryPolicyFromFlags(fs *flag.FlagSet, maxAttempts int, baseSeconds, maxSeconds, jitterSeconds float64) (*api.RetryPolicyDTO, error) {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "max-attempts", "retry-base-seconds", "retry-max-seconds", "retry-jitter-seconds":
+			set = true
+		}
+	})
+	if !set {
+		return nil, nil
+	}
+	policy := &api.RetryPolicyDTO{
+		MaxAttempts: maxAttempts, BaseSeconds: baseSeconds,
+		MaxSeconds: maxSeconds, JitterSeconds: jitterSeconds,
+	}
+	if policy.MaxAttempts < 0 || policy.MaxAttempts > 25 {
+		return nil, fmt.Errorf("--max-attempts must be between 0 and 25")
+	}
+	if policy.BaseSeconds < 0 || math.IsNaN(policy.BaseSeconds) || math.IsInf(policy.BaseSeconds, 0) {
+		return nil, fmt.Errorf("--retry-base-seconds must be finite and non-negative")
+	}
+	if policy.MaxSeconds < 0 || math.IsNaN(policy.MaxSeconds) || math.IsInf(policy.MaxSeconds, 0) {
+		return nil, fmt.Errorf("--retry-max-seconds must be finite and non-negative")
+	}
+	if policy.BaseSeconds > 0 && policy.MaxSeconds > 0 && policy.MaxSeconds < policy.BaseSeconds {
+		return nil, fmt.Errorf("--retry-max-seconds must be at least --retry-base-seconds")
+	}
+	if policy.JitterSeconds < 0 || policy.JitterSeconds > 1 || math.IsNaN(policy.JitterSeconds) || math.IsInf(policy.JitterSeconds, 0) {
+		return nil, fmt.Errorf("--retry-jitter-seconds must be between 0 and 1")
+	}
+	return policy, nil
+}
+
+func delayedTaskHeaderJSON(values []string) (json.RawMessage, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	headers := make(map[string]string, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		name, value, ok := strings.Cut(raw, ":")
+		name = strings.TrimSpace(name)
+		value = strings.TrimSpace(value)
+		if !ok || !api.CorsHeaderNamePattern.MatchString(name) {
+			return nil, fmt.Errorf("--header %q must be Name:Value with a valid HTTP header name", raw)
+		}
+		if strings.ContainsAny(value, "\r\n") {
+			return nil, fmt.Errorf("--header %q contains a newline", raw)
+		}
+		key := strings.ToLower(name)
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("--header repeats %q", name)
+		}
+		seen[key] = struct{}{}
+		headers[http.CanonicalHeaderKey(name)] = value
+	}
+	return json.Marshal(headers)
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
 }
 
 // cmdDelayedTaskList shows one newest-first page for an app.

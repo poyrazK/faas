@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/browser"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // authedClient builds a client using the stored token, or errors (exit 2) if the
@@ -443,8 +445,7 @@ func printErr(title string, err error) int {
 		platformErr := isTransportError(err)
 		problem := api.Problem{Status: 400, Code: "invalid_request", Title: title, Detail: err.Error()}
 		if platformErr {
-			problem.Status = 500
-			problem.Code = "internal"
+			problem = transportProblem(err)
 		}
 		if hasExit && ec.code == 2 {
 			problem.Status = 401
@@ -477,6 +478,14 @@ func printErr(title string, err error) int {
 		}
 		return ec.code
 	}
+	if isTransportError(err) {
+		problem := transportProblem(err)
+		renderAPIError(osStderr, &APIError{Problem: problem})
+		if hasHint {
+			PrintWarn(osStderr, "%s", hintErr.Hint)
+		}
+		return 3
+	}
 	if hasHint {
 		// The hint replaces the title — the bare error message already
 		// encodes the cwd + reasons (e.g. "no deployable source found in
@@ -490,6 +499,43 @@ func printErr(title string, err error) int {
 	}
 	PrintFail(osStderr, "%s\n  %s", title, err.Error())
 	return 1
+}
+
+const transportErrorCode = "transport_error"
+
+// transportProblem gives network failures the same stable, actionable shape
+// in human and JSON output. Keeping this client-local avoids pretending the
+// server returned a Problem when the request never reached it.
+func transportProblem(err error) api.Problem {
+	detail := "The Gregale API could not be reached."
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		detail = "The request timed out before the Gregale API responded."
+	case errors.Is(err, context.Canceled):
+		detail = "The request was canceled before the Gregale API responded."
+	default:
+		cause := err
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) && urlErr.Err != nil {
+			cause = urlErr.Err
+		}
+		if cause != nil {
+			message := strings.Join(strings.Fields(cause.Error()), " ")
+			if len(message) > 240 {
+				message = safetext.Truncate(message, 237) + "..."
+			}
+			if message != "" {
+				detail = "The Gregale API could not be reached: " + message
+			}
+		}
+	}
+	return api.Problem{
+		Status: http.StatusServiceUnavailable,
+		Code:   transportErrorCode,
+		Title:  "Could not reach Gregale",
+		Detail: detail,
+		Hint:   "Check your network connection and FAAS_API endpoint, then retry.",
+	}
 }
 
 // isTransportError distinguishes an SDK/network failure from a local

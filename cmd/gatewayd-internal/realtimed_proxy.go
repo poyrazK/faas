@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -10,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // newRealtimedProxy builds an HTTP/1.1 reverse proxy over the local Unix
@@ -47,7 +48,7 @@ func newRealtimedProxy(socket string, log *slog.Logger) http.Handler {
 		if log != nil {
 			log.Warn("managed realtime proxy failed", "path", r.URL.Path, "err", proxyErr)
 		}
-		http.Error(w, fmt.Sprintf("managed realtime unavailable: %v", proxyErr), http.StatusServiceUnavailable)
+		api.WriteProblem(w, api.ErrRealtimeUnavailable())
 	}
 	return proxy
 }
@@ -105,7 +106,7 @@ func newRealtimedControlProxy(socket string, log *slog.Logger) http.Handler {
 		if log != nil {
 			log.Warn("managed realtime control proxy failed", "path", r.URL.Path, "err", proxyErr)
 		}
-		http.Error(w, fmt.Sprintf("managed realtime unavailable: %v", proxyErr), http.StatusServiceUnavailable)
+		api.WriteProblem(w, api.ErrRealtimeUnavailable())
 	}
 	return proxy
 }

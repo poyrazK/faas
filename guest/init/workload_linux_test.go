@@ -524,6 +524,30 @@ func TestSidecarTmpfsMountDataClampsInvalidProfiles(t *testing.T) {
 	}
 }
 
+func TestEnsureMountDirectoryTreeRejectsImageSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc", filepath.Join(root, "tmp", "gregale")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureMountDirectoryTree(root, "/tmp/gregale/companions/proxy"); err == nil {
+		t.Fatal("image-provided symlink was accepted as a shared mount parent")
+	}
+}
+
+func TestEnsureMountDirectoryTreeCreatesSafePath(t *testing.T) {
+	root := t.TempDir()
+	if err := ensureMountDirectoryTree(root, "/tmp/gregale/companions/proxy"); err != nil {
+		t.Fatalf("ensureMountDirectoryTree: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(root, "tmp", "gregale", "companions", "proxy"))
+	if err != nil || !info.IsDir() {
+		t.Fatalf("shared path info=%v err=%v", info, err)
+	}
+}
+
 func TestDiscoverSidecarDevicesReadsOptimizedDriveRoster(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "upper", "etc", "faas", "workloads.json")

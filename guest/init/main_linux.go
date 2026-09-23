@@ -2203,8 +2203,73 @@ func mountSidecarRoots(mainRoot string) error {
 			return fmt.Errorf("sidecar %q runtime mounts: %w", dev.workloadName, err)
 		}
 	}
+	if err := mountCompanionSharedDirectories(mainRoot, mountRoot, devices); err != nil {
+		return err
+	}
 	if err := writeSidecarMountMarker(mainRoot); err != nil {
 		return fmt.Errorf("write sidecar mount marker: %w", err)
+	}
+	return nil
+}
+
+// mountCompanionSharedDirectories creates one bounded tmpfs per companion and
+// bind-mounts every directory into every workload root. The main workload sees
+// the source paths directly. This provides named, in-memory task storage
+// without exposing a general host-path or persistent-volume primitive.
+func mountCompanionSharedDirectories(mainRoot, sidecarMountRoot string, devices []sidecarDevice) error {
+	for _, shared := range devices {
+		path := companionSharedDirectory(shared.workloadName)
+		source := filepath.Join(mainRoot, strings.TrimPrefix(path, "/"))
+		if err := ensureMountDirectoryTree(mainRoot, path); err != nil {
+			return fmt.Errorf("companion %q shared directory: %w", shared.workloadName, err)
+		}
+		if err := syscall.Mount("tmpfs", source, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, sidecarTmpfsMountData(shared.tmpfsSizeMB)); err != nil {
+			return fmt.Errorf("companion %q shared tmpfs: %w", shared.workloadName, err)
+		}
+		for _, consumer := range devices {
+			sidecarRoot := filepath.Join(sidecarMountRoot, consumer.workloadName, "upper")
+			target := filepath.Join(sidecarRoot, strings.TrimPrefix(path, "/"))
+			if err := ensureMountDirectoryTree(sidecarRoot, path); err != nil {
+				return fmt.Errorf("companion %q shared target in %q: %w", shared.workloadName, consumer.workloadName, err)
+			}
+			if err := syscall.Mount(source, target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+				return fmt.Errorf("bind companion %q shared directory into %q: %w", shared.workloadName, consumer.workloadName, err)
+			}
+		}
+	}
+	return nil
+}
+
+// ensureMountDirectoryTree creates an absolute in-workload path without
+// following image-provided symlinks in any component. This is stricter than
+// ensureMountDirectory because the shared directory is rooted beneath the
+// main image's /tmp, whose pre-existing contents are customer-controlled.
+func ensureMountDirectoryTree(root, absolutePath string) error {
+	if !filepath.IsAbs(absolutePath) {
+		return fmt.Errorf("mount path %q is not absolute", absolutePath)
+	}
+	current := filepath.Clean(root)
+	for _, component := range strings.Split(strings.TrimPrefix(filepath.Clean(absolutePath), "/"), "/") {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("mount path component %s is a symlink", current)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("mount path component %s is not a directory", current)
+			}
+			continue
+		}
+		if !isNotExist(err) {
+			return err
+		}
+		if err := os.Mkdir(current, 0o755); err != nil && !os.IsExist(err) {
+			return err
+		}
 	}
 	return nil
 }

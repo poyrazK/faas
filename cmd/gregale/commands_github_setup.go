@@ -18,8 +18,10 @@ import (
 const defaultGithubSetupWorkflow = ".github/workflows/gregale.yml"
 
 const (
-	githubSetupRolloutStandard = "standard"
-	githubSetupRolloutSafe     = "safe"
+	githubSetupRolloutStandard            = "standard"
+	githubSetupRolloutSafe                = "safe"
+	githubSetupPreviewServicesDeny        = "deny"
+	githubSetupPreviewServicesAllowMarked = "allow_marked"
 )
 
 type githubSetupReceipt struct {
@@ -50,6 +52,7 @@ func cmdGithubSetup(args []string) int {
 	preview := fs.Bool("preview", false, "enable pull-request previews")
 	noPreview := fs.Bool("no-preview", false, "disable pull-request previews")
 	previewTTLHours := fs.Int("preview-ttl-hours", 0, "preview lease in hours (1-720)")
+	previewServicePolicy := fs.String("preview-service-policy", "", "preview-to-production service calls: deny|allow_marked")
 	rootDir := fs.String("root-dir", "", "repository-relative source root for the root workload")
 	ignore := fs.String("ignore", "", "comma-separated ignored change paths")
 	rollout := fs.String("rollout", githubSetupRolloutStandard, "production rollout mode: standard|safe (safe requires Pro/Scale)")
@@ -69,6 +72,9 @@ func cmdGithubSetup(args []string) int {
 	}
 	if *previewTTLHours != 0 && (*previewTTLHours < 1 || *previewTTLHours > 720) {
 		return printErr("Invalid --preview-ttl-hours", errors.New("must be between 1 and 720 hours"))
+	}
+	if *previewServicePolicy != "" && !validGithubSetupPreviewServicePolicy(*previewServicePolicy) {
+		return printErr("Invalid --preview-service-policy", errors.New("must be deny or allow_marked"))
 	}
 	if !validGithubSetupRollout(*rollout) {
 		return printErr("Invalid --rollout", errors.New("must be standard or safe"))
@@ -109,7 +115,7 @@ func cmdGithubSetup(args []string) int {
 		return printErr("Could not locate the Git repository", err)
 	}
 	workflowFile := filepath.Join(root, workflowPath)
-	policyPatch := githubSetupPolicyPatch(*preview, *noPreview, *previewTTLHours, *rootDir, ignoredPaths)
+	policyPatch := githubSetupPolicyPatch(*preview, *noPreview, *previewTTLHours, *rootDir, ignoredPaths, *previewServicePolicy)
 	if *dryRun {
 		if repoName == "" {
 			return printErr("Dry run needs --repo", errors.New("pass --repo OWNER/NAME so the workflow can be rendered without reading remote state"))
@@ -255,8 +261,8 @@ func parseGithubSetupIgnoredPaths(raw string) ([]string, error) {
 	return out, nil
 }
 
-func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ignored []string) *api.GitHubDeploymentPolicyPatch {
-	if !preview && !noPreview && ttl == 0 && rootDir == "" && ignored == nil {
+func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ignored []string, previewServicePolicy string) *api.GitHubDeploymentPolicyPatch {
+	if !preview && !noPreview && ttl == 0 && rootDir == "" && ignored == nil && previewServicePolicy == "" {
 		return nil
 	}
 	patch := &api.GitHubDeploymentPolicyPatch{}
@@ -272,6 +278,9 @@ func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ig
 	}
 	if ignored != nil {
 		patch.IgnoredPaths = &ignored
+	}
+	if previewServicePolicy != "" {
+		patch.PreviewServicePolicy = &previewServicePolicy
 	}
 	return patch
 }
@@ -333,6 +342,10 @@ func validGithubSetupBranch(branch string) bool {
 
 func validGithubSetupRollout(rollout string) bool {
 	return rollout == githubSetupRolloutStandard || rollout == githubSetupRolloutSafe
+}
+
+func validGithubSetupPreviewServicePolicy(policy string) bool {
+	return policy == githubSetupPreviewServicesDeny || policy == githubSetupPreviewServicesAllowMarked
 }
 
 func renderGithubSetupWorkflow(app, repo, branch, rollout string) string {
@@ -452,6 +465,7 @@ func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exist
 	}
 	if receipt.Policy != nil {
 		_, _ = fmt.Fprintf(osStdout, "  previews:          %t (%dh TTL)\n", receipt.Policy.PreviewEnabled, receipt.Policy.PreviewTTLHours)
+		_, _ = fmt.Fprintf(osStdout, "  preview_services:  %s\n", receipt.Policy.PreviewServicePolicy)
 	}
 	if receipt.DryRun {
 		_, _ = fmt.Fprintln(osStdout)

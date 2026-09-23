@@ -352,7 +352,7 @@ func dashboardDebugReplayActionFlash(r *http.Request) string {
 func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	slug, reqID := r.PathValue("slug"), r.PathValue("req_id")

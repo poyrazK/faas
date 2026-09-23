@@ -24,6 +24,8 @@ type (
 	AppResponse            = api.AppResponse
 	AppEffectiveLimits     = api.AppEffectiveLimits
 	AppConfiguredResources = api.AppConfiguredResources
+	AppServiceBinding      = api.AppServiceBinding
+	ServiceBindingPolicy   = api.ServiceBindingPolicy
 	DeclaredRoute          = api.DeclaredRoute
 	RetryPolicyDTO         = api.RetryPolicyDTO
 
@@ -163,10 +165,14 @@ type (
 	ListDelayedTasksResponse = api.ListDelayedTasksResponse
 
 	// Audit + invocations.
-	Invocation              = api.Invocation
-	ListInvocationsResponse = api.ListInvocationsResponse
-	AuditEventResponse      = api.AuditEventResponse
-	ListAuditEventsResponse = api.ListAuditEventsResponse
+	Invocation               = api.Invocation
+	ListInvocationsResponse  = api.ListInvocationsResponse
+	AuditEventResponse       = api.AuditEventResponse
+	ListAuditEventsResponse  = api.ListAuditEventsResponse
+	ActivityActorResponse    = api.ActivityActorResponse
+	ActivityResourceResponse = api.ActivityResourceResponse
+	OrgActivityResponse      = api.OrgActivityResponse
+	ListOrgActivityResponse  = api.ListOrgActivityResponse
 
 	// Wake timeline (issue #517 / PR-C / ADR-064).
 	WakeTimelineEvent    = api.WakeTimelineEvent
@@ -205,6 +211,11 @@ type (
 	// RaiseOverageCap).
 	SetAccountEgressAllowlistExtraRequest = api.SetAccountEgressAllowlistExtraRequest
 	AccountEgressAllowlistExtraResponse   = api.AccountEgressAllowlistExtraResponse
+)
+
+const (
+	ServiceBindingPolicyAccount  = api.ServiceBindingPolicyAccount
+	ServiceBindingPolicyDeclared = api.ServiceBindingPolicyDeclared
 )
 
 const (

@@ -1592,9 +1592,9 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 	return append([]api.WorkflowSpec{}, m.Workflows...), nil
 }
 
-// loadExtensionSidecarsManifestForDeploy resolves the manifest's named
-// telemetry presets before any deployment mutation. The image digest stays
-// customer-supplied; the preset only contributes stable defaults.
+// loadExtensionSidecarsManifestForDeploy resolves the manifest's companion
+// declarations before any deployment mutation. Preset-only companions keep
+// their image empty here; apid resolves the operator-pinned digest.
 func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) (api.Sidecars, error) {
 	if cwd == "" {
 		return nil, nil
@@ -1603,7 +1603,7 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 	if err != nil {
 		return nil, err
 	}
-	if !ok || m == nil || len(m.Extensions) == 0 {
+	if !ok || m == nil || (len(m.Companions) == 0 && len(m.Extensions) == 0) {
 		return nil, nil
 	}
 	if err := m.Validate(); err != nil {
@@ -1611,7 +1611,7 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 	}
 	acct, err := client.Whoami(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("resolve account plan for extension manifest: %w", err)
+		return nil, fmt.Errorf("resolve account plan for companion manifest: %w", err)
 	}
 	if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
 		return nil, err
@@ -3626,7 +3626,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Canary:         canarySpec,
 			RollbackOn5xx:  rollbackOn5xxPtr,
 			NoTriggers:     *noTriggers,
-			Sidecars:       sidecarDefs,
+			Companions:     sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3655,7 +3655,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
 				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx,
 				Reason: ann.Reason, Tag: ann.Tag,
-				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Sidecars: sidecarDefs,
+				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
 			}
 			var progress resumableUploadProgress
@@ -3783,7 +3783,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:    *environment,
 		RollbackOn5xx:  rollbackOn5xxPtr,
 		Workflows:      workflowDefs,
-		Sidecars:       sidecarDefs,
+		Companions:     sidecarDefs,
 		TrafficPercent: optTrafficPercent(*trafficPercent),
 		Reason:         annPtr(*reason),
 		Tag:            annPtr(*tag),
@@ -4093,6 +4093,108 @@ func cmdTrafficSet(args []string) int {
 	return 0
 }
 
+// TrafficPromotionReceipt is the machine-readable result of
+// `gregale traffic promote`. The nested deployment is the server's refreshed
+// row after the atomic sibling rebalance; the transition fields let automation
+// distinguish a real promotion from an idempotent retry.
+type TrafficPromotionReceipt struct {
+	Deployment      api.DeploymentResponse `json:"deployment"`
+	FromPercent     int                    `json:"from_percent"`
+	ToPercent       int                    `json:"to_percent"`
+	AlreadyPromoted bool                   `json:"already_promoted"`
+}
+
+// cmdTrafficPromote is the intent-level counterpart to traffic set. It keeps
+// the low-level percentage command available while making the common dark
+// deployment transition explicit and idempotent. The existing traffic PATCH
+// performs the atomic sibling rebalance, audit write, and gateway notification.
+func cmdTrafficPromote(args []string) int {
+	fs := newFlagSet("traffic promote", flag.ContinueOnError)
+	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
+	deployment := fs.String("deployment", "", "deployment id or vN revision to promote to 100% production traffic")
+	ifServing := fs.String("if-serving", "", "promote only if this deployment id or vN revision still serves 100% of production traffic")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
+	if strings.TrimSpace(*deployment) == "" {
+		PrintUsage(os.Stderr, "usage: gregale traffic promote [--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
+		return 1
+	}
+	var ifServingSet bool
+	fs.Visit(func(f *flag.Flag) { ifServingSet = ifServingSet || f.Name == "if-serving" })
+	if ifServingSet && !validDeploymentRef(*ifServing) {
+		return printErr("Traffic promote failed", fmt.Errorf("--if-serving requires a deployment id or vN revision"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	deploymentID, err := resolveDeploymentArg(ctx, client, *app, *deployment)
+	if err != nil {
+		return printErr("Traffic promote failed", err)
+	}
+	var servingID string
+	if ifServingSet {
+		resolved, resolveErr := resolveDeploymentArg(ctx, client, *app, *ifServing)
+		if resolveErr != nil {
+			return printErr("Traffic promote failed", resolveErr)
+		}
+		serving, readErr := client.GetDeployment(ctx, resolved)
+		if readErr != nil {
+			return printErr("Traffic promote failed", readErr)
+		}
+		servingID = serving.ID
+		if servingID == deploymentID {
+			return printErr("Traffic promote failed", fmt.Errorf("--if-serving must name a different deployment from --deployment"))
+		}
+	}
+	current, err := client.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return printErr("Traffic promote failed", err)
+	}
+	if current.Status != statusLive {
+		return printErr("Traffic promote failed", fmt.Errorf("deployment %s is %s; only live deployments can be promoted", deploymentLabel(current), current.Status))
+	}
+
+	receipt := TrafficPromotionReceipt{
+		Deployment:  current,
+		FromPercent: current.TrafficPercent,
+		ToPercent:   100,
+	}
+	if current.TrafficPercent == 100 {
+		receipt.AlreadyPromoted = true
+		if jsonOutput {
+			return jsonOut(writeJSON(receipt))
+		}
+		PrintOK(osStdout, "%s is already promoted at 100%% production traffic.", deploymentLabel(current))
+		return 0
+	}
+
+	var updated api.DeploymentResponse
+	if ifServingSet {
+		updated, err = client.PatchDeploymentTrafficIfServing(ctx, deploymentID, 100, servingID)
+	} else {
+		updated, err = client.PatchDeploymentsIdTraffic(ctx, deploymentID, 100)
+	}
+	if err != nil {
+		return printErr("Traffic promote failed", err)
+	}
+	if updated.TrafficPercent != 100 {
+		return printErr("Traffic promote failed", fmt.Errorf("deployment %s reports %d%% production traffic after promotion; expected 100%%", deploymentLabel(updated), updated.TrafficPercent))
+	}
+	receipt.Deployment = updated
+	receipt.ToPercent = updated.TrafficPercent
+	if jsonOutput {
+		return jsonOut(writeJSON(receipt))
+	}
+	PrintOK(osStdout, "Promoted %s: %d%% → %d%% production traffic.", deploymentLabel(updated), receipt.FromPercent, receipt.ToPercent)
+	return 0
+}
+
 // cmdTrafficStatus prints the live deployment weights that currently make up
 // an app's routing table. Read access is available on every plan; Free and
 // Hobby apps normally show one 100% row while Pro/Scale may show a split.
@@ -4149,16 +4251,18 @@ func cmdTrafficStatus(args []string) int {
 // cmdTraffic dispatches the implemented traffic leaves.
 func cmdTraffic(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic <set|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic <set|promote|status> [args]", "traffic")
 		return 1
 	}
 	switch args[0] {
 	case "set":
 		return cmdTrafficSet(args[1:])
+	case "promote":
+		return cmdTrafficPromote(args[1:])
 	case "status":
 		return cmdTrafficStatus(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale traffic <set|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic <set|promote|status> [args]", "traffic")
 		return 1
 	}
 }

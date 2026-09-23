@@ -49,7 +49,7 @@ func (s *server) dashboardDelete(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
 		// sessionAuth would have redirected; defensive 401.
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := middleware.VerifyAuthenticated(s.sessions, r, "delete", acct.ID); err != nil {
@@ -74,7 +74,7 @@ func (s *server) dashboardDelete(w http.ResponseWriter, r *http.Request) {
 func (s *server) dashboardRestore(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := middleware.VerifyAuthenticated(s.sessions, r, "restore", acct.ID); err != nil {
@@ -105,7 +105,7 @@ func (s *server) dashboardRestore(w http.ResponseWriter, r *http.Request) {
 func (s *server) dashboardExport(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	// Mirror the REST endpoint's ?include_secrets=false flag.
@@ -144,7 +144,7 @@ func (s *server) dashboardExport(w http.ResponseWriter, r *http.Request) {
 func (s *server) dashboardDPA(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if s.dpaPath == "" {
@@ -210,7 +210,7 @@ func acctViewFrom(acct state.Account) *dashboard.AccountView {
 func (s *server) dashboardRaiseOverageCap(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := middleware.VerifyAuthenticated(s.sessions, r, "raise_overage_cap", acct.ID); err != nil {

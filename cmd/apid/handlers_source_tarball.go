@@ -280,7 +280,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	sourceAccepted = true
 	uploadOutcome = "completed"
 
-	s.auditLocalTarballDeploy(r.Context(), acct, app, res, sidecar, spoolBytes, ann)
+	s.auditLocalTarballDeploy(r, acct, app, res, sidecar, spoolBytes, ann)
 
 	d, err := s.store.LatestDeployment(r.Context(), app.ID)
 	if err != nil {
@@ -306,7 +306,8 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 // (reason / tag / deployed_by / pr_number) when present. nil/zero
 // values are omitted from the map so pre-feature rows stay byte-
 // identical at the JSON layer.
-func (s *server) auditLocalTarballDeploy(ctx context.Context, acct state.Account, app state.App, res apidsource.EnqueueResult, sidecar sidecarPayload, sourceBytes int64, ann annotationForm) {
+func (s *server) auditLocalTarballDeploy(r *http.Request, acct state.Account, app state.App, res apidsource.EnqueueResult, sidecar sidecarPayload, sourceBytes int64, ann annotationForm) {
+	ctx := r.Context()
 	s.log.Info("local-tarball deployment enqueued",
 		"deployment", res.DeploymentID,
 		"app", app.ID,
@@ -353,4 +354,6 @@ func (s *server) auditLocalTarballDeploy(ctx context.Context, acct state.Account
 	// is "omit when zero" so pre-feature rows stay byte-identical.
 	mergeAnnotationAudit(data, ann)
 	s.audit.EmitAs(ctx, resolvedActor, "deploy.local_tarball", &acct.ID, mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.recordDeploymentActivity(ctx, r, acct, app, d,
+		map[string]any{"revision": d.Revision, "scope": d.Scope, "source": "local_tarball"})
 }

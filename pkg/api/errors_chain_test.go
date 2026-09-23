@@ -105,6 +105,7 @@ func TestStatusForCode_KnownCodes(t *testing.T) {
 		"step_up_required":              http.StatusInternalServerError, // not in StatusForCode switch
 		"app_concurrency_reached":       http.StatusTooManyRequests,
 		"app_maintenance_mode":          http.StatusServiceUnavailable,
+		"app_unavailable":               http.StatusServiceUnavailable,
 		"debug_regressions_unavailable": http.StatusServiceUnavailable,
 		"tenant_surfaces_not_enabled":   http.StatusServiceUnavailable,
 		"domain_not_verified":           http.StatusConflict,

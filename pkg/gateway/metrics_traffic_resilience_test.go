@@ -56,8 +56,8 @@ func TestTrafficResilienceSeriesExistBeforeAnyTraffic(t *testing.T) {
 		}
 	}
 	exhausted := gatherNamed(t, m.Registry(), "gateway_retry_exhausted_total")
-	if len(exhausted) != 6 {
-		t.Fatalf("retry exhausted series = %d, want all 6 reasons", len(exhausted))
+	if len(exhausted) != 8 {
+		t.Fatalf("retry exhausted series = %d, want all 8 reasons", len(exhausted))
 	}
 }
 
@@ -77,6 +77,7 @@ func TestEveryRetryReasonIsPreInstantiated(t *testing.T) {
 	for _, reason := range []string{
 		RetrySkipCommitted, RetrySkipNonIdempotent, RetrySkipNoTarget,
 		RetrySkipBudget, RetrySkipAttempts, RetrySkipBodyNotReplay,
+		RetrySkipIdempotency, RetrySkipAggregate,
 	} {
 		if !got[reason] {
 			t.Fatalf("reason %q has no pre-instantiated series; the loop can emit it", reason)

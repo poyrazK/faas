@@ -61,6 +61,9 @@ type server struct {
 	// cross-node coordination and never guards customer-intent state.
 	devSourceCacheMu sync.Mutex
 	domain           string // apps base domain for URLs
+	// companionImages is the operator-owned catalog behind preset-only
+	// companion declarations. Values are immutable OCI digest references.
+	companionImages map[string]string
 	// cliAuthURLBase is the public web origin used by the CLI device-code
 	// response. The public edge at this origin forwards /cli-auth to apid.
 	cliAuthURLBase string
@@ -631,6 +634,19 @@ func (s *server) WithCLIAuthURLBase(base string) *server {
 	return s
 }
 
+// WithCompanionImages attaches a defensive copy of the managed-companion
+// image catalog. Unknown keys remain inert because request validation uses the
+// closed preset vocabulary in pkg/api.
+func (s *server) WithCompanionImages(images map[string]string) *server {
+	s.companionImages = make(map[string]string, len(images))
+	for name, image := range images {
+		if preset, ok := api.NormalizeCompanionPreset(name); ok {
+			s.companionImages[string(preset)] = strings.TrimSpace(image)
+		}
+	}
+	return s
+}
+
 // WithEventsPlatform attaches the pkg/events.Platform
 // (issue #517 / PR-C / ADR-064). When non-nil, the deploy
 // handler emits wake.deploy_failed on the events table for
@@ -731,7 +747,7 @@ func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server 
 
 // WithGatewaydControlURL (ADR-093) attaches the loopback URL
 // apid uses to reach gatewayd-internal's control listener
-// (/v1/internal/apps/{slug}/routes). Default
+// (/v1/internal/apps/{slug}/routes and /streaming-cap). Default
 // http://127.0.0.1:9090 matches gatewayd-internal's default
 // control bind (see pkg/gateway/control.go ControlAddr);
 // production overrides via FAAS_GATEWAYD_CONTROL_URL when the
@@ -1224,6 +1240,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/orgs", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listOrgsForCaller)))
 	mux.HandleFunc("POST /v1/orgs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSharedOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrg)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgActivity)))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.patchOrg)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.softDeleteOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgMembers)))))
@@ -1891,6 +1908,7 @@ func (s *server) handler() http.Handler {
 	// the durable events row remains the recovery source.
 	mux.HandleFunc("POST /v1/events:publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.publishEvent)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventSubscriptions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createWorkflowRun)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getWorkflowRun))))
@@ -3085,7 +3103,7 @@ func (s *server) handler() http.Handler {
 	// dashboardAuthLimiter counts auth-failures, not every attempt
 	// here, and using it would either under-or-over-share. The
 	// limiter sits OUTSIDE sessionAuth so a 4th hit doesn't waste
-	// a cookie round-trip; the 429 body is the same plain-text
+	// a cookie round-trip; the 429 body is the same negotiated Problem
 	// shape AuthLimit emits so dashboards handle it identically.
 	mux.Handle("GET /dashboard/account/export", s.dashboardChain(
 		middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
@@ -3394,6 +3412,10 @@ func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {
 func (s *server) dashboardChain(h http.Handler) http.Handler {
 	// http.HandlerFunc is also http.Handler so middleware.RequestID
 	// accepts it directly. Build inside-out.
+	next := h
+	h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&dashboardProblemWriter{ResponseWriter: w, request: r}, r)
+	})
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(s.log)(h)
 	return h

@@ -393,6 +393,18 @@ type AppConfiguredResources struct {
 	CPUMillicores int `json:"cpu_millicores"`
 }
 
+type AppServiceBinding struct {
+	Binding string `json:"binding"`
+	Service string `json:"service"`
+}
+
+type ServiceBindingPolicy string
+
+const (
+	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
+	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+)
+
 // AppResponse is an app as returned by the API.
 // RepoResponse is one repository visible to the account's GitHub App
 // installation. Installation credentials are never returned.
@@ -479,6 +491,13 @@ type AppResponse struct {
 	// The DTO reuses the existing api.AppManifest (defined in
 	// appmanifest.go) so the wire shape stays a single source of truth.
 	Manifest AppManifest `json:"manifest"`
+	// ServiceBindings are repository-declared discovery edges. They do not
+	// change authorization under the account policy and become the outbound
+	// allowlist under the declared policy.
+	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	// ServiceBindingPolicy is the caller-side internal-service authorization
+	// policy returned by the API.
+	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -1541,6 +1560,42 @@ type OrgResponse struct {
 // OrgListResponse is the body of GET /v1/orgs. Sorted by slug.
 type OrgListResponse struct {
 	Orgs []OrgResponse `json:"orgs"`
+}
+
+// ActivityActorResponse is the captured identity shown beside one global
+// organization activity item.
+type ActivityActorResponse struct {
+	Type      string `json:"type"`
+	Label     string `json:"label"`
+	AccountID string `json:"account_id,omitempty"`
+}
+
+// ActivityResourceResponse identifies the primary affected infrastructure
+// object. ID can be absent for external resources such as domains.
+type ActivityResourceResponse struct {
+	Type  string `json:"type"`
+	ID    string `json:"id,omitempty"`
+	Label string `json:"label"`
+}
+
+// OrgActivityResponse is one display-ready organization activity fact.
+type OrgActivityResponse struct {
+	ID           string                   `json:"id"`
+	OccurredAt   string                   `json:"occurred_at"`
+	Kind         string                   `json:"kind"`
+	Summary      string                   `json:"summary"`
+	Actor        ActivityActorResponse    `json:"actor"`
+	Resource     ActivityResourceResponse `json:"resource"`
+	AppID        string                   `json:"app_id,omitempty"`
+	ProjectID    string                   `json:"project_id,omitempty"`
+	DeploymentID string                   `json:"deployment_id,omitempty"`
+	Data         json.RawMessage          `json:"data"`
+}
+
+// ListOrgActivityResponse is a newest-first keyset page.
+type ListOrgActivityResponse struct {
+	Items      []OrgActivityResponse `json:"items"`
+	NextBefore string                `json:"next_before,omitempty"`
 }
 
 // OrgMemberResponse is the wire shape for a single org membership row.

@@ -495,6 +495,11 @@ func TestArchiveStream_NilS3AndBucket_ServiceUnavailable(t *testing.T) {
 	if !strings.Contains(rec.body.String(), "log_archive_unconfigured") {
 		t.Errorf("body missing log_archive_unconfigured: %s", rec.body.String())
 	}
+	for _, internal := range []string{"gatewayd-internal", "archive-creds.json", "FAAS_LOG_ARCHIVE", "S3 client"} {
+		if strings.Contains(rec.body.String(), internal) {
+			t.Errorf("body leaked internal configuration term %q: %s", internal, rec.body.String())
+		}
+	}
 }
 
 // TestArchiveObjectKey pins the bucket-key layout. A

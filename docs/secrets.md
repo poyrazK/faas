@@ -25,3 +25,17 @@ rotate` to apply immediately. Gregale durably queues a configuration restart,
 destroys live VMs without snapshotting their old environment, and cold-boots a
 replacement with the current secret set. This restarts the app; in-process
 reload without restart is not yet supported.
+
+`gregale secrets list` reports delivery for each key:
+
+- `pending` means the current version has not yet reached a successfully
+  started runtime.
+- `delivered` means that exact version was staged into the runtime identified
+  by the returned wake and instance IDs.
+- `failed` means a runtime start attempted that version and failed. A later
+  successful wake changes it to `delivered`.
+
+Delivery is version-fenced. If a rotation races with a wake, completion of the
+older wake cannot mark the newer value delivered. The API exposes only the
+opaque version, status, timestamps, and runtime correlation IDs; it never
+places plaintext or ciphertext in delivery metadata or audit events.

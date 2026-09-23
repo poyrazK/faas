@@ -2,10 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
 import type { WorkloadDependency } from './WorkloadDependency.js';
 /**
- * One entry in the deploy request's `sidecars` array
- * (issue #463 / ADR-068). Up to 2 sidecars per app (1 init
+ * One entry in the deploy request's preferred `companions` array
+ * (legacy name: `sidecars`). Up to 2 helpers per app (1 init
  * + 1 sidecar; the array is type-uniqueness + 2-capped at
  * the schema layer via migration 00095's CHECK constraint).
  * Stateless only — stateful base images (Postgres, Redis,
@@ -21,8 +22,10 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * - `name` matches RFC 1123 label (lowercase alphanumeric
  * + dash, 1..63 chars, starts with [a-z0-9]). Unique
  * within a single request.
- * - `image` is the digest-pinned OCI reference. Tag
- * references rejected. State images rejected.
+ * - `preset` selects a platform-managed helper. A preset may omit
+ * `image`; apid resolves an operator-pinned immutable digest.
+ * - `image` is required for a custom helper and must be a
+ * digest-pinned OCI reference. Tag references are rejected.
  * - `type` ∈ {`init`, `sidecar`}. At most one of each per
  * deployment.
  * - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
@@ -32,6 +35,8 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * `EnvValueMaxBytes`. Plaintext values NEVER appear in
  * any log, audit, or error.
  * - `port` ∈ {0, 1..65535}. 0 = absent.
+ * - `primary_ingress` routes the application's normal hostname and
+ * custom domains through this long-running helper. It requires port.
  * - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
  * - `scratch_mb` ∈ {0, 16..512}. 0 = platform default; explicit values cap the sidecar's writable `/tmp` tmpfs.
  * - `cpu_millicores` ∈ {0, 250, 500, 1000}. 0 = inherit app CPU quota.
@@ -41,6 +46,10 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * (`failure_class=user_error`) and essential long-running
  * sidecars restart-loop. If false, the failure is logged
  * and the other workloads continue.
+ * - `startup_probe` optionally replaces the image's baked OCI
+ * `HEALTHCHECK` for this workload. It uses the exec-style
+ * `AppManifestHealthcheck` shape; set `test` to [`NONE`] to
+ * explicitly disable the image probe.
  * - `depends_on` optionally gates this workload on `main` or
  * another sidecar. Conditions are `started`, `healthy`, and
  * `completed_successfully`; omitted condition means `started`.
@@ -56,7 +65,11 @@ export type Sidecar = {
   /**
    * Digest-pinned OCI reference (repo@sha256:...). Tag references rejected with 400 `sidecar_invalid_image`.
    */
-  image: string;
+  image?: string;
+  /**
+   * Platform-managed companion preset. The installation must configure an immutable image digest.
+   */
+  preset?: 'opentelemetry' | 'sentry' | 'datadog-dogstatsd';
   /**
    * `init` runs once before the main workload (DB migrator shape). `sidecar` runs alongside (metrics scraper shape).
    */
@@ -73,6 +86,10 @@ export type Sidecar = {
    * Listen port. 0 = absent / fall back to image default.
    */
   port?: number;
+  /**
+   * Route the app's primary public hostname through this long-running companion. Requires an explicit port.
+   */
+  primary_ingress?: boolean;
   /**
    * Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API.
    */
@@ -93,6 +110,7 @@ export type Sidecar = {
    * Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained.
    */
   essential?: boolean;
+  startup_probe?: AppManifestHealthcheck;
   /**
    * Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running sidecars.
    */

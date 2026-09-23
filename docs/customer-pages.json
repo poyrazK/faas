@@ -15,6 +15,7 @@
     {"path": "build/source-ref", "source": "docs/source-ref.md"},
     {"path": "builds", "source": "docs/build.md"},
     {"path": "cli", "source": "docs/cli-reference.md"},
+    {"path": "companions", "source": "docs/companions.md"},
     {"path": "custom-domains", "source": "docs/domains.md"},
     {"path": "crons", "source": "docs/event-driven.md"},
     {"path": "deploy-from-github", "source": "docs/deploys.md"},
