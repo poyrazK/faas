@@ -758,9 +758,9 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// (pre-PR-D default). Non-empty → waitReady does HTTP GET
 	// <HealthcheckPath> against <HostIP>:8080 and accepts 2xx as ready.
 	if spec.SkipReady {
-		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, nil)
+		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil)
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.ExecutionMode, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, nil, &breakdown); err != nil {
+	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.ExecutionMode, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -769,8 +769,8 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	return nil
 }
 
-func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest) error {
-	return v.boot(ctx, l, cfg, true, "", 0, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, jobManifest, nil)
+func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest) error {
+	return v.boot(ctx, l, cfg, true, "", 0, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, nil)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -792,10 +792,10 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
-	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, "", nil, nil, nil, "", nil, nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, "", nil, nil, nil, "", false, nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
@@ -814,7 +814,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
 	provisionedAt := time.Now()
-	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP); err != nil {
+	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 	if jobManifest != nil {
@@ -979,8 +979,8 @@ func (v *JailerVMM) preparesWakeStateBeforeBoot() bool { return true }
 // restore breakdown's stage window on the production SSD nodes. The
 // per-file writers are shared with the public Stage* methods, which keep
 // their single-file mount for the legacy Manager path and for tests.
-func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string) error {
-	writers, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP)
+func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) error {
+	writers, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
 	if err != nil {
 		return err
 	}
@@ -1012,9 +1012,9 @@ type preBootFileWriter struct {
 // preBootFileWriters validates inputs and projects byte caps BEFORE any
 // mount, so a rejected payload never costs a loop mount — the same posture
 // the individual Stage* methods always had. Order is preserved from the
-// previous implementation: secrets, API env, resolver, sidecar env
-// overrides, main manifest, roster.
-func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string) ([]preBootFileWriter, error) {
+// previous implementation: secrets, API env, resolver, app-task marker,
+// sidecar env overrides, main manifest, roster.
+func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) ([]preBootFileWriter, error) {
 	var writers []preBootFileWriter
 	if len(secretsEnvJSON) > 0 {
 		writers = append(writers, preBootFileWriter{what: "stage secrets.env", write: func(mp string) error {
@@ -1033,6 +1033,11 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		}
 		writers = append(writers, preBootFileWriter{what: "stage service resolver", write: func(mp string) error {
 			return writeServiceDiscoveryResolver(mp, ip)
+		}})
+	}
+	if appTask {
+		writers = append(writers, preBootFileWriter{what: "stage app task marker", write: func(mp string) error {
+			return writeDriveFile(mp, appTaskMarkerPath, []byte(`{"kind":"app_task","version":1}`), 0o400, "app-task.json")
 		}})
 	}
 	if len(workloads) > 1 {
@@ -1129,6 +1134,8 @@ func writeWorkloadEnv(mountRoot, workloadName string, blob []byte) error {
 }
 
 const serviceDiscoveryResolverPath = "upper/etc/resolv.conf"
+
+const appTaskMarkerPath = "upper/etc/faas/app-task.json"
 
 func parseServiceDiscoveryIP(bridgeIP string) (netip.Addr, error) {
 	ip, err := netip.ParseAddr(strings.TrimSpace(bridgeIP))
@@ -1376,7 +1383,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
-	if err := v.stagePreBootFiles(l.Instance, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP); err != nil {
+	if err := v.stagePreBootFiles(l.Instance, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 	tPreBootFiles := time.Now()
