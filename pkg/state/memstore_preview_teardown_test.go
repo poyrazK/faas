@@ -219,6 +219,54 @@ func TestMemStore_SetPreviewPrState_PreviewOnly(t *testing.T) {
 	}
 }
 
+func TestMemStore_ClosePRPreviewStartsFixedGraceIdempotently(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct := seedPreviewAccount(t, m, "test-close-preview@example.com")
+	now := time.Now().UTC()
+	prev := mustCreatePreview(t, m, acct, "demo", "pr-close-demo", 17,
+		PreviewPrStateOpen, now.Add(7*24*time.Hour))
+	deadline := now.Add(PRPreviewClosedGrace)
+
+	closed, err := m.ClosePRPreview(ctx, prev.ID, deadline)
+	if err != nil {
+		t.Fatalf("ClosePRPreview: %v", err)
+	}
+	if closed.PreviewPrState != PreviewPrStateClosed || closed.PreviewExpiresAt == nil || !closed.PreviewExpiresAt.Equal(deadline) {
+		t.Fatalf("closed preview = state %q expiry %v, want closed at %v", closed.PreviewPrState, closed.PreviewExpiresAt, deadline)
+	}
+
+	// A webhook redelivery may arrive after some of the grace period has
+	// elapsed; it must not restart the clock.
+	replayDeadline := deadline.Add(time.Hour)
+	replayed, err := m.ClosePRPreview(ctx, prev.ID, replayDeadline)
+	if err != nil {
+		t.Fatalf("ClosePRPreview replay: %v", err)
+	}
+	if replayed.PreviewExpiresAt == nil || !replayed.PreviewExpiresAt.Equal(deadline) {
+		t.Fatalf("replayed close expiry = %v, want original deadline %v", replayed.PreviewExpiresAt, deadline)
+	}
+}
+
+func TestMemStore_ClosePRPreviewCannotReviveStaleOrDeveloperPreview(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acct := seedPreviewAccount(t, m, "test-close-preview-guard@example.com")
+	now := time.Now().UTC()
+	stale := mustCreatePreview(t, m, acct, "demo", "pr-stale-close", 18, PreviewPrStateStale, now.Add(time.Hour))
+	if _, err := m.ClosePRPreview(ctx, stale.ID, now.Add(PRPreviewClosedGrace)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ClosePRPreview(stale) = %v, want ErrNotFound", err)
+	}
+	torn := mustCreatePreview(t, m, acct, "demo", "pr-torn-close", 19, PreviewPrStateTornDown, now.Add(time.Hour))
+	if _, err := m.ClosePRPreview(ctx, torn.ID, now.Add(PRPreviewClosedGrace)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ClosePRPreview(torn_down) = %v, want ErrNotFound", err)
+	}
+	dev := mustCreatePreview(t, m, acct, "demo", "dev-close", 0, PreviewPrStateOpen, now.Add(time.Hour))
+	if _, err := m.ClosePRPreview(ctx, dev.ID, now.Add(PRPreviewClosedGrace)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ClosePRPreview(developer preview) = %v, want ErrNotFound", err)
+	}
+}
+
 func TestMemStore_SetPreviewPrState_RejectsProductionApp(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()

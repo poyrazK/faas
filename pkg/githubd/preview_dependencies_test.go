@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -122,6 +123,7 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	if _, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(43, strings.Repeat("c", 40))); err != nil {
 		t.Fatalf("open sibling PR #43: %v", err)
 	}
+	closeStarted := time.Now()
 	closed, err := svc.handlePullRequest(ctx, pullRequestClosedBody(42, strings.Repeat("b", 40)))
 	if err != nil || len(closed.BuildIDs) != 0 {
 		t.Fatalf("close PR #42 = (%+v, %v)", closed, err)
@@ -130,6 +132,7 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	if err != nil || !set.Closed {
 		t.Fatalf("closed preview revision set = (%+v, %v)", set, err)
 	}
+	var closeDeadline *time.Time
 	for _, pr := range []int{42, 43} {
 		for _, parentSlug := range []string{"db", "worker", "demo-app"} {
 			preview, err := rig.mem.AppBySlug(ctx, fmt.Sprintf("pr-%d-%s", pr, parentSlug))
@@ -142,6 +145,17 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 			}
 			if preview.PreviewPrState != want {
 				t.Errorf("PR #%d %s state = %q, want %q", pr, parentSlug, preview.PreviewPrState, want)
+			}
+			if pr == 42 {
+				if preview.PreviewExpiresAt == nil || preview.PreviewExpiresAt.Before(closeStarted.Add(state.PRPreviewClosedGrace-time.Second)) ||
+					preview.PreviewExpiresAt.After(time.Now().Add(state.PRPreviewClosedGrace+time.Second)) {
+					t.Errorf("PR #%d %s expiry = %v, want close time + %s", pr, parentSlug, preview.PreviewExpiresAt, state.PRPreviewClosedGrace)
+				} else if closeDeadline == nil {
+					deadline := *preview.PreviewExpiresAt
+					closeDeadline = &deadline
+				} else if !preview.PreviewExpiresAt.Equal(*closeDeadline) {
+					t.Errorf("PR #%d %s expiry = %v, want shared close deadline %v", pr, parentSlug, preview.PreviewExpiresAt, closeDeadline)
+				}
 			}
 		}
 	}
