@@ -523,6 +523,8 @@ export type { PreviewCreatedWebhookPayload } from './models/PreviewCreatedWebhoo
 export type { PreviewProductionChangesResponse } from './models/PreviewProductionChangesResponse.js';
 export type { PreviewResourceLinksResponse } from './models/PreviewResourceLinksResponse.js';
 export type { PreviewResourceResponse } from './models/PreviewResourceResponse.js';
+export type { PreviewEnvironmentMemberResponse } from './models/PreviewEnvironmentMemberResponse.js';
+export type { PreviewEnvironmentStatusResponse } from './models/PreviewEnvironmentStatusResponse.js';
 export type { PreviewServiceCallsPolicy } from './models/PreviewServiceCallsPolicy.js';
 export type { PrewarmIntentResponse } from './models/PrewarmIntentResponse.js';
 export type { PrewarmRequest } from './models/PrewarmRequest.js';

@@ -4,22 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/previewset"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type previewMemberStatus struct {
-	AppID            string
-	Slug             string
-	PreviewOfSlug    string
-	WorkloadName     string
-	AppStatus        string
-	PreviewState     string
-	DeploymentStatus string
-}
+type previewMemberStatus = previewset.Member
 
 type previewSetCheck struct {
 	Phase          githubdgrpc.CheckPhase
@@ -145,7 +137,7 @@ func loadPRPreviewMembers(ctx context.Context, pool *pgxpool.Pool, rootAppID str
 		       coalesce(a.slug, ''), coalesce(a.preview_of_slug, ''),
 		       coalesce(nullif(a.workload_name, ''), a.slug, expected.app_id),
 		       coalesce(a.status, 'missing'), coalesce(a.preview_pr_state, ''),
-		       coalesce(d.status, 'missing')
+		       coalesce(d.id::text, ''), coalesce(d.status, 'missing')
 		from unnest($1::text[]) with ordinality as expected(app_id, ordinal)
 		left join apps root on root.id = $3::uuid
 		left join apps a on a.id = expected.app_id::uuid
@@ -166,7 +158,7 @@ func loadPRPreviewMembers(ctx context.Context, pool *pgxpool.Pool, rootAppID str
 	for rows.Next() {
 		var member previewMemberStatus
 		if err := rows.Scan(&member.AppID, &member.Slug, &member.PreviewOfSlug, &member.WorkloadName,
-			&member.AppStatus, &member.PreviewState, &member.DeploymentStatus); err != nil {
+			&member.AppStatus, &member.PreviewState, &member.DeploymentID, &member.DeploymentStatus); err != nil {
 			return nil, fmt.Errorf("githubd: scan PR preview member: %w", err)
 		}
 		members = append(members, member)
@@ -181,58 +173,15 @@ func loadPRPreviewMembers(ctx context.Context, pool *pgxpool.Pool, rootAppID str
 // precedence over a live root; no event delivery order can make a partial
 // environment green. Only deployments for the recorded head reach this input.
 func aggregatePRPreviewMembers(prNumber int, rootAppID string, members []previewMemberStatus) previewSetCheck {
-	check := previewSetCheck{Phase: githubdgrpc.CheckPhaseBuilding}
-	if len(members) == 0 {
-		check.Phase = githubdgrpc.CheckPhaseFailed
-		check.Summary = fmt.Sprintf("Preview PR #%d has no recorded workloads.", prNumber)
-		return check
-	}
-	ready := 0
-	waiting := make([]string, 0, 3)
-	failed := ""
-	for _, member := range members {
-		if member.AppID == rootAppID {
-			check.RootSlug = member.Slug
-			check.RootParentSlug = member.PreviewOfSlug
-		}
-		name := strings.Join(strings.Fields(member.WorkloadName), " ")
-		if name == "" {
-			name = member.AppID
-		}
-		switch {
-		case (member.AppStatus != string(state.AppActive) && member.AppStatus != string(state.AppEvictedCold)) || member.PreviewState != state.PreviewPrStateOpen:
-			if failed == "" {
-				failed = fmt.Sprintf("%s is unavailable", name)
-			}
-		case member.DeploymentStatus == string(state.DeployFailed) || member.DeploymentStatus == string(state.DeployCancelled) || member.DeploymentStatus == string(state.DeploySuperseded):
-			if failed == "" {
-				failed = fmt.Sprintf("%s deployment %s", name, member.DeploymentStatus)
-			}
-		case member.DeploymentStatus == string(state.DeployLive):
-			ready++
-		case member.DeploymentStatus == "missing" || member.DeploymentStatus == string(state.DeployPending) ||
-			member.DeploymentStatus == string(state.DeployBuilding) || member.DeploymentStatus == string(state.DeployImaging) ||
-			member.DeploymentStatus == string(state.DeploySnapshotting):
-			if len(waiting) < 3 {
-				waiting = append(waiting, name)
-			}
-		default:
-			if failed == "" {
-				failed = fmt.Sprintf("%s has unknown deployment status", name)
-			}
-		}
-	}
-	if failed != "" {
-		check.Phase = githubdgrpc.CheckPhaseFailed
-		check.Summary = fmt.Sprintf("Preview PR #%d failed: %s. %d/%d workloads live.", prNumber, failed, ready, len(members))
-		return check
-	}
-	if ready == len(members) {
+	result := previewset.Evaluate(prNumber, rootAppID, members)
+	check := previewSetCheck{Summary: result.Summary, RootSlug: result.RootSlug, RootParentSlug: result.RootParentSlug}
+	switch result.Phase {
+	case previewset.PhaseLive:
 		check.Phase = githubdgrpc.CheckPhaseLive
-		check.Summary = fmt.Sprintf("Preview PR #%d live: all %d workloads reached this commit.", prNumber, ready)
-		return check
+	case previewset.PhaseFailed:
+		check.Phase = githubdgrpc.CheckPhaseFailed
+	default:
+		check.Phase = githubdgrpc.CheckPhaseBuilding
 	}
-	check.Summary = fmt.Sprintf("Preview PR #%d building: %d/%d workloads live; waiting for %s.",
-		prNumber, ready, len(members), strings.Join(waiting, ", "))
 	return check
 }

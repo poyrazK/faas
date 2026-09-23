@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/previewset"
 )
 
 // PRPreviewSet is the current, exact workload set for one GitHub pull request.
@@ -30,10 +31,25 @@ type PRPreviewSetStore interface {
 	GetPRPreviewSet(context.Context, int64, string, int) (PRPreviewSet, error)
 }
 
+// PRPreviewEnvironment is a current-head snapshot, including the latest
+// preview deployment for that commit for each expected workload.
+type PRPreviewEnvironment struct {
+	Set     PRPreviewSet
+	Members []previewset.Member
+}
+
+// PRPreviewEnvironmentReader is separate from Store so non-preview callers
+// do not need to implement a customer-facing projection.
+type PRPreviewEnvironmentReader interface {
+	PRPreviewEnvironmentByRoot(context.Context, string) (PRPreviewEnvironment, error)
+}
+
 var (
-	_             PRPreviewSetStore = (*PgStore)(nil)
-	_             PRPreviewSetStore = (*MemStore)(nil)
-	previewSetSHA                   = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+	_             PRPreviewSetStore          = (*PgStore)(nil)
+	_             PRPreviewSetStore          = (*MemStore)(nil)
+	_             PRPreviewEnvironmentReader = (*PgStore)(nil)
+	_             PRPreviewEnvironmentReader = (*MemStore)(nil)
+	previewSetSHA                            = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 )
 
 func validatePRPreviewSet(set PRPreviewSet) error {
@@ -132,6 +148,62 @@ func (s *PgStore) GetPRPreviewSet(ctx context.Context, installationID int64, rep
 	return set, nil
 }
 
+func (s *PgStore) PRPreviewEnvironmentByRoot(ctx context.Context, rootAppID string) (PRPreviewEnvironment, error) {
+	if _, err := uuid.Parse(rootAppID); err != nil {
+		return PRPreviewEnvironment{}, ErrNotFound
+	}
+	rows, err := s.pool.Query(ctx, `
+		with selected as (
+			select installation_id, repo_full_name, pr_number, commit_sha, root_app_id,
+			       member_app_ids, closed_at is not null as closed
+			from pr_preview_sets where root_app_id = $1::uuid
+			order by updated_at desc limit 1
+		)
+		select selected.installation_id, selected.repo_full_name, selected.pr_number,
+		       selected.commit_sha, selected.closed, expected.app_id,
+		       coalesce(a.slug, ''), coalesce(a.preview_of_slug, ''),
+		       coalesce(nullif(a.workload_name, ''), a.slug, expected.app_id),
+		       coalesce(a.status, 'missing'), coalesce(a.preview_pr_state, ''),
+		       coalesce(d.id::text, ''), coalesce(d.status, 'missing')
+		from selected
+		cross join lateral unnest(selected.member_app_ids) with ordinality as expected(app_id, ordinal)
+		left join apps root on root.id = selected.root_app_id
+		left join apps a on a.id = expected.app_id::uuid
+		  and a.account_id = root.account_id
+		  and a.project_id is not distinct from root.project_id
+		  and a.preview_pr_number = selected.pr_number
+		left join lateral (
+			select id, status from deployments
+			where app_id = a.id and kind = 'preview' and commit_sha = selected.commit_sha
+			order by created_at desc, id desc limit 1
+		) d on true
+		order by expected.ordinal`, rootAppID)
+	if err != nil {
+		return PRPreviewEnvironment{}, fmt.Errorf("state: load PR preview environment: %w", err)
+	}
+	defer rows.Close()
+	var environment PRPreviewEnvironment
+	environment.Members = []previewset.Member{}
+	for rows.Next() {
+		var member previewset.Member
+		if err := rows.Scan(&environment.Set.InstallationID, &environment.Set.RepoFullName,
+			&environment.Set.PRNumber, &environment.Set.CommitSHA, &environment.Set.Closed,
+			&member.AppID, &member.Slug, &member.PreviewOfSlug, &member.WorkloadName,
+			&member.AppStatus, &member.PreviewState, &member.DeploymentID, &member.DeploymentStatus); err != nil {
+			return PRPreviewEnvironment{}, fmt.Errorf("state: scan PR preview environment: %w", err)
+		}
+		environment.Members = append(environment.Members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return PRPreviewEnvironment{}, fmt.Errorf("state: iterate PR preview environment: %w", err)
+	}
+	if len(environment.Members) == 0 {
+		return PRPreviewEnvironment{}, ErrNotFound
+	}
+	environment.Set.RootAppID = rootAppID
+	return environment, nil
+}
+
 func (m *MemStore) PutPRPreviewSet(_ context.Context, set PRPreviewSet) error {
 	if err := validatePRPreviewSet(set); err != nil {
 		return err
@@ -181,4 +253,53 @@ func (m *MemStore) GetPRPreviewSet(_ context.Context, installationID int64, repo
 	}
 	set.MemberAppIDs = append([]string(nil), set.MemberAppIDs...)
 	return set, nil
+}
+
+func (m *MemStore) PRPreviewEnvironmentByRoot(_ context.Context, rootAppID string) (PRPreviewEnvironment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var set PRPreviewSet
+	found := false
+	for _, candidate := range m.previewSets {
+		if candidate.RootAppID == rootAppID {
+			set, found = candidate, true
+			break
+		}
+	}
+	if !found {
+		return PRPreviewEnvironment{}, ErrNotFound
+	}
+	root, rootExists := m.apps[rootAppID]
+	environment := PRPreviewEnvironment{Set: set, Members: make([]previewset.Member, 0, len(set.MemberAppIDs))}
+	environment.Set.MemberAppIDs = append([]string(nil), set.MemberAppIDs...)
+	for _, id := range set.MemberAppIDs {
+		member := previewset.Member{AppID: id, WorkloadName: id, AppStatus: "missing", DeploymentStatus: "missing"}
+		app, ok := m.apps[id]
+		if ok && rootExists && app.AccountID == root.AccountID && app.ProjectID == root.ProjectID && app.PreviewPrNumber == set.PRNumber {
+			member.Slug = app.Slug
+			member.PreviewOfSlug = app.PreviewOfSlug
+			member.WorkloadName = app.WorkloadName
+			if member.WorkloadName == "" {
+				member.WorkloadName = app.Slug
+			}
+			member.AppStatus = string(app.Status)
+			member.PreviewState = app.PreviewPrState
+			var latest Deployment
+			for _, deployment := range m.deployments {
+				if deployment.AppID != id || deployment.Kind != DeploymentKindPreview || deployment.CommitSHA != set.CommitSHA {
+					continue
+				}
+				if latest.ID == "" || deployment.CreatedAt.After(latest.CreatedAt) ||
+					(deployment.CreatedAt.Equal(latest.CreatedAt) && deployment.ID > latest.ID) {
+					latest = deployment
+				}
+			}
+			if latest.ID != "" {
+				member.DeploymentID = latest.ID
+				member.DeploymentStatus = string(latest.Status)
+			}
+		}
+		environment.Members = append(environment.Members, member)
+	}
+	return environment, nil
 }
