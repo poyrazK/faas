@@ -649,6 +649,13 @@ jobs:
           printf '%s\n' "$PKGS"
           go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
 
+      # cmd/githubd normally runs in the pure-Go shard, where its pgtest
+      # integration cases skip without DATABASE_URL. Exercise the PR set SQL
+      # projection here so query regressions cannot pass a green PR build.
+      - name: preview set PostgreSQL integration
+        if: ${{ matrix.id == 'b' }}
+        run: go test -count=1 -timeout=5m ./cmd/githubd -run '^TestLoadPRPreviewSetCheck_'
+
       - name: pkg/state coverage gate
         if: ${{ matrix.state_coverage }}
         run: make check-state-coverage COVERFILE=coverage/${{ matrix.coverage_file }}
