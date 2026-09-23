@@ -30,9 +30,11 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		       coalesce(d.rollout_state, ''), coalesce(d.rollout_aborted_reason, ''),
 		       coalesce(d.canary_step, 0), coalesce(d.canary_total_steps, 0), coalesce(d.traffic_percent, 0),
 		       coalesce(d.reason, ''), coalesce(d.tag, ''), coalesce(nullif(d.deployed_by, ''), d.pusher_login, ''), coalesce(d.pr_number, 0),
-		       coalesce(parent.github_repo_full_name, a.github_repo_full_name, p.repo_full_name, ''),
+		       coalesce(preview_set.repo_full_name, nullif(parent.github_repo_full_name, ''),
+		                nullif(a.github_repo_full_name, ''), nullif(p.repo_full_name, ''), ''),
 		       a.slug, coalesce(a.preview_of_slug, ''), coalesce(a.preview_pr_number, 0),
-		       coalesce(parent.github_install_id, a.github_install_id, 0)
+		       coalesce(preview_set.installation_id, nullif(parent.github_install_id, 0),
+		                nullif(a.github_install_id, 0), nullif(p.install_id, 0), 0)
 		from deployments d
 		join apps a on a.id = d.app_id
 		left join projects p on p.id = a.project_id
@@ -40,6 +42,12 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		  on parent.account_id = a.account_id
 		 and parent.slug = a.preview_of_slug
 		 and parent.deleted_at is null
+		left join lateral (
+			select installation_id, repo_full_name from pr_preview_sets
+			where pr_number = a.preview_pr_number and closed_at is null
+			  and member_app_ids @> array[a.id::text]
+			order by updated_at desc limit 1
+		) preview_set on true
 		where d.id = $1`, deploymentID).Scan(
 		&commitSHA, &kind, &status, &failure, &scope, &rolloutState, &rolloutAbortedReason,
 		&canaryStep, &canaryTotalSteps, &trafficPercent, &reason, &tag, &deployedBy, &prNumber,
@@ -126,6 +134,22 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		summary += " " + failure
 	}
 	if kind == string(state.DeploymentKindPreview) || previewOf != "" {
+		var setCheck previewSetCheck
+		if previewPRNumber > 0 && prNumber > 0 {
+			setCheck, err = loadPRPreviewSetCheck(ctx, pool, installationID, repo, prNumber, commitSHA)
+			if err != nil {
+				return err
+			}
+			if !setCheck.CurrentHead {
+				// A stale deployment (or a preview from before revision sets were
+				// recorded) must not overwrite the current PR-level check.
+				return nil
+			}
+			phase, summary = setCheck.Phase, setCheck.Summary
+			if setCheck.RootSlug != "" {
+				environmentURL = fmt.Sprintf("https://%s.%s", setCheck.RootSlug, domain)
+			}
+		}
 		if err := checks.WritePreviewCheckForInstallation(ctx, installationID, repo, commitSHA, phase,
 			environmentURL, summary); err != nil {
 			return err
@@ -135,9 +159,17 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 			// best-effort companion: a missing Issues:write grant must not
 			// prevent the Check Run worker from making progress.
 			previewURL := "https://" + appSlug + "." + domain
+			commentSlug, commentParent, commentStatus := appSlug, previewOf, status
+			if setCheck.CurrentHead && setCheck.RootSlug != "" {
+				// Every sibling updates the same root comment with the aggregate
+				// result. A live root must not advertise a complete environment
+				// while a dependency is still building or has failed.
+				previewURL = environmentURL
+				commentSlug, commentParent, commentStatus = setCheck.RootSlug, setCheck.RootParentSlug, setCheck.CommentSummary
+			}
 			dashboardBase := "https://" + domain
-			marker := "<!-- gregale-preview:" + appSlug + " -->"
-			body := fmt.Sprintf("%s\n### Gregale preview — %s\n\nPreview status: **%s**.\n\n[Open preview](%s) · [Deployment details](%s/dashboard/apps/%s/deployments/%s) · [Deployment logs](%s/v1/deployments/%s/logs) · [Destroy preview](%s/dashboard/apps/%s/preview/%s/destroy)\n\nCommit: `%s`", marker, status, status, previewURL, dashboardBase, appSlug, deploymentID, dashboardBase, deploymentID, dashboardBase, previewOf, appSlug, commitSHA)
+			marker := "<!-- gregale-preview:" + commentSlug + " -->"
+			body := fmt.Sprintf("%s\n### Gregale preview\n\nPreview status: **%s**\n\n[Open preview](%s) · [Latest workload deployment](%s/dashboard/apps/%s/deployments/%s) · [Deployment logs](%s/v1/deployments/%s/logs) · [Destroy preview](%s/dashboard/apps/%s/preview/%s/destroy)\n\nCommit: `%s`", marker, commentStatus, previewURL, dashboardBase, appSlug, deploymentID, dashboardBase, deploymentID, dashboardBase, commentParent, commentSlug, commitSHA)
 			if deployedByText != "" {
 				body += "\nDeployed by: **" + deployedByText + "**"
 			}

@@ -161,6 +161,7 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
+	previewSets               map[string]PRPreviewSet
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
 
 	privateNetworkAttachmentNodeStatuses map[string]PrivateNetworkAttachmentNodeStatus

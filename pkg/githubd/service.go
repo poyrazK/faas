@@ -1340,6 +1340,11 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		if closeErr := s.closePRDependencies(ctx, parentApp, ev.Number); closeErr != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: close PR preview siblings: %w", closeErr)
 		}
+		if sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore); ok {
+			if closeErr := sets.ClosePRPreviewSet(ctx, install.InstallationID, ev.Repository.FullName, ev.Number); closeErr != nil {
+				return reconcile.Result{}, fmt.Errorf("githubd: close PR preview set: %w", closeErr)
+			}
+		}
 		if _, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal); lookupErr != nil {
 			if errors.Is(lookupErr, state.ErrNotFound) {
 				// GitHub can deliver a close after retention already removed the
@@ -1645,6 +1650,24 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			result.Added = append(result.Added, preview)
 		}
 		toBuild = append(toBuild, created)
+		sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore)
+		if !ok {
+			return result, fmt.Errorf("githubd: preview store does not support revision sets")
+		}
+		memberIDs := make([]string, 0, len(toBuild))
+		for _, preview := range toBuild {
+			memberIDs = append(memberIDs, preview.ID)
+		}
+		if err := sets.PutPRPreviewSet(ctx, state.PRPreviewSet{
+			InstallationID: install.InstallationID,
+			RepoFullName:   ev.Repository.FullName,
+			PRNumber:       ev.Number,
+			CommitSHA:      ev.PullRequest.HeadSHA,
+			RootAppID:      created.ID,
+			MemberAppIDs:   memberIDs,
+		}); err != nil {
+			return result, fmt.Errorf("githubd: record PR preview set: %w", err)
+		}
 		project := state.Project{
 			AccountID:        binding.AccountID,
 			RepoFullName:     ev.Repository.FullName,

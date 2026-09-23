@@ -78,6 +78,10 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 		t.Fatalf("first result = %+v, want three preview apps and builds", first)
 	}
 	assertBuilds(0, []string{"db", "worker", "api"}, 42)
+	set, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("a", 40) || len(set.MemberAppIDs) != 3 || set.RootAppID != first.Added[0].ID {
+		t.Fatalf("first preview revision set = (%+v, %v)", set, err)
+	}
 	for _, slug := range []string{"pr-42-db", "pr-42-worker", "pr-42-demo-app"} {
 		if _, err := rig.mem.AppBySlug(ctx, slug); err != nil {
 			t.Fatalf("missing preview %s: %v", slug, err)
@@ -106,6 +110,10 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 		t.Fatalf("synchronize PR #42 = (%+v, %v)", second, err)
 	}
 	assertBuilds(3, []string{"db", "worker", "api"}, 42)
+	set, err = rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("b", 40) || len(set.MemberAppIDs) != 3 || set.Closed {
+		t.Fatalf("synchronized preview revision set = (%+v, %v)", set, err)
+	}
 	for i := 0; i < 3; i++ {
 		if enqueuer.specs[i].App.ID != enqueuer.specs[i+3].App.ID {
 			t.Errorf("retry changed app ID for %s", enqueuer.specs[i].App.WorkloadName)
@@ -117,6 +125,10 @@ func TestHandlePullRequest_ProvisionsOnlyTransitiveDependencies(t *testing.T) {
 	closed, err := svc.handlePullRequest(ctx, pullRequestClosedBody(42, strings.Repeat("b", 40)))
 	if err != nil || len(closed.BuildIDs) != 0 {
 		t.Fatalf("close PR #42 = (%+v, %v)", closed, err)
+	}
+	set, err = rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || !set.Closed {
+		t.Fatalf("closed preview revision set = (%+v, %v)", set, err)
 	}
 	for _, pr := range []int{42, 43} {
 		for _, parentSlug := range []string{"db", "worker", "demo-app"} {
@@ -191,6 +203,9 @@ func TestHandlePullRequest_DependencyQuotaStopsBuilds(t *testing.T) {
 	result, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40)))
 	if !IsIgnored(err) || !result.WasIgnored || len(enqueuer.specs) != 0 {
 		t.Fatalf("quota result = (%+v, %v), builds = %d; want ignored without builds", result, err, len(enqueuer.specs))
+	}
+	if _, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("quota refusal recorded preview set: %v", err)
 	}
 	if len(rec.checks) != 1 || rec.checks[0].phase != githubdgrpc.CheckPhaseFailed {
 		t.Fatalf("checks = %+v, want failed quota check", rec.checks)
