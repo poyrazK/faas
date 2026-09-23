@@ -2614,6 +2614,30 @@ type DeploymentPreviewURL struct {
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
 }
 
+// SetDeploymentAliasRequest is the body for PUT
+// /v1/apps/{slug}/deployment-aliases/{name}. The deployment ID is explicit:
+// an alias is a stable name for one immutable row, not a moving "latest"
+// selector.
+type SetDeploymentAliasRequest struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+// DeploymentAliasResponse is the persisted mapping returned by the
+// deployment-alias API. Revision is included as the readable vN handle for
+// the immutable target.
+type DeploymentAliasResponse struct {
+	Name         string    `json:"name"`
+	DeploymentID string    `json:"deployment_id"`
+	Revision     int       `json:"revision"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// DeploymentAliasListResponse is the bounded per-app alias list shape.
+type DeploymentAliasListResponse struct {
+	Items []DeploymentAliasResponse `json:"items"`
+}
+
 // UpdateDeploymentTrafficRequest is the body for
 // PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). The PATCH
 // route is dedicated to traffic splitting rather than reusing

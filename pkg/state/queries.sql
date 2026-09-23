@@ -3839,6 +3839,42 @@ LEFT JOIN data_upstream_probes p
 WHERE u.circuit_breaker_enabled
 ORDER BY u.app_id, u.host_redacted_hash, u.port, p.sampled_at DESC NULLS LAST;
 
+-- name: ListDeploymentAliases :many
+-- Stable per-app revision names. Join deployments for the human-readable
+-- revision while retaining aliases whose targets later become superseded;
+-- the alias continues to identify the same immutable row.
+SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
+  FROM deployment_aliases a
+  JOIN deployments d ON d.id = a.deployment_id AND d.app_id = a.app_id
+ WHERE a.app_id = sqlc.arg(app_id)
+ ORDER BY a.name;
+
+-- name: UpsertDeploymentAlias :one
+-- Accept only a routable target on this app. Using INSERT .. SELECT makes the
+-- ownership/status check atomic with writing the alias.
+WITH upserted AS (
+    INSERT INTO deployment_aliases (app_id, name, deployment_id)
+    SELECT d.app_id, sqlc.arg(name), d.id
+      FROM deployments d
+      JOIN apps a ON a.id = d.app_id
+     WHERE d.app_id = sqlc.arg(app_id)
+       AND d.id = sqlc.arg(deployment_id)
+       AND a.deleted_at IS NULL
+       AND d.deleted_at IS NULL
+       AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live')
+    ON CONFLICT (app_id, name) DO UPDATE
+       SET deployment_id = EXCLUDED.deployment_id,
+           updated_at = now()
+    RETURNING app_id, name, deployment_id, created_at, updated_at
+)
+SELECT u.app_id, u.name, u.deployment_id, d.revision, u.created_at, u.updated_at
+  FROM upserted u
+  JOIN deployments d ON d.id = u.deployment_id;
+
+-- name: DeleteDeploymentAlias :execrows
+DELETE FROM deployment_aliases
+ WHERE app_id = sqlc.arg(app_id) AND name = sqlc.arg(name);
+
 -- name: UpdateDataUpstreamCircuitBreaker :exec
 -- ADR-201 §3 per-upstream egress-breaker policy. Each field uses the
 -- COALESCE(sqlc.narg, existing) shape so a PATCH that omits a field
