@@ -71,6 +71,9 @@ func (e Envelope) Normalize(accountID string, now time.Time) (Envelope, error) {
 	if _, err := parseAccountUUID(accountID); err != nil {
 		return Envelope{}, errors.New("account_id must be a UUID")
 	}
+	// The authenticated account is authoritative even when the caller omitted
+	// account_id. Keep its supplied spelling so API responses remain stable.
+	e.AccountID = accountID
 	if err := e.Validate(); err != nil {
 		return Envelope{}, err
 	}
