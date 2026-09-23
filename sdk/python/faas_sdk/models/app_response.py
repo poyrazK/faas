@@ -18,13 +18,16 @@ from ..models.app_response_status import AppResponseStatus, check_app_response_s
 from ..models.app_response_type import AppResponseType, check_app_response_type
 from ..models.app_response_visibility import AppResponseVisibility, check_app_response_visibility
 from ..models.app_response_workload_class import AppResponseWorkloadClass, check_app_response_workload_class
+from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
 from ..models.resource_profile import ResourceProfile, check_resource_profile
+from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_configured_resources import AppConfiguredResources
     from ..models.app_effective_limits import AppEffectiveLimits
     from ..models.app_manifest import AppManifest
+    from ..models.app_service_binding import AppServiceBinding
     from ..models.declared_route import DeclaredRoute
     from ..models.parked_deployment_ref import ParkedDeploymentRef
     from ..models.public_auth_status import PublicAuthStatus
@@ -112,6 +115,16 @@ class AppResponse:
     """Preview lifecycle state. Absent for production apps."""
     preview_expires_at: datetime.datetime | None | Unset = UNSET
     """Automatic teardown deadline for a preview, when one is configured."""
+    service_bindings: list[AppServiceBinding] | Unset = UNSET
+    """Repository-declared same-account service dependencies currently injected into this workload. They are
+    discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared`
+    policy."""
+    service_binding_policy: ServiceBindingPolicy | Unset = UNSET
+    """Caller-side authorization policy for internal service requests. `account` preserves same-account
+    reachability; `declared` permits only targets present in the caller's service bindings."""
+    preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
+    """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
+    `deny` rejects preview callers before waking the target."""
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
@@ -297,6 +310,21 @@ class AppResponse:
         else:
             preview_expires_at = self.preview_expires_at
 
+        service_bindings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.service_bindings, Unset):
+            service_bindings = []
+            for service_bindings_item_data in self.service_bindings:
+                service_bindings_item = service_bindings_item_data.to_dict()
+                service_bindings.append(service_bindings_item)
+
+        service_binding_policy: str | Unset = UNSET
+        if not isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = self.service_binding_policy
+
+        preview_service_calls_policy: str | Unset = UNSET
+        if not isinstance(self.preview_service_calls_policy, Unset):
+            preview_service_calls_policy = self.preview_service_calls_policy
+
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
@@ -465,6 +493,12 @@ class AppResponse:
             field_dict["preview_pr_state"] = preview_pr_state
         if preview_expires_at is not UNSET:
             field_dict["preview_expires_at"] = preview_expires_at
+        if service_bindings is not UNSET:
+            field_dict["service_bindings"] = service_bindings
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
+        if preview_service_calls_policy is not UNSET:
+            field_dict["preview_service_calls_policy"] = preview_service_calls_policy
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
         if streaming_enabled is not UNSET:
@@ -527,6 +561,7 @@ class AppResponse:
         from ..models.app_configured_resources import AppConfiguredResources
         from ..models.app_effective_limits import AppEffectiveLimits
         from ..models.app_manifest import AppManifest
+        from ..models.app_service_binding import AppServiceBinding
         from ..models.declared_route import DeclaredRoute
         from ..models.parked_deployment_ref import ParkedDeploymentRef
         from ..models.public_auth_status import PublicAuthStatus
@@ -672,6 +707,29 @@ class AppResponse:
             return cast(datetime.datetime | None | Unset, data)
 
         preview_expires_at = _parse_preview_expires_at(d.pop("preview_expires_at", UNSET))
+
+        _service_bindings = d.pop("service_bindings", UNSET)
+        service_bindings: list[AppServiceBinding] | Unset = UNSET
+        if _service_bindings is not UNSET:
+            service_bindings = []
+            for service_bindings_item_data in _service_bindings:
+                service_bindings_item = AppServiceBinding.from_dict(service_bindings_item_data)
+
+                service_bindings.append(service_bindings_item)
+
+        _service_binding_policy = d.pop("service_binding_policy", UNSET)
+        service_binding_policy: ServiceBindingPolicy | Unset
+        if isinstance(_service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        else:
+            service_binding_policy = check_service_binding_policy(_service_binding_policy)
+
+        _preview_service_calls_policy = d.pop("preview_service_calls_policy", UNSET)
+        preview_service_calls_policy: PreviewServiceCallsPolicy | Unset
+        if isinstance(_preview_service_calls_policy, Unset):
+            preview_service_calls_policy = UNSET
+        else:
+            preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
@@ -898,6 +956,9 @@ class AppResponse:
             preview_pr_number=preview_pr_number,
             preview_pr_state=preview_pr_state,
             preview_expires_at=preview_expires_at,
+            service_bindings=service_bindings,
+            service_binding_policy=service_binding_policy,
+            preview_service_calls_policy=preview_service_calls_policy,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,

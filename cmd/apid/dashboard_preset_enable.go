@@ -63,11 +63,11 @@ var presetNameRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 func (s *server) renderDashboardEnablePreset(w http.ResponseWriter, r *http.Request, slug, presetName string) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !validSlug(slug) || !presetNameRe.MatchString(presetName) {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeDashboardBadRequest(w, r, "The app slug or alert preset name is invalid.")
 		return
 	}
 	if err := middleware.VerifyAuthenticated(s.sessions, r, dashboardEnablePresetAction, acct.ID); err != nil {
@@ -76,7 +76,7 @@ func (s *server) renderDashboardEnablePreset(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeDashboardBadRequest(w, r, "The alert preset form could not be read.")
 		return
 	}
 	webhookURL := r.PostFormValue("webhook_url")
@@ -163,11 +163,11 @@ const dashboardSendTestAlertPresetAction = "send_test_alert_preset"
 func (s *server) renderDashboardSendTestAlertPreset(w http.ResponseWriter, r *http.Request, slug, presetName string) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !validSlug(slug) || !presetNameRe.MatchString(presetName) {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeDashboardBadRequest(w, r, "The app slug or alert preset name is invalid.")
 		return
 	}
 	if err := middleware.VerifyAuthenticated(s.sessions, r, dashboardSendTestAlertPresetAction, acct.ID); err != nil {

@@ -17,5 +17,14 @@ export type GitHubDeploymentPolicy = {
   ignored_paths: Array<string>;
   preview_enabled: boolean;
   preview_ttl_hours: number;
+  /**
+   * Controls calls from project previews to production internal
+   * services. `deny` rejects the call before discovery or wake-up;
+   * `allow_marked` permits it and marks the request as preview-origin
+   * traffic. Projects created before this policy was introduced are
+   * migration-backed to `allow_marked`.
+   *
+   */
+  preview_service_policy: 'deny' | 'allow_marked';
 };
 

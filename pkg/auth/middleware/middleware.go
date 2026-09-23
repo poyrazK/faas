@@ -913,8 +913,7 @@ func (m *Middleware) RequireLimited(next AccountHandler) http.HandlerFunc {
 				w.Header().Add(key, value)
 			}
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeAuthRateLimited,
-			"Too many failed authentication attempts", "provide valid credentials or retry after 60 seconds").WithHeader("Retry-After", "60"))
+		api.WriteProblemForRequest(w, r, api.ErrAuthRateLimited(60))
 		if m.Log != nil {
 			m.Log.Warn("auth_limit blocked invalid credential",
 				"ip", logsanitize.Field(middleware.ClientIP(r)),

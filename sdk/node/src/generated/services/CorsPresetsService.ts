@@ -43,9 +43,9 @@ export class CorsPresetsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -129,9 +129,9 @@ export class CorsPresetsService {
         wire-level codes are 422 for grammar violations and 402
         for plan gates.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -162,9 +162,9 @@ export class CorsPresetsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -228,9 +228,9 @@ export class CorsPresetsService {
         wire-level codes are 422 for grammar violations and 402
         for plan gates.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -267,9 +267,9 @@ export class CorsPresetsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });

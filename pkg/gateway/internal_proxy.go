@@ -390,7 +390,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		p.logger().Error("internal proxy not configured",
 			"has_dialer", p.Dialer != nil,
 			"has_target", p.Target != nil)
-		http.Error(w, "internal proxy not configured", http.StatusBadGateway)
+		writeForwarderProblem(w, http.StatusBadGateway)
 		return
 	}
 	streamCtx, detachBudget, touch, cancelStream := newStreamSession(r.Context(), 0, streamIdleTimeout)
@@ -519,11 +519,10 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			"target", p.Target.String(),
 			"err", err)
 		if errors.Is(err, ErrNoComputeCapacity) {
-			w.Header().Set("Retry-After", "5")
-			http.Error(w, "compute capacity unavailable", http.StatusServiceUnavailable)
+			writeForwarderProblem(w, http.StatusServiceUnavailable)
 			return
 		}
-		http.Error(w, "bad gateway: internal round-trip failed", http.StatusBadGateway)
+		writeForwarderProblem(w, http.StatusBadGateway)
 		return
 	}
 	// copyResponseBody owns Body.Close (issue #687: closes it on

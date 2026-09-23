@@ -110,16 +110,16 @@ def sync_detailed(
     Range-check [0, 100] is enforced at the handler (422
     `invalid_traffic_percent`). The Σ invariant is asserted
     post-write as a defensive backstop (409
-    `traffic_percent_sum_invalid`) — structurally unreachable
-    with zero-siblings, but pinned by the test suite.
+    `traffic_percent_sum_invalid`).
+    An optional expected_serving_deployment_id is checked under the
+    same live-row locks before rebalance. A stale expectation returns
+    409 `traffic_serving_changed` without changing traffic.
 
     Args:
         id (str):
-        body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic (issue
-            #556 PR-A). Sets the per-deployment traffic-split weight (integer [0, 100]). PR-A uses the
-            zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live
-            row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are
-            rejected at 403 plan_traffic_split_not_allowed.
+        body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic.
+            Optionally require a particular live sibling to remain the sole 100% serving deployment
+            when the update commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,16 +157,16 @@ def sync(
     Range-check [0, 100] is enforced at the handler (422
     `invalid_traffic_percent`). The Σ invariant is asserted
     post-write as a defensive backstop (409
-    `traffic_percent_sum_invalid`) — structurally unreachable
-    with zero-siblings, but pinned by the test suite.
+    `traffic_percent_sum_invalid`).
+    An optional expected_serving_deployment_id is checked under the
+    same live-row locks before rebalance. A stale expectation returns
+    409 `traffic_serving_changed` without changing traffic.
 
     Args:
         id (str):
-        body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic (issue
-            #556 PR-A). Sets the per-deployment traffic-split weight (integer [0, 100]). PR-A uses the
-            zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live
-            row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are
-            rejected at 403 plan_traffic_split_not_allowed.
+        body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic.
+            Optionally require a particular live sibling to remain the sole 100% serving deployment
+            when the update commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,16 +199,16 @@ async def asyncio_detailed(
     Range-check [0, 100] is enforced at the handler (422
     `invalid_traffic_percent`). The Σ invariant is asserted
     post-write as a defensive backstop (409
-    `traffic_percent_sum_invalid`) — structurally unreachable
-    with zero-siblings, but pinned by the test suite.
+    `traffic_percent_sum_invalid`).
+    An optional expected_serving_deployment_id is checked under the
+    same live-row locks before rebalance. A stale expectation returns
+    409 `traffic_serving_changed` without changing traffic.
 
     Args:
         id (str):
-        body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic (issue
-            #556 PR-A). Sets the per-deployment traffic-split weight (integer [0, 100]). PR-A uses the
-            zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live
-            row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are
-            rejected at 403 plan_traffic_split_not_allowed.
+        body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic.
+            Optionally require a particular live sibling to remain the sole 100% serving deployment
+            when the update commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -244,16 +244,16 @@ async def asyncio(
     Range-check [0, 100] is enforced at the handler (422
     `invalid_traffic_percent`). The Σ invariant is asserted
     post-write as a defensive backstop (409
-    `traffic_percent_sum_invalid`) — structurally unreachable
-    with zero-siblings, but pinned by the test suite.
+    `traffic_percent_sum_invalid`).
+    An optional expected_serving_deployment_id is checked under the
+    same live-row locks before rebalance. A stale expectation returns
+    409 `traffic_serving_changed` without changing traffic.
 
     Args:
         id (str):
-        body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic (issue
-            #556 PR-A). Sets the per-deployment traffic-split weight (integer [0, 100]). PR-A uses the
-            zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live
-            row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are
-            rejected at 403 plan_traffic_split_not_allowed.
+        body (UpdateDeploymentTrafficRequest): Body for PATCH /v1/deployments/{id}/traffic.
+            Optionally require a particular live sibling to remain the sole 100% serving deployment
+            when the update commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

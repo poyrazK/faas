@@ -96,8 +96,9 @@ def sync_detailed(
     flag and deploy-time posture policy. Mounted with
     `authLimited → requireMFA → requireScope(ScopesAdminOnly...)`.
     `security_policy=enforce` rejects new deploys while high-severity
-    posture findings remain; `warn` is advisory and `off` preserves
-    historical behavior.
+    configuration findings remain; live-image evidence findings remain
+    visible but do not block the replacement needed for recovery. `warn`
+    is advisory and `off` preserves historical behavior.
 
     Each field is optional; omitted fields are unchanged and supplied
     fields are applied atomically.
@@ -143,8 +144,9 @@ def sync(
     flag and deploy-time posture policy. Mounted with
     `authLimited → requireMFA → requireScope(ScopesAdminOnly...)`.
     `security_policy=enforce` rejects new deploys while high-severity
-    posture findings remain; `warn` is advisory and `off` preserves
-    historical behavior.
+    configuration findings remain; live-image evidence findings remain
+    visible but do not block the replacement needed for recovery. `warn`
+    is advisory and `off` preserves historical behavior.
 
     Each field is optional; omitted fields are unchanged and supplied
     fields are applied atomically.
@@ -185,8 +187,9 @@ async def asyncio_detailed(
     flag and deploy-time posture policy. Mounted with
     `authLimited → requireMFA → requireScope(ScopesAdminOnly...)`.
     `security_policy=enforce` rejects new deploys while high-severity
-    posture findings remain; `warn` is advisory and `off` preserves
-    historical behavior.
+    configuration findings remain; live-image evidence findings remain
+    visible but do not block the replacement needed for recovery. `warn`
+    is advisory and `off` preserves historical behavior.
 
     Each field is optional; omitted fields are unchanged and supplied
     fields are applied atomically.
@@ -230,8 +233,9 @@ async def asyncio(
     flag and deploy-time posture policy. Mounted with
     `authLimited → requireMFA → requireScope(ScopesAdminOnly...)`.
     `security_policy=enforce` rejects new deploys while high-severity
-    posture findings remain; `warn` is advisory and `off` preserves
-    historical behavior.
+    configuration findings remain; live-image evidence findings remain
+    visible but do not block the replacement needed for recovery. `warn`
+    is advisory and `off` preserves historical behavior.
 
     Each field is optional; omitted fields are unchanged and supplied
     fields are applied atomically.

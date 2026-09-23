@@ -26,6 +26,9 @@ from .account_trace_lookup_error import AccountTraceLookupError
 from .account_trace_lookup_response import AccountTraceLookupResponse
 from .account_trace_match import AccountTraceMatch
 from .account_usage_response import AccountUsageResponse
+from .activity_actor_response import ActivityActorResponse
+from .activity_actor_response_type import ActivityActorResponseType
+from .activity_resource_response import ActivityResourceResponse
 from .add_tenant_hostname_request import AddTenantHostnameRequest
 from .add_trusted_signer_request import AddTrustedSignerRequest
 from .admin_refund_response import AdminRefundResponse
@@ -159,6 +162,8 @@ from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
 from .app_secret_response import AppSecretResponse
+from .app_secret_response_delivery_status import AppSecretResponseDeliveryStatus
+from .app_secret_response_last_delivery_error_code import AppSecretResponseLastDeliveryErrorCode
 from .app_security_finding import AppSecurityFinding
 from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
@@ -170,6 +175,7 @@ from .app_security_request import AppSecurityRequest
 from .app_security_request_security_policy import AppSecurityRequestSecurityPolicy
 from .app_security_response import AppSecurityResponse
 from .app_security_response_security_policy import AppSecurityResponseSecurityPolicy
+from .app_service_binding import AppServiceBinding
 from .app_slo_response import AppSLOResponse
 from .app_slo_response_wake_queue_sample_status import AppSLOResponseWakeQueueSampleStatus
 from .app_slo_response_window import AppSLOResponseWindow
@@ -186,7 +192,6 @@ from .app_wake_timeline_response_trigger_class_histogram import AppWakeTimelineR
 from .app_wake_timeline_response_trigger_histogram import AppWakeTimelineResponseTriggerHistogram
 from .app_webhook_delivery_list_response import AppWebhookDeliveryListResponse
 from .app_webhook_delivery_response import AppWebhookDeliveryResponse
-from .app_webhook_delivery_response_event import AppWebhookDeliveryResponseEvent
 from .app_webhook_delivery_response_payload import AppWebhookDeliveryResponsePayload
 from .app_webhook_delivery_response_status import AppWebhookDeliveryResponseStatus
 from .app_webhook_response import AppWebhookResponse
@@ -464,10 +469,19 @@ from .debug_timeline_event import DebugTimelineEvent
 from .debug_timeline_event_phase import DebugTimelineEventPhase
 from .declared_route import DeclaredRoute
 from .declared_route_methods_item import DeclaredRouteMethodsItem
+from .delayed_task_after_request import DelayedTaskAfterRequest
+from .delayed_task_after_request_headers import DelayedTaskAfterRequestHeaders
+from .delayed_task_after_request_payload import DelayedTaskAfterRequestPayload
+from .delayed_task_at_request import DelayedTaskAtRequest
+from .delayed_task_at_request_headers import DelayedTaskAtRequestHeaders
+from .delayed_task_at_request_payload import DelayedTaskAtRequestPayload
 from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
+from .deliver_app_event_request import DeliverAppEventRequest
+from .deliver_app_event_response import DeliverAppEventResponse
+from .deliver_app_event_response_status import DeliverAppEventResponseStatus
 from .deploy_dev_source_body import DeployDevSourceBody
 from .deploy_dev_source_body_runtime import DeployDevSourceBodyRuntime
 from .deploy_token_response import DeployTokenResponse
@@ -649,6 +663,8 @@ from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
+from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
+from .git_hub_deployment_policy_preview_service_policy import GitHubDeploymentPolicyPreviewServicePolicy
 from .git_hub_install_activity import GitHubInstallActivity
 from .git_hub_install_mutation_request import GitHubInstallMutationRequest
 from .git_hub_install_status import GitHubInstallStatus
@@ -756,6 +772,8 @@ from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
 from .list_operator_runtime_config_revisions_response_200 import ListOperatorRuntimeConfigRevisionsResponse200
+from .list_org_activity_actor_type import ListOrgActivityActorType
+from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
@@ -911,6 +929,8 @@ from .operator_runtime_config_revision import OperatorRuntimeConfigRevision
 from .operator_runtime_config_revision_scope import OperatorRuntimeConfigRevisionScope
 from .operator_runtime_config_source import OperatorRuntimeConfigSource
 from .operator_runtime_config_status import OperatorRuntimeConfigStatus
+from .org_activity_response import OrgActivityResponse
+from .org_activity_response_data import OrgActivityResponseData
 from .org_invitation_response import OrgInvitationResponse
 from .org_invitation_response_role import OrgInvitationResponseRole
 from .org_invitation_response_status import OrgInvitationResponseStatus
@@ -960,6 +980,7 @@ from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
+from .preview_service_calls_policy import PreviewServiceCallsPolicy
 from .prewarm_intent_response import PrewarmIntentResponse
 from .prewarm_intent_response_status import PrewarmIntentResponseStatus
 from .prewarm_intent_response_trigger import PrewarmIntentResponseTrigger
@@ -1165,6 +1186,8 @@ from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
 from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
+from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
+from .scoped_app_secret_response_last_delivery_error_code import ScopedAppSecretResponseLastDeliveryErrorCode
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -1173,6 +1196,11 @@ from .secret_scan_result import SecretScanResult
 from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
 from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
 from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
+from .send_app_message_request import SendAppMessageRequest
+from .send_app_message_request_data_content_type import SendAppMessageRequestDataContentType
+from .send_app_message_response import SendAppMessageResponse
+from .send_app_message_response_status import SendAppMessageResponseStatus
+from .service_binding_policy import ServiceBindingPolicy
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
@@ -1191,6 +1219,7 @@ from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
 from .sidecar_disk_io_profile import SidecarDiskIoProfile
 from .sidecar_env import SidecarEnv
+from .sidecar_preset import SidecarPreset
 from .sidecar_timeline_response import SidecarTimelineResponse
 from .sidecar_timeline_status import SidecarTimelineStatus
 from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
@@ -1393,6 +1422,9 @@ __all__ = (
     "AccountTraceLookupResponse",
     "AccountTraceMatch",
     "AccountUsageResponse",
+    "ActivityActorResponse",
+    "ActivityActorResponseType",
+    "ActivityResourceResponse",
     "AddTenantHostnameRequest",
     "AddTrustedSignerRequest",
     "AdminRefundResponse",
@@ -1530,6 +1562,8 @@ __all__ = (
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
     "AppSecretResponse",
+    "AppSecretResponseDeliveryStatus",
+    "AppSecretResponseLastDeliveryErrorCode",
     "AppSecurityFinding",
     "AppSecurityFindingSeverity",
     "AppSecurityPostureResponse",
@@ -1541,6 +1575,7 @@ __all__ = (
     "AppSecurityRequestSecurityPolicy",
     "AppSecurityResponse",
     "AppSecurityResponseSecurityPolicy",
+    "AppServiceBinding",
     "AppSLOResponse",
     "AppSLOResponseWakeQueueSampleStatus",
     "AppSLOResponseWindow",
@@ -1560,7 +1595,6 @@ __all__ = (
     "AppWakeTimelineResponseTriggerHistogram",
     "AppWebhookDeliveryListResponse",
     "AppWebhookDeliveryResponse",
-    "AppWebhookDeliveryResponseEvent",
     "AppWebhookDeliveryResponsePayload",
     "AppWebhookDeliveryResponseStatus",
     "AppWebhookResponse",
@@ -1823,10 +1857,19 @@ __all__ = (
     "DebugTimelineEventPhase",
     "DeclaredRoute",
     "DeclaredRouteMethodsItem",
+    "DelayedTaskAfterRequest",
+    "DelayedTaskAfterRequestHeaders",
+    "DelayedTaskAfterRequestPayload",
+    "DelayedTaskAtRequest",
+    "DelayedTaskAtRequestHeaders",
+    "DelayedTaskAtRequestPayload",
     "DelayedTaskResponse",
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
     "DeleteDeploymentScopeExclusionResponse200",
+    "DeliverAppEventRequest",
+    "DeliverAppEventResponse",
+    "DeliverAppEventResponseStatus",
     "DeployDevSourceBody",
     "DeployDevSourceBodyRuntime",
     "DeploymentAuditResponse",
@@ -2010,6 +2053,8 @@ __all__ = (
     "GithubCheckUpdateRecordStatus",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
+    "GitHubDeploymentPolicyPatchPreviewServicePolicy",
+    "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubInstallActivity",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
@@ -2115,6 +2160,8 @@ __all__ = (
     "ListJobTasksResponse",
     "ListOperatorRuntimeConfigResponse200",
     "ListOperatorRuntimeConfigRevisionsResponse200",
+    "ListOrgActivityActorType",
+    "ListOrgActivityResponse",
     "ListOrgAPIKeysResponse",
     "ListProjectEnvironmentPromotionsStatus",
     "ListSecretsForAccountResponse",
@@ -2266,6 +2313,8 @@ __all__ = (
     "OperatorRuntimeConfigRevisionScope",
     "OperatorRuntimeConfigSource",
     "OperatorRuntimeConfigStatus",
+    "OrgActivityResponse",
+    "OrgActivityResponseData",
     "OrgInvitationResponse",
     "OrgInvitationResponseRole",
     "OrgInvitationResponseStatus",
@@ -2315,6 +2364,7 @@ __all__ = (
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
     "PreviewCreatedWebhookPayload",
+    "PreviewServiceCallsPolicy",
     "PrewarmIntentResponse",
     "PrewarmIntentResponseStatus",
     "PrewarmIntentResponseTrigger",
@@ -2500,6 +2550,8 @@ __all__ = (
     "ScanResultStatus",
     "ScopedAppEnvResponse",
     "ScopedAppSecretResponse",
+    "ScopedAppSecretResponseDeliveryStatus",
+    "ScopedAppSecretResponseLastDeliveryErrorCode",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",
@@ -2508,6 +2560,11 @@ __all__ = (
     "SecurityQuarantineRecoveryRequest",
     "SecurityQuarantineRecoveryResponse",
     "SecurityQuarantineRecoveryResponseStatus",
+    "SendAppMessageRequest",
+    "SendAppMessageRequestDataContentType",
+    "SendAppMessageResponse",
+    "SendAppMessageResponseStatus",
+    "ServiceBindingPolicy",
     "ServiceReplicas",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",
@@ -2526,6 +2583,7 @@ __all__ = (
     "SidecarCpuMillicores",
     "SidecarDiskIoProfile",
     "SidecarEnv",
+    "SidecarPreset",
     "SidecarTimelineResponse",
     "SidecarTimelineStatus",
     "SidecarTimelineStatusStatus",

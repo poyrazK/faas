@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -369,8 +370,15 @@ func TestInternalReverseProxy_DialFailure_502BadGateway(t *testing.T) {
 	if rr.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "internal round-trip failed") {
-		t.Errorf("body = %q, want substring \"internal round-trip failed\"", rr.Body.String())
+	var problem api.Problem
+	if err := json.Unmarshal(rr.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeBadGateway {
+		t.Errorf("code = %q, want %q", problem.Code, api.CodeBadGateway)
+	}
+	if strings.Contains(rr.Body.String(), "internal") || strings.Contains(rr.Body.String(), "round-trip") {
+		t.Errorf("body leaked internal proxy details: %q", rr.Body.String())
 	}
 }
 
@@ -549,8 +557,12 @@ func TestInternalReverseProxy_NoComputeCapacity_503(t *testing.T) {
 	if got := rr.Header().Get("Retry-After"); got != "5" {
 		t.Errorf("Retry-After = %q, want 5", got)
 	}
-	if !strings.Contains(rr.Body.String(), "compute capacity unavailable") {
-		t.Errorf("body = %q, want compute capacity unavailable", rr.Body.String())
+	var problem api.Problem
+	if err := json.Unmarshal(rr.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeAppUnavailable {
+		t.Errorf("code = %q, want %q", problem.Code, api.CodeAppUnavailable)
 	}
 }
 

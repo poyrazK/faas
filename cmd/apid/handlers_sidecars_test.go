@@ -222,3 +222,28 @@ func TestValidateAndPlanSidecars_EmptySidecarsNoop(t *testing.T) {
 		t.Errorf("validateAndPlanSidecars: expected nil on empty sidecars, got %+v", p)
 	}
 }
+
+func TestValidateAndPlanSidecars_ResolvesManagedCompanion(t *testing.T) {
+	req := &api.CreateDeploymentRequest{Companions: api.Companions{{
+		Name: "otel-collector", Preset: "opentelemetry", Type: api.SidecarTypeSidecar, Port: 4318,
+	}}}
+	p := validateAndPlanSidecarsWithImages(req, state.Account{Plan: api.PlanFree}, testSidecarLimits(), map[string]string{
+		"opentelemetry": goodSidecarImage,
+	})
+	if p != nil {
+		t.Fatalf("validate managed companion: %+v", p)
+	}
+	if len(req.Companions) != 0 || len(req.Sidecars) != 1 || req.Sidecars[0].Image != goodSidecarImage {
+		t.Fatalf("normalized request = %+v", req)
+	}
+}
+
+func TestValidateAndPlanSidecars_ManagedCompanionUnavailable(t *testing.T) {
+	req := &api.CreateDeploymentRequest{Companions: api.Companions{{
+		Name: "otel-collector", Preset: "opentelemetry", Type: api.SidecarTypeSidecar, Port: 4318,
+	}}}
+	p := validateAndPlanSidecarsWithImages(req, state.Account{Plan: api.PlanFree}, testSidecarLimits(), nil)
+	if p == nil || p.Code != api.CodeCompanionPresetUnavailable || p.Status != 503 {
+		t.Fatalf("problem = %+v, want 503/%s", p, api.CodeCompanionPresetUnavailable)
+	}
+}

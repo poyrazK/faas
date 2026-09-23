@@ -18,14 +18,17 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // DTOs in internal/api should be added here on the next PR.
 type (
 	// App lifecycle.
-	CreateAppRequest       = api.CreateAppRequest
-	UpdateAppRequest       = api.UpdateAppRequest
-	RenameAppRequest       = api.RenameAppRequest
-	AppResponse            = api.AppResponse
-	AppEffectiveLimits     = api.AppEffectiveLimits
-	AppConfiguredResources = api.AppConfiguredResources
-	DeclaredRoute          = api.DeclaredRoute
-	RetryPolicyDTO         = api.RetryPolicyDTO
+	CreateAppRequest          = api.CreateAppRequest
+	UpdateAppRequest          = api.UpdateAppRequest
+	RenameAppRequest          = api.RenameAppRequest
+	AppResponse               = api.AppResponse
+	AppEffectiveLimits        = api.AppEffectiveLimits
+	AppConfiguredResources    = api.AppConfiguredResources
+	AppServiceBinding         = api.AppServiceBinding
+	ServiceBindingPolicy      = api.ServiceBindingPolicy
+	PreviewServiceCallsPolicy = api.PreviewServiceCallsPolicy
+	DeclaredRoute             = api.DeclaredRoute
+	RetryPolicyDTO            = api.RetryPolicyDTO
 
 	// End-customer consumers and credentials (ADR-120).
 	CreateAPIConsumerRequest                 = api.CreateAPIConsumerRequest
@@ -158,15 +161,23 @@ type (
 	QueueSendRequest         = api.QueueSendRequest
 	QueueSendResponse        = api.QueueSendResponse
 	QueueReceiveResponse     = api.QueueReceiveResponse
+	SendAppMessageRequest    = api.SendAppMessageRequest
+	SendAppMessageResponse   = api.SendAppMessageResponse
+	DeliverAppEventRequest   = api.DeliverAppEventRequest
+	DeliverAppEventResponse  = api.DeliverAppEventResponse
 	DelayedTaskRequest       = api.DelayedTaskRequest
 	DelayedTaskResponse      = api.DelayedTaskResponse
 	ListDelayedTasksResponse = api.ListDelayedTasksResponse
 
 	// Audit + invocations.
-	Invocation              = api.Invocation
-	ListInvocationsResponse = api.ListInvocationsResponse
-	AuditEventResponse      = api.AuditEventResponse
-	ListAuditEventsResponse = api.ListAuditEventsResponse
+	Invocation               = api.Invocation
+	ListInvocationsResponse  = api.ListInvocationsResponse
+	AuditEventResponse       = api.AuditEventResponse
+	ListAuditEventsResponse  = api.ListAuditEventsResponse
+	ActivityActorResponse    = api.ActivityActorResponse
+	ActivityResourceResponse = api.ActivityResourceResponse
+	OrgActivityResponse      = api.OrgActivityResponse
+	ListOrgActivityResponse  = api.ListOrgActivityResponse
 
 	// Wake timeline (issue #517 / PR-C / ADR-064).
 	WakeTimelineEvent    = api.WakeTimelineEvent
@@ -205,6 +216,13 @@ type (
 	// RaiseOverageCap).
 	SetAccountEgressAllowlistExtraRequest = api.SetAccountEgressAllowlistExtraRequest
 	AccountEgressAllowlistExtraResponse   = api.AccountEgressAllowlistExtraResponse
+)
+
+const (
+	ServiceBindingPolicyAccount  = api.ServiceBindingPolicyAccount
+	ServiceBindingPolicyDeclared = api.ServiceBindingPolicyDeclared
+	PreviewServiceCallsAllow     = api.PreviewServiceCallsAllow
+	PreviewServiceCallsDeny      = api.PreviewServiceCallsDeny
 )
 
 const (

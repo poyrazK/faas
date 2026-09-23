@@ -41,9 +41,9 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -81,9 +81,9 @@ export class RealtimeService {
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         403: `code: plan_realtime_quota — per-app or per-account managed realtime endpoint limit reached.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -117,9 +117,9 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -158,9 +158,9 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -194,9 +194,9 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -263,9 +263,9 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
@@ -324,9 +324,9 @@ export class RealtimeService {
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
@@ -368,9 +368,9 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
@@ -414,9 +414,9 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -451,9 +451,9 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -499,9 +499,9 @@ export class RealtimeService {
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
@@ -686,9 +686,9 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },

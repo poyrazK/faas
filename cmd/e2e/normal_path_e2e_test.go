@@ -1479,7 +1479,7 @@ func TestE2E_NormalPath_GuestServerErrorPassesThrough(t *testing.T) {
 }
 
 // TestE2E_NormalPath_BridgeUnavailableSurfaces503 pins the customer-facing
-// failure boundary. A VMMD Unavailable must be surfaced as an upstream 503,
+// failure boundary. A VMMD Unavailable must be surfaced as a safe app 503,
 // not rewritten as a guest response or an unrelated routing error.
 func TestE2E_NormalPath_BridgeUnavailableSurfaces503(t *testing.T) {
 	f := newNormalPathFixture(t, "normal-recovery")
@@ -1495,12 +1495,24 @@ func TestE2E_NormalPath_BridgeUnavailableSurfaces503(t *testing.T) {
 	if statusCode != http.StatusServiceUnavailable {
 		t.Fatalf("outage response status=%d body=%q, want 503", statusCode, body)
 	}
-	if !strings.Contains(string(body), "upstream unavailable") {
-		t.Fatalf("outage response body=%q, want upstream unavailable", body)
-	}
+	assertAppUnavailableProblem(t, body)
 	// Automatic replacement after stale-target eviction needs a deployable
 	// rootfs artifact. This KVM-free fixture intentionally owns the transport
 	// boundary only; native acceptance covers artifact-backed replacement.
+}
+
+func assertAppUnavailableProblem(t *testing.T, body []byte) {
+	t.Helper()
+	var problem api.Problem
+	if err := json.Unmarshal(body, &problem); err != nil {
+		t.Fatalf("decode app-unavailable problem: %v body=%q", err, body)
+	}
+	if problem.Status != http.StatusServiceUnavailable || problem.Code != api.CodeAppUnavailable {
+		t.Fatalf("app-unavailable problem = %+v, want 503/%s", problem, api.CodeAppUnavailable)
+	}
+	if strings.Contains(string(body), "simulated vmmd outage") || strings.Contains(string(body), "simulated stale sibling") {
+		t.Fatalf("app-unavailable problem leaked bridge detail: %q", body)
+	}
 }
 
 // TestE2E_NormalPath_StoppedInstanceInvalidatesRoute catches stale-cache

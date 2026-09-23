@@ -179,13 +179,15 @@ http://billing.svc.gregale:10080
 http://recommendation.svc.gregale:10080
 ```
 
-The name is the app slug. Declare the edges with `depends_on` and Gregale
-injects the URLs for you, so nothing hard-codes a hostname:
+The name is the project workload name (or the app slug for a standalone app).
+Declare the edges with `depends_on` and Gregale injects the URLs for you, so
+nothing hard-codes a hostname:
 
 ```yaml
 services:
   public-api:
     depends_on: [auth, billing, recommendation]
+    x-gregale-service-policy: declared
 ```
 
 `public-api` then starts with `GREGALE_SERVICE_AUTH_URL`,
@@ -193,23 +195,65 @@ services:
 environment. The dependency graph is validated before anything deploys —
 unknown names, self-edges, and ambiguous names are rejected.
 
+The same declared edges are exposed as service bindings by the app API and by
+`gregale bindings public-api`, alongside database, object-storage, and queue
+bindings. The default `account` policy keeps the backwards-compatible behavior:
+omitting an edge does not deny same-account traffic. Opt into the `declared`
+policy with `x-gregale-service-policy: declared`; the gateway then returns 403
+for calls to services that are not listed in `depends_on`. The CLI reports
+those service bindings as `enforced`.
+
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the
 same account. Cross-account calls are refused.
 
-### Preview environments call production services
+### Preview-to-production service policy
 
-A pull-request preview is provisioned as **one app**, derived from the app the
-PR touches. It does not get its own copy of that app'"'"'s dependencies, and
-service names resolve without an environment scope — so a preview'"'"'s internal
-calls reach your **production** services.
+A pull-request preview first resolves a service to a preview workload in the
+same account, project, and PR. It never selects a preview from another PR,
+project, or account. The target preview's protocol and WebSocket settings are
+used exactly as they are on the public edge.
 
-That is worth designing around. A preview of `public-api` calling `billing`
-reaches production `billing` and any side effects are real.
+Preview provisioning currently creates **one app**, derived from the app the
+PR touches, rather than cloning the whole project. A same-PR dependency may
+therefore be absent. In that case the gateway considers the production app
+and applies the project's production-dependency policy.
 
-Gregale marks these calls so a service can react rather than be surprised.
-Every request from a preview app carries:
+New projects default to `preview_service_policy: deny`. A denied call returns
+`403 application/problem+json` with code
+`preview_production_dependency_denied` before the proxy discovers or wakes the
+target. Projects that existed when this policy shipped were migration-backed
+to `allow_marked`, preserving their live behaviour. Opt an existing project
+into isolation with:
+
+```bash
+gregale github setup public-api --preview-service-policy deny
+```
+
+Set `allow_marked` only when the production dependency is designed to receive
+preview traffic. A preview of `public-api` calling `billing` then reaches
+production `billing`, and any side effects are real.
+
+In `allow_marked` mode, a production service can independently refuse preview
+calls with `x-gregale-preview-calls: deny` on its Compose service:
+
+```yaml
+services:
+  billing:
+    build: ./billing
+    x-gregale-preview-calls: deny
+```
+
+The gateway checks the target's policy before waking or forwarding it and
+returns 403 to a preview caller. The target policy defaults to `allow`, so it
+preserves existing behavior; the project-level `preview_service_policy` can
+still deny all preview-to-production calls. The app API and scan plan show the
+effective `preview_service_calls_policy`, and target-policy rejections count
+under `gateway_service_call_total{outcome="preview_denied"}`.
+
+Every forwarded request from a preview app carries these markers, whether the
+selected target is another preview or an allowed production dependency:
 
 ```text
 X-Faas-Caller-Env: preview
@@ -221,8 +265,10 @@ stripped before the hop, so the marker cannot be forged. Production callers
 carry neither header, so a service that ignores them is unaffected.
 
 Use them to skip irreversible work, tag writes as test data, or refuse the call
-outright. Operators can watch the fleet-wide rate with
-`gateway_service_preview_to_production_total`.
+outright. Operators can compare isolated traffic in
+`gateway_service_preview_to_preview_total` with allowed production fallbacks
+in `gateway_service_preview_to_production_total`; policy rejections use
+`gateway_service_call_total{outcome="preview_denied"}`.
 
 ### Verifying the caller (preview)
 

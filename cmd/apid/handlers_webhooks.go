@@ -22,6 +22,7 @@ package main
 // handlers_ext.go (ListCronRunsResponse).
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -298,6 +300,92 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		"enabled":         row.Enabled,
 	})
 	writeJSON(w, http.StatusCreated, appWebhookResponse(row))
+}
+
+// deliverAppEvent is the application-outbox facade. The destination must be a
+// webhook already registered on this app so the existing subscription remains
+// the single source of truth for its signing secret, retry curve, wire format,
+// and enable/disable state. Explicit delivery bypasses the subscription's
+// platform-event filter by design.
+func (s *server) deliverAppEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok || limits.WebhookPerApp == 0 {
+		api.WriteProblem(w, api.ErrPlanWebhooksNotAllowed(acct.Plan))
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	var req api.DeliverAppEventRequest
+	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
+		return
+	}
+	req.Destination = strings.TrimSpace(req.Destination)
+	req.Type = strings.TrimSpace(req.Type)
+	if req.Destination == "" || len(req.Destination) > 2048 {
+		api.WriteProblem(w, api.ErrAppWebhookInvalid("destination is required and must be at most 2048 characters"))
+		return
+	}
+	if req.Type == "" || len(req.Type) > 256 || strings.IndexFunc(req.Type, unicode.IsControl) >= 0 {
+		api.WriteProblem(w, api.ErrAppWebhookInvalid("type is required, must be at most 256 characters, and must not contain control characters"))
+		return
+	}
+	if len(req.Data) == 0 || !json.Valid(req.Data) {
+		api.WriteProblem(w, api.ErrAppWebhookInvalid("data must be valid JSON"))
+		return
+	}
+	hooks, err := s.store.ListAppWebhooksForApp(r.Context(), app.ID)
+	if err != nil {
+		s.log.WarnContext(r.Context(), "list application outbox destinations", slog.String("err", err.Error()))
+		api.WriteProblem(w, api.ErrCapacity("could not resolve outbox destination"))
+		return
+	}
+	var destination *state.AppWebhook
+	for i := range hooks {
+		if hooks[i].AccountID == acct.ID && (hooks[i].ID == req.Destination || hooks[i].TargetURL == req.Destination) {
+			destination = &hooks[i]
+			break
+		}
+	}
+	if destination == nil {
+		s.notFound(w, "outbox destination not found")
+		return
+	}
+	if !destination.Enabled {
+		api.WriteProblem(w, api.ErrAppWebhookInvalid("destination is disabled"))
+		return
+	}
+	now := timeNow().UTC()
+	delivery, err := s.store.RecordAppWebhookDelivery(r.Context(), state.AppWebhookDelivery{
+		WebhookID:     destination.ID,
+		AppID:         app.ID,
+		AccountID:     acct.ID,
+		Event:         state.AppWebhookEvent(req.Type),
+		Payload:       req.Data,
+		Status:        state.AppWebhookDeliveryPending,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+	})
+	if err != nil {
+		s.log.WarnContext(r.Context(), "enqueue application outbox delivery", slog.String("err", err.Error()))
+		api.WriteProblem(w, api.ErrCapacity("could not enqueue outbox delivery"))
+		return
+	}
+	s.audit.Emit(r.Context(), "app.outbox_delivery_queued", &acct.ID, map[string]any{
+		"app_id":      app.ID,
+		"webhook_id":  destination.ID,
+		"delivery_id": delivery.ID,
+		"event":       req.Type,
+	})
+	writeJSON(w, http.StatusAccepted, api.DeliverAppEventResponse{
+		ID:          delivery.ID,
+		WebhookID:   destination.ID,
+		Destination: destination.TargetURL,
+		Event:       string(delivery.Event),
+		Status:      string(delivery.Status),
+		StatusURL:   "/v1/apps/" + app.Slug + "/webhooks/" + destination.ID + "/deliveries",
+	})
 }
 
 // getAppWebhook returns the row if it belongs to the caller's

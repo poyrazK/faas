@@ -49,6 +49,26 @@ type RetryPolicyDTO struct {
 	JitterSeconds float64 `json:"jitter_seconds,omitempty"`
 }
 
+type SendAppMessageRequest struct {
+	ID              string          `json:"id,omitempty"`
+	Source          string          `json:"source,omitempty"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"data_content_type,omitempty"`
+	Data            json.RawMessage `json:"data"`
+	QueueName       string          `json:"queue_name,omitempty"`
+	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
+}
+
+type SendAppMessageResponse struct {
+	ID        string `json:"id"`
+	EventID   string `json:"event_id"`
+	TargetApp string `json:"target_app"`
+	Status    string `json:"status"`
+	StatusURL string `json:"status_url"`
+	TraceID   string `json:"trace_id,omitempty"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug            string `json:"slug"`
@@ -393,6 +413,25 @@ type AppConfiguredResources struct {
 	CPUMillicores int `json:"cpu_millicores"`
 }
 
+type AppServiceBinding struct {
+	Binding string `json:"binding"`
+	Service string `json:"service"`
+}
+
+type ServiceBindingPolicy string
+
+const (
+	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
+	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+)
+
+type PreviewServiceCallsPolicy string
+
+const (
+	PreviewServiceCallsAllow PreviewServiceCallsPolicy = "allow"
+	PreviewServiceCallsDeny  PreviewServiceCallsPolicy = "deny"
+)
+
 // AppResponse is an app as returned by the API.
 // RepoResponse is one repository visible to the account's GitHub App
 // installation. Installation credentials are never returned.
@@ -479,6 +518,14 @@ type AppResponse struct {
 	// The DTO reuses the existing api.AppManifest (defined in
 	// appmanifest.go) so the wire shape stays a single source of truth.
 	Manifest AppManifest `json:"manifest"`
+	// ServiceBindings are repository-declared discovery edges. They do not
+	// change authorization under the account policy and become the outbound
+	// allowlist under the declared policy.
+	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	// ServiceBindingPolicy is the caller-side internal-service authorization
+	// policy returned by the API.
+	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -1543,6 +1590,42 @@ type OrgListResponse struct {
 	Orgs []OrgResponse `json:"orgs"`
 }
 
+// ActivityActorResponse is the captured identity shown beside one global
+// organization activity item.
+type ActivityActorResponse struct {
+	Type      string `json:"type"`
+	Label     string `json:"label"`
+	AccountID string `json:"account_id,omitempty"`
+}
+
+// ActivityResourceResponse identifies the primary affected infrastructure
+// object. ID can be absent for external resources such as domains.
+type ActivityResourceResponse struct {
+	Type  string `json:"type"`
+	ID    string `json:"id,omitempty"`
+	Label string `json:"label"`
+}
+
+// OrgActivityResponse is one display-ready organization activity fact.
+type OrgActivityResponse struct {
+	ID           string                   `json:"id"`
+	OccurredAt   string                   `json:"occurred_at"`
+	Kind         string                   `json:"kind"`
+	Summary      string                   `json:"summary"`
+	Actor        ActivityActorResponse    `json:"actor"`
+	Resource     ActivityResourceResponse `json:"resource"`
+	AppID        string                   `json:"app_id,omitempty"`
+	ProjectID    string                   `json:"project_id,omitempty"`
+	DeploymentID string                   `json:"deployment_id,omitempty"`
+	Data         json.RawMessage          `json:"data"`
+}
+
+// ListOrgActivityResponse is a newest-first keyset page.
+type ListOrgActivityResponse struct {
+	Items      []OrgActivityResponse `json:"items"`
+	NextBefore string                `json:"next_before,omitempty"`
+}
+
 // OrgMemberResponse is the wire shape for a single org membership row.
 type OrgMemberResponse struct {
 	AccountID string `json:"account_id"`
@@ -1673,6 +1756,21 @@ type CreateAppWebhookRequest struct {
 	EventFilter   []string `json:"event_filter,omitempty"`
 	RetryPolicy   string   `json:"retry_policy,omitempty"`
 	Enabled       *bool    `json:"enabled,omitempty"`
+}
+
+type DeliverAppEventRequest struct {
+	Destination string          `json:"destination"`
+	Type        string          `json:"type"`
+	Data        json.RawMessage `json:"data"`
+}
+
+type DeliverAppEventResponse struct {
+	ID          string `json:"id"`
+	WebhookID   string `json:"webhook_id"`
+	Destination string `json:"destination"`
+	Event       string `json:"event"`
+	Status      string `json:"status"`
+	StatusURL   string `json:"status_url"`
 }
 
 // UpdateAppWebhookRequest is the body of PATCH

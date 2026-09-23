@@ -159,14 +159,14 @@ func (s *server) issueOAuthCodeStateForInstallation(w http.ResponseWriter, r *ht
 func (s *server) redirectToGitHubAuthorization(w http.ResponseWriter, r *http.Request, installationID int64) bool {
 	clientID := os.Getenv("FAAS_GITHUB_APP_CLIENT_ID")
 	if clientID == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "github_oauth_misconfigured",
-			"OAuth Misconfigured", "FAAS_GITHUB_APP_CLIENT_ID environment variable is required"))
+		s.log.Error("GitHub App connection is unavailable", "reason", "client ID is not configured")
+		api.WriteProblem(w, githubAppUnavailableProblem())
 		return false
 	}
 	stateToken, err := s.issueOAuthCodeStateForInstallation(w, r, installationID)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"Internal Error", "failed to generate CSRF state"))
+		s.log.Error("issue OAuth state for GitHub App authorization", "err", err)
+		api.WriteProblem(w, api.ErrInternal("Gregale could not start the GitHub connection flow.").WithHint("Retry in a moment; if it continues, contact support."))
 		return false
 	}
 	redirectURI := os.Getenv("FAAS_GITHUB_APP_REDIRECT_URI")
@@ -183,6 +183,14 @@ func (s *server) redirectToGitHubAuthorization(w http.ResponseWriter, r *http.Re
 		"&state=" + url.QueryEscape(stateToken) + "&scope="
 	http.Redirect(w, r, u, http.StatusFound)
 	return true
+}
+
+func githubAppUnavailableProblem() *api.Problem {
+	return api.NewProblem(http.StatusServiceUnavailable, api.CodeOAuthProviderUnavailable,
+		"GitHub connection unavailable",
+		"GitHub connections are not available for this Gregale installation.").
+		WithHint("Try again later, or contact support if you need to connect GitHub.").
+		WithDocs("https://gregale.dev/docs/auth")
 }
 
 // renderOAuthCodeCallback is the GET /oauth/code-callback handler.
@@ -326,15 +334,13 @@ func (s *server) redirectToGitHubAppInstall(w http.ResponseWriter, r *http.Reque
 	stateToken, err := s.issueOAuthCodeState(w, r)
 	if err != nil {
 		s.log.Error("issue oauth code state for GitHub App installation", "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"Internal Error", "failed to generate CSRF state"))
+		api.WriteProblem(w, api.ErrInternal("Gregale could not start the GitHub connection flow.").WithHint("Retry in a moment; if it continues, contact support."))
 		return false
 	}
 	installURL, err := githubAppInstallURL(stateToken)
 	if err != nil {
 		s.log.Error("build GitHub App installation URL", "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "github_oauth_misconfigured",
-			"OAuth Misconfigured", err.Error()))
+		api.WriteProblem(w, githubAppUnavailableProblem())
 		return false
 	}
 	http.Redirect(w, r, installURL, http.StatusFound)
@@ -376,8 +382,7 @@ func (s *server) startConnectGitHub(w http.ResponseWriter, r *http.Request) {
 	clientID := os.Getenv("FAAS_GITHUB_APP_CLIENT_ID")
 	if clientID == "" {
 		log.Error("FAAS_GITHUB_APP_CLIENT_ID not configured")
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "github_oauth_misconfigured",
-			"OAuth Misconfigured", "FAAS_GITHUB_APP_CLIENT_ID environment variable is required"))
+		api.WriteProblem(w, githubAppUnavailableProblem())
 		return
 	}
 

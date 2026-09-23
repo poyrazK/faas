@@ -514,6 +514,36 @@ func TestRenderProblem_PureUnit(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("code = %d, want 500", rec.Code)
 	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeInternal {
+		t.Errorf("problem code = %q, want %q", problem.Code, api.CodeInternal)
+	}
+	if problem.Hint == "" {
+		t.Error("hint is empty; dashboard render failure must give a next action")
+	}
+	if strings.Contains(rec.Body.String(), "boom") {
+		t.Errorf("body leaked render error: %s", rec.Body.String())
+	}
+}
+
+func TestRenderProblem_PreservesSafeProblem(t *testing.T) {
+	rec := httptest.NewRecorder()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	renderProblem(rec, log, api.ErrValidation("Choose a valid app slug."))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeValidation || problem.Detail != "Choose a valid app slug." {
+		t.Errorf("problem = %#v, want preserved validation problem", problem)
+	}
 }
 
 // TestDashboardManifestView confirms the state→dashboard adapter.

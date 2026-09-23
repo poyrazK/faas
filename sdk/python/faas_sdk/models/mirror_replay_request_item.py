@@ -21,6 +21,8 @@ T = TypeVar("T", bound="MirrorReplayRequestItem")
 
 @_attrs_define
 class MirrorReplayRequestItem:
+    """One sanitized historical request and its optional expected source-response metadata."""
+
     method: MirrorReplayRequestItemMethod
     path: str
     """Absolute request path with optional query; absolute URLs are rejected."""

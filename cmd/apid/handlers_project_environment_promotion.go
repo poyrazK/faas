@@ -347,9 +347,16 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Rollback refused", err.Error()))
+			s.log.WarnContext(r.Context(), "project environment rollback stopped because target changed", "promotion_id", promotion.ID, "err", err)
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Rollback stopped because the target changed",
+				"A target deployment changed after promotion. Review the current deployment state before retrying.").
+				WithHint("Refresh the promotion status and confirm the intended target before trying again."))
 		} else {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Rollback failed", err.Error()))
+			api.WriteProblem(w, customerCapacityProblem(s.log, "roll back environment promotion",
+				"Environment rollback temporarily unavailable",
+				"Gregale could not complete the environment rollback.",
+				"Check the promotion status before retrying; contact support if it remains incomplete.", err))
 		}
 		return
 	}
@@ -404,7 +411,9 @@ func (s *server) applyProjectEnvironmentPromotionRollback(ctx context.Context, a
 }
 
 func (s *server) recordProjectEnvironmentPromotionRollbackFailure(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, cause error) error {
-	message := cause.Error()
+	message := projectEnvironmentRollbackFailureMessage(cause)
+	s.log.ErrorContext(ctx, "project environment workload rollback failed",
+		"promotion_id", promotion.ID, "workload", workload.WorkloadSlug, "err", cause)
 	if _, err := s.store.UpdateProjectEnvironmentPromotionRollbackWorkload(ctx, acct.ID, promotion.ID, workload.ID, "failed", "", message); err != nil {
 		return fmt.Errorf("could not record environment rollback failure: %w", err)
 	}
@@ -413,6 +422,16 @@ func (s *server) recordProjectEnvironmentPromotionRollbackFailure(ctx context.Co
 		return fmt.Errorf("could not complete environment rollback failure: %w", err)
 	}
 	return cause
+}
+
+func projectEnvironmentRollbackFailureMessage(err error) string {
+	if errors.Is(err, state.ErrConflict) {
+		return "A target deployment changed after promotion; review its current state before retrying rollback."
+	}
+	if err != nil && strings.Contains(err.Error(), "no longer belongs to the project") {
+		return "A workload is no longer in this project; refresh the promotion before retrying rollback."
+	}
+	return "Gregale could not restore this workload during rollback. Check the promotion status or contact support."
 }
 
 func rollbackProjectEnvironmentPromotionWorkload(ctx context.Context, store state.Store, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, appID string) (string, string, error) {
@@ -565,13 +584,19 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 	}
 	if err := s.verifyProjectEnvironmentPromotion(ctx, acct, promotion, plan); err != nil {
 		verificationCompleted := time.Now().UTC()
-		message := err.Error()
+		message := projectEnvironmentVerificationMessage(err)
+		s.log.ErrorContext(ctx, "project environment promotion verification failed",
+			"promotion_id", promotion.ID, "err", err)
 		_, _ = s.store.UpdateProjectEnvironmentPromotionVerification(ctx, acct.ID, promotion.ID,
 			"failed", message, nil, &verificationCompleted)
 		_, _ = s.store.UpdateProjectEnvironmentPromotion(ctx, acct.ID, promotion.ID, "failed", message, &verificationCompleted)
 		if rollbackErr := s.autoRollbackProjectEnvironmentPromotion(ctx, acct, promotion); rollbackErr != nil {
+			s.log.ErrorContext(ctx, "automatic environment promotion rollback failed",
+				"promotion_id", promotion.ID, "err", rollbackErr)
 			return api.ProjectEnvironmentPromotionResponse{}, api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Promotion verification failed", message+"; automatic rollback failed: "+rollbackErr.Error())
+				"Promotion verification failed",
+				message+" Automatic rollback could not be confirmed; check the promotion status before retrying.").
+				WithHint("Review the promotion status and current target deployments. Contact support if rollback is incomplete.")
 		}
 		return api.ProjectEnvironmentPromotionResponse{}, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Promotion verification failed", message+"; promotion was automatically rolled back")
@@ -591,6 +616,14 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 		"promotion_hash": promotion.PromotionHash, "workload_count": len(finalWorkloads),
 	})
 	return projectEnvironmentPromotionResponse(updated, finalWorkloads), nil
+}
+
+func projectEnvironmentVerificationMessage(err error) string {
+	message := err.Error()
+	if strings.HasPrefix(message, "could not ") {
+		return "Gregale could not verify one or more deployment records."
+	}
+	return message
 }
 
 func (s *server) verifyProjectEnvironmentPromotion(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, plan projectEnvironmentPromotionPlan) error {

@@ -163,7 +163,7 @@ func TestGeneratedHelpUsesDispatcherArgumentOrder(t *testing.T) {
 	}
 }
 
-func TestLogsHelpDocumentsRequiredSlugAndFilters(t *testing.T) {
+func TestLogsHelpDocumentsOptionalSlugAndFilters(t *testing.T) {
 	var stdout bytes.Buffer
 	oldOut := osStdout
 	osStdout = &stdout
@@ -171,7 +171,10 @@ func TestLogsHelpDocumentsRequiredSlugAndFilters(t *testing.T) {
 	if code := run([]string{"logs", "--help"}); code != 0 {
 		t.Fatalf("logs --help = %d", code)
 	}
-	for _, want := range []string{"gregale logs <slug>", "--deployment", "--grep", "--since", "--level", "--explain", "--follow"} {
+	for _, want := range []string{
+		"gregale logs [<slug>]", "--deployment", "--release", "--source", "--grep", "--since",
+		"--level", "--status", "--route", "--request", "--limit", "--all", "--explain", "--follow",
+	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("logs help missing %q:\n%s", want, stdout.String())
 		}

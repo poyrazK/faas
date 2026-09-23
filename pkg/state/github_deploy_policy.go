@@ -24,27 +24,54 @@ const (
 	GitHubDeployPolicyMaxPreviewTTLHours     = 30 * 24
 )
 
-// GitHubDeployPolicy is the customer-owned deployment policy for a project
-// connected to GitHub. A missing row means the defaults below, so existing
-// bindings remain wire- and behaviour-compatible.
-type GitHubDeployPolicy struct {
-	ProjectID       string
-	AccountID       string
-	RootDir         string
-	IgnoredPaths    []string
-	PreviewEnabled  bool
-	PreviewTTLHours int
-	UpdatedAt       time.Time
+// PreviewServicePolicy controls whether a project preview may call a
+// production dependency through Gregale's internal service proxy.
+//
+// Existing projects are migration-backfilled to allow_marked. A project with
+// no persisted policy row is new and receives deny from
+// DefaultGitHubDeployPolicy, so the safe posture does not break existing
+// traffic.
+type PreviewServicePolicy string
+
+const (
+	PreviewServicePolicyDeny        PreviewServicePolicy = "deny"
+	PreviewServicePolicyAllowMarked PreviewServicePolicy = "allow_marked"
+)
+
+// Valid reports whether p is one of the two wire-stable policy values.
+func (p PreviewServicePolicy) Valid() bool {
+	switch p {
+	case PreviewServicePolicyDeny, PreviewServicePolicyAllowMarked:
+		return true
+	default:
+		return false
+	}
 }
 
-// DefaultGitHubDeployPolicy returns the backwards-compatible policy for a
-// project that has never been customized.
+// GitHubDeployPolicy is the customer-owned deployment policy for a project
+// connected to GitHub. A missing row receives the safe defaults below;
+// migrations persist legacy-compatible defaults for projects that predate the
+// preview service policy.
+type GitHubDeployPolicy struct {
+	ProjectID            string
+	AccountID            string
+	RootDir              string
+	IgnoredPaths         []string
+	PreviewEnabled       bool
+	PreviewTTLHours      int
+	PreviewServicePolicy PreviewServicePolicy
+	UpdatedAt            time.Time
+}
+
+// DefaultGitHubDeployPolicy returns the safe policy for a project that has
+// never been customized.
 func DefaultGitHubDeployPolicy(projectID, accountID string) GitHubDeployPolicy {
 	return GitHubDeployPolicy{
-		ProjectID:       projectID,
-		AccountID:       accountID,
-		PreviewEnabled:  true,
-		PreviewTTLHours: GitHubDeployPolicyDefaultPreviewTTLHours,
+		ProjectID:            projectID,
+		AccountID:            accountID,
+		PreviewEnabled:       true,
+		PreviewTTLHours:      GitHubDeployPolicyDefaultPreviewTTLHours,
+		PreviewServicePolicy: PreviewServicePolicyDeny,
 	}
 }
 
@@ -97,6 +124,9 @@ func (p GitHubDeployPolicy) Validate() error {
 	}
 	if p.PreviewTTLHours < GitHubDeployPolicyMinPreviewTTLHours || p.PreviewTTLHours > GitHubDeployPolicyMaxPreviewTTLHours {
 		return fmt.Errorf("state: preview_ttl_hours must be between %d and %d", GitHubDeployPolicyMinPreviewTTLHours, GitHubDeployPolicyMaxPreviewTTLHours)
+	}
+	if !p.PreviewServicePolicy.Valid() {
+		return fmt.Errorf("state: preview_service_policy must be %q or %q", PreviewServicePolicyDeny, PreviewServicePolicyAllowMarked)
 	}
 	return nil
 }
@@ -173,11 +203,11 @@ func (s *PgStore) GetGitHubDeployPolicy(ctx context.Context, projectID, accountI
 	var updatedAt time.Time
 	err := s.pool.QueryRow(ctx, `
 		select project_id, account_id, root_dir, ignored_paths, preview_enabled,
-		       preview_ttl_hours, updated_at
+		       preview_ttl_hours, preview_service_policy, updated_at
 		  from github_deploy_policies
 		 where project_id = $1 and account_id = $2`, projectID, accountID).Scan(
 		&policy.ProjectID, &policy.AccountID, &policy.RootDir, &raw,
-		&policy.PreviewEnabled, &policy.PreviewTTLHours, &updatedAt)
+		&policy.PreviewEnabled, &policy.PreviewTTLHours, &policy.PreviewServicePolicy, &updatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return DefaultGitHubDeployPolicy(projectID, accountID), nil
@@ -206,21 +236,23 @@ func (s *PgStore) UpsertGitHubDeployPolicy(ctx context.Context, policy GitHubDep
 	var storedRaw []byte
 	err = s.pool.QueryRow(ctx, `
 		insert into github_deploy_policies
-		    (project_id, account_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, updated_at)
-		values ($1, $2, $3, $4::jsonb, $5, $6, now())
+		    (project_id, account_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours,
+		     preview_service_policy, updated_at)
+		values ($1, $2, $3, $4::jsonb, $5, $6, $7, now())
 		on conflict (project_id) do update set
 		    account_id = excluded.account_id,
 		    root_dir = excluded.root_dir,
 		    ignored_paths = excluded.ignored_paths,
 		    preview_enabled = excluded.preview_enabled,
 		    preview_ttl_hours = excluded.preview_ttl_hours,
+		    preview_service_policy = excluded.preview_service_policy,
 		    updated_at = now()
 		returning project_id, account_id, root_dir, ignored_paths, preview_enabled,
-		          preview_ttl_hours, updated_at`,
+		          preview_ttl_hours, preview_service_policy, updated_at`,
 		policy.ProjectID, policy.AccountID, policy.RootDir, raw,
-		policy.PreviewEnabled, policy.PreviewTTLHours).Scan(
+		policy.PreviewEnabled, policy.PreviewTTLHours, policy.PreviewServicePolicy).Scan(
 		&stored.ProjectID, &stored.AccountID, &stored.RootDir, &storedRaw,
-		&stored.PreviewEnabled, &stored.PreviewTTLHours, &stored.UpdatedAt)
+		&stored.PreviewEnabled, &stored.PreviewTTLHours, &stored.PreviewServicePolicy, &stored.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubDeployPolicy{}, ErrNotFound

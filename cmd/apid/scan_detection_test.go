@@ -9,7 +9,9 @@ import (
 
 func TestScanDetectionTraceMapsToPlanResponse(t *testing.T) {
 	workload := toPlanWorkload(reposcan.Workload{
-		Name: "web",
+		Name:                      "web",
+		ServiceBindingPolicy:      reposcan.ServiceBindingPolicyDeclared,
+		PreviewServiceCallsPolicy: reposcan.PreviewServiceCallsDeny,
 		DetectedBy: reposcan.Detection{
 			Detector:   "compose",
 			Marker:     "compose.yaml",
@@ -19,6 +21,12 @@ func TestScanDetectionTraceMapsToPlanResponse(t *testing.T) {
 	})
 	if workload.DetectedBy == nil || workload.DetectedBy.Marker != "compose.yaml" {
 		t.Fatalf("detected_by = %+v, want compose.yaml marker", workload.DetectedBy)
+	}
+	if workload.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+		t.Fatalf("service_binding_policy = %q, want declared", workload.ServiceBindingPolicy)
+	}
+	if workload.PreviewServiceCallsPolicy != api.PreviewServiceCallsDeny {
+		t.Fatalf("preview_service_calls_policy = %q, want deny", workload.PreviewServiceCallsPolicy)
 	}
 
 	warnings := toPlanDetectionWarnings([]reposcan.DetectionWarning{{

@@ -405,6 +405,11 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		"name":                  key,
 		"snapshots_invalidated": invalidated,
 	})
+	s.recordAppActivity(r.Context(), r, acct, app, state.OrgActivity{
+		Kind: "env.set", ResourceType: "environment_variable", ResourceID: scope + ":" + key,
+		ResourceLabel: key, SourceType: "env.set", SourceID: activitySourceID(r, app.ID+":"+scope+":"+key),
+		Data: activityData(map[string]any{"scope": scope, "snapshots_invalidated": invalidated}),
+	})
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifyAppEnvChanged, acct, app, "set", scope, key)
 	writeJSON(w, http.StatusOK, struct {
 		Key   string `json:"key"`
@@ -511,6 +516,11 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		"scope":                 scope,
 		"name":                  key,
 		"snapshots_invalidated": invalidated,
+	})
+	s.recordAppActivity(r.Context(), r, acct, app, state.OrgActivity{
+		Kind: "env.deleted", ResourceType: "environment_variable", ResourceID: scope + ":" + key,
+		ResourceLabel: key, SourceType: "env.deleted", SourceID: activitySourceID(r, app.ID+":"+scope+":"+key),
+		Data: activityData(map[string]any{"scope": scope, "snapshots_invalidated": invalidated}),
 	})
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifyAppEnvChanged, acct, app, "delete", scope, key)
 	w.WriteHeader(http.StatusNoContent)

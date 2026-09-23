@@ -40,17 +40,26 @@ func (s *server) advanceCanary(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	next, problem := nextCanaryStage(d, req.ExpectedStep)
 	if problem != nil {
+		if problem.Status >= http.StatusInternalServerError {
+			logCustomerFailure(s.log, "read persisted canary configuration", fmt.Errorf("%s", problem.Detail))
+			problem.Detail = "Gregale could not read this rollout's configuration."
+			problem.Hint = "Retry the request in a moment; if it continues, contact support."
+		}
 		api.WriteProblem(w, problem)
 		return
 	}
 	advancer, ok := s.store.(state.CanaryAdvancer)
 	if !ok {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "canary unavailable", "the configured state store does not support atomic canary transitions"))
+		writeCustomerInternalProblem(w, r, s.log, "advance canary",
+			"Gregale could not advance this canary rollout.",
+			"Retry the request in a moment; if it continues, contact support.", errors.New("configured store does not support atomic canary transitions"))
 		return
 	}
 	audit, err := canaryAdvanceAudit(d, app, acct, req.ExpectedStep, next)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "canary audit unavailable", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "prepare canary audit",
+			"Gregale could not advance this canary rollout.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
 	updated, auditID, err := advancer.AdvanceCanary(r.Context(), d.ID, state.CanaryAdvanceParams{
@@ -158,7 +167,9 @@ func (s *server) writeCanaryAdvanceError(ctx context.Context, w http.ResponseWri
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such deployment"))
 	default:
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "canary advance failed", err.Error()))
+		logCustomerFailure(s.log, "advance canary", err)
+		api.WriteProblem(w, api.ErrInternal("Gregale could not advance this canary rollout.").
+			WithHint("Retry the request in a moment; if it continues, contact support."))
 	}
 	return false
 }

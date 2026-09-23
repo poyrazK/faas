@@ -14,7 +14,7 @@ func assertionProxy(t *testing.T, caller ServiceCaller, mint ServiceCallerMinter
 	t.Helper()
 	return NewServiceProxy(ServiceProxyConfig{
 		Provider: staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "i", NodeID: "n", Port: 8080}}},
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-target"}, true, nil
 		},
 		Authorize:           func(context.Context, string, string) (ServiceCaller, error) { return caller, nil },

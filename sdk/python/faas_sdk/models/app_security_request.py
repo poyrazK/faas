@@ -27,8 +27,8 @@ class AppSecurityRequest:
     """Operator-only toggle. nil = no change. *true = opt in to signature enforcement (requires the trust list to
     be non-empty). *false = opt out."""
     security_policy: AppSecurityRequestSecurityPolicy | Unset = UNSET
-    """Deploy-time response to high-severity posture findings. off = advisory report only; warn = non-blocking;
-    enforce = reject new deploys until remediated and require a trusted signature for OCI images."""
+    """Deploy-time response to high-severity configuration findings. off = advisory report only; warn = non-
+    blocking; enforce = reject new deploys until remediated and require a trusted signature for OCI images."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -562,6 +562,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/webhooks/{id}/rotate-secret":          "RotateAppWebhookSecret",
 	"GET /v1/apps/{slug}/webhooks/{id}/deliveries":              "ListAppWebhookDeliveries",
 	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry": "RetryAppWebhookDelivery",
+	"POST /v1/apps/{slug}/outbox":                               "DeliverAppEvent",
 
 	// ADR-212 — signature-verified durable inbound webhook configuration.
 	// The provider-facing /v1/hooks route is excluded above because it is not
@@ -648,6 +649,7 @@ var methodRouteMap = map[string]string{
 	// conforms to the SDK's flat resource naming.
 	"POST /v1/apps/{slug}/invoke":                         "InvokeApp",
 	"POST /v1/apps/{slug}/invoke/async":                   "InvokeAppAsync",
+	"POST /v1/apps/{slug}/inbox":                          "SendAppMessage",
 	"POST /v1/apps/{slug}/queues/send":                    "QueueSend",
 	"POST /v1/apps/{slug}/queues/receive":                 "QueueReceive",
 	"POST /v1/apps/{slug}/queues/{id}/ack":                "AckQueueRow",
@@ -939,6 +941,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/orgs":                               "ListOrgs",
 	"POST /v1/orgs":                              "CreateOrg",
 	"GET /v1/orgs/{slug}":                        "GetOrg",
+	"GET /v1/orgs/{slug}/activity":               "ListOrgActivity",
 	"PATCH /v1/orgs/{slug}":                      "PatchOrg",
 	"DELETE /v1/orgs/{slug}":                     "DeleteOrg",
 	"GET /v1/orgs/{slug}/members":                "ListOrgMembers",

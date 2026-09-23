@@ -4,10 +4,8 @@ package migrations_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
@@ -60,8 +58,7 @@ func TestMigrations_WebhookEventAllowlistB5(t *testing.T) {
 			(webhook_id, app_id, account_id, event, payload)
 		values ($1, $2, $3, 'deployment.faild', '{}'::jsonb)
 	`, hookID, appID, acctID)
-	var pgErr *pgconn.PgError
-	if err == nil || !errors.As(err, &pgErr) || pgErr.Code != "23514" {
-		t.Fatalf("typo event should fail with check_violation, got %v", err)
+	if err != nil {
+		t.Fatalf("custom event should remain accepted by the application outbox, got %v", err)
 	}
 }

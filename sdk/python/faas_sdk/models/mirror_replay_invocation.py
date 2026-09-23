@@ -14,6 +14,8 @@ T = TypeVar("T", bound="MirrorReplayInvocation")
 
 @_attrs_define
 class MirrorReplayInvocation:
+    """Correlation metadata for one queued mirror replay invocation."""
+
     request_id: str
     mirror_invocation_id: UUID
     status: MirrorReplayInvocationStatus

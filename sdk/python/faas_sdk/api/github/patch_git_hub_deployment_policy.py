@@ -95,7 +95,10 @@ def sync_detailed(
      Updates project-level GitHub deployment behaviour. Fields are
     replace-on-write; omitted fields retain their current values. The
     ignored_paths list accepts exact paths, one-segment shell globs, and
-    trailing `/**` directory patterns. Mutations require MFA.
+    trailing `/**` directory patterns. `preview_service_policy=deny`
+    rejects preview calls to production dependencies before discovery or
+    wake-up; `allow_marked` preserves the marked-call compatibility mode.
+    Mutations require MFA.
 
     Args:
         slug (str):
@@ -133,7 +136,10 @@ def sync(
      Updates project-level GitHub deployment behaviour. Fields are
     replace-on-write; omitted fields retain their current values. The
     ignored_paths list accepts exact paths, one-segment shell globs, and
-    trailing `/**` directory patterns. Mutations require MFA.
+    trailing `/**` directory patterns. `preview_service_policy=deny`
+    rejects preview calls to production dependencies before discovery or
+    wake-up; `allow_marked` preserves the marked-call compatibility mode.
+    Mutations require MFA.
 
     Args:
         slug (str):
@@ -166,7 +172,10 @@ async def asyncio_detailed(
      Updates project-level GitHub deployment behaviour. Fields are
     replace-on-write; omitted fields retain their current values. The
     ignored_paths list accepts exact paths, one-segment shell globs, and
-    trailing `/**` directory patterns. Mutations require MFA.
+    trailing `/**` directory patterns. `preview_service_policy=deny`
+    rejects preview calls to production dependencies before discovery or
+    wake-up; `allow_marked` preserves the marked-call compatibility mode.
+    Mutations require MFA.
 
     Args:
         slug (str):
@@ -202,7 +211,10 @@ async def asyncio(
      Updates project-level GitHub deployment behaviour. Fields are
     replace-on-write; omitted fields retain their current values. The
     ignored_paths list accepts exact paths, one-segment shell globs, and
-    trailing `/**` directory patterns. Mutations require MFA.
+    trailing `/**` directory patterns. `preview_service_policy=deny`
+    rejects preview calls to production dependencies before discovery or
+    wake-up; `allow_marked` preserves the marked-call compatibility mode.
+    Mutations require MFA.
 
     Args:
         slug (str):

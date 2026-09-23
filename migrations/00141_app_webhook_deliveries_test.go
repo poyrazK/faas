@@ -14,12 +14,8 @@
 //     delivered_at, created_at, updated_at).
 //  2. status CHECK accepts ('pending','in_flight','succeeded',
 //     'failed','dead') and rejects everything else with 23514.
-//  3. event CHECK accepts the closed vocabulary (cron.fired,
-//     app.deployed, app.scaled, app.parked, app.woken) and rejects
-//     unknown events with 23514. The vocabulary is the closed set
-//     the dispatcher emits today; new events land as a controller +
-//     handler addition first (mirrors
-//     alert_rules_metric_chk from migration 00062).
+//  3. event CHECK accepts platform and application-defined event types,
+//     while rejecting empty or overlong values.
 //  4. attempt CHECK enforces 0..7 — the dispatcher's DLQ ceiling.
 //  5. partial index app_webhook_deliveries_pending_idx exists on
 //     (status, next_attempt_at) WHERE status IN ('pending',
@@ -145,9 +141,11 @@ func TestMigrations_00141_AppWebhookDeliveries_ShapeAndFK(t *testing.T) {
 		t.Errorf("status='queued' error = %v, want pgx 23514 (check_violation)", err)
 	}
 
-	// (3) event CHECK accepts the closed vocabulary, rejects 'foo'.
+	// (3) Event types include both platform events and application-defined
+	// outbox events, bounded to 1..256 characters.
 	for _, ev := range []string{
 		"cron.fired", "app.deployed", "app.scaled", "app.parked", "app.woken",
+		"com.example.billing.invoice.created",
 	} {
 		if _, err := pool.Exec(ctx, `
 			insert into app_webhook_deliveries
@@ -160,12 +158,22 @@ func TestMigrations_00141_AppWebhookDeliveries_ShapeAndFK(t *testing.T) {
 	_, err = pool.Exec(ctx, `
 		insert into app_webhook_deliveries
 			(webhook_id, app_id, account_id, event, payload)
-		values ($1, $2, $3, 'app.unknown', '{}'::jsonb)
+		values ($1, $2, $3, '', '{}'::jsonb)
 	`, hookID, appID, acctID)
 	if err == nil {
-		t.Errorf("event='app.unknown' should be rejected by CHECK")
+		t.Errorf("empty event should be rejected by CHECK")
 	} else if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
-		t.Errorf("event='app.unknown' error = %v, want pgx 23514 (check_violation)", err)
+		t.Errorf("empty event error = %v, want pgx 23514 (check_violation)", err)
+	}
+	_, err = pool.Exec(ctx, `
+		insert into app_webhook_deliveries
+			(webhook_id, app_id, account_id, event, payload)
+		values ($1, $2, $3, repeat('x', 257), '{}'::jsonb)
+	`, hookID, appID, acctID)
+	if err == nil {
+		t.Errorf("event longer than 256 characters should be rejected by CHECK")
+	} else if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("overlong event error = %v, want pgx 23514 (check_violation)", err)
 	}
 
 	// (4) attempt CHECK enforces 0..7. The dispatcher's DLQ ceiling.

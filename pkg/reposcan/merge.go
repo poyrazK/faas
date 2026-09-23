@@ -52,16 +52,24 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		command      []string
 		commandShell bool
 		dependsOn    []string
-		schedules    []CronSchedule
-		ports        []int
-		envKeys      []string
+
+		serviceBindingPolicy      ServiceBindingPolicy
+		previewServiceCallsPolicy PreviewServiceCallsPolicy
+
+		schedules []CronSchedule
+		ports     []int
+		envKeys   []string
 		// Whether each per-field slot is filled. We never overwrite
 		// an already-filled field — first non-empty per tier order wins.
-		classSet  bool
-		cmdSet    bool
-		schedSet  bool
-		portsSet  bool
-		envSet    bool
+		classSet bool
+		cmdSet   bool
+		schedSet bool
+		portsSet bool
+		envSet   bool
+
+		serviceBindingPolicySet      bool
+		previewServiceCallsPolicySet bool
+
 		dfSet     bool
 		imageSet  bool
 		sourceSet bool
@@ -136,6 +144,14 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 				b.dependsOn = append(b.dependsOn, dep)
 			}
 		}
+		if !b.serviceBindingPolicySet && s.serviceBindingPolicy != "" {
+			b.serviceBindingPolicy = s.serviceBindingPolicy
+			b.serviceBindingPolicySet = true
+		}
+		if !b.previewServiceCallsPolicySet && s.previewServiceCallsPolicy != "" {
+			b.previewServiceCallsPolicy = s.previewServiceCallsPolicy
+			b.previewServiceCallsPolicySet = true
+		}
 		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
 			if len(s.schedules) > 0 {
 				b.schedules = append([]CronSchedule(nil), s.schedules...)
@@ -184,13 +200,17 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			Command:      b.command,
 			CommandShell: b.commandShell,
 			DependsOn:    b.dependsOn,
-			Class:        cls,
-			Schedule:     primarySchedule,
-			Schedules:    append([]CronSchedule(nil), b.schedules...),
-			Ports:        b.ports,
-			EnvKeys:      b.envKeys,
-			Source:       b.source,
-			Tier:         b.tier,
+
+			ServiceBindingPolicy:      b.serviceBindingPolicy,
+			PreviewServiceCallsPolicy: b.previewServiceCallsPolicy,
+
+			Class:     cls,
+			Schedule:  primarySchedule,
+			Schedules: append([]CronSchedule(nil), b.schedules...),
+			Ports:     b.ports,
+			EnvKeys:   b.envKeys,
+			Source:    b.source,
+			Tier:      b.tier,
 			DetectedBy: Detection{
 				Detector:         b.det.String(),
 				Priority:         b.det.priority(),

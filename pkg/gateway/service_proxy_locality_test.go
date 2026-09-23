@@ -16,7 +16,7 @@ func localityProxy(t *testing.T, localNodeID string, endpoints []ServiceEndpoint
 	t.Helper()
 	return NewServiceProxy(ServiceProxyConfig{
 		Provider: staticProvider{endpoints: endpoints},
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize:   func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },

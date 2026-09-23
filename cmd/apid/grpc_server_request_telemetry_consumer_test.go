@@ -15,6 +15,7 @@ import (
 type consumerTelemetryStore struct {
 	account  state.Account
 	inserted []sqlc.InsertRequestTelemetryParams
+	eventIDs []string
 	usage    []state.APIConsumerUsageEvent
 }
 
@@ -22,8 +23,9 @@ func (s *consumerTelemetryStore) AccountByID(context.Context, string) (state.Acc
 	return s.account, nil
 }
 
-func (s *consumerTelemetryStore) InsertRequestTelemetry(_ context.Context, arg sqlc.InsertRequestTelemetryParams) error {
+func (s *consumerTelemetryStore) InsertRequestTelemetryWithLogEvent(_ context.Context, arg sqlc.InsertRequestTelemetryParams, eventID string) error {
 	s.inserted = append(s.inserted, arg)
+	s.eventIDs = append(s.eventIDs, eventID)
 	return nil
 }
 
@@ -56,6 +58,9 @@ func TestRequestTelemetryReceiverPersistsConsumerID(t *testing.T) {
 	}
 	if got := store.inserted[0].ConsumerID.String(); got != consumerID {
 		t.Fatalf("ConsumerID = %q, want %q", got, consumerID)
+	}
+	if _, err := uuid.Parse(store.eventIDs[0]); err != nil {
+		t.Fatalf("log event id %q is not a UUID: %v", store.eventIDs[0], err)
 	}
 }
 

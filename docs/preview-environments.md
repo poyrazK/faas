@@ -1,9 +1,10 @@
 # PR preview environments (issue #272 / ADR-095)
 
-Every pull request against a connected GitHub repo gets its own
-ephemeral app, deployed on push, routed at a per-PR subdomain,
-and torn down on PR close (or after the TTL — whichever comes
-first). No CI configuration required; the integration is
+Every pull request against a connected GitHub repo gets an
+ephemeral app for the bound workload and its declared transitive
+`depends_on` workload dependencies, deployed on push and routed at
+per-PR subdomains. They are torn down on PR close (or after the TTL —
+whichever comes first). No CI configuration required; the integration is
 triggered by the GitHub App the customer installed via
 `gregale connect`.
 
@@ -54,7 +55,7 @@ A reopened PR during the grace period bumps the row back to
 
 ## Quota
 
-Each preview consumes **one slot** of the customer's
+Each preview workload consumes **one slot** of the customer's
 `DeployedAppMax`:
 
 - **Free** — 1 slot total (production + preview). Preview
@@ -64,7 +65,11 @@ Each preview consumes **one slot** of the customer's
 - **Scale** — 100 slots.
 
 This is the same ceiling production apps use; there is no
-separate preview cap. The 7-day default TTL plus the 24h
+separate preview cap. A preview with two app dependencies consumes three
+slots. The root and its dependency previews reserve those slots atomically:
+if the full set does not fit, no new preview rows are kept and no builds are
+queued. Existing rows for the same PR are preserved on retries. The 7-day
+default TTL plus the 24h
 closed-grace window plus the janitor's per-tick sweep keep
 the steady-state preview count bounded — a customer who
 opens 20 PRs today will not have 20 previews live a week
@@ -160,8 +165,11 @@ Customers can read and update the project policy through
 The policy supports a repository-relative root directory for root workloads,
 ignored change paths (exact paths, one-segment globs, and trailing `/**`
 directory patterns), a preview enable switch, and a preview TTL from 1 hour
-to 30 days. Existing projects default to previews enabled, a 7-day TTL, no
-ignored paths, and the repository root, so adopting the policy is additive.
+to 30 days. It also controls whether previews can call production internal
+services. New projects default to `preview_service_policy: deny`; projects
+that existed when the policy shipped were migration-backed to `allow_marked`
+to avoid changing live traffic. All projects otherwise default to previews
+enabled, a 7-day TTL, no ignored paths, and the repository root.
 
 When all changed files match ignored paths, githubd records the delivery as a
 successful no-op and does not enqueue builds. Compare-API failures still use
@@ -173,8 +181,9 @@ must not be mistaken for an ignored change set.
 From a checkout, `gregale github setup <slug> --repo OWNER/NAME` binds the
 application, writes `.github/workflows/gregale.yml`, and leaves the existing
 preview defaults in place. Add `--preview`, `--no-preview`,
-`--preview-ttl-hours`, `--root-dir`, or `--ignore` to configure the project
-policy in the same command. Use `--rollout safe` to generate a production
+`--preview-ttl-hours`, `--preview-service-policy deny|allow_marked`,
+`--root-dir`, or `--ignore` to configure the project policy in the same
+command. Use `--rollout safe` to generate a production
 workflow with the balanced health-gated rollout (Pro/Scale only); the default
 `standard` mode preserves the existing full-traffic behavior. Use `--dry-run`
 to inspect the workflow without network or file changes; an existing different
@@ -192,11 +201,37 @@ be managed by the connected GitHub integration.
 
 ## Internal service calls from a preview
 
-A preview is one app, not a copy of your whole project, so it has no preview
-copy of the services it depends on. Internal calls from a preview reach your
-**production** services, and their side effects are real.
+A project PR preview first resolves a service name inside its own account,
+project, and PR. If that workload preview exists, the call stays isolated; a
+preview in another PR, project, or account is never eligible.
 
-Gregale marks every such call with `X-Faas-Caller-Env: preview` and
+On each PR head update, githubd scans the source and provisions only the bound
+workload's transitive `depends_on` app closure, in dependency order. Enqueue
+order does not itself guarantee that a dependency is live before its caller
+starts. Unrelated project workloads are not copied. Retries reuse the same
+preview rows; closing the PR closes the sibling rows together. Managed services
+are external to this app fan-out, and a newly declared workload that has no
+active production app cannot yet be provisioned as a preview. When a dependency
+preview is absent, the gateway considers the **production** service and its
+side effects are real if policy permits it.
+
+For new projects, Gregale denies that boundary by default. The proxy returns
+`403 application/problem+json` with code
+`preview_production_dependency_denied` before endpoint discovery or wake-up,
+so the rejected call cannot consume production capacity or reach customer
+code. Existing projects retain the former behaviour until you opt them into
+strict isolation:
+
+```bash
+gregale github setup checkout --preview-service-policy deny
+```
+
+Use `--preview-service-policy allow_marked` only when the production dependency
+is intentionally preview-safe.
+
+Gregale marks every call made by a preview, including isolated sibling calls,
+with `X-Faas-Caller-Env: preview` and
 `X-Faas-Caller-Preview-Of: <production app slug>`. Both are platform-owned and
 cannot be set by a workload. See [networking](networking.md) for how to use
-them to skip side effects or refuse the call.
+them to skip side effects or refuse the call, and for the separate
+preview-to-preview and preview-to-production counters.

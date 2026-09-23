@@ -115,8 +115,16 @@ type Workload struct {
 	// deploy planner uses the graph for deterministic ordering while runtime
 	// readiness is provided by the private service proxy.
 	DependsOn []string
-	Class     Class  // http|graphql|grpc|job|worker|server|unknown
-	Schedule  string // primary cron expression retained for the existing plan wire
+	// ServiceBindingPolicy is the caller-side internal-service authorization
+	// mode declared by Compose's x-gregale-service-policy extension. Empty is
+	// the backwards-compatible account policy.
+	ServiceBindingPolicy ServiceBindingPolicy
+	// PreviewServiceCallsPolicy controls whether this workload, as a
+	// production target, accepts internal calls from preview apps.
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy
+
+	Class    Class  // http|graphql|grpc|job|worker|server|unknown
+	Schedule string // primary cron expression retained for the existing plan wire
 	// Schedules is the complete desired cron set. Schedule remains the first
 	// expression for compatibility with clients that predate multi-schedule
 	// workloads; callers that reconcile crons must use CronSchedules.
@@ -131,6 +139,23 @@ type Workload struct {
 	// parsing that string. Populated by mergeByKey.
 	DetectedBy Detection
 }
+
+// ServiceBindingPolicy is the repository declaration consumed by reconcile.
+// It intentionally lives in reposcan rather than pkg/api so repository
+// detection remains independent of the public wire DTO package.
+type ServiceBindingPolicy string
+
+const (
+	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
+	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+)
+
+type PreviewServiceCallsPolicy string
+
+const (
+	PreviewServiceCallsAllow PreviewServiceCallsPolicy = "allow"
+	PreviewServiceCallsDeny  PreviewServiceCallsPolicy = "deny"
+)
 
 // CronSchedule is one schedule discovered for a workload. Enabled preserves
 // source activation state such as Kubernetes CronJob spec.suspend.

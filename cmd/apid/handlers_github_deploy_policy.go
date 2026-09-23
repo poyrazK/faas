@@ -9,27 +9,30 @@ import (
 )
 
 type githubDeployPolicyResponse struct {
-	ProjectID       string   `json:"project_id"`
-	RootDir         string   `json:"root_dir"`
-	IgnoredPaths    []string `json:"ignored_paths"`
-	PreviewEnabled  bool     `json:"preview_enabled"`
-	PreviewTTLHours int      `json:"preview_ttl_hours"`
+	ProjectID            string                     `json:"project_id"`
+	RootDir              string                     `json:"root_dir"`
+	IgnoredPaths         []string                   `json:"ignored_paths"`
+	PreviewEnabled       bool                       `json:"preview_enabled"`
+	PreviewTTLHours      int                        `json:"preview_ttl_hours"`
+	PreviewServicePolicy state.PreviewServicePolicy `json:"preview_service_policy"`
 }
 
 type githubDeployPolicyPatch struct {
-	RootDir         *string   `json:"root_dir,omitempty"`
-	IgnoredPaths    *[]string `json:"ignored_paths,omitempty"`
-	PreviewEnabled  *bool     `json:"preview_enabled,omitempty"`
-	PreviewTTLHours *int      `json:"preview_ttl_hours,omitempty"`
+	RootDir              *string                     `json:"root_dir,omitempty"`
+	IgnoredPaths         *[]string                   `json:"ignored_paths,omitempty"`
+	PreviewEnabled       *bool                       `json:"preview_enabled,omitempty"`
+	PreviewTTLHours      *int                        `json:"preview_ttl_hours,omitempty"`
+	PreviewServicePolicy *state.PreviewServicePolicy `json:"preview_service_policy,omitempty"`
 }
 
 func githubDeployPolicyDTO(policy state.GitHubDeployPolicy) githubDeployPolicyResponse {
 	return githubDeployPolicyResponse{
-		ProjectID:       policy.ProjectID,
-		RootDir:         policy.RootDir,
-		IgnoredPaths:    append([]string(nil), policy.IgnoredPaths...),
-		PreviewEnabled:  policy.PreviewEnabled,
-		PreviewTTLHours: policy.PreviewTTLHours,
+		ProjectID:            policy.ProjectID,
+		RootDir:              policy.RootDir,
+		IgnoredPaths:         append([]string(nil), policy.IgnoredPaths...),
+		PreviewEnabled:       policy.PreviewEnabled,
+		PreviewTTLHours:      policy.PreviewTTLHours,
+		PreviewServicePolicy: policy.PreviewServicePolicy,
 	}
 }
 
@@ -93,6 +96,9 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 	if req.PreviewTTLHours != nil {
 		current.PreviewTTLHours = *req.PreviewTTLHours
 	}
+	if req.PreviewServicePolicy != nil {
+		current.PreviewServicePolicy = *req.PreviewServicePolicy
+	}
 	if err := current.Validate(); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid GitHub deployment policy", err.Error()))
@@ -114,12 +120,13 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 	}
 	acctID := acct.ID
 	s.audit.Emit(r.Context(), "github.deploy_policy.updated", &acctID, map[string]any{
-		"app_id":            app.ID,
-		"project_id":        app.ProjectID,
-		"root_dir":          stored.RootDir,
-		"ignored_paths":     len(stored.IgnoredPaths),
-		"preview_enabled":   stored.PreviewEnabled,
-		"preview_ttl_hours": stored.PreviewTTLHours,
+		"app_id":                 app.ID,
+		"project_id":             app.ProjectID,
+		"root_dir":               stored.RootDir,
+		"ignored_paths":          len(stored.IgnoredPaths),
+		"preview_enabled":        stored.PreviewEnabled,
+		"preview_ttl_hours":      stored.PreviewTTLHours,
+		"preview_service_policy": stored.PreviewServicePolicy,
 	})
 	writeJSON(w, http.StatusOK, githubDeployPolicyDTO(stored))
 }

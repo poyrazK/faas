@@ -3105,7 +3105,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		})
 	}
 
-	sealedEnv, err := e.loadSealedEnvFor(ctx, acct.ID, appID, dep.Scope, envSecretsFromDep(dep))
+	sealedEnv, err := e.loadSealedEnvDeliveryFor(ctx, acct.ID, appID, dep.Scope, envSecretsFromDep(dep))
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_sealed_env_invalid")
 		release()
@@ -3128,7 +3128,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		ExecutionMode:    executionModeForApp(app),
 		Plan:             acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
-		SealedEnv: sealedEnv,
+		SealedEnv: sealedEnv.Entries,
 		Sidecars:  sidecars,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
 		// sealed secrets surface but stores non-sensitive runtime
@@ -3218,9 +3218,11 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
 		// the right per-target client.
-		nodeID:   placement.NodeID,
-		identity: platformIdentity(app, dep, acct, placement.NodeID, ins.ID, placement.Region),
-		spec:     spec,
+		nodeID:           placement.NodeID,
+		identity:         platformIdentity(app, dep, acct, placement.NodeID, ins.ID, placement.Region),
+		spec:             spec,
+		secretDeliveries: sealedEnv.Candidates,
+		accountID:        acct.ID,
 		// wakeID is the per-wake-attempt correlation handle (gaps
 		// analysis 2026-07-23). Carried across the unlocked Phase 3
 		// window so the vmmd-failure log path, the state-stolen abort
@@ -3267,6 +3269,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// queue_accepted → admitted → boot_started. The earlier
 	// Phase 2→3 boundary emit was redundant.
 	release()
+	deliveryFinalized := false
+	defer func() {
+		if !deliveryFinalized {
+			e.recordAppSecretDelivery(ctx, bootInput, state.SecretDeliveryFailed, "runtime_start_failed")
+		}
+	}()
 
 	// ADR-038 / Tier 3 phase 3: cold-boot layer attestation. The
 	// layer key in spec is the same key imaged signed in
@@ -3622,6 +3630,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	e.recordCommittedInstanceTransition(ctx, fresh, bootInput.initState, state.StateRunning, bootInput.appID, "state_transition", "")
+	e.recordAppSecretDelivery(ctx, bootInput, state.SecretDeliveryDelivered, "")
+	deliveryFinalized = true
 	// A completed wake proves that the deployment can boot again. Clear any
 	// expired snapshot-miss backoff so a later miss starts a fresh sequence;
 	// this is idempotent for deployments that never had a backoff row and does
@@ -3750,6 +3760,7 @@ func (e *Engine) markRuntimeArtifactMissing(ctx context.Context, deploymentID, l
 type bootInput struct {
 	insID     string
 	appID     string
+	accountID string
 	appType   state.AppType
 	depID     string
 	initState state.State
@@ -3770,8 +3781,9 @@ type bootInput struct {
 	nodeID string
 	// identity is captured under the admission lock and returned with the
 	// wake result so downstream gateways do not need a deployment lookup.
-	identity api.PlatformIdentity
-	spec     AppSpec
+	identity         api.PlatformIdentity
+	spec             AppSpec
+	secretDeliveries []state.AppSecretDeliveryCandidate
 	// wakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 under the lock, persisted
 	// on the instances row in CreateInstance, and carried across the
@@ -5544,7 +5556,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// filtering — see Wake builder for the full contract. ColdBoot /
 	// Prime shares the wake path; the dep row is the same one Wake
 	// loaded (so no extra DB read).
-	sealedEnv, err := e.loadSealedEnvFor(ctx, acct.ID, appID, dep.Scope, envSecretsFromDep(dep))
+	sealedEnv, err := e.loadSealedEnvDeliveryFor(ctx, acct.ID, appID, dep.Scope, envSecretsFromDep(dep))
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sealed_env_invalid")
 		return fmt.Errorf("sched: prime: load sealed env: %w", err)
@@ -5565,7 +5577,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		ExecutionMode:    executionModeForApp(app),
 		Plan:             acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
-		SealedEnv: sealedEnv,
+		SealedEnv: sealedEnv.Entries,
 		Sidecars:  sidecars,
 		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
 		// sealed secrets surface but stores non-sensitive runtime
@@ -5607,6 +5619,16 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		Runtime:     app.Runtime,
 		AppProtocol: app.AppProtocol,
 	}
+	primeDelivery := bootInput{
+		insID: ins.ID, appID: appID, accountID: acct.ID, wakeID: primeWakeID,
+		secretDeliveries: sealedEnv.Candidates,
+	}
+	deliveryFinalized := false
+	defer func() {
+		if !deliveryFinalized {
+			e.recordAppSecretDelivery(ctx, primeDelivery, state.SecretDeliveryFailed, "runtime_start_failed")
+		}
+	}()
 	// ADR-038 / Tier 3 phase 3: same verify path as Wake. Prime
 	// is the deploy-pipeline first boot; a tampered layer here
 	// means imaged shipped something that should never have been
@@ -5648,6 +5670,8 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return fmt.Errorf("sched: prime: record runtime: %w", err)
 	}
 	e.transition(ctx, ins.ID, appID, state.StateRunning)
+	e.recordAppSecretDelivery(ctx, primeDelivery, state.SecretDeliveryDelivered, "")
+	deliveryFinalized = true
 
 	ins.AppID, ins.DeploymentID = appID, deploymentID
 	if executionModeForApp(app) == api.ExecutionModeWorker {
@@ -7159,7 +7183,17 @@ func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.A
 //
 // We carry AccountID explicitly so a cross-account (accountID, appID) pair
 // returns ErrNotFound (consistent with apid's 404 contract).
+type sealedEnvDelivery struct {
+	Entries    []fcvm.SealedEnvEntry
+	Candidates []state.AppSecretDeliveryCandidate
+}
+
 func (e *Engine) loadSealedEnvFor(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string) ([]fcvm.SealedEnvEntry, error) {
+	loaded, err := e.loadSealedEnvDeliveryFor(ctx, accountID, appID, scope, overrideEnvSecrets)
+	return loaded.Entries, err
+}
+
+func (e *Engine) loadSealedEnvDeliveryFor(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string) (sealedEnvDelivery, error) {
 	// Defensive collapse: a deployment pre-PR-B may have dep.Scope
 	// empty (NULL column). The store surface uses scope='default'
 	// everywhere else, so this keeps wake-time behaviour identical
@@ -7169,7 +7203,7 @@ func (e *Engine) loadSealedEnvFor(ctx context.Context, accountID, appID, scope s
 	}
 	rows, err := e.store.ListAppSecretsInScope(ctx, accountID, appID, scope)
 	if err != nil {
-		return nil, fmt.Errorf("load sealed env (account=%s app=%s scope=%s): %w", accountID, appID, scope, err)
+		return sealedEnvDelivery{}, fmt.Errorf("load sealed env (account=%s app=%s scope=%s): %w", accountID, appID, scope, err)
 	}
 	if len(overrideEnvSecrets) == 0 {
 		// Legacy path: stage everything for the app at the deployment's
@@ -7177,10 +7211,12 @@ func (e *Engine) loadSealedEnvFor(ctx context.Context, accountID, appID, scope s
 		// columns populated AND for tarball/dockerfile deploys that
 		// don't use the override surface.
 		out := make([]fcvm.SealedEnvEntry, 0, len(rows))
+		candidates := make([]state.AppSecretDeliveryCandidate, 0, len(rows))
 		for _, r := range rows {
 			out = append(out, fcvm.SealedEnvEntry{Key: r.Key, Ciphertext: r.Ciphertext})
+			candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: r.Scope, Key: r.Key, Version: r.DeliveryVersion})
 		}
-		return out, nil
+		return sealedEnvDelivery{Entries: out, Candidates: candidates}, nil
 	}
 	// Filtered path: STRICT PER-SCOPE (ADR-092 PR-A). Each
 	// override entry resolves to the (account_id, app_id, scope,
@@ -7202,6 +7238,7 @@ func (e *Engine) loadSealedEnvFor(ctx context.Context, accountID, appID, scope s
 	}
 	var missing []string
 	out := make([]fcvm.SealedEnvEntry, 0, len(overrideEnvSecrets))
+	candidates := make([]state.AppSecretDeliveryCandidate, 0, len(overrideEnvSecrets))
 	for envKey, ref := range overrideEnvSecrets {
 		row, ok := index[envKey]
 		if !ok {
@@ -7209,6 +7246,7 @@ func (e *Engine) loadSealedEnvFor(ctx context.Context, accountID, appID, scope s
 			continue
 		}
 		out = append(out, fcvm.SealedEnvEntry{Key: row.Key, Ciphertext: row.Ciphertext})
+		candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
 	}
 	if len(missing) > 0 {
 		// Sort for determinism — Go map iteration is randomised, so without
@@ -7216,10 +7254,43 @@ func (e *Engine) loadSealedEnvFor(ctx context.Context, accountID, appID, scope s
 		// different orders on different wakes. Scope is part of the
 		// error so the operator knows which deployment tripped.
 		sort.Strings(missing)
-		return nil, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s on (account=%s, app=%s); set the secret first via faas secrets set --scope %s",
+		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s on (account=%s, app=%s); set the secret first via faas secrets set --scope %s",
 			scope, strings.Join(missing, ", "), accountID, appID, scope)
 	}
-	return out, nil
+	return sealedEnvDelivery{Entries: out, Candidates: candidates}, nil
+}
+
+func (e *Engine) recordAppSecretDelivery(ctx context.Context, boot bootInput, status state.SecretDeliveryStatus, errorCode string) {
+	if len(boot.secretDeliveries) == 0 {
+		return
+	}
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	attemptedAt := time.Now().UTC()
+	updated, err := e.store.RecordAppSecretDelivery(recordCtx, state.AppSecretDeliveryResult{
+		AccountID: boot.accountID, AppID: boot.appID, WakeID: boot.wakeID, InstanceID: boot.insID,
+		Status: status, ErrorCode: errorCode, AttemptedAt: attemptedAt, Candidates: boot.secretDeliveries,
+	})
+	if err != nil {
+		e.log.Warn("sched: record app secret delivery", "app", boot.appID, "wake_id", boot.wakeID, "status", status, "err", err)
+		return
+	}
+	refs := make([]string, 0, len(boot.secretDeliveries))
+	for _, candidate := range boot.secretDeliveries {
+		refs = append(refs, candidate.Scope+"/"+candidate.Key)
+	}
+	sort.Strings(refs)
+	kind := "secret.delivery_succeeded"
+	if status == state.SecretDeliveryFailed {
+		kind = "secret.delivery_failed"
+	}
+	if e.audit != nil {
+		e.audit.Emit(recordCtx, kind, &boot.accountID, map[string]any{
+			"app_id": boot.appID, "wake_id": boot.wakeID, "instance_id": boot.insID,
+			"secret_refs": refs, "staged_count": len(refs), "status_rows_updated": updated,
+			"error_code": errorCode, "attempted_at": attemptedAt.Format(time.RFC3339Nano),
+		})
+	}
 }
 
 // envSecretsFromDep unmarshals dep.OverrideEnvSecrets (jsonb column) into a

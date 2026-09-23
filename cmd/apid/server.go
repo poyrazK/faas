@@ -61,6 +61,9 @@ type server struct {
 	// cross-node coordination and never guards customer-intent state.
 	devSourceCacheMu sync.Mutex
 	domain           string // apps base domain for URLs
+	// companionImages is the operator-owned catalog behind preset-only
+	// companion declarations. Values are immutable OCI digest references.
+	companionImages map[string]string
 	// cliAuthURLBase is the public web origin used by the CLI device-code
 	// response. The public edge at this origin forwards /cli-auth to apid.
 	cliAuthURLBase string
@@ -628,6 +631,19 @@ func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 // config to supply a provider-specific console hostname.
 func (s *server) WithCLIAuthURLBase(base string) *server {
 	s.cliAuthURLBase = normalizeCLIAuthURLBase(base)
+	return s
+}
+
+// WithCompanionImages attaches a defensive copy of the managed-companion
+// image catalog. Unknown keys remain inert because request validation uses the
+// closed preset vocabulary in pkg/api.
+func (s *server) WithCompanionImages(images map[string]string) *server {
+	s.companionImages = make(map[string]string, len(images))
+	for name, image := range images {
+		if preset, ok := api.NormalizeCompanionPreset(name); ok {
+			s.companionImages[string(preset)] = strings.TrimSpace(image)
+		}
+	}
 	return s
 }
 
@@ -1224,6 +1240,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/orgs", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listOrgsForCaller)))
 	mux.HandleFunc("POST /v1/orgs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSharedOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrg)))))
+	mux.HandleFunc("GET /v1/orgs/{slug}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgActivity)))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.patchOrg)))))
 	mux.HandleFunc("DELETE /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.softDeleteOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgMembers)))))
@@ -2072,6 +2089,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAppWebhookSecret))))
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
+	mux.HandleFunc("POST /v1/apps/{slug}/outbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deliverAppEvent)))))
 
 	// Durable inbound webhooks. Configuration is authenticated, while the
 	// provider-facing ingress route below is authenticated by the provider's
@@ -2147,6 +2165,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke/async", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.invokeAppAsync)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.queueSend)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.sendAppMessage)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/receive", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.queueReceive))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/{id}/ack", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.queueAck)))))
 	// Issue #394 — queue introspection. Read-only endpoints under
@@ -3086,7 +3105,7 @@ func (s *server) handler() http.Handler {
 	// dashboardAuthLimiter counts auth-failures, not every attempt
 	// here, and using it would either under-or-over-share. The
 	// limiter sits OUTSIDE sessionAuth so a 4th hit doesn't waste
-	// a cookie round-trip; the 429 body is the same plain-text
+	// a cookie round-trip; the 429 body is the same negotiated Problem
 	// shape AuthLimit emits so dashboards handle it identically.
 	mux.Handle("GET /dashboard/account/export", s.dashboardChain(
 		middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
@@ -3395,6 +3414,10 @@ func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {
 func (s *server) dashboardChain(h http.Handler) http.Handler {
 	// http.HandlerFunc is also http.Handler so middleware.RequestID
 	// accepts it directly. Build inside-out.
+	next := h
+	h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&dashboardProblemWriter{ResponseWriter: w, request: r}, r)
+	})
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(s.log)(h)
 	return h

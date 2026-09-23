@@ -2,6 +2,7 @@ package middleware_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
 )
 
@@ -95,6 +97,22 @@ func TestRecovery_Returns500OnPanic(t *testing.T) {
 	if !strings.Contains(rec.Header().Get("Content-Type"), "application/problem+json") {
 		t.Errorf("content-type = %q, want application/problem+json", rec.Header().Get("Content-Type"))
 	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != api.CodeInternal {
+		t.Errorf("code = %q, want %q", problem.Code, api.CodeInternal)
+	}
+	if problem.Title != "Internal Error" {
+		t.Errorf("title = %q, want %q", problem.Title, "Internal Error")
+	}
+	if problem.Hint == "" {
+		t.Error("hint is empty; recovery errors must give the customer a next action")
+	}
+	if strings.Contains(rec.Body.String(), "boom") {
+		t.Errorf("body leaked panic value: %q", rec.Body.String())
+	}
 }
 
 // TestRecovery_PassesHappyPath confirms non-panicking responses are
@@ -159,6 +177,19 @@ func TestAuthLimit_BlocksAfterThreshold(t *testing.T) {
 	}
 	if rec.Header().Get("Retry-After") != "60" {
 		t.Errorf("Retry-After = %q, want 60", rec.Header().Get("Retry-After"))
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "application/problem+json") {
+		t.Errorf("Content-Type = %q, want application/problem+json", got)
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode limited response: %v", err)
+	}
+	if problem.Code != api.CodeAuthRateLimited {
+		t.Errorf("code = %q, want %q", problem.Code, api.CodeAuthRateLimited)
+	}
+	if problem.Hint == "" {
+		t.Error("hint is empty; rate-limit response must tell the customer what to do next")
 	}
 }
 

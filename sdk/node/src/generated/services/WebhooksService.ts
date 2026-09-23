@@ -6,6 +6,8 @@ import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliver
 import type { AppWebhookResponse } from '../models/AppWebhookResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
 import type { CreateAppWebhookRequest } from '../models/CreateAppWebhookRequest.js';
+import type { DeliverAppEventRequest } from '../models/DeliverAppEventRequest.js';
+import type { DeliverAppEventResponse } from '../models/DeliverAppEventResponse.js';
 import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
 import type { UpdateAppWebhookRequest } from '../models/UpdateAppWebhookRequest.js';
@@ -13,6 +15,58 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class WebhooksService {
+  /**
+   * Reliably deliver a custom event to a registered webhook.
+   * Enqueues an explicitly addressed delivery in the app's durable webhook
+   * ledger. `destination` is either a webhook id or its exact registered
+   * target URL. The destination's configured HMAC secret, delivery format,
+   * timeout, and retry policy apply. Failed deliveries appear in the same
+   * delivery history and unified DLQ and can be replayed there.
+   *
+   * @returns DeliverAppEventResponse The delivery was durably queued.
+   * @throws ApiError
+   */
+  public static deliverAppEvent({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DeliverAppEventRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DeliverAppEventResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/outbox',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        413: `code: source_too_large — payload exceeds the plan's MaxSourceBytesPerInvocation.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
   /**
    * List outbound webhook subscriptions for this app.
    * @returns AppWebhookResponse The webhooks.
@@ -36,9 +90,9 @@ export class WebhooksService {
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -85,9 +139,9 @@ export class WebhooksService {
         403: `code: plan_webhook_quota — per-app or per-account webhook limit reached.`,
         404: `code: not_found`,
         409: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -121,9 +175,9 @@ export class WebhooksService {
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -167,9 +221,9 @@ export class WebhooksService {
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -207,9 +261,9 @@ export class WebhooksService {
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -252,9 +306,9 @@ export class WebhooksService {
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -307,9 +361,9 @@ export class WebhooksService {
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -355,9 +409,9 @@ export class WebhooksService {
         401: `code: unauthorized`,
         402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });

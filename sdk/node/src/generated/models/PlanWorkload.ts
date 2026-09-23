@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { PlanDetectedBy } from './PlanDetectedBy.js';
+import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
+import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 /**
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
@@ -18,6 +20,14 @@ export type PlanWorkload = {
    * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies.
    */
   depends_on?: Array<string>;
+  /**
+   * Effective policy selected by the Compose `x-gregale-service-policy` extension. Defaults to `account`.
+   */
+  service_binding_policy?: ServiceBindingPolicy;
+  /**
+   * Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`.
+   */
+  preview_service_calls_policy?: PreviewServiceCallsPolicy;
   class?: 'http' | 'graphql' | 'grpc' | 'job' | 'worker' | 'server' | 'unknown';
   /**
    * cron expression when declared (CronJob, render, serverless)

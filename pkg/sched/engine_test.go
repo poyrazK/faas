@@ -3880,6 +3880,29 @@ func TestEngine_StreamWarmHintsNilSink(t *testing.T) {
 // only reads e.store and e.log. Mirrors how the function is deployed at
 // Wake/ColdBoot call sites which already have a populated Engine.
 func TestLoadSealedEnvFor(t *testing.T) {
+	t.Run("delivery metadata carries the exact staged version", func(t *testing.T) {
+		s := state.NewMemStore()
+		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
+		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "DB_URL", []byte("cipher-v1")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "DB_URL", []byte("cipher-v2")); err != nil {
+			t.Fatal(err)
+		}
+		e := &Engine{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		loaded, err := e.loadSealedEnvDeliveryFor(context.Background(), "acct", app.ID, api.DefaultEnvScope, nil)
+		if err != nil {
+			t.Fatalf("load delivery metadata: %v", err)
+		}
+		if len(loaded.Entries) != 1 || len(loaded.Candidates) != 1 {
+			t.Fatalf("loaded entries/candidates = %d/%d, want 1/1", len(loaded.Entries), len(loaded.Candidates))
+		}
+		candidate := loaded.Candidates[0]
+		if candidate.Scope != api.DefaultEnvScope || candidate.Key != "DB_URL" || candidate.Version != 2 {
+			t.Fatalf("candidate = %+v, want default/DB_URL/v2", candidate)
+		}
+	})
+
 	t.Run("no override returns all secrets", func(t *testing.T) {
 		s := state.NewMemStore()
 		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)

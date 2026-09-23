@@ -9,6 +9,7 @@ import type { CreateOrgRequest } from '../models/CreateOrgRequest.js';
 import type { InvitationListResponse } from '../models/InvitationListResponse.js';
 import type { InvitationWithTokenResponse } from '../models/InvitationWithTokenResponse.js';
 import type { InviteMemberRequest } from '../models/InviteMemberRequest.js';
+import type { ListOrgActivityResponse } from '../models/ListOrgActivityResponse.js';
 import type { ListOrgAPIKeysResponse } from '../models/ListOrgAPIKeysResponse.js';
 import type { MemberListResponse } from '../models/MemberListResponse.js';
 import type { OrgInvitationResponse } from '../models/OrgInvitationResponse.js';
@@ -52,9 +53,9 @@ export class OrgsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `Org slug not found, or caller has no membership.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -130,9 +131,9 @@ export class OrgsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `Key id not in org, or org slug not found.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -171,9 +172,9 @@ export class OrgsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `Key id not in this org, or active-org slug not found.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -217,9 +218,9 @@ export class OrgsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `Key id not in org, or org slug not found, or predecessor already revoked.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -239,9 +240,9 @@ export class OrgsService {
       url: '/v1/orgs',
       errors: {
         401: `code: unauthorized`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -289,9 +290,9 @@ export class OrgsService {
         regex (lowercase alphanumeric + dashes, 3..32 chars).
         Stable code \`org_slug_invalid\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -332,9 +333,9 @@ export class OrgsService {
         \`org_role_forbidden\`.
         `,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -391,9 +392,9 @@ export class OrgsService {
         \`OrgSlugPattern\` regex (lowercase alphanumeric + dashes,
         3..32 chars). Stable code \`org_slug_invalid\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -438,9 +439,86 @@ export class OrgsService {
         immutable and cannot be modified by PATCH. Stable code
         \`org_personal_immutable\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the organization's global infrastructure activity.
+   * Returns one newest-first timeline across applications, deployments,
+   * environment configuration, domains, certificates, and automated
+   * platform actions. Every active member may read it (`org.view`).
+   *
+   * Entries are a curated customer-facing projection, not raw provider or
+   * security audit payloads. Labels are captured at write time and `data`
+   * contains non-secret display metadata only; environment values and
+   * credentials are never included. Pass `next_before` back unchanged as
+   * `before` to fetch the next older page.
+   *
+   * @returns ListOrgActivityResponse A stable keyset page of organization activity.
+   * @throws ApiError
+   */
+  public static listOrgActivity({
+    slug,
+    before,
+    limit = 50,
+    kindPrefix,
+    actorType,
+    appId,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Opaque cursor returned as `next_before` by the prior page.
+     */
+    before?: string,
+    /**
+     * Maximum number of activity items to return in this page.
+     */
+    limit?: number,
+    /**
+     * Optional namespaced kind prefix, such as `deploy.`.
+     */
+    kindPrefix?: string,
+    /**
+     * Restrict results to one captured actor category.
+     */
+    actorType?: 'user' | 'api_key' | 'github' | 'system' | 'operator',
+    /**
+     * Restrict results to activity associated with this application.
+     */
+    appId?: string,
+  }): CancelablePromise<ListOrgActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/activity',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+        'kind_prefix': kindPrefix,
+        'actor_type': actorType,
+        'app_id': appId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller is not an active member with \`org.view\`.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -481,9 +559,9 @@ export class OrgsService {
         \`org.view\` action. Stable code \`org_role_forbidden\`.
         `,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -546,9 +624,9 @@ export class OrgsService {
         immutable and cannot be modified by PATCH. Stable code
         \`org_personal_immutable\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -615,9 +693,9 @@ export class OrgsService {
         \`org_memberships_one_owner_idx\` partial unique index
         (migration 00099). Stable code \`org_last_owner\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -679,9 +757,9 @@ export class OrgsService {
         \`org_memberships_one_owner_idx\` partial unique index
         (migration 00099). Stable code \`org_last_owner\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -730,9 +808,9 @@ export class OrgsService {
         `,
         404: `code: NotFound (new owner is not a member)`,
         409: `code: org_last_owner (caller not the active owner OR new owner already owner)`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -769,9 +847,9 @@ export class OrgsService {
       errors: {
         401: `code: unauthorized`,
         410: `code: org_invitation_invalid | org_invitation_expired | org_invitation_invalid (already consumed/revoked)`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -830,9 +908,9 @@ export class OrgsService {
         already revoked, or expired. Stable codes
         \`org_invitation_invalid\` | \`org_invitation_expired\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -887,9 +965,9 @@ export class OrgsService {
         410: `\`410 Gone\` — the ID is unknown, already consumed,
         or already revoked. Stable code \`org_invitation_invalid\`.
         `,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -931,9 +1009,9 @@ export class OrgsService {
         \`org_role_forbidden\`.
         `,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });
@@ -1006,9 +1084,9 @@ export class OrgsService {
         active org. Stable code \`org_role_forbidden\`.
         `,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });

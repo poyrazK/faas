@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 from ..models.sidecar_cpu_millicores import SidecarCpuMillicores, check_sidecar_cpu_millicores
 from ..models.sidecar_disk_io_profile import SidecarDiskIoProfile, check_sidecar_disk_io_profile
+from ..models.sidecar_preset import SidecarPreset, check_sidecar_preset
 from ..models.sidecar_type import SidecarType, check_sidecar_type
 from ..types import UNSET, Unset
 
@@ -22,8 +23,8 @@ T = TypeVar("T", bound="Sidecar")
 
 @_attrs_define
 class Sidecar:
-    """One entry in the deploy request's `sidecars` array
-    (issue #463 / ADR-068). Up to 2 sidecars per app (1 init
+    """One entry in the deploy request's preferred `companions` array
+    (legacy name: `sidecars`). Up to 2 helpers per app (1 init
     + 1 sidecar; the array is type-uniqueness + 2-capped at
     the schema layer via migration 00095's CHECK constraint).
     Stateless only — stateful base images (Postgres, Redis,
@@ -39,8 +40,10 @@ class Sidecar:
     - `name` matches RFC 1123 label (lowercase alphanumeric
       + dash, 1..63 chars, starts with [a-z0-9]). Unique
       within a single request.
-    - `image` is the digest-pinned OCI reference. Tag
-      references rejected. State images rejected.
+    - `preset` selects a platform-managed helper. A preset may omit
+      `image`; apid resolves an operator-pinned immutable digest.
+    - `image` is required for a custom helper and must be a
+      digest-pinned OCI reference. Tag references are rejected.
     - `type` ∈ {`init`, `sidecar`}. At most one of each per
       deployment.
     - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
@@ -50,6 +53,8 @@ class Sidecar:
       `EnvValueMaxBytes`. Plaintext values NEVER appear in
       any log, audit, or error.
     - `port` ∈ {0, 1..65535}. 0 = absent.
+    - `primary_ingress` routes the application's normal hostname and
+      custom domains through this long-running helper. It requires port.
     - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
     - `scratch_mb` ∈ {0, 16..512}. 0 = platform default; explicit values cap the sidecar's writable `/tmp` tmpfs.
     - `cpu_millicores` ∈ {0, 250, 500, 1000}. 0 = inherit app CPU quota.
@@ -74,17 +79,21 @@ class Sidecar:
 
     name: str
     """RFC 1123 label (lowercase alphanumeric + dash, 1..63 chars, starts with [a-z0-9])."""
-    image: str
-    """Digest-pinned OCI reference (repo@sha256:...). Tag references rejected with 400 `sidecar_invalid_image`."""
     type_: SidecarType
     """`init` runs once before the main workload (DB migrator shape). `sidecar` runs alongside (metrics scraper
     shape)."""
+    image: str | Unset = UNSET
+    """Digest-pinned OCI reference (repo@sha256:...). Tag references rejected with 400 `sidecar_invalid_image`."""
+    preset: SidecarPreset | Unset = UNSET
+    """Platform-managed companion preset. The installation must configure an immutable image digest."""
     cmd: list[str] | Unset = UNSET
     """Argv. Image's ENTRYPOINT unchanged; CMD overridden. Every element non-empty."""
     env: SidecarEnv | Unset = UNSET
     """Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes."""
     port: int | Unset = UNSET
     """Listen port. 0 = absent / fall back to image default."""
+    primary_ingress: bool | Unset = False
+    """Route the app's primary public hostname through this long-running companion. Requires an explicit port."""
     ram_mb: int | Unset = UNSET
     """Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API."""
     scratch_mb: int | Unset = UNSET
@@ -107,9 +116,13 @@ class Sidecar:
     def to_dict(self) -> dict[str, Any]:
         name = self.name
 
+        type_: str = self.type_
+
         image = self.image
 
-        type_: str = self.type_
+        preset: str | Unset = UNSET
+        if not isinstance(self.preset, Unset):
+            preset = self.preset
 
         cmd: list[str] | Unset = UNSET
         if not isinstance(self.cmd, Unset):
@@ -120,6 +133,8 @@ class Sidecar:
             env = self.env.to_dict()
 
         port = self.port
+
+        primary_ingress = self.primary_ingress
 
         ram_mb = self.ram_mb
 
@@ -151,16 +166,21 @@ class Sidecar:
         field_dict.update(
             {
                 "name": name,
-                "image": image,
                 "type": type_,
             }
         )
+        if image is not UNSET:
+            field_dict["image"] = image
+        if preset is not UNSET:
+            field_dict["preset"] = preset
         if cmd is not UNSET:
             field_dict["cmd"] = cmd
         if env is not UNSET:
             field_dict["env"] = env
         if port is not UNSET:
             field_dict["port"] = port
+        if primary_ingress is not UNSET:
+            field_dict["primary_ingress"] = primary_ingress
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
         if scratch_mb is not UNSET:
@@ -187,9 +207,16 @@ class Sidecar:
         d = dict(src_dict)
         name = d.pop("name")
 
-        image = d.pop("image")
-
         type_ = check_sidecar_type(d.pop("type"))
+
+        image = d.pop("image", UNSET)
+
+        _preset = d.pop("preset", UNSET)
+        preset: SidecarPreset | Unset
+        if isinstance(_preset, Unset):
+            preset = UNSET
+        else:
+            preset = check_sidecar_preset(_preset)
 
         cmd = cast(list[str], d.pop("cmd", UNSET))
 
@@ -201,6 +228,8 @@ class Sidecar:
             env = SidecarEnv.from_dict(_env)
 
         port = d.pop("port", UNSET)
+
+        primary_ingress = d.pop("primary_ingress", UNSET)
 
         ram_mb = d.pop("ram_mb", UNSET)
 
@@ -240,11 +269,13 @@ class Sidecar:
 
         sidecar = cls(
             name=name,
-            image=image,
             type_=type_,
+            image=image,
+            preset=preset,
             cmd=cmd,
             env=env,
             port=port,
+            primary_ingress=primary_ingress,
             ram_mb=ram_mb,
             scratch_mb=scratch_mb,
             cpu_millicores=cpu_millicores,

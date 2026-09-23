@@ -111,3 +111,40 @@ func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.
 		t.Fatalf("restored crons = %#v, %v; deleted workload schedules must be declared again", crons, err)
 	}
 }
+
+func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
+	existing := AppManifest{
+		Env: map[string]string{
+			"CUSTOM":                          "kept",
+			"GREGALE_SERVICE_OLD_SERVICE_URL": "http://old-service.svc.gregale:10080",
+		},
+		ServiceBindings: []api.AppServiceBinding{{
+			Binding: "GREGALE_SERVICE_OLD_SERVICE_URL",
+			Service: "old-service",
+		}},
+	}
+	desired := AppManifest{
+		Env: map[string]string{
+			"GREGALE_SERVICE_API_URL": "http://api.svc.gregale:10080",
+		},
+		ServiceBindings: []api.AppServiceBinding{{
+			Binding: "GREGALE_SERVICE_API_URL",
+			Service: "api",
+		}},
+		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+	}
+
+	got := mergeProjectManagedManifest(existing, desired)
+	if got.Env["CUSTOM"] != "kept" || got.Env["GREGALE_SERVICE_API_URL"] == "" {
+		t.Fatalf("merged env = %#v, want custom env and current service binding", got.Env)
+	}
+	if _, ok := got.Env["GREGALE_SERVICE_OLD_SERVICE_URL"]; ok {
+		t.Fatalf("merged env = %#v, stale service binding was retained", got.Env)
+	}
+	if len(got.ServiceBindings) != 1 || got.ServiceBindings[0] != desired.ServiceBindings[0] {
+		t.Fatalf("service bindings = %#v, want %#v", got.ServiceBindings, desired.ServiceBindings)
+	}
+	if got.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+		t.Fatalf("service binding policy = %q, want declared", got.ServiceBindingPolicy)
+	}
+}

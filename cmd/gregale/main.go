@@ -470,6 +470,10 @@ func run(args []string) (status int) {
 		// EPIC #1278: publish a tenant-scoped CloudEvents envelope into
 		// the internal matcher and async fan-out path.
 		return cmdEvents(args[1:])
+	case "send":
+		return cmdSend(args[1:])
+	case "deliver":
+		return cmdDeliver(args[1:])
 	case "debug":
 		// ADR-127: production debugger (request evidence, regression
 		// watch, deployment compare, safe replay, and incident bundles).

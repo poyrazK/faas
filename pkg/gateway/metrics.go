@@ -686,10 +686,14 @@ type Metrics struct {
 	// this histogram is that evidence.
 	serviceWakeLatency prometheus.Histogram
 	// servicePreviewToProduction counts internal calls made by a PR preview
-	// app into a production service. Previews are created one app per PR, so
-	// a preview has no sibling copy of its dependencies and its calls land on
-	// production. This is the only fleet-wide signal that it is happening.
+	// app into a production service because no same-PR sibling was available.
+	// This is the fleet-wide signal that preview traffic is exercising live
+	// dependencies.
 	servicePreviewToProduction prometheus.Counter
+	// servicePreviewToPreview counts calls whose target resolved inside the
+	// caller's account/project/PR scope. It is the positive isolation signal
+	// paired with servicePreviewToProduction.
+	servicePreviewToPreview prometheus.Counter
 	// wsActiveSessions (issue #676 / ADR-080 follow-up, PR-B) is
 	// the in-flight raw-bytes Upgrade session gauge, labelled by
 	// plan. Inc/Dec happens via IncWSSessionStart /
@@ -1424,7 +1428,7 @@ func NewMetrics() *Metrics {
 		serviceCallTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_service_call_total",
-				Help: "Count of same-account service-to-service calls handled by the node-local service proxy (ADR-196 / ADR-197). Labelled by outcome: forwarded (target was already warm), woken (target was parked and a wake produced a replica), no_replica, registry_unavailable, wake_failed, wake_queue_full, unauthenticated, denied, not_found, upgrade_rejected. Not labelled by app — the series count must stay bounded; per-app attribution lives in the wake timeline.",
+				Help: "Count of same-account service-to-service calls handled by the node-local service proxy (ADR-196 / ADR-197). Labelled by outcome: forwarded (target was already warm), woken (target was parked and a wake produced a replica), no_replica, registry_unavailable, wake_failed, wake_queue_full, unauthenticated, denied, binding_denied, preview_denied, not_found, upgrade_rejected. Not labelled by app — the series count must stay bounded; per-app attribution lives in the wake timeline.",
 			},
 			[]string{"outcome"},
 		),
@@ -1442,7 +1446,13 @@ func NewMetrics() *Metrics {
 		servicePreviewToProduction: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "gateway_service_preview_to_production_total",
-				Help: "Internal service calls made by a PR preview app into a production service. Service names resolve without environment scope and previews are provisioned one app per PR, so a preview reaches production dependencies; a non-zero rate means PR traffic is exercising production services.",
+				Help: "Internal service calls made by a PR preview app into a production service because no same-PR preview workload was available; a non-zero rate means PR traffic is exercising production services.",
+			},
+		),
+		servicePreviewToPreview: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "gateway_service_preview_to_preview_total",
+				Help: "Internal service calls whose target resolved inside the calling app's account, project, and pull-request preview scope.",
 			},
 		),
 		wsUpgradeTotal: prometheus.NewCounterVec(
@@ -1773,6 +1783,7 @@ func NewMetrics() *Metrics {
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
 	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceWakeLatency)
+	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -3199,6 +3210,15 @@ func (m *Metrics) IncServicePreviewToProduction() {
 	m.servicePreviewToProduction.Inc()
 }
 
+// IncServicePreviewToPreview records one service call resolved inside the
+// caller's pull-request preview scope. nil-safe.
+func (m *Metrics) IncServicePreviewToPreview() {
+	if m == nil {
+		return
+	}
+	m.servicePreviewToPreview.Inc()
+}
+
 // ServiceCallOutcome is the closed label set for gateway_service_call_total.
 // Declared alongside the helper so the constructor's pre-instantiate loop and
 // the runtime call sites share one source of truth.
@@ -3227,11 +3247,17 @@ const (
 	ServiceCallUnauthenticated ServiceCallOutcome = "unauthenticated"
 	// ServiceCallDenied — caller and target belong to different accounts.
 	ServiceCallDenied ServiceCallOutcome = "denied"
+	// ServiceCallBindingDenied — a same-account caller selected the declared
+	// policy but did not declare the requested target service.
+	ServiceCallBindingDenied ServiceCallOutcome = "binding_denied"
 	// ServiceCallNotFound — the service name resolves to no app.
 	ServiceCallNotFound ServiceCallOutcome = "not_found"
 	// ServiceCallUpgradeRejected — an Upgrade request the target does not
 	// accept, or no raw bridge is wired on this node (ADR-197).
 	ServiceCallUpgradeRejected ServiceCallOutcome = "upgrade_rejected"
+	// ServiceCallPreviewDenied — a project policy or production target rejects
+	// a preview caller before the request is forwarded or the target is woken.
+	ServiceCallPreviewDenied ServiceCallOutcome = "preview_denied"
 )
 
 // ServiceCallOutcomes is the full closed set, used to pre-instantiate every
@@ -3239,8 +3265,8 @@ const (
 var ServiceCallOutcomes = []ServiceCallOutcome{
 	ServiceCallForwarded, ServiceCallWoken, ServiceCallNoReplica,
 	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
-	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallNotFound,
-	ServiceCallUpgradeRejected,
+	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallBindingDenied,
+	ServiceCallNotFound, ServiceCallUpgradeRejected, ServiceCallPreviewDenied,
 }
 
 // IncServiceCall bumps gateway_service_call_total for one outcome.

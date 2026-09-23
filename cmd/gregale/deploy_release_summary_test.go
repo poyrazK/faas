@@ -111,6 +111,11 @@ func TestRenderSuccessfulDarkDeploymentShowsPreviewAndPromotion(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.DeploymentPreviewURL{DeploymentID: "d1", URL: "https://deploy-44-my-app.gregale.dev", Alive: true})
 		case "/v1/apps/my-app":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "my-app", CanonicalURL: "https://my-app.gregale.dev"})
+		case "/v1/apps/my-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{
+				{ID: "d1", Revision: 44, Status: statusLive, TrafficPercent: 0},
+				{ID: "d0", Revision: 43, Status: statusLive, TrafficPercent: 100},
+			}})
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
@@ -128,8 +133,8 @@ func TestRenderSuccessfulDarkDeploymentShowsPreviewAndPromotion(t *testing.T) {
 	for _, want := range []string{
 		"Staged v44 with 0% production traffic.",
 		"Preview: https://deploy-44-my-app.gregale.dev",
-		"Production traffic remains unchanged. https://my-app.gregale.dev",
-		"Promote: gregale traffic promote --app my-app --deployment v44",
+		"Production remains on v43. https://my-app.gregale.dev",
+		"Promote: gregale traffic promote --app my-app --deployment v44 --if-serving v43",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("dark deploy output missing %q\nfull output:\n%s", want, out.String())
@@ -137,6 +142,26 @@ func TestRenderSuccessfulDarkDeploymentShowsPreviewAndPromotion(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "Deployed v44") || strings.Contains(out.String(), "Release summary:") {
 		t.Errorf("dark deploy rendered normal release copy\nfull output:\n%s", out.String())
+	}
+}
+
+func TestDeploymentPromotionCommandOmitsSplitTraffic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/my-app/deployments" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{
+			{ID: "candidate", Revision: 44, Status: statusLive, TrafficPercent: 0},
+			{ID: "stable-a", Revision: 43, Status: statusLive, TrafficPercent: 50},
+			{ID: "stable-b", Revision: 42, Status: statusLive, TrafficPercent: 50},
+		}})
+	}))
+	defer srv.Close()
+	command, serving := deploymentPromotionCommand(context.Background(), api.NewClient(srv.URL, "fp_live_x"),
+		"my-app", api.DeploymentResponse{ID: "candidate", Revision: 44, Status: statusLive})
+	if command != "" || serving != "" {
+		t.Fatalf("split traffic yielded promotion command %q serving %q, want neither", command, serving)
 	}
 }
 
@@ -196,6 +221,11 @@ func TestWriteWaitedDarkDeploymentReceiptIncludesPreviewAndPromotion(t *testing.
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: statusLive, Revision: 44, TrafficPercent: 0})
 		case "/v1/deployments/d1/url":
 			_ = json.NewEncoder(w).Encode(api.DeploymentPreviewURL{DeploymentID: "d1", URL: "https://deploy-44-my-app.gregale.dev", Alive: true})
+		case "/v1/apps/my-app/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{
+				{ID: "d1", Revision: 44, Status: statusLive, TrafficPercent: 0},
+				{ID: "d0", Revision: 43, Status: statusLive, TrafficPercent: 100},
+			}})
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
@@ -225,7 +255,7 @@ func TestWriteWaitedDarkDeploymentReceiptIncludesPreviewAndPromotion(t *testing.
 	if receipt.PreviewURL != "https://deploy-44-my-app.gregale.dev" {
 		t.Fatalf("preview_url = %q", receipt.PreviewURL)
 	}
-	if receipt.PromotionCommand != "gregale traffic promote --app my-app --deployment v44" {
+	if receipt.PromotionCommand != "gregale traffic promote --app my-app --deployment v44 --if-serving v43" {
 		t.Fatalf("promotion_command = %q", receipt.PromotionCommand)
 	}
 	if receipt.ReleaseSummary != nil {

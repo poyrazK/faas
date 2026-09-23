@@ -17,6 +17,8 @@ T = TypeVar("T", bound="MirrorReplayBatchRequest")
 
 @_attrs_define
 class MirrorReplayBatchRequest:
+    """A bounded batch of sanitized historical requests to replay against the mirror deployment."""
+
     requests: list[MirrorReplayRequestItem]
     allow_unsafe_methods: bool | Unset = False
     """Explicit acknowledgement required when any item uses POST, PUT, PATCH, or DELETE."""

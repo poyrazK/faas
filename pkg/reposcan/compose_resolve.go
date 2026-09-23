@@ -211,6 +211,16 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 		return err
 	}
 	candidate.Image = image
+	policy, err := interpolateComposeString(candidate.ServiceBindingPolicy, values, source, service, "x-gregale-service-policy")
+	if err != nil {
+		return err
+	}
+	candidate.ServiceBindingPolicy = policy
+	previewPolicy, err := interpolateComposeString(candidate.PreviewServiceCallsPolicy, values, source, service, "x-gregale-preview-calls")
+	if err != nil {
+		return err
+	}
+	candidate.PreviewServiceCallsPolicy = previewPolicy
 	return nil
 }
 

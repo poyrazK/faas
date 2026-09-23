@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -230,7 +232,9 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		return gateway.App{}, false, err
 	}
 	securityQuarantined := false
+	var liveDeployments []state.Deployment
 	if deps, depErr := r.store.LiveDeployments(ctx, app.ID); depErr == nil {
+		liveDeployments = deps
 		for _, dep := range deps {
 			if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
 				securityQuarantined = true
@@ -239,6 +243,10 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		}
 	} else if !errors.Is(depErr, state.ErrNotFound) {
 		return gateway.App{}, false, depErr
+	}
+	companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
+	if err != nil {
+		return gateway.App{}, false, err
 	}
 	favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
 	concurrencyOverflow := ""
@@ -277,6 +285,8 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		SessionAffinity:           app.Manifest.SessionAffinity,
 		NodeID:                    app.NodeID,
 		Ports:                     gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
+		Sidecars:                  companionRoutes,
+		PrimaryIngressPort:        primaryIngressPort,
 		// Issue #676 / ADR-080: per-app raw-bytes Upgrade
 		// bridge flag. Plumbed from apps.websocket_enabled
 		// through pgRouter.toApp so Handler.ServeHTTP's
@@ -350,6 +360,75 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 			IPAllowlist: app.PublicAuthIPAllowlist,
 		},
 	}, true, nil
+}
+
+type deploymentCompanionRoute struct {
+	Name           string          `json:"name"`
+	Type           api.SidecarType `json:"type"`
+	Port           int             `json:"port"`
+	PrimaryIngress bool            `json:"primary_ingress,omitempty"`
+}
+
+// gatewayCompanionRoutes projects deployment-local companion specs into a
+// rollout-safe app route. Named companion routes are the intersection of all
+// traffic-bearing live deployments. Primary ingress is stricter: any mismatch
+// fails closed so a rollout cannot silently route around a reverse proxy.
+func gatewayCompanionRoutes(deployments []state.Deployment) ([]gateway.AppSidecar, int, error) {
+	var (
+		shared      map[string]int
+		primaryName string
+		primaryPort int
+		seenLive    bool
+	)
+	for _, deployment := range deployments {
+		if deployment.TrafficPercent <= 0 {
+			continue
+		}
+		var specs []deploymentCompanionRoute
+		if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
+			if err := json.Unmarshal(deployment.Sidecars, &specs); err != nil {
+				return nil, 0, fmt.Errorf("decode live deployment %s companions: %w", deployment.ID, err)
+			}
+		}
+		current := make(map[string]int, len(specs))
+		currentPrimaryName, currentPrimaryPort := "", 0
+		for _, spec := range specs {
+			if spec.Type != api.SidecarTypeSidecar || spec.Port <= 0 {
+				continue
+			}
+			current[spec.Name] = spec.Port
+			if spec.PrimaryIngress {
+				currentPrimaryName, currentPrimaryPort = spec.Name, spec.Port
+			}
+		}
+		if !seenLive {
+			shared = current
+			primaryName, primaryPort = currentPrimaryName, currentPrimaryPort
+			seenLive = true
+			continue
+		}
+		for name, port := range shared {
+			if current[name] != port {
+				delete(shared, name)
+			}
+		}
+		if currentPrimaryName != primaryName || currentPrimaryPort != primaryPort {
+			return nil, 0, fmt.Errorf("live deployments disagree on primary companion ingress")
+		}
+	}
+	if !seenLive {
+		return nil, 0, nil
+	}
+	names := make([]string, 0, len(shared))
+	for name := range shared {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	routes := make([]gateway.AppSidecar, 0, len(names))
+	for _, name := range names {
+		routes = append(routes, gateway.AppSidecar{Name: name, Port: shared[name]})
+	}
+	return routes, primaryPort, nil
 }
 
 func gatewayDeclaredRoutes(routes []state.DeclaredRoute) []gateway.DeclaredRoute {
@@ -809,6 +888,11 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				log.Warn("gatewayd: refresh mirror rules failed", "app", p.AppID, "err", err)
 			}
 		default:
+			// Companion routes and primary ingress are hydrated from the live
+			// deployment set. The app cache has no TTL, so evict this app before
+			// refreshing weights; otherwise a new proxy route could remain stale
+			// for the lifetime of the gateway process.
+			inv.ResetApp(p.AppID)
 			// v1 cache lookup happens before target selection, so the
 			// deployment dimension is currently empty. Fence rollout and
 			// traffic changes with an app-wide cache purge.

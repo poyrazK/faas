@@ -26,14 +26,17 @@ T = TypeVar("T", bound="AppSecurityPostureResponse")
 
 @_attrs_define
 class AppSecurityPostureResponse:
-    """Read-only deterministic configuration posture for an app, including an active image-scan quarantine when present."""
+    """Read-only configuration posture and live-image scan-evidence coverage for an app, including an active image-scan
+    quarantine when present.
+
+    """
 
     app_id: str
     slug: str
     profile: AppSecurityPostureResponseProfile
     score: int
     security_policy: AppSecurityPostureResponseSecurityPolicy
-    """The app's deploy-time response to high-severity posture findings."""
+    """The app's deploy-time response to high-severity configuration findings."""
     findings: list[AppSecurityFinding]
     quarantine: AppSecurityQuarantine | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

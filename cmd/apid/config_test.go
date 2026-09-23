@@ -81,6 +81,9 @@ app_errors_tls_key_path = "/etc/faas/tls/apid/advisory.key"
 app_errors_tls_ca_path = "/etc/faas/tls/ca.pem"
 node_name = "fsn-1-apid"
 role = "control-plane"
+
+[companion_images]
+opentelemetry = "registry.example.com/otel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -91,6 +94,9 @@ role = "control-plane"
 	}
 	if cfg.ListenAddr != "0.0.0.0:8081" {
 		t.Errorf("ListenAddr = %q", cfg.ListenAddr)
+	}
+	if cfg.CompanionImages["opentelemetry"] == "" {
+		t.Errorf("CompanionImages = %#v, want opentelemetry digest", cfg.CompanionImages)
 	}
 	if cfg.MetricsAddr != "127.0.0.1:9101" {
 		t.Errorf("MetricsAddr = %q", cfg.MetricsAddr)
@@ -166,6 +172,17 @@ func TestLoadConfig_BadTOMLErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "parse") {
 		t.Errorf("error %q should mention parse failure", err.Error())
+	}
+}
+
+func TestLoadConfig_RejectsMutableCompanionImage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "apid.toml")
+	body := "[companion_images]\nopentelemetry = \"registry.example.com/otel:latest\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "digest-pinned") {
+		t.Fatalf("LoadConfig error = %v, want immutable companion image rejection", err)
 	}
 }
 

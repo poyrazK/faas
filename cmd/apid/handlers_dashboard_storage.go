@@ -192,7 +192,7 @@ func (s *server) verifyDashboardStorageCSRF(w http.ResponseWriter, r *http.Reque
 func (s *server) dashboardCreateStorageBucket(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardStorageCSRF(w, r, acct.ID) {
@@ -219,7 +219,7 @@ func (s *server) dashboardCreateStorageBucket(w http.ResponseWriter, r *http.Req
 func (s *server) dashboardDeleteStorageBucket(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardStorageCSRF(w, r, acct.ID) {
@@ -240,7 +240,7 @@ func (s *server) dashboardDeleteStorageBucket(w http.ResponseWriter, r *http.Req
 func (s *server) dashboardDeleteStorageObject(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardStorageCSRF(w, r, acct.ID) {
@@ -267,7 +267,7 @@ func (s *server) dashboardDeleteStorageObject(w http.ResponseWriter, r *http.Req
 func (s *server) dashboardSignStorageObject(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardStorageCSRF(w, r, acct.ID) {

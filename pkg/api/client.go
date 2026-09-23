@@ -2031,6 +2031,14 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
 }
 
+// PatchDeploymentTrafficIfServing updates traffic only if the named live
+// sibling still owns all production traffic at the transaction boundary.
+func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string, percent int, servingID string) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
+		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID}, &out)
+}
+
 // AdvanceCanary advances exactly one persisted canary step. APID resolves
 // the next percentage from the deployment's stored preset and performs the
 // expected-step compare-and-swap together with traffic, rollout state, and
@@ -2952,6 +2960,14 @@ func (c *Client) InvokeAppAsync(ctx context.Context, slug string, req InvokeRequ
 func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendRequest) (QueueSendResponse, error) {
 	var out QueueSendResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/send", req, &out)
+}
+
+// SendAppMessage reliably enqueues a CloudEvents-wrapped message for another
+// Gregale application. The returned invocation id is visible through the
+// ordinary invocation and DLQ APIs.
+func (c *Client) SendAppMessage(ctx context.Context, targetApp string, req SendAppMessageRequest) (SendAppMessageResponse, error) {
+	var out SendAppMessageResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+targetApp+"/inbox", req, &out)
 }
 
 // QueueReceive long-polls for the next dispatched row on the queue.
@@ -4851,7 +4867,7 @@ func (c *Client) SetGithubWebhookSecret(ctx context.Context, req AdminSetGithubW
 	return out, c.do(ctx, "POST", "/v1/admin/github-webhook-secrets", req, &out)
 }
 
-// Org surface (issue #190 / IAM-6 / ADR-061, PR 5). The 11 methods
+// Org surface (issue #190 / IAM-6 / ADR-061, PR 5). The methods
 // below mirror the spec routes documented under api/openapi.yaml
 // paths /v1/orgs*, /v1/invitations/{token}. Each maps 1:1 to a
 // spec route so the sdk-coverage gate (cmd/sdk-coverage) doesn't
@@ -4882,6 +4898,34 @@ func (c *Client) CreateOrg(ctx context.Context, req CreateOrgRequest) (OrgRespon
 func (c *Client) GetOrg(ctx context.Context, slug string) (OrgResponse, error) {
 	var out OrgResponse
 	return out, c.do(ctx, "GET", "/v1/orgs/"+slug, nil, &out)
+}
+
+// ListOrgActivity returns one newest-first page of the organization's global
+// infrastructure history. before is the opaque NextBefore value from the
+// prior page; empty-string filters are omitted.
+func (c *Client) ListOrgActivity(ctx context.Context, slug, before, kindPrefix, actorType, appID string, limit int) (ListOrgActivityResponse, error) {
+	var out ListOrgActivityResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if kindPrefix != "" {
+		q.Set("kind_prefix", kindPrefix)
+	}
+	if actorType != "" {
+		q.Set("actor_type", actorType)
+	}
+	if appID != "" {
+		q.Set("app_id", appID)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/orgs/" + slug + "/activity"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // PatchOrg applies a partial update to the org (name and/or plan).
@@ -5051,6 +5095,14 @@ func (c *Client) ListAppWebhooks(ctx context.Context, slug string) ([]AppWebhook
 func (c *Client) CreateAppWebhook(ctx context.Context, slug string, req CreateAppWebhookRequest) (AppWebhookResponse, error) {
 	var out AppWebhookResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks", req, &out)
+}
+
+// DeliverAppEvent queues an arbitrary event for a registered webhook
+// destination. The webhook subscription supplies signing, retries, timeout,
+// delivery format, and dead-letter behavior.
+func (c *Client) DeliverAppEvent(ctx context.Context, sourceApp string, req DeliverAppEventRequest) (DeliverAppEventResponse, error) {
+	var out DeliverAppEventResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+sourceApp+"/outbox", req, &out)
 }
 
 // GetAppWebhook returns a single subscription by id.

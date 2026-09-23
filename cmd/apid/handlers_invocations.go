@@ -21,8 +21,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -320,53 +323,119 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
 		return
 	}
-	n, err := s.store.CountPendingInvocations(r.Context(), app.ID, state.InvocationQueue)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("count queue"))
-		return
-	}
-	if n >= limits.MaxQueueDepth {
-		api.WriteProblem(w, api.ErrPlanQueueDepth(limits.MaxQueueDepth, n))
-		return
-	}
 	var req queueSendRequest
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	if problem := validateInvocationRetryPolicy(req.RetryPolicy); problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-	queueName, problem := s.resolveQueueSendName(r.Context(), acct, app, req.QueueName)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), acct, app, req.Payload, req.QueueName, req.RetryPolicy)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	traceHeaders, err := pkgtrace.MergeHeaders(r.Context(), nil)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("encode queue trace context"))
+	writeJSON(w, http.StatusCreated, api.QueueSendResponse{
+		ID:      inv.ID,
+		TraceID: traceID,
+	})
+}
+
+// sendAppMessage is the ergonomic application-inbox facade. It deliberately
+// reuses InvocationQueue so queue depth, retry, dead-letter, replay, wake, and
+// trace behavior stay identical to `queues/send`.
+func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
 		return
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	limits := api.MustLimitsFor(acct.Plan)
+	if limits.MaxQueueDepth == 0 {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
+		return
+	}
+	var req api.SendAppMessageRequest
+	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
+		return
+	}
+	if req.ID == "" {
+		req.ID = uuid.NewString()
+	}
+	if req.Source == "" {
+		req.Source = "gregale.send"
+	}
+	eventTime := time.Time{}
+	if req.Time != nil {
+		eventTime = *req.Time
+	}
+	envelope, err := (events.Envelope{
+		ID:              req.ID,
+		Source:          req.Source,
+		Type:            req.Type,
+		Time:            eventTime,
+		DataContentType: req.DataContentType,
+		Data:            req.Data,
+	}).Normalize(acct.ID, time.Now().UTC())
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("encode application message"))
+		return
+	}
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), acct, app, payload, req.QueueName, req.RetryPolicy)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, api.SendAppMessageResponse{
+		ID:        inv.ID,
+		EventID:   envelope.ID,
+		TargetApp: app.Slug,
+		Status:    string(inv.State),
+		StatusURL: "/v1/invocations/" + inv.ID,
+		TraceID:   traceID,
+	})
+}
+
+func (s *server) enqueueAppMessage(ctx context.Context, acct state.Account, app state.App, payload json.RawMessage, queueName string, retryPolicy *api.RetryPolicyDTO) (state.Invocation, string, *api.Problem) {
+	limits := api.MustLimitsFor(acct.Plan)
+	if limits.MaxQueueDepth == 0 {
+		return state.Invocation{}, "", api.ErrPlanFeatureGated("queues", acct.Plan)
+	}
+	n, err := s.store.CountPendingInvocations(ctx, app.ID, state.InvocationQueue)
+	if err != nil {
+		return state.Invocation{}, "", api.ErrCapacity("count queue")
+	}
+	if n >= limits.MaxQueueDepth {
+		return state.Invocation{}, "", api.ErrPlanQueueDepth(limits.MaxQueueDepth, n)
+	}
+	if problem := validateInvocationRetryPolicy(retryPolicy); problem != nil {
+		return state.Invocation{}, "", problem
+	}
+	resolvedQueueName, problem := s.resolveQueueSendName(ctx, acct, app, queueName)
+	if problem != nil {
+		return state.Invocation{}, "", problem
+	}
+	traceHeaders, err := pkgtrace.MergeHeaders(ctx, nil)
+	if err != nil {
+		return state.Invocation{}, "", api.ErrCapacity("encode queue trace context")
+	}
+	inv, err := s.store.EnqueueInvocation(ctx, state.Invocation{
 		AppID:           app.ID,
 		AccountID:       acct.ID,
 		Source:          state.InvocationQueue,
-		QueueName:       queueName,
-		Payload:         req.Payload,
+		QueueName:       resolvedQueueName,
+		Payload:         payload,
 		Headers:         traceHeaders,
 		DueAt:           time.Now().UTC(),
-		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, req.RetryPolicy, limits.MaxQueueAttempts),
+		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue queue send"))
-		return
+		return state.Invocation{}, "", api.ErrCapacity("enqueue application message")
 	}
 	var traceHeaderValues map[string]string
 	_ = json.Unmarshal(traceHeaders, &traceHeaderValues)
-	writeJSON(w, http.StatusCreated, api.QueueSendResponse{
-		ID:      inv.ID,
-		TraceID: traceHeaderValues[api.TraceIDHeader],
-	})
+	return inv, traceHeaderValues[api.TraceIDHeader], nil
 }
 
 // queueReceive long-polls on invocation_done scoped to this app; when

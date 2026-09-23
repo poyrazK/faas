@@ -226,7 +226,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	token, err := middleware.IssueForAuthenticated(h.srv.sessions, "cli-auth", acct.ID)
 	if err != nil {
 		h.log.Error("cli_auth.csrf_issue", "err", err)
-		http.Error(w, "render failed", http.StatusInternalServerError)
+		renderProblem(w, h.log, err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -251,7 +251,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	}
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		h.log.Error("cli_auth.render", "err", err)
-		http.Error(w, "render failed", http.StatusInternalServerError)
+		renderProblem(w, h.log, err)
 	}
 }
 
@@ -274,7 +274,7 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", http.StatusBadRequest)
+		writeDashboardBadRequest(w, r, "The CLI authorization form could not be read.")
 		return
 	}
 	// Resolve the code first so we can pass it as the CSRF subject.
@@ -309,7 +309,9 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 			return
 		}
 		h.log.Error("cli_auth.claim", "err", err)
-		http.Error(w, "internal", http.StatusInternalServerError)
+		api.WriteProblemForRequest(w, r, api.ErrInternal(
+			"Gregale could not authorize this CLI session.",
+		).WithHint("Restart `gregale login` and try the new code."))
 		return
 	}
 	_ = h.srv.notif.Notify(r.Context(), db.NotifyCliAuthCodeActivated,
@@ -328,7 +330,7 @@ func (h *cliAuthHandlers) renderCliAuthError(w http.ResponseWriter, r *http.Requ
 	}
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		h.log.Error("cli_auth.render_error", "err", err)
-		http.Error(w, "render failed", http.StatusInternalServerError)
+		renderProblem(w, h.log, err)
 	}
 }
 
