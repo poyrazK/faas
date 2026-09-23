@@ -28,6 +28,7 @@ class MirrorRuleResponse:
     percent: int
     enabled: bool
     include_body: bool
+    allow_unsafe_methods: bool
     redact_headers: list[str]
     always_stripped_headers: list[str]
     """Headers the gateway ALWAYS strips regardless of the customer's redact_headers setting."""
@@ -52,6 +53,8 @@ class MirrorRuleResponse:
 
         include_body = self.include_body
 
+        allow_unsafe_methods = self.allow_unsafe_methods
+
         redact_headers = self.redact_headers
 
         always_stripped_headers = self.always_stripped_headers
@@ -72,6 +75,7 @@ class MirrorRuleResponse:
                 "percent": percent,
                 "enabled": enabled,
                 "include_body": include_body,
+                "allow_unsafe_methods": allow_unsafe_methods,
                 "redact_headers": redact_headers,
                 "always_stripped_headers": always_stripped_headers,
                 "created_at": created_at,
@@ -100,6 +104,8 @@ class MirrorRuleResponse:
 
         include_body = d.pop("include_body")
 
+        allow_unsafe_methods = d.pop("allow_unsafe_methods")
+
         redact_headers = cast(list[str], d.pop("redact_headers"))
 
         always_stripped_headers = cast(list[str], d.pop("always_stripped_headers"))
@@ -117,6 +123,7 @@ class MirrorRuleResponse:
             percent=percent,
             enabled=enabled,
             include_body=include_body,
+            allow_unsafe_methods=allow_unsafe_methods,
             redact_headers=redact_headers,
             always_stripped_headers=always_stripped_headers,
             created_at=created_at,

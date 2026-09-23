@@ -3139,7 +3139,8 @@ CREATE TABLE public.mirror_invocation_results (
     crashed boolean DEFAULT false NOT NULL,
     request_id text NOT NULL,
     completed_at timestamp with time zone DEFAULT now() NOT NULL,
-    rollup_counted boolean DEFAULT false NOT NULL
+    rollup_counted boolean DEFAULT false NOT NULL,
+    comparison_incomplete boolean DEFAULT false NOT NULL
 );
 
 
@@ -3172,12 +3173,13 @@ CREATE TABLE public.mirror_rules (
     app_id uuid NOT NULL,
     source_deployment_id uuid NOT NULL,
     mirror_deployment_id uuid NOT NULL,
-    percent integer DEFAULT 100 NOT NULL,
+    percent integer DEFAULT 5 NOT NULL,
     enabled boolean DEFAULT true NOT NULL,
     include_body boolean DEFAULT false NOT NULL,
     redact_headers text[] DEFAULT '{}'::text[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    allow_unsafe_methods boolean DEFAULT false NOT NULL,
     CONSTRAINT mirror_rules_check CHECK ((source_deployment_id <> mirror_deployment_id)),
     CONSTRAINT mirror_rules_percent_check CHECK (((percent >= 0) AND (percent <= 100))),
     CONSTRAINT mirror_rules_redact_headers_check CHECK (((array_length(redact_headers, 1) IS NULL) OR (array_length(redact_headers, 1) <= 32)))

@@ -97,10 +97,10 @@ def sync_detailed(
 
      Read-only aggregate. Source: `mirror_invocation_results` rows
     whose `completed_at >= now - window_seconds`. Returns:
-    total invocations, status diff count, schema diff count, body
-    diff count, mean/p99 latency delta, crash count. PR-A2 returns
-    zeros (PR-A1's ledger has no writers until A3 ships the
-    runtime); post-A3 this is the dashboard widget's data source.
+    total invocations, complete changed-response count and percent,
+    status/schema/body diff counts, incomplete comparisons, mean/p99
+    latency delta, and mirror crash count. Incomplete rows are excluded
+    from the changed-response percentage denominator.
 
     Args:
         slug (str):
@@ -139,10 +139,10 @@ def sync(
 
      Read-only aggregate. Source: `mirror_invocation_results` rows
     whose `completed_at >= now - window_seconds`. Returns:
-    total invocations, status diff count, schema diff count, body
-    diff count, mean/p99 latency delta, crash count. PR-A2 returns
-    zeros (PR-A1's ledger has no writers until A3 ships the
-    runtime); post-A3 this is the dashboard widget's data source.
+    total invocations, complete changed-response count and percent,
+    status/schema/body diff counts, incomplete comparisons, mean/p99
+    latency delta, and mirror crash count. Incomplete rows are excluded
+    from the changed-response percentage denominator.
 
     Args:
         slug (str):
@@ -176,10 +176,10 @@ async def asyncio_detailed(
 
      Read-only aggregate. Source: `mirror_invocation_results` rows
     whose `completed_at >= now - window_seconds`. Returns:
-    total invocations, status diff count, schema diff count, body
-    diff count, mean/p99 latency delta, crash count. PR-A2 returns
-    zeros (PR-A1's ledger has no writers until A3 ships the
-    runtime); post-A3 this is the dashboard widget's data source.
+    total invocations, complete changed-response count and percent,
+    status/schema/body diff counts, incomplete comparisons, mean/p99
+    latency delta, and mirror crash count. Incomplete rows are excluded
+    from the changed-response percentage denominator.
 
     Args:
         slug (str):
@@ -216,10 +216,10 @@ async def asyncio(
 
      Read-only aggregate. Source: `mirror_invocation_results` rows
     whose `completed_at >= now - window_seconds`. Returns:
-    total invocations, status diff count, schema diff count, body
-    diff count, mean/p99 latency delta, crash count. PR-A2 returns
-    zeros (PR-A1's ledger has no writers until A3 ships the
-    runtime); post-A3 this is the dashboard widget's data source.
+    total invocations, complete changed-response count and percent,
+    status/schema/body diff counts, incomplete comparisons, mean/p99
+    latency delta, and mirror crash count. Incomplete rows are excluded
+    from the changed-response percentage denominator.
 
     Args:
         slug (str):

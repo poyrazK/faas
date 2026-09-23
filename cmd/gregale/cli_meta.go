@@ -1792,7 +1792,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "mirror",
 		DocSlug: "mirror",
-		Short:   "Manage traffic mirroring and sanitized replay (Pro/Scale only)",
+		Short:   "Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained.",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List mirror rules", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -1801,8 +1801,9 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "source", Short: "source deployment id or vN revision (live)", Req: true, Value: "ID"},
 				{Name: "mirror", Short: "mirror deployment id or vN revision (live; same app)", Req: true, Value: "ID"},
-				{Name: "percent", Short: "fan-out percent in [0, 100]; 100 = every request", Value: "N"},
-				{Name: "include-body", Short: "include request/response body hashes in the comparison ledger"},
+				{Name: "percent", Short: "fan-out percent in [0, 100]; defaults to a 5% sample", Value: "N"},
+				{Name: "include-body", Short: "compare response values using hashes; raw response bodies are never retained"},
+				{Name: "allow-unsafe-methods", Short: "also mirror POST, PUT, PATCH, and DELETE; these can cause side effects"},
 				{Name: "redact-header", Short: "extra header name to redact (repeatable)", Value: "NAME"},
 			}},
 			{Name: "info", Short: "Show one mirror rule", Flags: []cliFlag{
@@ -1817,6 +1818,8 @@ var cliCommands = []cliCommand{
 				{Name: "disable", Short: "disable the rule (mutually exclusive with --enable)"},
 				{Name: "include-body", Short: "enable body-hash comparison (mutually exclusive with --no-include-body)"},
 				{Name: "no-include-body", Short: "disable body-hash comparison"},
+				{Name: "allow-unsafe-methods", Short: "also mirror POST, PUT, PATCH, and DELETE"},
+				{Name: "safe-methods-only", Short: "skip POST, PUT, PATCH, and DELETE"},
 				{Name: "redact-header", Short: "extra header name to redact (repeatable)", Value: "NAME"},
 				{Name: "clear-redact", Short: "clear the customer's redact_headers list (drop to always-stripped only)"},
 			}},

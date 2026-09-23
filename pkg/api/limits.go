@@ -3526,17 +3526,17 @@ const (
 	MirrorMaxLifetimeSeconds = 5
 
 	// MirrorBodySnapshotCap (issue #72 / ADR-133 / ADR-125 PR-A3
-	// code-review fix) is the maximum number of source-request body
-	// bytes the gateway captures at the fanout boundary for the
-	// mirror goroutine's ClassifyResult comparison. The handler
-	// reads up to MirrorBodySnapshotCap bytes from r.Body, then
-	// restores r.Body to a fresh reader over the SAME bytes so the
-	// downstream ReverseProxy reads the full body unchanged.
+	// code-review fix) bounds request forwarding and each response
+	// snapshot retained for mirror comparison. The handler reads up
+	// to MirrorBodySnapshotCap+1 bytes from r.Body to detect oversize
+	// inputs, then restores r.Body so the source proxy sees the full
+	// body unchanged.
 	//
 	// 64 KiB is enough for status_diff / body_diff detection on a
 	// typical JSON / form-urlencoded response — the comparison is
-	// SHA-256 over the captured bytes (A3 ships byte-equal; JCS
-	// semantic diff is an ADR-124 §Follow-on). Larger values
+	// SHA-256 over the bounded response snapshot. JSON whitespace and object-key
+	// order are normalized before the value hash, and JSON shape has its own
+	// fingerprint. Larger values
 	// (1 MiB+) start eating gateway RAM on burst traffic; smaller
 	// values lose body-diff signal on responses with a long tail.
 	// Bumping this is a PR-grade change.

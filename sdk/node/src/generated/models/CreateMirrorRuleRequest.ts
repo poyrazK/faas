@@ -4,14 +4,18 @@
 /* eslint-disable */
 /**
  * Body for POST /v1/apps/{slug}/mirrors. Both deployments must
- * be `live` and belong to the same app. `include_body` defaults
- * to `false`; enabling it stores only request/response SHA-256
- * hashes for body-difference classification, never raw bodies.
+ * be `live` and belong to the same app. `percent` defaults to
+ * a 5% sample. `include_body` defaults to `false`; when enabled,
+ * only response SHA-256 hashes are retained. Raw bodies are never
+ * stored. POST, PUT, PATCH, and DELETE are skipped unless
+ * `allow_unsafe_methods` is explicitly enabled.
  * `redact_headers` is the
  * customer's additive list on top of the always-stripped list
  * (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
  * WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
- * A2's storage layer).
+ * A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
+ * snapshot cap are safely skipped rather than sending a partial request
+ * to the mirror deployment.
  *
  */
 export type CreateMirrorRuleRequest = {
@@ -24,13 +28,17 @@ export type CreateMirrorRuleRequest = {
    */
   mirror_deployment_id: string;
   /**
-   * Fan-out percent. 100 = mirror every customer request; lower = sampled shadow.
+   * Fan-out percent. Defaults to a 5% sample; 100 mirrors every eligible request.
    */
   percent?: number;
   /**
-   * If true, the comparison ledger captures request/response SHA-256 hashes for body-difference classification. Raw bodies are never stored. Off by default.
+   * If true, compare response values using hashes. Raw response bodies are never stored. Off by default.
    */
   include_body?: boolean;
+  /**
+   * If true, also mirror POST, PUT, PATCH, and DELETE. These methods may cause side effects in the mirror deployment.
+   */
+  allow_unsafe_methods?: boolean;
   /**
    * Customer-supplied additional header names to redact on top of the always-stripped list (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization, WWW-Authenticate).
    */

@@ -45,10 +45,11 @@ func mirrorTestLimits() Limits {
 }
 
 func TestCreateMirrorRuleRequest_RoundTrip(t *testing.T) {
+	percent := 25
 	in := CreateMirrorRuleRequest{
 		SourceDeploymentID: "11111111-1111-1111-1111-111111111111",
 		MirrorDeploymentID: "22222222-2222-2222-2222-222222222222",
-		Percent:            25,
+		Percent:            &percent,
 		IncludeBody:        true,
 		RedactHeaders:      []string{"X-Tenant-Id", "X-Trace-Id"},
 	}
@@ -72,7 +73,7 @@ func TestCreateMirrorRuleRequest_RoundTrip(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.SourceDeploymentID != in.SourceDeploymentID || out.MirrorDeploymentID != in.MirrorDeploymentID ||
-		out.Percent != in.Percent || out.IncludeBody != in.IncludeBody ||
+		out.Percent == nil || *out.Percent != *in.Percent || out.IncludeBody != in.IncludeBody ||
 		len(out.RedactHeaders) != len(in.RedactHeaders) {
 		t.Fatalf("round-trip mismatch: %+v vs %+v", out, in)
 	}
