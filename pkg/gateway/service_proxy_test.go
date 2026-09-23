@@ -103,7 +103,7 @@ func TestServiceProxyHonorsAggregateRetryBudget(t *testing.T) {
 	var calls atomic.Int32
 	proxy := NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
