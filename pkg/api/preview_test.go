@@ -83,3 +83,21 @@ func TestGetPreviewReturnsFirstClassResource(t *testing.T) {
 		t.Fatalf("preview = %+v", got)
 	}
 }
+
+func TestGetPreviewEnvironmentStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/preview/pr-42-web/environment" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(PreviewEnvironmentStatusResponse{RootSlug: "pr-42-web", PRNumber: 42,
+			CommitSHA: "abc1234", Phase: "building", TotalWorkloads: 2,
+			Members: []PreviewEnvironmentMemberResponse{{Slug: "pr-42-web"}, {Slug: "pr-42-worker"}}})
+	}))
+	defer srv.Close()
+	got, err := NewClient(srv.URL, "token").GetPreviewEnvironmentStatus(context.Background(), "pr-42-web")
+	if err != nil || got.PRNumber != 42 || len(got.Members) != 2 {
+		t.Fatalf("environment = (%+v, %v)", got, err)
+	}
+}

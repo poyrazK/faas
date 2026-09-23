@@ -92,6 +92,10 @@
     .preview-state-closed    { color: #6b7280; font-weight: 600; }
     .preview-state-stale     { color: #c62828; font-weight: 600; }
     .preview-state-torn_down { color: #888; font-style: italic; }
+    .badge.preview-env-live { background: #d1fae5; color: #065f46; }
+    .badge.preview-env-building { background: #dbeafe; color: #1e40af; }
+    .badge.preview-env-failed { background: #fee2e2; color: #991b1b; }
+    .badge.preview-env-closed { background: #e5e7eb; color: #374151; }
     .preview-copy-btn {
       padding: 0.1rem 0.5rem; font-size: 0.85rem; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer;
     }
@@ -700,6 +704,35 @@
           {{end}}
           <small class="muted">Updated {{.Data.RequestAnalytics.AsOf}} · latency percentiles include collapsed request counts.</small>
         </section>
+      {{end}}
+
+      {{if .Data.PreviewEnvironment}}
+        {{with .Data.PreviewEnvironment}}
+          <section aria-label="PR preview environment" id="pr-preview-environment">
+            <h2>PR environment</h2>
+            <p>
+              <span class="badge preview-env-{{.Phase}}">{{.Phase}}</span>
+              · {{.LiveCount}}/{{.TotalCount}} current-head deployments live
+              {{if .PRURL}}· <a href="{{.PRURL}}" target="_blank" rel="noopener noreferrer">{{.RepoFullName}} #{{.PRNumber}}</a>{{else}}· PR #{{.PRNumber}}{{end}}
+              · commit <code title="{{.CommitSHA}}">{{printf "%.7s" .CommitSHA}}</code>
+            </p>
+            <p>{{.Summary}}</p>
+            <table aria-label="PR preview workloads">
+              <thead><tr><th>Workload</th><th>Preview app</th><th>App</th><th>PR state</th><th>Deployment</th></tr></thead>
+              <tbody>
+                {{range .Members}}
+                  <tr>
+                    <td>{{.WorkloadName}}</td>
+                    <td>{{if .Slug}}<a href="/dashboard/apps/{{.Slug}}"><code>{{.Slug}}</code></a>{{else}}—{{end}}</td>
+                    <td>{{.AppStatus}}</td>
+                    <td>{{if .PreviewState}}{{.PreviewState}}{{else}}—{{end}}</td>
+                    <td>{{.DeploymentStatus}}</td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </section>
+        {{end}}
       {{end}}
 
       {{/* Issue #272 / ADR-095 PR-C — preview environments panel.

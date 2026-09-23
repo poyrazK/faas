@@ -1000,6 +1000,9 @@ from .preflight_source import PreflightSource
 from .preflight_verdict import PreflightVerdict
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
+from .preview_environment_member_response import PreviewEnvironmentMemberResponse
+from .preview_environment_status_response import PreviewEnvironmentStatusResponse
+from .preview_environment_status_response_phase import PreviewEnvironmentStatusResponsePhase
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
     PreviewProductionChangesResponseConfigurationChangedGroupsItem,
@@ -2440,6 +2443,9 @@ __all__ = (
     "PreflightVerdict",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
+    "PreviewEnvironmentMemberResponse",
+    "PreviewEnvironmentStatusResponse",
+    "PreviewEnvironmentStatusResponsePhase",
     "PreviewProductionChangesResponse",
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
     "PreviewResourceLinksResponse",

@@ -3908,7 +3908,7 @@ func (m *MemStore) ListPreviewsForTeardown(_ context.Context, now time.Time, max
 		if a.PreviewPrState == PreviewPrStateTornDown {
 			continue
 		}
-		if a.PreviewPrState == PreviewPrStateClosed || a.PreviewPrState == PreviewPrStateStale {
+		if a.PreviewPrState == PreviewPrStateClosed || a.PreviewPrState == PreviewPrStateStale || a.PreviewPrState == PreviewPrStateTearingDown {
 			out = append(out, a)
 			continue
 		}
@@ -3948,7 +3948,7 @@ func (m *MemStore) SetPreviewPrState(_ context.Context, appID, prState string) (
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[appID]
-	if !ok || a.PreviewOfSlug == "" {
+	if !ok || a.PreviewOfSlug == "" || (a.PreviewPrState == PreviewPrStateTearingDown && prState != PreviewPrStateTornDown) {
 		return App{}, ErrNotFound
 	}
 	a.PreviewPrState = prState
@@ -3983,7 +3983,8 @@ func (m *MemStore) RefreshDevSession(_ context.Context, appID string, expiresAt 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[appID]
-	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber != 0 || a.Status == AppDeleted {
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber != 0 || a.Status == AppDeleted ||
+		a.PreviewPrState == PreviewPrStateTearingDown || a.PreviewPrState == PreviewPrStateTornDown {
 		return App{}, ErrNotFound
 	}
 	t := expiresAt
@@ -4000,7 +4001,8 @@ func (m *MemStore) RefreshPRPreview(_ context.Context, appID string, expiresAt t
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[appID]
-	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber <= 0 || a.Status == AppDeleted {
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber <= 0 || a.Status == AppDeleted ||
+		a.PreviewPrState == PreviewPrStateTearingDown || a.PreviewPrState == PreviewPrStateTornDown {
 		return App{}, ErrNotFound
 	}
 	t := expiresAt

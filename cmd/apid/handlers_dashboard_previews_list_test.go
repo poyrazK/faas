@@ -68,6 +68,12 @@ func TestRenderPreviewsList_HappyPath(t *testing.T) {
 			t.Errorf("body missing %q (preview slug must render): %s", want, body)
 		}
 	}
+	if !strings.Contains(body, `href="/dashboard/apps/pr-42-acme"`) {
+		t.Error("preview row does not link to its app detail")
+	}
+	if strings.Contains(body, "github.com/.../pull/") {
+		t.Error("preview list contains a placeholder GitHub PR link")
+	}
 	for _, want := range []string{"/dashboard/apps/acme", "/dashboard/apps/foo", "/dashboard/apps/bar"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q (parent link must compose with slug)", want)

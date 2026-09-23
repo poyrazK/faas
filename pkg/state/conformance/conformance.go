@@ -107,6 +107,7 @@ func Run(t *testing.T, open Open) {
 		{"log_event_insert_is_idempotent_and_queries_are_tenant_scoped", testLogEventInsertAndList},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
+		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
@@ -591,6 +592,40 @@ func containsAppIDs(apps []state.App, want string) bool {
 		}
 	}
 	return false
+}
+
+func testPreviewTeardownClaim(t *testing.T, fx *Fixture) {
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	expiry := now.Add(-time.Hour)
+	preview, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "claim-preview-" + uuid.NewString()[:8],
+		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 1,
+		PreviewOfSlug: fx.App.Slug, PreviewPrNumber: 42,
+		PreviewPrState: state.PreviewPrStateStale, PreviewExpiresAt: &expiry,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatalf("CreateAppIfUnderQuota: %v", err)
+	}
+	if _, err := fx.Store.RefreshPRPreview(fx.Ctx, preview.ID, now.Add(time.Hour)); err != nil {
+		t.Fatalf("RefreshPRPreview: %v", err)
+	}
+	if _, err := fx.Store.ClaimPreviewTeardown(fx.Ctx, preview, now); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("claim from stale snapshot = %v, want ErrNotFound", err)
+	}
+	current, err := fx.Store.SetPreviewPrState(fx.Ctx, preview.ID, state.PreviewPrStateStale)
+	if err != nil {
+		t.Fatalf("SetPreviewPrState(stale): %v", err)
+	}
+	claimed, err := fx.Store.ClaimPreviewTeardown(fx.Ctx, current, now)
+	if err != nil || claimed.PreviewPrState != state.PreviewPrStateTearingDown {
+		t.Fatalf("ClaimPreviewTeardown = (%+v, %v)", claimed, err)
+	}
+	if _, err := fx.Store.RefreshPRPreview(fx.Ctx, preview.ID, now.Add(time.Hour)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("refresh after claim = %v, want ErrNotFound", err)
+	}
+	if _, err := fx.Store.ClaimPreviewTeardown(fx.Ctx, claimed, now); err != nil {
+		t.Fatalf("retry claim: %v", err)
+	}
 }
 
 func testPRPreviewLease(t *testing.T, fx *Fixture) {

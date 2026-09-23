@@ -2,10 +2,12 @@ package githubd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -14,7 +16,7 @@ import (
 // previewDependencyParents selects only the bound workload's transitive
 // depends_on closure. An unrelated service in the same repository never gets
 // a PR preview merely because it was discovered by the scanner.
-func (s *Service) previewDependencyParents(ctx context.Context, parent state.App, scan reposcan.Result) ([]state.App, error) {
+func (s *Service) previewDependencyParents(ctx context.Context, parent state.App, scan reposcan.Result, prNumber int) ([]state.App, error) {
 	if parent.ProjectID == "" {
 		return nil, nil // legacy single-app bindings have no project graph
 	}
@@ -82,8 +84,36 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 			continue
 		}
 		app, found := byWorkload[key]
-		if !found || app.Status != state.AppActive {
+		if !found {
+			// A PR may introduce a new dependency before it exists in
+			// production. Start with a clean preview template, without
+			// copying the root app's env or credentials.
+			if !api.ValidAppSlug(name) {
+				return nil, fmt.Errorf("githubd: PR dependency %q is not a valid app slug", name)
+			}
+			app = state.App{
+				AccountID: parent.AccountID, ProjectID: parent.ProjectID,
+				Slug: name, WorkloadName: name, Type: state.AppTypeApp,
+				RAMMB: 128, MaxConcurrency: 1, CPUMillicores: api.DefaultAppCPUMillicores,
+				Status: state.AppActive,
+			}
+		}
+		if app.Status != state.AppActive {
 			return nil, fmt.Errorf("githubd: PR dependency %q has no active production app", name)
+		}
+		// A production app can appear after the first PR preview, possibly
+		// with a different slug. Reuse the already-reserved preview identity
+		// so synchronize does not consume a second slot or strand the old row.
+		existing, err := s.Reconcile.Store.PreviewAppByProjectWorkload(ctx,
+			parent.AccountID, parent.ProjectID, prNumber, name)
+		if err == nil {
+			expected, slugErr := previewSlug(existing.PreviewOfSlug, prNumber)
+			if slugErr != nil || existing.Slug != expected {
+				return nil, fmt.Errorf("githubd: PR dependency %q has inconsistent preview identity: %w", name, state.ErrConflict)
+			}
+			app.Slug = existing.PreviewOfSlug
+		} else if !errors.Is(err, state.ErrNotFound) {
+			return nil, fmt.Errorf("githubd: resolve existing PR dependency %q: %w", name, err)
 		}
 		parents = append(parents, app)
 	}
@@ -131,7 +161,9 @@ func (s *Service) closePRDependencies(ctx context.Context, parent state.App, prN
 		return err
 	}
 	for _, preview := range previews {
-		if preview.ProjectID != parent.ProjectID || preview.PreviewPrNumber != prNumber || preview.PreviewOfSlug == parent.Slug {
+		if preview.ProjectID != parent.ProjectID || preview.PreviewPrNumber != prNumber || preview.PreviewOfSlug == parent.Slug ||
+			preview.PreviewPrState == state.PreviewPrStateStale || preview.PreviewPrState == state.PreviewPrStateTearingDown ||
+			preview.PreviewPrState == state.PreviewPrStateTornDown {
 			continue
 		}
 		if _, err := s.closePRPreview(ctx, preview.ID, expiresAt); err != nil {

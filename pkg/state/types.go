@@ -1432,29 +1432,31 @@ func EvictionPriorityOrBestEffort(p string) string {
 	return p
 }
 
-// PreviewPrStateOpen / Closed / Stale / TornDown are the four
+// PreviewPrStateOpen / Closed / Stale / TearingDown / TornDown are the
 // closed-set values for state.App.PreviewPrState. Mirrors the
 // apps_preview_pr_state_chk CHECK constraint introduced by
-// migration 00218 (issue #272 / ADR-094). Empty string means
+// migration 00220 (issue #272 / ADR-094), extended by the teardown-claim
+// migration. Empty string means
 // "production app, no preview state" — the SQL CHECK allows
-// NULL or one of the four values; the Go side represents NULL
+// NULL or one of these values; the Go side represents NULL
 // as "" (same convention as EvictionPriorityOrBestEffort).
 const (
-	PreviewPrStateOpen     = "open"
-	PreviewPrStateClosed   = "closed"
-	PreviewPrStateStale    = "stale"
-	PreviewPrStateTornDown = "torn_down"
+	PreviewPrStateOpen        = "open"
+	PreviewPrStateClosed      = "closed"
+	PreviewPrStateStale       = "stale"
+	PreviewPrStateTearingDown = "tearing_down"
+	PreviewPrStateTornDown    = "torn_down"
 )
 
 // PreviewPrStateIsValid reports whether the value is one of
-// the four legal preview_pr_state values. Empty string is the
+// the legal preview_pr_state values. Empty string is the
 // "production app" shape (preview_pr_state IS NULL) — the SQL
 // CHECK allows NULL; the Go side uses "" for that. Callers
 // building a new preview App MUST set a non-empty value from
 // the closed set above.
 func PreviewPrStateIsValid(s string) bool {
 	switch s {
-	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTornDown:
+	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown:
 		return true
 	default:
 		return false

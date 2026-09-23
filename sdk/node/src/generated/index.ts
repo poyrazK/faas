@@ -521,6 +521,8 @@ export type { PreflightSource } from './models/PreflightSource.js';
 export type { PreflightVerdict } from './models/PreflightVerdict.js';
 export type { PreviewArtifactResponse } from './models/PreviewArtifactResponse.js';
 export type { PreviewCreatedWebhookPayload } from './models/PreviewCreatedWebhookPayload.js';
+export type { PreviewEnvironmentMemberResponse } from './models/PreviewEnvironmentMemberResponse.js';
+export type { PreviewEnvironmentStatusResponse } from './models/PreviewEnvironmentStatusResponse.js';
 export type { PreviewProductionChangesResponse } from './models/PreviewProductionChangesResponse.js';
 export type { PreviewResourceLinksResponse } from './models/PreviewResourceLinksResponse.js';
 export type { PreviewResourceResponse } from './models/PreviewResourceResponse.js';
