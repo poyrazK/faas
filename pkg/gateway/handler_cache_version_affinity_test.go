@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +14,19 @@ import (
 type cacheVersionAffinityBackend struct {
 	*fakeBackend
 	deploymentID string
+}
+
+type cacheColdFallbackBackend struct {
+	*cacheVersionAffinityBackend
+	stable Target
+}
+
+func (b *cacheColdFallbackBackend) PickForVersionKey(string, string, string) PickResult {
+	return PickResult{Target: b.stable, OK: true, Picked: "dep-candidate", ColdBucket: "dep-candidate"}
+}
+
+func (b *cacheColdFallbackBackend) Admit(context.Context, string, string, string, string, int) (string, WakeMethod, bool, error) {
+	return "", WakeMethodUnspecified, false, errors.New("candidate wake unavailable")
 }
 
 func (b *cacheVersionAffinityBackend) AffinityDeployment(string, string) (string, bool) {
@@ -49,5 +64,29 @@ func TestResponseCachePartitionsVersionAffinityByDeployment(t *testing.T) {
 	served, _ = h.applyEdgeRuleCache(w, req, app, rec)
 	if !served || w.Body.String() != "stable-or-cursor" {
 		t.Fatalf("unkeyed cache response = served %v body %q, want legacy partition", served, w.Body.String())
+	}
+}
+
+func TestResponseCacheDoesNotStoreWarmFallbackInKeyedPartition(t *testing.T) {
+	cache := NewResponseCache()
+	h, backend, upstream := newTestHandler(t)
+	stable := Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "stable-1", DeploymentID: "dep-stable"}
+	backend.AddTarget(stable)
+	h.backend = &cacheColdFallbackBackend{
+		cacheVersionAffinityBackend: &cacheVersionAffinityBackend{fakeBackend: backend, deploymentID: "dep-candidate"},
+		stable:                      stable,
+	}
+	h.WithResponseCache(cache)
+	seedCacheRule(t, h, "jane-api.apps.dom", EdgeRuleCacheResolved{ID: "rule-cache-1", PathGlob: "/catalog", MaxAgeSeconds: 60})
+
+	req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/catalog", nil)
+	req.Header.Set(api.VersionKeyHeader, "customer-42")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || w.Body.String() != "hello from app" {
+		t.Fatalf("fallback response = %d %q, want stable 200", w.Code, w.Body.String())
+	}
+	if got := cache.Len(); got != 0 {
+		t.Fatalf("cache entries = %d, want no candidate entry for stable fallback", got)
 	}
 }

@@ -5875,6 +5875,11 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// A keyed cache entry may only contain a response from the deployment
+	// selected by that key. The picker can temporarily serve a warm sibling
+	// while the selected cold bucket is waking; never cache that fallback in
+	// the selected deployment's partition.
+	servedDeploymentID := ""
 	var asyncRule *EdgeRuleAsyncResolved
 	if !deploymentSmoke {
 		asyncRule = h.matchAsyncRoute(r, sidecarName)
@@ -5916,7 +5921,7 @@ haveApp:
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
 		w = cw
 		defer func() {
-			if cw.shouldStore() {
+			if cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
 				key := CacheKey{
 					AppID:          app.ID,
 					DeploymentID:   versionDeploymentID,
@@ -5928,8 +5933,8 @@ haveApp:
 				}
 				cw.finishCacheCapture(h.responseCache, key, time.Now())
 			} else {
-				// shouldStore() returned false — bump the
-				// store_skipped counter so the dashboard
+				// The response was uncacheable or came from a warm
+				// fallback revision — bump store_skipped so the dashboard
 				// chip surfaces "why isn't my cache
 				// populating?". The actual reason is opaque
 				// (predicate veto) — a follow-on ADR can
@@ -6410,6 +6415,7 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
+	servedDeploymentID = target.DeploymentID
 	if app.SessionAffinity {
 		if _, ok := h.backend.(affinityPicker); ok {
 			h.setSessionAffinityCookie(w, app.ID, target.InstanceID)
