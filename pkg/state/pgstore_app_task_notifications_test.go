@@ -31,6 +31,11 @@ func TestPgStoreReleaseTaskCompletionAndNotificationAreAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
+	for _, status := range []state.DeploymentStatus{state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting} {
+		if err := store.UpdateDeploymentStatus(ctx, deployment.ID, status, ""); err != nil {
+			t.Fatalf("UpdateDeploymentStatus(%s): %v", status, err)
+		}
+	}
 	if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/tmp/release.ext4", "apps/release/outbox.ext4", 4096); err != nil {
 		t.Fatalf("SetDeploymentRootfs: %v", err)
 	}
