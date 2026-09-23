@@ -16146,6 +16146,44 @@ func (s *PgStore) PublishInstanceRuntime(ctx context.Context, id, expectedState,
 	return ins, err
 }
 
+func (s *PgStore) SetInstanceStartupCPUBoostUntil(ctx context.Context, id string, until *time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update instances set startup_cpu_boost_until = $2 where id = $1`, id, until)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PgStore) ListActiveInstanceStartupCPUBoosts(ctx context.Context, after time.Time) (map[string]time.Time, error) {
+	rows, err := s.pool.Query(ctx, `
+		select id::text, startup_cpu_boost_until
+		  from instances
+		 where startup_cpu_boost_until > $1
+		   and state in ('waking','cold_booting','running','draining','warm')
+	`, after)
+	if err != nil {
+		return nil, fmt.Errorf("state: list active startup CPU boosts: %w", err)
+	}
+	defer rows.Close()
+	active := make(map[string]time.Time)
+	for rows.Next() {
+		var id string
+		var until time.Time
+		if err := rows.Scan(&id, &until); err != nil {
+			return nil, fmt.Errorf("state: scan active startup CPU boost: %w", err)
+		}
+		active[id] = until
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate active startup CPU boosts: %w", err)
+	}
+	return active, nil
+}
+
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),
@@ -16904,7 +16942,11 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 	}
 	rows, err := s.pool.Query(ctx, `
 		select i.node_id::text,
-		       coalesce(sum(case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end), 0)::bigint
+		       coalesce(sum(case
+	         when i.startup_cpu_boost_until > now() then
+	           greatest(case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end, $2)
+	         else case when a.cpu_millicores > 0 then a.cpu_millicores else $2 end
+	       end), 0)::bigint
 		  from instances i
 		  join apps a on a.id = i.app_id
 		 where i.node_id = any($1::uuid[])

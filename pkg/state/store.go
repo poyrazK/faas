@@ -4439,6 +4439,12 @@ type Store interface {
 	// second read, and state write. It returns ErrConflict when the watchdog or
 	// another reconciler changed/deleted the row during the vmmd call.
 	PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error)
+	// SetInstanceStartupCPUBoostUntil persists the temporary peak-quota
+	// reservation deadline. A nil deadline clears the reservation. The batch
+	// reader is used during scheduler startup to rebuild in-flight boost CPU
+	// accounting before placement accepts new work.
+	SetInstanceStartupCPUBoostUntil(ctx context.Context, id string, until *time.Time) error
+	ListActiveInstanceStartupCPUBoosts(ctx context.Context, after time.Time) (map[string]time.Time, error)
 	// RunningInstanceForApp returns the newest RUNNING instance attached to a
 	// currently live deployment with positive traffic, or ErrNotFound when none
 	// is routable. A VM on a superseded or zero-weight generation must not make

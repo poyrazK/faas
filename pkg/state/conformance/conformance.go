@@ -101,6 +101,7 @@ func Run(t *testing.T, open Open) {
 		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
 		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
 		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
+		{"startup_cpu_boost_reservation_is_durable_and_expires", testStartupCPUBoostReservation},
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
@@ -861,6 +862,60 @@ func testPublishInstanceRuntime(t *testing.T, fx *Fixture) {
 		"stale", "10.99.0.9", 20009,
 	); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale PublishInstanceRuntime error = %v, want ErrConflict", err)
+	}
+}
+
+func testStartupCPUBoostReservation(t *testing.T, fx *Fixture) {
+	configuredCPU := 250
+	if _, err := fx.Store.UpdateApp(fx.Ctx, fx.App.ID, state.UpdateAppParams{CPUMillicores: &configuredCPU}); err != nil {
+		t.Fatalf("UpdateApp(cpu_millicores): %v", err)
+	}
+	instance, err := fx.Store.CreateInstance(
+		fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateRunning),
+		256, fx.Node.ID, "",
+	)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	until := time.Now().UTC().Add(time.Minute)
+	if err := fx.Store.SetInstanceStartupCPUBoostUntil(fx.Ctx, instance.ID, &until); err != nil {
+		t.Fatalf("SetInstanceStartupCPUBoostUntil: %v", err)
+	}
+	active, err := fx.Store.ListActiveInstanceStartupCPUBoosts(fx.Ctx, time.Now())
+	if err != nil {
+		t.Fatalf("ListActiveInstanceStartupCPUBoosts: %v", err)
+	}
+	if got := active[instance.ID]; !got.Equal(until) {
+		t.Fatalf("active reservation deadline = %v, want %v", got, until)
+	}
+	cpuUsage, ok := fx.Store.(state.ComputeNodeCPUUsageBatcher)
+	if !ok {
+		t.Fatal("store does not implement ComputeNodeCPUUsageBatcher")
+	}
+	usedCPU, err := cpuUsage.ComputeNodeUsedCPUMillicoresByNode(fx.Ctx, []string{fx.Node.ID})
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode during boost: %v", err)
+	}
+	if usedCPU[fx.Node.ID] != int64(api.DefaultAppCPUMillicores) {
+		t.Fatalf("CPU aggregate during boost = %d, want %d", usedCPU[fx.Node.ID], api.DefaultAppCPUMillicores)
+	}
+
+	if err := fx.Store.SetInstanceStartupCPUBoostUntil(fx.Ctx, instance.ID, nil); err != nil {
+		t.Fatalf("clear startup CPU reservation: %v", err)
+	}
+	active, err = fx.Store.ListActiveInstanceStartupCPUBoosts(fx.Ctx, time.Now())
+	if err != nil {
+		t.Fatalf("ListActiveInstanceStartupCPUBoosts after clear: %v", err)
+	}
+	if _, ok := active[instance.ID]; ok {
+		t.Fatalf("cleared startup CPU reservation remains active: %v", active[instance.ID])
+	}
+	usedCPU, err = cpuUsage.ComputeNodeUsedCPUMillicoresByNode(fx.Ctx, []string{fx.Node.ID})
+	if err != nil {
+		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode after clear: %v", err)
+	}
+	if usedCPU[fx.Node.ID] != int64(configuredCPU) {
+		t.Fatalf("CPU aggregate after clear = %d, want %d", usedCPU[fx.Node.ID], configuredCPU)
 	}
 }
 
