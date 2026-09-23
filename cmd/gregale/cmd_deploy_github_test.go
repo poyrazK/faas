@@ -178,7 +178,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"Ref: ${{ github.sha }}",
 				"app: my-app",
 				"uses: poyrazK/faas/.github/actions/deploy@v0",
-				"https://gregale.dev/docs/build/source-ref",
+				"https://gregale.dev/docs/deploy-from-github",
 				"id-token: write",
 				"checks: write",
 				"https://api.gregale.dev",

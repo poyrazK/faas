@@ -99,6 +99,15 @@ func (s *stubSchedd) Close() error { return nil }
 type stubRouterStore struct {
 	nodes map[string]state.ComputeNode
 	ins   map[string]state.Instance
+	apps  map[string]state.App
+}
+
+func (s *stubRouterStore) AppByID(_ context.Context, id string) (state.App, error) {
+	a, ok := s.apps[id]
+	if !ok {
+		return state.App{}, state.ErrNotFound
+	}
+	return a, nil
 }
 
 func (s *stubRouterStore) ComputeNodeByID(_ context.Context, id string) (state.ComputeNode, error) {
@@ -309,6 +318,10 @@ func TestScheddRouter_ScheddForInstance_ResolvesByNodeID(t *testing.T) {
 			"i-a": {ID: "i-a", AppID: "app-1", NodeID: "node-A"},
 			"i-b": {ID: "i-b", AppID: "app-2", NodeID: "node-B"},
 		},
+		apps: map[string]state.App{
+			"app-1": {ID: "app-1", NodeID: "node-A"},
+			"app-2": {ID: "app-2", NodeID: "node-B"},
+		},
 	}
 	dial := newFakeScheddDial()
 
@@ -478,5 +491,57 @@ func TestScheddRouter_WatchNodeChanges_MalformedPayloadDropped(t *testing.T) {
 	r.mu.Unlock()
 	if !stillCached {
 		t.Errorf("malformed payloads evicted node-A — defensive drop is broken")
+	}
+}
+
+// Issue #3359: an instance placed on a peer node must route to the schedd
+// that owns its app. The host schedd drops touches for apps it does not own,
+// so routing by instances.node_id made a busy instance look idle.
+func TestScheddRouter_ScheddForInstance_RoutesToAppOwner(t *testing.T) {
+	urlA := "tcp://10.0.0.1:7100"
+	urlB := "tcp://10.0.0.2:7100"
+	store := &stubRouterStore{
+		nodes: map[string]state.ComputeNode{
+			"node-A": {ID: "node-A", Name: "fsn-1", Active: true, ScheddTargetURL: &urlA},
+			"node-B": {ID: "node-B", Name: "fsn-2", Active: true, ScheddTargetURL: &urlB},
+		},
+		ins: map[string]state.Instance{
+			"i-off-owner": {ID: "i-off-owner", AppID: "app-1", NodeID: "node-B"},
+			"i-legacy":    {ID: "i-legacy", AppID: "app-legacy", NodeID: "node-B"},
+			"i-orphan":    {ID: "i-orphan", AppID: "app-gone", NodeID: "node-B"},
+		},
+		apps: map[string]state.App{
+			"app-1":      {ID: "app-1", NodeID: "node-A"},
+			"app-legacy": {ID: "app-legacy"},
+		},
+	}
+	dial := newFakeScheddDial()
+	r := newScheddRouter(store, nil, dial.Dial, nil)
+	defer func() { _ = r.Close() }()
+
+	owner, err := r.ScheddForApp(context.Background(), state.App{ID: "app-1", NodeID: "node-A"})
+	if err != nil {
+		t.Fatalf("ScheddForApp: %v", err)
+	}
+	host, err := r.ScheddForApp(context.Background(), state.App{ID: "probe", NodeID: "node-B"})
+	if err != nil {
+		t.Fatalf("ScheddForApp(host): %v", err)
+	}
+	cases := []struct {
+		instance string
+		want     scheddgrpc.ScheddClient
+	}{
+		{"i-off-owner", owner},
+		{"i-legacy", host}, // no owner stamp: fall back to the host node
+		{"i-orphan", nil},  // app gone: drop
+	}
+	for _, tc := range cases {
+		got, err := r.ScheddForInstance(context.Background(), tc.instance)
+		if err != nil {
+			t.Fatalf("ScheddForInstance(%s): %v", tc.instance, err)
+		}
+		if got != tc.want {
+			t.Errorf("ScheddForInstance(%s) = %v, want %v", tc.instance, got, tc.want)
+		}
 	}
 }

@@ -40,6 +40,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -134,11 +135,15 @@ type renderStagingFunc func() string
 // is the next attempt; a manual `nft -c -f <staging>` inspection is
 // the operator's recovery path.
 type egressWatcher struct {
-	log        *slog.Logger
-	nft        nftExec
-	render     renderStagingFunc
-	stagingDir string
-	livePath   string
+	// Serialize the shared staging/live files across wake and operator reloads.
+	mu          sync.Mutex
+	appliedBody string
+	hasApplied  bool
+	log         *slog.Logger
+	nft         nftExec
+	render      renderStagingFunc
+	stagingDir  string
+	livePath    string
 }
 
 // Render satisfies fcvm.HostRenderer. Manager cache mutations (including a
@@ -146,6 +151,13 @@ type egressWatcher struct {
 // replacement pipeline as pg_notify-driven reloads.
 func (w *egressWatcher) Render(ctx context.Context) error {
 	return w.Reload(ctx)
+}
+
+// RenderIfChanged is the wake-only fast path. Equality is against the complete
+// policy last successfully loaded into the kernel by this watcher, never just
+// the live file. Explicit Reload/Render calls still repair out-of-band drift.
+func (w *egressWatcher) RenderIfChanged(ctx context.Context) error {
+	return w.reload(ctx, true)
 }
 
 // SetStaticEgressRules is retained for the fcvm.HostRenderer seam. The active
@@ -247,8 +259,24 @@ func (w *egressWatcher) Run(ctx context.Context, pool *pgxpool.Pool) error {
 // a startEgressWatcher test seam; the production wiring in main.go
 // launches a goroutine that calls Run directly.
 func (w *egressWatcher) Reload(ctx context.Context) error {
+	return w.reload(ctx, false)
+}
+
+func (w *egressWatcher) reload(ctx context.Context, ifChanged bool) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		w.hasApplied = false
+		return err
+	}
 	// 1. Render.
 	body := w.render()
+	if ifChanged && w.hasApplied && body == w.appliedBody {
+		return nil
+	}
+	// Invalidate before attempting any update. Even an unsuccessful forced
+	// repair must not let a subsequent wake trust an older cached ruleset.
+	w.hasApplied = false
 
 	// The production staging path lives under /run/faas and is not provisioned
 	// as a child directory by Ansible. Create it on every reload so a fresh
@@ -291,6 +319,8 @@ func (w *egressWatcher) Reload(ctx context.Context) error {
 	if err := w.nft.Reload(ctx, w.livePath); err != nil {
 		return fmt.Errorf("nft reload %s: %w", w.livePath, err)
 	}
+	w.appliedBody = body
+	w.hasApplied = true
 	return nil
 }
 

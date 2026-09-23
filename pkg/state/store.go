@@ -4450,6 +4450,14 @@ type Store interface {
 	// LatestSnapshot (which now ranks warm above init on ties).
 	LatestSnapshotForTier(ctx context.Context, deploymentID, tier string) (Snapshot, error)
 	MarkSnapshotStale(ctx context.Context, snapshotID string) error
+	// MarkAppRuntimeConfigChanged (issue #3360) records now() as the last
+	// time the app's secrets or environment changed. InvalidateAppSnapshots
+	// calls it, so every runtime-config mutation stamps it.
+	MarkAppRuntimeConfigChanged(ctx context.Context, appID string) error
+	// AppRuntimeConfigChangedAt returns that stamp; ok is false when the
+	// app's runtime config has not changed since the stamp was introduced.
+	// schedd refuses to snapshot an instance that started before it.
+	AppRuntimeConfigChangedAt(ctx context.Context, appID string) (changedAt time.Time, ok bool, err error)
 
 	// Snapshot GC (imaged nightly + on FC upgrade, spec §4.6 + §4.4).
 	//

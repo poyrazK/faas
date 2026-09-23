@@ -32,7 +32,9 @@ type testEnv struct {
 
 type stubRollbackArtifactVerifier struct{ err error }
 
-func (v stubRollbackArtifactVerifier) Verify(context.Context, string, string) error { return v.err }
+func (v stubRollbackArtifactVerifier) CheckPresent(context.Context, string, string) error {
+	return v.err
+}
 
 func setup(t *testing.T, plan api.Plan) testEnv {
 	t.Helper()

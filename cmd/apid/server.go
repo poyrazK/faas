@@ -257,9 +257,10 @@ type server struct {
 	sbomStorage artifactstorage.StorageBackend
 	// rollbackArtifactVerifier proves a historical deployment's immutable
 	// rootfs and signature are both present before apid starts a readiness-
-	// gated rollback. Production wires the same verifier/key as schedd.
+	// gated rollback, without downloading the rootfs (issue #3356). schedd
+	// still verifies the full signature before the target boots.
 	rollbackArtifactVerifier interface {
-		Verify(context.Context, string, string) error
+		CheckPresent(context.Context, string, string) error
 	}
 	// billingProvider is the per-deployment Provider apid's webhook
 	// + changePlan handlers dispatch through. Wired via WithBillingProvider
@@ -524,8 +525,11 @@ func (s *server) WithSBOMStorage(backend artifactstorage.StorageBackend) *server
 	return s
 }
 
+// WithRollbackArtifactVerifier wires the rollback precheck. CheckPresent
+// must not transfer the rootfs body: it runs inside the HTTP request, and
+// schedd verifies the full signature before the rollback target boots.
 func (s *server) WithRollbackArtifactVerifier(verifier interface {
-	Verify(context.Context, string, string) error
+	CheckPresent(context.Context, string, string) error
 }) *server {
 	s.rollbackArtifactVerifier = verifier
 	return s

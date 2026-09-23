@@ -2163,7 +2163,7 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 			"Gregale could not verify this deployment right now.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
-	err := s.rollbackArtifactVerifier.Verify(ctx, target.RootfsKey, "sigs/"+target.RootfsKey+".sig")
+	err := s.rollbackArtifactVerifier.CheckPresent(ctx, target.RootfsKey, "sigs/"+target.RootfsKey+".sig")
 	if err == nil {
 		return nil
 	}

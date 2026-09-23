@@ -308,8 +308,27 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// stripFirecrackerTimestamp drops the wall-clock token Firecracker's logger
+// prints before its "[instance:origin]" header, for example
+// "2026-09-22T18:27:44.308421861 [id:main] Running Firecracker v1.7.0".
+// Without this every production control line bypassed the filter, which only
+// recognised lines that start with "[" (issue #3362). A leading token that
+// is not timestamp-shaped is left alone.
+func stripFirecrackerTimestamp(line string) string {
+	token, rest, ok := strings.Cut(line, " ")
+	if !ok || len(token) < len("2006-01-02T15:04:05") || !strings.HasPrefix(strings.TrimSpace(rest), "[") {
+		return line
+	}
+	for _, r := range token {
+		if (r < '0' || r > '9') && r != '-' && r != ':' && r != '.' && r != 'T' && r != 'Z' && r != '+' {
+			return line
+		}
+	}
+	return strings.TrimSpace(rest)
+}
+
 func firecrackerControlLine(line []byte) bool {
-	trimmed := strings.TrimSpace(string(line))
+	trimmed := stripFirecrackerTimestamp(strings.TrimSpace(string(line)))
 	if !strings.HasPrefix(trimmed, "[") {
 		return false
 	}
@@ -337,9 +356,17 @@ func firecrackerControlLine(line []byte) bool {
 	}
 	for _, marker := range []string{
 		"running firecracker",
+		"firecracker exiting",
 		"host cpu vendor",
 		"snapshot cpu vendor",
 		"device kick",
+		"kick devices",
+		"kick net ",
+		"kick entropy ",
+		"kick block ",
+		"kick vsock",
+		"development preview",
+		"vmm action took",
 		"api server",
 		"request was executed successfully",
 		"api request took",

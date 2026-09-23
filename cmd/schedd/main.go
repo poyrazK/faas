@@ -1577,6 +1577,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	scheddgrpc.NewWithStats(engine, reader, ops, log).
 		WithPeerNodeResolver(nodeVerifier).
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
+		WithForeignReportRelay(engine).
 		Register(gsrv)
 
 	// Serve goroutine — must run AFTER Register or grpc fatals.

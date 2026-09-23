@@ -621,7 +621,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}
-	_, _ = fmt.Fprintf(w, "\nDocs: %s/%s\n", docsURL, command.DocSlug)
+	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
 
 func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
@@ -636,5 +636,5 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}
-	_, _ = fmt.Fprintf(w, "\nDocs: %s/%s\n", docsURL, command.DocSlug)
+	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }

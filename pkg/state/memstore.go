@@ -133,6 +133,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
+	runtimeConfigChangedAt map[string]time.Time
 	// serviceCallerKeys mirrors service_caller_keys: one published
 	// public key per node (ADR-206).
 	serviceCallerKeys map[string]ServiceCallerKey
@@ -13074,6 +13076,25 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 		}
 	}
 	return ErrNotFound
+}
+
+// MarkAppRuntimeConfigChanged implements Store.
+func (m *MemStore) MarkAppRuntimeConfigChanged(_ context.Context, appID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.runtimeConfigChangedAt == nil {
+		m.runtimeConfigChangedAt = map[string]time.Time{}
+	}
+	m.runtimeConfigChangedAt[appID] = time.Now()
+	return nil
+}
+
+// AppRuntimeConfigChangedAt implements Store.
+func (m *MemStore) AppRuntimeConfigChangedAt(_ context.Context, appID string) (time.Time, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	changedAt, ok := m.runtimeConfigChangedAt[appID]
+	return changedAt, ok, nil
 }
 
 // ListSnapshotsForGC joins snapshots → deployments → apps in-memory.

@@ -751,6 +751,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		// handler arm, one extra safety ticker. No additional
 		// pool subscriber.
 		db.NotifyOperatorIntent,
+		db.NotifyInstanceFailureRelayed, // issue #3359: vmmd reports relayed by the hosting schedd to the app's owner.
 	}, l.log)
 	if err != nil {
 		return err
@@ -2100,6 +2101,12 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// matches the build_queued notify-loss defense pattern
 		// (cmd/imaged consumer: subscriber re-reads the row).
 		l.drainPendingFireNowRequests(ctx)
+	case db.NotifyInstanceFailureRelayed:
+		// Issue #3359: a peer schedd hosts one of this schedd's instances
+		// and relayed vmmd's terminal failure report. Non-owners discard.
+		if err := l.engine.HandleRelayedInstanceFailure(ctx, n.Payload); err != nil {
+			l.log.Warn("sched: relayed instance failure", "err", err)
+		}
 	case db.NotifyAppDelete:
 		// ADR-098: app was deleted. Evict any in-flight wake for
 		// the deleted app via the wake coordinator's Forget so

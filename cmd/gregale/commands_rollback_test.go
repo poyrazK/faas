@@ -148,3 +148,38 @@ func TestCmdRollback_UnknownFlagFails(t *testing.T) {
 		t.Errorf("cmdRollback --bogus = %d, want 1", code)
 	}
 }
+
+// Issue #3362: `--yes` is accepted (rollback never prompts) and an extra
+// positional is reported as an argument, not a flag.
+func TestCmdRollback_YesFlagAndPositionals(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "test")
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: uuid.NewString(), Status: "live"})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+
+	cases := []struct {
+		args      []string
+		wantCode  int
+		wantCalls int
+	}{
+		{args: []string{"my-app", "--to", "v2", "--yes"}, wantCode: 0, wantCalls: 1},
+		{args: []string{"my-app", "-y"}, wantCode: 0, wantCalls: 1},
+		{args: []string{"my-app", "v2"}, wantCode: 1, wantCalls: 0},
+	}
+	for _, tc := range cases {
+		calls = 0
+		if code := cmdRollback(tc.args); code != tc.wantCode {
+			t.Errorf("cmdRollback(%q) = %d, want %d", tc.args, code, tc.wantCode)
+		}
+		if calls != tc.wantCalls {
+			t.Errorf("cmdRollback(%q) made %d API call(s), want %d", tc.args, calls, tc.wantCalls)
+		}
+	}
+}

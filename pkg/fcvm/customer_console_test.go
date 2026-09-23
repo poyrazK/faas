@@ -69,3 +69,37 @@ func TestFirecrackerControlLineDoesNotFilterKernelOrArbitraryAppPrefixes(t *test
 		}
 	}
 }
+
+// Issue #3362: production Firecracker lines carry a wall-clock token before
+// the "[instance:origin]" header, and every one of them reached the customer
+// log. These are verbatim lines from a production restore and exit.
+func TestFirecrackerControlLineRecognizesTimestampedProductionLines(t *testing.T) {
+	const id = "70a2fc33-74d4-4013-91c7-2b883d61ca6a"
+	for _, line := range []string{
+		"2026-09-22T18:27:44.308421861 [" + id + ":main] Running Firecracker v1.7.0",
+		"2026-09-22T18:27:44.312061439 [" + id + ":fc_api] The API server received a Put request on \"/snapshot/load\"",
+		"2026-09-22T18:27:44.312235528 [" + id + ":main] [DevPreview] Virtual machine snapshots is in development preview.",
+		"2026-09-22T18:27:44.312581881 [" + id + ":main] Host CPU vendor ID: [71, 101, 110]",
+		"2026-09-22T18:27:44.318663910 [" + id + ":main] Artificially kick devices.",
+		"2026-09-22T18:27:44.318679858 [" + id + ":main] kick net eth0.",
+		"2026-09-22T18:27:44.318710356 [" + id + ":main] kick entropy rng.",
+		"2026-09-22T18:27:44.318719225 [" + id + ":main] kick block base.",
+		"2026-09-22T18:27:44.319312144 [" + id + ":main] [DevPreview] Virtual machine snapshots is in development preview - 'load snapshot' VMM action took 7038 us.",
+		"2026-09-22T18:27:44.320377143 [" + id + ":fc_api] 'load snapshot' API request took 8347 us.",
+		"2026-09-22T19:35:17.807045958 [" + id + ":main] Firecracker exiting successfully. exit_code=0",
+	} {
+		if !firecrackerControlLine([]byte(line)) {
+			t.Errorf("production control line was not filtered: %q", line)
+		}
+	}
+	for _, line := range []string{
+		"2026-09-22T18:27:44Z request handled in 3ms",
+		"2026-09-22T18:27:44Z [worker:main] processed job 42",
+		"crashing on purpose",
+		"guest-init: app crash-looped after 3 restart(s)",
+	} {
+		if firecrackerControlLine([]byte(line)) {
+			t.Errorf("customer line was filtered: %q", line)
+		}
+	}
+}

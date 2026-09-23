@@ -344,6 +344,16 @@ type Server struct {
 	// legacy single-box posture, where unix sockets use DAC auth and
 	// capacity reports retain their pre-mTLS behavior.
 	peerNodes wire.NodeIdentityResolver
+	// failureRelay hands a vmmd failure report for an instance this node
+	// hosts, but whose app a peer schedd owns, to that owner (issue #3359).
+	// nil keeps the pre-relay FailedPrecondition behaviour.
+	failureRelay ForeignFailureRelay
+}
+
+// ForeignFailureRelay publishes an instance failure report for the schedd
+// that owns the app. *sched.Engine implements it.
+type ForeignFailureRelay interface {
+	RelayInstanceFailure(ctx context.Context, r sched.InstanceFailureReport) error
 }
 
 // New wires the server. ops may be nil (a throwaway registry used by
@@ -402,6 +412,19 @@ func (s *Server) WithPeerNodeResolver(resolver wire.NodeIdentityResolver) *Serve
 		return s
 	}
 	s.peerNodes = resolver
+	return s
+}
+
+// WithForeignReportRelay enables relaying vmmd liveness and workload-OOM
+// reports for hosted instances whose app another schedd owns. vmmd always
+// reports to its local schedd, and placement can run an instance off its
+// owner's node; without the relay those reports are rejected and the dead
+// instance stays RUNNING until reconciliation (issue #3359).
+func (s *Server) WithForeignReportRelay(relay ForeignFailureRelay) *Server {
+	if s == nil {
+		return s
+	}
+	s.failureRelay = relay
 	return s
 }
 
@@ -646,9 +669,10 @@ func (s *Server) ReportActivity(ctx context.Context, req *scheddpb.ReportActivit
 	// ownership is per-instance (load the parent app + compare
 	// node_id). A bad-routed touch is dropped silently via the
 	// for-loop below rather than failing the whole batch —
-	// the gateway already partitions touches by owner via
-	// instance.node_id before dialling, so this loop is the
-	// second-line check (defence-in-depth).
+	// the gateway already partitions touches by the app's owner
+	// (apps.node_id, not the instance's host node, issue #3359)
+	// before dialling, so this loop is the second-line check
+	// (defence-in-depth).
 	in := req.GetTouches()
 	touches := make([]state.InstanceTouch, 0, len(in))
 	for _, t := range in {
@@ -838,9 +862,12 @@ func (s *Server) ForceRestartInstance(ctx context.Context, req *scheddpb.ForceRe
 //   - codes.OK + Ok=true on success or no-op
 //   - codes.NotFound when the instance_id doesn't resolve
 //     (state.ErrNotFound from the engine)
-//   - codes.Unauthenticated / codes.PermissionDenied if the
-//     ownership guard rejects (defence-in-depth; vmmd always
-//     dials the schedd on the same node)
+//   - codes.OK + Ok=true when the instance runs on this node but a
+//     peer schedd owns its app: vmmd always dials the schedd on its
+//     own node, and placement can run an instance off its owner's
+//     node, so the report is relayed to the owner (issue #3359)
+//   - codes.FailedPrecondition if the ownership guard rejects and the
+//     instance is not hosted here (or no relay is wired)
 //   - codes.Internal for any other engine failure (db hitches,
 //     pg_notify backlog, etc.)
 //
@@ -849,7 +876,13 @@ func (s *Server) ForceRestartInstance(ctx context.Context, req *scheddpb.ForceRe
 func (s *Server) ReportLivenessFailed(ctx context.Context, req *scheddpb.LivenessFailedReport) (*scheddpb.LivenessFailedAck, error) {
 	const op = "ReportLivenessFailed"
 	if _, err := authorizeInstance(ctx, s.owner, s.resolver, req.GetInstanceId()); err != nil {
-		return nil, err
+		relayed, relayErr := s.relayForeignFailure(ctx, err, sched.InstanceFailureReport{
+			InstanceID: req.GetInstanceId(), Kind: sched.InstanceFailureLiveness, Reason: req.GetReason(),
+		})
+		if relayed {
+			return &scheddpb.LivenessFailedAck{Ok: true}, nil
+		}
+		return nil, relayErr
 	}
 	start := time.Now()
 	err := s.engine.DestroyForLivenessFailure(ctx, req.GetInstanceId(), req.GetReason())
@@ -896,7 +929,14 @@ func (s *Server) ReportLivenessFailed(ctx context.Context, req *scheddpb.Livenes
 func (s *Server) ReportWorkloadOOM(ctx context.Context, req *scheddpb.ReportWorkloadOOMRequest) (*scheddpb.ReportWorkloadOOMAck, error) {
 	const op = "ReportWorkloadOOM"
 	if _, err := authorizeInstance(ctx, s.owner, s.resolver, req.GetInstanceId()); err != nil {
-		return nil, err
+		relayed, relayErr := s.relayForeignFailure(ctx, err, sched.InstanceFailureReport{
+			InstanceID: req.GetInstanceId(), Kind: sched.InstanceFailureWorkloadOOM,
+			PeakMB: int(req.GetPeakMb()), PlanMB: int(req.GetPlanMb()),
+		})
+		if relayed {
+			return &scheddpb.ReportWorkloadOOMAck{Ok: true}, nil
+		}
+		return nil, relayErr
 	}
 	start := time.Now()
 	// Note: peakMB / planMB are uint32 on the wire; the engine

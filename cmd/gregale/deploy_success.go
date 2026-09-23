@@ -64,14 +64,37 @@ func deploymentWithReleaseSummary(ctx context.Context, c *Client, appSlug, deplo
 // output. The lookup is deliberately best-effort so a metadata read cannot
 // turn an already successful deployment into a failed command.
 func deploymentAppURL(ctx context.Context, c *Client, appSlug string) string {
-	if c != nil && appSlug != "" {
-		readCtx, cancel := context.WithTimeout(ctx, deploymentReceiptFetchTimeout)
-		defer cancel()
-		if app, err := c.GetApp(readCtx, appSlug); err == nil {
-			return canonicalAppURL(app)
-		}
+	if app, ok := deploymentApp(ctx, c, appSlug); ok {
+		return canonicalAppURL(app)
 	}
 	return deployedAppURL(appSlug)
+}
+
+// deploymentApp is the best-effort app read behind the success output.
+func deploymentApp(ctx context.Context, c *Client, appSlug string) (api.AppResponse, bool) {
+	if c == nil || appSlug == "" {
+		return api.AppResponse{}, false
+	}
+	readCtx, cancel := context.WithTimeout(ctx, deploymentReceiptFetchTimeout)
+	defer cancel()
+	app, err := c.GetApp(readCtx, appSlug)
+	return app, err == nil
+}
+
+// renderDeploymentAccess says when the new URL rejects anonymous requests.
+// Hobby and above default to require_authn (ADR-080), and the post-deploy
+// verifier authenticates, so "verified, 200" followed by a 401 from curl
+// looked like a broken deploy (issue #3362).
+func renderDeploymentAccess(w io.Writer, app api.AppResponse, appSlug string) {
+	if !app.RequireAuthn {
+		return
+	}
+	if app.PublicAuth.Mode == api.AppPublicAuthModeBasic {
+		PrintProgress(w, "Access: requests need HTTP Basic credentials (%s).", formatAppAuth(app))
+	} else {
+		PrintProgress(w, "Access: requests need Authorization: Bearer <api-key> (%s).", formatAppAuth(app))
+	}
+	PrintProgress(w, "  make the URL public: gregale app %s --no-require-authn", appSlug)
 }
 
 // deploymentPreviewURL resolves the immutable per-deployment URL after a
@@ -145,7 +168,11 @@ func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.Deployme
 
 func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, darkDeploy bool) int {
 	final := deploymentWithReceipt(ctx, c, dep)
-	appURL := deploymentAppURL(ctx, c, appSlug)
+	app, appOK := deploymentApp(ctx, c, appSlug)
+	appURL := deployedAppURL(appSlug)
+	if appOK {
+		appURL = canonicalAppURL(app)
+	}
 	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
 		reason := final.RolloutAbortedReason
 		if reason == "" {
@@ -200,6 +227,9 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	}
 	if !darkDeploy {
 		printDeployColdWakeSentence()
+	}
+	if appOK {
+		renderDeploymentAccess(osStdout, app, appSlug)
 	}
 	if cache := formatBuildCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {
 		PrintProgress(osStdout, "Build cache: %s", cache)

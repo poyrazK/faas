@@ -281,6 +281,17 @@ func (c *LocalCacheBackend) LocalPathWithSource(key string) (string, LocalPathSo
 	return "", "", false, nil
 }
 
+// Exists implements ExistenceChecker by asking the canonical parent. A cache
+// hit is not evidence: a garbage-collected artifact can outlive its canonical
+// copy here until eviction.
+func (c *LocalCacheBackend) Exists(ctx context.Context, key string) (bool, error) {
+	checker, ok := c.parent.(ExistenceChecker)
+	if !ok {
+		return false, ErrExistenceUnsupported
+	}
+	return checker.Exists(ctx, key)
+}
+
 // cacheFileFor hashes the storage key into a path-safe
 // filename. The hash is hex-encoded SHA-256 (64 lowercase hex
 // chars), with the leading 2 chars used as the bucket directory

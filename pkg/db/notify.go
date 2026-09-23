@@ -551,6 +551,16 @@ const (
 	// live app. It is deliberately separate from app_changed/restart: restoring
 	// or capturing process memory would preserve the previous environment.
 	NotifyRuntimeConfigRestart = "runtime_config_restart"
+	// NotifyInstanceFailureRelayed carries a vmmd liveness or workload-OOM
+	// report from the schedd that hosts an instance to the schedd that owns
+	// its app (issue #3359). vmmd always reports to its local schedd, but
+	// placement can run an instance on a peer node, and only the owner may
+	// write the app's instance state. Every schedd receives the broadcast and
+	// all but the owner discard it. Advisory: a missed delivery falls back to
+	// the owner's instance reconciliation.
+	// Payload: {"instance_id":uuid,"app_id":uuid,"kind":"liveness"|"workload_oom",
+	//           "reason":string,"peak_mb":int,"plan_mb":int}
+	NotifyInstanceFailureRelayed = "instance_failure_relayed"
 	// NotifyPrivateNetworkAttachmentChanged carries the durable cleanup
 	// event emitted when an app attachment is detached. Unlike the broad
 	// app_changed stream, this channel is replayed so a schedd restart or

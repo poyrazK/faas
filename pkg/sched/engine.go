@@ -6788,6 +6788,21 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 		}
 		return nil
 	}
+	// Issue #3360: the same retire-instead-of-capture rule applies when the
+	// app's secrets or environment changed after this process started.
+	if e.runtimeConfigStale(ctx, ins) {
+		e.log.Info("sched: park: discard instance after runtime config change", "instance", ins.ID, "app", ins.AppID)
+		destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
+		if destroyErr != nil {
+			e.log.Warn("sched: park: destroy runtime-config-stale instance", "instance", ins.ID, "err", destroyErr)
+		}
+		e.ledger.Release(ins.ID)
+		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_runtime_config_changed", "runtime_config_changed")
+		if destroyErr != nil {
+			return fmt.Errorf("sched: park: destroy runtime-config-stale instance %s: %w", ins.ID, destroyErr)
+		}
+		return nil
+	}
 
 	storageKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString())
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: storageKey})
@@ -6914,6 +6929,13 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	// success path so imaged writes both rows. The engine does NOT
 	// write the warm row directly to avoid a unique-violation on
 	// (deployment_id, tier) between engine and imaged.
+	// Issue #3360: a secret or env change that landed during the capture
+	// invalidated snapshots before this one existed. Leave the blob
+	// unpublished (GC reclaims it) so the next wake cold-boots.
+	if reused == nil && e.runtimeConfigStale(ctx, ins) {
+		e.log.Info("sched: park: drop init capture after runtime config change", "instance", ins.ID, "app", ins.AppID)
+		return nil
+	}
 	if reused == nil {
 		e.emitSnapshotWritten(ctx, ins.DeploymentID, ins.NodeID, vmstate, storageKey, b, state.SnapshotTierInit)
 	}
@@ -7057,6 +7079,11 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	// store.CreateSnapshot tier=warm here to avoid a unique-
 	// violation on (deployment_id, tier) with imaged's row.
 	vmstatePath := filepath.Join(SnapDir(), strings.TrimPrefix(warmVMStateStorageKey, "snap/"))
+	// Issue #3360: see the init-tier counterpart in snapshotAndPark.
+	if e.runtimeConfigStale(ctx, ins) {
+		e.log.Info("sched: park: drop warm capture after runtime config change", "instance", ins.ID, "app", ins.AppID)
+		return SnapshotBytes{}, nil
+	}
 	e.emitSnapshotWritten(ctx, ins.DeploymentID, ins.NodeID, vmstatePath, warmMemKey, b, state.SnapshotTierWarm)
 	// Issue #470 / PR C / ADR-074: emit app.warm_snapshot_promoted
 	// so operators can grep gregale audit-events --kind-prefix

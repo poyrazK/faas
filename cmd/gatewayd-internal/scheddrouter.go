@@ -70,12 +70,14 @@ func DefaultScheddDialer(tlsCfg *tls.Config) ScheddDialer {
 
 // ScheddNodeResolver is the read-only slice of state.Store the
 // per-node schedd router uses: ComputeNodeByID for the dial target
-// and InstanceByID for per-instance dispatch (Phase 2 / Gate A).
+// and InstanceByID + AppByID for per-instance dispatch to the app's
+// owner (Phase 2 / Gate A).
 // Production wires *state.PgStore; tests inject a fake so the
 // router can be exercised without standing up Postgres.
 type ScheddNodeResolver interface {
 	ComputeNodeByID(ctx context.Context, id string) (state.ComputeNode, error)
 	InstanceByID(ctx context.Context, id string) (state.Instance, error)
+	AppByID(ctx context.Context, id string) (state.App, error)
 }
 
 // scheddRouter is gatewayd-internal's per-node schedd client cache. Holds a
@@ -157,13 +159,18 @@ func (r *scheddRouter) ScheddForApp(ctx context.Context, app state.App) (scheddg
 	return r.clientForNode(ctx, app.NodeID)
 }
 
-// ScheddForInstance resolves the owner schedd for an instance by
-// doing one InstanceByID hop. The handler has the instance id from
-// the per-request Target struct; this hop lets the activity flush
-// (and any future per-instance gRPC) reach the right schedd without
-// a parallel "instance → node_id" cache in the gateway.
+// ScheddForInstance resolves the schedd that owns an instance's app. The
+// handler has the instance id from the per-request Target struct; the
+// instance → app hop lets the activity flush (and any future per-instance
+// gRPC) reach the right schedd without a parallel cache in the gateway.
 //
-// NotFound on the instance (parked / never admitted / hard-deleted
+// The owner is apps.node_id, not instances.node_id. Placement can run an
+// instance on a peer node, and that node's schedd drops touches for apps it
+// does not own, so routing by host left off-owner instances looking idle to
+// their owner no matter how busy they were (issue #3359). A row with no
+// owner stamp falls back to the host node.
+//
+// NotFound on the instance or app (parked / never admitted / hard-deleted
 // post-M7) returns nil, nil — the caller treats it as a no-op drop,
 // matching the pre-PR behaviour where unknown instance ids were
 // silently dropped on schedd's side.
@@ -178,10 +185,21 @@ func (r *scheddRouter) ScheddForInstance(ctx context.Context, instanceID string)
 		}
 		return nil, fmt.Errorf("scheddrouter: resolve instance %s: %w", instanceID, err)
 	}
-	if ins.NodeID == "" {
-		return nil, fmt.Errorf("scheddrouter: instance %s has empty NodeID", instanceID)
+	app, err := r.store.AppByID(ctx, ins.AppID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scheddrouter: resolve app %s for instance %s: %w", ins.AppID, instanceID, err)
 	}
-	return r.clientForNode(ctx, ins.NodeID)
+	owner := app.NodeID
+	if owner == "" {
+		owner = ins.NodeID
+	}
+	if owner == "" {
+		return nil, fmt.Errorf("scheddrouter: instance %s has no owner or host node", instanceID)
+	}
+	return r.clientForNode(ctx, owner)
 }
 
 // clientForNode is the inner cache + dial step shared by

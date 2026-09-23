@@ -16162,6 +16162,33 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 	return nil
 }
 
+// MarkAppRuntimeConfigChanged implements Store. The stamp uses the database
+// clock, the same clock the instances trigger uses for started_at, so the
+// comparison in schedd is immune to host clock skew.
+func (s *PgStore) MarkAppRuntimeConfigChanged(ctx context.Context, appID string) error {
+	_, err := s.pool.Exec(ctx, `
+		insert into app_runtime_config_changes (app_id, changed_at) values ($1, now())
+		on conflict (app_id) do update set changed_at = excluded.changed_at`, appID)
+	if err != nil {
+		return fmt.Errorf("pgstore: mark app %s runtime config changed: %w", appID, err)
+	}
+	return nil
+}
+
+// AppRuntimeConfigChangedAt implements Store.
+func (s *PgStore) AppRuntimeConfigChangedAt(ctx context.Context, appID string) (time.Time, bool, error) {
+	var changedAt time.Time
+	err := s.pool.QueryRow(ctx,
+		`select changed_at from app_runtime_config_changes where app_id = $1`, appID).Scan(&changedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("pgstore: app %s runtime config changed_at: %w", appID, err)
+	}
+	return changedAt, true, nil
+}
+
 // ListSnapshotsForGC returns every non-stale snapshot joined with its
 // deployment + app + account, ordered newest-first. Snapshots made stale by a
 // deleted app or an unusable terminal deployment remain in the result because

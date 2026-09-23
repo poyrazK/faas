@@ -3896,8 +3896,13 @@ func cmdRollback(args []string) int {
 			to = rest[i] //nolint:gosec // G602: bounds checked immediately above
 		case strings.HasPrefix(a, "--to="):
 			to = a[len("--to="):]
+		case a == "--yes" || a == "-y":
+			// Rollback never prompts. Accept the flag deploy uses so shared
+			// scripts do not fail here (issue #3362).
+		case strings.HasPrefix(a, "-"):
+			return printErr("Unknown flag", fmt.Errorf("%q (rollback accepts --to <deployment|vN>)", a))
 		default:
-			return printErr("Unknown flag", fmt.Errorf("%q (rollback accepts no positional after <slug>)", a))
+			return printErr("Unexpected argument", fmt.Errorf("%q (rollback takes one <slug>; pass the target with --to)", a))
 		}
 	}
 	client, err := authedClient()
@@ -4405,6 +4410,9 @@ func cmdCrons(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeNDJSON(out))
 		}
+		// The ID leads because `crons info|update|rm|runs` all require it
+		// and nothing else printed it (issue #3362).
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %s\n", "ID", "SCHEDULE", "STATE", "PATH")
 		for _, c := range out {
 			state := "enabled"
 			if !c.Enabled {
@@ -4412,7 +4420,7 @@ func cmdCrons(args []string) int {
 			} else if c.SuspendedReason != "" {
 				state = "suspended: " + c.SuspendedReason
 			}
-			fmt.Printf("%-30s %-15s %s\n", c.Schedule, state, c.Path)
+			_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %s\n", c.ID, c.Schedule, state, c.Path)
 		}
 		return 0
 	case subAdd:

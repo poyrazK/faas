@@ -203,13 +203,15 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 	if endpoint != "" {
 		// Let the SDK consume standard endpoint, headers, timeout,
 		// compression, and TLS variables. Preserve Gregale's legacy bare
-		// host:port form by translating only that form into an explicit
-		// plaintext URL; passing endpoint options for every case would
+		// host:port form by setting the host, default traces path, and
+		// plaintext transport. WithEndpointURL now treats a pathless URL
+		// as the root path. Passing endpoint options for every case would
 		// override signal-specific env vars.
 		var exporterOptions []otlptracehttp.Option
 		if !strings.Contains(endpoint, "://") {
 			exporterOptions = []otlptracehttp.Option{
-				otlptracehttp.WithEndpointURL("http://" + endpoint),
+				otlptracehttp.WithEndpoint(endpoint),
+				otlptracehttp.WithURLPath("/v1/traces"),
 				otlptracehttp.WithInsecure(),
 			}
 		}

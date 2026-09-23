@@ -1200,6 +1200,13 @@ func (m *Manager) rebuildHostStaticEgressRules(ctx context.Context) {
 // enforcement point. Rules are rebuilt on every live-map or allowlist mutation
 // so a PATCH takes effect without a cold wake.
 func (m *Manager) rebuildHostSMTPAllowlistRules(ctx context.Context) {
+	m.renderHostSMTPAllowlistRules(ctx, false)
+}
+
+// Wake can avoid reapplying an unchanged host policy. All other mutation and
+// repair paths retain forced Render semantics; renderers without this optional
+// capability also retain their existing behavior.
+func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bool) {
 	if m.hostRenderer == nil {
 		return
 	}
@@ -1251,7 +1258,13 @@ func (m *Manager) rebuildHostSMTPAllowlistRules(ctx context.Context) {
 	next := *cur
 	next.SMTPAllowlistRules = rules
 	netns.SwapActiveHostPolicy(next)
-	if err := m.hostRenderer.Render(ctx); err != nil {
+	render := m.hostRenderer.Render
+	if conditional, ok := m.hostRenderer.(interface {
+		RenderIfChanged(context.Context) error
+	}); ifChanged && ok {
+		render = conditional.RenderIfChanged
+	}
+	if err := render(ctx); err != nil {
 		m.log.Warn("fcvm: rebuildHostSMTPAllowlistRules reload failed; live ruleset unchanged",
 			"err", err, "rules", len(rules))
 	}
@@ -4118,9 +4131,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.exportDirs[req.Instance] = req.ExportDir
 	}
 	m.mu.Unlock()
+	phases.mark("post_bring_up")
 	if !req.ExecutionOnly {
-		m.rebuildHostSMTPAllowlistRules(ctx)
+		m.renderHostSMTPAllowlistRules(ctx, true)
 	}
+	phases.mark("host_policy")
 	wakeAttrs := []any{
 		"wake_id", wakeID, "instance", req.Instance, "method", method.String(),
 		"uid", lease.UID, "host_ip", lease.HostIP.String(),

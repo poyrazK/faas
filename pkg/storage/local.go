@@ -248,6 +248,29 @@ func (l *LocalStorageBackend) Get(ctx context.Context, key string) (io.ReadClose
 	return f, nil
 }
 
+// Exists implements ExistenceChecker with a stat. An empty file reports
+// false, matching Get's contract that a zero-byte artifact is not found.
+func (l *LocalStorageBackend) Exists(ctx context.Context, key string) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("storage: exists %q: %w", key, err)
+	}
+	full, err := l.join(key)
+	if err != nil {
+		return false, err
+	}
+	st, err := os.Stat(full)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("storage: exists %q: %w", key, err)
+	}
+	return st.Mode().IsRegular() && st.Size() > 0, nil
+}
+
 // Delete removes the key. Missing keys are NOT errors — matches the
 // idempotent semantics imaged already relies on (cleanup paths call
 // os.Remove and tolerate ErrNotExist).

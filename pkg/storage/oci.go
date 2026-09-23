@@ -551,6 +551,27 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 // digest, and streams the blob back as an io.ReadCloser. A missing
 // manifest surfaces as ErrNotFound (matching LocalStorageBackend's
 // contract). The returned reader MUST be closed by the caller.
+// Exists implements ExistenceChecker by resolving the key's manifest only.
+// Registries refuse a manifest whose layer blobs are absent, so a manifest
+// that names a layer is sufficient evidence without downloading the blob.
+func (o *OCIRegistryStorageBackend) Exists(ctx context.Context, key string) (bool, error) {
+	repo, tag, err := o.plan(key)
+	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("storage: oci exists %q: %w", key, err)
+	}
+	manifest, err := o.fetchManifest(ctx, repo, tag)
+	if err != nil {
+		if IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("storage: oci exists %q: %w", key, err)
+	}
+	return len(manifest.Layers) > 0 && manifest.Layers[0].Digest != "", nil
+}
+
 func (o *OCIRegistryStorageBackend) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	repo, tag, err := o.plan(key)
 	if err != nil {

@@ -43,3 +43,13 @@
   wake cannot acknowledge a concurrent rotation. Successful and failed
   attempts emit value-free audit events containing only app, secret names,
   wake/instance correlation, counts, timestamps, and a closed error code.
+- **Amendment (issue #3360):** invalidating existing snapshots is not enough
+  for the no-restart path. A live instance still holds the old environment,
+  and its next idle park would capture a fresh snapshot of it that the next
+  wake restores. Every runtime-config mutation therefore also stamps
+  `app_runtime_config_changes.changed_at` (database clock, like
+  `instances.started_at`). schedd's park path retires, instead of snapshotting,
+  any instance that started before the stamp, and it drops a warm or init
+  capture if the stamp moves while the capture runs. A failed stamp lookup
+  also skips the capture: a missed snapshot costs one cold boot, while a stale
+  one keeps a credential the customer replaced.

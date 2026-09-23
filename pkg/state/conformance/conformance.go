@@ -111,6 +111,7 @@ func Run(t *testing.T, open Open) {
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
+		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
