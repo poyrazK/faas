@@ -192,7 +192,7 @@ func TestHandlePullRequest_DependencyQuotaStopsBuilds(t *testing.T) {
 	if !IsIgnored(err) || !result.WasIgnored || len(enqueuer.specs) != 0 {
 		t.Fatalf("quota result = (%+v, %v), builds = %d; want ignored without builds", result, err, len(enqueuer.specs))
 	}
-	if len(rec.checks) < 2 || rec.checks[len(rec.checks)-1].phase != githubdgrpc.CheckPhaseFailed {
+	if len(rec.checks) != 1 || rec.checks[0].phase != githubdgrpc.CheckPhaseFailed {
 		t.Fatalf("checks = %+v, want failed quota check", rec.checks)
 	}
 	for _, slug := range []string{"pr-42-demo-app", "pr-42-db", "pr-42-worker"} {
