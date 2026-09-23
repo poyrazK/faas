@@ -56,6 +56,7 @@
             <th>Deployment</th>
             <th>Status</th>
             <th>Rollout state</th>
+			<th>Service handoff</th>
             <th>Created</th>
             <th>Kind</th>
           </tr>
@@ -65,7 +66,8 @@
           <tr>
             <td><code>{{.ID}}</code></td>
             <td>{{.Status}}</td>
-            <td>{{.Kind}}</td>
+			<td>{{.RolloutState}}</td>
+			<td>{{if .ServiceHandoffPhase}}<code>{{.ServiceHandoffAction}}/{{.ServiceHandoffPhase}}</code>{{if .ServiceHandoffRetries}} · retry {{.ServiceHandoffRetries}}{{end}}{{if .ServiceHandoffMissing}}<br>missing: <code>{{range $i, $gateway := .ServiceHandoffMissing}}{{if $i}}, {{end}}{{$gateway}}{{end}}</code>{{end}}{{if .ServiceHandoffError}}<br><span class="badge warning">{{.ServiceHandoffError}}</span>{{end}}{{else}}—{{end}}</td>
             <td>{{.CreatedAt}}</td>
             <td>{{.Kind}}</td>
           </tr>

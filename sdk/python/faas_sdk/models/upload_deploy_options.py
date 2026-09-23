@@ -36,8 +36,10 @@ class UploadDeployOptions:
     deployed_by: str | Unset = UNSET
     pr_number: int | Unset = UNSET
     workflows: list[WorkflowSpec] | Unset = UNSET
+    companions: list[Sidecar] | Unset = UNSET
+    """Preferred field for companions carried across the resumable upload session."""
     sidecars: list[Sidecar] | Unset = UNSET
-    """Up to 2 stateless sidecars (1 init + 1 sidecar) carried across the resumable upload session."""
+    """Deprecated spelling of companions."""
     rollback_on_5xx: bool | None | Unset = UNSET
     """Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
     while omitted or null keeps the default false."""
@@ -75,6 +77,13 @@ class UploadDeployOptions:
             for workflows_item_data in self.workflows:
                 workflows_item = workflows_item_data.to_dict()
                 workflows.append(workflows_item)
+
+        companions: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.companions, Unset):
+            companions = []
+            for companions_item_data in self.companions:
+                companions_item = companions_item_data.to_dict()
+                companions.append(companions_item)
 
         sidecars: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.sidecars, Unset):
@@ -120,6 +129,8 @@ class UploadDeployOptions:
             field_dict["pr_number"] = pr_number
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
+        if companions is not UNSET:
+            field_dict["companions"] = companions
         if sidecars is not UNSET:
             field_dict["sidecars"] = sidecars
         if rollback_on_5xx is not UNSET:
@@ -168,6 +179,15 @@ class UploadDeployOptions:
 
                 workflows.append(workflows_item)
 
+        _companions = d.pop("companions", UNSET)
+        companions: list[Sidecar] | Unset = UNSET
+        if _companions is not UNSET:
+            companions = []
+            for companions_item_data in _companions:
+                companions_item = Sidecar.from_dict(companions_item_data)
+
+                companions.append(companions_item)
+
         _sidecars = d.pop("sidecars", UNSET)
         sidecars: list[Sidecar] | Unset = UNSET
         if _sidecars is not UNSET:
@@ -202,6 +222,7 @@ class UploadDeployOptions:
             deployed_by=deployed_by,
             pr_number=pr_number,
             workflows=workflows,
+            companions=companions,
             sidecars=sidecars,
             rollback_on_5xx=rollback_on_5xx,
             no_triggers=no_triggers,

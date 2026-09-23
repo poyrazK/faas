@@ -25,6 +25,8 @@ export type { AccountTraceLookupError } from './models/AccountTraceLookupError.j
 export type { AccountTraceLookupResponse } from './models/AccountTraceLookupResponse.js';
 export type { AccountTraceMatch } from './models/AccountTraceMatch.js';
 export type { AccountUsageResponse } from './models/AccountUsageResponse.js';
+export type { ActivityActorResponse } from './models/ActivityActorResponse.js';
+export type { ActivityResourceResponse } from './models/ActivityResourceResponse.js';
 export type { AddTenantHostnameRequest } from './models/AddTenantHostnameRequest.js';
 export type { AddTrustedSignerRequest } from './models/AddTrustedSignerRequest.js';
 export type { AdminRefundResponse } from './models/AdminRefundResponse.js';
@@ -386,6 +388,7 @@ export type { ListInvocationsResponse } from './models/ListInvocationsResponse.j
 export type { ListJobRunsResponse } from './models/ListJobRunsResponse.js';
 export type { ListJobsResponse } from './models/ListJobsResponse.js';
 export type { ListJobTasksResponse } from './models/ListJobTasksResponse.js';
+export type { ListOrgActivityResponse } from './models/ListOrgActivityResponse.js';
 export type { ListOrgAPIKeysResponse } from './models/ListOrgAPIKeysResponse.js';
 export type { ListSecretsForAccountResponse } from './models/ListSecretsForAccountResponse.js';
 export type { ListTenantSurfacesResponse } from './models/ListTenantSurfacesResponse.js';
@@ -478,6 +481,7 @@ export type { OperatorRuntimeConfig } from './models/OperatorRuntimeConfig.js';
 export type { OperatorRuntimeConfigOperation } from './models/OperatorRuntimeConfigOperation.js';
 export type { OperatorRuntimeConfigRevision } from './models/OperatorRuntimeConfigRevision.js';
 export type { OrgAccountID } from './models/OrgAccountID.js';
+export type { OrgActivityResponse } from './models/OrgActivityResponse.js';
 export type { OrgInvitationResponse } from './models/OrgInvitationResponse.js';
 export type { OrgListResponse } from './models/OrgListResponse.js';
 export type { OrgMemberResponse } from './models/OrgMemberResponse.js';
@@ -620,6 +624,7 @@ export type { SecurityQuarantineRecoveryResponse } from './models/SecurityQuaran
 export type { SendAppMessageRequest } from './models/SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './models/SendAppMessageResponse.js';
 export type { ServiceReplicas } from './models/ServiceReplicas.js';
+export type { ServiceRolloutHandoffResponse } from './models/ServiceRolloutHandoffResponse.js';
 export type { SessionInfo } from './models/SessionInfo.js';
 export type { SessionListResponse } from './models/SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './models/SessionsRevokeAllResponse.js';

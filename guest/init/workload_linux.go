@@ -127,6 +127,15 @@ type workloadSpec struct {
 // manifest, not the compatibility stamp.
 const workloadRosterPath = "/etc/faas/workloads.json"
 
+// companionSharedDirectoryRoot is the task-local memory-volume namespace.
+// Every workload sees the same per-companion directories at the same absolute
+// paths; data is instance-scoped and disappears with the microVM.
+const companionSharedDirectoryRoot = "/tmp/gregale/companions"
+
+func companionSharedDirectory(name string) string {
+	return filepath.Join(companionSharedDirectoryRoot, name)
+}
+
 // workloadRoster mirrors the deployment-level roster shape.
 // Main is the canonical main-workload spec; Sidecars is the
 // per-sidecar array (nil/empty = legacy single-workload path).

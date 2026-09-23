@@ -160,6 +160,9 @@ type OpsMetrics struct {
 	// operators distinguish a healthy rollout from a service that is
 	// below its desired serving capacity without scraping scheduler logs.
 	serviceReplicaStatus *prometheus.GaugeVec
+	// serviceRolloutHandoffPhaseDuration measures routing and request-drain
+	// barriers with closed labels and no customer identifiers.
+	serviceRolloutHandoffPhaseDuration *prometheus.HistogramVec
 	// daemonRestartCount (issue #573 / ADR-128) is the per-(daemon,
 	// version) counter that records how many times systemd has
 	// restarted THIS process in its lifetime. The producer is the
@@ -2178,6 +2181,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			serviceReplicaStatus.WithLabelValues(app, state)
 		}
 	}
+	serviceRolloutHandoffPhaseDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_service_rollout_handoff_phase_duration_seconds",
+		Help:    "Duration of zero-downtime service rollout handoff barriers, labelled by action in {promote,abort}, phase in {routing,draining}, and outcome in {success,timeout,error}. Labels are closed and contain no customer identifiers.",
+		Buckets: []float64{0.01, 0.1, 0.5, 1, 2, 5, 10, 15, 25, 30, 60},
+	}, []string{"action", "phase", "outcome"})
+	for _, action := range []string{"promote", "abort"} {
+		for _, phase := range []string{"routing", "draining"} {
+			for _, outcome := range []string{"success", "timeout", "error"} {
+				serviceRolloutHandoffPhaseDuration.WithLabelValues(action, phase, outcome)
+			}
+		}
+	}
 	// Issue #573 / ADR-128: per-(daemon, version) restart counter.
 	// Closed daemon set mirrors the cmd/ tree (Tier A7 split kept
 	// gatewayd-public and gatewayd-internal as distinct units per
@@ -3660,7 +3675,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	commonCollectors := []prometheus.Collector{
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -5047,6 +5062,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		livenessRestarts:                           livenessRestarts,
 		workloadOOMKills:                           workloadOOMKills,
 		serviceReplicaStatus:                       serviceReplicaStatus,
+		serviceRolloutHandoffPhaseDuration:         serviceRolloutHandoffPhaseDuration,
 		daemonRestartCount:                         daemonRestartCount,
 		daemonBuildInfo:                            daemonBuildInfo,
 		daemonUptimeSeconds:                        daemonUptimeSeconds,
@@ -5436,6 +5452,28 @@ func (m *OpsMetrics) SetServiceReplicaStatus(app string, desired, ready, startin
 	for i, state := range serviceReplicaMetricStates {
 		m.serviceReplicaStatus.WithLabelValues(app, state).Set(float64(values[i]))
 	}
+}
+
+// ObserveServiceRolloutHandoffPhase records one terminal barrier attempt.
+// Inputs are normalized onto closed sets so an accidental error string cannot
+// create unbounded Prometheus series. Nil-safe for scheduler unit fixtures.
+func (m *OpsMetrics) ObserveServiceRolloutHandoffPhase(action, phase, outcome string, seconds float64) {
+	if m == nil || m.serviceRolloutHandoffPhaseDuration == nil {
+		return
+	}
+	if action != "promote" && action != "abort" {
+		action = "promote"
+	}
+	if phase != "routing" && phase != "draining" {
+		phase = "routing"
+	}
+	if outcome != "success" && outcome != "timeout" && outcome != "error" {
+		outcome = "error"
+	}
+	if seconds < 0 {
+		seconds = 0
+	}
+	m.serviceRolloutHandoffPhaseDuration.WithLabelValues(action, phase, outcome).Observe(seconds)
 }
 
 // RecordDaemonRestart (issue #573 / ADR-128) records the systemd

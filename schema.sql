@@ -3281,6 +3281,61 @@ CREATE TABLE public.operator_intents (
 
 
 --
+-- Name: org_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.org_activity (
+    id bigint NOT NULL,
+    org_id uuid NOT NULL,
+    occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    kind text NOT NULL,
+    actor_type text NOT NULL,
+    actor_account_id uuid,
+    actor_label text NOT NULL,
+    resource_type text NOT NULL,
+    resource_id text,
+    resource_label text NOT NULL,
+    app_id uuid,
+    project_id uuid,
+    deployment_id uuid,
+    data jsonb DEFAULT '{}'::jsonb NOT NULL,
+    source_type text NOT NULL,
+    source_id text NOT NULL,
+    CONSTRAINT org_activity_actor_type_chk CHECK ((actor_type = ANY (ARRAY['user'::text, 'api_key'::text, 'github'::text, 'system'::text, 'operator'::text]))),
+    CONSTRAINT org_activity_data_object_chk CHECK ((jsonb_typeof(data) = 'object'::text)),
+    CONSTRAINT org_activity_kind_chk CHECK ((kind ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'::text))
+);
+
+
+--
+-- Name: org_activity_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.org_activity ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.org_activity_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: org_activity; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.org_activity IS 'Curated organization activity timeline; safe display facts only, FK-free and append-only';
+
+
+--
+-- Name: COLUMN org_activity.data; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.org_activity.data IS 'Non-secret display metadata. Environment variable values and credentials are forbidden.';
+
+
+--
 -- Name: org_invitations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5136,6 +5191,22 @@ ALTER TABLE ONLY public.operator_intents
 
 
 --
+-- Name: org_activity org_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_activity
+    ADD CONSTRAINT org_activity_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: org_activity org_activity_source_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_activity
+    ADD CONSTRAINT org_activity_source_unique UNIQUE (org_id, source_type, source_id);
+
+
+--
 -- Name: org_invitations org_invitations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6963,6 +7034,20 @@ CREATE INDEX operator_intents_target_idx ON public.operator_intents USING btree 
 --
 
 CREATE INDEX operator_intents_trace_idx ON public.operator_intents USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: org_activity_app_timeline_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX org_activity_app_timeline_idx ON public.org_activity USING btree (org_id, app_id, occurred_at DESC, id DESC) WHERE (app_id IS NOT NULL);
+
+
+--
+-- Name: org_activity_timeline_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX org_activity_timeline_idx ON public.org_activity USING btree (org_id, occurred_at DESC, id DESC);
 
 
 --

@@ -3344,6 +3344,22 @@ groups:
           description: "No complete snapshot drift inventory has succeeded for more than two hours. Check OCI enumeration latency and registry availability."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotDriftAuditUnavailable.md"
 
+  - name: faas_service_rollout_handoff
+    interval: 30s
+    rules:
+      - alert: FaasServiceRolloutHandoffBlocked
+        expr: sum(increase(schedd_service_rollout_handoff_phase_duration_seconds_count{outcome=~"timeout|error"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: warn
+          component: schedd
+          family: service_rollout
+          public_status: degraded
+        annotations:
+          summary: "A zero-downtime service rollout handoff is blocked"
+          description: "schedd recorded a routing or request-drain timeout/error during a service rollout in the last ten minutes. Inspect the deployment's service_rollout_handoff status for the action, generation, missing gateways, retry count, and last error. The predecessor remains live while reconciliation retries."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServiceRolloutHandoffBlocked.md"
+
   - name: faas_durable_queue
     interval: 30s
     rules:
