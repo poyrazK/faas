@@ -990,6 +990,54 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	waitReadyz(t, controlAddr, 30*time.Second)
 }
 
+// StartAdditionalGateway runs a second named gatewayd-internal against this
+// harness's database and schedd. Its independent listener, cache, and PG
+// subscription let rollout tests exercise the real fleet ACK barrier rather
+// than manufacturing acknowledgements in a notifier fake. The process is
+// owned by Harness.Stop like the primary gateway.
+func (h *Harness) StartAdditionalGateway(nodeName string, extraEnv ...string) string {
+	if h == nil || h.T == nil {
+		panic("e2etest: nil harness")
+	}
+	t := h.T
+	t.Helper()
+	if h.GatewayURL == "" || h.ScheddSock == "" || nodeName == "" {
+		t.Fatal("e2etest: additional gateway requires a running gateway, schedd, and node name")
+	}
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres:///faas?host=/run/postgresql&user=faas"
+	}
+	dbURL = daemonDSN(dbURL, h.Pool)
+	publicAddr := freeTCPAddr(t)
+	controlAddr := freeTCPAddr(t)
+	for controlAddr == publicAddr {
+		controlAddr = freeTCPAddr(t)
+	}
+	dir, err := os.MkdirTemp(h.SockDir, "gw-*")
+	if err != nil {
+		t.Fatalf("e2etest: create additional gateway socket dir: %v", err)
+	}
+	configPath := filepath.Join(dir, "gatewayd.toml")
+	config := fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\n", publicAddr, controlAddr, h.APIDURL)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("e2etest: write additional gateway config: %v", err)
+	}
+	env := append(testEnvCommon(dbURL),
+		"FAAS_GATEWAY_LISTEN="+publicAddr,
+		"FAAS_GATEWAYD_CONFIG="+configPath,
+		"FAAS_GATEWAY_CONTROL_LISTEN="+controlAddr,
+		"FAAS_GATEWAY_SYNTH_SOCKET="+filepath.Join(dir, "gatewayd-internal.sock"),
+		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
+		"FAAS_APPS_DOMAIN="+testDomain,
+		"FAAS_NODE_NAME="+nodeName,
+	)
+	env = append(env, extraEnv...)
+	h.procs = append(h.procs, startProc(t, h.BinDir, "gatewayd-internal", env))
+	waitReadyz(t, controlAddr, 30*time.Second)
+	return "http://" + publicAddr
+}
+
 // startGatewaydPublic boots the public edge next to gatewayd-internal. It is
 // opt-in because most metal tests only need the internal HTTP path; the raw
 // TCP acceptance test needs the real gatewayd-public/tcpd composition.
