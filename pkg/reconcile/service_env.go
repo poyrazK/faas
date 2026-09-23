@@ -2,8 +2,10 @@ package reconcile
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 )
 
@@ -21,22 +23,60 @@ func serviceEnvForWorkloadWithAvailable(base map[string]string, w reposcan.Workl
 		}
 		env[key] = value
 	}
-	for _, dep := range w.DependsOn {
-		name := strings.TrimSpace(dep)
-		if name == "" {
-			continue
-		}
-		if available != nil {
-			if _, ok := available[strings.ToLower(name)]; !ok {
-				continue
-			}
-		}
-		env[serviceEnvKey(name)] = fmt.Sprintf("http://%s.svc.gregale:%d", name, serviceEnvPort)
+	for _, binding := range serviceBindingsForWorkloadWithAvailable(w, available) {
+		env[binding.Binding] = fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, serviceEnvPort)
 	}
 	if len(env) == 0 {
 		return nil
 	}
 	return env
+}
+
+func serviceBindingsForWorkloadWithAvailable(w reposcan.Workload, available map[string]struct{}) []api.AppServiceBinding {
+	bindings := make([]api.AppServiceBinding, 0, len(w.DependsOn))
+	seen := make(map[string]struct{}, len(w.DependsOn))
+	for _, dependency := range w.DependsOn {
+		service := strings.TrimSpace(dependency)
+		if service == "" {
+			continue
+		}
+		key := strings.ToLower(service)
+		if available != nil {
+			if _, ok := available[key]; !ok {
+				continue
+			}
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		bindings = append(bindings, api.AppServiceBinding{
+			Binding: serviceEnvKey(key),
+			Service: key,
+		})
+	}
+	sort.Slice(bindings, func(i, j int) bool {
+		if bindings[i].Service != bindings[j].Service {
+			return bindings[i].Service < bindings[j].Service
+		}
+		return bindings[i].Binding < bindings[j].Binding
+	})
+	if len(bindings) == 0 {
+		return nil
+	}
+	return bindings
+}
+
+func serviceBindingsEqual(left, right []api.AppServiceBinding) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func serviceEnvKey(name string) string {

@@ -26,6 +26,9 @@ from .account_trace_lookup_error import AccountTraceLookupError
 from .account_trace_lookup_response import AccountTraceLookupResponse
 from .account_trace_match import AccountTraceMatch
 from .account_usage_response import AccountUsageResponse
+from .activity_actor_response import ActivityActorResponse
+from .activity_actor_response_type import ActivityActorResponseType
+from .activity_resource_response import ActivityResourceResponse
 from .add_tenant_hostname_request import AddTenantHostnameRequest
 from .add_trusted_signer_request import AddTrustedSignerRequest
 from .admin_refund_response import AdminRefundResponse
@@ -170,6 +173,7 @@ from .app_security_request import AppSecurityRequest
 from .app_security_request_security_policy import AppSecurityRequestSecurityPolicy
 from .app_security_response import AppSecurityResponse
 from .app_security_response_security_policy import AppSecurityResponseSecurityPolicy
+from .app_service_binding import AppServiceBinding
 from .app_slo_response import AppSLOResponse
 from .app_slo_response_wake_queue_sample_status import AppSLOResponseWakeQueueSampleStatus
 from .app_slo_response_window import AppSLOResponseWindow
@@ -464,6 +468,12 @@ from .debug_timeline_event import DebugTimelineEvent
 from .debug_timeline_event_phase import DebugTimelineEventPhase
 from .declared_route import DeclaredRoute
 from .declared_route_methods_item import DeclaredRouteMethodsItem
+from .delayed_task_after_request import DelayedTaskAfterRequest
+from .delayed_task_after_request_headers import DelayedTaskAfterRequestHeaders
+from .delayed_task_after_request_payload import DelayedTaskAfterRequestPayload
+from .delayed_task_at_request import DelayedTaskAtRequest
+from .delayed_task_at_request_headers import DelayedTaskAtRequestHeaders
+from .delayed_task_at_request_payload import DelayedTaskAtRequestPayload
 from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
@@ -758,6 +768,8 @@ from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
 from .list_operator_runtime_config_revisions_response_200 import ListOperatorRuntimeConfigRevisionsResponse200
+from .list_org_activity_actor_type import ListOrgActivityActorType
+from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
@@ -913,6 +925,8 @@ from .operator_runtime_config_revision import OperatorRuntimeConfigRevision
 from .operator_runtime_config_revision_scope import OperatorRuntimeConfigRevisionScope
 from .operator_runtime_config_source import OperatorRuntimeConfigSource
 from .operator_runtime_config_status import OperatorRuntimeConfigStatus
+from .org_activity_response import OrgActivityResponse
+from .org_activity_response_data import OrgActivityResponseData
 from .org_invitation_response import OrgInvitationResponse
 from .org_invitation_response_role import OrgInvitationResponseRole
 from .org_invitation_response_status import OrgInvitationResponseStatus
@@ -1176,6 +1190,9 @@ from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequ
 from .security_quarantine_recovery_response import SecurityQuarantineRecoveryResponse
 from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
 from .service_replicas import ServiceReplicas
+from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
+from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
+from .service_rollout_handoff_response_phase import ServiceRolloutHandoffResponsePhase
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
@@ -1190,6 +1207,7 @@ from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
 from .sidecar_disk_io_profile import SidecarDiskIoProfile
 from .sidecar_env import SidecarEnv
+from .sidecar_preset import SidecarPreset
 from .sidecar_timeline_response import SidecarTimelineResponse
 from .sidecar_timeline_status import SidecarTimelineStatus
 from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
@@ -1392,6 +1410,9 @@ __all__ = (
     "AccountTraceLookupResponse",
     "AccountTraceMatch",
     "AccountUsageResponse",
+    "ActivityActorResponse",
+    "ActivityActorResponseType",
+    "ActivityResourceResponse",
     "AddTenantHostnameRequest",
     "AddTrustedSignerRequest",
     "AdminRefundResponse",
@@ -1540,6 +1561,7 @@ __all__ = (
     "AppSecurityRequestSecurityPolicy",
     "AppSecurityResponse",
     "AppSecurityResponseSecurityPolicy",
+    "AppServiceBinding",
     "AppSLOResponse",
     "AppSLOResponseWakeQueueSampleStatus",
     "AppSLOResponseWindow",
@@ -1822,6 +1844,12 @@ __all__ = (
     "DebugTimelineEventPhase",
     "DeclaredRoute",
     "DeclaredRouteMethodsItem",
+    "DelayedTaskAfterRequest",
+    "DelayedTaskAfterRequestHeaders",
+    "DelayedTaskAfterRequestPayload",
+    "DelayedTaskAtRequest",
+    "DelayedTaskAtRequestHeaders",
+    "DelayedTaskAtRequestPayload",
     "DelayedTaskResponse",
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
@@ -2116,6 +2144,8 @@ __all__ = (
     "ListJobTasksResponse",
     "ListOperatorRuntimeConfigResponse200",
     "ListOperatorRuntimeConfigRevisionsResponse200",
+    "ListOrgActivityActorType",
+    "ListOrgActivityResponse",
     "ListOrgAPIKeysResponse",
     "ListProjectEnvironmentPromotionsStatus",
     "ListSecretsForAccountResponse",
@@ -2267,6 +2297,8 @@ __all__ = (
     "OperatorRuntimeConfigRevisionScope",
     "OperatorRuntimeConfigSource",
     "OperatorRuntimeConfigStatus",
+    "OrgActivityResponse",
+    "OrgActivityResponseData",
     "OrgInvitationResponse",
     "OrgInvitationResponseRole",
     "OrgInvitationResponseStatus",
@@ -2510,6 +2542,9 @@ __all__ = (
     "SecurityQuarantineRecoveryResponse",
     "SecurityQuarantineRecoveryResponseStatus",
     "ServiceReplicas",
+    "ServiceRolloutHandoffResponse",
+    "ServiceRolloutHandoffResponseAction",
+    "ServiceRolloutHandoffResponsePhase",
     "SessionInfo",
     "SessionListResponse",
     "SessionsRevokeAllResponse",
@@ -2524,6 +2559,7 @@ __all__ = (
     "SidecarCpuMillicores",
     "SidecarDiskIoProfile",
     "SidecarEnv",
+    "SidecarPreset",
     "SidecarTimelineResponse",
     "SidecarTimelineStatus",
     "SidecarTimelineStatusStatus",

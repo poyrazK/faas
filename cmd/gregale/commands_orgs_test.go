@@ -54,6 +54,7 @@ func TestOrgs_NoTokenExitsOne(t *testing.T) {
 		{"list"},
 		{"create", "--slug", "acme", "--name", "ACME Co"},
 		{"info", "acme"},
+		{"activity", "--org", "acme"},
 		{"rm", "-q", "acme"},
 		{"members", "list", "acme"},
 		{"members", "invite", "--org", "acme", "--email", "x@y.z"},
@@ -163,6 +164,44 @@ func TestOrgs_Info_HappyPath(t *testing.T) {
 	}
 	if sawMethod != "GET" || sawPath != "/v1/orgs/acme" {
 		t.Errorf("route = %s %s, want GET /v1/orgs/acme", sawMethod, sawPath)
+	}
+}
+
+func TestOrgs_Activity_HappyPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "test")
+
+	var sawMethod, sawPath string
+	var sawQuery = make(map[string]string)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawMethod, sawPath = r.Method, r.URL.Path
+		for key := range r.URL.Query() {
+			sawQuery[key] = r.URL.Query().Get(key)
+		}
+		_ = json.NewEncoder(w).Encode(api.ListOrgActivityResponse{Items: []api.OrgActivityResponse{{
+			OccurredAt: "2026-09-22T14:32:00Z", Summary: "Bahadir deployed payments",
+		}}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+
+	code := cmdOrgs([]string{"activity", "--org", "acme", "--before", "cursor+/=", "--kind-prefix", "deploy.",
+		"--actor-type", "github", "--app-id", "11111111-1111-4111-8111-111111111111", "--limit", "25"})
+	if code != 0 {
+		t.Fatalf("orgs activity exit = %d, want 0", code)
+	}
+	if sawMethod != http.MethodGet || sawPath != "/v1/orgs/acme/activity" {
+		t.Fatalf("route = %s %s", sawMethod, sawPath)
+	}
+	want := map[string]string{
+		"before": "cursor+/=", "kind_prefix": "deploy.", "actor_type": "github",
+		"app_id": "11111111-1111-4111-8111-111111111111", "limit": "25",
+	}
+	for key, value := range want {
+		if sawQuery[key] != value {
+			t.Errorf("query[%s] = %q, want %q", key, sawQuery[key], value)
+		}
 	}
 }
 

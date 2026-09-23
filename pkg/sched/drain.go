@@ -471,19 +471,13 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.log.Warn("drain: incompatible invocation failed permanently", "inv", inv.ID, "app_id", inv.AppID, "workload_class", app.WorkloadClass, "execution_mode", app.Manifest.ExecutionMode)
 		return
 	}
-	// 1. Cap re-check (delayed_task source only — the plan may have
-	// been downgraded between EnqueueInvocation and now).
-	if inv.Source == state.InvocationDelayedTask {
-		if d.isOverDelayedCap(ctx, inv.AppID) {
-			// budget=0 makes this administrative deferral non-consuming. No
-			// app delivery was attempted, so spending the row's finite
-			// delivery budget here would dead-letter healthy work during a
-			// temporary plan-cap condition.
-			_ = d.store.FailInvocation(ctx, inv.ID, "delayed-task cap exceeded on dispatch", 30*time.Second, 0)
-			d.log.Warn("drain: delayed-task cap on dispatch", "inv", inv.ID, "app_id", inv.AppID)
-			return
-		}
-	}
+	// 1. Delayed-task plan limits are admission limits, not dispatch
+	// limits. Once apid has durably accepted a task, it is grandfathered
+	// across plan changes. Re-counting pending work here also counts the
+	// candidate itself: an app at exactly its limit would otherwise defer
+	// every due task forever, so the backlog could never fall below the
+	// limit that is blocking it.
+	//
 	// 2. Account Active gate. The cron path has this (loop.go:580);
 	// the drain needs it too because rows queued while the account was
 	// Active may sit in 'pending' across a suspension (Free goes past
@@ -711,27 +705,6 @@ func (d *Drain) emitDone(ctx context.Context, inv state.Invocation, terminalStat
 	if err := d.notifier.Notify(ctx, db.NotifyInvocationDone, string(body)); err != nil && !errors.Is(err, context.Canceled) {
 		d.log.Warn("drain: notify invocation_done", "inv", inv.ID, "err", err)
 	}
-}
-
-// isOverDelayedCap returns true when adding one more delayed_task to
-// this app would push past the plan cap. Reads the cap dynamically
-// (the customer may have downgraded) and delegates the count to
-// CountPendingInvocations (index-backed by invocations_app_pending_idx).
-func (d *Drain) isOverDelayedCap(ctx context.Context, appID string) bool {
-	app, err := d.engine.Store().AppByID(ctx, appID)
-	if err != nil {
-		return false
-	}
-	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
-	if err != nil {
-		return false
-	}
-	limits := api.MustLimitsFor(acct.Plan)
-	n, err := d.store.CountPendingInvocations(ctx, appID, state.InvocationDelayedTask)
-	if err != nil {
-		return false
-	}
-	return n >= limits.MaxDelayedTasksPerApp
 }
 
 // isAccountActive is the suspended-account gate for the drain. Mirrors

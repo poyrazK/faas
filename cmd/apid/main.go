@@ -1368,6 +1368,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv := newServerWithDeps(store, log, cfg.GetAppsDomain(deps.getenv), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv)).
 		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
+		WithCompanionImages(cfg.CompanionImages).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))

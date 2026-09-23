@@ -278,6 +278,76 @@ func TestMemStore_RecoverRolloutErrorGuards(t *testing.T) {
 	}
 }
 
+func TestMemStoreServiceRolloutRecoveryRequestsSafeAbort(t *testing.T) {
+	m, ctx, _, app, stable := memDeploymentFixture(t)
+	base := time.Now().UTC().Add(-time.Minute)
+	stable.Status = DeployLive
+	stable.Scope = DefaultEnvScope
+	stable.RolloutState = "complete"
+	stable.TrafficPercent = 100
+	stable.CreatedAt = base
+	seedCanaryDeployment(m, stable)
+
+	rollout := stable
+	rollout.ID = uuid.NewString()
+	rollout.RolloutState = "rolling_out"
+	rollout.RolloutStartedAt = &base
+	rollout.TrafficPercent = 0
+	rollout.CreatedAt = base.Add(time.Second)
+	seedCanaryDeployment(m, rollout)
+
+	for _, action := range []string{"advance", "promote"} {
+		if got, _, err := m.RecoverRollout(ctx, app.ID, action, "unsafe"); !errors.Is(err, ErrRolloutStateInvalid) || got.ID != rollout.ID {
+			t.Fatalf("service %s = deployment:%q err:%v, want rollout/ErrRolloutStateInvalid", action, got.ID, err)
+		}
+	}
+
+	requested, auditID, err := m.RecoverRollout(ctx, app.ID, "abort", "operator stop")
+	if err != nil {
+		t.Fatalf("request service abort: %v", err)
+	}
+	if auditID == 0 || requested.RolloutState != "rolling_out" || requested.Status != DeployLive || requested.TrafficPercent != 0 {
+		t.Fatalf("requested abort = %+v audit:%d; want live/rolling_out/0 with audit", requested, auditID)
+	}
+	handoff := requested.ServiceRolloutHandoff
+	if handoff.Action != ServiceRolloutActionAbort || handoff.Phase != ServiceRolloutPhasePending || handoff.PredecessorDeploymentID != stable.ID || handoff.StartedAt == nil {
+		t.Fatalf("requested handoff = %+v; want abort/pending predecessor", handoff)
+	}
+	if _, err := m.FinalizeServiceRollout(ctx, rollout.ID); !errors.Is(err, ErrServiceRolloutInvalid) {
+		t.Fatalf("forward finalize after abort request = %v, want ErrServiceRolloutInvalid", err)
+	}
+
+	repeated, _, err := m.RecoverRollout(ctx, app.ID, "abort", "duplicate")
+	if err != nil {
+		t.Fatalf("repeat service abort: %v", err)
+	}
+	if repeated.ServiceRolloutHandoff.StartedAt == nil || !repeated.ServiceRolloutHandoff.StartedAt.Equal(*handoff.StartedAt) || repeated.ServiceRolloutHandoff.Reason != "operator stop" {
+		t.Fatalf("repeat changed durable intent = %+v; want original request preserved", repeated.ServiceRolloutHandoff)
+	}
+
+	routing, err := m.BeginServiceRolloutAbort(ctx, rollout.ID)
+	if err != nil {
+		t.Fatalf("begin service abort: %v", err)
+	}
+	if routing.ServiceRolloutHandoff.Phase != ServiceRolloutPhaseRouting || routing.ServiceRolloutHandoff.RetryCount != 1 {
+		t.Fatalf("routing handoff = %+v; want routing retry 1", routing.ServiceRolloutHandoff)
+	}
+	if got, _ := m.DeploymentByID(ctx, stable.ID); got.Status != DeployLive || got.TrafficPercent != 100 {
+		t.Fatalf("predecessor during reverse handoff = status:%s traffic:%d; want live/100", got.Status, got.TrafficPercent)
+	}
+	if got, _ := m.DeploymentByID(ctx, rollout.ID); got.Status != DeployLive || got.TrafficPercent != 0 {
+		t.Fatalf("candidate during reverse handoff = status:%s traffic:%d; want live/0", got.Status, got.TrafficPercent)
+	}
+
+	aborted, err := m.AbortServiceRollout(ctx, rollout.ID, routing.ServiceRolloutHandoff.Reason)
+	if err != nil {
+		t.Fatalf("finalize service abort: %v", err)
+	}
+	if aborted.Status != DeploySuperseded || aborted.RolloutState != "aborted" || aborted.ServiceRolloutHandoff.Phase != ServiceRolloutPhaseComplete || aborted.ServiceRolloutHandoff.CompletedAt == nil {
+		t.Fatalf("final abort = %+v; want superseded/aborted/complete", aborted)
+	}
+}
+
 func TestStepToPercentAndSiblingAdapter(t *testing.T) {
 	tests := []struct {
 		step, total, want int

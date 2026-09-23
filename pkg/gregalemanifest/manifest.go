@@ -104,26 +104,31 @@ type EventTrigger struct {
 	Filter string `yaml:"filter,omitempty" toml:"filter"`
 }
 
-// ExtensionSpec declares one telemetry/observability sidecar in a manifest.
-// Presets provide safe defaults for the common agents while the image remains
-// explicit and digest-pinned: Gregale never silently selects a mutable image
-// on a customer's behalf.
-type ExtensionSpec struct {
-	Name          string                      `yaml:"name,omitempty" toml:"name,omitempty"`
-	Preset        string                      `yaml:"preset,omitempty" toml:"preset,omitempty"`
-	Image         string                      `yaml:"image" toml:"image"`
-	Type          api.SidecarType             `yaml:"type,omitempty" toml:"type,omitempty"`
-	Cmd           []string                    `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
-	Env           map[string]string           `yaml:"env,omitempty" toml:"env,omitempty"`
-	Port          int                         `yaml:"port,omitempty" toml:"port,omitempty"`
-	RamMB         int                         `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
-	ScratchMB     int                         `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
-	CPUMillicores int                         `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
-	DiskIOProfile string                      `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
-	Essential     *bool                       `yaml:"essential,omitempty" toml:"essential,omitempty"`
-	StartupProbe  *api.AppManifestHealthcheck `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
-	DependsOn     []ExtensionDependency       `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
+// CompanionSpec declares one bounded helper workload in a manifest. A preset
+// supplies safe defaults and may omit Image; apid resolves it to the
+// operator-configured immutable digest before persistence. Custom companions
+// must continue to provide an explicit digest-pinned image.
+type CompanionSpec struct {
+	Name           string                      `yaml:"name,omitempty" toml:"name,omitempty"`
+	Preset         string                      `yaml:"preset,omitempty" toml:"preset,omitempty"`
+	Image          string                      `yaml:"image,omitempty" toml:"image,omitempty"`
+	Type           api.SidecarType             `yaml:"type,omitempty" toml:"type,omitempty"`
+	Cmd            []string                    `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
+	Env            map[string]string           `yaml:"env,omitempty" toml:"env,omitempty"`
+	Port           int                         `yaml:"port,omitempty" toml:"port,omitempty"`
+	PrimaryIngress bool                        `yaml:"primary_ingress,omitempty" toml:"primary_ingress,omitempty"`
+	RamMB          int                         `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
+	ScratchMB      int                         `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
+	CPUMillicores  int                         `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
+	DiskIOProfile  string                      `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
+	Essential      *bool                       `yaml:"essential,omitempty" toml:"essential,omitempty"`
+	StartupProbe   *api.AppManifestHealthcheck `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
+	DependsOn      []ExtensionDependency       `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
 }
+
+// ExtensionSpec is the deprecated manifest name retained for source
+// compatibility. New manifests should use the top-level companions key.
+type ExtensionSpec = CompanionSpec
 
 // ExtensionDependency gates an extension on another workload lifecycle.
 type ExtensionDependency struct {
@@ -135,9 +140,9 @@ type ExtensionDependency struct {
 type ExtensionPreset string
 
 const (
-	ExtensionPresetOpenTelemetry ExtensionPreset = "opentelemetry"
-	ExtensionPresetSentry        ExtensionPreset = "sentry"
-	ExtensionPresetDogStatsD     ExtensionPreset = "datadog-dogstatsd"
+	ExtensionPresetOpenTelemetry ExtensionPreset = ExtensionPreset(api.CompanionPresetOpenTelemetry)
+	ExtensionPresetSentry        ExtensionPreset = ExtensionPreset(api.CompanionPresetSentry)
+	ExtensionPresetDogStatsD     ExtensionPreset = ExtensionPreset(api.CompanionPresetDogStatsD)
 )
 
 type extensionPresetDefaults struct {
@@ -163,22 +168,27 @@ func extensionPreset(name string) (extensionPresetDefaults, bool) {
 	}
 }
 
-// ToSidecars resolves manifest extensions into the API deployment shape.
-// Image is intentionally required even for a preset; digest pinning is the
-// supply-chain boundary and the API performs the final stateful-image check.
+// ToSidecars resolves manifest companions into the established API/runtime
+// shape. The name is retained for internal compatibility; customer-facing
+// manifests use companions. Preset-only entries are resolved to pinned images
+// by apid at the deployment boundary.
 func (m *Manifest) ToSidecars() (api.Sidecars, error) {
-	if m == nil || len(m.Extensions) == 0 {
+	companions, err := m.companionSpecs()
+	if err != nil {
+		return nil, err
+	}
+	if len(companions) == 0 {
 		return nil, nil
 	}
-	out := make(api.Sidecars, 0, len(m.Extensions))
-	for i, ext := range m.Extensions {
+	out := make(api.Sidecars, 0, len(companions))
+	for i, ext := range companions {
 		presetName := strings.TrimSpace(ext.Preset)
 		defaults := extensionPresetDefaults{}
 		if presetName != "" {
 			var ok bool
 			defaults, ok = extensionPreset(presetName)
 			if !ok {
-				return nil, fmt.Errorf("extension[%d].preset: unsupported preset %q", i, ext.Preset)
+				return nil, fmt.Errorf("companion[%d].preset: unsupported preset %q", i, ext.Preset)
 			}
 		}
 		name := strings.TrimSpace(ext.Name)
@@ -186,10 +196,10 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 			name = defaults.Name
 		}
 		if name == "" {
-			return nil, fmt.Errorf("extension[%d].name: required when preset is omitted", i)
+			return nil, fmt.Errorf("companion[%d].name: required when preset is omitted", i)
 		}
-		if strings.TrimSpace(ext.Image) == "" {
-			return nil, fmt.Errorf("extension[%d].image: required and must be digest-pinned", i)
+		if strings.TrimSpace(ext.Image) == "" && presetName == "" {
+			return nil, fmt.Errorf("companion[%d].image: required when preset is omitted", i)
 		}
 		typ := ext.Type
 		if typ == "" {
@@ -207,9 +217,9 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 			deps = append(deps, api.WorkloadDependency{Name: dep.Name, Condition: dep.Condition})
 		}
 		sc := api.Sidecar{
-			Name: name, Image: strings.TrimSpace(ext.Image), Type: typ,
+			Name: name, Preset: strings.ToLower(presetName), Image: strings.TrimSpace(ext.Image), Type: typ,
 			Cmd: append([]string(nil), ext.Cmd...), Env: env,
-			Port: ext.Port, RamMB: ext.RamMB, ScratchMB: ext.ScratchMB,
+			Port: ext.Port, PrimaryIngress: ext.PrimaryIngress, RamMB: ext.RamMB, ScratchMB: ext.ScratchMB,
 			CPUMillicores: ext.CPUMillicores, DiskIOProfile: ext.DiskIOProfile,
 			Essential: ext.Essential, StartupProbe: ext.StartupProbe, DependsOn: deps,
 		}
@@ -222,6 +232,19 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 		out = append(out, sc)
 	}
 	return out, nil
+}
+
+func (m *Manifest) companionSpecs() ([]CompanionSpec, error) {
+	if m == nil {
+		return nil, nil
+	}
+	if len(m.Companions) > 0 && len(m.Extensions) > 0 {
+		return nil, errors.New("set either companions or the deprecated extensions field, not both")
+	}
+	if len(m.Companions) > 0 {
+		return m.Companions, nil
+	}
+	return m.Extensions, nil
 }
 
 // Validate checks the event pattern and content filter without requiring an
@@ -973,9 +996,9 @@ func (d BucketDependency) EffectiveLabel() string {
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
 // `function`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
-// `triggers`, `event_triggers`, `extensions`, `workflows`, `databases`,
-// `buckets`, and the local-only `dev` profile; other keys are validated
-// strictly (yaml.Decoder.KnownFields(true))
+// `triggers`, `event_triggers`, `companions`, `extensions`, `workflows`,
+// `databases`, `buckets`, and the local-only `dev` profile; other keys are
+// validated strictly (yaml.Decoder.KnownFields(true))
 // so a typo like `trigger:` (singular) surfaces as a load-time error rather
 // than silently shipping a no-op deploy.
 type Manifest struct {
@@ -996,12 +1019,14 @@ type Manifest struct {
 	// [[triggers.event]] in gregale.toml. YAML trigger entries remain in
 	// Triggers for backward compatibility; the separate slice keeps event
 	// subscriptions from changing that wire shape.
-	EventTriggers []EventTrigger       `yaml:"event_triggers,omitempty"`
-	Extensions    []ExtensionSpec      `yaml:"extensions,omitempty"`
-	Workflows     []api.WorkflowSpec   `yaml:"workflows,omitempty"`
-	Databases     []DatabaseDependency `yaml:"databases,omitempty"`
-	Buckets       []BucketDependency   `yaml:"buckets,omitempty"`
-	Worker        *WorkerSpec          `yaml:"worker,omitempty"`
+	EventTriggers []EventTrigger  `yaml:"event_triggers,omitempty"`
+	Companions    []CompanionSpec `yaml:"companions,omitempty"`
+	// Extensions is the legacy name for Companions.
+	Extensions []ExtensionSpec      `yaml:"extensions,omitempty"`
+	Workflows  []api.WorkflowSpec   `yaml:"workflows,omitempty"`
+	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
+	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
+	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
 }
 
 // DevConfig declares local defaults for the remote `gregale dev` loop. Paths
@@ -1344,6 +1369,7 @@ func parseManifest(b []byte) (*Manifest, error) {
 type tomlManifest struct {
 	SchemaVersion int             `toml:"schema_version"`
 	Triggers      tomlTriggers    `toml:"triggers"`
+	Companions    []CompanionSpec `toml:"companions"`
 	Extensions    []ExtensionSpec `toml:"extensions"`
 }
 
@@ -1364,7 +1390,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		}
 		return nil, fmt.Errorf("unsupported TOML field(s): %s", strings.Join(keys, ", "))
 	}
-	return &Manifest{SchemaVersion: raw.SchemaVersion, EventTriggers: raw.Triggers.Event, Extensions: raw.Extensions}, nil
+	return &Manifest{SchemaVersion: raw.SchemaVersion, EventTriggers: raw.Triggers.Event, Companions: raw.Companions, Extensions: raw.Extensions}, nil
 }
 
 // Validate runs schema checks against the decoded manifest. It retains the
@@ -1428,13 +1454,13 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return err
 		}
 	}
-	if len(m.Extensions) > 0 {
+	if len(m.Companions) > 0 || len(m.Extensions) > 0 {
 		sidecars, err := m.ToSidecars()
 		if err != nil {
 			return err
 		}
 		if prob := sidecars.Validate(api.MustLimitsFor(plan)); prob != nil {
-			return fmt.Errorf("extensions: %s", prob.Detail)
+			return fmt.Errorf("companions: %s", prob.Detail)
 		}
 	}
 	seenBindings := make(map[string]struct{}, len(m.QueueBindings))

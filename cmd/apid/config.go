@@ -101,6 +101,12 @@ type Config struct {
 	// hostnames are normalized to HTTPS.
 	CLIAuthURLBase string `toml:"cli_auth_url_base"`
 
+	// CompanionImages maps the closed managed-preset names to immutable OCI
+	// references. Keeping digests in operator config lets Gregale update and
+	// qualify platform companions without accepting mutable tags or baking a
+	// registry choice into the public manifest schema.
+	CompanionImages map[string]string `toml:"companion_images"`
+
 	// DBURL is apid's Postgres DSN. An empty value preserves the
 	// containerised-deploys path and lets db.Open resolve DATABASE_URL or
 	// its local Unix-socket default. Manifest-rendered control-plane TOML
@@ -218,6 +224,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := toml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("apid: parse %q: %w", path, err)
 	}
+	if err := validateCompanionImageConfig(c.CompanionImages); err != nil {
+		return nil, fmt.Errorf("apid: companion_images: %w", err)
+	}
 	overlayAppErrorsTLSFromEnv(c)
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
 	// c.Role is consulted against FAAS_APID_ROLE. Setting Role in
@@ -235,6 +244,19 @@ func LoadConfig(path string) (*Config, error) {
 		c.NodeName = v
 	}
 	return c, nil
+}
+
+func validateCompanionImageConfig(images map[string]string) error {
+	for name, image := range images {
+		preset, ok := api.NormalizeCompanionPreset(name)
+		if !ok {
+			return fmt.Errorf("unsupported preset %q", name)
+		}
+		if !api.ValidCompanionImageReference(strings.TrimSpace(image)) {
+			return fmt.Errorf("preset %q must use a digest-pinned OCI image", preset)
+		}
+	}
+	return nil
 }
 
 // overlayAppErrorsTLSFromEnv keeps the generated split-box systemd drop-in

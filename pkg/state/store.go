@@ -151,6 +151,21 @@ var ErrInvalidTrafficPercent = errors.New("state: invalid traffic_percent")
 // repair a superseded, failed, or pending target.
 var ErrDeploymentNotLive = errors.New("state: deployment is not live")
 
+// ErrTrafficServingChanged means a conditional traffic update observed a
+// different sole 100% serving deployment while holding the live-row locks.
+var ErrTrafficServingChanged = errors.New("state: serving deployment changed")
+
+// sameDeploymentID accepts both API-supported UUID spellings. PgStore reads
+// dashed IDs from PostgreSQL; MemStore's historical IDs are 32-hex.
+func sameDeploymentID(a, b string) bool {
+	if a == b {
+		return true
+	}
+	parsedA, errA := uuid.Parse(a)
+	parsedB, errB := uuid.Parse(b)
+	return errA == nil && errB == nil && parsedA == parsedB
+}
+
 // ErrCanaryStepConflict is returned by AdvanceCanary when the deployment's
 // current step differs from the caller's expected step. The compare-and-swap
 // is checked while the deployment row is locked, so this is the safe race
@@ -2499,6 +2514,13 @@ type Store interface {
 	// predecessor remains available until every serving gateway acknowledges
 	// the routing generation and its in-flight requests drain.
 	BeginServiceRolloutCutover(ctx context.Context, id string) (Deployment, error)
+	// BeginServiceRolloutAbort restores the predecessor's traffic weight while
+	// retaining both generations as live. The scheduler must wait for gateway
+	// acknowledgement and candidate request drain before finalising the abort.
+	BeginServiceRolloutAbort(ctx context.Context, id string) (Deployment, error)
+	// UpdateServiceRolloutHandoff persists scheduler progress between the
+	// routing and drain barriers so another schedd can resume safely.
+	UpdateServiceRolloutHandoff(ctx context.Context, id string, handoff ServiceRolloutHandoff) (Deployment, error)
 	// AbortServiceRollout atomically removes a failed service rollout and
 	// restores the newest older live deployment in the same app/scope to 100%
 	// traffic. The target must be a live zero-step row marked
@@ -2563,8 +2585,9 @@ type Store interface {
 	// unknown. The handler is responsible for the plan-gate (Pro+
 	// only, ErrPlanTrafficSplitNotAllowed) and the request-time
 	// range-check — this method holds the FOR UPDATE lock that
-	// makes the rebalance race-free against CreateDeployment.
-	UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int) (Deployment, error)
+	// makes the rebalance race-free against CreateDeployment. An optional
+	// expectedServingID is checked while those locks are held, before writes.
+	UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error)
 
 	// RecoverRollout (issue #976 / ADR-122 / SAFE-RELEASES-R) is
 	// the operator manual-recovery escape hatch — the back-end
@@ -6432,6 +6455,15 @@ type Store interface {
 // older operator implementations.
 type DefaultCustomDomainStore interface {
 	DefaultCustomDomain(context.Context, string) (string, error)
+}
+
+// OrgActivityStore is the optional durable projection behind the global
+// organization activity timeline. It remains a narrow capability instead of
+// widening Store so small test doubles and alternate stores do not need to
+// implement a customer-facing read model they never use.
+type OrgActivityStore interface {
+	AppendOrgActivity(context.Context, OrgActivity) (OrgActivity, error)
+	ListOrgActivity(context.Context, OrgActivityFilter) ([]OrgActivity, error)
 }
 
 // CustomerEventFilter is the tenant-safe query contract for the customer audit

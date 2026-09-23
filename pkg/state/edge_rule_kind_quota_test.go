@@ -36,11 +36,9 @@ func createKindRule(m *MemStore, acct Account, app App, kind EdgeRuleKind, limit
 	return err
 }
 
-// The load-bearing case: Free's quota of 0 must DENY, not skip. The older
-// per-kind branches guard with `limits.X > 0`, which silently allows
-// unlimited rules at zero; ADR-201 needs Free = 0 to actually exclude Free.
+// The load-bearing case: Free's quota of 0 must DENY, not skip.
 func TestEdgeRuleKindQuota_FreeZeroDeniesRatherThanSkips(t *testing.T) {
-	for _, kind := range []EdgeRuleKind{EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker} {
+	for _, kind := range []EdgeRuleKind{EdgeRuleKindCache, EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker} {
 		m, acct, app, limits := quotaFixture(t, api.PlanFree)
 		err := createKindRule(m, acct, app, kind, limits)
 		if err == nil {
@@ -65,6 +63,8 @@ func TestEdgeRuleKindQuota_AllowsUpToPlanLimitThenDenies(t *testing.T) {
 		kind  EdgeRuleKind
 		limit int
 	}{
+		{api.PlanHobby, EdgeRuleKindCache, 1},
+		{api.PlanPro, EdgeRuleKindCache, 5},
 		{api.PlanHobby, EdgeRuleKindRetry, 3},
 		{api.PlanPro, EdgeRuleKindRetry, 10},
 		{api.PlanHobby, EdgeRuleKindCircuitBreaker, 3},
@@ -113,11 +113,11 @@ func TestEdgeRuleKindQuota_KindsAreIndependent(t *testing.T) {
 func TestEdgeRuleKindQuota_LeavesOtherKindsAlone(t *testing.T) {
 	limits := api.MustLimitsFor(api.PlanFree)
 	for _, kind := range []EdgeRuleKind{
-		EdgeRuleKindRoute, EdgeRuleKindCORSA, EdgeRuleKindCache,
+		EdgeRuleKindRoute, EdgeRuleKindCORSA,
 		EdgeRuleKindThrottle, EdgeRuleKindBudget, EdgeRuleKindGeo,
 	} {
 		if _, governed := edgeRuleKindQuota(kind, limits); governed {
-			t.Fatalf("kind=%s is governed by the ADR-201 helper; it must only cover retry and circuit_breaker", kind)
+			t.Fatalf("kind=%s is unexpectedly governed by the closed-zero helper", kind)
 		}
 		if denied := edgeRuleKindQuotaDenied(kind, limits); denied != nil {
 			t.Fatalf("kind=%s was denied by the ADR-201 helper: %+v", kind, denied)

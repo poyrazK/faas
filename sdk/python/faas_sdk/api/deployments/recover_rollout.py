@@ -45,6 +45,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 202:
+        response_202 = RolloutTransitionResponse.from_dict(response.json())
+
+        return response_202
+
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
 
@@ -123,10 +128,13 @@ def sync_detailed(
         on the in-flight row + 0 on the siblings. No stuck-check;
         this is the operator's \"I'm sure, ship it\" path.
 
-      - `abort`: flips `rollout_state = 'aborted'` with
-        `rollout_aborted_reason = reason`. Legal from
-        `rollout_state ∈ {pending, rolling_out}`. Emits a
-        `deploy.rolled_back` audit row.
+      - `abort`: ordinary canaries transition synchronously to
+        `rollout_state = 'aborted'`. A zero-step service rollout instead
+        records a durable abort request and returns 202; schedd restores
+        the predecessor route, waits for gateway acknowledgement and
+        candidate request drain, then finalises the abort. `advance` and
+        `promote` are invalid for service rollouts. Emits a
+        `deploy.rolled_back` audit row for the operator intent.
 
     Returns the post-transition Deployment + the audit row id
     so the operator's terminal can echo `audit_id=…`. Plan-tier
@@ -188,10 +196,13 @@ def sync(
         on the in-flight row + 0 on the siblings. No stuck-check;
         this is the operator's \"I'm sure, ship it\" path.
 
-      - `abort`: flips `rollout_state = 'aborted'` with
-        `rollout_aborted_reason = reason`. Legal from
-        `rollout_state ∈ {pending, rolling_out}`. Emits a
-        `deploy.rolled_back` audit row.
+      - `abort`: ordinary canaries transition synchronously to
+        `rollout_state = 'aborted'`. A zero-step service rollout instead
+        records a durable abort request and returns 202; schedd restores
+        the predecessor route, waits for gateway acknowledgement and
+        candidate request drain, then finalises the abort. `advance` and
+        `promote` are invalid for service rollouts. Emits a
+        `deploy.rolled_back` audit row for the operator intent.
 
     Returns the post-transition Deployment + the audit row id
     so the operator's terminal can echo `audit_id=…`. Plan-tier
@@ -248,10 +259,13 @@ async def asyncio_detailed(
         on the in-flight row + 0 on the siblings. No stuck-check;
         this is the operator's \"I'm sure, ship it\" path.
 
-      - `abort`: flips `rollout_state = 'aborted'` with
-        `rollout_aborted_reason = reason`. Legal from
-        `rollout_state ∈ {pending, rolling_out}`. Emits a
-        `deploy.rolled_back` audit row.
+      - `abort`: ordinary canaries transition synchronously to
+        `rollout_state = 'aborted'`. A zero-step service rollout instead
+        records a durable abort request and returns 202; schedd restores
+        the predecessor route, waits for gateway acknowledgement and
+        candidate request drain, then finalises the abort. `advance` and
+        `promote` are invalid for service rollouts. Emits a
+        `deploy.rolled_back` audit row for the operator intent.
 
     Returns the post-transition Deployment + the audit row id
     so the operator's terminal can echo `audit_id=…`. Plan-tier
@@ -311,10 +325,13 @@ async def asyncio(
         on the in-flight row + 0 on the siblings. No stuck-check;
         this is the operator's \"I'm sure, ship it\" path.
 
-      - `abort`: flips `rollout_state = 'aborted'` with
-        `rollout_aborted_reason = reason`. Legal from
-        `rollout_state ∈ {pending, rolling_out}`. Emits a
-        `deploy.rolled_back` audit row.
+      - `abort`: ordinary canaries transition synchronously to
+        `rollout_state = 'aborted'`. A zero-step service rollout instead
+        records a durable abort request and returns 202; schedd restores
+        the predecessor route, waits for gateway acknowledgement and
+        candidate request drain, then finalises the abort. `advance` and
+        `promote` are invalid for service rollouts. Emits a
+        `deploy.rolled_back` audit row for the operator intent.
 
     Returns the post-transition Deployment + the audit row id
     so the operator's terminal can echo `audit_id=…`. Plan-tier

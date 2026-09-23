@@ -507,43 +507,44 @@ func TestDrain_TenantFairnessBuckets(t *testing.T) {
 	}
 }
 
-// TestDrain_DelayedTaskCapEnforced pins the config-drift re-check.
-// delayed_task source on Hobby plan has MaxDelayedTasksPerApp=5; a
-// 6th row sitting pending must be failed when the drain tries to
-// dispatch it.
-func TestDrain_DelayedTaskCapEnforced(t *testing.T) {
+// TestDrain_DelayedTaskAtCapDispatches protects the admission/dispatch
+// boundary. The pending count includes the candidate itself, so applying
+// the create-time cap again in the drain would strand all five accepted
+// Hobby tasks precisely when the app reaches its documented limit.
+func TestDrain_DelayedTaskAtCapDispatches(t *testing.T) {
 	t.Parallel()
-	d, store, _, _, _ := newDrainHarness(t, api.PlanHobby, true)
+	d, store, _, _, synth := newDrainHarness(t, api.PlanHobby, true)
 	ctx := context.Background()
 	apps, _ := store.ListAllApps(ctx)
 	app := apps[0]
-	// Hobby allows 5 pending delayed_task rows. Seed 5, then a 6th
-	// must fail on dispatch.
+	var due state.Invocation
 	for i := 0; i < 5; i++ {
-		if _, err := store.EnqueueInvocation(ctx, state.Invocation{
+		when := time.Now().Add(time.Duration(i+1) * time.Minute)
+		if i == 0 {
+			when = time.Now().Add(-time.Second)
+		}
+		created, err := store.EnqueueInvocation(ctx, state.Invocation{
 			ID: uuid.NewString(), AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationDelayedTask,
-			Method: "POST", Path: "/x", DueAt: time.Now().Add(time.Duration(i+1) * time.Minute),
-		}); err != nil {
+			Method: "POST", Path: "/x", DueAt: when,
+		})
+		if err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
-	}
-	over, err := store.EnqueueInvocation(ctx, state.Invocation{
-		AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationDelayedTask,
-		Method: "POST", Path: "/x", DueAt: time.Now().Add(-time.Second),
-	})
-	if err != nil {
-		t.Fatalf("EnqueueInvocation over-cap: %v", err)
+		if i == 0 {
+			due = created
+		}
 	}
 
 	d.Tick(ctx)
-	got, _ := store.InvocationByID(ctx, over.ID)
-	// The cap re-check failed the row (retryAfter=30s to give the
-	// customer a window to drain their queue).
-	if got.State != state.InvocationPending {
-		t.Errorf("over-cap row state = %q, want pending (with retryAfter=30s)", got.State)
+	got, err := store.InvocationByID(ctx, due.ID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
 	}
-	if got.LastError == "" {
-		t.Errorf("over-cap row last_error = empty, want set")
+	if got.State != state.InvocationCompleted {
+		t.Errorf("due row state = %q, want completed", got.State)
+	}
+	if calls := synth.calls.Load(); calls != 1 {
+		t.Errorf("synth calls = %d, want 1", calls)
 	}
 }
 

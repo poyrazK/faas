@@ -219,8 +219,7 @@ Use `--preview-service-policy allow_marked` only when the production dependency
 is intentionally preview-safe.
 
 Gregale marks every call made by a preview, including isolated sibling calls,
-with
-`X-Faas-Caller-Env: preview` and
+with `X-Faas-Caller-Env: preview` and
 `X-Faas-Caller-Preview-Of: <production app slug>`. Both are platform-owned and
 cannot be set by a workload. See [networking](networking.md) for how to use
 them to skip side effects or refuse the call, and for the separate

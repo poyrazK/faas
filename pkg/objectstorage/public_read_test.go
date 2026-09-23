@@ -22,7 +22,10 @@ func (p publicReadTestProvider) ListObjects(context.Context, string, string, str
 }
 func (p publicReadTestProvider) DeleteObject(context.Context, string, string) error { return nil }
 func (p publicReadTestProvider) Presign(_ context.Context, _ string, req SignRequest) (SignedRequest, error) {
-	return SignedRequest{URL: p.endpoint, Method: req.Method}, nil
+	return SignedRequest{URL: p.endpoint + "?response-content-type=application%2Foctet-stream", Method: req.Method}, nil
+}
+func (p publicReadTestProvider) PresignObjectRead(_ context.Context, _ string, method, _ string, _ int64) (SignedRequest, error) {
+	return SignedRequest{URL: p.endpoint, Method: method}, nil
 }
 func (p publicReadTestProvider) EnsureMultipartUpload(context.Context, string, MultipartCreateRequest) (string, error) {
 	return "upload", nil
@@ -58,7 +61,7 @@ func TestValidPublicReadPath(t *testing.T) {
 
 func TestPublicReadHandlerServesWithoutNext(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/" {
+		if r.Method != http.MethodGet || r.URL.Path != "/" || len(r.URL.Query()) != 0 {
 			t.Errorf("upstream request = %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "image/png")
