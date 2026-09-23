@@ -852,6 +852,15 @@ type CronSuspensionStore interface {
 	ReactivateCronsForApp(ctx context.Context, appID string) (int, error)
 }
 
+// DeploymentActivationLocker serializes the post-snapshot verification and
+// live cutover for one deployment across all imaged processes. A
+// snapshot_written notification is broadcast to every compute node; checking
+// the deployment status without this lock lets several nodes smoke and wake
+// the same candidate at once.
+type DeploymentActivationLocker interface {
+	AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (release func(context.Context), err error)
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface
@@ -1730,7 +1739,7 @@ type Store interface {
 	// ListPreviewsForTeardown (ADR-095 PR-C / issue #272) returns
 	// preview rows the teardown janitor should consider this tick:
 	// every non-torn_down preview that is either in a terminal-ish
-	// PR state (closed / stale) or past its preview_expires_at TTL.
+	// PR state (closed / stale / tearing_down) or past its preview_expires_at TTL.
 	//
 	// Deliberately NOT filtered on status <> 'deleted': the janitor
 	// is the component that sets status='deleted', and it must be
@@ -1746,6 +1755,10 @@ type Store interface {
 	// than a full-table scan. Ordered by preview_expires_at ASC
 	// (nulls last) so the most overdue rows are reaped first.
 	ListPreviewsForTeardown(ctx context.Context, now time.Time, maxPerTick int) ([]App, error)
+	// ClaimPreviewTeardown atomically fences a janitor candidate only when its
+	// state and lease still match the sweep snapshot. A reopened preview returns
+	// ErrNotFound. A claimed row remains claimable for crash recovery.
+	ClaimPreviewTeardown(ctx context.Context, observed App, now time.Time) (App, error)
 	// SetPreviewPrState (ADR-095 PR-C / issue #272) advances one
 	// preview row's lifecycle label. Returns the updated row, or
 	// ErrNotFound when no row matches the id.
@@ -1758,6 +1771,10 @@ type Store interface {
 	// production app id is ErrNotFound, so a bug in the janitor's
 	// query can never relabel a customer's live app.
 	SetPreviewPrState(ctx context.Context, appID, prState string) (App, error)
+	// ClosePRPreview atomically marks a GitHub PR preview closed and starts its
+	// fixed post-close grace lease. Repeated close deliveries preserve the
+	// original deadline, and stale/torn-down previews cannot be revived.
+	ClosePRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error)
 	// RefreshDevSession extends an ad-hoc developer preview's lease and
 	// restores its serving state to open. Developer previews are encoded as
 	// preview rows with preview_pr_number=0; the implementation must refuse
@@ -2243,10 +2260,11 @@ type Store interface {
 	CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error)
 	UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error)
 	// DeleteProjectEnvironment removes an unprotected, non-production
-	// environment when it has no live releases. Related configuration and
-	// approval rows are removed with the registry entry. ErrConflict protects
-	// production, protected environments, and environments still serving a
-	// live release.
+	// environment when it has no live releases. Scoped app variables and
+	// ordinary secrets plus related configuration/approval rows are removed;
+	// managed credential rows remain for the API layer to revoke safely.
+	// ErrConflict protects production, the reserved default app scope, protected
+	// environments, and environments still serving a live release.
 	DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error
 	CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error)
 	ProjectEnvironmentApprovalByID(ctx context.Context, accountID, projectSlug, environmentSlug, id string) (ProjectEnvironmentApproval, error)
@@ -3028,13 +3046,9 @@ type Store interface {
 	// ADR-069 / PR-B). The PR-A surface (Deployment.Sidecars
 	// jsonb) stays the contract layer; this is the per-sidecar
 	// storage-key handle imaged writes and vmmd reads at wake
-	// time. The 2-row cap is enforced upstream by the
-	// `deployments.sidecars` CHECK constraint — this interface
-	// does not duplicate it (its row count could exceed
-	// SidecarCapMax via a hand-INSERT and that would only
-	// surface when vmmd reads a row that no jsonb entry
-	// references, which is a defence-in-depth concern, not a
-	// correctness gate).
+	// time. The five-row cap is enforced by the deployment JSONB
+	// CHECK and a per-deployment trigger on the layer table; this
+	// interface does not duplicate the database guard.
 	//
 	// SetDeploymentSidecarLayer upserts one sidecar's layer
 	// handle. Imaged calls it once per sidecar in

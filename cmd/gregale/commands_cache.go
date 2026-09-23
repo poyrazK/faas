@@ -24,7 +24,7 @@ const cacheDeclareUsage = "usage: gregale cache GET|HEAD <path> for <duration> [
 //	gregale cache GET /products/:id for 30s
 func cmdCache(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       gregale cache purge <slug> [--path GLOB]", "cache")
+		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       gregale cache purge <slug> [--path GLOB | --tag TAG]", "cache")
 		return 1
 	}
 	switch strings.ToUpper(args[0]) {
@@ -33,7 +33,7 @@ func cmdCache(args []string) int {
 	case "PURGE":
 		return cmdCachePurge(args[1:])
 	default:
-		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       gregale cache purge <slug> [--path GLOB]", "cache")
+		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       gregale cache purge <slug> [--path GLOB | --tag TAG]", "cache")
 		return 1
 	}
 }
@@ -41,6 +41,7 @@ func cmdCache(args []string) int {
 func cmdCachePurge(args []string) int {
 	fs := newFlagSet("cache purge", flag.ContinueOnError)
 	pathGlob := fs.String("path", "", "optional normalized request path glob")
+	tag := fs.String("tag", "", "optional cache tag")
 	// Accept both the documented positional-first form and the
 	// conventional flags-first spelling. The standard flag package
 	// otherwise stops parsing as soon as it sees the app slug.
@@ -49,25 +50,51 @@ func cmdCachePurge(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) {
-		PrintUsage(os.Stderr, "usage: gregale cache purge <slug> [--path GLOB]", "cache")
+		PrintUsage(os.Stderr, "usage: gregale cache purge <slug> [--path GLOB | --tag TAG]", "cache")
 		return 1
+	}
+	var hasPath, hasTag bool
+	fs.Visit(func(f *flag.Flag) {
+		hasPath = hasPath || f.Name == "path"
+		hasTag = hasTag || f.Name == "tag"
+	})
+	if hasPath && hasTag {
+		return printErr("Invalid cache purge", errors.New("--path and --tag cannot be combined"))
+	}
+	if hasTag {
+		canonical, err := api.NormalizeCacheTag(*tag)
+		if err != nil {
+			return printErr("Invalid cache tag", err)
+		}
+		*tag = canonical
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	slug := positional[0]
-	if err := client.PurgeAppCache(context.Background(), slug, *pathGlob); err != nil {
+	if hasTag {
+		err = client.PurgeAppCacheTag(context.Background(), slug, *tag)
+	} else {
+		err = client.PurgeAppCache(context.Background(), slug, *pathGlob)
+	}
+	if err != nil {
 		return printErr("Cache purge failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(map[string]any{
+		receipt := map[string]any{
 			"purged": true,
 			"app":    slug,
 			"path":   *pathGlob,
-		}))
+		}
+		if hasTag {
+			receipt["tag"] = *tag
+		}
+		return jsonOut(writeJSON(receipt))
 	}
-	if *pathGlob == "" {
+	if hasTag {
+		_, _ = fmt.Fprintf(osStdout, "Purged response cache for %s (tag %s)\n", slug, *tag)
+	} else if *pathGlob == "" {
 		_, _ = fmt.Fprintf(osStdout, "Purged response cache for %s\n", slug)
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "Purged response cache for %s (%s)\n", slug, *pathGlob)

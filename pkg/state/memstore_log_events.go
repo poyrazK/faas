@@ -60,6 +60,9 @@ func (m *MemStore) ListLogEvents(_ context.Context, filter LogEventFilter) ([]Lo
 		if normalized.RequestID != "" && event.RequestID != normalized.RequestID && event.TraceID != normalized.RequestID {
 			continue
 		}
+		if normalized.TraceID != "" && event.TraceID != normalized.TraceID {
+			continue
+		}
 		if normalized.Route != "" && event.Route != normalized.Route {
 			continue
 		}

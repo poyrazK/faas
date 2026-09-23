@@ -2769,15 +2769,16 @@ func runtimeToEnvSuffix(runtime string) string {
 // is the customer's call).
 func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 	manifest, err := oci.ManifestFromConfig(oci.Config{
-		Env:              cloneEnvMap(cfg.Env),
-		Entrypoint:       append([]string(nil), cfg.Entrypoint...),
-		Cmd:              append([]string(nil), cfg.Cmd...),
-		WorkingDir:       cfg.WorkingDir,
-		User:             cfg.User,
-		ExposedPorts:     cfg.ExposedPorts,
-		Healthcheck:      cfg.Healthcheck,
-		StopSignal:       cfg.StopSignal,
-		StopGracePeriodS: cfg.StopGracePeriodS,
+		Env:                cloneEnvMap(cfg.Env),
+		Entrypoint:         append([]string(nil), cfg.Entrypoint...),
+		Cmd:                append([]string(nil), cfg.Cmd...),
+		WorkingDir:         cfg.WorkingDir,
+		User:               cfg.User,
+		ExposedPorts:       cfg.ExposedPorts,
+		Healthcheck:        cfg.Healthcheck,
+		StopSignal:         cfg.StopSignal,
+		SecretReloadSignal: cfg.SecretReloadSignal,
+		StopGracePeriodS:   cfg.StopGracePeriodS,
 	})
 	if err != nil {
 		return api.AppManifest{}, err
@@ -2863,6 +2864,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	}
 	if deploymentID == "" {
 		return errors.New("imaged: deployment activation missing deployment_id")
+	}
+	locker, ok := h.store.(state.DeploymentActivationLocker)
+	if !ok {
+		if h.nodeName != "" {
+			return errors.New("imaged: deployment activation requires a fleet-wide store lock")
+		}
+	} else {
+		release, lockErr := locker.AcquireDeploymentActivationLock(ctx, deploymentID)
+		if lockErr != nil {
+			return fmt.Errorf("imaged: acquire deployment activation lock: %w", lockErr)
+		}
+		defer release(ctx)
 	}
 	dep, err := h.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
@@ -2987,6 +3000,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		// rewrite its hosting receipt, or republish terminal lifecycle events.
 		if dep.Status == state.DeployLive {
 			h.log.Debug("imaged: snapshot activation already complete", "deployment_id", dep.ID)
+			return nil
+		}
+		// A terminal deployment cannot become live, so a redelivered
+		// activation has nothing left to verify. Before this guard, a failed
+		// smoke marked the deployment failed and returned an error; the outbox
+		// then redelivered for minutes, and every redelivery smoked a failed
+		// candidate that schedd refuses to wake, producing hundreds of 429s that
+		// the pressure rebalancer read as load.
+		if dep.Status.IsTerminal() {
+			h.log.Info("imaged: snapshot activation skipped for terminal deployment",
+				"deployment_id", dep.ID, "status", dep.Status)
 			return nil
 		}
 	}

@@ -174,6 +174,14 @@ func (m *memorySharedResponseCache) InvalidateByAppPath(appID, pathGlob string) 
 	}
 	return nil
 }
+func (m *memorySharedResponseCache) InvalidateByAppTag(appID, tag string) error {
+	for k, entry := range m.entries {
+		if entry.key.AppID == appID && hasCacheTag(entry.tags, tag) {
+			delete(m.entries, k)
+		}
+	}
+	return nil
+}
 func (m *memorySharedResponseCache) InvalidateAll() error {
 	m.entries = map[string]*cacheEntry{}
 	return nil
@@ -341,6 +349,46 @@ func TestResponseCache_InvalidateByAppPath(t *testing.T) {
 	}
 	if err := c.InvalidateByAppPath("app-1", "["); err == nil {
 		t.Fatal("invalid glob returned nil error")
+	}
+}
+
+// adr: 122
+func TestResponseCache_InvalidateByAppTagAcrossTiers(t *testing.T) {
+	shared := &memorySharedResponseCache{entries: map[string]*cacheEntry{}}
+	c := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, time.Now).WithSharedStore(shared)
+	now := time.Now()
+	keys := []CacheKey{
+		{AppID: "app-1", RuleID: "tagged", NormalizedPath: "/products/1"},
+		{AppID: "app-1", RuleID: "other", NormalizedPath: "/products/2"},
+		{AppID: "app-2", RuleID: "tagged", NormalizedPath: "/products/1"},
+	}
+	for i, key := range keys {
+		tags := []string{"other"}
+		if i != 1 {
+			tags = []string{"product:42"}
+		}
+		if !c.PutWithWindowsAndTags(key, 200, nil, []byte("body"), now.Add(time.Minute), now.Add(time.Minute), now.Add(time.Minute), nil, tags) {
+			t.Fatalf("Put(%d) failed", i)
+		}
+	}
+	if err := c.InvalidateByAppTag("app-1", "Product:42"); err != nil {
+		t.Fatal(err)
+	}
+	for i, key := range keys {
+		want := "fresh"
+		if i == 0 {
+			want = ""
+		}
+		if got, _ := c.Get(key); got != want {
+			t.Errorf("Get(%d) = %q, want %q", i, got, want)
+		}
+		_, inShared := shared.entries[key.String()]
+		if inShared != (i != 0) {
+			t.Errorf("shared entry %d present = %v", i, inShared)
+		}
+	}
+	if err := c.InvalidateByAppTag("app-1", "bad tag"); err == nil {
+		t.Fatal("invalid tag accepted")
 	}
 }
 

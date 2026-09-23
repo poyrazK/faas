@@ -3098,8 +3098,8 @@ SELECT count(*) FROM object_buckets WHERE account_id = $1 AND state <> 'deleted'
 DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
 
 -- name: ObjectBucketInsert :one
-INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *;
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *;
 
 -- name: ObjectBucketList :many
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id;
@@ -3839,6 +3839,59 @@ LEFT JOIN data_upstream_probes p
 WHERE u.circuit_breaker_enabled
 ORDER BY u.app_id, u.host_redacted_hash, u.port, p.sampled_at DESC NULLS LAST;
 
+-- name: ListDeploymentAliases :many
+-- Stable per-app revision names. Join deployments for the human-readable
+-- revision while retaining aliases whose targets later become superseded;
+-- the alias continues to identify the same immutable row.
+SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
+  FROM deployment_aliases a
+  JOIN deployments d ON d.id = a.deployment_id AND d.app_id = a.app_id
+ WHERE a.app_id = sqlc.arg(app_id)
+ ORDER BY a.name;
+
+-- name: DeploymentAliasByHostLabel :many
+-- The hostname label uses the app's immutable UUID so aliases remain stable
+-- across app slug renames. Keep the deployment join app-scoped and hide
+-- soft-deleted owners/targets.
+SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
+  FROM deployment_aliases a
+  JOIN apps p ON p.id = a.app_id
+             AND p.status <> 'deleted'
+             AND p.deleted_at IS NULL
+  JOIN deployments d ON d.id = a.deployment_id
+                    AND d.app_id = a.app_id
+                    AND d.deleted_at IS NULL
+ WHERE ('tag-' || a.name || '-' || replace(a.app_id::text, '-', ''))
+       = sqlc.arg(host_label)
+ ORDER BY a.app_id, a.name;
+
+-- name: UpsertDeploymentAlias :one
+-- Accept only a routable target on this app. Using INSERT .. SELECT makes the
+-- ownership/status check atomic with writing the alias.
+WITH upserted AS (
+    INSERT INTO deployment_aliases (app_id, name, deployment_id)
+    SELECT d.app_id, sqlc.arg(name), d.id
+      FROM deployments d
+      JOIN apps a ON a.id = d.app_id
+     WHERE d.app_id = sqlc.arg(app_id)
+       AND d.id = sqlc.arg(deployment_id)
+       AND a.deleted_at IS NULL
+       AND a.status <> 'deleted'
+       AND d.deleted_at IS NULL
+       AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live')
+    ON CONFLICT (app_id, name) DO UPDATE
+       SET deployment_id = EXCLUDED.deployment_id,
+           updated_at = now()
+    RETURNING app_id, name, deployment_id, created_at, updated_at
+)
+SELECT u.app_id, u.name, u.deployment_id, d.revision, u.created_at, u.updated_at
+  FROM upserted u
+  JOIN deployments d ON d.id = u.deployment_id;
+
+-- name: DeleteDeploymentAlias :execrows
+DELETE FROM deployment_aliases
+ WHERE app_id = sqlc.arg(app_id) AND name = sqlc.arg(name);
+
 -- name: UpdateDataUpstreamCircuitBreaker :exec
 -- ADR-201 §3 per-upstream egress-breaker policy. Each field uses the
 -- COALESCE(sqlc.narg, existing) shape so a PATCH that omits a field
@@ -3854,3 +3907,17 @@ SET circuit_breaker_enabled           = COALESCE(sqlc.narg('circuit_breaker_enab
     circuit_breaker_min_samples       = COALESCE(sqlc.narg('circuit_breaker_min_samples')::integer, circuit_breaker_min_samples),
     circuit_breaker_open_seconds      = COALESCE(sqlc.narg('circuit_breaker_open_seconds')::integer, circuit_breaker_open_seconds)
 WHERE id = $1 AND app_id = $2;
+
+-- name: LatestInstanceReadiness :many
+-- Gateway restart hydration: readiness is independent of the instance's
+-- RUNNING state, so replay only the latest reversible ready/unready event.
+SELECT DISTINCT ON (CAST(data->>'instance_id' AS text))
+       CAST(data->>'instance_id' AS text) AS instance_id,
+       CAST(data->>'status' AS text) AS status,
+       at,
+       id
+FROM events
+WHERE kind = 'wake.sidecar_health'
+  AND data->>'status' IN ('ready', 'unready')
+  AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
+ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC;

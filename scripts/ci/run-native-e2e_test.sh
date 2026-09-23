@@ -245,7 +245,10 @@ grep -Fq 'create extension if not exists citext' "${runner}" ||
   fail "the wrapper does not prove the DSN can create schemas and citext"
 # Must be a refusal on a non-comment line; a comment mentioning the opt-out
 # does not disable it.
-grep -vE '^[[:space:]]*#' "${runner}" | grep -Fq 'unset FAAS_SKIP_PG_TESTS' ||
+awk '
+  !/^[[:space:]]*#/ && /unset FAAS_SKIP_PG_TESTS/ { found = 1 }
+  END { exit !found }
+' "${runner}" ||
   fail "the wrapper does not clear FAAS_SKIP_PG_TESTS (a comment mentioning it does not count)"
 # An env file that exists but yields an empty DSN must be fatal, not a silent
 # fall back to the default cluster. Hit for real on 2026-09-12: the DSN holds an

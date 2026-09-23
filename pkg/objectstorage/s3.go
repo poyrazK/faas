@@ -146,6 +146,13 @@ func (p *S3) DeleteObject(ctx context.Context, bucket, key string) error {
 }
 
 func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest) (CopyObjectResult, error) {
+	return p.CopyObjectBetweenBuckets(ctx, bucket, bucket, r)
+}
+
+func (p *S3) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destinationBucket string, r CopyObjectRequest) (CopyObjectResult, error) {
+	if sourceBucket == "" || destinationBucket == "" {
+		return CopyObjectResult{}, ErrInvalid
+	}
 	if !ValidKey(r.SourceKey) || !ValidKey(r.DestinationKey) {
 		return CopyObjectResult{}, ErrInvalid
 	}
@@ -172,8 +179,8 @@ func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest)
 		return CopyObjectResult{}, err
 	}
 	in := &s3.CopyObjectInput{
-		Bucket:             aws.String(bucket),
-		CopySource:         aws.String(url.PathEscape(bucket + "/" + r.SourceKey)),
+		Bucket:             aws.String(destinationBucket),
+		CopySource:         aws.String(url.PathEscape(sourceBucket + "/" + r.SourceKey)),
 		Key:                aws.String(r.DestinationKey),
 		Metadata:           r.Metadata.Metadata,
 		ContentType:        stringPtrOrNil(r.Metadata.ContentType),

@@ -376,7 +376,7 @@ export class ObservabilityService {
    * Oldest-first (forward narrative). Returns the sidecar's init-exit,
    * restart, and health-transition frames. The `latest` field is the
    * most recent `wake.sidecar_health` status (`starting`, `healthy`,
-   * `unhealthy`, `restarting`, or `failed`) when one is available.
+   * `unhealthy`, `restarting`, `failed`, `ready`, or `unready`) when one is available.
    *
    * The endpoint is a sub-resource of `/v1/apps/{slug}` and uses the
    * same MFA, scope, per-app rate-limit, and Hobby+ observability gates

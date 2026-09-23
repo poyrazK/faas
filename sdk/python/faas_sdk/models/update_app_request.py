@@ -193,6 +193,11 @@ class UpdateAppRequest:
     """Allow health probes to wake the app. Omit for no change; Pro/Scale only when true."""
     session_affinity: bool | None | Unset = UNSET
     """Toggle best-effort cookie-based routing to the same running instance. Omit for no change."""
+    version_affinity_cookie: None | str | Unset = UNSET
+    """Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change."""
+    version_affinity_managed_cookie: bool | None | Unset = UNSET
+    """Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no
+    change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -465,6 +470,18 @@ class UpdateAppRequest:
         else:
             session_affinity = self.session_affinity
 
+        version_affinity_cookie: None | str | Unset
+        if isinstance(self.version_affinity_cookie, Unset):
+            version_affinity_cookie = UNSET
+        else:
+            version_affinity_cookie = self.version_affinity_cookie
+
+        version_affinity_managed_cookie: bool | None | Unset
+        if isinstance(self.version_affinity_managed_cookie, Unset):
+            version_affinity_managed_cookie = UNSET
+        else:
+            version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -671,6 +688,10 @@ class UpdateAppRequest:
             field_dict["health_path_wakes"] = health_path_wakes
         if session_affinity is not UNSET:
             field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -1170,6 +1191,26 @@ class UpdateAppRequest:
 
         session_affinity = _parse_session_affinity(d.pop("session_affinity", UNSET))
 
+        def _parse_version_affinity_cookie(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        version_affinity_cookie = _parse_version_affinity_cookie(d.pop("version_affinity_cookie", UNSET))
+
+        def _parse_version_affinity_managed_cookie(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        version_affinity_managed_cookie = _parse_version_affinity_managed_cookie(
+            d.pop("version_affinity_managed_cookie", UNSET)
+        )
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1489,6 +1530,8 @@ class UpdateAppRequest:
             health_path=health_path,
             health_path_wakes=health_path_wakes,
             session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             autoscale_target_rps=autoscale_target_rps,

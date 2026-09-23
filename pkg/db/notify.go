@@ -688,10 +688,14 @@ const (
 	NotifyBuildLog        = "build_log"
 	NotifyDomainVerify    = "domain_verify"
 	NotifyInstanceChanged = "instance_changed"
-	NotifySnapshotPrime   = "snapshot_prime"
-	NotifySnapshotBoot    = "snapshot_boot"
-	NotifySnapshotWritten = "snapshot_written"
-	NotifyDeploymentReady = "deployment_ready"
+	// NotifyInstanceReadinessChanged carries reversible sidecar readiness
+	// transitions. Gateway listeners update the in-memory picker without
+	// changing schedd-owned instances.state.
+	NotifyInstanceReadinessChanged = "instance_readiness_changed"
+	NotifySnapshotPrime            = "snapshot_prime"
+	NotifySnapshotBoot             = "snapshot_boot"
+	NotifySnapshotWritten          = "snapshot_written"
+	NotifyDeploymentReady          = "deployment_ready"
 	// NotifyAppTaskChanged is a durable terminal-state handoff. Release tasks
 	// use it to resume deployment priming only after their command succeeds;
 	// manual tasks currently have no daemon-side consumer.

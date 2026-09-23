@@ -79,23 +79,25 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		stopGrace = time.Duration(req.StopGracePeriodS) * time.Second
 	}
 	return api.AppManifest{
-		ExecutionMode:    req.ExecutionMode,
-		RestartPolicy:    req.RestartPolicy,
-		StartupDeadlineS: req.StartupDeadlineS,
-		MaxRetries:       req.MaxRetries,
-		StopGracePeriod:  stopGrace,
-		StopSignal:       req.StopSignal,
-		RequestTimeoutS:  req.RequestTimeoutS,
-		ServiceReplicas:  req.ServiceReplicas,
-		WorkerReplicas:   req.WorkerReplicas,
-		Ports:            cloneWorkloadPorts(req.Ports),
-		Favicon:          append([]byte(nil), req.Favicon...),
-		RobotsTxt:        req.RobotsTxt,
-		HeadWakes:        req.HeadWakes,
-		CrawlerPolicy:    req.CrawlerPolicy,
-		HealthPath:       healthPath,
-		HealthPathWakes:  req.HealthPathWakes,
-		SessionAffinity:  req.SessionAffinity != nil && *req.SessionAffinity,
+		ExecutionMode:                req.ExecutionMode,
+		RestartPolicy:                req.RestartPolicy,
+		StartupDeadlineS:             req.StartupDeadlineS,
+		MaxRetries:                   req.MaxRetries,
+		StopGracePeriod:              stopGrace,
+		StopSignal:                   req.StopSignal,
+		RequestTimeoutS:              req.RequestTimeoutS,
+		ServiceReplicas:              req.ServiceReplicas,
+		WorkerReplicas:               req.WorkerReplicas,
+		Ports:                        cloneWorkloadPorts(req.Ports),
+		Favicon:                      append([]byte(nil), req.Favicon...),
+		RobotsTxt:                    req.RobotsTxt,
+		HeadWakes:                    req.HeadWakes,
+		CrawlerPolicy:                req.CrawlerPolicy,
+		HealthPath:                   healthPath,
+		HealthPathWakes:              req.HealthPathWakes,
+		SessionAffinity:              req.SessionAffinity != nil && *req.SessionAffinity,
+		VersionAffinityCookie:        req.VersionAffinityCookie,
+		VersionAffinityManagedCookie: req.VersionAffinityManagedCookie,
 	}
 }
 
@@ -119,23 +121,25 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		stopGracePeriodS = int(math.Ceil(manifest.StopGracePeriod.Seconds()))
 	}
 	return state.AppManifest{
-		ExecutionMode:    manifest.ExecutionMode,
-		RestartPolicy:    manifest.RestartPolicy,
-		StartupDeadlineS: manifest.StartupDeadlineS,
-		MaxRetries:       manifest.MaxRetries,
-		StopGracePeriodS: stopGracePeriodS,
-		StopSignal:       manifest.StopSignal,
-		RequestTimeoutS:  manifest.RequestTimeoutS,
-		ServiceReplicas:  replicas,
-		WorkerReplicas:   workerReplicas,
-		Ports:            cloneWorkloadPorts(manifest.Ports),
-		Favicon:          append([]byte(nil), manifest.Favicon...),
-		RobotsTxt:        manifest.RobotsTxt,
-		HeadWakes:        manifest.HeadWakes,
-		CrawlerPolicy:    manifest.CrawlerPolicy,
-		HealthPath:       manifest.HealthPath,
-		HealthPathWakes:  manifest.HealthPathWakes,
-		SessionAffinity:  manifest.SessionAffinity,
+		ExecutionMode:                manifest.ExecutionMode,
+		RestartPolicy:                manifest.RestartPolicy,
+		StartupDeadlineS:             manifest.StartupDeadlineS,
+		MaxRetries:                   manifest.MaxRetries,
+		StopGracePeriodS:             stopGracePeriodS,
+		StopSignal:                   manifest.StopSignal,
+		RequestTimeoutS:              manifest.RequestTimeoutS,
+		ServiceReplicas:              replicas,
+		WorkerReplicas:               workerReplicas,
+		Ports:                        cloneWorkloadPorts(manifest.Ports),
+		Favicon:                      append([]byte(nil), manifest.Favicon...),
+		RobotsTxt:                    manifest.RobotsTxt,
+		HeadWakes:                    manifest.HeadWakes,
+		CrawlerPolicy:                manifest.CrawlerPolicy,
+		HealthPath:                   manifest.HealthPath,
+		HealthPathWakes:              manifest.HealthPathWakes,
+		SessionAffinity:              manifest.SessionAffinity,
+		VersionAffinityCookie:        manifest.VersionAffinityCookie,
+		VersionAffinityManagedCookie: manifest.VersionAffinityManagedCookie,
 	}
 }
 
@@ -159,23 +163,25 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		stopGrace = time.Duration(manifest.StopGracePeriodS) * time.Second
 	}
 	return api.AppManifest{
-		ExecutionMode:    manifest.ExecutionMode,
-		RestartPolicy:    manifest.RestartPolicy,
-		StartupDeadlineS: manifest.StartupDeadlineS,
-		MaxRetries:       manifest.MaxRetries,
-		StopGracePeriod:  stopGrace,
-		StopSignal:       manifest.StopSignal,
-		RequestTimeoutS:  manifest.RequestTimeoutS,
-		ServiceReplicas:  replicas,
-		WorkerReplicas:   workerReplicas,
-		Ports:            cloneWorkloadPorts(manifest.Ports),
-		Favicon:          append([]byte(nil), manifest.Favicon...),
-		RobotsTxt:        manifest.RobotsTxt,
-		HeadWakes:        manifest.HeadWakes,
-		CrawlerPolicy:    manifest.CrawlerPolicy,
-		HealthPath:       manifest.HealthPath,
-		HealthPathWakes:  manifest.HealthPathWakes,
-		SessionAffinity:  manifest.SessionAffinity,
+		ExecutionMode:                manifest.ExecutionMode,
+		RestartPolicy:                manifest.RestartPolicy,
+		StartupDeadlineS:             manifest.StartupDeadlineS,
+		MaxRetries:                   manifest.MaxRetries,
+		StopGracePeriod:              stopGrace,
+		StopSignal:                   manifest.StopSignal,
+		RequestTimeoutS:              manifest.RequestTimeoutS,
+		ServiceReplicas:              replicas,
+		WorkerReplicas:               workerReplicas,
+		Ports:                        cloneWorkloadPorts(manifest.Ports),
+		Favicon:                      append([]byte(nil), manifest.Favicon...),
+		RobotsTxt:                    manifest.RobotsTxt,
+		HeadWakes:                    manifest.HeadWakes,
+		CrawlerPolicy:                manifest.CrawlerPolicy,
+		HealthPath:                   manifest.HealthPath,
+		HealthPathWakes:              manifest.HealthPathWakes,
+		SessionAffinity:              manifest.SessionAffinity,
+		VersionAffinityCookie:        manifest.VersionAffinityCookie,
+		VersionAffinityManagedCookie: manifest.VersionAffinityManagedCookie,
 	}
 }
 
@@ -184,7 +190,7 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil ||
-		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.Ports != nil
+		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.Ports != nil
 	if !changed {
 		return api.AppManifest{}, false
 	}
@@ -247,6 +253,12 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	if req.SessionAffinity != nil {
 		manifest.SessionAffinity = *req.SessionAffinity
 	}
+	if req.VersionAffinityCookie != nil {
+		manifest.VersionAffinityCookie = *req.VersionAffinityCookie
+	}
+	if req.VersionAffinityManagedCookie != nil {
+		manifest.VersionAffinityManagedCookie = *req.VersionAffinityManagedCookie
+	}
 	return manifest, true
 }
 
@@ -273,5 +285,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.HealthPath = manifest.HealthPath
 	updated.HealthPathWakes = manifest.HealthPathWakes
 	updated.SessionAffinity = manifest.SessionAffinity
+	updated.VersionAffinityCookie = manifest.VersionAffinityCookie
+	updated.VersionAffinityManagedCookie = manifest.VersionAffinityManagedCookie
 	return &updated, true
 }

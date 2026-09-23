@@ -2459,6 +2459,20 @@ func (m *Manager) InstanceIdentity(instance string) (appID, accountID string, er
 	return inst.AppID, inst.AccountID, nil
 }
 
+// InstanceRuntimeSecretIdentity resolves the deployment, app, and account
+// principal for a live guest stream under one lock. Keeping the tuple atomic
+// prevents a park/reuse race from mixing identities during runtime secret
+// refresh.
+func (m *Manager) InstanceRuntimeSecretIdentity(instance string) (deploymentID, appID, accountID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", "", "", fmt.Errorf("fcvm: runtime secret identity %s: not live", instance)
+	}
+	return inst.DeploymentID, inst.AppID, inst.AccountID, nil
+}
+
 // InstanceIdentityByCID resolves the peer CID and its app/account principal
 // under one lock. This is the host-vsock token boundary: a park/reuse racing a
 // request can therefore only produce a complete old tuple or a not-live error,
@@ -2838,6 +2852,36 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 		}
 	}
 	return merged, nil
+}
+
+// UnsealRuntimeSecrets is the narrow live-refresh counterpart to
+// prepareWakeFiles. Callers must already have established that the request is
+// bound to an authorized live app deployment. Plaintext remains in the
+// caller's memory only; callers must not log or persist it outside the guest's
+// runtime projection.
+func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]string, error) {
+	if len(entries) == 0 {
+		return map[string]string{}, nil
+	}
+	if len(m.hostIdentities) == 0 {
+		return nil, ErrNoHostKey
+	}
+	secrets := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		inner, err := secretbox.OpenMulti(m.hostIdentities, entry.Ciphertext)
+		if err != nil {
+			return nil, fmt.Errorf("open runtime secret[%s]: %w", logsanitize.Field(entry.Key), err)
+		}
+		value, ok := inner[entry.Key]
+		if !ok || len(inner) != 1 {
+			return nil, fmt.Errorf("runtime secret[%s]: sealed value does not match its authorized key", logsanitize.Field(entry.Key))
+		}
+		if _, duplicate := secrets[entry.Key]; duplicate {
+			return nil, fmt.Errorf("runtime secret[%s]: duplicate authorized key", logsanitize.Field(entry.Key))
+		}
+		secrets[entry.Key] = value
+	}
+	return secrets, nil
 }
 
 // prepareSidecarEnvFiles opens the per-value SealBytes payloads persisted by
@@ -6762,7 +6806,9 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			DiskIOProfile:   sc.DiskIOProfile,
 			Port:            sc.Port,
 			Essential:       sc.Essential,
-			StartupProbe:    cloneWorkloadStartupProbe(sc.StartupProbe),
+			StartupProbe:    cloneWorkloadProbe(sc.StartupProbe),
+			LivenessProbe:   cloneWorkloadProbe(sc.LivenessProbe),
+			ReadinessProbe:  cloneWorkloadProbe(sc.ReadinessProbe),
 			Cmd:             append([]string(nil), sc.Cmd...),
 			Entrypoint:      append([]string(nil), sc.Entrypoint...),
 			DependsOn:       append([]api.WorkloadDependency(nil), sc.DependsOn...),
@@ -6773,12 +6819,25 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 	return out
 }
 
-func cloneWorkloadStartupProbe(in *api.AppManifestHealthcheck) *api.AppManifestHealthcheck {
+func cloneWorkloadProbe(in *api.SidecarProbe) *api.SidecarProbe {
 	if in == nil {
 		return nil
 	}
 	out := *in
 	out.Test = append([]string(nil), in.Test...)
+	if in.Exec != nil {
+		execProbe := *in.Exec
+		execProbe.Command = append([]string(nil), in.Exec.Command...)
+		out.Exec = &execProbe
+	}
+	if in.HTTPGet != nil {
+		httpProbe := *in.HTTPGet
+		out.HTTPGet = &httpProbe
+	}
+	if in.TCPSocket != nil {
+		tcpProbe := *in.TCPSocket
+		out.TCPSocket = &tcpProbe
+	}
 	return &out
 }
 

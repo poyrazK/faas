@@ -62,6 +62,7 @@ type fakeBackend struct {
 	// branch (PR scale-out readiness).
 	wakeMethodOut       WakeMethod
 	lastAdmitDeployment string
+	lastAdmitScope      string
 	lastAdmitTrigger    string
 	lastAdmitMax        int
 	// failNextPick forces the next Pick call to return !ok so the
@@ -212,7 +213,7 @@ func (b *fakeBackend) HealthyCount(_ string) int {
 	return 0
 }
 
-func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, _, trigger string, maxConcurrency int) (string, WakeMethod, bool, error) {
+func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, scope, trigger string, maxConcurrency int) (string, WakeMethod, bool, error) {
 	// Issue #168 fan-out invariant: the HealthyCount + addTarget pair
 	// must be serialized. The fakeBackend takes b.mu for the whole
 	// call so concurrent Admit callers cannot collectively exceed
@@ -222,6 +223,7 @@ func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, _, trigger str
 	defer b.mu.Unlock()
 	b.lastAdmitCorrelation, _ = wire.FromContext(ctx)
 	b.lastAdmitDeployment = deploymentID
+	b.lastAdmitScope = scope
 	b.lastAdmitTrigger = trigger
 	b.lastAdmitMax = maxConcurrency
 	if len(b.targets) >= maxConcurrency {

@@ -15,23 +15,22 @@ import (
 var previewWaitPollInterval = 2 * time.Second
 
 type previewWaitReceipt struct {
-	Preview       previewSummary `json:"preview"`
-	Deployment    *DeployReceipt `json:"deployment,omitempty"`
-	Ready         bool           `json:"ready"`
-	TimedOut      bool           `json:"timed_out,omitempty"`
-	ResumeCommand string         `json:"resume_command,omitempty"`
-	NextAction    string         `json:"next_action,omitempty"`
+	Preview       previewSummary                        `json:"preview"`
+	Deployment    *DeployReceipt                        `json:"deployment,omitempty"`
+	Environment   *api.PreviewEnvironmentStatusResponse `json:"environment,omitempty"`
+	Ready         bool                                  `json:"ready"`
+	TimedOut      bool                                  `json:"timed_out,omitempty"`
+	ResumeCommand string                                `json:"resume_command,omitempty"`
+	NextAction    string                                `json:"next_action,omitempty"`
 }
 
-// cmdPreviewWait waits for the newest deployment belonging to a preview app.
-// It deliberately resolves the deployment by preview slug instead of asking
-// callers to copy an internal deployment id from create output. A new push can
-// replace that deployment while the command is waiting, so each poll reads
-// the app-scoped latest deployment endpoint.
+// cmdPreviewWait follows the current PR head's full recorded workload set
+// when available. Developer and legacy previews retain the app-scoped latest
+// deployment behavior.
 func cmdPreviewWait(args []string) int {
 	flags, pos := splitArgsForFlags(args, "progress", "open")
 	fs := newFlagSet("preview wait", flag.ContinueOnError)
-	progress := fs.Bool("progress", false, "print deployment transitions while waiting (human output only)")
+	progress := fs.Bool("progress", false, "print workload transitions while waiting (human output only)")
 	openURL := fs.Bool("open", false, "open the preview URL after it becomes ready")
 	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, "maximum seconds to wait for preview readiness")
 	if err := fs.Parse(flags); err != nil {
@@ -54,29 +53,58 @@ func cmdPreviewWait(args []string) int {
 	}
 
 	var (
-		lastState     api.PreviewStatusResponse
-		haveLastState bool
-		progressState *deploymentProgressSnapshot
+		lastState       api.PreviewStatusResponse
+		haveLastState   bool
+		progressState   *deploymentProgressSnapshot
+		lastEnvironment *api.PreviewEnvironmentStatusResponse
+		progressSHA     string
+		progressMembers map[string]string
 	)
 	for {
 		state, getErr := client.GetPreviewStatus(ctx, pos[0])
 		if getErr != nil {
 			if haveLastState && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				if lastEnvironment != nil {
+					return renderPreviewEnvironmentWaitTimeout(lastState, *lastEnvironment, waitTimeout)
+				}
 				return renderPreviewWaitTimeout(lastState, waitTimeout)
 			}
 			return printErr("Could not load preview", getErr)
 		}
 		lastState = state
 		haveLastState = true
-		if *progress && !jsonOutput && state.LatestDeployment != nil {
-			progressState = renderDeploymentProgress(osStdout, *state.LatestDeployment, progressState)
-		}
-
 		if state.App.PreviewPRState == "torn_down" {
 			return renderPreviewWaitTerminal(state, client, false, false)
 		}
-		if state.LatestDeployment != nil && isCompletedDeployment(*state.LatestDeployment) {
-			return renderPreviewWaitTerminal(state, client, state.LatestDeployment.Status == statusLive, *openURL)
+		environment, envErr := previewEnvironmentForApp(ctx, client, state.App)
+		if envErr != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				if lastEnvironment != nil {
+					return renderPreviewEnvironmentWaitTimeout(lastState, *lastEnvironment, waitTimeout)
+				}
+				return renderPreviewWaitTimeout(lastState, waitTimeout)
+			}
+			return printErr("Could not load preview environment", envErr)
+		}
+		if environment != nil {
+			lastEnvironment = environment
+			if *progress && !jsonOutput {
+				progressSHA, progressMembers = renderPreviewEnvironmentProgress(*environment, progressSHA, progressMembers)
+			}
+			if environment.Phase == "failed" || environment.Phase == "closed" ||
+				(environment.Phase == "live" && environment.Ready) {
+				return renderPreviewEnvironmentWaitTerminal(state, *environment, client, *openURL)
+			}
+		} else {
+			if lastEnvironment != nil {
+				return printErr("Preview environment disappeared", fmt.Errorf("recorded workload set for %s is no longer available", state.App.Slug))
+			}
+			if *progress && !jsonOutput && state.LatestDeployment != nil {
+				progressState = renderDeploymentProgress(osStdout, *state.LatestDeployment, progressState)
+			}
+			if state.LatestDeployment != nil && isCompletedDeployment(*state.LatestDeployment) {
+				return renderPreviewWaitTerminal(state, client, state.LatestDeployment.Status == statusLive, *openURL)
+			}
 		}
 
 		timer := time.NewTimer(previewWaitPollInterval)
@@ -85,10 +113,82 @@ func cmdPreviewWait(args []string) int {
 			if !timer.Stop() {
 				<-timer.C
 			}
+			if lastEnvironment != nil {
+				return renderPreviewEnvironmentWaitTimeout(lastState, *lastEnvironment, waitTimeout)
+			}
 			return renderPreviewWaitTimeout(lastState, waitTimeout)
 		case <-timer.C:
 		}
 	}
+}
+
+func renderPreviewEnvironmentWaitTimeout(state api.PreviewStatusResponse, environment api.PreviewEnvironmentStatusResponse, timeout time.Duration) int {
+	receipt := newPreviewEnvironmentWaitReceipt(state, environment, false)
+	receipt.TimedOut = true
+	receipt.ResumeCommand = fmt.Sprintf("gregale preview wait %s --timeout %d", state.App.Slug, int(timeout/time.Second))
+	receipt.NextAction = previewEnvironmentNextAction(environment)
+	if jsonOutput {
+		PrintWarn(osStderr, "preview environment did not become ready before the wait deadline; resume with: %s", receipt.ResumeCommand)
+		if code := jsonOut(writeJSON(receipt)); code != 0 {
+			return code
+		}
+		return 3
+	}
+	PrintWarn(osStderr, "preview environment %s did not become ready after %s; resume with: %s", state.App.Slug, timeout, receipt.ResumeCommand)
+	PrintProgress(osStderr, "next: %s", receipt.NextAction)
+	return 3
+}
+
+func renderPreviewEnvironmentWaitTerminal(state api.PreviewStatusResponse, environment api.PreviewEnvironmentStatusResponse, client *Client, open bool) int {
+	ready := environment.Phase == "live" && environment.Ready
+	root := previewEnvironmentRootDeployment(state, environment)
+	if root != nil {
+		resolved := deploymentWithReceipt(context.Background(), client, *root)
+		root = &resolved
+	}
+	receipt := newPreviewEnvironmentWaitReceipt(state, environment, ready)
+	if root != nil {
+		receipt.Preview = previewSummaryFromApp(state.App, root)
+		receipt.Deployment = newDeployReceipt(*root, nil, previewURLFromApp(state.App), "")
+	}
+	if !ready {
+		receipt.NextAction = previewEnvironmentNextAction(environment)
+	}
+	if jsonOutput {
+		if code := jsonOut(writeJSON(receipt)); code != 0 {
+			return code
+		}
+		if ready {
+			return 0
+		}
+		return 1
+	}
+	if !ready {
+		PrintFail(osStderr, "%s", environment.Summary)
+		PrintProgress(osStderr, "next: %s", receipt.NextAction)
+		return 1
+	}
+	PrintOK(osStdout, "Preview ready: %s", previewURLFromApp(state.App))
+	PrintProgress(osStdout, "%d/%d workloads live at %s", environment.LiveWorkloads, environment.TotalWorkloads, environment.CommitSHA)
+	if root != nil {
+		PrintProgress(osStdout, "Root deployment: %s", root.ID)
+	}
+	PrintProgress(osStdout, "Expires: %s", previewExpiry(state.App.PreviewExpiresAt))
+	openPreviewURL(open, previewURLFromApp(state.App))
+	return 0
+}
+
+func newPreviewEnvironmentWaitReceipt(state api.PreviewStatusResponse, environment api.PreviewEnvironmentStatusResponse, ready bool) previewWaitReceipt {
+	root := previewEnvironmentRootDeployment(state, environment)
+	receipt := previewWaitReceipt{
+		Preview:     previewSummaryFromApp(state.App, root),
+		Environment: &environment,
+		Ready:       ready,
+	}
+	if root != nil {
+		receipt.Deployment = newDeployReceipt(*root, nil, previewURLFromApp(state.App), "")
+	}
+	return receipt
 }
 
 func renderPreviewWaitTimeout(state api.PreviewStatusResponse, timeout time.Duration) int {

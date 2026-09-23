@@ -357,26 +357,78 @@ func cmdProjectsEnvironmentConfigDiff(args []string) int {
 	if *from == *to {
 		return printErr("Invalid environments", fmt.Errorf("--from and --to must be different"))
 	}
+	return runProjectEnvironmentDiff(positional[0], *from, *to)
+}
+
+func runProjectEnvironmentDiff(project, from, to string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	diff, err := client.GetProjectEnvironmentConfigDiff(context.Background(), positional[0], *to, *from)
+	diff, err := client.GetProjectEnvironmentDiff(context.Background(), project, to, from)
 	if err != nil {
-		return printErr("Could not load environment config diff", err)
+		return printErr("Could not load environment diff", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(diff))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Environment config diff %s: %s -> %s\n  versions: %d -> %d\n  hashes: %s -> %s\n", diff.ProjectSlug, diff.FromEnvironment, diff.ToEnvironment, diff.FromVersion, diff.ToVersion, diff.FromHash, diff.ToHash)
-	if len(diff.Changes) == 0 {
+	renderProjectEnvironmentDiff(diff)
+	return 0
+}
+
+func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
+	_, _ = fmt.Fprintf(osStdout, "Environment diff %s: %s -> %s\n\nCONFIGURATION\n  versions: %d -> %d\n  hashes: %s -> %s\n", diff.ProjectSlug, diff.FromEnvironment, diff.ToEnvironment, diff.Configuration.FromVersion, diff.Configuration.ToVersion, diff.Configuration.FromHash, diff.Configuration.ToHash)
+	if len(diff.Configuration.Changes) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "  no changes")
-		return 0
 	}
-	for _, change := range diff.Changes {
+	for _, change := range diff.Configuration.Changes {
 		_, _ = fmt.Fprintf(osStdout, "  %-24s %-8s before=%s after=%s\n", change.Key, change.Kind, change.Before, change.After)
 	}
-	return 0
+	for _, workload := range diff.Workloads {
+		_, _ = fmt.Fprintf(osStdout, "\nAPPLICATION %s\n  release: %-9s %s -> %s\n", workload.WorkloadSlug, workload.Release.Kind, releaseSummary(workload.Release.Before), releaseSummary(workload.Release.After))
+		for _, change := range workload.Variables {
+			_, _ = fmt.Fprintf(osStdout, "  variable %-20s %-8s %s -> %s\n", change.Key, change.Kind, optionalString(change.Before), optionalString(change.After))
+		}
+		for _, change := range workload.Secrets {
+			_, _ = fmt.Fprintf(osStdout, "  secret   %-20s %-8s %s -> %s\n", change.Key, change.Kind, secretCellSummary(change.Before), secretCellSummary(change.After))
+		}
+		for _, change := range workload.Bindings {
+			_, _ = fmt.Fprintf(osStdout, "  binding  %-20s %-8s %s\n", change.BindingID, change.Change, change.Kind)
+		}
+	}
+	_, _ = fmt.Fprintln(osStdout, "\nSHARED (not environment-scoped)")
+	for _, resource := range diff.SharedResources {
+		_, _ = fmt.Fprintf(osStdout, "  %s\n", resource.Kind)
+	}
+}
+
+func releaseSummary(release api.ProjectEnvironmentReleaseWorkloadResponse) string {
+	for _, identity := range []string{release.ImageDigest, release.SourceSHA256, release.CommitSHA, release.BuildID, release.DeploymentID} {
+		if identity != "" {
+			return identity
+		}
+	}
+	return "<not deployed>"
+}
+
+func optionalString(value *string) string {
+	if value == nil {
+		return "<missing>"
+	}
+	return *value
+}
+
+func secretCellSummary(cell api.ProjectEnvironmentSecretCellResponse) string {
+	if !cell.Present {
+		return "<missing>"
+	}
+	if cell.CredentialGeneration > 0 {
+		return fmt.Sprintf("generation %d", cell.CredentialGeneration)
+	}
+	if cell.ValueHash == "" {
+		return "present (fingerprint unavailable)"
+	}
+	return "fingerprint " + cell.ValueHash
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {
@@ -631,19 +683,27 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("projects-environments-create", flag.ContinueOnError)
 	protected := fs.Bool("protected", false, "protect the environment from promotion")
+	from := fs.String("from", "", "source environment to clone")
+	shareResources := fs.Bool("share-resources", false, "explicitly share managed database and object-storage data")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--protected]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--from <environment>] [--protected] [--share-resources]", "projects environments")
 		return 1
 	}
 	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
 		return printErr("Invalid environment", fmt.Errorf("project and environment slugs must use lowercase letters, numbers, and internal hyphens"))
+	}
+	if *from != "" && (!api.ValidProjectEnvironmentSlug(*from) || *from == positional[1]) {
+		return printErr("Invalid source environment", fmt.Errorf("--from must name a different project environment"))
+	}
+	if *shareResources && *from == "" {
+		return printErr("Invalid resource sharing option", fmt.Errorf("--share-resources requires --from"))
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	environment, err := client.CreateProjectEnvironment(context.Background(), positional[0], api.CreateProjectEnvironmentRequest{
-		Slug: positional[1], Protected: protected,
+		Slug: positional[1], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources,
 	})
 	if err != nil {
 		return printErr("Create failed", err)
@@ -676,6 +736,16 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 		return jsonOut(writeJSON(environment))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  protected: %t\n  updated: %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
+	if environment.Clone != nil {
+		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d\n  shared: %s\n",
+			environment.ClonedFrom, environment.Clone.ConfigurationCopied, environment.Clone.VariablesCopied,
+			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, environment.Clone.BindingsCopied,
+			strings.Join(environment.Clone.SharedResources, ", "))
+		if strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "managed_postgres_data") ||
+			strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "object_storage_bucket_data") {
+			_, _ = fmt.Fprintln(osStdout, "  warning: managed data is shared with the source; credentials are new and environment-scoped")
+		}
+	}
 	return 0
 }
 

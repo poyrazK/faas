@@ -29,16 +29,17 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
-| [`deployments`](#deployments) | List deployments (--app SLUG or linked context \| --limit N \| --before C \| --all \| --wide) |
+| [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment (name defaults to linked context) |
+| [`diff`](#diff) | Compare two named environments in the linked project |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
-| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
+| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
-| [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context) |
+| [`env`](#env) | Clone project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
@@ -933,9 +934,9 @@ Cancel a delayed task
 
 ## deployments
 
-List deployments (--app SLUG or linked context | --limit N | --before C | --all | --wide)
+List deployments or manage stable named URLs for immutable revisions
 
-`gregale deployments [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
+`gregale deployments [<subcommand>] [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -944,6 +945,43 @@ List deployments (--app SLUG or linked context | --limit N | --before C | --all 
 | `--before <cursor>` | pagination cursor (RFC3339Nano) |  |
 | `--all` | walk every page |  |
 | `--wide` | include annotation columns (by / pr / tag / reason) |  |
+
+### deployments alias
+
+Manage stable named URLs for immutable deployments
+
+#### deployments alias list
+
+List deployment aliases for an app
+
+`gregale deployments alias list [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+
+#### deployments alias set
+
+Point an alias at an exact deployment revision
+
+`gregale deployments alias set [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+| `--name <NAME>` | lowercase DNS-label alias name | required |
+| `--deployment <ID|vN>` | deployment ID or app revision (vN) | required |
+
+#### deployments alias delete
+
+Remove an alias without deleting its deployment
+
+`gregale deployments alias delete [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+| `--name <NAME>` | lowercase DNS-label alias name | required |
 
 
 ## deployment
@@ -1173,6 +1211,17 @@ preflight a project and prepare the first developer environment
 | `--postgres-region <REGION>` | choose managed database placement |  |
 
 
+## diff
+
+Compare two named environments in the linked project
+
+`gregale diff <from-environment> <to-environment> [--project <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--project <SLUG>` | project slug (defaults to linked project) |  |
+
+
 ## preview
 
 Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)
@@ -1225,7 +1274,7 @@ Tear down a preview app (POST /v1/preview/{slug}/destroy)
 
 ## edge-rules
 
-Per-app edge rules (edge-rules list|create|get|update|rm --app &lt;slug&gt;)
+Per-app edge rules (edge-rules list|trace|create|get|update|rm --app &lt;slug&gt;)
 
 `gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
 
@@ -1242,6 +1291,16 @@ List edge rules
 |---|---|---|
 | `--app <slug>` | filter to a single app slug |  |
 | `--kind <value>` | filter to a single kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
+
+### edge-rules trace
+
+Preview which edge rules match a proposed request (no actions executed)
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--url <URL>` | absolute HTTP(S) request URL | required |
+| `--method <method>` | request method (default GET) |  |
 
 ### edge-rules create
 
@@ -1312,13 +1371,24 @@ Remove the imported app OpenAPI document
 
 ## env
 
-Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context)
+Clone project environments or manage app runtime env/secrets
 
 `gregale env [<subcommand>] [--app <slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked context) |  |
+
+### env create
+
+Clone a project environment with isolated managed data by default
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | source environment | required |
+| `--project <SLUG>` | project slug (defaults to linked project) |  |
+| `--protected` | protect the new environment |  |
+| `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
 
 ### env pull
 
@@ -1606,7 +1676,7 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 Query runtime logs and HTTP request events (slug defaults to linked context)
 
-`gregale logs [<slug>] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
+`gregale logs [<slug>] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1620,6 +1690,7 @@ Query runtime logs and HTTP request events (slug defaults to linked context)
 | `--status <100..599>` | only show HTTP requests with this status |  |
 | `--route <PATH>` | only show HTTP requests for this route |  |
 | `--request <ID>` | show one HTTP request by public request id or row id |  |
+| `--trace <TRACE_ID>` | show HTTP access logs correlated with a W3C trace id |  |
 | `--limit <N>` | HTTP request page size (1..200) |  |
 | `--all` | read every retained HTTP request page |  |
 | `--explain` | summarize the last failure and common error patterns |  |
@@ -2406,11 +2477,12 @@ Cache HEAD responses for a route
 
 ### cache purge
 
-Purge cached responses: cache purge &lt;slug&gt; [--path GLOB]
+Purge cached responses: cache purge &lt;slug&gt; [--path GLOB | --tag TAG]
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <GLOB>` | optional normalized request path glob |  |
+| `--tag <TAG>` | optional cache tag |  |
 
 
 ## upload-cache

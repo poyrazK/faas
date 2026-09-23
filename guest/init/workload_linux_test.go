@@ -194,31 +194,33 @@ func TestSupervisor_LastErr_NilAndStored(t *testing.T) {
 	}
 }
 
-// TestRunWorkloads_CapRejectsThreeSidecars pins the in-guest
-// cap-2 defensive check (PR-B review finding #2). The server-
-// side cap (migration 00119 trigger) rejects a 3rd row before
+// TestRunWorkloads_CapRejectsSixHelpers pins the in-guest
+// defensive cardinality check. The server-side cap rejects a 6th row before
 // the roster is ever stamped; guest-init still re-asserts the
 // limit so a malformed /etc/faas/workloads.json (e.g. stamped
 // by an older vmmd, or hand-crafted for a metal test) can't
-// trick the orchestrator into supervising more than 2 sidecars.
+// trick the orchestrator into supervising more than 5 helpers.
 // The error must be returned BEFORE any exec.Command, so this
 // test uses an empty mainManifest — a real runWorkloads would
 // fail later, but the cap rejection must short-circuit first.
-func TestRunWorkloads_CapRejectsThreeSidecars(t *testing.T) {
+func TestRunWorkloads_CapRejectsSixHelpers(t *testing.T) {
 	roster := workloadRoster{
 		Main: workloadSpec{Name: "main", Type: "main", Essential: true},
 		Sidecars: []workloadSpec{
+			{Name: "migrate", Type: "init", Essential: true},
 			{Name: "metrics", Type: "sidecar", Essential: true},
 			{Name: "logger", Type: "sidecar", Essential: true},
+			{Name: "proxy", Type: "sidecar", Essential: true},
+			{Name: "tracer", Type: "sidecar", Essential: true},
 			{Name: "audit", Type: "sidecar", Essential: true},
 		},
 	}
 	err := runWorkloads(api.AppManifest{}, roster, nil, nil, nil, nil)
 	if err == nil {
-		t.Fatal("runWorkloads with 3 sidecars: got nil, want cap rejection")
+		t.Fatal("runWorkloads with 6 helpers: got nil, want cap rejection")
 	}
-	if !strings.Contains(err.Error(), "cap is 2") {
-		t.Errorf("runWorkloads error = %v, want cap-2 message", err)
+	if !strings.Contains(err.Error(), "cap is 5") {
+		t.Errorf("runWorkloads error = %v, want cap-5 message", err)
 	}
 }
 
@@ -462,6 +464,9 @@ func TestDiscoverSidecarDevicesCarriesWorkloadNames(t *testing.T) {
 		Sidecars: []workloadSpec{
 			{Name: "metrics", Type: "sidecar", RamMB: 128, ScratchMB: 192},
 			{Name: "migrator", Type: "init"},
+			{Name: "logger", Type: "sidecar"},
+			{Name: "proxy", Type: "sidecar"},
+			{Name: "tracer", Type: "sidecar"},
 		},
 	}
 	data, err := json.Marshal(roster)
@@ -475,14 +480,17 @@ func TestDiscoverSidecarDevicesCarriesWorkloadNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discoverSidecarDevices: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("devices = %d, want 2", len(got))
+	if len(got) != api.SidecarCapMax {
+		t.Fatalf("devices = %d, want maximum %d", len(got), api.SidecarCapMax)
 	}
-	if got[0].workloadName != "metrics" || got[1].workloadName != "migrator" {
-		t.Fatalf("workload names = %q, %q", got[0].workloadName, got[1].workloadName)
+	if got[0].workloadName != "metrics" || got[1].workloadName != "migrator" || got[4].workloadName != "tracer" {
+		t.Fatalf("workload names at declaration-order slots = %q, %q, %q", got[0].workloadName, got[1].workloadName, got[4].workloadName)
 	}
 	if got[0].tmpfsSizeMB != 192 || got[1].tmpfsSizeMB != defaultSidecarTmpfsSizeMB {
 		t.Fatalf("sidecar tmpfs sizes = %d, %d; want 192, %d", got[0].tmpfsSizeMB, got[1].tmpfsSizeMB, defaultSidecarTmpfsSizeMB)
+	}
+	if got[4].device != "/dev/vdg" {
+		t.Errorf("fifth helper device = %q, want /dev/vdg", got[4].device)
 	}
 }
 

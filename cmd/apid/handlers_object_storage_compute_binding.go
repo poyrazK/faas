@@ -103,7 +103,7 @@ func (s *server) listObjectStorageComputeBindings(w http.ResponseWriter, r *http
 	}
 	items := make([]api.ObjectStorageComputeBinding, 0, len(rows))
 	for _, row := range rows {
-		if row.ManagedAppID == app.ID && row.ManagedScope == bucket.Scope && row.ManagedPrefix != "" {
+		if row.ManagedAppID == app.ID && row.ManagedPrefix != "" {
 			items = append(items, viewObjectStorageComputeBinding(row))
 		}
 	}
@@ -289,7 +289,7 @@ func (s *server) loadObjectStorageComputeBinding(w http.ResponseWriter, r *http.
 		return state.App{}, state.ObjectBucket{}, nil, state.ObjectS3Credential{}, false
 	}
 	credential, err := store.GetObjectS3Credential(r.Context(), acct.ID, bucket.ID, id)
-	if err != nil || credential.ManagedAppID != app.ID || credential.ManagedScope != bucket.Scope || credential.ManagedPrefix == "" {
+	if err != nil || credential.ManagedAppID != app.ID || credential.ManagedPrefix == "" {
 		bucketProblem(w, state.ErrNotFound)
 		return state.App{}, state.ObjectBucket{}, nil, state.ObjectS3Credential{}, false
 	}

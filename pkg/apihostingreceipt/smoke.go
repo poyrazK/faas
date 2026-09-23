@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,11 +30,15 @@ const (
 // gateway's public origin; AppsDomain is used to construct the tenant Host
 // header when the origin is shared by many apps.
 type Verifier struct {
-	Client        *http.Client
-	BaseURL       string
-	AppsDomain    string
-	Timeout       time.Duration
-	RetryInterval time.Duration
+	Client     *http.Client
+	BaseURL    string
+	AppsDomain string
+	Timeout    time.Duration
+	// RequestTimeout bounds one public gateway attempt independently of the
+	// whole verification budget. A stalled node must not consume the entire
+	// budget before another attempt can reach a healthy candidate.
+	RequestTimeout time.Duration
+	RetryInterval  time.Duration
 	// Required makes an unset BaseURL a failed verification rather than a
 	// compatibility skip. Public-beta compute nodes set this so a missing
 	// verifier cannot promote a deployment with an unverified public route.
@@ -84,9 +89,13 @@ func (v Verifier) VerifyDeployment(ctx context.Context, slug, path, deploymentID
 	if client == nil {
 		client = &http.Client{}
 	}
-	if v.Timeout > 0 {
+	requestTimeout := v.Timeout
+	if v.RequestTimeout > 0 {
+		requestTimeout = v.RequestTimeout
+	}
+	if requestTimeout > 0 {
 		copy := *client
-		copy.Timeout = v.Timeout
+		copy.Timeout = requestTimeout
 		client = &copy
 	}
 	verifyCtx := ctx
@@ -135,7 +144,7 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 		return failedSmoke(path, "smoke_request_failed", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	result.StatusCode = resp.StatusCode
 	result.VerifiedAt = time.Now().UTC()
 	if id := resp.Header.Get("X-Faas-Request-ID"); id != "" {
@@ -144,20 +153,48 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 		result.RequestID = id
 	}
 	result.DeploymentID = resp.Header.Get(ServedDeploymentHeader)
+	// Report an error response as what it is. Checking the deployment header
+	// first turned every gateway refusal (a 429 or 503 carries no deployment
+	// header) into "reached deployment \"\"", which hid the real status.
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		result.Status = SmokeFailed
+		result.ErrorCode = "smoke_http_status"
+		result.Error = fmt.Sprintf("health probe returned HTTP %d", resp.StatusCode)
+		if code := problemCode(resp.Header.Get("Content-Type"), body); code != "" {
+			result.Error += " (" + code + ")"
+		}
+		return result
+	}
 	if deploymentID != "" && result.DeploymentID != deploymentID {
 		result.Status = SmokeFailed
 		result.ErrorCode = SmokeErrorDeploymentMismatch
 		result.Error = fmt.Sprintf("health probe reached deployment %q, expected %q", result.DeploymentID, deploymentID)
 		return result
 	}
-	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-		result.Status = SmokeVerified
-		return result
-	}
-	result.Status = SmokeFailed
-	result.ErrorCode = "smoke_http_status"
-	result.Error = fmt.Sprintf("health probe returned HTTP %d", resp.StatusCode)
+	result.Status = SmokeVerified
 	return result
+}
+
+// problemCode extracts the stable RFC 7807 "code" from a JSON error body.
+// Only a short identifier is returned, never body content, so a receipt
+// cannot persist anything the app or gateway wrote.
+func problemCode(contentType string, body []byte) string {
+	if !strings.Contains(strings.ToLower(contentType), "json") || len(body) == 0 {
+		return ""
+	}
+	var problem struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &problem); err != nil || problem.Code == "" || len(problem.Code) > 64 {
+		return ""
+	}
+	for _, r := range problem.Code {
+		allowed := r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.'
+		if !allowed {
+			return ""
+		}
+	}
+	return problem.Code
 }
 
 func retryableSmoke(result SmokeResult) bool {
@@ -168,7 +205,7 @@ func retryableSmoke(result SmokeResult) bool {
 		return true
 	}
 	switch result.StatusCode {
-	case http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusNotFound, http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	default:
 		return false

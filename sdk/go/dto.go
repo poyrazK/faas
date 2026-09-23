@@ -54,11 +54,15 @@ type (
 	ResourceProfileSpec                      = api.ResourceProfileSpec
 
 	// Deployments.
-	CreateDeploymentRequest        = api.CreateDeploymentRequest
-	DeploymentResponse             = api.DeploymentResponse
-	DeploymentListResponse         = api.DeploymentListResponse
-	LatestDeploymentsByAppResponse = api.LatestDeploymentsByAppResponse
-	PreviewStatusResponse          = api.PreviewStatusResponse
+	CreateDeploymentRequest          = api.CreateDeploymentRequest
+	DeploymentResponse               = api.DeploymentResponse
+	DeploymentListResponse           = api.DeploymentListResponse
+	LatestDeploymentsByAppResponse   = api.LatestDeploymentsByAppResponse
+	PreviewStatusResponse            = api.PreviewStatusResponse
+	PreviewResourceResponse          = api.PreviewResourceResponse
+	PreviewProductionChangesResponse = api.PreviewProductionChangesResponse
+	PreviewArtifactResponse          = api.PreviewArtifactResponse
+	PreviewResourceLinksResponse     = api.PreviewResourceLinksResponse
 
 	// Account.
 	RepoResponse            = api.RepoResponse

@@ -5090,7 +5090,7 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 }
 
 // ErrSidecarCapExceeded is returned when the request carries more
-// than SidecarCapMax sidecars (issue #463 / ADR-068 §Decision 1).
+// than the global or per-type helper cap (issue #463 / ADR-068 §Decision 1).
 // 400 because the request shape is wrong; the cap is the load-bearing
 // invariant. The schema CHECK on `deployments.sidecars` is the
 // second-line defence; this error surfaces before that check
@@ -5098,14 +5098,14 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 func ErrSidecarCapExceeded(seen, cap int) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSidecarCapExceeded,
 		"Too many sidecars",
-		fmt.Sprintf("request carried %d sidecars; the cap is %d (issue #463 / ADR-068 §Decision 1).", seen, cap)).
+		fmt.Sprintf("request carried %d helpers; the cap is %d (issue #463 / ADR-068 §Decision 1).", seen, cap)).
 		WithLimit(int64(cap), int64(seen)).
 		WithDocs(docsBase + "/sidecars#cap")
 }
 
 // ErrSidecarInvalidType is returned when a sidecar carries a `type`
 // other than {init, sidecar}, or when the request carries more than
-// one init or more than one sidecar (the per-type-uniqueness rule).
+// one init helper.
 // 400 because the request shape is wrong.
 func ErrSidecarInvalidType(name, got string) *Problem {
 	if got == "" {

@@ -1432,29 +1432,31 @@ func EvictionPriorityOrBestEffort(p string) string {
 	return p
 }
 
-// PreviewPrStateOpen / Closed / Stale / TornDown are the four
+// PreviewPrStateOpen / Closed / Stale / TearingDown / TornDown are the
 // closed-set values for state.App.PreviewPrState. Mirrors the
 // apps_preview_pr_state_chk CHECK constraint introduced by
-// migration 00218 (issue #272 / ADR-094). Empty string means
+// migration 00220 (issue #272 / ADR-094), extended by the teardown-claim
+// migration. Empty string means
 // "production app, no preview state" — the SQL CHECK allows
-// NULL or one of the four values; the Go side represents NULL
+// NULL or one of these values; the Go side represents NULL
 // as "" (same convention as EvictionPriorityOrBestEffort).
 const (
-	PreviewPrStateOpen     = "open"
-	PreviewPrStateClosed   = "closed"
-	PreviewPrStateStale    = "stale"
-	PreviewPrStateTornDown = "torn_down"
+	PreviewPrStateOpen        = "open"
+	PreviewPrStateClosed      = "closed"
+	PreviewPrStateStale       = "stale"
+	PreviewPrStateTearingDown = "tearing_down"
+	PreviewPrStateTornDown    = "torn_down"
 )
 
 // PreviewPrStateIsValid reports whether the value is one of
-// the four legal preview_pr_state values. Empty string is the
+// the legal preview_pr_state values. Empty string is the
 // "production app" shape (preview_pr_state IS NULL) — the SQL
 // CHECK allows NULL; the Go side uses "" for that. Callers
 // building a new preview App MUST set a non-empty value from
 // the closed set above.
 func PreviewPrStateIsValid(s string) bool {
 	switch s {
-	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTornDown:
+	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown:
 		return true
 	default:
 		return false
@@ -1525,7 +1527,9 @@ type AppManifest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is persisted in the manifest; legacy rows remain
 	// disabled when the field is absent.
-	SessionAffinity bool `json:"session_affinity,omitempty"`
+	SessionAffinity              bool   `json:"session_affinity,omitempty"`
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1564,7 +1568,7 @@ func (m AppManifest) IsZero() bool {
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
-		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -2027,8 +2031,8 @@ type Deployment struct {
 	// 3 / 60s) are applied on the apid read path when this
 	// column is empty.
 	OverrideLivenessProbe json.RawMessage `json:"override_liveness_probe,omitempty"`
-	// Sidecars (issue #463 / ADR-068). Up to 2 stateless sidecars
-	// (1 init + 1 sidecar) per app. Persisted as jsonb on the
+	// Sidecars (issue #463 / ADR-068). Up to 5 stateless helpers
+	// (1 init + 4 long-running companions) per app. Persisted as jsonb on the
 	// `deployments.sidecars` column (migration 00095). Field is
 	// json.RawMessage (NOT []api.Sidecar) so the state package
 	// does NOT import pkg/api — see pkg/api ↔ pkg/state cycle
@@ -2455,6 +2459,21 @@ func (d Deployment) DeploymentPreviewActive() bool {
 	}
 }
 
+// DeploymentAliasActive reports whether a named alias may keep routing to its
+// pinned revision. Unlike a deployment-preview URL, an alias deliberately
+// remains valid after a newer revision supersedes its target. Failed or
+// cancelled targets are never routable, and soft-deletion is checked by the
+// caller because it is stored separately from status.
+func (d Deployment) DeploymentAliasActive() bool {
+	switch d.Status {
+	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting,
+		DeployLive, DeploySuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 // StageState is the typed view of the
 // `deployments.stage_state` jsonb column (ADR-117,
 // migration 00302). Shape:
@@ -2511,8 +2530,9 @@ type StageStateItem struct {
 // handle (issue #463 / ADR-069 / PR-B). imaged writes one row per
 // sidecar during the buildImageLayer pass; vmmd reads it at wake
 // time to resolve the StorageBackend key into a tmp path. The
-// 2-row cap is mirrored at the schema layer via the
-// `deployments.sidecars` jsonb CHECK constraint (migration 00118);
+// five-row cap is mirrored at the schema layer via the
+// `deployments.sidecars` jsonb CHECK constraint and this table's
+// trigger (migration 20260923163517663);
 // this table's own constraint is just the PK uniqueness
 // (deployment_id, sidecar_name). The FK CASCADE means deleting
 // the deployment carries the rows with it (defence-in-depth —
@@ -3149,7 +3169,9 @@ const (
 	AppWebhookEventAppWoken                AppWebhookEvent = "app.woken"
 	AppWebhookEventBuildSucceeded          AppWebhookEvent = "build.succeeded"
 	AppWebhookEventBuildFailed             AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentLive          AppWebhookEvent = "deployment.live"
 	AppWebhookEventDeploymentFailed        AppWebhookEvent = "deployment.failed"
+	AppWebhookEventRolloutCompleted        AppWebhookEvent = "rollout.completed"
 	AppWebhookEventRolloutAborted          AppWebhookEvent = "rollout.aborted"
 	AppWebhookEventErrorNew                AppWebhookEvent = "error.new"
 	AppWebhookEventJobFinished             AppWebhookEvent = "job.finished"
@@ -3172,7 +3194,9 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventAppWoken,
 	AppWebhookEventBuildSucceeded,
 	AppWebhookEventBuildFailed,
+	AppWebhookEventDeploymentLive,
 	AppWebhookEventDeploymentFailed,
+	AppWebhookEventRolloutCompleted,
 	AppWebhookEventRolloutAborted,
 	AppWebhookEventErrorNew,
 	AppWebhookEventJobFinished,

@@ -18,6 +18,18 @@ import (
 // webhookIDPattern in commands_webhooks.go.
 const webhookTestID = "0123456789abcdef0123456789abcdef"
 
+// ADR-076: only producer-backed webhook events may be selected locally.
+func TestWebhookEventVocab_RolloutOutcomes(t *testing.T) {
+	for _, event := range []string{"rollout.completed", "rollout.aborted", "job.finished"} {
+		if !validAppWebhookEvent(event) {
+			t.Errorf("producer-backed event %q rejected by CLI", event)
+		}
+	}
+	if validAppWebhookEvent("rollout.started") {
+		t.Fatal("event without a producer accepted by CLI")
+	}
+}
+
 func TestCmdWebhooks_Add_HappyPath(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody api.CreateAppWebhookRequest
