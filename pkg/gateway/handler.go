@@ -5696,6 +5696,7 @@ haveApp:
 	managedVersionToken := ""
 	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
 		versionKey, versionKeyOutcome, managedVersionToken = versionAffinityKeyFromManagedRequest(r)
+		r = withManagedVersionCookieProtection(r)
 	}
 	if h.metrics != nil {
 		h.metrics.ObserveVersionAffinityKey(versionAffinitySurfacePublic, versionKeyOutcome)
@@ -8337,6 +8338,7 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
+		stripGuestManagedVersionCookieResponseHeader(resp)
 		return nil
 	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the
