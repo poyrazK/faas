@@ -76,6 +76,10 @@ export type DeploymentResponse = {
    */
   has_overrides?: boolean;
   /**
+   * Whether the deployment opted out of the temporary startup CPU allowance; absent/false preserves the default boost.
+   */
+  disable_startup_cpu_boost?: boolean;
+  /**
    * Entrypoint override echoed verbatim from the create request. nil when no override was supplied.
    */
   override_entrypoint?: Array<string>;

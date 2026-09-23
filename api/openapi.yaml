@@ -22836,7 +22836,7 @@ components:
           description: "Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
-          description: "Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
+          description: "Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost."
         no_triggers:
           type: boolean
           description: "Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."

@@ -47,6 +47,10 @@ export type UploadDeployOptions = {
    */
   rollback_on_5xx?: boolean | null;
   /**
+   * Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost.
+   */
+  disable_startup_cpu_boost?: boolean | null;
+  /**
    * Skip reconciling trigger declarations from the uploaded gregale manifest at commit time.
    */
   no_triggers?: boolean;
