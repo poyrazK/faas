@@ -181,9 +181,10 @@ func problemCode(contentType string, body []byte) string {
 		return ""
 	}
 	for _, r := range problem.Code {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.') {
-			return ""
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.' {
+			continue
 		}
+		return ""
 	}
 	return problem.Code
 }
