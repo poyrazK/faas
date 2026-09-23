@@ -997,7 +997,7 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 		`update job_tasks set
 		   status = 'claimed', instance_id = $3::uuid,
 		   lease_token = $4, lease_expires_at = $5,
-		   last_lease_node = $6::uuid,
+		   last_lease_node = $6,
 		   started_at = coalesce(started_at, now())
 		 where run_id = $1::uuid and task_index = $2 and status = 'queued'`,
 		runID, taskIndex, instanceID, leaseToken, leaseExpiresAt.UTC(), leaseOwnerNodeID)
