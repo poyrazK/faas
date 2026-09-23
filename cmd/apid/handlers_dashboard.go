@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
+	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/stages"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
@@ -2578,6 +2579,7 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 		}
 		data.Invitations = items
 	}
+	populateOrgActivity(r.Context(), r, log, s.store, org, &data)
 
 	page := dashboard.Page{
 		Title:   org.Name,
@@ -2587,6 +2589,99 @@ func (s *server) renderOrgDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
+	}
+}
+
+const orgDashboardActivityPageSize = 25
+
+// populateOrgActivity reads the customer-safe activity projection for this
+// organization. The membership check in renderOrgDetail has already passed;
+// every query remains pinned to the authoritative org ID rather than a URL
+// parameter.
+func populateOrgActivity(ctx context.Context, r *http.Request, log *slog.Logger, store state.Store, org state.Org, data *dashboard.OrgDetailData) {
+	query := r.URL.Query()
+	kindPrefix := query.Get("activity_kind_prefix")
+	if !validDashboardActivityKindPrefix(kindPrefix) {
+		data.ActivityError = "unsupported event type filter"
+		return
+	}
+	actorType := query.Get("activity_actor_type")
+	if !validDashboardActivityActor(actorType) {
+		data.ActivityError = "unsupported actor filter"
+		return
+	}
+	data.ActivityKindPrefix = kindPrefix
+	data.ActivityActorType = actorType
+
+	orgID, err := uuid.Parse(org.ID)
+	if err != nil {
+		log.Warn("dashboard renderOrgDetail: invalid organization id for activity", "org_id", org.ID, "err", err)
+		data.ActivityError = "timeline is temporarily unavailable"
+		return
+	}
+	activityStore, ok := store.(state.OrgActivityStore)
+	if !ok {
+		data.ActivityError = "timeline is unavailable for this storage backend"
+		return
+	}
+	filter := state.OrgActivityFilter{OrgID: orgID, KindPrefix: kindPrefix, ActorType: state.OrgActivityActorType(actorType), Limit: orgDashboardActivityPageSize + 1}
+	if rawBefore := query.Get("activity_before"); rawBefore != "" {
+		key, decodeErr := cursor.Decode(rawBefore)
+		id, idErr := strconv.ParseInt(key.ID, 10, 64)
+		if decodeErr != nil || idErr != nil || id < 1 {
+			data.ActivityError = "invalid activity page cursor; clear the filters to start again"
+			return
+		}
+		filter.Before = &state.OrgActivityCursor{OccurredAt: key.CreatedAt, ID: id}
+	}
+	rows, err := activityStore.ListOrgActivity(ctx, filter)
+	if err != nil {
+		log.Warn("dashboard renderOrgDetail: ListOrgActivity", "org_id", org.ID, "err", err)
+		data.ActivityError = "timeline is temporarily unavailable"
+		return
+	}
+	hasNext := len(rows) > orgDashboardActivityPageSize
+	if hasNext {
+		rows = rows[:orgDashboardActivityPageSize]
+	}
+	data.Activity = make([]dashboard.OrgActivityItem, 0, len(rows))
+	for _, row := range rows {
+		data.Activity = append(data.Activity, dashboard.OrgActivityItem{
+			OccurredAt: row.OccurredAt.UTC().Format("2006-01-02 15:04 MST"),
+			Kind:       row.Kind,
+			Summary:    orgActivitySummary(row),
+		})
+	}
+	if hasNext && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		values := url.Values{}
+		if kindPrefix != "" {
+			values.Set("activity_kind_prefix", kindPrefix)
+		}
+		if actorType != "" {
+			values.Set("activity_actor_type", actorType)
+		}
+		values.Set("activity_before", cursor.Encode(cursor.Key{CreatedAt: last.OccurredAt, ID: strconv.FormatInt(last.ID, 10)}))
+		data.ActivityNextURL = r.URL.Path + "?" + values.Encode()
+	}
+}
+
+func validDashboardActivityKindPrefix(prefix string) bool {
+	switch prefix {
+	case "", "app.", "deploy.", "env.", "domain.":
+		return true
+	default:
+		return false
+	}
+}
+
+func validDashboardActivityActor(actor string) bool {
+	switch state.OrgActivityActorType(actor) {
+	case "", state.OrgActivityActorUser, state.OrgActivityActorAPIKey,
+		state.OrgActivityActorGitHub, state.OrgActivityActorSystem, state.OrgActivityActorOperator:
+		return true
+	default:
+		return false
 	}
 }
 
