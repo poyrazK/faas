@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Request to enqueue a signed webhook delivery owned by the source app.
+ */
 export type DeliverAppEventRequest = {
   /**
    * A webhook id or exact registered target URL owned by the source app.

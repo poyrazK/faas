@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Durable receipt for a queued app-to-app message.
+ */
 export type SendAppMessageResponse = {
   /**
    * Durable invocation identifier.

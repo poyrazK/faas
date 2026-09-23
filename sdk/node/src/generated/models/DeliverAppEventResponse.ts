@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Durable receipt for an accepted outbound webhook delivery.
+ */
 export type DeliverAppEventResponse = {
   id: string;
   webhook_id: string;
