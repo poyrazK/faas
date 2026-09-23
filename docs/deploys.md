@@ -175,6 +175,8 @@ other cookie are never stored. When a first cache miss issues only Gregale's
 cookie, the public origin response can populate the cache without storing that
 cookie; each later visitor still receives their own cookie. This option and
 `version_affinity_cookie` are mutually exclusive. Set it to `false` to disable.
+When enabled, guest responses cannot set the reserved
+`__Host-gregale_version` cookie; other application cookies are unaffected.
 
 Traffic splitting and canary rollouts are available on every plan. During a
 rollout an app runs one instance above its plan's concurrency limit so both
