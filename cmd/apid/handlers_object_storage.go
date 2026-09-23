@@ -480,6 +480,23 @@ func (s *server) deleteBucket(w http.ResponseWriter, r *http.Request, acct state
 			}
 		}
 	}
+	if b.EnvironmentCloneSourceBucketID != "" && len(bindingIDs) > 0 {
+		bindings, ok := s.store.(state.ObjectS3CredentialBindingStore)
+		if !ok {
+			bucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
+		for _, bindingID := range bindingIDs {
+			if err := bindings.RevokeObjectS3Credential(r.Context(), acct.ID, b.ID, bindingID); err != nil && !errors.Is(err, state.ErrNotFound) {
+				bucketProblem(w, err)
+				return
+			}
+			if err := s.store.DeleteManagedObjectStorageSecrets(r.Context(), bindingID); err != nil {
+				bucketProblem(w, err)
+				return
+			}
+		}
+	}
 	token := uuid.NewString()
 	b, err := st.ClaimObjectBucket(r.Context(), b.AccountID, b.AppID, b.ID, token, "deleting")
 	if err != nil {

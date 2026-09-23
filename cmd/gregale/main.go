@@ -117,6 +117,23 @@ func run(args []string) (status int) {
 			return 0
 		}
 	}
+	// The deployments alias group has one extra command level. Resolve
+	// help only when the manifest confirms the exact verb path, so a
+	// positional value that happens to be `--help` cannot trigger a request.
+	if len(args) >= 3 && hasHelpFlag(args[2:]) {
+		if command, ok := lookupCliCommand(args[0]); ok {
+			if parent, found := findCliSubcommand(command.Subcommands, args[1]); found && len(parent.Subcommands) > 0 {
+				if len(args) == 3 {
+					printLocalSubcommandHelp(osStdout, command, parent)
+					return 0
+				}
+				if leaf, found := findCliSubcommand(parent.Subcommands, args[2]); found && hasHelpFlag(args[3:]) {
+					printLocalLeafHelp(osStdout, command, parent, leaf)
+					return 0
+				}
+			}
+		}
+	}
 	if len(args) >= 3 && hasHelpFlag(args[2:]) && shouldResolveNestedHelp(args[0], args[1]) {
 		if command, ok := lookupCliCommand(args[0]); ok {
 			for _, sub := range command.Subcommands {
@@ -182,6 +199,8 @@ func run(args []string) (status int) {
 		return cmdBindings(args[1:])
 	case "deploy":
 		return cmdDeployTarball(args[1:])
+	case "diff":
+		return environmentDiff(args[1:])
 	case "dev":
 		return cmdDev(args[1:])
 	case "canary":
@@ -626,10 +645,23 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 
 func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 	usage := "gregale " + command.Name + " " + sub.Name
+	if len(sub.Subcommands) > 0 {
+		choices := make([]string, 0, len(sub.Subcommands))
+		for _, child := range sub.Subcommands {
+			choices = append(choices, child.Name)
+		}
+		usage += " <" + strings.Join(choices, "|") + ">"
+	}
 	if len(sub.Flags) > 0 {
 		usage += " [flags]"
 	}
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", sub.Short, usage)
+	if len(sub.Subcommands) > 0 {
+		_, _ = fmt.Fprintln(w, "\nCommands:")
+		for _, child := range sub.Subcommands {
+			_, _ = fmt.Fprintf(w, "  %-18s %s\n", child.Name, child.Short)
+		}
+	}
 	if len(sub.Flags) > 0 {
 		_, _ = fmt.Fprintln(w, "\nFlags:")
 		for _, flag := range sub.Flags {
@@ -637,4 +669,28 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 		}
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
+}
+
+func printLocalLeafHelp(w io.Writer, command cliCommand, parent, leaf cliSub) {
+	usage := "gregale " + command.Name + " " + parent.Name + " " + leaf.Name
+	if len(leaf.Flags) > 0 {
+		usage += " [flags]"
+	}
+	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", leaf.Short, usage)
+	if len(leaf.Flags) > 0 {
+		_, _ = fmt.Fprintln(w, "\nFlags:")
+		for _, flag := range leaf.Flags {
+			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
+		}
+	}
+	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
+}
+
+func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
+	for _, sub := range subcommands {
+		if sub.Name == name {
+			return sub, true
+		}
+	}
+	return cliSub{}, false
 }

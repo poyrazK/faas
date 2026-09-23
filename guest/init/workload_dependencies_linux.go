@@ -24,6 +24,33 @@ type workloadDependencyState struct {
 	err error
 }
 
+// validateWorkloadCardinality mirrors the API and scheduler bounds at the
+// guest boundary. Roster input is host-authored, but guest-init must fail
+// closed if a stale or malformed control-plane payload bypasses validation.
+func validateWorkloadCardinality(roster workloadRoster) error {
+	if len(roster.Sidecars) > api.SidecarCapMax {
+		return fmt.Errorf("workload roster: deployment has %d sidecars; cap is %d", len(roster.Sidecars), api.SidecarCapMax)
+	}
+	initCount, sidecarCount := 0, 0
+	for _, sc := range roster.Sidecars {
+		switch sc.Type {
+		case "init":
+			initCount++
+		case "sidecar":
+			sidecarCount++
+		default:
+			return fmt.Errorf("workload roster: %q has invalid workload type %q", sc.Name, sc.Type)
+		}
+	}
+	if initCount > 1 {
+		return fmt.Errorf("workload roster: deployment has %d init sidecars; cap is 1", initCount)
+	}
+	if sidecarCount > api.SidecarLongRunningCapMax {
+		return fmt.Errorf("workload roster: deployment has %d long-running sidecars; cap is %d", sidecarCount, api.SidecarLongRunningCapMax)
+	}
+	return nil
+}
+
 func newWorkloadDependencyState() *workloadDependencyState {
 	return &workloadDependencyState{
 		started:               make(chan struct{}),
@@ -53,6 +80,9 @@ func (s *workloadDependencyState) result() error {
 // workload. Init workloads are implicit prerequisites of main and long-running
 // sidecars, preserving the pre-dependency roster semantics.
 func normalizeWorkloadDependencies(roster workloadRoster) (map[string][]api.WorkloadDependency, error) {
+	if err := validateWorkloadCardinality(roster); err != nil {
+		return nil, err
+	}
 	if len(roster.Main.DependsOn) > api.WorkloadDependencyCapMax {
 		return nil, fmt.Errorf("workload roster: main has %d dependencies; max is %d", len(roster.Main.DependsOn), api.WorkloadDependencyCapMax)
 	}

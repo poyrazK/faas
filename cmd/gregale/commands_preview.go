@@ -17,16 +17,20 @@ import (
 // this shape keeps `--json` useful for scripts without exposing every app
 // setting in a discovery command.
 type previewSummary struct {
-	ID               string                   `json:"id"`
-	Slug             string                   `json:"slug"`
-	ParentSlug       string                   `json:"parent_slug"`
-	PRNumber         int                      `json:"pr_number"`
-	Kind             string                   `json:"kind"`
-	PRState          string                   `json:"pr_state,omitempty"`
-	AppStatus        string                   `json:"app_status"`
-	URL              string                   `json:"url"`
-	ExpiresAt        *time.Time               `json:"expires_at,omitempty"`
-	LatestDeployment *previewDeploymentStatus `json:"latest_deployment,omitempty"`
+	ID                   string                                `json:"id"`
+	Slug                 string                                `json:"slug"`
+	ParentSlug           string                                `json:"parent_slug"`
+	PRNumber             int                                   `json:"pr_number"`
+	Kind                 string                                `json:"kind"`
+	PRState              string                                `json:"pr_state,omitempty"`
+	AppStatus            string                                `json:"app_status"`
+	URL                  string                                `json:"url"`
+	ExpiresAt            *time.Time                            `json:"expires_at,omitempty"`
+	LatestDeployment     *previewDeploymentStatus              `json:"latest_deployment,omitempty"`
+	ProductionDeployment *previewDeploymentStatus              `json:"production_deployment,omitempty"`
+	Changes              *api.PreviewProductionChangesResponse `json:"changes_from_production,omitempty"`
+	Links                *api.PreviewResourceLinksResponse     `json:"links,omitempty"`
+	Environment          *api.PreviewEnvironmentStatusResponse `json:"environment,omitempty"`
 }
 
 type previewDeploymentStatus struct {
@@ -55,6 +59,18 @@ func previewSummaryFromApp(app api.AppResponse, deployment *api.DeploymentRespon
 			ID: deployment.ID, Status: deployment.Status, CreatedAt: deployment.CreatedAt,
 		}
 	}
+	return item
+}
+
+func previewSummaryFromResource(resource api.PreviewResourceResponse) previewSummary {
+	item := previewSummaryFromApp(resource.App, resource.LatestDeployment)
+	if resource.ProductionDeployment != nil {
+		item.ProductionDeployment = &previewDeploymentStatus{
+			ID: resource.ProductionDeployment.ID, Status: resource.ProductionDeployment.Status,
+			CreatedAt: resource.ProductionDeployment.CreatedAt,
+		}
+	}
+	item.Changes, item.Links = &resource.Changes, &resource.Links
 	return item
 }
 
@@ -155,15 +171,36 @@ func cmdPreviewShow(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	preview, err := client.GetPreviewStatus(ctx, args[0])
+	preview, err := client.GetPreview(ctx, args[0])
 	if err != nil {
 		return printErr("Could not load preview", err)
 	}
-	item := previewSummaryFromApp(preview.App, preview.LatestDeployment)
+	environment, err := previewEnvironmentForApp(ctx, client, preview.App)
+	if err != nil {
+		return printErr("Could not load preview environment", err)
+	}
+	latest := preview.LatestDeployment
+	if environment != nil {
+		status := api.PreviewStatusResponse{App: preview.App, LatestDeployment: preview.LatestDeployment}
+		latest = previewEnvironmentRootDeployment(status, *environment)
+	}
+	item := previewSummaryFromResource(preview)
+	if environment != nil {
+		item.LatestDeployment = nil
+		if latest != nil {
+			item.LatestDeployment = &previewDeploymentStatus{
+				ID: latest.ID, Status: latest.Status, CreatedAt: latest.CreatedAt,
+			}
+		}
+	}
+	item.Environment = environment
 	if jsonOutput {
 		return jsonOut(writeJSON(item))
 	}
 	renderPreviewDetails(item)
+	if environment != nil {
+		renderPreviewEnvironmentDetails(*environment)
+	}
 	return 0
 }
 
@@ -205,6 +242,16 @@ func renderPreviewDetails(item previewSummary) {
 	_, _ = fmt.Fprintf(osStdout, "URL:           %s\n", valueOrDash(item.URL))
 	_, _ = fmt.Fprintf(osStdout, "Expires:       %s\n", previewExpiry(item.ExpiresAt))
 	_, _ = fmt.Fprintf(osStdout, "Latest deploy: %s\n", previewDeployment(item.LatestDeployment))
+	_, _ = fmt.Fprintf(osStdout, "Production:    %s\n", previewDeployment(item.ProductionDeployment))
+	if item.Changes != nil {
+		_, _ = fmt.Fprintf(osStdout, "Artifact diff: %t\n", item.Changes.ArtifactChanged)
+		_, _ = fmt.Fprintf(osStdout, "Config diff:   %s\n", valueOrDash(strings.Join(item.Changes.ConfigurationChangedGroups, ", ")))
+	}
+	if item.Links != nil {
+		_, _ = fmt.Fprintf(osStdout, "Logs API:      %s\n", item.Links.Logs)
+		_, _ = fmt.Fprintf(osStdout, "Metrics API:   %s\n", item.Links.Metrics)
+		_, _ = fmt.Fprintf(osStdout, "Config API:    %s\n", item.Links.Configuration)
+	}
 }
 
 func previewExpiry(expiresAt *time.Time) string {

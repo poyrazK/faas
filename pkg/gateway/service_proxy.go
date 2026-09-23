@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
@@ -175,6 +176,15 @@ const servicecallerEnvPreview = "preview"
 // wiring that has no scheduler seam (tests, single-box dev without schedd).
 type ServiceProxyWaker func(ctx context.Context, appID string) error
 
+// ServiceProxyDeploymentWaker restores one rollout bucket when a keyed
+// service call selects a cold revision while a sibling revision is warm.
+type ServiceProxyDeploymentWaker func(ctx context.Context, appID, deploymentID string) error
+
+// ServiceProxyDeploymentValidator confirms an explicit target is a currently
+// live deployment of the already-resolved, authorized service app. A false
+// result is a customer error; a store error is a platform failure.
+type ServiceProxyDeploymentValidator func(ctx context.Context, appID, deploymentID string) (bool, error)
+
 // ServiceProxyConfig wires the narrow seams around ServiceProxy. Forward is
 // normally gateway.ForwardingReverseProxyWithEvents(...); tests inject a
 // small handler factory so selection and retry behavior can be exercised
@@ -192,6 +202,13 @@ type ServiceProxyConfig struct {
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
+	// WakeDeployment is the optional deployment-scoped wake seam used by
+	// version-affinity calls. It prevents a warm sibling from suppressing the
+	// selected cohort's restore.
+	WakeDeployment ServiceProxyDeploymentWaker
+	// ValidateDeployment is required only for exact deployment overrides. Nil
+	// fails closed when the override header is present.
+	ValidateDeployment ServiceProxyDeploymentValidator
 	// Metrics observes internal call outcomes, cold-path wake latency, and
 	// ADR-201 §2 breaker transitions. nil is allowed and every observation
 	// is a no-op — the breaker keeps working and simply publishes nothing.
@@ -226,19 +243,21 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
-	mintAssertion ServiceCallerMinter
-	localNodeID   string
-	provider      ServiceEndpointProvider
-	resolve       ServiceProxyResolver
-	authorize     ServiceProxyAuthorizer
-	resolveCaller ServiceProxyCallerResolver
-	forward       func(Target) http.Handler
-	rawForward    func(Target) http.Handler
-	wake          ServiceProxyWaker
-	metrics       *Metrics
-	endpointTTL   time.Duration
-	now           func() time.Time
-	log           *slog.Logger
+	mintAssertion      ServiceCallerMinter
+	localNodeID        string
+	provider           ServiceEndpointProvider
+	resolve            ServiceProxyResolver
+	authorize          ServiceProxyAuthorizer
+	resolveCaller      ServiceProxyCallerResolver
+	forward            func(Target) http.Handler
+	rawForward         func(Target) http.Handler
+	wake               ServiceProxyWaker
+	wakeDeployment     ServiceProxyDeploymentWaker
+	validateDeployment ServiceProxyDeploymentValidator
+	metrics            *Metrics
+	endpointTTL        time.Duration
+	now                func() time.Time
+	log                *slog.Logger
 
 	breaker     *circuit.Group
 	retryPolicy RetryPolicy
@@ -315,24 +334,26 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
-		mintAssertion: cfg.MintCallerAssertion,
-		localNodeID:   strings.TrimSpace(cfg.LocalNodeID),
-		provider:      cfg.Provider,
-		resolve:       cfg.Resolve,
-		authorize:     cfg.Authorize,
-		resolveCaller: cfg.ResolveCaller,
-		forward:       cfg.Forward,
-		rawForward:    cfg.RawForward,
-		wake:          cfg.Wake,
-		metrics:       cfg.Metrics,
-		endpointTTL:   ttl,
-		now:           now,
-		log:           log,
-		breaker:       breaker,
-		retryPolicy:   retryPolicy,
-		retryBudget:   retryBudget,
-		snapshots:     make(map[string]serviceProxySnapshot),
-		next:          make(map[string]uint64),
+		mintAssertion:      cfg.MintCallerAssertion,
+		localNodeID:        strings.TrimSpace(cfg.LocalNodeID),
+		provider:           cfg.Provider,
+		resolve:            cfg.Resolve,
+		authorize:          cfg.Authorize,
+		resolveCaller:      cfg.ResolveCaller,
+		forward:            cfg.Forward,
+		rawForward:         cfg.RawForward,
+		wake:               cfg.Wake,
+		wakeDeployment:     cfg.WakeDeployment,
+		validateDeployment: cfg.ValidateDeployment,
+		metrics:            cfg.Metrics,
+		endpointTTL:        ttl,
+		now:                now,
+		log:                log,
+		breaker:            breaker,
+		retryPolicy:        retryPolicy,
+		retryBudget:        retryBudget,
+		snapshots:          make(map[string]serviceProxySnapshot),
+		next:               make(map[string]uint64),
 	}
 }
 
@@ -463,11 +484,69 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy transport is not wired")
 		return
 	}
-	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID)
+	overrideID, overridePresent, overrideValid := serviceDeploymentOverrideFromRequest(r)
+	if overridePresent {
+		if !overrideValid {
+			p.metrics.IncServiceCall(ServiceCallOverrideRejected)
+			serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "Gregale-Target-Deployment must contain one deployment ID")
+			return
+		}
+		if p.validateDeployment == nil {
+			p.metrics.IncServiceCall(ServiceCallOverrideUnavailable)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
+			return
+		}
+		live, err := p.validateDeployment(dependencyCtx, target.AppID, overrideID)
+		if err != nil {
+			p.metrics.IncServiceCall(ServiceCallOverrideUnavailable)
+			p.log.Warn("gateway: service deployment validation failed", "app", target.AppID, "err", err)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
+			return
+		}
+		if !live {
+			p.metrics.IncServiceCall(ServiceCallOverrideRejected)
+			serviceProxyProblem(dispatchWriter, http.StatusUnprocessableEntity, "deployment is not live for the target service")
+			return
+		}
+	}
+	versionKey, versionKeyOutcome := versionAffinityKeyFromRequest(r)
+	p.metrics.ObserveVersionAffinityKey(versionAffinitySurfaceService, versionKeyOutcome)
+	versionDeploymentID := overrideID
+	if !overridePresent && versionKey != "" {
+		if resolver, ok := p.provider.(versionAffinityResolver); ok {
+			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
+		}
+	}
+	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
 	if !served {
 		return
 	}
 	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+}
+
+// serviceDeploymentOverrideFromRequest rejects ambiguous headers before the
+// store lookup. Deployment IDs are canonical UUIDs; normalizing uppercase
+// hex is safe, while a comma-joined or duplicate header is not.
+func serviceDeploymentOverrideFromRequest(r *http.Request) (id string, present, valid bool) {
+	if r == nil {
+		return "", false, true
+	}
+	values, present := r.Header[http.CanonicalHeaderKey(api.TargetDeploymentHeader)]
+	if !present {
+		return "", false, true
+	}
+	if len(values) != 1 {
+		return "", true, false
+	}
+	raw := strings.TrimSpace(values[0])
+	if len(raw) != 36 {
+		return "", true, false
+	}
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return "", true, false
+	}
+	return parsed.String(), true, true
 }
 
 func serviceProxySpanName(service string) string {
@@ -659,17 +738,18 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 // waking a parked target on the way (ADR-196). It writes the error response
 // itself and reports served=false when nothing is routable, so ServeHTTP
 // stays within the handler-length convention.
-func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID string) (_ []ServiceEndpoint, woken, served bool) {
+func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID, deploymentID string) (_ []ServiceEndpoint, woken, served bool) {
 	endpoints, err := p.endpoints(r.Context(), appID)
 	if err != nil {
 		p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 		return nil, false, false
 	}
+	endpoints = serviceEndpointsForDeployment(endpoints, deploymentID)
 	if len(endpoints) > 0 {
 		return endpoints, false, true
 	}
-	endpoints, err = p.wakeAndRefresh(r.Context(), appID)
+	endpoints, err = p.wakeAndRefresh(r.Context(), appID, deploymentID)
 	if err != nil {
 		p.writeWakeFailure(w, appID, err)
 		return nil, false, false
@@ -711,7 +791,17 @@ func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err
 //
 // A nil waker returns no endpoints and no error, so the caller falls through
 // to the pre-ADR-196 "no healthy replicas" response.
-func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID string) ([]ServiceEndpoint, error) {
+func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID, deploymentID string) ([]ServiceEndpoint, error) {
+	if deploymentID != "" && p.wakeDeployment != nil {
+		start := p.now()
+		if err := p.wakeDeployment(ctx, appID, deploymentID); err != nil {
+			return nil, err
+		}
+		p.metrics.ObserveServiceWakeLatency(p.now().Sub(start))
+		p.invalidateEndpoints(appID)
+		endpoints, err := p.endpoints(ctx, appID)
+		return serviceEndpointsForDeployment(endpoints, deploymentID), err
+	}
 	if p.wake == nil {
 		return nil, nil
 	}
@@ -721,7 +811,21 @@ func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID string) ([]Serv
 	}
 	p.metrics.ObserveServiceWakeLatency(p.now().Sub(start))
 	p.invalidateEndpoints(appID)
-	return p.endpoints(ctx, appID)
+	endpoints, err := p.endpoints(ctx, appID)
+	return serviceEndpointsForDeployment(endpoints, deploymentID), err
+}
+
+func serviceEndpointsForDeployment(endpoints []ServiceEndpoint, deploymentID string) []ServiceEndpoint {
+	if deploymentID == "" {
+		return endpoints
+	}
+	filtered := make([]ServiceEndpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint.DeploymentID == deploymentID {
+			filtered = append(filtered, endpoint)
+		}
+	}
+	return filtered
 }
 
 // invalidateEndpoints drops the cached registry lease for appID so the next
@@ -770,6 +874,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	request.RequestURI = ""
 	request.Header = r.Header.Clone()
 	request.Header.Del(ServiceProxyCallerAppHeader)
+	// An override applies only to this resolved binding. Forwarding it would
+	// unintentionally pin a later service hop to this app's deployment ID.
+	request.Header.Del(api.TargetDeploymentHeader)
 	// Both caller-environment headers are platform-owned. Strip whatever the
 	// guest sent before deciding: otherwise any workload could label its own
 	// traffic, and a target that trusts the marker would be trusting the

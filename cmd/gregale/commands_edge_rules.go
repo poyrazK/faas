@@ -1,6 +1,6 @@
 package main
 
-// `gregale edge-rules <list|create|get|update|rm> ...` —
+// `gregale edge-rules <list|trace|create|get|update|rm> ...` —
 // customer-facing CLI for the Edge Rules resource (ADR-089, issue #561).
 // PR 1 of the rollout shipped the schema, state, apid CRUD, SDK, and
 // OpenAPI surface (PR #799). PR 2 (this file) ships the CLI wrapper
@@ -75,12 +75,14 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|create|get|update|rm> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|trace|create|get|update|rm> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
 	case subList:
 		return cmdEdgeRulesList(args[1:])
+	case "trace":
+		return cmdEdgeRulesTrace(args[1:])
 	case subCreate:
 		return cmdEdgeRulesCreate(args[1:])
 	case subGet:

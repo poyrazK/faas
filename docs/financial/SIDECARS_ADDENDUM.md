@@ -15,8 +15,8 @@ per_instance_billable_mb = plan.RAMMB + Σ(sidecar.ram_mb) + PerVMOverheadMB
 
 - `plan.RAMMB` — the customer's plan tier RAM quota (Free 128 /
   Hobby 256 / Pro 512 / Scale 1024). Source: `pkg/api/limits.go`.
-- `Σ(sidecar.ram_mb)` — sum of per-sidecar `ram_mb` over the
-  deployment's `sidecars[]` array. The customer-supplied value
+- `Σ(sidecar.ram_mb)` — sum of per-helper `ram_mb` over the
+  deployment's `companions[]` array (legacy `sidecars[]`). The customer-supplied value
   per sidecar, validated at `pkg/api/dto.go::Sidecar.Validate`
   (16 MB floor, plan RAM ceiling per sidecar). Source:
   `pkg/api/limits.go::SidecarRamMBMatrix`.
@@ -36,9 +36,23 @@ instancestats poller, schedd gRPC, apid) go through these two
 helpers so the only place the overhead constant lives is
 `PerVMOverheadMB`.
 
+## Expanded companion capacity
+
+ADR-223 raises the bound to five helper entries: one init helper and up to
+four long-running companions. The formula is unchanged, but all five RAM
+reservations are included. For example, five helpers configured at 64 MB
+each reserve `plan.RAMMB + 320 + 8` MB per instance. The historical 0/1/2
+rows below remain useful examples; they are no longer maximum-capacity
+scenarios. A deployment at the per-helper ceiling could reserve up to
+`plan.RAMMB + 2,560 + 8` MB. The offline financial-model workbook must add
+the five-helper scenario before the old table is used as a maximum.
+
 ## Scenario columns
 
-| Plan | Plan RAM (MB) | Sidecar count           | Σ sidecar.ram_mb | Per-VM overhead | Per-instance billable (MB) | 30-day @ 720h × 1 instance (GB-h) | Plan ceiling (GB-h) | Overage (€0.01 / GB-h) |
+The following 0/1/2-helper rows are illustrative and do not show the new
+five-helper ceiling.
+
+| Plan | Plan RAM (MB) | Helper count           | Σ helper.ram_mb | Per-VM overhead | Per-instance billable (MB) | 30-day @ 720h × 1 instance (GB-h) | Plan ceiling (GB-h) | Overage (€0.01 / GB-h) |
 |------|---------------|--------------------------|------------------|-----------------|----------------------------|-----------------------------------|---------------------|------------------------|
 | Free | 128           | 0                        | 0                | 8               | 136                        | ~92                                | 5 (included)        | ~€0.87                 |
 | Hobby | 256          | 0                        | 0                | 8               | 264                        | ~178                              | 50 (included)       | ~€1.28                 |
@@ -60,8 +74,8 @@ divisor (1 GB = 1024 MB) per ADR-039 and the existing
 `pkg/meter/sampler.go` math. Hobby customers on a sidecar
 deployment **exceed their 50 GB-h included ceiling** under any
 sidecar usage; Pro customers exceed their 250 GB-h ceiling under
-any sidecar usage; Scale customers fit their 1500 GB-h ceiling
-under the 2-sidecar cap.
+any sidecar usage. Scale usage depends on configured helper RAM and
+concurrency; these historical two-helper rows do not bound the new cap.
 
 ## Verifications (sheet rows, reference node only — must mirror this table)
 
@@ -69,20 +83,11 @@ under the 2-sidecar cap.
    sidecar usage (1-init row at ~221 GB-h ≫ 50 GB-h).
 2. Pro 250 GB-h included ceiling is exceeded under
    `sidecars >= 1` (~394 GB-h at 1-init, ~437 GB-h at 2-sidecar).
-3. Scale 1500 GB-h included ceiling is **not exceeded** under
-   the 2-cap even at `max_concurrency = 20` (783 GB-h × 20 ≫
-   1500 GB-h — actually exceeds; scale's `max_concurrency`
-   cap has its own ceiling interaction captured separately on
-   the spreadsheet).
-
-   The honest framing: Scale customers on a 2-sidecar deployment
-   with `max_concurrency = 20` will exceed their 1500 GB-h
-   ceiling and start incurring overage. The 2-sidecar cap does
-   NOT make sidecars cost-free on Scale. The spreadsheet's
-   `per-instance` rate is unchanged — the customer's bill goes
-   up proportionally. This is the customer-visible cost signal
-   the addendum must surface so the dashboard UI can warn
-   before deploy.
+3. Recalculate Scale overage at the five-helper capacity and the
+   configured `max_concurrency`. The old two-helper examples already
+   show why companion RAM is not free; the new cap increases the
+   possible reservation, so the offline workbook needs a matching row
+   before customer-facing estimates use a maximum-capacity scenario.
 
 ## Source-of-truth pointer
 

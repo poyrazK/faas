@@ -5,8 +5,8 @@
 //
 //   - opened/synchronize/reopened: provision (or reuse) the
 //     preview apps row + write the queued Check Run.
-//   - closed: stamp preview_pr_state='closed' (the janitor
-//     in PR-C owns the actual teardown).
+//   - closed: atomically stamp the fixed grace deadline (the
+//     janitor in PR-C owns the actual teardown).
 //   - fork PR (head.repo differs from base.repo): refuse +
 //     neutral Check Run, NO apps row created.
 //   - quota exhausted: refuse + failure Check Run with
@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
@@ -431,14 +432,12 @@ func TestHandlePullRequest_Closed_StampsClosedState(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	// Then: close. The handler stamps preview_pr_state='closed'
-	// on the same row via SetPreviewPrState (ADR-095 PR-C.1).
+	// Then: close. The handler atomically stamps preview_pr_state='closed'
+	// and replaces the open TTL with the fixed 24-hour grace deadline.
 	// The janitor in cmd/apid/preview_janitor.go owns the
 	// closed → stale → torn_down transitions thereafter, but
-	// the dispatcher must advance the label so the janitor's
-	// grace clock starts on time. Before PR-C the conflict
-	// path swallowed the label write — a closed event left
-	// preview_pr_state='open' until the row hit its TTL.
+	// the dispatcher must start the grace clock when the PR closes.
+	closeStarted := time.Now()
 	_, err := svc.handlePullRequest(context.Background(),
 		pullRequestClosedBody(42, "deadbeef00000000000000000000000000000000"))
 	if err != nil {
@@ -458,12 +457,30 @@ func TestHandlePullRequest_Closed_StampsClosedState(t *testing.T) {
 	if got := previews[0].PreviewPrState; got != state.PreviewPrStateClosed {
 		t.Errorf("PreviewPrState after closed = %q, want %q", got, state.PreviewPrStateClosed)
 	}
+	firstCloseDeadline := previews[0].PreviewExpiresAt
+	if firstCloseDeadline == nil || firstCloseDeadline.Before(closeStarted.Add(state.PRPreviewClosedGrace-time.Second)) ||
+		firstCloseDeadline.After(time.Now().Add(state.PRPreviewClosedGrace+time.Second)) {
+		t.Errorf("PreviewExpiresAt after close = %v, want close time + %s", firstCloseDeadline, state.PRPreviewClosedGrace)
+	}
+	if firstCloseDeadline == nil {
+		t.Fatal("PreviewExpiresAt after close is nil")
+	}
+	wantCloseDeadline := *firstCloseDeadline
 
-	// A subsequent 'reopened' event must clear the closed
-	// label back to 'open' — the PR is live again. This is
-	// the corollary the dispatcher must enforce because
-	// SetPreviewPrState refuses the no-op.
-	svc.handlePullRequest(context.Background(),
+	// GitHub may redeliver the same close webhook; that must not keep the
+	// preview alive by restarting the grace period.
+	if _, err := svc.handlePullRequest(context.Background(),
+		pullRequestClosedBody(42, "deadbeef00000000000000000000000000000000")); err != nil {
+		t.Fatalf("replayed closed: %v", err)
+	}
+	previews, err = rig.mem.PreviewAppsByParent(context.Background(), rig.acct, "demo-app")
+	if err != nil || len(previews) != 1 || previews[0].PreviewExpiresAt == nil || !previews[0].PreviewExpiresAt.Equal(wantCloseDeadline) {
+		t.Fatalf("replayed close deadline = %v (rows %d, err %v), want original %v", previews, len(previews), err, wantCloseDeadline)
+	}
+
+	// A subsequent 'reopened' event must clear the closed label,
+	// restore the preview to open, and reset its configured TTL.
+	_, err = svc.handlePullRequest(context.Background(),
 		pullRequestReopenedBody(42, "deadbeef00000000000000000000000000000000"))
 	if err != nil {
 		t.Fatalf("reopened: %v", err)
