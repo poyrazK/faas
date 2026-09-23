@@ -131,7 +131,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_APPS_ROOT", Owners: []string{"imaged", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APP_ERRORS_ENABLED", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_APP_ID", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
-	{Name: "FAAS_APP_TASK_API_ENABLED", Owners: []string{"apid"}, Source: EnvSourceUnit, Note: "explicit 0 until deployment-attached task admission and the ADR-222 metal isolation path are qualified together"},
+	{Name: "FAAS_APP_TASK_API_ENABLED", Owners: []string{"apid"}, Source: EnvSourceUnit, Note: "explicit 0 until deployment-attached task admission and the ADR-230 metal isolation path are qualified together"},
 	{Name: "FAAS_APP_TASK_DISPATCH", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact opt-in for deployment-attached one-off command dispatch; default off provides a production-safe rollout gate"},
 	{Name: "FAAS_ARTIFACT_REPLICATOR", Owners: []string{"imaged"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_ARTIFACT_SYNC_TARGET", Owners: []string{"imaged"}, Source: EnvSourceScript, Note: "consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env"},

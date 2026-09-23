@@ -1,7 +1,7 @@
 package main
 
 // Public deployment-attached app-task admission and lifecycle handlers
-// (ADR-222). apid selects the current live deployment once; the state layer
+// (ADR-230). apid selects the current live deployment once; the state layer
 // atomically copies its runtime artifact identity into the durable task row.
 
 import (

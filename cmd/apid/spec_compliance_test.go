@@ -63,7 +63,7 @@ const (
 	managedPostgresFile   = "managed_postgres.go"
 	openapiContractFile   = "openapi_contract.go"
 	executionsFile        = "executions.go"      // ADR-171 — disposable one-shot execution DTOs
-	appTasksFile          = "app_tasks.go"       // ADR-222 — deployment-attached one-off command DTOs
+	appTasksFile          = "app_tasks.go"       // ADR-230 — deployment-attached one-off command DTOs
 	projectsFile          = "projects.go"        // issue #2201 — durable project lifecycle and recovery DTOs
 	devSyncFile           = "dev_sync.go"        // developer edit-to-live history
 	privateNetworkFile    = "private_network.go" // Gregale-owned private network fabric DTOs
