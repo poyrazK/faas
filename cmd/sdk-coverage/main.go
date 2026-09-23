@@ -317,6 +317,9 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/deployments":                              "Deploy",
 	"GET /v1/apps/{slug}/deployments":                               "ListAppDeployments",
 	"GET /v1/apps/{slug}/deployments/latest":                        "GetLatestAppDeployment",
+	"GET /v1/apps/{slug}/deployment-aliases":                        "ListDeploymentAliases",
+	"PUT /v1/apps/{slug}/deployment-aliases/{name}":                 "SetDeploymentAlias",
+	"DELETE /v1/apps/{slug}/deployment-aliases/{name}":              "DeleteDeploymentAlias",
 	"GET /v1/apps/{slug}/deployments/{id}/summary":                  "GetAppDeploymentSummary",
 	"POST /v1/apps/{slug}/deployments/dev-source":                   "DeployDevSource",
 	"POST /v1/apps/{slug}/deployments/source-ref":                   "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy

@@ -185,6 +185,13 @@ func renderManCommand(w io.Writer, c cliCommand) {
 				_, _ = fmt.Fprintln(w, ".TP")
 				_, _ = fmt.Fprintf(w, ".BR %s\n", s.Name)
 				writeRoffParagraph(w, s.Short)
+				for _, child := range s.Subcommands {
+					_, _ = fmt.Fprintln(w, ".RS")
+					_, _ = fmt.Fprintln(w, ".TP")
+					_, _ = fmt.Fprintf(w, ".BR %s\n", child.Name)
+					writeRoffParagraph(w, child.Short)
+					_, _ = fmt.Fprintln(w, ".RE")
+				}
 			}
 		})
 	}

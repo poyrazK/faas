@@ -219,7 +219,10 @@ func TestFullLaneRunsFullAPIHostingRuntimeCatalog(t *testing.T) {
 		t.Fatal("workflow has no deploy phase after source-build phase")
 	}
 	buildPhase := wf[start : start+end]
-	if !strings.Contains(buildPhase, "--setenv=FAAS_E2E_API_HOSTING_CATALOG=full") {
-		t.Error("full native lane does not enable the complete supported runtime fixture catalog")
+	if !strings.Contains(buildPhase, "CATALOG_MODE: ${{ inputs.lane == 'qualify' && 'qualify' || 'full' }}") {
+		t.Error("native build phase does not select full fixtures for the full lane and candidates for qualify")
+	}
+	if !strings.Contains(buildPhase, "--setenv=FAAS_E2E_API_HOSTING_CATALOG='$CATALOG_MODE'") {
+		t.Error("native build phase does not forward its selected catalog mode to the remote runner")
 	}
 }

@@ -29,7 +29,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
-| [`deployments`](#deployments) | List deployments (--app SLUG or linked context \| --limit N \| --before C \| --all \| --wide) |
+| [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
@@ -933,9 +933,9 @@ Cancel a delayed task
 
 ## deployments
 
-List deployments (--app SLUG or linked context | --limit N | --before C | --all | --wide)
+List deployments or manage stable named URLs for immutable revisions
 
-`gregale deployments [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
+`gregale deployments [<subcommand>] [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -944,6 +944,43 @@ List deployments (--app SLUG or linked context | --limit N | --before C | --all 
 | `--before <cursor>` | pagination cursor (RFC3339Nano) |  |
 | `--all` | walk every page |  |
 | `--wide` | include annotation columns (by / pr / tag / reason) |  |
+
+### deployments alias
+
+Manage stable named URLs for immutable deployments
+
+#### deployments alias list
+
+List deployment aliases for an app
+
+`gregale deployments alias list [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+
+#### deployments alias set
+
+Point an alias at an exact deployment revision
+
+`gregale deployments alias set [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+| `--name <NAME>` | lowercase DNS-label alias name | required |
+| `--deployment <ID|vN>` | deployment ID or app revision (vN) | required |
+
+#### deployments alias delete
+
+Remove an alias without deleting its deployment
+
+`gregale deployments alias delete [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+| `--name <NAME>` | lowercase DNS-label alias name | required |
 
 
 ## deployment
@@ -1628,7 +1665,7 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 Query runtime logs and HTTP request events (slug defaults to linked context)
 
-`gregale logs [<slug>] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
+`gregale logs [<slug>] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1642,6 +1679,7 @@ Query runtime logs and HTTP request events (slug defaults to linked context)
 | `--status <100..599>` | only show HTTP requests with this status |  |
 | `--route <PATH>` | only show HTTP requests for this route |  |
 | `--request <ID>` | show one HTTP request by public request id or row id |  |
+| `--trace <TRACE_ID>` | show HTTP access logs correlated with a W3C trace id |  |
 | `--limit <N>` | HTTP request page size (1..200) |  |
 | `--all` | read every retained HTTP request page |  |
 | `--explain` | summarize the last failure and common error patterns |  |
@@ -2428,11 +2466,12 @@ Cache HEAD responses for a route
 
 ### cache purge
 
-Purge cached responses: cache purge &lt;slug&gt; [--path GLOB]
+Purge cached responses: cache purge &lt;slug&gt; [--path GLOB | --tag TAG]
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <GLOB>` | optional normalized request path glob |  |
+| `--tag <TAG>` | optional cache tag |  |
 
 
 ## upload-cache

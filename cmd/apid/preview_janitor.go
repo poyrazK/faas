@@ -135,13 +135,11 @@ type previewJanitorNotifier interface {
 // per-tick failures are logged + observed; the loop continues;
 // one bad row MUST NOT silently disable the cron.
 //
-// The closed→stale grace is NOT a janitor concern — it lives
-// entirely on the row's preview_expires_at column, which the
-// githubd dispatcher re-stamps at provision time
-// (created_at + 7d) and on every sync / reopened event. The
-// janitor treats "PreviewExpiresAt < now() AND PR state ∈
-// {closed, open}" as past-grace via transition() below; no
-// in-memory grace tracking is needed.
+// The open-preview TTL lives on preview_expires_at and is refreshed
+// on each sync / reopen. When GitHub closes the PR, githubd atomically
+// replaces that lease with state.PRPreviewClosedGrace. The janitor
+// treats an expired lease in either open or closed state as eligible
+// for teardown; no in-memory grace tracking is needed.
 type previewJanitor struct {
 	store   previewJanitorStore
 	notif   previewJanitorNotifier
@@ -313,12 +311,11 @@ const (
 // table can exercise every combination without exercising the
 // store.
 //
-// The grace decision is encoded entirely on the row's
-// PreviewExpiresAt column (set by the githubd dispatcher at
-// provision time as created_at + 7d, refreshed on every sync /
-// reopened event). The janitor reads "expired" once and
-// routes through the state machine — no in-memory grace
-// bookkeeping is needed.
+// The grace decision is encoded entirely on PreviewExpiresAt: open
+// previews use their configured TTL, while the close webhook atomically
+// replaces it with the fixed 24-hour post-close deadline. The janitor
+// reads "expired" once and routes through the state machine — no
+// in-memory grace bookkeeping is needed.
 func (j *previewJanitor) transition(row state.App, now time.Time) (string, transitionAction) {
 	expired := row.PreviewExpiresAt != nil && row.PreviewExpiresAt.Before(now)
 	switch row.PreviewPrState {

@@ -276,10 +276,10 @@ func TestReconcileServiceTopologyRemovesOppositeRoleResidueAndPreservesOptionalS
 		}
 		return false
 	}
-	if !hasCall("systemctl", "disable", "--now", "faas-vmmd.service") {
+	if !hasCall("systemctl", "disable", "--now", "--no-reload", "faas-vmmd.service") {
 		t.Errorf("missing disable for stale vmmd: %v", calls)
 	}
-	if hasCall("systemctl", "disable", "--now", "faas-builderd.service") {
+	if hasCall("systemctl", "disable", "--now", "--no-reload", "faas-builderd.service") {
 		t.Errorf("already-masked builderd was sent through disable --now: %v", calls)
 	}
 	for _, service := range []string{"vmmd", "gatewayd"} {
@@ -294,15 +294,15 @@ func TestReconcileServiceTopologyRemovesOppositeRoleResidueAndPreservesOptionalS
 		t.Errorf("existing builderd mask was removed or changed, target=%q err=%v", target, err)
 	}
 	for _, service := range []string{"vmmd", "builderd", "gatewayd", "spool-sync"} {
-		if !hasCall("systemctl", "mask", "--force", "faas-"+service+".service") {
+		if !hasCall("systemctl", "mask", "--force", "--no-reload", "faas-"+service+".service") {
 			t.Errorf("missing mask for omitted %s: %v", service, calls)
 		}
 		if !hasCall("systemctl", "reset-failed", "faas-"+service+".service") {
 			t.Errorf("missing failed-state reset for omitted %s: %v", service, calls)
 		}
 	}
-	if hasCall("systemctl", "disable", "--now", "faas-s3-gatewayd.service") ||
-		hasCall("systemctl", "mask", "--force", "faas-s3-gatewayd.service") {
+	if hasCall("systemctl", "disable", "--now", "--no-reload", "faas-s3-gatewayd.service") ||
+		hasCall("systemctl", "mask", "--force", "--no-reload", "faas-s3-gatewayd.service") {
 		t.Errorf("optional s3-gatewayd was reconciled as core topology residue: %v", calls)
 	}
 }
@@ -338,9 +338,60 @@ func TestReconcileSocketTopologyRetiresSocketOmittedFromRollback(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(unitDir, "faas-gatewayd-public.socket")); err != nil {
 		t.Fatalf("socket retained by rollback bundle changed: %v", err)
 	}
-	want := []string{"systemctl", "disable", "--now", "faas-apid.socket"}
+	want := []string{"systemctl", "disable", "--now", "--no-reload", "faas-apid.socket"}
 	if len(calls) != 1 || !reflect.DeepEqual(calls[0], want) {
 		t.Fatalf("socket reconciliation calls = %v, want %v", calls, want)
+	}
+}
+
+func TestActivateBatchesUnitFileDaemonReloads(t *testing.T) {
+	root := t.TempDir()
+	releaseRoot := filepath.Join(root, "release")
+	units := filepath.Join(releaseRoot, "systemd")
+	unitDir := filepath.Join(root, "installed")
+	for _, dir := range []string{units, unitDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(units, "faas-apid.service"), []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := runCommand
+	t.Cleanup(func() { runCommand = orig })
+	var calls [][]string
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		calls = append(calls, append([]string{name}, args...))
+		return nil
+	}
+
+	r := hostRuntime{unitDir: unitDir}
+	if err := r.Activate(context.Background(), releaseRoot); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	var reloads []int
+	lastUnitFileChange := -1
+	for i, call := range calls {
+		if len(call) < 2 || call[0] != "systemctl" {
+			continue
+		}
+		if call[1] == "daemon-reload" {
+			reloads = append(reloads, i)
+			continue
+		}
+		if slices.Contains([]string{"disable", "mask", "unmask", "enable"}, call[1]) {
+			if !slices.Contains(call, "--no-reload") {
+				t.Errorf("unit-file operation implicitly reloads systemd: %v", call)
+			}
+			lastUnitFileChange = i
+		}
+	}
+	if len(reloads) != 2 {
+		t.Fatalf("Activate called daemon-reload %d times, want initial and final batch reload: %v", len(reloads), calls)
+	}
+	if lastUnitFileChange <= reloads[0] || lastUnitFileChange >= reloads[1] {
+		t.Fatalf("final daemon-reload must follow topology changes: reloads=%v last change=%d calls=%v", reloads, lastUnitFileChange, calls)
 	}
 }
 

@@ -340,6 +340,66 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublicStatusOverview' }
 
+  /v1/preflight:
+    get:
+      tags: [status]
+      operationId: getMigrationPreflight
+      summary: Check whether a public GitHub repository would run on Gregale.
+      description: |
+        Unauthenticated static analysis of a public repository. Nothing is
+        built, deployed, or executed: the source is inspected for a detectable
+        framework and for hard disqualifiers from the container compatibility
+        contract.
+
+        The verdict is deliberately conservative. `green` means the source
+        already satisfies the contract, `amber` means it runs once a declared
+        change is supplied, and `red` means a disqualifier applies and the app
+        cannot run as written.
+
+        Only public github.com repositories are accepted. A private or missing
+        repository returns the same `preflight_repo_not_found` response so the
+        endpoint cannot be used to probe for private repositories.
+      security: []
+      parameters:
+        - name: source
+          in: query
+          required: true
+          description: A github.com repository URL, or an `owner/repo` pair.
+          schema: { type: string, maxLength: 512 }
+        - name: ref
+          in: query
+          required: false
+          description: |
+            Branch, tag, or commit SHA. A full commit SHA pins the verdict and
+            makes the result permanently reproducible.
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: The preflight verdict for the resolved commit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreflightReport' }
+        '404':
+          description: Repository not found, or private.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: Not a public github.com repository, or the source is too large.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many checks from this client.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The upstream repository host is rate limiting Gregale.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/status/incidents/{public_id}:
     get:
       tags: [status]
@@ -5564,6 +5624,68 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deployment-aliases:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDeploymentAliases
+      summary: List named deployment aliases for an app.
+      description: Returns customer-managed names that point to exact immutable deployment rows, with their stable routing hosts. Changing an alias does not alter production traffic.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Alias names and their pinned deployment revisions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentAliasListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deployment-aliases/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        description: Lowercase DNS label for this app's stable revision alias.
+    put:
+      tags: [deployments]
+      operationId: setDeploymentAlias
+      summary: Point a named alias at an immutable deployment.
+      description: The target must be a routable deployment that belongs to the app. This updates only the alias mapping; it does not shift production traffic. The alias name and app identifier must fit together in one DNS label.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetDeploymentAliasRequest' }
+            example: { deployment_id: "01234567-89ab-cdef-0123-456789abcdef" }
+      responses:
+        '200':
+          description: Alias mapping after the update.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentAliasResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [deployments]
+      operationId: deleteDeploymentAlias
+      summary: Remove a named deployment alias.
+      description: Removes the mapping only; deployments and production traffic are unchanged.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Alias removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/deployments:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -6804,16 +6926,23 @@ paths:
       description: |
         Requests a response-cache purge on every gateway and on the optional
         distributed cache tier. The optional path glob limits the purge to
-        matching normalized request paths; omit it to purge the complete app
-        cache.
+        matching normalized request paths. The optional tag limits it to
+        responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+        omit both to purge the complete app cache.
       parameters:
         - name: path
           in: query
           required: false
           schema: { type: string }
           description: Optional normalized request path glob (for example `/products/*`).
+        - name: tag
+          in: query
+          required: false
+          schema: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9._:/-]+$' }
+          description: Optional cache tag (for example `product:42`); cannot be combined with path.
       responses:
         '204': { description: Purge requested. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -18530,6 +18659,93 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    PreflightLevel:
+      type: string
+      enum: [green, amber, red]
+      description: |
+        `green` satisfies the container contract as written, `amber` needs a
+        declared change, `red` cannot run.
+    PreflightSource:
+      type: object
+      description: |
+        A validated public GitHub repository reference. Every field has passed
+        the character and length rules, so it is safe to interpolate upstream.
+      required: [owner, repo]
+      properties:
+        owner: { type: string }
+        repo: { type: string }
+        ref: { type: string, description: Branch or tag parsed from the input; empty means the default branch. }
+    PreflightFinding:
+      type: object
+      description: |
+        One actionable observation about the source. `detail` says what was
+        observed; `remedy` says what to change about it.
+      required: [code, level, title, detail]
+      properties:
+        code: { type: string, description: Stable machine-readable finding code. }
+        level: { $ref: '#/components/schemas/PreflightLevel' }
+        title: { type: string }
+        detail: { type: string, description: What was observed in the source. }
+        remedy: { type: string, description: What to change. Empty for informational findings. }
+        sources:
+          type: array
+          description: Repository-relative paths the finding came from. Never file contents.
+          items: { type: string }
+    PreflightProfile:
+      type: object
+      description: The run contract inferred from the source tree.
+      properties:
+        version: { type: string }
+        framework: { type: string }
+        framework_version: { type: string }
+        package_manager: { type: string }
+        dockerfile_path: { type: string }
+        start_command: { type: string }
+        port: { type: integer }
+        health_path: { type: string }
+        config_file: { type: string }
+        inferred: { type: boolean }
+    PreflightVerdict:
+      type: object
+      description: |
+        The assessed result for one source tree: a headline level, the findings
+        behind it, and the run contract that was inferred.
+      required: [level, profile]
+      properties:
+        level: { $ref: '#/components/schemas/PreflightLevel' }
+        findings:
+          type: array
+          items: { $ref: '#/components/schemas/PreflightFinding' }
+        profile: { $ref: '#/components/schemas/PreflightProfile' }
+    PreflightPlanBudget:
+      type: object
+      description: |
+        What one plan includes, expressed as running time. Preflight does not
+        estimate an app's memory use, so it reports each tier's allowance
+        rather than recommending one.
+      required: [plan, ram_mb, billed_ram_mb, included_running_minutes, included_gb_hours, price_millicents]
+      properties:
+        plan: { type: string }
+        ram_mb: { type: integer }
+        billed_ram_mb: { type: integer, description: Plan RAM plus the fixed per-VM overhead. }
+        included_running_minutes: { type: integer, description: The included allowance as wall-clock running time at this plan's billed RAM. }
+        included_gb_hours: { type: integer }
+        price_millicents: { type: integer, format: int64, description: Monthly subscription price in millicents. }
+        overage_millicents_per_gb_hour: { type: integer, format: int64 }
+    PreflightReport:
+      type: object
+      description: |
+        One complete preflight answer, pinned to the commit it was computed
+        from so a permalink always re-renders the same verdict.
+      required: [source, commit_sha, verdict, plan_budgets, checked_at]
+      properties:
+        source: { $ref: '#/components/schemas/PreflightSource' }
+        commit_sha: { type: string, description: The commit the verdict was computed from. }
+        verdict: { $ref: '#/components/schemas/PreflightVerdict' }
+        plan_budgets:
+          type: array
+          items: { $ref: '#/components/schemas/PreflightPlanBudget' }
+        checked_at: { type: string, format: date-time }
     StatusUptimeBucket:
       description: Daily platform-availability point. Successful and total count available and observed complete five-minute platform intervals; customer workload outcomes are excluded.
       type: object
@@ -20668,6 +20884,14 @@ components:
           description: "Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy instances are bypassed automatically."
           type: boolean
           example: false
+        version_affinity_cookie:
+          description: "Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes the value before forwarding it as a key."
+          type: string
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
+        version_affinity_managed_cookie:
+          description: "Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie."
+          type: boolean
+          default: false
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -21133,7 +21357,14 @@ components:
       type: object
       required: [slug]
       properties:
-        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world" }
+        slug:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          not: { pattern: '^tag-' }
+          minLength: 3
+          maxLength: 40
+          example: "hello-world"
+          description: The tag- prefix is reserved for stable deployment-alias hostnames.
         type: { type: string, enum: [app, function] , example: "app"}
         visibility: { type: string, enum: [public, internal], default: public, description: "Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro and Scale." }
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
@@ -21225,6 +21456,14 @@ components:
           description: "Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."
         session_affinity:
           description: "Enable best-effort cookie-based routing to the same running instance. Omitted uses false."
+          type: boolean
+          default: false
+        version_affinity_cookie:
+          description: "Use a stable, non-secret browser cookie for rollout affinity. Omit to disable."
+          type: string
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
+        version_affinity_managed_cookie:
+          description: "Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with version_affinity_cookie; omitted uses false."
           type: boolean
           default: false
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
@@ -21605,6 +21844,12 @@ components:
         session_affinity:
           description: "Toggle best-effort cookie-based routing to the same running instance. Omit for no change."
           type: [boolean, "null"]
+        version_affinity_cookie:
+          description: "Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change."
+          type: [string, "null"]
+        version_affinity_managed_cookie:
+          description: "Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no change."
+          type: [boolean, "null"]
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -21851,7 +22096,14 @@ components:
       type: object
       required: [new_slug]
       properties:
-        new_slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world-v2" }
+        new_slug:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          not: { pattern: '^tag-' }
+          minLength: 3
+          maxLength: 40
+          example: "hello-world-v2"
+          description: App slugs beginning with tag- are reserved for deployment-alias hostnames.
 
     RaiseOverageCapRequest:
       description: |
@@ -22123,6 +22375,10 @@ components:
         stop_signal:
           type: [string, "null"]
           description: "OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2."
+        secret_reload_signal:
+          type: [string, "null"]
+          enum: [SIGHUP, SIGUSR1, SIGUSR2, null]
+          description: "Opt the main workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Must differ from stop_signal (ADR-222)."
         stop_grace_period:
           type: [string, "null"]
           description: "OCI StopGracePeriod as a Go duration string (e.g. \"30s\"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4."
@@ -22207,6 +22463,13 @@ components:
           description: "Whether health probes may wake this app."
         session_affinity:
           description: "Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically."
+          type: boolean
+          default: false
+        version_affinity_cookie:
+          description: "Configured browser cookie name for rollout affinity; omitted when disabled."
+          type: string
+        version_affinity_managed_cookie:
+          description: "Whether the edge issues its own host-only rollout-affinity cookie."
           type: boolean
           default: false
 
@@ -24627,6 +24890,55 @@ components:
           type: [string, "null"]
           format: date-time
           description: 'When certmagic last validated the cert under host. Null for never-touched hostnames. NOT a latency probe — the cert NotAfter is the load-bearing expiry.'
+
+    SetDeploymentAliasRequest:
+      description: Request to point one named alias at an exact immutable deployment row.
+      type: object
+      required: [deployment_id]
+      additionalProperties: false
+      properties:
+        deployment_id:
+          type: string
+          format: uuid
+          description: Exact immutable deployment row to associate with this alias.
+
+    DeploymentAliasResponse:
+      description: A customer's named pointer to one per-app deployment revision, including its stable host when the platform apps domain is configured.
+      type: object
+      required: [name, deployment_id, revision, created_at, updated_at]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+        deployment_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+          description: Per-app revision number; rendered in CLI output as vN.
+        host:
+          type: string
+          description: Stable one-label hostname for this alias. It is keyed by an immutable app identifier and remains stable if the app slug is renamed.
+        url:
+          type: string
+          format: uri
+          description: HTTPS URL for the alias host; omitted when the platform apps domain is not configured.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DeploymentAliasListResponse:
+      description: The per-app list of named deployment aliases.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentAliasResponse' }
 
     # ─── Instances ────────────────────────────────────────────────────────
 
@@ -31605,7 +31917,7 @@ components:
     AccountTraceLookupResponse:
       type: object
       description: "Tenant-scoped distributed-trace correlation envelope."
-      required: [trace_id, generated_at, limit, matches, invocations, spans, spans_truncated]
+      required: [trace_id, generated_at, limit, matches, invocations, logs, logs_truncated, spans, spans_truncated]
       properties:
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         generated_at: { type: string, format: date-time }
@@ -31616,6 +31928,11 @@ components:
         invocations:
           type: array
           items: { $ref: '#/components/schemas/AccountTraceInvocation' }
+        logs:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/LogQueryEvent' }
+        logs_truncated: { type: boolean }
         spans:
           type: array
           maxItems: 100
@@ -31625,6 +31942,29 @@ components:
         errors:
           type: array
           items: { $ref: '#/components/schemas/AccountTraceLookupError' }
+
+    LogQueryEvent:
+      type: object
+      description: "Safe source-neutral log query event; trace lookup returns the HTTP access-log projection."
+      required: [id, timestamp, source, message]
+      properties:
+        id: { type: string, format: uuid }
+        app: { type: string }
+        timestamp: { type: string, format: date-time }
+        source: { type: string, enum: [runtime, http] }
+        deployment_id: { type: string, format: uuid }
+        instance_id: { type: string }
+        request_id: { type: string }
+        trace_id: { type: string }
+        route: { type: string }
+        method: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        level: { type: string, enum: [trace, debug, info, warn, error, fatal] }
+        stream: { type: string, enum: [stdout, stderr, system, access] }
+        message: { type: string, minLength: 1, maxLength: 16384 }
+        latency_ms: { type: integer, minimum: 0 }
+        count: { type: integer, minimum: 1 }
+        cold_boot: { type: boolean }
 
     AccountTraceMatch:
       type: object
@@ -33790,13 +34130,24 @@ components:
           additionalProperties: { type: string }
 
     # ─── Outbound webhooks (issue #476 / ADR-076) ──────────────────────────────
+    DeploymentLiveWebhookPayload:
+      type: object
+      description: Deployment reached the live state. Delivery IDs are stable across retries.
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id: { type: string, description: App that owns this live deployment. }
+        deployment_id: { type: string, description: Deployment that entered the live state. }
+        status: { type: string, enum: [live] }
+      additionalProperties: true
+
     DeploymentFailedWebhookPayload:
       type: object
-      description: Deployment failure details delivered with deployment.failed.
-      required: [app_id, deployment_id]
+      description: Deployment failure details delivered with deployment.failed. Delivery IDs are stable across retries.
+      required: [app_id, deployment_id, status]
       properties:
-        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
-        deployment_id: { type: string }
+        app_id: { type: string, description: App that owns this failed deployment. }
+        deployment_id: { type: string, description: Deployment that entered the failed state. }
+        status: { type: string, enum: [failed] }
         error_code: { type: string }
         error_hint: { type: string }
         error_why: { type: string }
@@ -33968,7 +34319,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -34382,7 +34733,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -34439,7 +34790,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

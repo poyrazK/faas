@@ -320,6 +320,25 @@ func TestRouteCacheInvalidate(t *testing.T) {
 	}
 }
 
+func TestRouteCacheKeepsPinnedDeploymentHostSpecific(t *testing.T) {
+	c := NewRouteCache(10)
+	production := RouteTarget{AppID: "app-1"}
+	preview := RouteTarget{AppID: "app-1", PinnedDeploymentID: "dep-7", PinnedDeploymentScope: "qa"}
+	c.PutTarget("app.gregale.dev", production)
+	c.PutTarget("deploy-7-app.gregale.dev", preview)
+
+	if got, ok := c.PeekTarget("app.gregale.dev"); !ok || got != production {
+		t.Fatalf("production route = (%+v, %v), want %+v", got, ok, production)
+	}
+	if got, ok := c.PeekTarget("deploy-7-app.gregale.dev"); !ok || got != preview {
+		t.Fatalf("preview route = (%+v, %v), want %+v", got, ok, preview)
+	}
+	c.InvalidateApp("app-1")
+	if _, ok := c.PeekTarget("deploy-7-app.gregale.dev"); ok {
+		t.Fatal("deployment change left its pinned host in the route cache")
+	}
+}
+
 // --- wake gate -------------------------------------------------------------
 
 func TestWakeGateSingleFlight(t *testing.T) {

@@ -20,22 +20,43 @@ import (
 // committed primary mutation into an ambiguous HTTP failure.
 func (s *server) recordAppActivity(ctx context.Context, r *http.Request, acct state.Account, app state.App, entry state.OrgActivity) {
 	activityStore, ok := s.store.(state.OrgActivityStore)
-	if !ok {
+	outbox, hasOutbox := s.store.(state.OrgActivityOutboxStore)
+	if !ok && !hasOutbox {
 		return
 	}
-	orgID, err := s.resolveActivityOrg(ctx, app)
+	entry, err := s.prepareAppActivity(ctx, r, acct, app, entry)
 	if err != nil {
 		if s.log != nil {
-			s.log.Warn("activity: resolve organization failed", "app", app.ID, "kind", entry.Kind, "err", err)
+			s.log.Warn("activity: prepare failed", "app", app.ID, "kind", entry.Kind, "err", err)
 		}
 		return
+	}
+	if hasOutbox {
+		id, err := outbox.EnqueueOrgActivityOutbox(ctx, entry)
+		if err != nil {
+			if s.log != nil {
+				s.log.Warn("activity: enqueue failed", "org", entry.OrgID.String(), "app", app.ID, "kind", entry.Kind, "err", err)
+			}
+			return
+		}
+		s.deliverOrgActivityOutbox(ctx, id)
+		return
+	}
+	if _, err := activityStore.AppendOrgActivity(ctx, entry); err != nil {
+		if s.log != nil {
+			s.log.Warn("activity: append failed", "org", entry.OrgID.String(), "app", app.ID, "kind", entry.Kind, "err", err)
+		}
+	}
+}
+
+func (s *server) prepareAppActivity(ctx context.Context, r *http.Request, acct state.Account, app state.App, entry state.OrgActivity) (state.OrgActivity, error) {
+	orgID, err := s.resolveActivityOrg(ctx, app)
+	if err != nil {
+		return state.OrgActivity{}, err
 	}
 	appID, err := uuid.Parse(app.ID)
 	if err != nil {
-		if s.log != nil {
-			s.log.Warn("activity: invalid app id", "app", app.ID, "kind", entry.Kind)
-		}
-		return
+		return state.OrgActivity{}, err
 	}
 	entry.OrgID = orgID
 	entry.AppID = &appID
@@ -51,11 +72,7 @@ func (s *server) recordAppActivity(ctx context.Context, r *http.Request, acct st
 	if entry.ActorType == "" {
 		entry.ActorType, entry.ActorLabel, entry.ActorAccountID = activityActor(r, acct)
 	}
-	if _, err := activityStore.AppendOrgActivity(ctx, entry); err != nil {
-		if s.log != nil {
-			s.log.Warn("activity: append failed", "org", orgID.String(), "app", app.ID, "kind", entry.Kind, "err", err)
-		}
-	}
+	return entry, nil
 }
 
 // App ownership is persisted on the resource row. A caller's active org or

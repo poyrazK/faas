@@ -112,6 +112,39 @@ time.sleep(60)`)
 	}
 }
 
+func TestSupervisor_ForwardSignalOnStartQueuesUntilChildStarts(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 not available: %v", err)
+	}
+	sup := &Supervisor{Max: MaxRestarts}
+	if err := sup.ForwardSignalOnStart(syscall.SIGUSR1); err != nil {
+		t.Fatalf("queue SIGUSR1: %v", err)
+	}
+	cmd := exec.Command("python3", "-c", `import os, signal, time
+signal.signal(signal.SIGUSR1, lambda *_: os._exit(0))
+time.sleep(60)`)
+	sup.TrackCommand(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start python3: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+	time.Sleep(readyDelayStop)
+	sup.markStarted()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("child exited after queued reload signal: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued reload signal was not delivered after child start")
+	}
+}
+
 // TestSupervisor_Stop_GraceExpiresEscalatesToSIGKILL pins the
 // escalation path: a child that ignores SIGTERM causes the
 // grace timer to fire; Stop escalates to SIGKILL. The test

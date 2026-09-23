@@ -26,8 +26,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Fatalf("defaultContentType = %v, want CloudEvents structured JSON", got)
 	}
 	info := object(t, document, "info")
-	if got := info["version"]; got != "1.4.0" {
-		t.Fatalf("info.version = %v, want 1.4.0 after application inbox/outbox expansion", got)
+	if got := info["version"]; got != "1.5.0" {
+		t.Fatalf("info.version = %v, want 1.5.0 after deployment lifecycle webhooks", got)
 	}
 
 	channels := object(t, document, "channels")
@@ -41,6 +41,8 @@ func TestAsyncAPIContract(t *testing.T) {
 	wantEvents := map[string]string{
 		"appParked":               "app.parked",
 		"appWoken":                "app.woken",
+		"deploymentLive":          "deployment.live",
+		"deploymentFailed":        "deployment.failed",
 		"usageStatementFinalized": "usage_statement.finalized",
 	}
 	for channelName, eventName := range wantEvents {
@@ -96,6 +98,8 @@ func TestAsyncAPIContract(t *testing.T) {
 	for operationName, channelName := range map[string]string{
 		"deliverAppParked":               "appParked",
 		"deliverAppWoken":                "appWoken",
+		"deliverDeploymentLive":          "deploymentLive",
+		"deliverDeploymentFailed":        "deploymentFailed",
 		"deliverUsageStatementFinalized": "usageStatementFinalized",
 	} {
 		operation := object(t, operations, operationName)
@@ -190,7 +194,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, messageName := range []string{"AppParked", "AppWoken", "UsageStatementFinalized"} {
+	for _, messageName := range []string{"AppParked", "AppWoken", "DeploymentLive", "DeploymentFailed", "UsageStatementFinalized"} {
 		message := object(t, messages, messageName)
 		if message["contentType"] != "application/cloudevents+json" {
 			t.Errorf("components.messages.%s contentType = %v, want CloudEvents structured JSON", messageName, message["contentType"])
@@ -234,7 +238,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		}
 	}
 
-	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "UsageStatementFinalizedData", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
+	for _, schemaName := range []string{"CloudEventBase", "WebhookHeaders", "AppParkedData", "AppWokenData", "DeploymentLiveData", "DeploymentFailedData", "UsageStatementFinalizedData", "InternalEventPublishPayload", "WorkflowEventHeaders", "WorkflowExternalEventPayload", "QueueRequestHeaders", "QueueSendPayload", "QueueReceivePayload"} {
 		_ = object(t, schemas, schemaName)
 	}
 	internalEventSchema := object(t, schemas, "InternalEventPublishPayload")

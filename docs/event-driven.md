@@ -71,6 +71,30 @@ timestamps, and deduplicate the durable delivery id.
 Use `--idempotency-key` when retrying a `gregale deliver` call whose outcome
 is unknown; a new key can enqueue a second delivery.
 
+## Deployment lifecycle webhooks
+
+Subscribe to `deployment.live` and `deployment.failed` to drive a platform's
+customer-facing deployment status without polling:
+
+```bash
+gregale webhooks add --app checkout-api \
+  --target-url https://platform.example/deployments \
+  --secret "$WEBHOOK_SECRET" \
+  --event deployment.live --event deployment.failed
+```
+
+An event is enqueued when the deployment's durable status *changes* to `live`
+or `failed`. Rewriting the same status does not enqueue it again; creating a
+subscription does not replay old transitions. The payload identifies the app,
+deployment, and status. Failures also include any available `error_code`,
+`error_hint`, `error_why`, and `error_fix`; internal error text and log excerpts
+are not sent. `deployment.live` means the deployment reached the live state,
+not that a progressive rollout reached 100% traffic.
+
+Delivery is at least once. Verify the webhook signature and deduplicate by the
+durable delivery id in the webhook envelope or headers; retries keep that id.
+The existing delivery history and dead-letter retry API cover these events.
+
 ## Delayed tasks
 
 Delayed tasks are durable one-shot invocations. The producer asks Gregale to
