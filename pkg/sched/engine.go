@@ -3131,9 +3131,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
-		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
-		ExecutionMode:    executionModeForApp(app),
-		Plan:             acct.Plan, AccountID: acct.ID,
+		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
+		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
+		ExecutionMode:          executionModeForApp(app),
+		Plan:                   acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv.Entries,
 		Sidecars:  sidecars,
@@ -4877,14 +4878,15 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		EgressMbit:    int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
-		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
-		ExecutionMode:    executionModeForApp(app),
-		Plan:             acct.Plan,
-		AccountID:        acct.ID,
-		AppID:            app.ID,
-		DeploymentID:     dep.ID,
-		SealedEnv:        sealedEnv,
-		Sidecars:         sidecars,
+		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
+		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
+		ExecutionMode:          executionModeForApp(app),
+		Plan:                   acct.Plan,
+		AccountID:              acct.ID,
+		AppID:                  app.ID,
+		DeploymentID:           dep.ID,
+		SealedEnv:              sealedEnv,
+		Sidecars:               sidecars,
 		// ADR-045: api_env plaintext layer; the loadAPIEnv
 		// helper already fail-softs on a lookup error and logs
 		// Warn (engine.go:2382-2396). A hiccup here ships an
@@ -5580,9 +5582,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.
-		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
-		ExecutionMode:    executionModeForApp(app),
-		Plan:             acct.Plan, AccountID: acct.ID,
+		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
+		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
+		ExecutionMode:          executionModeForApp(app),
+		Plan:                   acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv.Entries,
 		Sidecars:  sidecars,

@@ -869,7 +869,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}
 	boundTunAt := time.Now()
 	var coldBootCPU startupCPUProfile
-	trackColdBootCPU := !skipReady && !l.IsBuilder && l.Plan.Valid()
+	trackColdBootCPU := shouldApplyStartupCPUBoost(l, !skipReady)
 	if l.IsBuilder || l.Plan.Valid() {
 		fenceLease := l
 		if trackColdBootCPU {
@@ -1430,7 +1430,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	tTunReady := time.Now()
 	var restoreCPU startupCPUProfile
-	trackRestoreCPU := !l.IsBuilder && l.Plan.Valid()
+	trackRestoreCPU := shouldApplyStartupCPUBoost(l, true)
 	if l.IsBuilder || l.Plan.Valid() {
 		fenceLease := l
 		if trackRestoreCPU {

@@ -626,6 +626,9 @@ message AppSpec {
   // Reusable network-level protocol/port allow rules. Empty preserves the
   // CIDR-only behavior; non-empty rules are enforced fail-closed.
   repeated PrivateNetworkFirewallRule private_network_firewall_rules = 23;
+  // Disables the bounded startup CPU allowance for this deployment. False
+  // preserves the established behavior for callers that omit this field.
+  bool disable_startup_cpu_boost = 24;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's

@@ -12,7 +12,7 @@ import (
 func TestStartupDeadlineForwardedToWakeRequest(t *testing.T) {
 	request, err := toWakeRequest(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
-		App:      &vmmdpb.AppSpec{BaseKey: "/b", StartupDeadlineS: 42, ExecutionMode: "worker"},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", StartupDeadlineS: 42, ExecutionMode: "worker", DisableStartupCpuBoost: true},
 	})
 	if err != nil {
 		t.Fatalf("toWakeRequest: %v", err)
@@ -23,12 +23,15 @@ func TestStartupDeadlineForwardedToWakeRequest(t *testing.T) {
 	if request.ExecutionMode != "worker" {
 		t.Fatalf("execution mode = %q, want worker", request.ExecutionMode)
 	}
+	if !request.DisableStartupCPUBoost {
+		t.Fatal("disable_startup_cpu_boost was not forwarded to WakeRequest")
+	}
 }
 
 func TestStartupDeadlineForwardedToColdBootRequest(t *testing.T) {
 	request, err := toColdBootRequest(context.Background(), &vmmdpb.CreateColdBootRequest{
 		Instance: "inst-1",
-		App:      &vmmdpb.AppSpec{BaseKey: "/b", StartupDeadlineS: 42, ExecutionMode: "job"},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", StartupDeadlineS: 42, ExecutionMode: "job", DisableStartupCpuBoost: true},
 	})
 	if err != nil {
 		t.Fatalf("toColdBootRequest: %v", err)
@@ -38,5 +41,8 @@ func TestStartupDeadlineForwardedToColdBootRequest(t *testing.T) {
 	}
 	if request.ExecutionMode != "job" {
 		t.Fatalf("execution mode = %q, want job", request.ExecutionMode)
+	}
+	if !request.DisableStartupCPUBoost {
+		t.Fatal("disable_startup_cpu_boost was not forwarded to cold-boot request")
 	}
 }

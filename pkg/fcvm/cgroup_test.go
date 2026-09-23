@@ -175,6 +175,28 @@ func TestStartupCPUProfileResolvesLegacyZeroToPlanCeiling(t *testing.T) {
 	}
 }
 
+func TestShouldApplyStartupCPUBoost(t *testing.T) {
+	cases := []struct {
+		name     string
+		lease    Lease
+		eligible bool
+		want     bool
+	}{
+		{name: "default remains enabled", lease: Lease{Plan: api.PlanPro}, eligible: true, want: true},
+		{name: "deployment opt-out", lease: Lease{Plan: api.PlanPro, DisableStartupCPUBoost: true}, eligible: true},
+		{name: "builder is ineligible", lease: Lease{Plan: api.PlanPro, IsBuilder: true}, eligible: true},
+		{name: "caller skips readiness", lease: Lease{Plan: api.PlanPro}, eligible: false},
+		{name: "unknown plan is ineligible", lease: Lease{}, eligible: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldApplyStartupCPUBoost(tc.lease, tc.eligible); got != tc.want {
+				t.Fatalf("shouldApplyStartupCPUBoost() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWidenSnapshotMemoryCgroupRestoresOrdinaryFence(t *testing.T) {
 	dir := withFakeCgroupRoot(t)
 	inst := "snapshot-headroom"

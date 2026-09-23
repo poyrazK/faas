@@ -2319,6 +2319,10 @@ type Deployment struct {
 	// Default false; the column is BOOLEAN NOT NULL DEFAULT
 	// false (migration 00354).
 	RollbackOn5xx bool `json:"rollback_on_5xx,omitempty"`
+	// DisableStartupCPUBoost opts this deployment out of the bounded startup
+	// CPU allowance. False (including for rows predating the setting) keeps
+	// the existing boost enabled.
+	DisableStartupCPUBoost bool `json:"disable_startup_cpu_boost,omitempty"`
 	// FirstWakeAt + First5xxWindowEndsAt stamp the start of the
 	// first-wake window (anchored at the first
 	// wake.proxy_first_byte event). Both nullable; the window
