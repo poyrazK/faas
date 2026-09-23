@@ -268,6 +268,10 @@ type PGBackend struct {
 	// original Admit notification. The narrow hook keeps gateway independent
 	// of pkg/state.
 	liveTargetLoader func(ctx context.Context, appID string) ([]Target, error)
+	// deploymentSmokeTargetLoader reads an unpromoted RUNNING candidate for
+	// authenticated verification only. It must not populate the ordinary
+	// picker, whose weights represent customer-routable live deployments.
+	deploymentSmokeTargetLoader func(ctx context.Context, appID, deploymentID string) (Target, bool, error)
 	// liveTargetHydration coalesces cache-reconciliation reads for the same
 	// app. A gateway restart can receive a burst before the first request has
 	// populated the process-local picker; those requests must share one
@@ -427,6 +431,35 @@ func (b *PGBackend) WithLiveTargetLoader(fn func(context.Context, string) ([]Tar
 		b.liveTargetLoader = fn
 	}
 	return b
+}
+
+// WithDeploymentSmokeTargetLoader installs the narrow lookup used when a
+// candidate was woken by another gateway replica before promotion.
+func (b *PGBackend) WithDeploymentSmokeTargetLoader(fn func(context.Context, string, string) (Target, bool, error)) *PGBackend {
+	if b != nil {
+		b.deploymentSmokeTargetLoader = fn
+	}
+	return b
+}
+
+// ResolveDeploymentSmokeTarget consults durable instance state without
+// publishing the unpromoted candidate into the customer-traffic picker.
+func (b *PGBackend) ResolveDeploymentSmokeTarget(ctx context.Context, appID, deploymentID string) (Target, bool, error) {
+	if b == nil || b.deploymentSmokeTargetLoader == nil || appID == "" || deploymentID == "" {
+		return Target{}, false, nil
+	}
+	target, found, err := b.deploymentSmokeTargetLoader(ctx, appID, deploymentID)
+	if err != nil || !found {
+		return Target{}, false, err
+	}
+	if target.InstanceID == "" || target.NodeID == "" || target.DeploymentID != deploymentID ||
+		(target.AppID != "" && target.AppID != appID) {
+		return Target{}, false, fmt.Errorf("gateway: invalid deployment smoke target for app %q deployment %q", appID, deploymentID)
+	}
+	if target.AppID == "" {
+		target.AppID = appID
+	}
+	return target, true, nil
 }
 
 // ReconcileLiveTargets hydrates the process-local picker from the authoritative

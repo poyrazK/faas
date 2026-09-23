@@ -768,6 +768,14 @@ type deploymentTargetPicker interface {
 	PickForDeployment(appID, deploymentID string) PickResult
 }
 
+// deploymentSmokeTargetResolver looks up a RUNNING snapshotting candidate
+// without adding it to the ordinary customer-traffic picker. The live-target
+// cache intentionally excludes unpromoted deployments, so another gateway
+// replica cannot discover a peer's verification instance through that cache.
+type deploymentSmokeTargetResolver interface {
+	ResolveDeploymentSmokeTarget(ctx context.Context, appID, deploymentID string) (Target, bool, error)
+}
+
 // liveTargetValidator checks an idle-aged cached target against durable
 // instance state. It is called only on the first request after an idle window,
 // keeping normal warm traffic entirely in memory.
@@ -6100,6 +6108,20 @@ haveApp:
 			return
 		}
 		pick = picker.PickForDeployment(app.ID, exactDeploymentID)
+		if !pick.OK && deploymentSmoke {
+			if resolver, ok := h.backend.(deploymentSmokeTargetResolver); ok {
+				target, found, resolveErr := resolver.ResolveDeploymentSmokeTarget(r.Context(), app.ID, smokeDeploymentID)
+				if resolveErr != nil {
+					api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+						"Deployment verification unavailable", "candidate target lookup failed"))
+					h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+					return
+				}
+				if found {
+					pick = PickResult{Target: target, OK: true, Picked: smokeDeploymentID}
+				}
+			}
+		}
 		if !pick.OK {
 			// A snapshot candidate or zero-percent live deployment can be cold
 			// before its exact URL is visited. Admit one deployment-scoped
