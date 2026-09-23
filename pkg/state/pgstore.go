@@ -6533,7 +6533,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
-		                          stage_state, rollback_on_5xx)
+		                          stage_state, rollback_on_5xx, disable_startup_cpu_boost)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -6547,7 +6547,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46)
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -6588,7 +6588,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
 		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
-		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx)
+		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx, d.DisableStartupCPUBoost)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -22944,7 +22944,8 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(workflows, '[]'::jsonb),
 	coalesce(full_rootfs_allow_auto, false), full_rootfs_override,
 	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
-	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
+	disable_startup_cpu_boost`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -22999,7 +23000,8 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.workflows, '[]'::jsonb),
 	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override,
 	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
-	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
+	d.disable_startup_cpu_boost`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -23114,7 +23116,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.DeletedAt, &d.DeletedByPrincipal, &d.Workflows,
 		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
 		&d.APIHostingReceipt,
-		&d.InferredProfile,
+		&d.InferredProfile, &d.DisableStartupCPUBoost,
 	); err != nil {
 		return mapErr(err)
 	}

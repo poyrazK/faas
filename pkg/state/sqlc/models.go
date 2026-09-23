@@ -856,6 +856,7 @@ type Deployment struct {
 	DeployedBy               pgtype.Text
 	PrNumber                 pgtype.Int4
 	RollbackOn5xx            bool
+	DisableStartupCpuBoost   bool
 	FirstWakeAt              pgtype.Timestamptz
 	First5xxWindowEndsAt     pgtype.Timestamptz
 	First5xxCount            int32

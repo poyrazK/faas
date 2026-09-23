@@ -401,6 +401,9 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	if req.RollbackOn5xx != nil {
 		dep.RollbackOn5xx = *req.RollbackOn5xx
 	}
+	if req.DisableStartupCPUBoost != nil {
+		dep.DisableStartupCPUBoost = *req.DisableStartupCPUBoost
+	}
 	if len(req.Workflows) > 0 {
 		dep.Workflows, _ = json.Marshal(req.Workflows)
 	}

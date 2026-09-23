@@ -154,7 +154,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	if req.DeployOptions != nil {
-		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx}
+		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx, DisableStartupCPUBoost: req.DeployOptions.DisableStartupCPUBoost}
 		if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -599,7 +599,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			s.log.Warn("upload-session manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -614,7 +614,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: opts.RollbackOn5xx}
+	rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost}
 	if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -720,33 +720,34 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		sourceURL = "local-tar://upload-session/" + uploadID
 	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		AppID:            app.ID,
-		Kind:             kind,
-		SourcePath:       row.PartPath,
-		SourceBytes:      row.ReceivedBytes,
-		SourceRoot:       opts.SourceRoot,
-		Handler:          opts.Handler,
-		FunctionRuntime:  functionRuntimeForApp(app),
-		SourceURL:        sourceURL,
-		CommitSHA:        opts.CommitSHA,
-		Source:           "upload-session:" + uploadID,
-		LogSpool:         spoolRoot(),
-		Log:              s.log,
-		ActorUserID:      acct.ID,
-		ActorVia:         routeKindForRequest(r),
-		ActorFromIP:      middleware.ClientIP(r),
-		ActorPusherLogin: "",
-		Reason:           opts.Reason,
-		Tag:              opts.Tag,
-		DeployedBy:       opts.DeployedBy,
-		PRNumber:         opts.PRNumber,
-		RollbackOn5xx:    opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
-		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
-		Sidecars:         append(json.RawMessage(nil), rollout.Sidecars...),
-		Scope:            rolloutReq.Scope,
-		HostingObserver:  s.ops,
-		HostingFlow:      "first_deploy",
-		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
+		AppID:                  app.ID,
+		Kind:                   kind,
+		SourcePath:             row.PartPath,
+		SourceBytes:            row.ReceivedBytes,
+		SourceRoot:             opts.SourceRoot,
+		Handler:                opts.Handler,
+		FunctionRuntime:        functionRuntimeForApp(app),
+		SourceURL:              sourceURL,
+		CommitSHA:              opts.CommitSHA,
+		Source:                 "upload-session:" + uploadID,
+		LogSpool:               spoolRoot(),
+		Log:                    s.log,
+		ActorUserID:            acct.ID,
+		ActorVia:               routeKindForRequest(r),
+		ActorFromIP:            middleware.ClientIP(r),
+		ActorPusherLogin:       "",
+		Reason:                 opts.Reason,
+		Tag:                    opts.Tag,
+		DeployedBy:             opts.DeployedBy,
+		PRNumber:               opts.PRNumber,
+		RollbackOn5xx:          opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
+		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
+		Workflows:              marshalWorkflowDefinitions(opts.Workflows),
+		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		Scope:                  rolloutReq.Scope,
+		HostingObserver:        s.ops,
+		HostingFlow:            "first_deploy",
+		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService,
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)

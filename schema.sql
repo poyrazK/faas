@@ -2471,6 +2471,7 @@ CREATE TABLE public.deployments (
     deployed_by text,
     pr_number integer,
     rollback_on_5xx boolean DEFAULT false NOT NULL,
+    disable_startup_cpu_boost boolean DEFAULT false NOT NULL,
     first_wake_at timestamp with time zone,
     first_5xx_window_ends_at timestamp with time zone,
     first_5xx_count integer DEFAULT 0 NOT NULL,

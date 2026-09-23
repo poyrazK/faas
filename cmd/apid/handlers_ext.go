@@ -4963,7 +4963,8 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		// absent == "default" (the migration backfills the
 		// column on every pre-PR-D deployment, so the field is
 		// never empty in practice).
-		Scope: d.Scope,
+		Scope:                  d.Scope,
+		DisableStartupCPUBoost: d.DisableStartupCPUBoost,
 		// Issue #606 / SAFE-RELEASES-E.1: structured deployer
 		// attribution. Mirrored verbatim from state.Deployment
 		// — the four fields are server-stamped at handler entry
