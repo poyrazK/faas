@@ -2,7 +2,7 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.4.0
+  version: 1.5.0
   description: |
     Gregale delivers selected app lifecycle and billing events to an app's
     configured webhook subscriptions, accepts tenant-scoped events for the
@@ -49,6 +49,22 @@ channels:
     messages:
       appWoken:
         $ref: '#/components/messages/AppWoken'
+  deploymentLive:
+    address: deployment.live
+    description: Emitted when a deployment enters the live state.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      deploymentLive:
+        $ref: '#/components/messages/DeploymentLive'
+  deploymentFailed:
+    address: deployment.failed
+    description: Emitted when a deployment enters the failed state.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      deploymentFailed:
+        $ref: '#/components/messages/DeploymentFailed'
   usageStatementFinalized:
     address: usage_statement.finalized
     description: Emitted when an API consumer usage statement becomes payable.
@@ -166,6 +182,28 @@ operations:
     summary: Deliver an app.woken event to a subscribed webhook.
     messages:
       - $ref: '#/channels/appWoken/messages/appWoken'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverDeploymentLive:
+    action: send
+    channel:
+      $ref: '#/channels/deploymentLive'
+    summary: Deliver a deployment.live event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/deploymentLive/messages/deploymentLive'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverDeploymentFailed:
+    action: send
+    channel:
+      $ref: '#/channels/deploymentFailed'
+    summary: Deliver a deployment.failed event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/deploymentFailed/messages/deploymentFailed'
     bindings:
       http:
         method: POST
@@ -316,6 +354,30 @@ components:
       contentType: application/cloudevents+json
       payload:
         $ref: '#/components/schemas/AppWokenEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    DeploymentLive:
+      name: deployment.live
+      title: Deployment live
+      summary: A deployment has entered the live state.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/DeploymentLiveEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    DeploymentFailed:
+      name: deployment.failed
+      title: Deployment failed
+      summary: A deployment has entered the failed state.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/DeploymentFailedEvent'
       bindings:
         http:
           headers:
@@ -630,6 +692,24 @@ components:
               enum: ['app.woken']
             data:
               $ref: '#/components/schemas/AppWokenData'
+    DeploymentLiveEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['deployment.live']
+            data:
+              $ref: '#/components/schemas/DeploymentLiveData'
+    DeploymentFailedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['deployment.failed']
+            data:
+              $ref: '#/components/schemas/DeploymentFailedData'
     UsageStatementFinalizedEvent:
       allOf:
         - $ref: '#/components/schemas/CloudEventBase'
@@ -682,6 +762,34 @@ components:
         occurred_at:
           type: string
           format: date-time
+      additionalProperties: false
+    DeploymentLiveData:
+      type: object
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id:
+          type: string
+        deployment_id:
+          type: string
+        status:
+          type: string
+          enum: [live]
+      additionalProperties: false
+    DeploymentFailedData:
+      type: object
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id:
+          type: string
+        deployment_id:
+          type: string
+        status:
+          type: string
+          enum: [failed]
+        error_code: { type: string }
+        error_hint: { type: string }
+        error_why: { type: string }
+        error_fix: { type: string }
       additionalProperties: false
     UsageStatementFinalizedData:
       type: object

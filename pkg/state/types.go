@@ -3160,6 +3160,7 @@ const (
 	AppWebhookEventAppWoken                AppWebhookEvent = "app.woken"
 	AppWebhookEventBuildSucceeded          AppWebhookEvent = "build.succeeded"
 	AppWebhookEventBuildFailed             AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentLive          AppWebhookEvent = "deployment.live"
 	AppWebhookEventDeploymentFailed        AppWebhookEvent = "deployment.failed"
 	AppWebhookEventRolloutAborted          AppWebhookEvent = "rollout.aborted"
 	AppWebhookEventErrorNew                AppWebhookEvent = "error.new"
@@ -3183,6 +3184,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventAppWoken,
 	AppWebhookEventBuildSucceeded,
 	AppWebhookEventBuildFailed,
+	AppWebhookEventDeploymentLive,
 	AppWebhookEventDeploymentFailed,
 	AppWebhookEventRolloutAborted,
 	AppWebhookEventErrorNew,

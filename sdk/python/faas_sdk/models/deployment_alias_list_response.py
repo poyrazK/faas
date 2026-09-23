@@ -1,30 +1,36 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="RenameAppRequest")
+if TYPE_CHECKING:
+    from ..models.deployment_alias_response import DeploymentAliasResponse
+
+
+T = TypeVar("T", bound="DeploymentAliasListResponse")
 
 
 @_attrs_define
-class RenameAppRequest:
-    """Rename payload: new slug. Old slug returns 404 immediately on the next request."""
+class DeploymentAliasListResponse:
+    """The per-app list of named deployment aliases."""
 
-    new_slug: str
-    """App slugs beginning with tag- are reserved for deployment-alias hostnames."""
+    items: list[DeploymentAliasResponse]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        new_slug = self.new_slug
+        items = []
+        for items_item_data in self.items:
+            items_item = items_item_data.to_dict()
+            items.append(items_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "new_slug": new_slug,
+                "items": items,
             }
         )
 
@@ -32,15 +38,22 @@ class RenameAppRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        d = dict(src_dict)
-        new_slug = d.pop("new_slug")
+        from ..models.deployment_alias_response import DeploymentAliasResponse
 
-        rename_app_request = cls(
-            new_slug=new_slug,
+        d = dict(src_dict)
+        items = []
+        _items = d.pop("items")
+        for items_item_data in _items:
+            items_item = DeploymentAliasResponse.from_dict(items_item_data)
+
+            items.append(items_item)
+
+        deployment_alias_list_response = cls(
+            items=items,
         )
 
-        rename_app_request.additional_properties = d
-        return rename_app_request
+        deployment_alias_list_response.additional_properties = d
+        return deployment_alias_list_response
 
     @property
     def additional_keys(self) -> list[str]:

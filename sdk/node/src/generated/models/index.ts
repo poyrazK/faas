@@ -260,6 +260,7 @@ export type { DeploymentChange } from './DeploymentChange.js';
 export type { DeploymentFailedWebhookPayload } from './DeploymentFailedWebhookPayload.js';
 export type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 export type { DeploymentListResponse } from './DeploymentListResponse.js';
+export type { DeploymentLiveWebhookPayload } from './DeploymentLiveWebhookPayload.js';
 export type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 export type { DeploymentPreviewURL } from './DeploymentPreviewURL.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';
