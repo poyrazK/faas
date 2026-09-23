@@ -40,3 +40,31 @@ deployment health-path override selects HTTP readiness instead.
 
 Gregale adds the managed infrastructure around that process: TLS, readiness,
 logs and metrics, snapshots, autoscaling, and scale-to-zero.
+
+## Randomness after a snapshot restore
+
+A scaled-to-zero app wakes from a snapshot of its running process, so any
+random generator the process held in memory is restored with it. The guest
+kernel is reseeded on every wake, so anything that reads the kernel on each
+call is always safe: `/dev/urandom`, `getrandom(2)`, Go `crypto/rand`, Python
+`secrets`, `os.urandom` and `uuid.uuid4`, and Node `crypto.webcrypto`.
+
+For Node and Python, Gregale also reseeds the process itself before a woken
+instance serves traffic (ADR-222). It covers Node `crypto` (and the OpenSSL
+state behind TLS), `crypto.randomUUID`, `crypto.randomInt` and `Math.random`,
+and Python `random`, `ssl`, and numpy's global `numpy.random` functions. If a
+process cannot confirm the reseed, the instance cold-boots instead of waking
+from the snapshot.
+
+Reseed these yourself, or avoid keeping them across a snapshot:
+
+- generators in other runtimes, such as Go `math/rand`, Java `Random` and
+  `SecureRandom`, Ruby `Random`, and PHP `mt_rand`;
+- generator objects your code created before the snapshot, such as Python
+  `random.Random()` or `numpy.random.default_rng()`;
+- `Math.random` inside Node worker threads;
+- sidecars that run from their own root filesystem.
+
+Setting `GREGALE_RESTORE_RESEED=off` in the app's environment disables the
+Node and Python reseed. Only do that for an app that never generates tokens,
+keys, nonces or identifiers.
