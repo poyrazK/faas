@@ -328,6 +328,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}":            "GetProjectEnvironment",
 	"PATCH /v1/projects/{slug}/environments/{environment}":          "UpdateProjectEnvironment",
 	"GET /v1/projects/{slug}/environments/{environment}/releases":   "GetProjectEnvironmentReleases",
+	"GET /v1/projects/{slug}/environments/{environment}/state":      "GetProjectEnvironmentState",
+	"GET /v1/projects/{slug}/environments/{environment}/diff":       "GetProjectEnvironmentDiff",
 	"GET /v1/projects/{slug}/environments/{environment}/promotions": "ListProjectEnvironmentPromotions",
 	"GET /v1/projects/{slug}/delete-preview":                        "PreviewDeleteProject",
 	"DELETE /v1/projects/{slug}":                                    "DeleteProject",

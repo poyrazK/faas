@@ -61,3 +61,25 @@ func TestGetPreviewStatusRejectsProductionApp(t *testing.T) {
 		t.Fatal("GetPreviewStatus succeeded for a production app")
 	}
 }
+
+func TestGetPreviewReturnsFirstClassResource(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/preview/pr-42-web" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(PreviewResourceResponse{
+			App:     AppResponse{Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42},
+			Changes: PreviewProductionChangesResponse{ArtifactChanged: true},
+			Links:   PreviewResourceLinksResponse{URL: "https://pr-42-web.gregale.dev"},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := NewClient(srv.URL, "token").GetPreview(context.Background(), "pr-42-web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.App.PreviewPRNumber != 42 || !got.Changes.ArtifactChanged || got.Links.URL == "" {
+		t.Fatalf("preview = %+v", got)
+	}
+}

@@ -35,10 +35,11 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment (name defaults to linked context) |
+| [`diff`](#diff) | Compare two named environments in the linked project |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
-| [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context) |
+| [`env`](#env) | Clone project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
@@ -1160,6 +1161,17 @@ preflight a project and prepare the first developer environment
 | `--postgres-region <REGION>` | choose managed database placement |  |
 
 
+## diff
+
+Compare two named environments in the linked project
+
+`gregale diff <from-environment> <to-environment> [--project <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--project <SLUG>` | project slug (defaults to linked project) |  |
+
+
 ## preview
 
 Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)
@@ -1299,13 +1311,24 @@ Remove the imported app OpenAPI document
 
 ## env
 
-Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt; or linked context)
+Clone project environments or manage app runtime env/secrets
 
 `gregale env [<subcommand>] [--app <slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked context) |  |
+
+### env create
+
+Clone a project environment with isolated managed data by default
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | source environment | required |
+| `--project <SLUG>` | project slug (defaults to linked project) |  |
+| `--protected` | protect the new environment |  |
+| `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
 
 ### env pull
 

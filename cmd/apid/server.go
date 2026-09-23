@@ -1472,6 +1472,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateApp))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreApp))))
+	// First-class preview state keeps URL, expiry, production diff, and
+	// observability/configuration links behind the normal read surface.
+	mux.HandleFunc("GET /v1/preview/{slug}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPreviewStatus)))
 	// Mega-C PR-1 / issue #961 leaf 3: one-click preview destroy
 	// from a PR comment. Distinct URL from DELETE /v1/apps/{slug}
 	// so production apps do not collide with the preview-specific
@@ -1950,6 +1953,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createProjectEnvironment)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentReleases))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentState))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironment))))
 	mux.HandleFunc("PATCH /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateProjectEnvironment))))
 	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deleteProjectEnvironment)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentConfig))))

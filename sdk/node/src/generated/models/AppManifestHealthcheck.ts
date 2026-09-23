@@ -2,14 +2,24 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { SidecarExecProbe } from './SidecarExecProbe.js';
+import type { SidecarHTTPGetProbe } from './SidecarHTTPGetProbe.js';
+import type { SidecarTCPSocketProbe } from './SidecarTCPSocketProbe.js';
 /**
- * AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1 surfaces the field for the registry-pull path.
+ * AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations are integer seconds at the JSON boundary to match OCI/Docker conventions.
  */
 export type AppManifestHealthcheck = {
   /**
    * Argv of the check command, prefixed by "CMD", "CMD-SHELL", or "NONE" per Docker semantics.
    */
   test?: Array<string>;
+  exec?: SidecarExecProbe;
+  http_get?: SidecarHTTPGetProbe;
+  tcp_socket?: SidecarTCPSocketProbe;
+  /**
+   * Typed sidecar probe cadence in seconds; defaults to 10, or 30 for legacy OCI checks.
+   */
+  period_s?: number;
   /**
    * Poll cadence after StartPeriodS elapses (Docker default 30s).
    */
@@ -22,6 +32,18 @@ export type AppManifestHealthcheck = {
    * Consecutive failure count to mark unhealthy (Docker default 3).
    */
   retries?: number | null;
+  /**
+   * Failure count that marks a startup probe failed or restarts a liveness workload; defaults to 3.
+   */
+  failure_threshold?: number;
+  /**
+   * Consecutive passes required before the probe reports healthy; defaults to 1.
+   */
+  success_threshold?: number;
+  /**
+   * Seconds to wait before the first typed sidecar probe.
+   */
+  initial_delay_s?: number;
   /**
    * Startup grace during which failures don't count (Docker 17.05+, default 0s).
    */

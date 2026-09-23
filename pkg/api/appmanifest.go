@@ -284,7 +284,7 @@ func ValidateWorkloadPorts(ports []WorkloadPort) error {
 type AppManifestHealthcheck struct {
 	// Test is the argv of the check command, prefixed by "CMD",
 	// "CMD-SHELL", or "NONE" per Docker semantics.
-	Test []string `json:"test" yaml:"test" toml:"test"`
+	Test []string `json:"test,omitempty" yaml:"test,omitempty" toml:"test,omitempty"`
 	// IntervalS is the poll cadence after StartPeriodS elapses.
 	// 0 = inherit platform default (Docker: 30s).
 	IntervalS int `json:"interval_s,omitempty" yaml:"interval_s,omitempty" toml:"interval_s,omitempty"`
@@ -296,6 +296,16 @@ type AppManifestHealthcheck struct {
 	// StartPeriodS is the startup grace during which failures
 	// don't count (Docker 17.05+).
 	StartPeriodS int `json:"start_period_s,omitempty" yaml:"start_period_s,omitempty" toml:"start_period_s,omitempty"`
+	// The following typed actions and Cloud Run-style timing fields are used
+	// by deployment sidecar probe overrides; image-baked OCI HEALTHCHECKs keep
+	// using the fields above.
+	Exec             *SidecarExecProbe      `json:"exec,omitempty" yaml:"exec,omitempty" toml:"exec,omitempty"`
+	HTTPGet          *SidecarHTTPGetProbe   `json:"http_get,omitempty" yaml:"http_get,omitempty" toml:"http_get,omitempty"`
+	TCPSocket        *SidecarTCPSocketProbe `json:"tcp_socket,omitempty" yaml:"tcp_socket,omitempty" toml:"tcp_socket,omitempty"`
+	PeriodS          int                    `json:"period_s,omitempty" yaml:"period_s,omitempty" toml:"period_s,omitempty"`
+	FailureThreshold int                    `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty" toml:"failure_threshold,omitempty"`
+	SuccessThreshold int                    `json:"success_threshold,omitempty" yaml:"success_threshold,omitempty" toml:"success_threshold,omitempty"`
+	InitialDelayS    int                    `json:"initial_delay_s,omitempty" yaml:"initial_delay_s,omitempty" toml:"initial_delay_s,omitempty"`
 }
 
 // EffectivePort returns Port or the default.

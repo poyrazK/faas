@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 )
 
 // PreviewStatusResponse is the SDK read model used by preview-aware tooling.
@@ -12,6 +14,19 @@ import (
 type PreviewStatusResponse struct {
 	App              AppResponse         `json:"app"`
 	LatestDeployment *DeploymentResponse `json:"latest_deployment,omitempty"`
+}
+
+// GetPreviewSlug returns the dedicated preview resource in one request. The
+// path-shaped name is the generated-SDK coverage contract.
+func (c *Client) GetPreviewSlug(ctx context.Context, slug string) (PreviewResourceResponse, error) {
+	var out PreviewResourceResponse
+	path := "/v1/preview/" + url.PathEscape(slug)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetPreview is the ergonomic alias used by preview-aware tooling.
+func (c *Client) GetPreview(ctx context.Context, slug string) (PreviewResourceResponse, error) {
+	return c.GetPreviewSlug(ctx, slug)
 }
 
 // GetPreviewStatus returns preview metadata and its newest deployment in one

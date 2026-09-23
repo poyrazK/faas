@@ -52,6 +52,29 @@ func TestApplyEdgeRuleCache_BypassOnAuthorization(t *testing.T) {
 	}
 }
 
+func TestApplyEdgeRuleCache_BypassesDeploymentPreviewRoute(t *testing.T) {
+	now := time.Now()
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+	h, _, _ := newTestHandler(t)
+	h.WithResponseCache(cache)
+	rule := EdgeRuleCacheResolved{ID: "rule-cache-1", PathGlob: "/catalog", MaxAgeSeconds: 60}
+	seedCacheRule(t, h, "deploy-42-jane-api.apps.dom", rule)
+	cache.Put(CacheKey{
+		AppID: "app-1", RuleID: rule.ID, Method: http.MethodGet,
+		NormalizedPath: "/catalog", VaryHash: hashStable(""),
+	}, http.StatusOK, nil, []byte("production"), now.Add(time.Minute), now.Add(time.Minute), rule.toStateEdgeRuleCacheAction())
+
+	req := httptest.NewRequest(http.MethodGet, "http://deploy-42-jane-api.apps.dom/catalog", nil)
+	w := httptest.NewRecorder()
+	rec := newTestStatusRecorder(w)
+	served, matched := h.applyEdgeRuleCache(w, req, App{
+		ID: "app-1", Plan: api.PlanPro, PinnedDeploymentID: "deployment-42",
+	}, rec)
+	if served || matched != nil || w.Body.Len() != 0 {
+		t.Fatalf("deployment preview consulted app cache: served=%v matched=%v body=%q", served, matched, w.Body.String())
+	}
+}
+
 // TestApplyEdgeRuleCache_MethodGateOnlyGet verifies that POST
 // (and other non-GET/HEAD methods) are NEVER served from cache.
 // A cache that served a POST response to a subsequent POST would

@@ -3,9 +3,16 @@
   "fixtures": [
     {
       "id": "django",
-      "description": "Django application with manage.py and requirements.",
-      "tags": ["python"],
-      "files": {"requirements.txt": "Django==5.2\ngunicorn\n", "manage.py": "#!/usr/bin/env python\n"},
+      "description": "Runnable Django WSGI application with conventional project settings.",
+      "tags": ["python", "runtime-candidate"],
+      "files": {
+        "requirements.txt": "Django==5.2.0\ngunicorn==23.0.0\n",
+        "manage.py": "#!/usr/bin/env python\nimport os\nimport sys\n\nif __name__ == \"__main__\":\n    os.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"app.settings\")\n    from django.core.management import execute_from_command_line\n    execute_from_command_line(sys.argv)\n",
+        "app/__init__.py": "",
+        "app/settings.py": "from pathlib import Path\n\nBASE_DIR = Path(__file__).resolve().parent.parent\nSECRET_KEY = \"catalog-test-only\"\nDEBUG = False\nALLOWED_HOSTS = [\"*\"]\nROOT_URLCONF = \"app.urls\"\nINSTALLED_APPS = []\nMIDDLEWARE = []\nWSGI_APPLICATION = \"app.wsgi.application\"\nDEFAULT_AUTO_FIELD = \"django.db.models.BigAutoField\"\n",
+        "app/urls.py": "from django.http import HttpResponse\nfrom django.urls import path\n\ndef healthz(_request):\n    return HttpResponse(\"ready\\n\")\n\ndef index(_request):\n    return HttpResponse(\"catalog django\\n\")\n\nurlpatterns = [path(\"healthz\", healthz), path(\"\", index)]\n",
+        "app/wsgi.py": "import os\nfrom django.core.wsgi import get_wsgi_application\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"app.settings\")\napplication = get_wsgi_application()\n"
+      },
       "expected": {"framework": "django", "package_manager": "pip", "port": 8000, "health_path": "/healthz", "start_command": "gunicorn app.wsgi:application --bind 0.0.0.0:$PORT", "inferred": true}
     },
     {
@@ -29,6 +36,17 @@
       "tags": ["python", "runtime"],
       "files": {"requirements.txt": "fastapi==0.116.0\nuvicorn\n", "app.py": "from fastapi import FastAPI\napp=FastAPI()\n\n@app.get('/healthz')\ndef healthz():\n    return {'status': 'ready'}\n\n@app.get('/')\ndef root():\n    return {'service': 'catalog-fastapi'}\n"},
       "expected": {"framework": "fastapi", "package_manager": "pip", "port": 8000, "health_path": "/healthz", "start_command": "uvicorn app:app --host 0.0.0.0 --port $PORT", "inferred": true}
+    },
+    {
+      "id": "fastapi-src-layout",
+      "description": "FastAPI application installed from requirements with a conventional src layout.",
+      "tags": ["python", "runtime-candidate"],
+      "files": {
+        "requirements.txt": "fastapi==0.116.0\nuvicorn==0.35.0\n",
+        "src/__init__.py": "",
+        "src/api.py": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get('/healthz')\ndef healthz():\n    return {'status': 'ready'}\n\n@app.get('/')\ndef root():\n    return {'service': 'catalog-fastapi-src'}\n"
+      },
+      "expected": {"framework": "fastapi", "package_manager": "pip", "port": 8000, "health_path": "/healthz", "start_command": "uvicorn src.api:app --host 0.0.0.0 --port $PORT", "inferred": true}
     },
     {
       "id": "fastify",
@@ -60,9 +78,16 @@
     },
     {
       "id": "go-workspace",
-      "description": "Go API rooted in a Go workspace.",
+      "description": "Go API selected from a nested module in a multi-module Go workspace.",
       "tags": ["go", "runtime", "workspace"],
-      "files": {"go.mod": "module example.com/api\ngo 1.24\n", "go.work": "go 1.24\n\nuse .\n", "main.go": "package main\n\nimport (\n  \"fmt\"\n  \"net/http\"\n)\n\nfunc main() {\n  mux := http.NewServeMux()\n  mux.HandleFunc(\"/healthz\", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, \"ready\\n\") })\n  mux.HandleFunc(\"/\", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, \"catalog go workspace\\n\") })\n  _ = http.ListenAndServe(\":8080\", mux)\n}\n"},
+      "source_root": "apps/api",
+      "files": {
+        "go.work": "go 1.24\n\nuse (\n  ./apps/api\n  ./apps/worker\n)\n",
+        "apps/api/go.mod": "module example.com/api\ngo 1.24\n",
+        "apps/api/main.go": "package main\n\nimport (\n  \"fmt\"\n  \"net/http\"\n)\n\nfunc main() {\n  mux := http.NewServeMux()\n  mux.HandleFunc(\"/healthz\", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, \"ready\\n\") })\n  mux.HandleFunc(\"/\", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, \"catalog go workspace\\n\") })\n  _ = http.ListenAndServe(\":8080\", mux)\n}\n",
+        "apps/worker/go.mod": "module example.com/worker\ngo 1.24\n",
+        "apps/worker/main.go": "package main\n\nfunc main() {}\n"
+      },
       "expected": {"framework": "go-net-http", "package_manager": "go", "port": 8080, "health_path": "/healthz", "start_command": "go run .", "inferred": true}
     },
     {
@@ -81,16 +106,32 @@
     },
     {
       "id": "nestjs",
-      "description": "NestJS API using its production start script.",
+      "description": "NestJS API compiled from TypeScript and started from its production entrypoint.",
       "tags": ["node", "runtime"],
-      "files": {"package.json": "{\"dependencies\":{\"@nestjs/core\":\"^11\"},\"scripts\":{\"start:prod\":\"node server.js\"}}", "src/main.ts": "import { NestFactory } from '@nestjs/core';\n", "server.js": "const http = require('http');\nhttp.createServer((req, res) => {\n  res.writeHead(200, {'content-type':'text/plain'});\n  res.end(req.url === '/healthz' ? 'ready\\n' : 'catalog nestjs\\n');\n}).listen(process.env.PORT || 3000);\n"},
+      "files": {
+        "package.json": "{\"scripts\":{\"build\":\"nest build\",\"start:prod\":\"node dist/main.js\"},\"dependencies\":{\"@nestjs/common\":\"^11.0.0\",\"@nestjs/core\":\"^11.0.0\",\"@nestjs/platform-express\":\"^11.0.0\",\"reflect-metadata\":\"^0.2.2\",\"rxjs\":\"^7.8.2\"},\"devDependencies\":{\"@nestjs/cli\":\"^11.0.0\",\"@nestjs/schematics\":\"^11.0.0\",\"@types/node\":\"^22.13.0\",\"typescript\":\"^5.8.3\"}}",
+        "nest-cli.json": "{\"collection\":\"@nestjs/schematics\",\"sourceRoot\":\"src\"}\n",
+        "tsconfig.json": "{\"compilerOptions\":{\"module\":\"commonjs\",\"declaration\":true,\"removeComments\":true,\"emitDecoratorMetadata\":true,\"experimentalDecorators\":true,\"allowSyntheticDefaultImports\":true,\"target\":\"ES2021\",\"sourceMap\":false,\"outDir\":\"./dist\",\"baseUrl\":\"./\",\"incremental\":false,\"skipLibCheck\":true,\"strictNullChecks\":false,\"noImplicitAny\":false,\"strictBindCallApply\":false,\"forceConsistentCasingInFileNames\":true,\"noFallthroughCasesInSwitch\":true}}\n",
+        "tsconfig.build.json": "{\"extends\":\"./tsconfig.json\",\"exclude\":[\"node_modules\",\"test\",\"dist\",\"**/*spec.ts\"]}\n",
+        "src/main.ts": "import { NestFactory } from '@nestjs/core';\nimport { AppModule } from './app.module';\n\nasync function bootstrap() {\n  const app = await NestFactory.create(AppModule);\n  await app.listen(Number(process.env.PORT) || 3000, '0.0.0.0');\n}\nvoid bootstrap();\n",
+        "src/app.module.ts": "import { Module } from '@nestjs/common';\nimport { AppController } from './app.controller';\n\n@Module({ controllers: [AppController] })\nexport class AppModule {}\n",
+        "src/app.controller.ts": "import { Controller, Get } from '@nestjs/common';\n\n@Controller()\nexport class AppController {\n  @Get('/healthz')\n  healthz() { return { status: 'ready' }; }\n\n  @Get('/')\n  index() { return { service: 'catalog nestjs' }; }\n}\n"
+      },
       "expected": {"framework": "nestjs", "package_manager": "npm", "port": 3000, "health_path": "/healthz", "start_command": "npm run start:prod", "inferred": true}
     },
     {
       "id": "pnpm-workspace",
-      "description": "Express API declaring pnpm in a workspace repository.",
+      "description": "Express API selected from a nested pnpm workspace and importing a sibling workspace package.",
       "tags": ["node", "runtime", "workspace"],
-      "files": {"package.json": "{\"packageManager\":\"pnpm@9.12.0\",\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "pnpm-workspace.yaml": "packages:\n  - apps/*\n", "server.js": "const express = require('express');\nconst app = express();\napp.get('/healthz', (_req, res) => res.send('ready\\n'));\napp.get('/', (_req, res) => res.send('catalog pnpm\\n'));\napp.listen(process.env.PORT || 3000);\n"},
+      "source_root": "apps/api",
+      "files": {
+        "package.json": "{\"private\":true,\"packageManager\":\"pnpm@9.12.0\"}\n",
+        "pnpm-workspace.yaml": "packages:\n  - apps/*\n  - packages/*\n",
+        "apps/api/package.json": "{\"name\":\"@catalog/api\",\"private\":true,\"packageManager\":\"pnpm@9.12.0\",\"dependencies\":{\"@catalog/shared\":\"workspace:*\",\"express\":\"^5.0.0\"},\"scripts\":{\"start\":\"node server.js\"}}\n",
+        "apps/api/server.js": "const express = require('express');\nconst message = require('@catalog/shared');\nconst app = express();\napp.get('/healthz', (_req, res) => res.send('ready\\n'));\napp.get('/', (_req, res) => res.send(message));\napp.listen(process.env.PORT || 3000);\n",
+        "packages/shared/package.json": "{\"name\":\"@catalog/shared\",\"version\":\"1.0.0\",\"main\":\"index.js\"}\n",
+        "packages/shared/index.js": "module.exports = 'catalog pnpm workspace\\n';\n"
+      },
       "expected": {"framework": "express", "package_manager": "pnpm", "port": 3000, "health_path": "/healthz", "start_command": "pnpm run start", "inferred": true}
     },
     {
@@ -99,13 +140,6 @@
       "tags": ["node", "runtime", "sse"],
       "files": {"package.json": "{\"dependencies\":{\"express\":\"^5\"},\"scripts\":{\"start\":\"node server.js\"}}", "server.js": "const express = require('express');\nconst app = express();\napp.get('/healthz', (_req, res) => res.send('ready\\n'));\napp.get('/sse', (_req, res) => { res.setHeader('content-type', 'text/event-stream'); res.write('data: catalog\\n\\n'); });\napp.get('/', (_req, res) => res.send('catalog sse\\n'));\napp.listen(process.env.PORT || 3000);\n"},
       "expected": {"framework": "express", "package_manager": "npm", "port": 3000, "health_path": "/healthz", "start_command": "npm run start", "inferred": true}
-    },
-    {
-      "id": "uv-fastapi",
-      "description": "FastAPI application using uv and a src layout.",
-      "tags": ["python", "workspace"],
-      "files": {"pyproject.toml": "[project]\ndependencies = [\"fastapi\", \"uvicorn\"]\n", "uv.lock": "version = 1\n", "src/api.py": "from fastapi import FastAPI\napp = FastAPI()\n\n@app.get('/healthz')\ndef healthz():\n    return {'status': 'ready'}\n\n@app.get('/')\ndef root():\n    return {'service': 'catalog-uv'}\n"},
-      "expected": {"framework": "fastapi", "package_manager": "uv", "port": 8000, "health_path": "/healthz", "start_command": "uvicorn src.api:app --host 0.0.0.0 --port $PORT", "inferred": true}
     }
   ]
 }

@@ -21,13 +21,17 @@ type ObjectBucket struct {
 	State              string
 	PublicRead         bool
 	ServeAt            string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	LeaseToken         string
-	LeaseUntil         time.Time
-	AttemptCount       int32
-	RetryAt            time.Time
-	LastErrorCode      string
+	// EnvironmentCloneSourceBucketID is non-empty only for a private bucket
+	// provisioned by an isolated project-environment clone. It gives cleanup a
+	// durable ownership marker without conflating it with user-created buckets.
+	EnvironmentCloneSourceBucketID string
+	CreatedAt                      time.Time
+	UpdatedAt                      time.Time
+	LeaseToken                     string
+	LeaseUntil                     time.Time
+	AttemptCount                   int32
+	RetryAt                        time.Time
+	LastErrorCode                  string
 }
 
 // ObjectBucketStore is separate from Store so test doubles unrelated to
@@ -41,6 +45,12 @@ type ObjectBucketStore interface {
 	RetryObjectBucket(context.Context, string, string, string, time.Duration) error
 	DueObjectBuckets(context.Context, bool, int32) ([]ObjectBucket, error)
 	ClaimObjectBucketRecovery(context.Context, string, string, string, string, string) (ObjectBucket, error)
+}
+
+// ObjectBucketReservationResultStore is the provisioning-facing variant used
+// by multi-step workflows that must compensate only rows they created.
+type ObjectBucketReservationResultStore interface {
+	ReserveObjectBucketWithResult(context.Context, ObjectBucket, int) (ObjectBucket, bool, error)
 }
 
 const ObjectBucketLeaseDuration = 2 * time.Minute

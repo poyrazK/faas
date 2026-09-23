@@ -659,18 +659,19 @@ func JailerCommand(s JailerSpec) []string {
 // single canonical way to override the entrypoint without stamping
 // a new base layer.
 type WorkloadSpec struct {
-	Name          string                      // "main" for the main workload; sidecar name for the rest
-	Type          string                      // "main", "init", "sidecar"
-	Image         string                      // digest-pinned sidecar image, retained for wire/audit parity
-	StorageKey    string                      // StorageBackend key (apps/<slug>/<depID>[-<name>].ext4)
-	DriveID       string                      // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
-	RamMB         int                         // 0 = inherit plan RAM
-	CPUMillicores int                         // 0 = inherit app CPU quota
-	ScratchMB     int                         // 0 = platform default; sidecars only
-	DiskIOProfile string                      // "low", "standard", "high"; sidecars only
-	Port          int                         // 0 = inherit main port (8080)
-	Essential     bool                        // type=="init" + essential=true → fail deploy on non-zero exit
-	StartupProbe  *api.AppManifestHealthcheck // deployment override for the image OCI healthcheck
+	Name          string            // "main" for the main workload; sidecar name for the rest
+	Type          string            // "main", "init", "sidecar"
+	Image         string            // digest-pinned sidecar image, retained for wire/audit parity
+	StorageKey    string            // StorageBackend key (apps/<slug>/<depID>[-<name>].ext4)
+	DriveID       string            // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
+	RamMB         int               // 0 = inherit plan RAM
+	CPUMillicores int               // 0 = inherit app CPU quota
+	ScratchMB     int               // 0 = platform default; sidecars only
+	DiskIOProfile string            // "low", "standard", "high"; sidecars only
+	Port          int               // 0 = inherit main port (8080)
+	Essential     bool              // type=="init" + essential=true → fail deploy on non-zero exit
+	StartupProbe  *api.SidecarProbe // startup gate; nil falls back to image OCI healthcheck
+	LivenessProbe *api.SidecarProbe // optional steady-state probe for long-running sidecars
 	Cmd           []string
 	Entrypoint    []string
 	// DependsOn is the guest-init startup gate list. Conditions are

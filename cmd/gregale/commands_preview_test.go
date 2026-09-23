@@ -82,14 +82,17 @@ func TestPreviewShowIncludesLatestDeployment(t *testing.T) {
 	setPreviewTestAuth(t)
 	expires := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/apps/pr-42-web":
-			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", PreviewExpiresAt: &expires, Status: "active", URL: "https://pr-42-web.gregale.dev"})
-		case "/v1/apps/pr-42-web/deployments/latest":
-			writeJSONTest(w, api.DeploymentResponse{ID: "deploy-42", AppID: "preview-web", Status: "failed", CreatedAt: "2026-09-17T08:00:00Z"})
-		default:
+		if r.URL.Path != "/v1/preview/pr-42-web" {
 			http.NotFound(w, r)
+			return
 		}
+		writeJSONTest(w, api.PreviewResourceResponse{
+			App:                  api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", PreviewExpiresAt: &expires, Status: "active", URL: "https://pr-42-web.gregale.dev"},
+			LatestDeployment:     &api.DeploymentResponse{ID: "deploy-42", AppID: "preview-web", Status: "failed", CreatedAt: "2026-09-17T08:00:00Z"},
+			ProductionDeployment: &api.DeploymentResponse{ID: "deploy-prod", Status: "live"},
+			Changes:              api.PreviewProductionChangesResponse{ArtifactChanged: true, ConfigurationChangedGroups: []string{"runtime"}},
+			Links:                api.PreviewResourceLinksResponse{Logs: "/v1/apps/pr-42-web/logs", Metrics: "/v1/apps/pr-42-web/metrics", Configuration: "/v1/apps/pr-42-web"},
+		})
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
@@ -106,8 +109,9 @@ func TestPreviewShowIncludesLatestDeployment(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
 	}
-	if got.Kind != "pull_request" || got.URL == "" || got.LatestDeployment == nil || got.LatestDeployment.Status != "failed" {
-		t.Fatalf("summary = %+v, want PR URL and failed deployment", got)
+	if got.Kind != "pull_request" || got.URL == "" || got.LatestDeployment == nil || got.LatestDeployment.Status != "failed" ||
+		got.ProductionDeployment == nil || got.Changes == nil || !got.Changes.ArtifactChanged || got.Links == nil {
+		t.Fatalf("summary = %+v, want first-class preview details", got)
 	}
 }
 
@@ -115,8 +119,8 @@ func TestPreviewShowRejectsProductionAppBeforeDeploymentLookup(t *testing.T) {
 	resetJSONOut(t)
 	setPreviewTestAuth(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/apps/web" {
-			writeJSONTest(w, api.AppResponse{Slug: "web", Status: "active"})
+		if r.URL.Path == "/v1/preview/web" {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		t.Errorf("unexpected request: %s", r.URL.Path)

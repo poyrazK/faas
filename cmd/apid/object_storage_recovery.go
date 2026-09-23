@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
@@ -48,7 +49,12 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 			err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
 		}
 	} else {
-		err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
+		if b.EnvironmentCloneSourceBucketID != "" {
+			err = emptyEnvironmentCloneBucket(callCtx, backend.Provider, b.PhysicalName)
+		}
+		if err == nil {
+			err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
+		}
 	}
 	notEmpty := b.State == "deleting" && errors.Is(err, objectstorage.ErrNotEmpty)
 	if err != nil && !notEmpty {
@@ -68,6 +74,30 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 		s.audit.Emit(ctx, event, &b.AccountID, map[string]any{"app_id": b.AppID, "bucket_id": b.ID})
 	}
 	return err
+}
+
+func emptyEnvironmentCloneBucket(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
+	for range api.ObjectStorageInventoryMaxPages {
+		page, err := provider.ListObjects(ctx, physicalName, "", "", 1000)
+		if err != nil {
+			return err
+		}
+		if len(page.Items) > 1000 || (len(page.Items) == 0 && page.NextCursor != "") {
+			return objectstorage.ErrInvalid
+		}
+		if len(page.Items) == 0 {
+			return nil
+		}
+		for _, item := range page.Items {
+			if !objectstorage.ValidKey(item.Key) {
+				return objectstorage.ErrInvalid
+			}
+			if err := provider.DeleteObject(ctx, physicalName, item.Key); err != nil {
+				return err
+			}
+		}
+	}
+	return objectstorage.ErrUnavailable
 }
 
 func (s *server) retryBucketOperation(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket, cause error) error {

@@ -84,7 +84,8 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 			DiskIOProfile: sc.DiskIOProfile,
 			Port:          sc.Port,
 			Essential:     essential,
-			StartupProbe:  cloneAppManifestHealthcheck(sc.StartupProbe),
+			StartupProbe:  cloneSidecarProbe(sc.StartupProbe),
+			LivenessProbe: cloneSidecarProbe(sc.LivenessProbe),
 			SealedEnv:     sealedEnv,
 			DependsOn:     append([]api.WorkloadDependency(nil), sc.DependsOn...),
 			// Cmd is retained as a legacy fallback for guest-init
@@ -102,12 +103,25 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 	return out, nil
 }
 
-func cloneAppManifestHealthcheck(in *api.AppManifestHealthcheck) *api.AppManifestHealthcheck {
+func cloneSidecarProbe(in *api.SidecarProbe) *api.SidecarProbe {
 	if in == nil {
 		return nil
 	}
 	out := *in
 	out.Test = append([]string(nil), in.Test...)
+	if in.Exec != nil {
+		execProbe := *in.Exec
+		execProbe.Command = append([]string(nil), in.Exec.Command...)
+		out.Exec = &execProbe
+	}
+	if in.HTTPGet != nil {
+		httpProbe := *in.HTTPGet
+		out.HTTPGet = &httpProbe
+	}
+	if in.TCPSocket != nil {
+		tcpProbe := *in.TCPSocket
+		out.TCPSocket = &tcpProbe
+	}
 	return &out
 }
 
