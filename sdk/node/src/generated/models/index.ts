@@ -569,7 +569,6 @@ export type { QueueWorkloadProfileRequest } from './QueueWorkloadProfileRequest.
 export type { QueueWorkloadProfileResponse } from './QueueWorkloadProfileResponse.js';
 export type { QuotaBlock } from './QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './RaiseOverageCapRequest.js';
-export type { RateLimitPlain } from './RateLimitPlain.js';
 export type { RecordDevSyncRequest } from './RecordDevSyncRequest.js';
 export type { RecoverRolloutRequest } from './RecoverRolloutRequest.js';
 export type { RekeyProgress } from './RekeyProgress.js';

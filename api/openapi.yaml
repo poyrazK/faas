@@ -13,9 +13,8 @@ info:
     with `Idempotent-Replayed: true`.
 
     Errors use RFC 9457 `application/problem+json` with a stable `code`
-    field — see `Problem` schema. The single documented exception is the
-    429 response from the authlimiter middleware: plain text only
-    (`pkg/middleware/authlimit.go`).
+    field — see `Problem` schema. Authentication rate limits use the same
+    envelope with `code: auth_rate_limited` and a `Retry-After` header.
 
     Operator routes (`/v1/compute-nodes`), dashboard routes (`/dashboard/*`),
     webhook receivers (`/v1/webhooks/stripe`), SSE streams (`/v1/events`,
@@ -31799,8 +31798,9 @@ components:
         RFC 9457 problem+json envelope. The `code` field is the stable
         machine-readable identifier; clients branch on it. `limit` and
         `observed` are populated on quota errors. `docs_url` points the
-        user at the next action. `billing_portal_url` is populated on
-        `code: payment_required` when the customer already has a
+        user at the next action. Common customer-facing codes and recovery
+        guidance are listed in `docs/errors.md`. `billing_portal_url` is
+        populated on `code: payment_required` when the customer already has a
         provider subscription and must update it in the provider
         portal. `checkout_url` is populated when a new hosted checkout
         is required. `paddle_checkout_url` is retained as a legacy
@@ -31954,13 +31954,6 @@ components:
         source: { type: string, enum: [build, vm-init, app, gateway], example: "app" }
         message: { type: string, example: "the kernel OOM-killer fired on the workload" }
 
-    RateLimitPlain:
-      type: string
-      description: |
-        Plain-text body returned ONLY by the authlimiter middleware
-        (`pkg/middleware/authlimit.go`, around line 200). All other 429s
-        return a `Problem` with `code: plan_limit_concurrency` or
-        `code: quota_exhausted`.
     # ------------------------------------------------------------------ MFA
     # IAM-2 (issue #186): TOTP MFA on dashboard sessions. The five
     # /v1/account/mfa/* routes and their wire shapes live here so
@@ -35003,9 +34996,9 @@ components:
 
     TooManyRequests:
       description: |
-        429. Two response shapes:
-        - `application/problem+json` for code-driven 429s (`plan_limit_concurrency`, `quota_exhausted`).
-        - `text/plain` for the authlimiter middleware (`pkg/middleware/authlimit.go`).
+        429 application/problem+json response. Authentication throttling uses
+        `auth_rate_limited`; plan and usage limits use their specific stable
+        codes such as `plan_limit_concurrency` and `quota_exhausted`.
       headers:
         Retry-After:
           schema: { type: integer, example: 60 }
@@ -35022,8 +35015,6 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
-        text/plain:
-          schema: { $ref: '#/components/schemas/RateLimitPlain' }
 
     # ─── Inbound-webhook problem responses (ADR-212) ───────────────────────────
     InboundWebhookInvalid:

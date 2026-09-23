@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
@@ -43,9 +44,9 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 					if rw, ok := w.(interface{ Headers() http.Header }); ok {
 						_ = rw // type assertion kept for future hints
 					}
-					w.Header().Set("Content-Type", "application/problem+json")
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte(`{"type":"about:blank","title":"internal","status":500,"detail":"internal server error"}`))
+					api.WriteProblemForRequest(w, r, api.ErrInternal(
+						"Gregale encountered an unexpected error while processing this request.",
+					).WithHint("Retry the request; if it still fails, contact support."))
 				}
 			}()
 			next.ServeHTTP(w, r)

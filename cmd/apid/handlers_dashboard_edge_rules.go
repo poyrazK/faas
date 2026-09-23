@@ -168,7 +168,7 @@ func dashboardEdgeRulesActionFlash(r *http.Request) string {
 func (s *server) dashboardCreateEdgeRule(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardEdgeRulesCSRF(w, r, acct.ID) {
@@ -232,7 +232,7 @@ func (s *server) dashboardCreateEdgeRule(w http.ResponseWriter, r *http.Request)
 func (s *server) dashboardToggleEdgeRule(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardEdgeRulesCSRF(w, r, acct.ID) {
@@ -261,7 +261,7 @@ func (s *server) dashboardToggleEdgeRule(w http.ResponseWriter, r *http.Request)
 func (s *server) dashboardDeleteEdgeRule(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardEdgeRulesCSRF(w, r, acct.ID) {
@@ -278,7 +278,7 @@ func (s *server) dashboardDeleteEdgeRule(w http.ResponseWriter, r *http.Request)
 func (s *server) dashboardSecurityHeaders(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardEdgeRulesCSRF(w, r, acct.ID) {

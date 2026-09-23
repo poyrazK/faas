@@ -118,9 +118,7 @@ func TestE2E_NormalPath_StaleInstanceFailsOverAndReplacementRejoins(t *testing.T
 		path := fmt.Sprintf("/multi-failover/trigger/%d", i)
 		_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
 		if statusCode == http.StatusServiceUnavailable {
-			if !strings.Contains(string(body), "upstream unavailable") {
-				t.Fatalf("stale target response body=%q, want upstream unavailable", body)
-			}
+			assertAppUnavailableProblem(t, body)
 			sawStaleFailure = true
 			break
 		}

@@ -2,13 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
 )
 
@@ -44,5 +50,46 @@ func TestRealtimedControlProxyRewritesManagementPath(t *testing.T) {
 func TestRealtimedControlProxyDisabledWithoutSocket(t *testing.T) {
 	if got := newRealtimedControlProxy("", nil); got != nil {
 		t.Fatal("empty socket should disable control proxy")
+	}
+}
+
+func TestRealtimedProxyFailureReturnsSafeProblem(t *testing.T) {
+	missingSocket := filepath.Join(t.TempDir(), "missing-realtimed.sock")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	tests := []struct {
+		name string
+		new  func(string, *slog.Logger) http.Handler
+		path string
+	}{
+		{name: "public", new: newRealtimedProxy, path: "/realtime/connect"},
+		{name: "control", new: newRealtimedControlProxy, path: "/v1/internal/realtime/connections"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			test.new(missingSocket, log).ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+			}
+			if got := recorder.Header().Get("Content-Type"); !strings.Contains(got, "application/problem+json") {
+				t.Fatalf("content-type = %q, want application/problem+json", got)
+			}
+			if got := recorder.Header().Get("Retry-After"); got != "5" {
+				t.Errorf("Retry-After = %q, want 5", got)
+			}
+			var problem api.Problem
+			if err := json.Unmarshal(recorder.Body.Bytes(), &problem); err != nil {
+				t.Fatalf("decode problem: %v", err)
+			}
+			if problem.Code != api.CodeRealtimeUnavailable {
+				t.Errorf("code = %q, want %q", problem.Code, api.CodeRealtimeUnavailable)
+			}
+			if strings.Contains(recorder.Body.String(), missingSocket) || strings.Contains(recorder.Body.String(), "dial unix") {
+				t.Errorf("response leaked internal dial details: %s", recorder.Body.String())
+			}
+		})
 	}
 }

@@ -166,8 +166,9 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 			s.notFound(w, "no such app")
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"App lookup failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "load app for upload",
+			"Gregale could not prepare an upload for this app.",
+			"Check the app name and retry; contact support if it continues.", err)
 		return
 	}
 	if app.AccountID != acct.ID {
@@ -193,8 +194,9 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		AppSlug: req.AppSlug,
 	})
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Count failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "check open upload sessions",
+			"Gregale could not check the number of uploads already in progress.",
+			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
 	if openCount >= uploadSessionOpenCap {
@@ -206,8 +208,9 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 
 	openBytes, err := s.store.SumOpenUploadSessionBytesByAccount(r.Context(), acctUUID)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Sum failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "check upload storage budget",
+			"Gregale could not check the storage available for this upload.",
+			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
 	budgetBytes := maxBytes * uploadSessionSpoolBudgetMultiplier
@@ -239,27 +242,31 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	uploadID := randomToken(12)
 	partPath := spoolRoot() + "/" + uploadID + ".part"
 	if err := os.MkdirAll(spoolRoot(), 0o770); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool mkdir failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "prepare upload storage",
+			"Gregale could not prepare storage for this upload.",
+			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
 	f, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY, 0o660)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool create failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "create upload storage file",
+			"Gregale could not prepare storage for this upload.",
+			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
 	if err := f.Truncate(req.TotalSize); err != nil {
 		_ = f.Close()
 		_ = os.Remove(partPath)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool truncate failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "reserve upload storage",
+			"Gregale could not reserve storage for this upload.",
+			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
 	if err := f.Close(); err != nil {
 		_ = os.Remove(partPath)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool close failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "close prepared upload storage",
+			"Gregale could not prepare storage for this upload.",
+			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
 
@@ -275,8 +282,9 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	})
 	if err != nil {
 		_ = os.Remove(partPath)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Create session failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "create upload session",
+			"Gregale could not start this upload.",
+			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
 
@@ -306,8 +314,9 @@ func (s *server) handleGetUpload(w http.ResponseWriter, r *http.Request, acct st
 			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Get session failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "load upload session",
+			"Gregale could not load this upload session.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
 	if row.AccountID != pgtypeFromUUIDString(acct.ID) {
@@ -351,8 +360,9 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Get session failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "load upload session before appending",
+			"Gregale could not continue this upload.",
+			"Retry with the current upload offset; contact support if it continues.", err)
 		return
 	}
 	acctUUID := pgtypeFromUUIDString(acct.ID)
@@ -406,8 +416,9 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Get session failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "reload upload session before appending",
+			"Gregale could not continue this upload.",
+			"Retry with the current upload offset; contact support if it continues.", err)
 		return
 	}
 	if row.AccountID != acctUUID {
@@ -440,25 +451,29 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 	// Advancing first would let a retry skip bytes that never reached disk.
 	f, err := os.OpenFile(row.PartPath, os.O_WRONLY, 0o660)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool open failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "open upload storage file",
+			"Gregale could not write this upload chunk.",
+			"Retry the chunk upload; contact support if it continues.", err)
 		return
 	}
 	if _, err := f.WriteAt(chunk, clientOffset); err != nil {
 		_ = f.Close()
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool write failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "write upload chunk",
+			"Gregale could not write this upload chunk.",
+			"Retry the chunk upload; contact support if it continues.", err)
 		return
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool fsync failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "persist upload chunk",
+			"Gregale could not safely persist this upload chunk.",
+			"Retry the chunk upload; contact support if it continues.", err)
 		return
 	}
 	if err := f.Close(); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Spool close failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "close upload chunk storage",
+			"Gregale could not finish writing this upload chunk.",
+			"Retry the chunk upload; contact support if it continues.", err)
 		return
 	}
 
@@ -481,8 +496,9 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.ErrUploadSessionOffsetConflict(uploadID, clientOffset, current.ReceivedBytes))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Append failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "advance upload offset",
+			"Gregale could not record the uploaded chunk.",
+			"Retry with the server's current upload offset; contact support if it continues.", err)
 		return
 	}
 
@@ -509,8 +525,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, s.uploadCommitRecoveryProblem(r.Context(), acct.ID, uploadID))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Get session failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "load upload session before commit",
+			"Gregale could not load this upload session.",
+			"Retry the commit request; contact support if it continues.", err)
 		return
 	}
 	if row.AccountID != pgtypeFromUUIDString(acct.ID) {
@@ -521,8 +538,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
 		return
 	} else if !errors.Is(outcomeErr, state.ErrNotFound) {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Get commit outcome failed", outcomeErr.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "load upload commit outcome",
+			"Gregale could not determine whether this upload was already committed.",
+			"Check the deployment list before retrying; contact support if the result is unclear.", outcomeErr)
 		return
 	}
 	if row.Status != "open" {
@@ -546,8 +564,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			s.notFound(w, "no such app")
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"App lookup failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "load app for upload commit",
+			"Gregale could not load the app for this upload.",
+			"Check the app name and upload status, then retry; contact support if it continues.", err)
 		return
 	}
 	// Defense in depth: the auth chain + upload_sessions row's
@@ -564,8 +583,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	var opts api.UploadDeployOptions
 	if len(row.DeployOptions) > 0 && string(row.DeployOptions) != "{}" {
 		if err := json.Unmarshal(row.DeployOptions, &opts); err != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-				"Invalid persisted deploy options", err.Error()))
+			writeCustomerInternalProblem(w, r, s.log, "read upload deployment options",
+				"Gregale could not read the deployment options saved with this upload.",
+				"Start a new upload; contact support if this problem persists.", err)
 			return
 		}
 	}
@@ -749,13 +769,15 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 				api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
 				return
 			} else {
-				api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-					"Commit outcome conflict without stored outcome", getErr.Error()))
+				writeCustomerInternalProblem(w, r, s.log, "recover conflicting upload commit outcome",
+					"Gregale could not determine the result of this upload commit.",
+					"Check the deployment list before retrying; contact support if the result is unclear.", getErr)
 				return
 			}
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Record outcome failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "record upload commit outcome",
+			"Gregale could not record the result of this upload commit.",
+			"Check the deployment list before retrying; contact support if the result is unclear.", err)
 		return
 	}
 
@@ -770,8 +792,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 				return
 			}
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Mark committed failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "mark upload session committed",
+			"Gregale could not finish recording this upload commit.",
+			"Check the deployment list before retrying; contact support if the result is unclear.", err)
 		return
 	}
 	_ = committedRow // satisfied for the side effect
@@ -805,8 +828,9 @@ func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Get session failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "load upload session before cancel",
+			"Gregale could not load this upload session.",
+			"Retry the cancellation request; contact support if it continues.", err)
 		return
 	}
 	if row.AccountID != acctUUID {
@@ -826,8 +850,9 @@ func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct
 			api.WriteProblem(w, api.ErrUploadSessionAlreadyCancelled(uploadID))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Cancel failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "cancel upload session",
+			"Gregale could not cancel this upload.",
+			"Retry the cancellation request; contact support if it continues.", err)
 		return
 	}
 

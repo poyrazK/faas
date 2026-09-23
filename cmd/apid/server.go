@@ -3103,7 +3103,7 @@ func (s *server) handler() http.Handler {
 	// dashboardAuthLimiter counts auth-failures, not every attempt
 	// here, and using it would either under-or-over-share. The
 	// limiter sits OUTSIDE sessionAuth so a 4th hit doesn't waste
-	// a cookie round-trip; the 429 body is the same plain-text
+	// a cookie round-trip; the 429 body is the same negotiated Problem
 	// shape AuthLimit emits so dashboards handle it identically.
 	mux.Handle("GET /dashboard/account/export", s.dashboardChain(
 		middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
@@ -3412,6 +3412,10 @@ func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {
 func (s *server) dashboardChain(h http.Handler) http.Handler {
 	// http.HandlerFunc is also http.Handler so middleware.RequestID
 	// accepts it directly. Build inside-out.
+	next := h
+	h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&dashboardProblemWriter{ResponseWriter: w, request: r}, r)
+	})
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(s.log)(h)
 	return h

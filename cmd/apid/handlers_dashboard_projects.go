@@ -125,7 +125,7 @@ func (s *server) dashboardUpdateProject(w http.ResponseWriter, r *http.Request) 
 	acct, ok := AccountFrom(r.Context())
 	slug := r.PathValue("slug")
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !api.ValidProjectSlug(slug) {
@@ -178,7 +178,7 @@ func (s *server) dashboardDeleteProject(w http.ResponseWriter, r *http.Request) 
 	acct, ok := AccountFrom(r.Context())
 	slug := r.PathValue("slug")
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !api.ValidProjectSlug(slug) {

@@ -267,6 +267,7 @@ InsertDataUpstreamProbe
 InsertMirrorResult
 InsertOIDCExchangedToken
 InsertRequestTelemetry
+InsertRequestTelemetryWithLogEvent
 InsertStatusIncident
 InsertTriggerDeadLetter
 InsertWorkflowEvent

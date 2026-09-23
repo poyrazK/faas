@@ -139,7 +139,7 @@ func (s *server) dashboardRetryDeployment(w http.ResponseWriter, r *http.Request
 
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := middleware.VerifyAuthenticated(s.sessions, r, dashboardRetryDeploymentAction, acct.ID); err != nil {

@@ -102,7 +102,12 @@ func (s *server) eventsHandler(log *slog.Logger) http.HandlerFunc {
 
 		ch, cancel, err := s.notif.Subscribe(r.Context(), eventsChannels)
 		if err != nil {
-			_, _ = fmt.Fprintf(w, "event: error\ndata: {\"message\":%q}\n\n", err.Error())
+			s.log.ErrorContext(r.Context(), "subscribe event stream", "account_id", acct.ID, "err", err)
+			payload, _ := json.Marshal(struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			}{api.CodeEventStreamUnavailable, "The event stream is temporarily unavailable. Reconnect in a moment."})
+			_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", payload)
 			if flusher != nil {
 				flusher.Flush()
 			}

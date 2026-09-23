@@ -575,7 +575,6 @@ export type { QueueWorkloadProfileRequest } from './models/QueueWorkloadProfileR
 export type { QueueWorkloadProfileResponse } from './models/QueueWorkloadProfileResponse.js';
 export type { QuotaBlock } from './models/QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './models/RaiseOverageCapRequest.js';
-export type { RateLimitPlain } from './models/RateLimitPlain.js';
 export type { RecordDevSyncRequest } from './models/RecordDevSyncRequest.js';
 export type { RecoverRolloutRequest } from './models/RecoverRolloutRequest.js';
 export type { RekeyProgress } from './models/RekeyProgress.js';

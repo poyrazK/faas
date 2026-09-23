@@ -54,7 +54,7 @@ const (
 // fake without spinning a real Postgres pool.
 type requestTelemetryStore interface {
 	AccountByID(ctx context.Context, id string) (state.Account, error)
-	InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertRequestTelemetryParams) error
+	state.RequestTelemetryLogStore
 }
 
 // consumerUsageStore is the billing side of the receiver. PgStore and
@@ -277,7 +277,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		out.Outcome = rtOutcomeDBError
 		return out
 	}
-	insertErr := r.store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+	insertErr := r.store.InsertRequestTelemetryWithLogEvent(ctx, sqlc.InsertRequestTelemetryParams{
 		AccountID:           state.NewPgtypeUUID(accountID),
 		AppID:               state.NewPgtypeUUID(appID),
 		DeploymentID:        state.NewPgtypeUUID(deploymentID),
@@ -305,7 +305,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		DeploymentTag:       req.GetDeploymentTag(),
 		DeploymentCreatedAt: req.GetDeploymentCreatedAt(),
 		ImageDigest:         req.GetImageDigest(),
-	})
+	}, eventID)
 	if insertErr != nil {
 		if isConstraintViolation(insertErr) {
 			r.observe(rtOutcomeDBError)

@@ -1118,7 +1118,7 @@ func testErrorCodesParity(t *testing.T, root string, spec *specDoc) {
 
 	// Every code in code must have a corresponding response in spec
 	// whose status is StatusForCode(code) AND whose content includes
-	// application/problem+json (with the exception of plain-text 429s).
+	// application/problem+json.
 	// codes is pre-filtered by scanErrorCodes against codeExclude so
 	// non-public codes (CLI auth) never reach this loop.
 	var missing []string
@@ -1140,15 +1140,11 @@ func testErrorCodesParity(t *testing.T, root string, spec *specDoc) {
 		}
 	}
 
-	// Documented exception: 429 must declare BOTH application/problem+json
-	// (for code-driven 429s) AND text/plain (for the authlimiter). Hard
-	// fail if either is missing.
+	// Authentication throttling uses the same structured Problem contract as
+	// every other 429, so the shared response must retain problem+json.
 	if media, ok := spec.Responses["429"]; ok {
 		if !media["application/problem+json"] {
-			t.Errorf("429 must declare application/problem+json (for plan_limit_concurrency / quota_exhausted)")
-		}
-		if !media["text/plain"] {
-			t.Errorf("429 must declare text/plain (authlimiter middleware in pkg/middleware/authlimit.go)")
+			t.Errorf("429 must declare application/problem+json")
 		}
 	}
 }

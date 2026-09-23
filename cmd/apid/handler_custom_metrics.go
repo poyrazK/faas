@@ -67,7 +67,9 @@ func (s *server) putCustomMetric(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal(err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "save custom metric",
+			"Gregale could not save this custom metric.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -86,7 +88,9 @@ func (s *server) listCustomMetrics(w http.ResponseWriter, r *http.Request, acct 
 	}
 	rows, err := s.store.ListCustomMetrics(r.Context(), app.ID)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal(err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "list custom metrics",
+			"Gregale could not load custom metrics for this app.",
+			"Refresh the page or retry the request in a moment.", err)
 		return
 	}
 	out := api.CustomMetricListResponse{
@@ -121,7 +125,9 @@ func (s *server) deleteCustomMetric(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	if err := s.store.DeleteCustomMetric(r.Context(), app.ID, r.PathValue("name")); err != nil {
-		api.WriteProblem(w, api.ErrInternal(err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "delete custom metric",
+			"Gregale could not delete this custom metric.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

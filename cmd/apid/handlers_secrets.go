@@ -318,8 +318,9 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, scope, key, value string, limits api.Limits) *api.Problem {
 	recipient := setSecretRecipient()
 	if recipient == nil {
-		// Apid started without a host.age.pub; refuse to accept plaintext.
-		return api.ErrCapacity("host age recipient not loaded — refusing to seal")
+		return customerCapacityProblem(s.log, "store app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	hmacKey := hostHMACKey()
 	if len(hmacKey) == 0 {
@@ -328,7 +329,9 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 		// didn't load. apid startup catches this earlier (503 at boot),
 		// but a unit test that bypasses main's loader must not be
 		// able to silently write a row with value_hash = ''.
-		return api.ErrCapacity("host hmac key not loaded — refusing to seal")
+		return customerCapacityProblem(s.log, "store app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	// mfaIdentities is nil in unit-test harnesses that only install
 	// the single-key package level (see withTestRecipient in
@@ -346,11 +349,15 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 		}
 	}
 	if len(idents) == 0 {
-		return api.ErrCapacity("host age identities not loaded — refusing to seal")
+		return customerCapacityProblem(s.log, "store app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	kid, err := secretbox.IdentityFingerprint(idents)
 	if err != nil {
-		return api.ErrCapacity("could not resolve kid: " + err.Error())
+		return customerCapacityProblem(s.log, "fingerprint app secret identity", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
 	valueHash, err := secretbox.ValueFingerprint([]byte(value), hmacKey)
 	if err != nil {
@@ -359,7 +366,9 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 		// error only fires for the empty-string edge case the
 		// handler didn't catch. Treat as a 5xx capacity problem
 		// (misconfiguration: handler let an empty value through).
-		return api.ErrCapacity("could not compute value_hash: " + err.Error())
+		return customerCapacityProblem(s.log, "fingerprint app secret value", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
 	ciphertext, err := secretbox.SealOne(recipient, key, value, limits.SecretValueMaxBytes)
 	if err != nil {
@@ -367,7 +376,9 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 		if prob := api.AsProblem(err); prob != nil {
 			return prob
 		}
-		return api.ErrCapacity("could not seal secret")
+		return customerCapacityProblem(s.log, "encrypt app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
 	// ADR-092 PR-B: scope-aware upsert. PK is now (app_id, scope, key)
 	// (PR-A migration 00217). The flat UpsertAppSecretWithKid is kept
