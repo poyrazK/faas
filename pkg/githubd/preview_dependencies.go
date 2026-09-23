@@ -98,7 +98,7 @@ func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time
 		return state.App{}, err
 	}
 	return applyGitHubRootPolicy(state.App{
-		AccountID: parent.AccountID, Slug: slug, Type: parent.Type,
+		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, MaxConcurrency: parent.MaxConcurrency,
 		IdleTimeoutS: parent.IdleTimeoutS, ProjectID: parent.ProjectID,
 		RootDir: parent.RootDir, WorkloadName: parent.WorkloadName,

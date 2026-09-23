@@ -2224,6 +2224,24 @@ func (s *PgStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []Ap
 	if len(apps) == 0 {
 		return nil, nil
 	}
+	needsPersonalOrg := false
+	for _, app := range apps {
+		if app.OrgID == "" {
+			needsPersonalOrg = true
+			break
+		}
+	}
+	if needsPersonalOrg {
+		personalOrg, err := s.OrgByPersonalAccount(ctx, apps[0].AccountID)
+		if err != nil {
+			return nil, err
+		}
+		for i := range apps {
+			if apps[i].OrgID == "" {
+				apps[i].OrgID = personalOrg.ID
+			}
+		}
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("state: begin preview batch: %w", err)

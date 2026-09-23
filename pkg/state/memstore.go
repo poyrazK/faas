@@ -3559,6 +3559,9 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for i := range apps {
+		m.ensureAppOrgLocked(&apps[i])
+	}
 	created := make([]App, 0, len(apps))
 	insertedIDs := make([]string, 0, len(apps))
 	rollback := func(err error) ([]App, error) {

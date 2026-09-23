@@ -1371,6 +1371,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		// UUIDv7 when App.ID is empty. The preview app is a fresh
 		// row; reusing the parent's ID would collide on the PK.
 		AccountID:        parentApp.AccountID,
+		OrgID:            parentApp.OrgID,
 		Slug:             previewSlugVal,
 		Type:             parentApp.Type,
 		Runtime:          parentApp.Runtime,
