@@ -22156,7 +22156,7 @@ components:
               type: integer
               minimum: 0
               maximum: 65535
-              description: "Container port; 0/omitted inherits the workload port."
+              description: "HTTP container port; 0/omitted inherits the workload port."
         tcp_socket:
           type: object
           properties:
@@ -22164,7 +22164,7 @@ components:
               type: integer
               minimum: 0
               maximum: 65535
-              description: "Container port; 0/omitted inherits the workload port."
+              description: "TCP container port; 0/omitted inherits the workload port."
         period_s:
           type: integer
           minimum: 0
