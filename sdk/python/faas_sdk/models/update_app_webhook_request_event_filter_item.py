@@ -1,7 +1,14 @@
 from typing import Literal
 
 UpdateAppWebhookRequestEventFilterItem = Literal[
-    "app.parked", "app.woken", "deployment.failed", "deployment.live", "usage_statement.finalized"
+    "app.parked",
+    "app.woken",
+    "deployment.failed",
+    "deployment.live",
+    "job.finished",
+    "rollout.aborted",
+    "rollout.completed",
+    "usage_statement.finalized",
 ]
 
 UPDATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[UpdateAppWebhookRequestEventFilterItem] = {
@@ -9,6 +16,9 @@ UPDATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[UpdateAppWebhookRequest
     "app.woken",
     "deployment.failed",
     "deployment.live",
+    "job.finished",
+    "rollout.aborted",
+    "rollout.completed",
     "usage_statement.finalized",
 }
 

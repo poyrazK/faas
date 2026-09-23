@@ -1,3 +1,5 @@
+// ADR-076: test only deployment lifecycle rows now that all-events hooks also
+// receive release outcome rows.
 package state
 
 import (
@@ -46,10 +48,16 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != want {
-			t.Fatalf("hook %s deliveries = %d, want %d", hook.ID, len(got), want)
+		var lifecycle []AppWebhookDelivery
+		for _, delivery := range got {
+			if delivery.Event == AppWebhookEventDeploymentLive || delivery.Event == AppWebhookEventDeploymentFailed {
+				lifecycle = append(lifecycle, delivery)
+			}
 		}
-		return got
+		if len(lifecycle) != want {
+			t.Fatalf("hook %s deployment deliveries = %d, want %d", hook.ID, len(lifecycle), want)
+		}
+		return lifecycle
 	}
 	assertDeliveryCount(liveHook, 1)
 	assertDeliveryCount(allHook, 1)

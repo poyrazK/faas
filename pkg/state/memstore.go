@@ -4352,6 +4352,7 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if !ok {
 		return Deployment{}, 0, ErrNotFound
 	}
+	before := d
 	rolloutState := NormalizeRolloutState(d.RolloutState)
 	if d.Status != DeployLive || (rolloutState != "pending" && rolloutState != "rolling_out") ||
 		d.CanaryTotalSteps <= 0 || params.ExpectedStep >= d.CanaryTotalSteps {
@@ -4420,6 +4421,7 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: append canary audit: %w", err)
 	}
+	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	return d, auditID, nil
 }
 
@@ -6717,6 +6719,7 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
+	before := d
 	d.RolloutState = NormalizeRolloutState(rolloutState)
 	if startedAt != nil {
 		t := *startedAt
@@ -6732,6 +6735,7 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	}
 	d.RolloutAbortedReason = abortedReason
 	m.deployments[id] = d
+	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	return d, nil
 }
 
@@ -6823,6 +6827,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	if target.CanaryTotalSteps <= 0 && !IsServiceRollout(*target) {
 		return *target, 0, ErrRolloutStateInvalid
 	}
+	before := *target
 
 	now := time.Now()
 	if IsServiceRollout(*target) {
@@ -6949,6 +6954,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
 		}
+		m.enqueueRolloutOutcomeWebhooksLocked(before, *target)
 		return *target, auditID, nil
 
 	case "promote":
@@ -6983,6 +6989,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
 		}
+		m.enqueueRolloutOutcomeWebhooksLocked(before, *target)
 		return *target, auditID, nil
 
 	case "abort":
@@ -7021,6 +7028,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
 		}
+		m.enqueueRolloutOutcomeWebhooksLocked(before, *target)
 		return *target, auditID, nil
 	}
 	return Deployment{}, 0, ErrInvalidRecoverAction
@@ -7454,6 +7462,7 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 }
 
 func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
+	before := d
 	previousStatus := d.Status
 	now := time.Now().UTC()
 	d.Status = DeployFailed
@@ -7481,6 +7490,7 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 		}
 	}
 	m.deployments[d.ID] = d
+	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	if previousStatus != DeployFailed {
 		m.enqueueDeploymentLifecycleWebhooksLocked(d)
 	}
@@ -7545,10 +7555,15 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 	if !ok {
 		return ErrNotFound
 	}
+	before := d
 	previousStatus := d.Status
 	defer func() {
-		if err == nil && previousStatus != DeployLive {
-			if current, exists := m.deployments[id]; exists && current.Status == DeployLive {
+		if err == nil {
+			if current, exists := m.deployments[id]; exists {
+				m.enqueueRolloutOutcomeWebhooksLocked(before, current)
+				if previousStatus == DeployLive || current.Status != DeployLive {
+					return
+				}
 				m.enqueueDeploymentLifecycleWebhooksLocked(current)
 			}
 		}
@@ -8264,6 +8279,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || d.Status != DeployLive {
 			continue
 		}
+		before := d
 		d.Status = DeploySuperseded
 		d.TrafficPercent = 0
 		d.RolloutState = "aborted"
@@ -8275,9 +8291,11 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 			d.RolloutAbortedReason = "automatic rollback"
 		}
 		m.deployments[id] = d
+		m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	}
 	cur = m.deployments[currentDeploymentID]
 	target := m.deployments[targetID]
+	beforeTarget := target
 	target.Status = DeployLive
 	target.Error = ""
 	target.TrafficPercent = 100
@@ -8300,6 +8318,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	}
 	m.deployments[currentDeploymentID] = cur
 	m.deployments[targetID] = target
+	m.enqueueRolloutOutcomeWebhooksLocked(beforeTarget, target)
 	m.enqueueDeploymentLifecycleWebhooksLocked(target)
 	return targetID, nil
 }

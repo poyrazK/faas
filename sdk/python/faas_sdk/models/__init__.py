@@ -1212,6 +1212,9 @@ from .retry_policy_dto import RetryPolicyDTO
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
+from .rollout_aborted_webhook_payload_rollout_state import RolloutAbortedWebhookPayloadRolloutState
+from .rollout_completed_webhook_payload import RolloutCompletedWebhookPayload
+from .rollout_completed_webhook_payload_rollout_state import RolloutCompletedWebhookPayloadRolloutState
 from .rollout_transition_response import RolloutTransitionResponse
 from .rotate_alert_rule_secret_request import RotateAlertRuleSecretRequest
 from .rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
@@ -2635,6 +2638,9 @@ __all__ = (
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
+    "RolloutAbortedWebhookPayloadRolloutState",
+    "RolloutCompletedWebhookPayload",
+    "RolloutCompletedWebhookPayloadRolloutState",
     "RolloutTransitionResponse",
     "RotateAlertRuleSecretRequest",
     "RotateAlertRuleSecretResponse",

@@ -95,6 +95,32 @@ Delivery is at least once. Verify the webhook signature and deduplicate by the
 durable delivery id in the webhook envelope or headers; retries keep that id.
 The existing delivery history and dead-letter retry API cover these events.
 
+## Rollout outcome webhooks
+
+Subscribe to `rollout.completed` and `rollout.aborted` when an external
+platform needs to close a release workflow after the deployment becomes live:
+
+```bash
+gregale webhooks add --app checkout-api \
+  --target-url https://platform.example/rollouts \
+  --secret "$WEBHOOK_SECRET" \
+  --event rollout.completed --event rollout.aborted
+```
+
+`deployment.live` means the revision is ready to serve. It does not mean its
+canary has finished. `rollout.completed` means the configured rollout entered
+the `complete` state; the payload includes `traffic_percent` because an
+explicit traffic split can complete below 100%. `rollout.aborted` means an
+in-progress live rollout entered `aborted`, with its customer-visible reason
+and final traffic percentage. A build that fails before going live emits
+`deployment.failed` instead of `rollout.aborted`.
+
+Both payloads include `app_id`, `deployment_id`, and `rollout_state`, plus
+`completed_at` or `aborted_at` respectively. An outcome is enqueued once per
+state transition, in the same transaction as the state change; updating an
+already-terminal rollout does not enqueue another event. Webhook delivery is
+at least once, so receivers must deduplicate by the stable delivery id.
+
 ## Delayed tasks
 
 Delayed tasks are durable one-shot invocations. The producer asks Gregale to

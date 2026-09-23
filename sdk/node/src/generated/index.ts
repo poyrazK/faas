@@ -628,6 +628,7 @@ export type { RetryPolicyDTO } from './models/RetryPolicyDTO.js';
 export type { RollbackOperatorRuntimeConfigRequest } from './models/RollbackOperatorRuntimeConfigRequest.js';
 export type { RollbackRequest } from './models/RollbackRequest.js';
 export type { RolloutAbortedWebhookPayload } from './models/RolloutAbortedWebhookPayload.js';
+export type { RolloutCompletedWebhookPayload } from './models/RolloutCompletedWebhookPayload.js';
 export type { RolloutTransitionResponse } from './models/RolloutTransitionResponse.js';
 export type { RotateAlertRuleSecretRequest } from './models/RotateAlertRuleSecretRequest.js';
 export type { RotateAlertRuleSecretResponse } from './models/RotateAlertRuleSecretResponse.js';
