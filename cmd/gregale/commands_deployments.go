@@ -556,8 +556,8 @@ func cmdDeploymentGet(args []string) int {
 	if d.BuildID != "" {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "build_id:", d.BuildID)
 	}
-	if cache := formatBuildCacheSummary(d.BuildCacheStatus, d.CacheKeySHA256); cache != "" {
-		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "build_cache:", cache)
+	if cache := formatArtifactCacheSummary(d.BuildCacheStatus, d.CacheKeySHA256); cache != "" {
+		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "artifact_cache:", cache)
 	}
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "image_digest:", d.ImageDigest)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "kind:", d.Kind)

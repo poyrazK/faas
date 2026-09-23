@@ -2156,9 +2156,10 @@ type BuildResponse struct {
 	FinishedAt      string `json:"finished_at,omitempty"`
 	CancelledAt     string `json:"cancelled_at,omitempty"`
 	DurationSeconds int    `json:"duration_seconds,omitempty"`
-	// CacheStatus and CacheKeySHA256 are populated once builderd makes a
-	// cache decision. The status is hit|miss|invalidated; the key is the
-	// digest of the versioned BuildCacheRecipe.
+	// CacheStatus and CacheKeySHA256 are populated once builderd makes an
+	// exact-source artifact-cache decision. This is separate from the
+	// BuildKit dependency-layer cache. Status is hit|miss|invalidated; key is
+	// the digest of the versioned BuildCacheRecipe.
 	CacheStatus    string `json:"cache_status,omitempty"`
 	CacheKeySHA256 string `json:"cache_key_sha256,omitempty"`
 }
@@ -2255,7 +2256,8 @@ type DeploymentResponse struct {
 	Revision int    `json:"revision,omitempty"`
 	BuildID  string `json:"build_id,omitempty"`
 	// BuildCacheStatus and CacheKeySHA256 mirror the associated build's
-	// durable cache decision. They are populated on deployment detail reads
+	// exact-source artifact-cache decision (not the separate BuildKit
+	// dependency-layer cache). They are populated on deployment detail reads
 	// after builderd reaches the cache lookup.
 	BuildCacheStatus string `json:"build_cache_status,omitempty"`
 	CacheKeySHA256   string `json:"cache_key_sha256,omitempty"`

@@ -44,7 +44,7 @@ func TestPrintBuildStatus_TerminalSucceeded(t *testing.T) {
 		"deployment_id:         00000000000000000000000000000001",
 		"kind:                  railpack",
 		"status:                succeeded",
-		"cache_status:          hit",
+		"artifact_cache_status: hit",
 		"cache_key_sha256:      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"source_bytes:          12345",
 		"enqueued_at:           2026-08-10T12:34:56Z",
@@ -58,23 +58,23 @@ func TestPrintBuildStatus_TerminalSucceeded(t *testing.T) {
 	}
 }
 
-// TestFormatBuildCacheSummary pins the human deploy receipt wording while
+// TestFormatArtifactCacheSummary pins the human deploy receipt wording while
 // keeping the full digest available to operators. Empty status is omitted so
 // pre-cache rows remain compatible with older API responses.
-func TestFormatBuildCacheSummary(t *testing.T) {
+func TestFormatArtifactCacheSummary(t *testing.T) {
 	const key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	tests := []struct {
 		name, status, key, want string
 	}{
 		{name: "hit with key", status: "hit", key: key, want: "hit (sha256:" + key + ")"},
-		{name: "miss without key", status: "miss", want: "miss"},
+		{name: "miss without key", status: "miss", want: "miss (no artifact hit; dependency cache is separate—see build logs)"},
 		{name: "invalidated with key", status: "invalidated", key: key, want: "invalidated (sha256:" + key + ")"},
 		{name: "empty status", key: key, want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := formatBuildCacheSummary(tt.status, tt.key); got != tt.want {
-				t.Fatalf("formatBuildCacheSummary(%q, %q) = %q, want %q", tt.status, tt.key, got, tt.want)
+			if got := formatArtifactCacheSummary(tt.status, tt.key); got != tt.want {
+				t.Fatalf("formatArtifactCacheSummary(%q, %q) = %q, want %q", tt.status, tt.key, got, tt.want)
 			}
 		})
 	}
