@@ -3349,6 +3349,45 @@ COMMENT ON COLUMN public.org_activity.data IS 'Non-secret display metadata. Envi
 
 
 --
+-- Name: org_activity_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.org_activity_outbox (
+    id bigint NOT NULL,
+    org_id uuid NOT NULL,
+    source_type text NOT NULL,
+    source_id text NOT NULL,
+    activity jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_by text,
+    claimed_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    delivered_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT org_activity_outbox_activity_check CHECK ((jsonb_typeof(activity) = 'object'::text)),
+    CONSTRAINT org_activity_outbox_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT org_activity_outbox_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'delivered'::text, 'dead_letter'::text])))
+);
+
+
+--
+-- Name: org_activity_outbox_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.org_activity_outbox ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.org_activity_outbox_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: org_invitations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5228,6 +5267,22 @@ ALTER TABLE ONLY public.org_activity
 
 
 --
+-- Name: org_activity_outbox org_activity_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_activity_outbox
+    ADD CONSTRAINT org_activity_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: org_activity_outbox org_activity_outbox_source_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_activity_outbox
+    ADD CONSTRAINT org_activity_outbox_source_uniq UNIQUE (org_id, source_type, source_id);
+
+
+--
 -- Name: org_invitations org_invitations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7076,6 +7131,13 @@ CREATE INDEX org_activity_app_timeline_idx ON public.org_activity USING btree (o
 --
 
 CREATE INDEX org_activity_timeline_idx ON public.org_activity USING btree (org_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: org_activity_outbox_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX org_activity_outbox_claim_idx ON public.org_activity_outbox USING btree (state, available_at, id) WHERE (state = ANY (ARRAY['pending'::text, 'processing'::text]));
 
 
 --

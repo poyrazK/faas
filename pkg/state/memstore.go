@@ -551,6 +551,11 @@ type MemStore struct {
 	// projection. Source keys are deduplicated on append, matching the
 	// database unique constraint.
 	orgActivity []OrgActivity
+	// orgActivityOutbox mirrors org_activity_outbox. Queue state is kept
+	// separate from the projection so tests can exercise retry/replay paths.
+	orgActivityOutbox       map[int64]orgActivityOutboxRow
+	orgActivityOutboxByKey  map[string]int64
+	nextOrgActivityOutboxID int64
 	// usage holds one row per (instance, minute) — mirrors PgStore's
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
@@ -1061,6 +1066,9 @@ func NewMemStore() *MemStore {
 		auditOutbox:                       map[int64]auditEventOutboxRow{},
 		auditOutboxByKey:                  map[string]int64{},
 		nextAuditOutboxID:                 1,
+		orgActivityOutbox:                 map[int64]orgActivityOutboxRow{},
+		orgActivityOutboxByKey:            map[string]int64{},
+		nextOrgActivityOutboxID:           1,
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
