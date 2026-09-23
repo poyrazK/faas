@@ -3944,6 +3944,26 @@ func (m *MemStore) SetPreviewPrState(_ context.Context, appID, prState string) (
 	return a, nil
 }
 
+// ClosePRPreview atomically starts the post-close grace period. Duplicate
+// close deliveries preserve the first deadline, and stale/torn-down rows
+// cannot be revived by delayed webhook events.
+func (m *MemStore) ClosePRPreview(_ context.Context, appID string, expiresAt time.Time) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[appID]
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber <= 0 || a.Status == AppDeleted ||
+		(a.PreviewPrState != PreviewPrStateOpen && a.PreviewPrState != PreviewPrStateClosed) {
+		return App{}, ErrNotFound
+	}
+	if a.PreviewPrState == PreviewPrStateOpen || a.PreviewExpiresAt == nil {
+		expiry := expiresAt
+		a.PreviewExpiresAt = &expiry
+	}
+	a.PreviewPrState = PreviewPrStateClosed
+	m.apps[appID] = a
+	return a, nil
+}
+
 // RefreshDevSession is the in-memory mirror of PgStore.RefreshDevSession.
 // preview_pr_number=0 is the discriminator for CLI-created developer
 // sessions; GitHub PR previews are never eligible for this transition.

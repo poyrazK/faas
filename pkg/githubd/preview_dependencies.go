@@ -120,9 +120,9 @@ func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, wo
 }
 
 // closePRDependencies advances every sibling in the same project and PR to
-// the janitor's closed state. The bound preview may already have expired, so
-// this is deliberately independent of its lookup path.
-func (s *Service) closePRDependencies(ctx context.Context, parent state.App, prNumber int) error {
+// the janitor's closed state with the same grace deadline. The bound preview
+// may already have expired, so this is deliberately independent of its lookup path.
+func (s *Service) closePRDependencies(ctx context.Context, parent state.App, prNumber int, expiresAt time.Time) error {
 	if parent.ProjectID == "" {
 		return nil // a legacy binding has no project-scoped sibling set
 	}
@@ -134,7 +134,7 @@ func (s *Service) closePRDependencies(ctx context.Context, parent state.App, prN
 		if preview.ProjectID != parent.ProjectID || preview.PreviewPrNumber != prNumber || preview.PreviewOfSlug == parent.Slug {
 			continue
 		}
-		if err := s.stampPreviewPrState(ctx, preview.ID, state.PreviewPrStateClosed); err != nil {
+		if _, err := s.closePRPreview(ctx, preview.ID, expiresAt); err != nil {
 			return err
 		}
 	}

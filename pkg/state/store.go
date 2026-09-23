@@ -1758,6 +1758,10 @@ type Store interface {
 	// production app id is ErrNotFound, so a bug in the janitor's
 	// query can never relabel a customer's live app.
 	SetPreviewPrState(ctx context.Context, appID, prState string) (App, error)
+	// ClosePRPreview atomically marks a GitHub PR preview closed and starts its
+	// fixed post-close grace lease. Repeated close deliveries preserve the
+	// original deadline, and stale/torn-down previews cannot be revived.
+	ClosePRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error)
 	// RefreshDevSession extends an ad-hoc developer preview's lease and
 	// restores its serving state to open. Developer previews are encoded as
 	// preview rows with preview_pr_number=0; the implementation must refuse

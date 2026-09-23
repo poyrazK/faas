@@ -2722,6 +2722,28 @@ func (s *PgStore) SetPreviewPrState(ctx context.Context, appID, prState string) 
 	return a, nil
 }
 
+// ClosePRPreview atomically starts the post-close grace period. A duplicate
+// webhook delivery leaves an already-closed preview's deadline unchanged;
+// stale or torn-down rows cannot be reopened by a delayed close event.
+func (s *PgStore) ClosePRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error) {
+	var a App
+	row := s.pool.QueryRow(ctx, `
+		update apps
+		set preview_pr_state = $2,
+		    preview_expires_at = case when preview_pr_state = $3 or preview_expires_at is null then $4 else preview_expires_at end
+		where id = $1
+		  and preview_of_slug is not null
+		  and coalesce(preview_pr_number, 0) > 0
+		  and status <> 'deleted'
+		  and preview_pr_state in ($3, $2)
+		returning `+appsSelectColumns,
+		appID, PreviewPrStateClosed, PreviewPrStateOpen, expiresAt)
+	if err := scanAppInto(&a, row); err != nil {
+		return App{}, mapErr(err)
+	}
+	return a, nil
+}
+
 // RefreshDevSession renews the lease on a CLI-created developer preview.
 // The preview_pr_number=0 guard keeps this path from reopening or extending a
 // GitHub PR preview, while the status predicate prevents reviving a row the

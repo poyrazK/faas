@@ -216,14 +216,15 @@ torn_down: preview_pr_state = 'torn_down' AND apps.status
            reused from prod). preview_url returns 410
            Gone; the slug is free for reuse.
 
-TTL:       The 24h grace is tracked via preview_expires_at
-           itself (provisioned at open time as
-           created_at + 7d, refreshed on every sync /
-           reopened event). The janitor treats a row as
-           "past grace" iff preview_pr_state IN
-           ('closed','open') AND preview_expires_at < NOW().
-           A support-pushed TTL bump re-stamps
-           preview_expires_at to extend the window.
+TTL:       Open previews use preview_expires_at as their
+           configured TTL (default 7d), refreshed on every
+           sync / reopened event. A close webhook atomically
+           changes preview_pr_state to 'closed' and replaces
+           that deadline with now + 24h. Duplicate close
+           deliveries preserve the original close deadline.
+           The janitor treats a row as past grace iff
+           preview_pr_state IN ('closed','open') AND
+           preview_expires_at < NOW().
 ```
 
 The 24h grace between `closed` and `stale` lets a
