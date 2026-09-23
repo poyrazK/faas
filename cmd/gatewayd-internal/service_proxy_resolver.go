@@ -32,6 +32,7 @@ func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
 					// Set replacement marks obsolete siblings stale before it
 					// commits. Never route to one while janitor cleanup waits.
 					if lookupErr == nil && preview.PreviewPrState != state.PreviewPrStateStale &&
+						preview.PreviewPrState != state.PreviewPrStateTearingDown &&
 						preview.PreviewPrState != state.PreviewPrStateTornDown {
 						return serviceTargetFromApp(preview, true), preview.ID != "", nil
 					}
