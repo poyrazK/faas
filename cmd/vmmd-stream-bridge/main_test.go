@@ -77,8 +77,12 @@ func TestHandleH1Stream_FlushesFirstSSEEventBeforeGuestCompletes(t *testing.T) {
 		}
 		first <- line
 		line, err = reader.ReadString('\n') // blank line between SSE events
-		if err != nil || line != "\n" {
-			failure <- fmt.Errorf("first event terminator = %q, err=%v", line, err)
+		if err != nil {
+			failure <- err
+			return
+		}
+		if line != "\n" {
+			failure <- fmt.Errorf("first event terminator = %q, want blank line", line)
 			return
 		}
 		line, err = reader.ReadString('\n')
