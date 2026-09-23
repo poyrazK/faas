@@ -62,7 +62,7 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 	stable, stableInstance := createServiceHandoffDeployment(t, f, "stable", false, time.Time{})
 	f.vmmd.SetVersion(stableInstance.ID, "stable")
 	setServiceHandoffInflight(f.vmmd, stableInstance.ID, 0)
-	if status, body := probeServiceHandoffGateway(t, f.h.GatewayURL, f.host, 8*time.Second); status != http.StatusOK || string(body) != "normal-path:stable\n" {
+	if status, body := probeServiceHandoffGateway(t, f.h.GatewayURL, f.host, f.key, 8*time.Second); status != http.StatusOK || string(body) != "normal-path:stable\n" {
 		t.Fatalf("initial stable route = %d %q", status, body)
 	}
 
@@ -70,7 +70,7 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 	defer gate.Release()
 	longDone := make(chan error, 1)
 	go func() {
-		status, body, err := requestServiceHandoffGateway(f.h.GatewayURL, f.host, "/long", 90*time.Second)
+		status, body, err := requestServiceHandoffGateway(f.h.GatewayURL, f.host, f.key, "/long", 90*time.Second)
 		if err != nil {
 			longDone <- err
 			return
@@ -99,7 +99,7 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 			containsServiceHandoffGateway(d.ServiceRolloutHandoff.MissingGateways, secondaryName)
 	})
 	assertServiceHandoffPredecessorLive(t, f, stable.ID, longDone)
-	if status, body := probeServiceHandoffGateway(t, f.h.GatewayURL, f.host, 8*time.Second); status != http.StatusOK || string(body) != "normal-path:candidate\n" {
+	if status, body := probeServiceHandoffGateway(t, f.h.GatewayURL, f.host, f.key, 8*time.Second); status != http.StatusOK || string(body) != "normal-path:candidate\n" {
 		t.Fatalf("primary route during missing secondary ACK = %d %q, want candidate 200", status, body)
 	}
 
@@ -122,7 +122,7 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 	})
 	assertServiceHandoffPredecessorLive(t, f, stable.ID, longDone)
 	for name, url := range map[string]string{primaryName: f.h.GatewayURL, secondaryName: secondaryURL} {
-		status, body := probeServiceHandoffGateway(t, url, f.host, 8*time.Second)
+		status, body := probeServiceHandoffGateway(t, url, f.host, f.key, 8*time.Second)
 		if status != http.StatusOK || string(body) != "normal-path:candidate\n" {
 			t.Fatalf("%s did not adopt candidate route: %d %q", name, status, body)
 		}
@@ -192,7 +192,7 @@ func setServiceHandoffInflight(vmmd *e2etest.FakeVMMD, instanceID string, inflig
 	})
 }
 
-func requestServiceHandoffGateway(url, host, path string, timeout time.Duration) (int, []byte, error) {
+func requestServiceHandoffGateway(url, host, key, path string, timeout time.Duration) (int, []byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+path, nil)
@@ -200,6 +200,7 @@ func requestServiceHandoffGateway(url, host, path string, timeout time.Duration)
 		return 0, nil, err
 	}
 	req.Host = host
+	req.Header.Set("Authorization", "Bearer "+key)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, nil, err
@@ -209,9 +210,9 @@ func requestServiceHandoffGateway(url, host, path string, timeout time.Duration)
 	return resp.StatusCode, body, err
 }
 
-func probeServiceHandoffGateway(t *testing.T, url, host string, timeout time.Duration) (int, []byte) {
+func probeServiceHandoffGateway(t *testing.T, url, host, key string, timeout time.Duration) (int, []byte) {
 	t.Helper()
-	status, body, err := requestServiceHandoffGateway(url, host, "/", timeout)
+	status, body, err := requestServiceHandoffGateway(url, host, key, "/", timeout)
 	if err != nil {
 		t.Fatalf("probe gateway %s: %v", url, err)
 	}
