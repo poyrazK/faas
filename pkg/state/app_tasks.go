@@ -129,6 +129,7 @@ var (
 	ErrAppTaskInvalid               = errors.New("state: invalid app task")
 	ErrAppTaskDeploymentUnavailable = errors.New("state: app task deployment artifact is unavailable")
 	ErrAppTaskLeaseLost             = errors.New("state: app task lease lost")
+	ErrAppTaskCancellationPending   = errors.New("state: app task cancellation is pending")
 )
 
 // AppTaskStore is deliberately separate from ExecutionStore: disposable
@@ -139,6 +140,7 @@ type AppTaskStore interface {
 	AppTaskByID(ctx context.Context, accountID, appID, taskID string) (AppTask, error)
 	ListAppTasks(ctx context.Context, accountID, appID string, limit, offset int) ([]AppTask, error)
 	ClaimNextAppTask(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error)
+	RenewAppTaskLease(ctx context.Context, taskID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error
 	MarkAppTaskRunning(ctx context.Context, taskID, leaseToken string, startedAt time.Time) (AppTask, error)
 	RequestAppTaskCancellation(ctx context.Context, accountID, appID, taskID string, requestedAt time.Time) (AppTask, error)
 	CompleteAppTask(ctx context.Context, params CompleteAppTaskParams) (AppTask, error)
