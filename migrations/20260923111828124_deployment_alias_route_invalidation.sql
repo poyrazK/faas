@@ -1,11 +1,10 @@
--- filename: 20260923090000002_deployment_alias_route_invalidation.sql
+-- filename: 20260923111828124_deployment_alias_route_invalidation.sql
 -- +goose Up
 -- +goose StatementBegin
-
 -- Alias mutations change the deployment pinned to a public hostname. Publish
 -- the app-wide route invalidation in the same transaction as the mapping so
 -- every gateway drops its cached host target only after the write commits.
-CREATE FUNCTION notify_deployment_alias_changed() RETURNS trigger
+CREATE OR REPLACE FUNCTION notify_deployment_alias_changed() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
@@ -20,10 +19,10 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS deployment_aliases_app_changed ON deployment_aliases;
 CREATE TRIGGER deployment_aliases_app_changed
 AFTER INSERT OR UPDATE OR DELETE ON deployment_aliases
 FOR EACH ROW EXECUTE FUNCTION notify_deployment_alias_changed();
-
 -- +goose StatementEnd
 
 -- +goose Down
