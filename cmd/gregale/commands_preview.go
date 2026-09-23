@@ -30,6 +30,7 @@ type previewSummary struct {
 	ProductionDeployment *previewDeploymentStatus              `json:"production_deployment,omitempty"`
 	Changes              *api.PreviewProductionChangesResponse `json:"changes_from_production,omitempty"`
 	Links                *api.PreviewResourceLinksResponse     `json:"links,omitempty"`
+	Environment          *api.PreviewEnvironmentStatusResponse `json:"environment,omitempty"`
 }
 
 type previewDeploymentStatus struct {
@@ -174,11 +175,31 @@ func cmdPreviewShow(args []string) int {
 	if err != nil {
 		return printErr("Could not load preview", err)
 	}
+	environment, err := previewEnvironmentForApp(ctx, client, preview.App)
+	if err != nil {
+		return printErr("Could not load preview environment", err)
+	}
+	latest := preview.LatestDeployment
+	if environment != nil {
+		latest = previewEnvironmentRootDeployment(preview, *environment)
+	}
 	item := previewSummaryFromResource(preview)
+	if environment != nil {
+		item.LatestDeployment = nil
+		if latest != nil {
+			item.LatestDeployment = &previewDeploymentStatus{
+				ID: latest.ID, Status: latest.Status, CreatedAt: latest.CreatedAt,
+			}
+		}
+	}
+	item.Environment = environment
 	if jsonOutput {
 		return jsonOut(writeJSON(item))
 	}
 	renderPreviewDetails(item)
+	if environment != nil {
+		renderPreviewEnvironmentDetails(*environment)
+	}
 	return 0
 }
 

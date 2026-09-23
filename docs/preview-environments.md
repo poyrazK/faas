@@ -19,11 +19,14 @@ gregale preview create --app checkout --repo acme/checkout \
 gregale preview wait pr-42-checkout --open
 ```
 
-`preview wait` follows the newest deployment for the preview, so a new push
-does not leave the command watching an obsolete deployment. Use `--progress`
-for lifecycle transitions or `--json` for a stable receipt containing the
-preview URL, expiry, deployment status, readiness, timeout resume command,
-and the next diagnostic action.
+For a GitHub-managed PR, `preview show` displays every recorded workload at
+the current PR head. `preview wait` succeeds only when the whole set is live;
+a live root app alone is not enough. A new push moves the command to the new
+head rather than leaving it watching obsolete deployments. Use `--progress`
+for per-workload transitions or `--json` for a receipt containing aggregate
+readiness, member statuses, the preview URL, expiry, timeout resume command,
+and the next diagnostic action. Developer and older PR previews without a
+recorded workload set retain app-level behavior.
 
 ## URL shape
 
@@ -232,8 +235,8 @@ readiness, plus each expected workload's latest preview deployment for that
 SHA. A missing or failed sibling cannot produce `ready: true`; a closed PR
 reports `phase: closed` and `ready: false`. The endpoint returns 404 for
 developer previews and legacy PR previews with no recorded set. The CLI's
-`preview show` and `preview wait` still use app-level status until their
-follow-up change.
+`preview show` and `preview wait` use the recorded set when available and
+fall back to app-level status for those older previews.
 
 For new projects, Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code
