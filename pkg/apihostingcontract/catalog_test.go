@@ -118,7 +118,7 @@ func TestRuntimeCatalogModesKeepCandidatesOptIn(t *testing.T) {
 	}
 	fullIDs := fixtureIDs(full)
 	qualifyIDs := fixtureIDs(qualify)
-	for _, candidate := range []string{"django", "fastapi-src-layout"} {
+	for _, candidate := range []string{"django", "fastapi-src-layout", "fastapi-uv-src-layout"} {
 		if slices.Contains(fullIDs, candidate) {
 			t.Errorf("full mode unexpectedly selected candidate %q", candidate)
 		}
@@ -166,6 +166,29 @@ func TestDjangoFixtureHasRunnableWSGIProject(t *testing.T) {
 	}
 	if !hasTag(fixture.Tags, "runtime-candidate") || hasTag(fixture.Tags, "runtime") {
 		t.Errorf("Django must remain a runtime candidate until reference-node acceptance passes; tags=%v", fixture.Tags)
+	}
+}
+
+func TestFastAPIUVFixtureHasLockedProject(t *testing.T) {
+	catalog, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := fixtureByID(t, catalog, "fastapi-uv-src-layout")
+	if !hasTag(fixture.Tags, "runtime-candidate") || hasTag(fixture.Tags, "runtime") {
+		t.Fatalf("FastAPI uv fixture must remain a candidate until reference-node acceptance passes; tags=%v", fixture.Tags)
+	}
+	for _, check := range []struct{ name, want string }{
+		{"pyproject.toml", "fastapi==0.116.0"},
+		{"pyproject.toml", "uvicorn==0.35.0"},
+		{"uv.lock", "version = 1"},
+		{"uv.lock", "name = \"fastapi\""},
+		{"uv.lock", "name = \"uvicorn\""},
+		{"src/api.py", "app = FastAPI()"},
+	} {
+		if !strings.Contains(fixture.Files[check.name], check.want) {
+			t.Errorf("FastAPI uv fixture %s does not contain %q", check.name, check.want)
+		}
 	}
 }
 
