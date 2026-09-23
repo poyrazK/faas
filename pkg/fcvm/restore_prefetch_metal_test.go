@@ -214,7 +214,7 @@ func TestMetalRestorePrefetchRecordsAndWarms(t *testing.T) {
 	r.wake(t)
 }
 
-// TestMetalRestorePrefetchBench is the ADR-224 evidence run: interleaved
+// TestMetalRestorePrefetchBench is the ADR-225 evidence run: interleaved
 // restores of one parked app with its mem evicted from the page cache, the
 // working-set prefetch alternately disabled and enabled. Opt-in:
 //

@@ -95,6 +95,10 @@ export type { AppSecurityResponse } from './AppSecurityResponse.js';
 export type { AppServiceBinding } from './AppServiceBinding.js';
 export type { AppStaticEgressIPResponse } from './AppStaticEgressIPResponse.js';
 export type { AppStreamingStatus } from './AppStreamingStatus.js';
+export type { AppTaskFailure } from './AppTaskFailure.js';
+export type { AppTaskID } from './AppTaskID.js';
+export type { AppTaskListResponse } from './AppTaskListResponse.js';
+export type { AppTaskResponse } from './AppTaskResponse.js';
 export type { AppTrustedSignerListResponse } from './AppTrustedSignerListResponse.js';
 export type { AppUsageSummaryResponse } from './AppUsageSummaryResponse.js';
 export type { AppWakeResponse } from './AppWakeResponse.js';
@@ -150,6 +154,7 @@ export type { CreateAPIConsumerUsageStatementRequest } from './CreateAPIConsumer
 export type { CreateAlertRuleRequest } from './CreateAlertRuleRequest.js';
 export type { CreateAppLogDrainRequest } from './CreateAppLogDrainRequest.js';
 export type { CreateAppRequest } from './CreateAppRequest.js';
+export type { CreateAppTaskRequest } from './CreateAppTaskRequest.js';
 export type { CreateAppWebhookRequest } from './CreateAppWebhookRequest.js';
 export type { CreateConsumerKeyRequest } from './CreateConsumerKeyRequest.js';
 export type { CreateCorsPresetRequest } from './CreateCorsPresetRequest.js';

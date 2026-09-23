@@ -1838,7 +1838,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Cancellation accepted or already applied.
+          description: Execution cancellation requested, or its existing terminal receipt returned.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ExecutionResponse' }
@@ -1886,6 +1886,112 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [runs]
+      operationId: listAppTasks
+      summary: List deployment-attached tasks for an app.
+      description: |
+        Returns newest-first one-off command receipts for the app. Task rows
+        remain pinned to the immutable deployment selected at admission.
+        Scheduler leases and artifact storage identifiers are never returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum number of task receipts to return.
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of task receipts to skip.
+      responses:
+        '200':
+          description: App-scoped task page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [runs]
+      operationId: createAppTask
+      summary: Run a one-off command against an app deployment.
+      description: |
+        Queues one manual command in a fresh task VM using the app's current
+        live deployment, scoped configuration, bindings, and network policy.
+        The selected deployment is pinned at admission and the VM is destroyed
+        before terminal completion. Release tasks cannot be created here.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppTaskRequest' }
+      responses:
+        '202':
+          description: Manual app task admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      tags: [runs]
+      operationId: getAppTask
+      summary: Get one deployment-attached app task.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current or terminal app-task receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [runs]
+      operationId: cancelAppTask
+      summary: Cancel one deployment-attached app task.
+      description: Cancellation is idempotent; claimed work is torn down before terminal acknowledgement.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: App-task cancellation recorded, or its existing terminal receipt returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/account:
@@ -18600,6 +18706,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Canonical UUID for a disposable execution.
+    AppTaskID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a deployment-attached app task.
     ManagedPostgresID:
       name: id
       in: path
@@ -32373,6 +32485,78 @@ components:
         limit: { type: integer, minimum: 1, maximum: 200 }
         offset: { type: integer, minimum: 0 }
         next_offset: { type: integer, description: "Next offset, or -1 at the end of the result set." }
+
+    CreateAppTaskRequest:
+      description: |
+        One manual command to execute against the app's live deployment.
+        `command_shell=false` executes argv directly. Shell mode requires one
+        command string and is explicit so clients preserve quoting semantics.
+      type: object
+      required: [command]
+      additionalProperties: false
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+        command_shell: { type: boolean, default: false }
+        timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Zero uses the 600-second default." }
+        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024." }
+
+    AppTaskFailure:
+      description: Bounded customer-visible failure details for an app task.
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, maxLength: 64 }
+        message: { type: string, maxLength: 4096 }
+
+    AppTaskResponse:
+      description: |
+        App-scoped receipt for a deployment-attached command. Scheduler lease
+        data, rootfs storage keys, and image digests are intentionally omitted.
+      type: object
+      required: [id, app_id, deployment_id, deployment_scope, kind, command, command_shell, status, timeout_seconds, max_output_bytes, output_truncated, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_scope: { type: string }
+        kind: { type: string, enum: [manual, release] }
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+        command_shell: { type: boolean }
+        status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, cancelled] }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        max_output_bytes: { type: integer, minimum: 1024, maximum: 16777216 }
+        stdout_tail: { type: string }
+        stderr_tail: { type: string }
+        output_truncated: { type: boolean }
+        exit_code: { type: [integer, "null"], minimum: 0, maximum: 255 }
+        failure: { anyOf: [{ $ref: '#/components/schemas/AppTaskFailure' }, { type: "null" }] }
+        cancel_requested_at: { type: [string, "null"], format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AppTaskListResponse:
+      description: |
+        App-scoped page of task receipts. `next_offset` is -1 when there is no
+        following page; otherwise pass it as `offset`.
+      type: object
+      required: [tasks, limit, offset, next_offset]
+      properties:
+        tasks:
+          type: array
+          items: { $ref: '#/components/schemas/AppTaskResponse' }
+        limit: { type: integer, minimum: 1, maximum: 200 }
+        offset: { type: integer, minimum: 0 }
+        next_offset: { type: integer, description: "Offset for the following app-task page, or -1 when this page is final." }
 
     Invocation:
       description: "A single invocations row. Account-scoped; cross-account reads return 404."
