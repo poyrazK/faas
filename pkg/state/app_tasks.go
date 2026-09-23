@@ -138,6 +138,10 @@ var (
 type AppTaskStore interface {
 	CreateAppTask(ctx context.Context, params CreateAppTaskParams) (AppTask, error)
 	AppTaskByID(ctx context.Context, accountID, appID, taskID string) (AppTask, error)
+	// ReleaseAppTaskByDeployment returns the unique internal release task for
+	// a deployment. It is the idempotency read used by imaged when a durable
+	// build or task notification is replayed.
+	ReleaseAppTaskByDeployment(ctx context.Context, deploymentID string) (AppTask, error)
 	ListAppTasks(ctx context.Context, accountID, appID string, limit, offset int) ([]AppTask, error)
 	ClaimNextAppTask(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error)
 	RenewAppTaskLease(ctx context.Context, taskID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error

@@ -297,6 +297,10 @@ func testAppTaskLifecycle(t *testing.T, fx *Fixture) {
 	if err != nil || release.Kind != state.AppTaskKindRelease || !release.CommandShell {
 		t.Fatalf("CreateAppTask(release) = %+v, err=%v", release, err)
 	}
+	byDeployment, err := fx.Store.ReleaseAppTaskByDeployment(fx.Ctx, fx.Deployment.ID)
+	if err != nil || byDeployment.ID != release.ID {
+		t.Fatalf("ReleaseAppTaskByDeployment = %+v, err=%v", byDeployment, err)
+	}
 	if _, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{
 		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: fx.Deployment.ID,
 		Kind: state.AppTaskKindRelease, Command: []string{"bin/release-again"}, CreatedAt: base.Add(17 * time.Second),

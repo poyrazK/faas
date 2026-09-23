@@ -2,12 +2,14 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/db"
 )
 
 var _ AppTaskStore = (*PgStore)(nil)
@@ -122,6 +124,34 @@ func (s *PgStore) AppTaskByID(ctx context.Context, accountID, appID, taskID stri
 	return task, nil
 }
 
+func (s *PgStore) ReleaseAppTaskByDeployment(ctx context.Context, deploymentID string) (AppTask, error) {
+	task, err := scanAppTask(s.pool.QueryRow(ctx, `
+		select `+appTaskSelectColumns+`
+		  from app_tasks
+		 where deployment_id = $1 and kind = 'release'`, deploymentID))
+	if err != nil {
+		return AppTask{}, mapErr(err)
+	}
+	return task, nil
+}
+
+func enqueueTerminalReleaseTask(ctx context.Context, tx pgx.Tx, task AppTask) error {
+	if task.Kind != AppTaskKindRelease || !task.Status.Terminal() {
+		return nil
+	}
+	payload, err := json.Marshal(db.AppTaskChangedPayload{
+		AccountID: task.AccountID, AppID: task.AppID, DeploymentID: task.DeploymentID,
+		TaskID: task.ID, Kind: string(task.Kind), Status: string(task.Status),
+	})
+	if err != nil {
+		return fmt.Errorf("state: marshal release task notification: %w", err)
+	}
+	if err := db.EnqueueDurableNotificationTx(ctx, tx, db.NotifyAppTaskChanged, string(payload)); err != nil {
+		return fmt.Errorf("state: enqueue release task notification: %w", err)
+	}
+	return nil
+}
+
 func (s *PgStore) ListAppTasks(ctx context.Context, accountID, appID string, limit, offset int) ([]AppTask, error) {
 	limit, offset = normalizeAppTaskPage(limit, offset)
 	rows, err := s.pool.Query(ctx, `
@@ -228,7 +258,20 @@ func (s *PgStore) RequestAppTaskCancellation(ctx context.Context, accountID, app
 	} else {
 		requestedAt = requestedAt.UTC()
 	}
-	task, err := scanAppTask(s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return AppTask{}, fmt.Errorf("cancel app task: begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	current, err := scanAppTask(tx.QueryRow(ctx, `
+		select `+appTaskSelectColumns+`
+		  from app_tasks
+		 where account_id = $1 and app_id = $2 and id = $3
+		 for update`, accountID, appID, taskID))
+	if err != nil {
+		return AppTask{}, mapErr(err)
+	}
+	task, err := scanAppTask(tx.QueryRow(ctx, `
 		update app_tasks
 		   set status = case when status = 'queued' then 'cancelled' else status end,
 		       cancel_requested_at = case
@@ -244,6 +287,14 @@ func (s *PgStore) RequestAppTaskCancellation(ctx context.Context, accountID, app
 		returning `+appTaskSelectColumns, accountID, appID, taskID, requestedAt))
 	if err != nil {
 		return AppTask{}, mapErr(err)
+	}
+	if !current.Status.Terminal() {
+		if err := enqueueTerminalReleaseTask(ctx, tx, task); err != nil {
+			return AppTask{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AppTask{}, fmt.Errorf("cancel app task: commit: %w", err)
 	}
 	return task, nil
 }
@@ -312,6 +363,9 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 		}
 		return AppTask{}, mapErr(err)
 	}
+	if err := enqueueTerminalReleaseTask(ctx, tx, completed); err != nil {
+		return AppTask{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppTask{}, fmt.Errorf("complete app task: commit: %w", err)
 	}
@@ -323,8 +377,13 @@ func (s *PgStore) SweepExpiredAppTasks(ctx context.Context, at time.Time) (AppTa
 		return AppTaskSweepResult{}, ErrAppTaskInvalid
 	}
 	at = at.UTC()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return AppTaskSweepResult{}, fmt.Errorf("sweep app tasks: begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
 	var result AppTaskSweepResult
-	err := s.pool.QueryRow(ctx, `
+	rows, err := tx.Query(ctx, `
 		with expired as materialized (
 			select id, status as old_status, cancel_requested_at
 			  from app_tasks
@@ -354,15 +413,52 @@ func (s *PgStore) SweepExpiredAppTasks(ctx context.Context, at time.Time) (AppTa
 			       updated_at = $1
 			  from expired
 			 where task.id = expired.id
-			returning expired.old_status, expired.cancel_requested_at
+			returning task.id, task.account_id, task.app_id, task.deployment_id,
+			          task.kind, task.status, expired.old_status,
+			          expired.cancel_requested_at is not null as was_cancelled
 		)
-		select
-			count(*) filter (where old_status = 'restoring' and cancel_requested_at is null),
-			count(*) filter (where old_status = 'running' and cancel_requested_at is null),
-			count(*) filter (where cancel_requested_at is not null)
-		  from updated`, at).Scan(&result.RequeuedRestores, &result.FailedRuns, &result.Cancelled)
+		select id, account_id, app_id, deployment_id, kind, status, old_status, was_cancelled
+		  from updated`, at)
 	if err != nil {
 		return AppTaskSweepResult{}, mapErr(err)
+	}
+	defer rows.Close()
+	terminalReleaseTasks := make([]AppTask, 0)
+	for rows.Next() {
+		var id, accountID, appID, deploymentID pgtype.UUID
+		var task AppTask
+		var oldStatus AppTaskStatus
+		var wasCancelled bool
+		if err := rows.Scan(&id, &accountID, &appID, &deploymentID, &task.Kind, &task.Status, &oldStatus, &wasCancelled); err != nil {
+			return AppTaskSweepResult{}, mapErr(err)
+		}
+		task.ID = pgUUIDString(id)
+		task.AccountID = pgUUIDString(accountID)
+		task.AppID = pgUUIDString(appID)
+		task.DeploymentID = pgUUIDString(deploymentID)
+		switch {
+		case wasCancelled:
+			result.Cancelled++
+		case oldStatus == AppTaskRestoring:
+			result.RequeuedRestores++
+		case oldStatus == AppTaskRunning:
+			result.FailedRuns++
+		}
+		if task.Kind == AppTaskKindRelease && task.Status.Terminal() {
+			terminalReleaseTasks = append(terminalReleaseTasks, task)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return AppTaskSweepResult{}, mapErr(err)
+	}
+	rows.Close()
+	for _, task := range terminalReleaseTasks {
+		if err := enqueueTerminalReleaseTask(ctx, tx, task); err != nil {
+			return AppTaskSweepResult{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AppTaskSweepResult{}, fmt.Errorf("sweep app tasks: commit: %w", err)
 	}
 	return result, nil
 }

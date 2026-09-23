@@ -103,6 +103,11 @@ type Handler struct {
 	// It keeps the safety invariant in the handler rather than relying only on
 	// cmd/imaged wiring: a misconfigured verifier fails the candidate closed.
 	hostingSmokeRequired bool
+	// releasePhaseEnabled turns a pinned deployment release command into an
+	// internal app task after the immutable rootfs is published and before any
+	// serving VM is booted. It is an exact opt-in while app-task dispatch is
+	// still dark-launched in schedd.
+	releasePhaseEnabled bool
 	// nodeName is the compute_node identity of this imaged process. A
 	// snapshot_boot notification is fleet-wide, while the builder's OCI
 	// export is local to the node that produced it. Named multi-box daemons
@@ -570,6 +575,14 @@ func (h *Handler) WithHostingSmoke(fn func(context.Context, state.App, state.Dep
 // public-beta compute nodes enable this alongside WithHostingSmoke.
 func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
 	h.hostingSmokeRequired = required
+	return h
+}
+
+// WithReleasePhaseEnabled enables the ADR-222 pre-boot release gate. Operators
+// must enable FAAS_APP_TASK_DISPATCH on schedd at the same time; keeping this
+// opt-in prevents a partially rolled-out fleet from queueing tasks forever.
+func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
+	h.releasePhaseEnabled = enabled
 	return h
 }
 
@@ -1375,6 +1388,15 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 			return fmt.Errorf("handle deployment ready %s: %w", p.DeploymentID, err)
 		}
 		return nil
+	case db.NotifyAppTaskChanged:
+		p, err := db.ParseAppTaskChangedPayload(n.Payload)
+		if err != nil {
+			return err
+		}
+		if err := h.handleAppTaskChanged(ctx, p); err != nil {
+			return fmt.Errorf("handle app task changed %s: %w", p.TaskID, err)
+		}
+		return nil
 	case db.NotifyAppChanged:
 		p, err := db.ParseAppChangedPayload(n.Payload)
 		if err != nil {
@@ -1697,14 +1719,135 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSnapshotPrepare, state.DeploySnapshotting, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
-	// Hand off to schedd: boot the freshly-built layer once, snapshot it, park
-	// it (spec §5 step 6). The deployment stays in `snapshotting` until
-	// snapshot_written comes back — imaged does not mark it live here.
-	primePayload, _ := json.Marshal(map[string]string{"app_id": app.ID, "deployment_id": dep.ID})
+	// Hand off to schedd only after any pinned release command succeeds. This
+	// is deliberately before the first serving VM boots: workers cannot consume
+	// jobs and request processes cannot observe traffic before migrations run.
+	return h.handoffSnapshotPrime(ctx, app, dep)
+}
+
+// handoffSnapshotPrime admits the unique release task when the dark-launch
+// gate is enabled, then either waits for its durable terminal notification or
+// emits the existing schedd handoff. Deployments without release intent keep
+// the historical zero-query fast path while the feature remains disabled.
+func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep state.Deployment) error {
+	if h.releasePhaseEnabled && len(dep.ReleaseCommand) > 0 {
+		task, err := h.ensureReleaseTask(ctx, app, dep)
+		if err != nil {
+			return err
+		}
+		wait, err := h.applyReleaseTaskOutcome(ctx, dep, task)
+		if err != nil || wait {
+			return err
+		}
+	}
+	return h.notifySnapshotPrime(ctx, app.ID, dep.ID)
+}
+
+func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep state.Deployment) (state.AppTask, error) {
+	task, err := h.store.ReleaseAppTaskByDeployment(ctx, dep.ID)
+	if err == nil {
+		return task, nil
+	}
+	if !errors.Is(err, state.ErrNotFound) {
+		return state.AppTask{}, fmt.Errorf("imaged: load deployment release task: %w", err)
+	}
+	task, err = h.store.CreateAppTask(ctx, state.CreateAppTaskParams{
+		AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID,
+		Kind: state.AppTaskKindRelease, Command: append([]string(nil), dep.ReleaseCommand...),
+		CommandShell: dep.ReleaseCommandShell,
+	})
+	if errors.Is(err, state.ErrConflict) {
+		// A duplicate snapshot/build notification can race another imaged
+		// process. The partial unique index is the admission fence; re-read the
+		// winner rather than treating the replay as a deployment failure.
+		task, err = h.store.ReleaseAppTaskByDeployment(ctx, dep.ID)
+	}
+	if err != nil {
+		return state.AppTask{}, fmt.Errorf("imaged: create deployment release task: %w", err)
+	}
+	h.log.Info("imaged: release task admitted", "deployment_id", dep.ID, "task_id", task.ID)
+	return task, nil
+}
+
+// applyReleaseTaskOutcome returns wait=true when deployment priming must not
+// proceed. Terminal failures close the deployment here, leaving its current
+// same-scope predecessor untouched and routable.
+func (h *Handler) applyReleaseTaskOutcome(ctx context.Context, dep state.Deployment, task state.AppTask) (bool, error) {
+	switch task.Status {
+	case state.AppTaskQueued, state.AppTaskRestoring, state.AppTaskRunning:
+		h.log.Debug("imaged: deployment waiting for release task",
+			"deployment_id", dep.ID, "task_id", task.ID, "status", task.Status)
+		return true, nil
+	case state.AppTaskSucceeded:
+		return false, nil
+	case state.AppTaskFailed, state.AppTaskTimedOut, state.AppTaskCancelled:
+		detail := fmt.Sprintf("release task %s ended with status %s", task.ID, task.Status)
+		if task.FailureCode != nil && *task.FailureCode != "" {
+			detail += ": " + *task.FailureCode
+		}
+		if task.FailureMessage != nil && *task.FailureMessage != "" {
+			detail += ": " + *task.FailureMessage
+		}
+		if _, err := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleaseCommandFailed, detail); err != nil {
+			return true, fmt.Errorf("imaged: fail deployment after release task: %w", err)
+		}
+		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
+		return true, nil
+	default:
+		return true, fmt.Errorf("imaged: release task %s has unsupported status %q", task.ID, task.Status)
+	}
+}
+
+func (h *Handler) notifySnapshotPrime(ctx context.Context, appID, deploymentID string) error {
+	primePayload, err := json.Marshal(map[string]string{"app_id": appID, "deployment_id": deploymentID})
+	if err != nil {
+		return fmt.Errorf("imaged: marshal snapshot_prime: %w", err)
+	}
 	if err := h.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
 		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
 	}
 	return nil
+}
+
+// handleAppTaskChanged consumes the durable terminal handoff emitted in the
+// same transaction as a release task completion. The database row, not the
+// notification status, is authoritative so replay and out-of-order delivery
+// are harmless.
+func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskChangedPayload) error {
+	if payload.Kind != string(state.AppTaskKindRelease) {
+		return nil
+	}
+	task, err := h.store.AppTaskByID(ctx, payload.AccountID, payload.AppID, payload.TaskID)
+	if errors.Is(err, state.ErrNotFound) {
+		// App hard-deletion can cascade the task before an old outbox row is
+		// replayed. There is no deployment left to resume in that case.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("imaged: load changed release task: %w", err)
+	}
+	if task.Kind != state.AppTaskKindRelease || task.DeploymentID != payload.DeploymentID {
+		return fmt.Errorf("imaged: release task notification identity mismatch")
+	}
+	dep, err := h.store.DeploymentByID(ctx, task.DeploymentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("imaged: load release-gated deployment: %w", err)
+	}
+	if dep.Status == state.DeployLive || dep.Status == state.DeploySuperseded ||
+		dep.Status == state.DeployFailed || dep.Status == state.DeployCancelled {
+		return nil
+	}
+	if dep.Status != state.DeploySnapshotting {
+		return fmt.Errorf("imaged: release-gated deployment %s is in %q", dep.ID, dep.Status)
+	}
+	wait, err := h.applyReleaseTaskOutcome(ctx, dep, task)
+	if err != nil || wait {
+		return err
+	}
+	return h.notifySnapshotPrime(ctx, dep.AppID, dep.ID)
 }
 
 // buildImageLayer is the app-deploy path (app.Type == AppTypeApp):
@@ -3242,14 +3385,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	if err := h.transitionWithStage(ctx, dep.ID, state.StageSecurityScan, state.StageSnapshotPrepare, state.DeploySnapshotting, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
-	primePayload, _ := json.Marshal(map[string]string{
-		"app_id":        app.ID,
-		"deployment_id": dep.ID,
-	})
-	if err := h.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
-		return fmt.Errorf("imaged: notify snapshot_prime: %w", err)
-	}
-	return nil
+	return h.handoffSnapshotPrime(ctx, app, dep)
 }
 
 func (h *Handler) releaseBuildCacheLease(parent context.Context, dep state.Deployment) {
