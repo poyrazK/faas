@@ -1263,6 +1263,7 @@ var cliCommands = []cliCommand{
 			{Name: "status", Short: "only show HTTP requests with this status", Value: "100..599"},
 			{Name: "route", Short: "only show HTTP requests for this route", Value: "PATH"},
 			{Name: "request", Short: "show one HTTP request by public request id or row id", Value: "ID"},
+			{Name: "trace", Short: "show HTTP access logs correlated with a W3C trace id", Value: "TRACE_ID"},
 			{Name: "limit", Short: "HTTP request page size (1..200)", Value: "N"},
 			{Name: "all", Short: "read every retained HTTP request page"},
 			{Name: "explain", Short: "summarize the last failure and common error patterns"},
