@@ -117,6 +117,33 @@ func TestRenderArchiveLineWithIdentityIncludesDeploymentProvenance(t *testing.T)
 	}
 }
 
+func TestRenderArchiveLineWithIdentityPrefersStoredSnapshot(t *testing.T) {
+	rec := httptest.NewRecorder()
+	current := api.PlatformIdentity{
+		DeploymentID: "dep-current", NodeID: "node-current", Region: "us-east1",
+		CommitSHA: "current-sha", DeploymentTag: "current", ImageDigest: "sha256:current",
+	}
+	raw := []byte(`{"seq":8,"stream":"stdout","ts":"2026-09-23T10:11:12Z","msg":"hello","identity_captured":true,"app_id":"app-1","tenant_id":"acct-1","deployment_id":"dep-historical","node_id":"node-old","region":"eu-fsn1","commit_sha":"old-sha","deployment_tag":"stable","deployment_created_at":"2026-09-20T08:00:00Z","image_digest":"sha256:old"}`)
+	if !renderArchiveLineWithIdentity(rec, rec, "app-1", "instance-1", raw, current, nil) {
+		t.Fatal("renderArchiveLineWithIdentity returned false")
+	}
+	out := rec.Body.String()
+	for _, want := range []string{
+		`"app_id":"app-1"`, `"tenant_id":"acct-1"`, `"deployment_id":"dep-historical"`,
+		`"node_id":"node-old"`, `"region":"eu-fsn1"`, `"commit_sha":"old-sha"`,
+		`"deployment_tag":"stable"`, `"image_digest":"sha256:old"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("archive payload missing historical field %q: %s", want, out)
+		}
+	}
+	for _, stale := range []string{`"deployment_id":"dep-current"`, `"node_id":"node-current"`, `"region":"us-east1"`, `"commit_sha":"current-sha"`} {
+		if strings.Contains(out, stale) {
+			t.Errorf("archive payload used current identity %q: %s", stale, out)
+		}
+	}
+}
+
 // newFakeS3 wires a tiny httptest server that mimics the
 // subset of S3 GetObject the bucket-proxy read-back handler
 // uses. status programs the response (200 / 404 / 500);

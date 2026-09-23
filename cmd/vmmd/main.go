@@ -869,7 +869,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the With*Stamper chain shares one receiver rather than
 	// allocating two equivalent adapters.
 	tailStamper := stamperFromStore(store, log)
-	archiveSink, stopArchive := startVMMDLogArchive(ctx, log, ops)
+	archiveSink, stopArchive := startVMMDLogArchive(ctx, store, nodeID, log, ops)
 	if stopArchive != nil {
 		defer stopArchive()
 	}

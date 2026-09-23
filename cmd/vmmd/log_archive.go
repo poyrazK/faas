@@ -8,15 +8,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/logarchive"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
-	vmmdLogArchiveQueueSize  = 4096
-	vmmdLogArchiveQueueBytes = 64 << 20
+	vmmdLogArchiveQueueSize        = 4096
+	vmmdLogArchiveQueueBytes       = 64 << 20
+	vmmdLogArchiveIdentityCacheMax = 4096
 )
 
 type archivedLine struct {
@@ -38,9 +41,18 @@ type vmmdLogArchiveSink struct {
 	mu          sync.RWMutex
 	closed      bool
 	queuedBytes int64
+
+	identityStore  state.Store
+	identityNodeID string
+	identityMu     sync.Mutex
+	identityCache  map[string]api.PlatformIdentity
 }
 
 func newVMMDLogArchiveSink(spool *logarchive.Spool, metrics logarchive.Metrics, log *slog.Logger) *vmmdLogArchiveSink {
+	return newVMMDLogArchiveSinkWithIdentity(spool, metrics, log, nil, "")
+}
+
+func newVMMDLogArchiveSinkWithIdentity(spool *logarchive.Spool, metrics logarchive.Metrics, log *slog.Logger, store state.Store, nodeID string) *vmmdLogArchiveSink {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -48,14 +60,72 @@ func newVMMDLogArchiveSink(spool *logarchive.Spool, metrics logarchive.Metrics, 
 		metrics = logarchive.NewMetrics(nil)
 	}
 	s := &vmmdLogArchiveSink{
-		spool:   spool,
-		metrics: metrics,
-		log:     log,
-		queue:   make(chan archivedLine, vmmdLogArchiveQueueSize),
-		done:    make(chan struct{}),
+		spool:          spool,
+		metrics:        metrics,
+		log:            log,
+		queue:          make(chan archivedLine, vmmdLogArchiveQueueSize),
+		done:           make(chan struct{}),
+		identityStore:  store,
+		identityNodeID: nodeID,
+		identityCache:  make(map[string]api.PlatformIdentity),
 	}
 	go s.run()
 	return s
+}
+
+func (s *vmmdLogArchiveSink) resolveIdentity(instance string) api.PlatformIdentity {
+	identity := api.PlatformIdentity{InstanceID: instance, NodeID: s.identityNodeID}
+	if s.identityStore == nil {
+		return identity
+	}
+	s.identityMu.Lock()
+	if cached, ok := s.identityCache[instance]; ok {
+		s.identityMu.Unlock()
+		return cached
+	}
+	s.identityMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	instanceRow, err := s.identityStore.InstanceByID(ctx, instance)
+	if err != nil {
+		return identity
+	}
+	identity.AppID = instanceRow.AppID
+	identity.DeploymentID = instanceRow.DeploymentID
+	if instanceRow.NodeID != "" {
+		identity.NodeID = instanceRow.NodeID
+	}
+	if app, appErr := s.identityStore.AppByID(ctx, instanceRow.AppID); appErr == nil {
+		identity.TenantID = app.AccountID
+	}
+	if identity.DeploymentID != "" {
+		if deployment, deploymentErr := s.identityStore.DeploymentByID(ctx, identity.DeploymentID); deploymentErr == nil &&
+			(deployment.AppID == "" || deployment.AppID == identity.AppID) {
+			identity.CommitSHA = deployment.CommitSHA
+			identity.DeploymentTag = deployment.Tag
+			identity.ImageDigest = deployment.ImageDigest
+			if !deployment.CreatedAt.IsZero() {
+				identity.DeploymentCreatedAt = deployment.CreatedAt.UTC().Format(time.RFC3339Nano)
+			}
+		}
+	}
+	if identity.NodeID != "" {
+		if node, nodeErr := s.identityStore.ComputeNodeByID(ctx, identity.NodeID); nodeErr == nil && node.Region != nil {
+			identity.Region = *node.Region
+		}
+	}
+	s.identityMu.Lock()
+	if len(s.identityCache) >= vmmdLogArchiveIdentityCacheMax {
+		// Instance ids are not reused, so a daemon that runs indefinitely
+		// must bound this best-effort lookup cache. A clear only causes a
+		// later eviction to re-read state; it never changes the persisted
+		// snapshot already written for earlier lines.
+		s.identityCache = make(map[string]api.PlatformIdentity)
+	}
+	s.identityCache[instance] = identity
+	s.identityMu.Unlock()
+	return identity
 }
 
 // Enqueue is intentionally non-blocking because it runs from Ring's
@@ -88,14 +158,21 @@ func (s *vmmdLogArchiveSink) run() {
 		s.mu.Lock()
 		s.queuedBytes -= int64(len(item.line.Line))
 		s.mu.Unlock()
-		if _, err := s.spool.WriteWithLevel(item.instance, item.line.Seq, item.line.Stream, item.line.WrittenAt, item.line.Line, item.line.Level); err != nil {
-			if errors.Is(err, logarchive.ErrSpoolFull) {
+		var writeErr error
+		if s.identityStore == nil && s.identityNodeID == "" {
+			_, writeErr = s.spool.WriteWithLevel(item.instance, item.line.Seq, item.line.Stream, item.line.WrittenAt, item.line.Line, item.line.Level)
+		} else {
+			identity := s.resolveIdentity(item.instance)
+			_, writeErr = s.spool.WriteWithIdentity(item.instance, item.line.Seq, item.line.Stream, item.line.WrittenAt, item.line.Line, item.line.Level, identity)
+		}
+		if writeErr != nil {
+			if errors.Is(writeErr, logarchive.ErrSpoolFull) {
 				s.metrics.IncFailure(logarchive.FailureReasonSpoolFull)
 			} else {
 				s.metrics.IncFailure(logarchive.FailureReasonSpoolWrite)
 			}
 			s.log.Warn("logarchive.spool_write_failed",
-				"instance", item.instance, "seq", item.line.Seq, "err", err)
+				"instance", item.instance, "seq", item.line.Seq, "err", writeErr)
 		}
 	}
 }
@@ -126,7 +203,7 @@ func (s *vmmdLogArchiveSink) Close(ctx context.Context) error {
 // setup is optional: an absent credential envelope leaves vmmd serving live
 // logs with archive disabled; a malformed envelope emits a clear startup
 // warning, matching apid's best-effort archive policy.
-func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMetrics) (*vmmdLogArchiveSink, func()) {
+func startVMMDLogArchive(ctx context.Context, store state.Store, nodeID string, log *slog.Logger, ops *wire.OpsMetrics) (*vmmdLogArchiveSink, func()) {
 	cfg, err := logarchive.ConfigFromEnv(os.Getenv, log)
 	if err != nil {
 		log.Warn("vmmd: log archive config failed", "err", err)
@@ -169,7 +246,7 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		log.Warn("vmmd: log archive shipper init failed", "err", err)
 		return nil, nil
 	}
-	sink := newVMMDLogArchiveSink(spool, metrics, log)
+	sink := newVMMDLogArchiveSinkWithIdentity(spool, metrics, log, store, nodeID)
 	archiveCtx, archiveCancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
