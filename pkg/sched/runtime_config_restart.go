@@ -76,7 +76,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list initial instances for %s: %w", appID, err)
 	}
 	for _, instance := range instances {
-		if !(instance.StartedAt.IsZero() || changedAt.After(instance.StartedAt)) {
+		if !instance.StartedAt.IsZero() && !changedAt.After(instance.StartedAt) {
 			continue
 		}
 		switch state.State(instance.State) {
@@ -225,7 +225,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list final stale instances for %s: %w", appID, err)
 	}
 	for _, instance := range instances {
-		if _, isLive := liveByID[instance.DeploymentID]; isLive || !(instance.StartedAt.IsZero() || changedAt.After(instance.StartedAt)) {
+		if _, isLive := liveByID[instance.DeploymentID]; isLive || (!instance.StartedAt.IsZero() && !changedAt.After(instance.StartedAt)) {
 			continue
 		}
 		switch state.State(instance.State) {
