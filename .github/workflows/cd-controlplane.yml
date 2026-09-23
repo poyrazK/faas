@@ -30,12 +30,20 @@ on:
         description: "Existing pre-1.0 release tag published by release.yml"
         required: true
         type: string
+      maintenance_mode:
+        description: "Planned window with legacy writers stopped before incompatible migrations"
+        type: boolean
+        default: false
   workflow_dispatch:  # manual trigger for deliberate deployment
     inputs:
       release_tag:
         description: "Existing pre-1.0 release tag published by release.yml (for example v0.1.18-rc.1)"
         required: true
         type: string
+      maintenance_mode:
+        description: "Planned window with legacy writers stopped before incompatible migrations"
+        type: boolean
+        default: false
 
 concurrency:
   group: cd-cp-${{ inputs.release_tag }}
@@ -59,6 +67,7 @@ jobs:
       # compute hosts. Keep the shared storage.env credential read-only.
       APID_STORAGE_LIFECYCLE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       RELEASE_TAG: ${{ inputs.release_tag }}
+      MAINTENANCE_MODE: ${{ inputs.maintenance_mode }}
       # The critical / best-effort service split is owned by
       # pkg/daemonunitspec (Entry.Critical) and shipped as
       # deploy/etc/daemons.json; the env lists that used to live here were
@@ -702,23 +711,32 @@ jobs:
           }
           trap cleanup_probe_proxy EXIT
           probe_proxy="socks5h://127.0.0.1:${probe_port}"
-          proxy_ready=0
-          for _ in $(seq 1 20); do
-            if curl --fail --silent --show-error --proxy "$probe_proxy" \
-              --connect-timeout 1 --max-time 3 \
-              'https://api.gregale.dev/v1/status?rollout_probe=proxy-preflight' \
-              >/dev/null; then
-              proxy_ready=1
-              break
-            fi
-            kill -0 "$probe_proxy_pid" 2>/dev/null || break
-            sleep 0.25
-          done
-          (( proxy_ready == 1 )) || {
-            echo "::error::control-plane rollout probe proxy did not become ready" >&2
-            exit 1
-          }
-          ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh \
+          baseline_samples=3
+          if [[ "$MAINTENANCE_MODE" == "true" ]]; then
+            # Legacy writers are intentionally stopped before migration; the
+            # public endpoint cannot provide a healthy pre-rollout baseline.
+            baseline_samples=0
+            echo "::notice::planned maintenance: customer-path availability gate is inconclusive"
+          else
+            proxy_ready=0
+            for _ in $(seq 1 20); do
+              if curl --fail --silent --show-error --proxy "$probe_proxy" \
+                --connect-timeout 1 --max-time 3 \
+                'https://api.gregale.dev/v1/status?rollout_probe=proxy-preflight' \
+                >/dev/null; then
+                proxy_ready=1
+                break
+              fi
+              kill -0 "$probe_proxy_pid" 2>/dev/null || break
+              sleep 0.25
+            done
+            (( proxy_ready == 1 )) || {
+              echo "::error::control-plane rollout probe proxy did not become ready" >&2
+              exit 1
+            }
+          fi
+          ROLLOUT_BASELINE_SAMPLE_COUNT="$baseline_samples" \
+            ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh \
             "https://api.gregale.dev/v1/status" -- \
             ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
