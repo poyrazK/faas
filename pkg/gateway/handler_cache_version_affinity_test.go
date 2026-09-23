@@ -1,5 +1,7 @@
 package gateway
 
+// adr: 122 — response-cache keys must keep rollout cohorts isolated.
+
 import (
 	"context"
 	"errors"

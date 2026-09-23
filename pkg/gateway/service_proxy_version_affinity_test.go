@@ -1,5 +1,7 @@
 package gateway
 
+// adr: 168 — the internal service proxy routes only through authorized service targets.
+
 import (
 	"context"
 	"net/http"

@@ -1,5 +1,7 @@
 package gateway_test
 
+// adr: 084 — traffic-split cohorts must be stable across gateway replicas.
+
 import (
 	"context"
 	"fmt"

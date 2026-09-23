@@ -1,5 +1,7 @@
 package gateway
 
+// adr: 084 — keyed affinity refines the existing traffic-split routing contract.
+
 import (
 	"net/http"
 	"net/http/httptest"
