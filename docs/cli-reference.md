@@ -1293,13 +1293,15 @@ List edge rules
 
 ### edge-rules trace
 
-Preview which edge rules match a proposed request (no actions executed)
+Preview matching edge rules and simulate IP/geo decisions
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--url <URL>` | absolute HTTP(S) request URL | required |
 | `--method <method>` | request method (default GET) |  |
+| `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
+| `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 
 ### edge-rules create
 

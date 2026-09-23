@@ -32,7 +32,7 @@ func TestPreviewEdgeRules(t *testing.T) {
 		makeRule("early", func(r *api.EdgeRuleResponse) { r.Priority = 5; r.CreatedAt = time.Unix(10, 0) }),
 		makeRule("other-kind", func(r *api.EdgeRuleResponse) { r.Kind = "headers" }),
 	}
-	got := previewEdgeRules("demo", "api.example.com", "/api/items", "GET", rules)
+	got := previewEdgeRules("demo", "api.example.com", "/api/items", "GET", "", "", rules)
 	byID := make(map[string]edgeRuleTraceRow)
 	for _, row := range got.Rules {
 		byID[row.ID] = row
@@ -58,7 +58,7 @@ func TestPreviewEdgeRules_EqualPriorityIsAmbiguous(t *testing.T) {
 		{ID: "a", Enabled: true, Kind: "ip", MatchHost: "*", Priority: 10},
 		{ID: "b", Enabled: true, Kind: "ip", MatchHost: "*", Priority: 10},
 	}
-	got := previewEdgeRules("demo", "example.com", "/", "GET", rules)
+	got := previewEdgeRules("demo", "example.com", "/", "GET", "", "", rules)
 	for _, row := range got.Rules {
 		if row.Status != "tied_candidate" || !strings.Contains(row.Reason, "no guaranteed order") {
 			t.Errorf("tie not qualified: %#v", row)
@@ -85,7 +85,7 @@ func TestTraceHostAndPathSemantics(t *testing.T) {
 		t.Fatal("method filter differs from gateway")
 	}
 	rules := []api.EdgeRuleResponse{{ID: "all", Enabled: true, Kind: "route", MatchHost: "*", MatchPath: "*"}}
-	if got := previewEdgeRules("demo", "example.com", "/a/b", "GET", rules).Rules[0].Status; got != "first_candidate" {
+	if got := previewEdgeRules("demo", "example.com", "/a/b", "GET", "", "", rules).Rules[0].Status; got != "first_candidate" {
 		t.Fatalf("match-all path = %q", got)
 	}
 }
