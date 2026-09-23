@@ -57,6 +57,30 @@ func TestPGBackend_LookupCachesAndFallsBack(t *testing.T) {
 	}
 }
 
+func TestPGBackend_LookupKeepsDeploymentPinHostSpecific(t *testing.T) {
+	router := &fakeRouter{byID: map[string]gateway.App{
+		"api.gregale.dev": {ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		"deploy-7-api.gregale.dev": {
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PinnedDeploymentID: "dep-7", PinnedDeploymentScope: "qa",
+		},
+	}}
+	b := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
+
+	preview, ok := b.Lookup(context.Background(), "deploy-7-api.gregale.dev")
+	if !ok || preview.PinnedDeploymentID != "dep-7" || preview.PinnedDeploymentScope != "qa" {
+		t.Fatalf("preview lookup = %+v, ok=%v", preview, ok)
+	}
+	production, ok := b.Lookup(context.Background(), "api.gregale.dev")
+	if !ok || production.PinnedDeploymentID != "" || production.PinnedDeploymentScope != "" {
+		t.Fatalf("production lookup inherited preview pin = %+v, ok=%v", production, ok)
+	}
+	preview, ok = b.Lookup(context.Background(), "deploy-7-api.gregale.dev")
+	if !ok || preview.PinnedDeploymentID != "dep-7" || preview.PinnedDeploymentScope != "qa" {
+		t.Fatalf("cached preview lookup lost pin = %+v, ok=%v", preview, ok)
+	}
+}
+
 func TestPGBackend_LookupUnknownHost(t *testing.T) {
 	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, gateway.NewFakeScheduler(""), nil)
 	if _, ok := b.Lookup(context.Background(), "nope.example.com"); ok {

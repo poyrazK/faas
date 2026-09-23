@@ -27,6 +27,9 @@ type pgRouter struct {
 	// under it is a platform subdomain whose label is the app slug; anything
 	// else is a custom domain resolved through the domains table.
 	appsSuffix string
+	// deploySuffix is the dedicated immutable-deployment preview zone. Hosts in
+	// this zone resolve a stable deployment revision, not the app's live route.
+	deploySuffix string
 	// tenantSurfacesEnabled is the durable runtime gate. Tests and legacy
 	// callers may leave it nil, in which case the historical environment
 	// accessor remains the fallback.
@@ -38,6 +41,9 @@ var _ gateway.Router = pgRouter{}
 // ResolveHost implements gateway.Router. A missing/unverified/deleted route is a
 // clean ok=false (404); only an actual store failure returns a non-nil error.
 func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bool, error) {
+	if revision, slug, ok := gateway.DeploymentScopeFromHost(r.deploySuffix, host); ok {
+		return r.deploymentPreviewByRevision(ctx, revision, slug)
+	}
 	if slug, ok := r.slugFor(host); ok {
 		return r.appBySlug(ctx, slug)
 	}
@@ -60,6 +66,32 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 		}
 	}
 	return r.customDomain(ctx, host)
+}
+
+// deploymentPreviewByRevision resolves an immutable deployment-preview host
+// to its owning app and pins the request to that exact deployment. Closed
+// deployments intentionally stop routing even when the hostname remains in a
+// local cache; deployment_changed invalidation rechecks this gate.
+func (r pgRouter) deploymentPreviewByRevision(ctx context.Context, revision int, slug string) (gateway.App, bool, error) {
+	app, ok, err := r.appBySlug(ctx, slug)
+	if err != nil || !ok {
+		return app, ok, err
+	}
+	deployment, err := r.store.DeploymentByRevision(ctx, app.ID, revision)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if !deployment.DeploymentPreviewActive() {
+		return gateway.App{}, false, nil
+	}
+	app.PinnedDeploymentID = deployment.ID
+	if deployment.Scope != "default" {
+		app.PinnedDeploymentScope = deployment.Scope
+	}
+	return app, true, nil
 }
 
 // appBySlug — slugFor hit branch. Extracted to keep ResolveHost
@@ -525,6 +557,7 @@ type invalidator interface {
 	// flips are usually isolated to one app; wholesale FlushRoutes
 	// would also evict every other app's entry on every flip.
 	ResetApp(appID string)
+	InvalidateRoutesForApp(appID string)
 	// InvalidateResponseCacheByApp (ADR-122 §Decision) drops every
 	// kind=cache entry for an app on a per-app column flip (most
 	// importantly a deploy — the previous release's body must
@@ -888,6 +921,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				log.Warn("gatewayd: refresh mirror rules failed", "app", p.AppID, "err", err)
 			}
 		default:
+			inv.InvalidateRoutesForApp(p.AppID)
 			// Companion routes and primary ingress are hydrated from the live
 			// deployment set. The app cache has no TTL, so evict this app before
 			// refreshing weights; otherwise a new proxy route could remain stale

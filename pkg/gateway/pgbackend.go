@@ -212,7 +212,7 @@ type PGBackend struct {
 	log     *slog.Logger
 	metrics *Metrics
 
-	routes *RouteCache // host -> app_id (LRU)
+	routes *RouteCache // host -> app_id + optional pinned deployment (LRU)
 	// stale (ADR-190) is the last-known-good host -> App tier consulted
 	// only when the Router errors. See stale_routes.go.
 	stale *staleRoutes
@@ -865,8 +865,10 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	// Lookup is on every request. Use the read-mostly cache operation so
 	// concurrent hits do not serialize behind LRU promotion; route changes
 	// still invalidate the cache through the existing notifier path.
-	if appID, ok := b.routes.Peek(host); ok {
+	if appID, pinnedDeploymentID, pinnedScope, ok := b.routes.PeekTarget(host); ok {
 		if app, ok := b.getApp(appID); ok {
+			app.PinnedDeploymentID = pinnedDeploymentID
+			app.PinnedDeploymentScope = pinnedScope
 			return app, true
 		}
 	}
@@ -879,10 +881,13 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		b.stale.Delete(host)
 		return App{}, false
 	}
-	b.routes.Put(host, app.ID)
+	resolvedApp := app
+	b.routes.PutTarget(host, app.ID, app.PinnedDeploymentID, app.PinnedDeploymentScope)
+	app.PinnedDeploymentID = ""
+	app.PinnedDeploymentScope = ""
 	b.putApp(app)
-	b.stale.Put(host, app)
-	return app, true
+	b.stale.Put(host, resolvedApp)
+	return resolvedApp, true
 }
 
 // lookupStale is the Router-error branch of Lookup (ADR-190).
@@ -1890,6 +1895,19 @@ func (b *PGBackend) FlushRoutes() {
 	b.appsMu.Unlock()
 }
 
+// InvalidateRoutesForApp drops host-specific routes to appID, including any
+// deployment-preview pins. It is called when deployment state changes so a
+// superseded revision cannot keep routing from the host cache.
+func (b *PGBackend) InvalidateRoutesForApp(appID string) {
+	if b == nil || b.routes == nil {
+		return
+	}
+	b.routes.InvalidateApp(appID)
+	if b.stale != nil {
+		b.stale.DeleteApp(appID)
+	}
+}
+
 // InvalidatePublicAuth (issue #477 / ADR-079) drops every
 // entry in the per-app basic-auth unsealed-credential cache.
 // gatewayd-internal calls this on a db.NotifyKeyChanged notification
@@ -2032,6 +2050,8 @@ func (b *PGBackend) getApp(appID string) (App, bool) {
 }
 
 func (b *PGBackend) putApp(app App) {
+	app.PinnedDeploymentID = ""
+	app.PinnedDeploymentScope = ""
 	b.appsMu.Lock()
 	b.apps[app.ID] = app
 	b.appsMu.Unlock()

@@ -287,6 +287,14 @@ type App struct {
 	// existing route cache (apps_update / domain_changed wipes
 	// the route cache, and the next Lookup re-derives).
 	Scope string
+	// PinnedDeploymentID is set only by a host-specific deployment URL. Unlike
+	// Scope (which selects an environment), this forces request selection to one
+	// immutable deployment revision. Both it and PinnedDeploymentScope belong to
+	// the host route, not the shared app-level cache.
+	PinnedDeploymentID string
+	// PinnedDeploymentScope is the environment of PinnedDeploymentID, normalized
+	// to empty for the default scope. It is only used for exact-revision admits.
+	PinnedDeploymentScope string
 	// CORS improvements D1: per-app default CORS
 	// opt-in. Plumbed from apps.cors_default_enabled
 	// through pgRouter.toApp so applyEdgeRuleCORS
@@ -5537,6 +5545,7 @@ haveApp:
 	)
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
+	pinnedDeploymentRoute := !deploymentSmoke && app.PinnedDeploymentID != ""
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -5860,7 +5869,7 @@ haveApp:
 		// store-skipped capture. The wake leader continues to the origin;
 		// its normal cache writer refreshes this entry after the instance is
 		// ready.
-		r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
+		r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn), app.PinnedDeploymentID))
 		wakeInFlight := h.gate != nil && h.gate.Inflight(app.ID)
 		if wakeInFlight {
 			if served, _ := h.tryServeStaleWhileWaking(w, r, app, rec); served {
@@ -5886,7 +5895,7 @@ haveApp:
 			if cw.shouldStore() {
 				key := CacheKey{
 					AppID:          app.ID,
-					DeploymentID:   "",
+					DeploymentID:   app.PinnedDeploymentID,
 					RuleID:         rule.ID,
 					Method:         r.Method,
 					NormalizedPath: r.URL.Path,
@@ -6106,6 +6115,15 @@ haveApp:
 				return
 			}
 		}
+	} else if pinnedDeploymentRoute {
+		picker, ok := h.backend.(deploymentTargetPicker)
+		if !ok {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+				"Deployment preview unavailable", "the gateway cannot select the pinned deployment"))
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
+		pick = picker.PickForDeployment(app.ID, app.PinnedDeploymentID)
 	} else {
 		pick = h.pickForRequest(app, preferredInstanceID)
 	}
@@ -6128,7 +6146,35 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
 		return
 	}
-	if !pick.OK {
+	if pinnedDeploymentRoute && !pick.OK {
+		// Preview hosts must never fall through to the app's weighted picker.
+		// Admit only the immutable revision encoded in this hostname.
+		maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
+		platformWakeStart = time.Now()
+		platformWakeTrace = newWakePhaseTrace(platformWakeStart)
+		wakeCtx := withWakePhaseTrace(r.Context(), platformWakeTrace)
+		admittedWakeID, method, atCapacity, admitErr := h.backend.Admit(
+			wakeCtx, app.ID, app.PinnedDeploymentID, app.PinnedDeploymentScope,
+			sched.TriggerGateway, maxInstances+api.RolloutConcurrencyGrant,
+		)
+		if admitErr != nil || atCapacity {
+			if admitErr == nil {
+				admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, h.backend.HealthyCount(app.ID))
+			}
+			writeWakeError(w, admitErr)
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
+		cold, wakeID, wakeMethod = true, admittedWakeID, method
+		pick = h.backend.(deploymentTargetPicker).PickForDeployment(app.ID, app.PinnedDeploymentID)
+		if !pick.OK {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+				"Deployment preview unavailable", "the pinned deployment did not become routable after admission"))
+			h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
+			return
+		}
+	}
+	if !pick.OK && !pinnedDeploymentRoute {
 		// This is the canonical platform-only boundary. Authentication,
 		// routing, rate limiting, and the public edge have already completed;
 		// scheduler admission, VM restore, and the internal first-byte hop are
@@ -6228,7 +6274,13 @@ haveApp:
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
 	burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
 	defer cancelBurstWait()
-	waitedForBurst, burstErr := h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+	var (
+		waitedForBurst bool
+		burstErr       error
+	)
+	if !pinnedDeploymentRoute {
+		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+	}
 	if burstErr != nil {
 		// A burst that cannot become routable within its admission policy is
 		// a controlled timeout, not an upstream 502. Client disconnects
@@ -6243,7 +6295,7 @@ haveApp:
 	// would send every queued request to the first guest even after waiting
 	// for siblings. Keep the single PickWarm call on ordinary warm traffic
 	// so round-robin cursors advance only once per request.
-	if !deploymentSmoke && (!pick.OK || waitedForBurst) {
+	if !deploymentSmoke && !pinnedDeploymentRoute && (!pick.OK || waitedForBurst) {
 		pick = h.pickAfterCapacity(app, preferredInstanceID)
 	}
 
@@ -6254,7 +6306,7 @@ haveApp:
 	// Bounded to ONE admit per request — sustained cold-bucket
 	// hits are recovered via the next deployment_changed notify
 	// that re-seeds the cache.
-	if pick.ColdBucket != "" {
+	if pick.ColdBucket != "" && !pinnedDeploymentRoute {
 		if platformWakeStart.IsZero() {
 			platformWakeStart = time.Now()
 		}
@@ -6313,7 +6365,11 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, smokeDeploymentID)
+	deploymentIDForCapacity := smokeDeploymentID
+	if pinnedDeploymentRoute {
+		deploymentIDForCapacity = app.PinnedDeploymentID
+	}
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, deploymentIDForCapacity)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),

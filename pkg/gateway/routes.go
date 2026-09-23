@@ -5,9 +5,10 @@ import (
 	"sync"
 )
 
-// RouteCache is the in-memory hostname→app_id LRU (spec §4.1: 10k entries, backed
-// by Postgres LISTEN app_routes_changed; a miss is one indexed PG lookup). It is
-// safe for concurrent use on the hot request path.
+// RouteCache is the in-memory hostname→app route LRU (spec §4.1: 10k entries,
+// backed by Postgres LISTEN app_routes_changed; a miss is one indexed PG
+// lookup). Deployment-preview hosts also retain their host-specific revision
+// pin and scope here, separate from the shared app cache.
 type RouteCache struct {
 	// Reads use RLock through Peek. The request path does not need to
 	// promote a route on every hit: app routes are invalidated by the
@@ -21,8 +22,10 @@ type RouteCache struct {
 }
 
 type routeEntry struct {
-	host  string
-	appID string
+	host               string
+	appID              string
+	pinnedDeploymentID string
+	pinnedScope        string
 }
 
 // NewRouteCache returns a cache holding up to cap entries (spec §4.1: 10,000).
@@ -35,13 +38,22 @@ func NewRouteCache(capacity int) *RouteCache {
 
 // Get returns the app_id for host and whether it was cached, promoting the entry.
 func (c *RouteCache) Get(host string) (string, bool) {
+	appID, _, _, ok := c.GetTarget(host)
+	return appID, ok
+}
+
+// GetTarget returns the app and optional pinned deployment for host, promoting
+// the entry. A deployment-preview hostname is host-specific even though its app
+// shares the normal app cache entry.
+func (c *RouteCache) GetTarget(host string) (string, string, string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if el, ok := c.byID[host]; ok {
 		c.ll.MoveToFront(el)
-		return el.Value.(*routeEntry).appID, true
+		entry := el.Value.(*routeEntry)
+		return entry.appID, entry.pinnedDeploymentID, entry.pinnedScope, true
 	}
-	return "", false
+	return "", "", "", false
 }
 
 // Peek returns the app_id for host without updating the LRU order. It is the
@@ -53,28 +65,62 @@ func (c *RouteCache) Get(host string) (string, bool) {
 // would be with strict per-hit promotion, which is acceptable because the next
 // request simply rehydrates it from the authoritative Router.
 func (c *RouteCache) Peek(host string) (string, bool) {
+	appID, _, _, ok := c.PeekTarget(host)
+	return appID, ok
+}
+
+// PeekTarget returns the app and optional pinned deployment without promoting
+// the entry on the read-mostly request path.
+func (c *RouteCache) PeekTarget(host string) (string, string, string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if el, ok := c.byID[host]; ok {
-		return el.Value.(*routeEntry).appID, true
+		entry := el.Value.(*routeEntry)
+		return entry.appID, entry.pinnedDeploymentID, entry.pinnedScope, true
 	}
-	return "", false
+	return "", "", "", false
 }
 
 // Put inserts or updates a route, evicting the least-recently-used entry if the
 // cache is over capacity.
 func (c *RouteCache) Put(host, appID string) {
+	c.PutTarget(host, appID, "", "")
+}
+
+// PutTarget caches the host-specific deployment pin and scope alongside its app route.
+func (c *RouteCache) PutTarget(host, appID, pinnedDeploymentID, pinnedScope string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if el, ok := c.byID[host]; ok {
-		el.Value.(*routeEntry).appID = appID
+		entry := el.Value.(*routeEntry)
+		entry.appID = appID
+		entry.pinnedDeploymentID = pinnedDeploymentID
+		entry.pinnedScope = pinnedScope
 		c.ll.MoveToFront(el)
 		return
 	}
-	el := c.ll.PushFront(&routeEntry{host: host, appID: appID})
+	el := c.ll.PushFront(&routeEntry{
+		host: host, appID: appID,
+		pinnedDeploymentID: pinnedDeploymentID, pinnedScope: pinnedScope,
+	})
 	c.byID[host] = el
 	if c.ll.Len() > c.cap {
 		c.evictLRU()
+	}
+}
+
+// InvalidateApp removes every hostname route targeting appID. Deployment
+// status changes can close an immutable preview URL, so its host-level pin must
+// be re-resolved even though the app itself is unchanged.
+func (c *RouteCache) InvalidateApp(appID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for el := c.ll.Front(); el != nil; {
+		next := el.Next()
+		if el.Value.(*routeEntry).appID == appID {
+			c.removeElement(el)
+		}
+		el = next
 	}
 }
 

@@ -86,16 +86,11 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		h.metricsIncCacheOutcome(app.ID, "bypass_authed")
 		return false, nil
 	}
-	// Build the cache key. DeploymentID is empty in v1 because
-	// the App value type doesn't carry one — plumbed in a
-	// follow-on commit once applyEdgeRuleCache is wired into
-	// the picker path. Without per-deployment binding, a
-	// deploy bumps via InvalidateByApp in the same
-	// NotifyAppChanged hook (commit 14) — slightly coarser
-	// (whole app flush) but safe.
+	// Bind deployment-preview responses to their immutable target so an
+	// alias URL can never replay a production deployment's cached body.
 	key := CacheKey{
 		AppID:          app.ID,
-		DeploymentID:   "",
+		DeploymentID:   app.PinnedDeploymentID,
 		RuleID:         rule.ID,
 		Method:         method,
 		NormalizedPath: path,

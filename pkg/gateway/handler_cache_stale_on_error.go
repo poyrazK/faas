@@ -33,21 +33,27 @@ type cacheRuleContextKey struct{}
 // the matched rule + the cache key components that were
 // resolved at the top of ServeHTTP.
 type cacheRuleSnapshot struct {
-	Rule     *EdgeRuleCacheResolved
-	AppID    string
-	Method   string
-	Path     string
-	Query    string
-	VaryHash [32]byte
+	Rule         *EdgeRuleCacheResolved
+	AppID        string
+	DeploymentID string
+	Method       string
+	Path         string
+	Query        string
+	VaryHash     [32]byte
 }
 
 // withCacheRuleContext stashes the snapshot on ctx.
-func withCacheRuleContext(ctx context.Context, rule *EdgeRuleCacheResolved, appID, method, path, query string, varyHash [32]byte) context.Context {
+func withCacheRuleContext(ctx context.Context, rule *EdgeRuleCacheResolved, appID, method, path, query string, varyHash [32]byte, deploymentIDs ...string) context.Context {
 	if rule == nil {
 		return ctx
 	}
+	deploymentID := ""
+	if len(deploymentIDs) > 0 {
+		deploymentID = deploymentIDs[0]
+	}
 	return context.WithValue(ctx, cacheRuleContextKey{}, &cacheRuleSnapshot{
-		Rule: rule, AppID: appID, Method: method, Path: path, Query: query, VaryHash: varyHash,
+		Rule: rule, AppID: appID, DeploymentID: deploymentID,
+		Method: method, Path: path, Query: query, VaryHash: varyHash,
 	})
 }
 
@@ -100,7 +106,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 	}
 	key := CacheKey{
 		AppID:          snap.AppID,
-		DeploymentID:   "",
+		DeploymentID:   snap.DeploymentID,
 		RuleID:         snap.Rule.ID,
 		Method:         snap.Method,
 		NormalizedPath: snap.Path,
@@ -144,7 +150,7 @@ func (h *Handler) startStaleWhileWakingRefresh(r *http.Request, app App, rule *E
 	}
 	key := CacheKey{
 		AppID:          snap.AppID,
-		DeploymentID:   "",
+		DeploymentID:   snap.DeploymentID,
 		RuleID:         snap.Rule.ID,
 		Method:         snap.Method,
 		NormalizedPath: snap.Path,
@@ -278,7 +284,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	}
 	key := CacheKey{
 		AppID:          snap.AppID,
-		DeploymentID:   "",
+		DeploymentID:   snap.DeploymentID,
 		RuleID:         snap.Rule.ID,
 		Method:         snap.Method,
 		NormalizedPath: snap.Path,
