@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -266,6 +267,60 @@ func TestManagedVersionAffinityCookieCacheIsolation(t *testing.T) {
 	h.ServeHTTP(w, private)
 	if w.Code != 200 || w.Body.String() == "public cached body" {
 		t.Fatalf("customer cookie reached shared cache: %d/%q", w.Code, w.Body.String())
+	}
+}
+
+func TestManagedVersionAffinityCookieFirstMissFillsCacheWithoutReplayingCookie(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	backend.app.VersionAffinityManagedCookie = true
+	var originCalls atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		originCalls.Add(1)
+		_, _ = w.Write([]byte("public origin body"))
+	}))
+	t.Cleanup(origin.Close)
+	backend.upstream = origin.Listener.Addr().String()
+	backend.AddTarget(Target{NodeID: backend.upstream, InstanceID: "candidate-1", DeploymentID: "dep-candidate"})
+	affinity := &cookieAffinityBackend{fakeBackend: backend}
+	h.backend = affinity
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, time.Now)
+	h.WithResponseCache(cache)
+	rule := EdgeRuleCacheResolved{ID: "rule-cache", PathGlob: "/catalog", MaxAgeSeconds: 60}
+	seedCacheRule(t, h, backend.host, rule)
+
+	first := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/catalog", nil)
+	firstResponse := httptest.NewRecorder()
+	h.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusOK || firstResponse.Body.String() != "public origin body" || originCalls.Load() != 1 || cache.Len() != 1 {
+		t.Fatalf("first miss = %d/%q, origin calls = %d, cache entries = %d", firstResponse.Code, firstResponse.Body.String(), originCalls.Load(), cache.Len())
+	}
+	firstCookies := firstResponse.Result().Cookies()
+	if len(firstCookies) != 1 || firstCookies[0].Name != api.ManagedVersionAffinityCookieName {
+		t.Fatalf("first response cookies = %+v", firstCookies)
+	}
+	key := CacheKey{AppID: backend.app.ID, DeploymentID: "dep-candidate", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hashStable("")}
+	state, entry := cache.Get(key)
+	if state != "fresh" || entry == nil || len(entry.header["Set-Cookie"]) != 0 {
+		t.Fatalf("cached response = %q/%+v", state, entry)
+	}
+
+	second := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/catalog", nil)
+	secondResponse := httptest.NewRecorder()
+	h.ServeHTTP(secondResponse, second)
+	secondCookies := secondResponse.Result().Cookies()
+	if secondResponse.Code != http.StatusOK || secondResponse.Body.String() != "public origin body" || originCalls.Load() != 1 || len(secondCookies) != 1 {
+		t.Fatalf("new visitor cache hit = %d/%q, origin calls = %d, cookies = %+v", secondResponse.Code, secondResponse.Body.String(), originCalls.Load(), secondCookies)
+	}
+	if secondCookies[0].Value == firstCookies[0].Value {
+		t.Fatal("cached response replayed first visitor's cookie")
+	}
+
+	returning := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/catalog", nil)
+	returning.AddCookie(firstCookies[0])
+	returningResponse := httptest.NewRecorder()
+	h.ServeHTTP(returningResponse, returning)
+	if returningResponse.Code != http.StatusOK || returningResponse.Body.String() != "public origin body" || originCalls.Load() != 1 || len(returningResponse.Result().Cookies()) != 0 {
+		t.Fatalf("returning visitor cache hit = %d/%q, origin calls = %d, cookies = %+v", returningResponse.Code, returningResponse.Body.String(), originCalls.Load(), returningResponse.Result().Cookies())
 	}
 }
 

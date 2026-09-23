@@ -2196,6 +2196,18 @@ func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error 
 	return err
 }
 
+// InvalidateResponseCacheByTag drops the matching tagged entries for one app.
+func (b *PGBackend) InvalidateResponseCacheByTag(appID, tag string) error {
+	if b == nil || b.responseCache == nil {
+		return nil
+	}
+	err := b.responseCache.InvalidateByAppTag(appID, tag)
+	if err == nil {
+		b.refreshResponseCacheMetrics()
+	}
+	return err
+}
+
 // InvalidateResponseCacheAll (ADR-122 §Decision) drops every
 // cached entry. Called from cmd/gatewayd-internal on
 // db.NotifyEdgeRuleChanged when a kind=cache rule is created /

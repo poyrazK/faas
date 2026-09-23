@@ -170,10 +170,13 @@ the initial page and its later assets share a cohort across gateways. It is
 host-only, Secure, HttpOnly, SameSite=Lax, and expires after seven days. An
 explicit `Gregale-Version-Key` still wins. The edge removes its own cookie
 before forwarding the request or evaluating response-cache eligibility;
-customer cookies retain the normal cache bypass, and responses setting a cookie
-are never stored. The first cache miss that issues the cookie is therefore
-served from the origin without populating the response cache. This option and
+customer cookies retain the normal cache bypass, and responses setting any
+other cookie are never stored. When a first cache miss issues only Gregale's
+cookie, the public origin response can populate the cache without storing that
+cookie; each later visitor still receives their own cookie. This option and
 `version_affinity_cookie` are mutually exclusive. Set it to `false` to disable.
+When enabled, guest responses cannot set the reserved
+`__Host-gregale_version` cookie; other application cookies are unaffected.
 
 Traffic splitting and canary rollouts are available on every plan. During a
 rollout an app runs one instance above its plan's concurrency limit so both

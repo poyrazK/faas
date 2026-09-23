@@ -137,8 +137,35 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) {
 		return
 	}
+	if guestSetsManagedVersionCookie(ctx, name, value) {
+		return
+	}
 	if !recordGuestExecutionEvidence(ctx, name, value) && !isGuestEvidenceHeader(name) {
 		dst.Add(name, value)
+	}
+}
+
+// The legacy reverse-proxy path copies response headers in one batch rather
+// than calling forwardedResponseHeader. Filter only guest-authored cookies
+// with the reserved name; the edge's cookie lives on the downstream writer
+// and is not part of resp.Header.
+func stripGuestManagedVersionCookieResponseHeader(resp *http.Response) {
+	if resp == nil || resp.Header == nil || resp.Request == nil {
+		return
+	}
+	ctx := resp.Request.Context()
+	if !managedVersionCookieProtected(ctx) {
+		return
+	}
+	values := resp.Header.Values("Set-Cookie")
+	if len(values) == 0 {
+		return
+	}
+	resp.Header.Del("Set-Cookie")
+	for _, value := range values {
+		if !guestSetsManagedVersionCookie(ctx, "Set-Cookie", value) {
+			resp.Header.Add("Set-Cookie", value)
+		}
 	}
 }
 

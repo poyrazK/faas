@@ -1846,8 +1846,9 @@ var cliCommands = []cliCommand{
 				{Name: "vary-on", Short: "header included in the cache key", Value: "HEADER", ClosedSet: []string{"Accept-Language", "Accept-Encoding"}},
 				{Name: "priority", Short: "match priority (lower wins)", Value: "N"},
 			}},
-			{Name: "purge", Short: "Purge cached responses: cache purge <slug> [--path GLOB]", Flags: []cliFlag{
+			{Name: "purge", Short: "Purge cached responses: cache purge <slug> [--path GLOB | --tag TAG]", Flags: []cliFlag{
 				{Name: "path", Short: "optional normalized request path glob", Value: "GLOB"},
+				{Name: "tag", Short: "optional cache tag", Value: "TAG"},
 			}},
 		},
 	},

@@ -41,6 +41,53 @@ func TestCacheWriter_Stores200(t *testing.T) {
 	}
 }
 
+// adr: 122
+func TestCacheWriter_CacheTagsAreMetadata(t *testing.T) {
+	now := time.Now()
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+	rule := EdgeRuleCacheResolved{ID: "rule-1", MaxAgeSeconds: 60}
+	key := CacheKey{AppID: "app-1", RuleID: rule.ID, Method: "GET", NormalizedPath: "/products/42"}
+	for _, tc := range []struct {
+		name, value string
+		wantStored  bool
+	}{
+		{"valid", "Product:42, collection-winter", true},
+		{"invalid", "product:42,", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := newTestStatusRecorder(httptest.NewRecorder())
+			cw := newCacheWriter(rec, rec, &rule, ResponseCachePerEntryMaxBytes)
+			cw.Header().Set("Cache-Tag", tc.value)
+			cw.WriteHeader(200)
+			_, _ = cw.Write([]byte("public body"))
+			if got := cw.finishCacheCapture(cache, key, now); got != tc.wantStored {
+				t.Fatalf("stored = %v, want %v", got, tc.wantStored)
+			}
+			if got := rec.Header().Get("Cache-Tag"); got != "" {
+				t.Errorf("live Cache-Tag = %q, want stripped", got)
+			}
+			if tc.wantStored {
+				_, entry := cache.Get(key)
+				if entry == nil || !hasCacheTag(entry.tags, "product:42") || entry.header["Cache-Tag"] != nil {
+					t.Errorf("cached tags/header = %+v", entry)
+				}
+			}
+		})
+	}
+}
+
+// adr: 122
+func TestCacheWriter_FlushStripsCacheTag(t *testing.T) {
+	rule := EdgeRuleCacheResolved{ID: "rule-1", MaxAgeSeconds: 60}
+	rec := newTestStatusRecorder(httptest.NewRecorder())
+	cw := newCacheWriter(rec, rec, &rule, ResponseCachePerEntryMaxBytes)
+	cw.Header().Set("Cache-Tag", "product:42")
+	cw.Flush()
+	if !cw.headerOK || rec.Header().Get("Cache-Tag") != "" {
+		t.Fatalf("flush left control header live: headerOK=%v header=%v", cw.headerOK, rec.Header())
+	}
+}
+
 // TestCacheWriter_Skips304 verifies 304 is not in the cacheable
 // status set — caching a Not-Modified would require ETag logic
 // (deferred). The store path treats 304 as not-cacheable.
@@ -74,6 +121,59 @@ func TestCacheWriter_SkipsSetCookie(t *testing.T) {
 	stored := cw.finishCacheCapture(cache, CacheKey{AppID: "a", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hashStable("")}, now)
 	if stored {
 		t.Fatalf("Set-Cookie must bypass cache")
+	}
+}
+
+func TestCacheWriter_ManagedCookieExcludedButOriginCookiesStillVeto(t *testing.T) {
+	const edgeCookie = "__Host-gregale_version=00112233445566778899aabbccddeeff; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax"
+	tests := []struct {
+		name         string
+		additional   []string
+		allowEdge    bool
+		cacheControl string
+		wantStore    bool
+	}{
+		{name: "edge cookie only", allowEdge: true, wantStore: true},
+		{name: "edge cookie not identified", wantStore: false},
+		{name: "origin session cookie", additional: []string{"session=private"}, allowEdge: true},
+		{name: "origin cookie using reserved name", additional: []string{"__Host-gregale_version=origin; Path=/"}, allowEdge: true},
+		{name: "duplicate edge cookie", additional: []string{edgeCookie}, allowEdge: true},
+		{name: "empty origin cookie", additional: []string{""}, allowEdge: true},
+		{name: "private origin response", allowEdge: true, cacheControl: "private"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+			rule := EdgeRuleCacheResolved{ID: "rule-1", PathGlob: "/catalog", MaxAgeSeconds: 60}
+			rec := newTestStatusRecorder(httptest.NewRecorder())
+			rec.Header().Add("Set-Cookie", edgeCookie)
+			cw := newCacheWriter(rec, rec, &rule, ResponseCachePerEntryMaxBytes)
+			if tc.allowEdge {
+				cw.excludeManagedVersionCookie(edgeCookie)
+			}
+			for _, cookie := range tc.additional {
+				cw.Header().Add("Set-Cookie", cookie)
+			}
+			if tc.cacheControl != "" {
+				cw.Header().Set("Cache-Control", tc.cacheControl)
+			}
+			cw.WriteHeader(200)
+			_, _ = cw.Write([]byte("public body"))
+			key := CacheKey{AppID: "app-1", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hashStable("")}
+			if stored := cw.finishCacheCapture(cache, key, now); stored != tc.wantStore {
+				t.Fatalf("stored = %v, want %v", stored, tc.wantStore)
+			}
+			if len(rec.Header().Values("Set-Cookie")) != 1+len(tc.additional) {
+				t.Fatalf("live response cookie changed: %q", rec.Header().Values("Set-Cookie"))
+			}
+			if tc.wantStore {
+				state, entry := cache.Get(key)
+				if state != "fresh" || entry == nil || len(entry.header["Set-Cookie"]) != 0 {
+					t.Fatalf("cached entry = %q/%+v", state, entry)
+				}
+			}
+		})
 	}
 }
 

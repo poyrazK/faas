@@ -6893,16 +6893,23 @@ paths:
       description: |
         Requests a response-cache purge on every gateway and on the optional
         distributed cache tier. The optional path glob limits the purge to
-        matching normalized request paths; omit it to purge the complete app
-        cache.
+        matching normalized request paths. The optional tag limits it to
+        responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+        omit both to purge the complete app cache.
       parameters:
         - name: path
           in: query
           required: false
           schema: { type: string }
           description: Optional normalized request path glob (for example `/products/*`).
+        - name: tag
+          in: query
+          required: false
+          schema: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9._:/-]+$' }
+          description: Optional cache tag (for example `product:42`); cannot be combined with path.
       responses:
         '204': { description: Purge requested. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }

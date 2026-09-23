@@ -2244,8 +2244,9 @@ export class AppsService {
    * Purge cached responses for an app.
    * Requests a response-cache purge on every gateway and on the optional
    * distributed cache tier. The optional path glob limits the purge to
-   * matching normalized request paths; omit it to purge the complete app
-   * cache.
+   * matching normalized request paths. The optional tag limits it to
+   * responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+   * omit both to purge the complete app cache.
    *
    * @returns void
    * @throws ApiError
@@ -2253,6 +2254,7 @@ export class AppsService {
   public static purgeAppCache({
     slug,
     path,
+    tag,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -2262,6 +2264,10 @@ export class AppsService {
      * Optional normalized request path glob (for example `/products*`).
      */
     path?: string,
+    /**
+     * Optional cache tag (for example `product:42`); cannot be combined with path.
+     */
+    tag?: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
@@ -2271,8 +2277,10 @@ export class AppsService {
       },
       query: {
         'path': path,
+        'tag': tag,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,

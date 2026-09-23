@@ -42,6 +42,27 @@ type versionAffinityPicker interface {
 }
 
 type versionAffinityDeploymentContextKey struct{}
+type managedVersionCookieProtectionContextKey struct{}
+
+func withManagedVersionCookieProtection(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), managedVersionCookieProtectionContextKey{}, true))
+}
+
+func managedVersionCookieProtected(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(managedVersionCookieProtectionContextKey{}) == true
+}
+
+// A __Host- prefix constrains a browser's cookie attributes, not which
+// same-host server emitted Set-Cookie. Protect the gateway-owned name only
+// for apps that opted into managed version affinity.
+func guestSetsManagedVersionCookie(ctx context.Context, name, value string) bool {
+	if !managedVersionCookieProtected(ctx) ||
+		!strings.EqualFold(strings.TrimSpace(name), "Set-Cookie") {
+		return false
+	}
+	cookieName, _, hasValue := strings.Cut(value, "=")
+	return hasValue && strings.TrimSpace(cookieName) == api.ManagedVersionAffinityCookieName
+}
 
 func withVersionAffinityDeployment(ctx context.Context, deploymentID string) context.Context {
 	if deploymentID == "" {
