@@ -1,7 +1,7 @@
--- filename: 20260923090000001_deployment_aliases.sql
+-- filename: 20260923102753954_deployment_aliases.sql
+
 -- +goose Up
 -- +goose StatementBegin
-
 -- Customer-managed names are pointers to immutable deployment revisions.
 -- They do not participate in the app's production traffic weights. The
 -- deployment target must belong to app_id; the write query enforces that
@@ -19,7 +19,6 @@ CREATE TABLE deployment_aliases (
 
 CREATE INDEX deployment_aliases_deployment_idx
     ON deployment_aliases (deployment_id);
-
 -- +goose StatementEnd
 
 -- +goose Down

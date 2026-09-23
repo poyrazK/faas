@@ -852,6 +852,26 @@ type DeploymentListResponse struct {
 	NextBefore string               `json:"next_before,omitempty"`
 }
 
+// SetDeploymentAliasRequest points a customer-managed name at one exact
+// deployment belonging to the app.
+type SetDeploymentAliasRequest struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+// DeploymentAliasResponse is a named pointer to an immutable deployment.
+type DeploymentAliasResponse struct {
+	Name         string    `json:"name"`
+	DeploymentID string    `json:"deployment_id"`
+	Revision     int       `json:"revision"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// DeploymentAliasListResponse is the bounded per-app alias list shape.
+type DeploymentAliasListResponse struct {
+	Items []DeploymentAliasResponse `json:"items"`
+}
+
 // LatestDeploymentsByAppResponse is the account-scoped batch shape returned
 // by GET /v1/deployments/latest-by-app.
 type LatestDeploymentsByAppResponse struct {

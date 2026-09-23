@@ -22,7 +22,7 @@ func TestPgDeploymentAliasesPinAppScopedDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	deployment, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, Status: state.DeployBuilding, CreatedAt: time.Now().UTC(),
+		AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployBuilding, CreatedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -10,6 +10,8 @@ import type { CanaryAdvanceResponse } from '../models/CanaryAdvanceResponse.js';
 import type { CancelDeploymentRequest } from '../models/CancelDeploymentRequest.js';
 import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
+import type { DeploymentAliasListResponse } from '../models/DeploymentAliasListResponse.js';
+import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.js';
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
 import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
@@ -22,6 +24,7 @@ import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
 import type { ScanResult } from '../models/ScanResult.js';
 import type { SecretScanResult } from '../models/SecretScanResult.js';
+import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequest.js';
 import type { SourceRefDeployRequest } from '../models/SourceRefDeployRequest.js';
 import type { SourceTarballDeployRequest } from '../models/SourceTarballDeployRequest.js';
 import type { UpdateDeploymentTrafficRequest } from '../models/UpdateDeploymentTrafficRequest.js';
@@ -29,6 +32,114 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DeploymentsService {
+  /**
+   * List named deployment aliases for an app.
+   * Returns customer-managed names that point to exact immutable deployment rows. Changing an alias does not alter production traffic.
+   * @returns DeploymentAliasListResponse Alias names and their pinned deployment revisions.
+   * @throws ApiError
+   */
+  public static listDeploymentAliases({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DeploymentAliasListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployment-aliases',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Point a named alias at an immutable deployment.
+   * The target must be a routable deployment that belongs to the app. This updates only the alias mapping; it does not shift production traffic.
+   * @returns DeploymentAliasResponse Alias mapping after the update.
+   * @throws ApiError
+   */
+  public static setDeploymentAlias({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lowercase DNS label for this app's stable revision alias.
+     */
+    name: string,
+    requestBody: SetDeploymentAliasRequest,
+  }): CancelablePromise<DeploymentAliasResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/deployment-aliases/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a named deployment alias.
+   * Removes the mapping only; deployments and production traffic are unchanged.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteDeploymentAlias({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lowercase DNS label for this app's stable revision alias.
+     */
+    name: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/deployment-aliases/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
   /**
    * List deployments for an app.
    * Paged backwards (newest first) for the app identified by `slug`.
