@@ -483,19 +483,20 @@ func parseImageConfig(b []byte) (ImageConfig, error) {
 		volumes = raw.Config.Volumes
 	}
 	return ImageConfig{
-		OS:               raw.OS,
-		Architecture:     raw.Architecture,
-		Variant:          raw.Variant,
-		Volumes:          volumes,
-		Entrypoint:       f.Entrypoint,
-		Cmd:              f.Cmd,
-		Env:              envSliceToMap(f.Env),
-		WorkingDir:       f.WorkingDir,
-		User:             f.User,
-		Healthcheck:      healthcheckFromRaw(raw.resolvedHealthcheck()),
-		StopSignal:       raw.resolvedStopSignal(),
-		StopGracePeriodS: stopGraceFromRaw(raw),
-		ExposedPorts:     clonePortSet(f.ExposedPorts),
+		OS:                 raw.OS,
+		Architecture:       raw.Architecture,
+		Variant:            raw.Variant,
+		Volumes:            volumes,
+		Entrypoint:         f.Entrypoint,
+		Cmd:                f.Cmd,
+		Env:                envSliceToMap(f.Env),
+		WorkingDir:         f.WorkingDir,
+		User:               f.User,
+		Healthcheck:        healthcheckFromRaw(raw.resolvedHealthcheck()),
+		StopSignal:         raw.resolvedStopSignal(),
+		SecretReloadSignal: raw.resolvedSecretReloadSignal(),
+		StopGracePeriodS:   stopGraceFromRaw(raw),
+		ExposedPorts:       clonePortSet(f.ExposedPorts),
 	}, nil
 }
 

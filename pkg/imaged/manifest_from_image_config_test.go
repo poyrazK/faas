@@ -75,6 +75,20 @@ func TestManifestFromImageConfig_BusyboxCmdOnly(t *testing.T) {
 	}
 }
 
+func TestManifestFromImageConfig_SecretReloadSignalLabelFlowsThrough(t *testing.T) {
+	t.Parallel()
+	m, err := manifestFromImageConfig(oci.ImageConfig{
+		Cmd:                []string{"/app/server"},
+		SecretReloadSignal: "SIGUSR1",
+	})
+	if err != nil {
+		t.Fatalf("manifestFromImageConfig: %v", err)
+	}
+	if m.SecretReloadSignal != "SIGUSR1" {
+		t.Fatalf("secret_reload_signal = %q, want SIGUSR1", m.SecretReloadSignal)
+	}
+}
+
 func TestManifestFromImageConfig_SingleTCPExposeSeedsPortAndEnv(t *testing.T) {
 	t.Parallel()
 	m, err := manifestFromImageConfig(oci.ImageConfig{

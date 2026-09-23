@@ -21,17 +21,21 @@ const (
 	// Must mirror pkg/fcvm.VsockRuntimeConfigHostPort. guest-init keeps this
 	// literal local to preserve the one-way package dependency.
 	metadataEnvHostPort   = 1031
-	runtimeConfigMaxFrame = 32 << 10
+	runtimeConfigMaxFrame = 24 << 20
 )
 
 type runtimeConfigRequest struct {
-	Scope string `json:"scope"`
+	Kind     string `json:"kind,omitempty"`
+	Scope    string `json:"scope"`
+	Revision string `json:"revision,omitempty"`
 }
 
 type runtimeConfigResponse struct {
-	Env      map[string]string `json:"env,omitempty"`
-	Revision string            `json:"revision,omitempty"`
-	Error    string            `json:"error,omitempty"`
+	Env       map[string]string  `json:"env,omitempty"`
+	Secrets   *map[string]string `json:"secrets,omitempty"`
+	Revision  string             `json:"revision,omitempty"`
+	Unchanged bool               `json:"unchanged,omitempty"`
+	Error     string             `json:"error,omitempty"`
 }
 
 // dialRuntimeConfigHost is a variable so the HTTP seam can be exercised with
@@ -54,7 +58,7 @@ func metadataEnvHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
-	reqBody, _ := json.Marshal(runtimeConfigRequest{Scope: "default"})
+	reqBody, _ := json.Marshal(runtimeConfigRequest{Kind: "env", Scope: "default"})
 	if err := writeRuntimeConfigFrame(conn, reqBody); err != nil {
 		writeRuntimeConfigError(w, http.StatusServiceUnavailable, "config_unavailable")
 		return
