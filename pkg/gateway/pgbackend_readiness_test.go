@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+// adr: 216 — readiness probes control whether a primary-ingress companion
+// receives public traffic, including across event/admission ordering.
 func TestPGBackendReadinessWithdrawsAndRestoresTarget(t *testing.T) {
 	b := NewPGBackend(nil, nil, nil)
 	target := Target{AppID: "app", NodeID: "node", InstanceID: "instance", RequiresReadiness: true}
@@ -62,7 +64,7 @@ func TestPGBackendReadinessWithdrawsAndRestoresTarget(t *testing.T) {
 
 func TestPGBackendReadinessEventBeforeTargetIsApplied(t *testing.T) {
 	b := NewPGBackend(nil, nil, nil)
-	at := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	at := time.Now().UTC().Truncate(time.Second)
 	b.SetInstanceReadiness("app", "instance", "unready", at, 4)
 	b.RecordTarget("app", Target{AppID: "app", NodeID: "node", InstanceID: "instance"})
 

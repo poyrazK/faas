@@ -50,6 +50,9 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * HTTP GET, and TCP probes. Omit it to use the image OCI `HEALTHCHECK`.
  * - `liveness_probe` independently monitors a running sidecar; when
  * omitted, the effective startup probe is reused for compatibility.
+ * - `readiness_probe` is valid only on the `primary_ingress` sidecar. It
+ * gates initial traffic and temporarily withdraws/resumes routing
+ * without restarting the companion.
  * - `depends_on` optionally gates this workload on `main` or
  * another sidecar. Conditions are `started`, `healthy`, and
  * `completed_successfully`; omitted condition means `started`.
@@ -112,6 +115,7 @@ export type Sidecar = {
   essential?: boolean;
   startup_probe?: SidecarProbe;
   liveness_probe?: SidecarProbe;
+  readiness_probe?: SidecarProbe;
   /**
    * Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running sidecars.
    */

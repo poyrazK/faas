@@ -650,9 +650,9 @@ func (t Target) PlatformIdentity(tenantID, requestID string) api.PlatformIdentit
 //   - Admit asks schedd to admit ONE additional instance for the app, gated
 //     by maxConcurrency so concurrent callers cannot collectively over-admit
 //     past the cap, including targets withdrawn by readiness (issue #168).
-	//     Returns the new Target's WakeID on the admitted path, atCapacity=true
-	//     when the scheduler's live-instance count is already at maxConcurrency
-	//     (the gateway treats this as a benign
+//     Returns the new Target's WakeID on the admitted path, atCapacity=true
+//     when the scheduler's live-instance count is already at maxConcurrency
+//     (the gateway treats this as a benign
 //     no-op when it has ≥1 cached target), or an *api.Problem on real
 //     failure (RAM headroom, chooser, store).
 type Backend interface {

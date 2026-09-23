@@ -652,13 +652,13 @@ const (
 	// transitions. Gateway listeners update the in-memory picker without
 	// changing schedd-owned instances.state.
 	NotifyInstanceReadinessChanged = "instance_readiness_changed"
-	NotifySnapshotPrime   = "snapshot_prime"
-	NotifySnapshotBoot    = "snapshot_boot"
-	NotifySnapshotWritten = "snapshot_written"
-	NotifyDeploymentReady = "deployment_ready"
-	NotifyBillingPastDue  = "billing_past_due"
-	NotifyQuotaWarning    = "quota_warning"
-	NotifyCronFired       = "cron_fired"
+	NotifySnapshotPrime            = "snapshot_prime"
+	NotifySnapshotBoot             = "snapshot_boot"
+	NotifySnapshotWritten          = "snapshot_written"
+	NotifyDeploymentReady          = "deployment_ready"
+	NotifyBillingPastDue           = "billing_past_due"
+	NotifyQuotaWarning             = "quota_warning"
+	NotifyCronFired                = "cron_fired"
 	// NotifyDebugRegressionChanged carries one account-scoped, redacted
 	// regression observation whenever detection or operator workflow state
 	// changes. Payload includes app_id, deployment_id, route, and state.

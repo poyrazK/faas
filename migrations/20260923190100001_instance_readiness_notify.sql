@@ -7,7 +7,13 @@ CREATE INDEX IF NOT EXISTS events_instance_readiness_latest_idx
     WHERE kind = 'wake.sidecar_health'
       AND data->>'status' IN ('ready', 'unready');
 
-CREATE OR REPLACE FUNCTION instance_readiness_notify() RETURNS trigger AS $$
+-- PostgreSQL has no CREATE TRIGGER IF NOT EXISTS. Drop the dependent trigger
+-- before replacing the function so a drifted database with a missing goose
+-- ledger row can safely replay this migration.
+DROP TRIGGER IF EXISTS instance_readiness_notify_trg ON events;
+DROP FUNCTION IF EXISTS instance_readiness_notify();
+
+CREATE FUNCTION instance_readiness_notify() RETURNS trigger AS $$
 BEGIN
     IF NEW.kind = 'wake.sidecar_health'
        AND NEW.data->>'status' IN ('ready', 'unready')
