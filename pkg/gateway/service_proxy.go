@@ -73,6 +73,9 @@ var (
 	// ErrServiceProxyBindingDenied is returned after the same-account boundary
 	// succeeds when a strict caller has not declared the target service.
 	ErrServiceProxyBindingDenied = errors.New("service proxy binding denied")
+	// ErrServiceProxyPreviewDenied is returned when a production target does
+	// not accept calls from preview apps.
+	ErrServiceProxyPreviewDenied = errors.New("service proxy preview call denied")
 )
 
 // ServiceTarget is the resolved routing identity of a named service. It
@@ -430,6 +433,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrServiceProxyBindingDenied) {
 			p.metrics.IncServiceCall(ServiceCallBindingDenied)
 			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has not declared this service binding")
+			return
+		}
+		if errors.Is(err, ErrServiceProxyPreviewDenied) {
+			p.metrics.IncServiceCall(ServiceCallPreviewDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "production service does not accept calls from preview apps")
 			return
 		}
 		if errors.Is(err, ErrServiceProxyDenied) {

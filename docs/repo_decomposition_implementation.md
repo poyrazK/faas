@@ -51,6 +51,9 @@ managed services remain customer-provided and are not given a Gregale URL.
 Compose services may set `x-gregale-service-policy: declared` to make this
 dependency list an outbound authorization allowlist. The omitted/default
 `account` policy preserves same-account reachability for existing projects.
+The target-side `x-gregale-preview-calls: deny` extension rejects internal
+calls from preview apps to that production workload before it wakes. Its
+default is `allow`.
 
 On every subsequent `gregale deploy`, the same scan runs and renders a **diff**
 instead of a first-run list — the repo is the source of truth, so the deployed

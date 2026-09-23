@@ -59,6 +59,27 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 	unknownPolicy := newApp(acct.ID, "unknownpolicy", state.AppManifest{
 		ServiceBindingPolicy: api.ServiceBindingPolicy("future-policy"),
 	})
+	denyingTarget := newApp(acct.ID, "denyingtarget", state.AppManifest{
+		PreviewServiceCallsPolicy: api.PreviewServiceCallsDeny,
+	})
+	unknownTargetPolicy := newApp(acct.ID, "unknowntargetpolicy", state.AppManifest{
+		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy("future-policy"),
+	})
+	preview, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "pr-42-authzcaller", Type: state.AppTypeApp,
+		RAMMB: 128, Status: state.AppActive, PreviewOfSlug: caller.Slug,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp preview: %v", err)
+	}
+	previewTarget, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "pr-42-denyingtarget", Type: state.AppTypeApp,
+		RAMMB: 128, Status: state.AppActive, PreviewOfSlug: denyingTarget.Slug,
+		Manifest: state.AppManifest{PreviewServiceCallsPolicy: api.PreviewServiceCallsDeny},
+	})
+	if err != nil {
+		t.Fatalf("CreateApp preview target: %v", err)
+	}
 
 	// A second account, to stand in for a cross-tenant caller.
 	otherAcct, err := store.CreateAccount(ctx, "other@local", api.PlanPro)
@@ -81,6 +102,12 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 		{"undeclared target is binding denied", strictUndeclared.ID, target.ID, gateway.ErrServiceProxyBindingDenied},
 		{"empty strict binding set denies all services", strictEmpty.ID, target.ID, gateway.ErrServiceProxyBindingDenied},
 		{"unknown persisted policy fails closed", unknownPolicy.ID, target.ID, gateway.ErrServiceProxyBindingDenied},
+		{"preview reaches legacy production target", preview.ID, target.ID, nil},
+		{"production reaches guarded target", caller.ID, denyingTarget.ID, nil},
+		{"preview cannot reach guarded production target", preview.ID, denyingTarget.ID, gateway.ErrServiceProxyPreviewDenied},
+		{"unknown target policy fails closed for preview", preview.ID, unknownTargetPolicy.ID, gateway.ErrServiceProxyPreviewDenied},
+		{"unknown target policy does not block production", caller.ID, unknownTargetPolicy.ID, nil},
+		{"guard applies only to production target", preview.ID, previewTarget.ID, nil},
 		{"cross-account is denied", outsider.ID, target.ID, gateway.ErrServiceProxyDenied},
 		{"absent caller is denied", absentUUID, target.ID, gateway.ErrServiceProxyDenied},
 		{"absent target is denied", caller.ID, absentUUID, gateway.ErrServiceProxyDenied},

@@ -80,3 +80,16 @@ func TestDiffFieldsChangedDetectsServiceBindingPolicy(t *testing.T) {
 		t.Fatalf("changed fields = %v, want %v", got, want)
 	}
 }
+
+func TestDiffFieldsChangedDetectsPreviewServiceCallsPolicy(t *testing.T) {
+	workload := reposcan.Workload{
+		Name:                      "billing",
+		PreviewServiceCallsPolicy: reposcan.PreviewServiceCallsDeny,
+	}
+	app := state.App{WorkloadName: "billing", WorkloadClass: state.WorkloadClassHTTP}
+	got := diffFieldsChanged(app, workload, "")
+	want := []string{"preview_service_calls_policy"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("changed fields = %v, want %v", got, want)
+	}
+}

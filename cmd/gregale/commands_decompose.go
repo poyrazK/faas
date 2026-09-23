@@ -655,13 +655,17 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			if wl.ServiceBindingPolicy.Effective() == api.ServiceBindingPolicyDeclared {
 				servicePolicySuffix = "  service_policy=declared"
 			}
+			previewPolicySuffix := ""
+			if wl.PreviewServiceCallsPolicy.Effective() == api.PreviewServiceCallsDeny {
+				previewPolicySuffix = "  preview_calls=deny"
+			}
 			// plan.Workloads is the post-filter set: the scan
 			// service drops --only/--exclude slugs before populating
 			// it (scan_service.go:564-577). So no excluded row ever
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, previewPolicySuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}

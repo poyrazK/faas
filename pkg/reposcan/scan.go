@@ -119,6 +119,9 @@ type Workload struct {
 	// mode declared by Compose's x-gregale-service-policy extension. Empty is
 	// the backwards-compatible account policy.
 	ServiceBindingPolicy ServiceBindingPolicy
+	// PreviewServiceCallsPolicy controls whether this workload, as a
+	// production target, accepts internal calls from preview apps.
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy
 
 	Class    Class  // http|graphql|grpc|job|worker|server|unknown
 	Schedule string // primary cron expression retained for the existing plan wire
@@ -145,6 +148,13 @@ type ServiceBindingPolicy string
 const (
 	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
 	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+)
+
+type PreviewServiceCallsPolicy string
+
+const (
+	PreviewServiceCallsAllow PreviewServiceCallsPolicy = "allow"
+	PreviewServiceCallsDeny  PreviewServiceCallsPolicy = "deny"
 )
 
 // CronSchedule is one schedule discovered for a workload. Enabled preserves

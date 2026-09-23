@@ -227,7 +227,8 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		Command:    w.Command,
 		DependsOn:  w.DependsOn,
 
-		ServiceBindingPolicy: api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective(),
+		ServiceBindingPolicy:      api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective(),
+		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective(),
 
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
