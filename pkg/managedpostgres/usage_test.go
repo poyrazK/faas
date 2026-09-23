@@ -222,10 +222,12 @@ func TestServiceAdmissionRunsOnlyForNewReservations(t *testing.T) {
 
 type usageTestProvider struct {
 	*fakeProvider
-	readings []MeterReading
+	readings   []MeterReading
+	usageCalls []string
 }
 
-func (p *usageTestProvider) Usage(_ context.Context, _ string, window UsageWindow) (Usage, error) {
+func (p *usageTestProvider) Usage(_ context.Context, providerResourceID string, window UsageWindow) (Usage, error) {
+	p.usageCalls = append(p.usageCalls, providerResourceID)
 	return Usage{Window: window, Readings: p.readings}, nil
 }
 
@@ -281,5 +283,98 @@ func TestUsageCollectorRecordsCompleteProviderWindows(t *testing.T) {
 	snapshot, err = store.UsageSnapshot(context.Background(), "account-1", now)
 	if err != nil || snapshot.CostMillicents != 7600 {
 		t.Fatalf("repeated snapshot = %+v, %v", snapshot, err)
+	}
+}
+
+func TestUsageCollectorRecordsSharedRestoreUsageOnlyAgainstSource(t *testing.T) {
+	capabilities := testCapabilities()
+	capabilities.RestoreUsageIsolated = false
+	capabilities.RestoreUsageIncludedInSource = true
+	provider := &usageTestProvider{
+		fakeProvider: &fakeProvider{capabilities: capabilities},
+		readings: []MeterReading{
+			{Meter: MeterComputeUnitSeconds, Quantity: 3600},
+			{Meter: MeterStorageByteSeconds, Quantity: bytesPerGiB * secondsPerHour},
+			{Meter: MeterHistoryByteSeconds, Quantity: bytesPerGiB * secondsPerHour},
+			{Meter: MeterEgressBytes, Quantity: 1 << 30},
+		},
+	}
+	now := time.Date(2026, 9, 6, 12, 17, 0, 0, time.UTC)
+	registry := testRegistry(t, provider, func(config *Config) {
+		config.Usage = UsageConfig{
+			Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
+			StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 100000,
+			MaxMonthlyComputeUnitSeconds: 100000, MaxMonthlyStorageByteSeconds: 1 << 50,
+			MaxMonthlyHistoryByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 40,
+			ComputeUnitHourMillicents: 3600, StorageGiBHourMillicents: 2500,
+			HistoryGiBHourMillicents: 500, EgressGiBMillicents: 1000,
+		}
+	})
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewMemoryStore()
+	for _, database := range []Database{
+		{
+			ID: "source", AccountID: "account-1", Name: "orders", Spec: testSpec(),
+			BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+			ProviderResourceID: "provider-source", State: StateReady, UpdatedAt: now,
+		},
+		{
+			ID: "restore-1", AccountID: "account-1", Name: "orders-restore-1", Spec: testSpec(),
+			BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+			ProviderResourceID: "provider-restore-1", RestoreSourceDatabaseID: "source",
+			RestoreSourceResourceID: "provider-source", State: StateReady, UpdatedAt: now,
+		},
+		{
+			ID: "restore-2", AccountID: "account-1", Name: "orders-restore-2", Spec: testSpec(),
+			BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+			ProviderResourceID: "provider-restore-2", RestoreSourceDatabaseID: "restore-1",
+			RestoreSourceResourceID: "provider-restore-1", State: StateReady, UpdatedAt: now,
+		},
+	} {
+		store.databases[database.ID] = database
+	}
+	observations := make(map[string]string)
+	collector, err := NewUsageCollector(registry, store, UsageCollectorOptions{
+		Now: func() time.Time { return now },
+		Observe: func(observation UsageCollectionObservation) {
+			observations[observation.DatabaseID] = observation.Outcome
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := collector.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Discovered != 3 || summary.Recorded != 1 || summary.IncludedInSourceUsage != 2 || summary.Deferred != 0 {
+		t.Fatalf("collection summary = %+v", summary)
+	}
+	if len(provider.usageCalls) != 1 || provider.usageCalls[0] != "provider-source" {
+		t.Fatalf("provider usage calls = %v, want only source resource", provider.usageCalls)
+	}
+	if observations["source"] != "recorded" || observations["restore-1"] != "included_in_source" || observations["restore-2"] != "included_in_source" {
+		t.Fatalf("usage observations = %v", observations)
+	}
+
+	if len(store.usage) != len(provider.readings) {
+		t.Fatalf("usage ledger contains %d records, want %d source records", len(store.usage), len(provider.readings))
+	}
+	for key, record := range store.usage {
+		if record.DatabaseID != "source" || key.databaseID != "source" {
+			t.Fatalf("restore usage was recorded independently: key=%+v record=%+v", key, record)
+		}
+	}
+	snapshot, err := store.UsageSnapshot(context.Background(), "account-1", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ComputeUnitSeconds != 3600 || snapshot.StorageByteSeconds != bytesPerGiB*secondsPerHour ||
+		snapshot.HistoryByteSeconds != bytesPerGiB*secondsPerHour || snapshot.EgressBytes != 1<<30 || snapshot.CostMillicents != 7600 {
+		t.Fatalf("shared project usage snapshot = %+v", snapshot)
 	}
 }

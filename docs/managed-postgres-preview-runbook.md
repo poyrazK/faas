@@ -85,9 +85,13 @@ malformed entries and never blocks database deletion or credential revocation.
 
 Restore is always restore-to-new-database. Confirm the source is `ready`, the
 requested timestamp is inside the source restore window, and the provider
-qualification report says restore usage is isolated. With the Neon adapter,
-shared-project restore branches remain unavailable while usage guardrails are
-enabled because provider consumption is project-scoped.
+qualification report declares a supported restore-accounting mode: isolated
+per-target usage or usage included in the source aggregate. Neon uses the
+source-aggregate mode because consumption is project-scoped. The collector
+records that aggregate once against the source and skips restore descendants,
+marking them `included_in_source`; this supports aggregate COGS guardrails but
+does not provide per-database restore cost attribution. Do not enable guarded
+restores for a provider whose qualification reports neither accounting mode.
 
 ## Account deletion
 
