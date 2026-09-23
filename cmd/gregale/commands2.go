@@ -55,6 +55,7 @@ const (
 	subInfo     = "info"
 	subGet      = "get"
 	subCreate   = "create"
+	subExec     = "exec"
 	// Issue #961 / Mega-A PR-3: domains surface verbs. Lifted from
 	// inline literals so goconst stops flagging the "verify" /
 	// "show" / "set-default" strings in cli_meta.go + the dispatch

@@ -14,7 +14,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
-| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|restart\|--profile NAME\|--ram N\|…]) |
+| [`app`](#app) | Get/update one app or run a deployment-attached command |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
 | [`build`](#build) | Inspect builds (build status\|list\|provenance\|sbom) |
@@ -359,7 +359,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 ## app
 
-Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
+Get/update one app or run a deployment-attached command
 
 `gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
@@ -391,6 +391,19 @@ Rename an app
 ### app restart
 
 Park and wake from a fresh snapshot
+
+### app exec
+
+Run a one-off command against the live deployment
+
+| Flag | Meaning | |
+|---|---|---|
+| `--shell` | interpret one command string through the app shell |  |
+| `--detach` | return after the task is queued |  |
+| `--timeout-seconds <N>` | server-side command timeout |  |
+| `--max-output-bytes <N>` | combined stdout/stderr tail cap |  |
+| `--poll-interval <D>` | status polling interval while attached |  |
+| `--wait-timeout <D>` | maximum attached wait |  |
 
 ### app security
 

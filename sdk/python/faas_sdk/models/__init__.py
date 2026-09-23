@@ -183,6 +183,11 @@ from .app_static_egress_ip_response import AppStaticEgressIPResponse
 from .app_streaming_status import AppStreamingStatus
 from .app_streaming_status_cap_kind import AppStreamingStatusCapKind
 from .app_streaming_status_status import AppStreamingStatusStatus
+from .app_task_failure import AppTaskFailure
+from .app_task_list_response import AppTaskListResponse
+from .app_task_response import AppTaskResponse
+from .app_task_response_kind import AppTaskResponseKind
+from .app_task_response_status import AppTaskResponseStatus
 from .app_trusted_signer_list_response import AppTrustedSignerListResponse
 from .app_usage_summary_response import AppUsageSummaryResponse
 from .app_usage_summary_response_source import AppUsageSummaryResponseSource
@@ -289,6 +294,7 @@ from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_type import CreateAppRequestType
 from .create_app_request_visibility import CreateAppRequestVisibility
+from .create_app_task_request import CreateAppTaskRequest
 from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
@@ -1586,6 +1592,11 @@ __all__ = (
     "AppStreamingStatus",
     "AppStreamingStatusCapKind",
     "AppStreamingStatusStatus",
+    "AppTaskFailure",
+    "AppTaskListResponse",
+    "AppTaskResponse",
+    "AppTaskResponseKind",
+    "AppTaskResponseStatus",
     "AppTrustedSignerListResponse",
     "AppUsageSummaryResponse",
     "AppUsageSummaryResponseSource",
@@ -1685,6 +1696,7 @@ __all__ = (
     "CreateAppRequestRuntime",
     "CreateAppRequestType",
     "CreateAppRequestVisibility",
+    "CreateAppTaskRequest",
     "CreateAppWebhookRequest",
     "CreateAppWebhookRequestDeliveryFormat",
     "CreateAppWebhookRequestEventFilterItem",

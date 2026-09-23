@@ -429,12 +429,20 @@ var cliCommands = []cliCommand{
 	{
 		Name:                        appSlugFallback,
 		DocSlug:                     "apps",
-		Short:                       "Get/update one app (gregale app <slug> [scale|rename <new>|restart|--profile NAME|--ram N|…])",
+		Short:                       "Get/update one app or run a deployment-attached command",
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
 			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU"},
 			{Name: "rename", Short: "Rename an app"},
 			{Name: "restart", Short: "Park and wake from a fresh snapshot"},
+			{Name: subExec, Short: "Run a one-off command against the live deployment", Flags: []cliFlag{
+				{Name: "shell", Short: "interpret one command string through the app shell"},
+				{Name: "detach", Short: "return after the task is queued"},
+				{Name: "timeout-seconds", Short: "server-side command timeout", Value: "N"},
+				{Name: "max-output-bytes", Short: "combined stdout/stderr tail cap", Value: "N"},
+				{Name: "poll-interval", Short: "status polling interval while attached", Value: "D"},
+				{Name: "wait-timeout", Short: "maximum attached wait", Value: "D"},
+			}},
 			{Name: "security", Short: "Show posture or configure deploy enforcement"},
 			{Name: "egress-allowlist", Short: "Inspect or update the outbound CIDR allowlist"},
 			{Name: "network", Short: "Inspect networking or manage private-network attachments"},
