@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// ADR-224: an account release receiver is tenant-owned, not app-bound.
+// ADR-224: account release receivers are tenant-owned, not app-bound.
 package migrations_test
 
 import (
