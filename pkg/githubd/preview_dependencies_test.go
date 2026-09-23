@@ -298,6 +298,63 @@ func TestHandlePullRequest_RemovedDependencyWaitsForJanitor(t *testing.T) {
 	}
 }
 
+func TestHandlePullRequest_SwapsDependencyAtFullQuota(t *testing.T) {
+	ctx := context.Background()
+	rig := newPreviewRig(t)
+	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanHobby); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"worker", "db"} {
+		if _, err := rig.mem.CreateApp(ctx, state.App{
+			AccountID: rig.acct, ProjectID: rig.parentProjectID, Slug: name,
+			WorkloadName: name, Type: state.AppTypeApp, RAMMB: 256,
+			MaxConcurrency: 1, Status: state.AppActive,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc, _ := newPreviewService(t, rig)
+	svc.Source = &stubSource{fsys: fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte("services: {}\n")},
+	}}
+	svc.WorkDir = t.TempDir()
+	svc.Enqueuer = &previewDependencyEnqueuer{}
+	dependency := "worker"
+	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+		return reposcan.Result{Workloads: []reposcan.Workload{
+			{Name: "api", DependsOn: []string{dependency}}, {Name: "worker"}, {Name: "db"},
+		}}, nil
+	}
+	first, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40)))
+	if err != nil || len(first.BuildIDs) != 2 {
+		t.Fatalf("first preview = (%+v, %v)", first, err)
+	}
+	count, err := rig.mem.CountDeployedApps(ctx, rig.acct)
+	if err != nil || count != api.MustLimitsFor(api.PlanHobby).DeployedApps {
+		t.Fatalf("initial full quota = (%d, %v)", count, err)
+	}
+	worker, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependency = "db"
+	second, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40)))
+	if err != nil || len(second.BuildIDs) != 2 {
+		t.Fatalf("quota-neutral sync = (%+v, %v)", second, err)
+	}
+	retired, err := rig.mem.AppByID(ctx, worker.ID)
+	if err != nil || retired.Status != state.AppDeleted || retired.PreviewPrState != state.PreviewPrStateStale {
+		t.Fatalf("retired worker = (%+v, %v)", retired, err)
+	}
+	if _, err := rig.mem.AppBySlug(ctx, "pr-42-db"); err != nil {
+		t.Fatalf("new db preview: %v", err)
+	}
+	count, err = rig.mem.CountDeployedApps(ctx, rig.acct)
+	if err != nil || count != api.MustLimitsFor(api.PlanHobby).DeployedApps {
+		t.Fatalf("post-swap quota = (%d, %v)", count, err)
+	}
+}
+
 func TestPreviewDependencyParents_DoesNotReplaceInactiveProduction(t *testing.T) {
 	ctx := context.Background()
 	rig := newPreviewRig(t)
