@@ -1,4 +1,4 @@
-// adr: 222 — task VM sessions use a private one-shot command exchange.
+// adr: 230 — task VM sessions use a private one-shot command exchange.
 package fcvm
 
 import (
