@@ -3339,6 +3339,11 @@ type Store interface {
 	// durable boundary.
 	ExecutionStore
 
+	// Commands attached to one immutable application deployment (ADR-222).
+	// This stays separate from ExecutionStore because app tasks inherit the
+	// app's artifact, scoped configuration, bindings, and network policy.
+	AppTaskStore
+
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and
 	// safely choose a same-identity cold boot.
