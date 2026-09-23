@@ -63,14 +63,12 @@ func (e Envelope) Normalize(accountID string, now time.Time) (Envelope, error) {
 	}
 	e.Time = e.Time.UTC()
 
-	if e.AccountID != "" && e.AccountID != accountID {
+	if e.AccountID != "" && !sameAccountID(e.AccountID, accountID) {
 		return Envelope{}, fmt.Errorf("account_id must match the authenticated account")
 	}
-	parsedAccountID, err := uuid.Parse(accountID)
-	if err != nil {
+	if _, err := uuid.Parse(accountID); err != nil {
 		return Envelope{}, errors.New("account_id must be a UUID")
 	}
-	e.AccountID = parsedAccountID.String()
 	if err := e.Validate(); err != nil {
 		return Envelope{}, err
 	}

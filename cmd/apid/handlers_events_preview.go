@@ -83,14 +83,14 @@ func (s *server) previewEvent(w http.ResponseWriter, r *http.Request, acct state
 			}
 			appSlugs = make(map[string]string, len(apps))
 			for _, app := range apps {
-				appSlugs[app.ID] = app.Slug
+				appSlugs[canonicalEventPreviewUUID(app.ID)] = app.Slug
 			}
 		}
 
 		for _, row := range subscriptions {
 			out.CandidateCount++
 			item := api.EventPreviewSubscription{
-				AppSlug:        appSlugs[row.AppID],
+				AppSlug:        appSlugs[canonicalEventPreviewUUID(row.AppID)],
 				SubscriptionID: row.ID,
 				Source:         row.Source,
 				Type:           row.Type,
@@ -129,6 +129,14 @@ func (s *server) previewEvent(w http.ResponseWriter, r *http.Request, acct state
 		cursor = state.EventSubscriptionCursor{CreatedAt: last.CreatedAt, ID: last.ID}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func canonicalEventPreviewUUID(value string) string {
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return value
+	}
+	return parsed.String()
 }
 
 func appendEventPreviewSample(dst *[]api.EventPreviewSubscription, item api.EventPreviewSubscription, truncated *bool) {

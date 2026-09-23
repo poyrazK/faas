@@ -8,6 +8,8 @@ import (
 	"io"
 	"math/big"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // Subscription is the declarative event target used by the internal router.
@@ -80,7 +82,7 @@ func (s Subscription) Match(e Envelope) (bool, error) {
 	if err := e.Validate(); err != nil {
 		return false, fmt.Errorf("event: invalid envelope: %w", err)
 	}
-	if s.AccountID != e.AccountID {
+	if !sameAccountID(s.AccountID, e.AccountID) {
 		return false, nil
 	}
 	sourceMatch, err := matchPattern(s.Source, e.Source)
@@ -129,7 +131,7 @@ func (s Subscription) ExplainMatch(e Envelope) (MatchReason, error) {
 	if matched {
 		return MatchReasonWouldDeliver, nil
 	}
-	if s.AccountID != e.AccountID {
+	if !sameAccountID(s.AccountID, e.AccountID) {
 		return MatchReasonTenantMismatch, nil
 	}
 	sourceMatch, err := matchPattern(s.Source, e.Source)
@@ -144,6 +146,18 @@ func (s Subscription) ExplainMatch(e Envelope) (MatchReason, error) {
 		return MatchReasonPatternMismatch, nil
 	}
 	return MatchReasonFilterMismatch, nil
+}
+
+// sameAccountID treats compact and hyphenated spellings of the same UUID as
+// equivalent. MemStore-generated IDs are compact while SQL UUID values are
+// typically rendered with hyphens; both represent the same tenant.
+func sameAccountID(a, b string) bool {
+	if a == b {
+		return true
+	}
+	parsedA, errA := uuid.Parse(a)
+	parsedB, errB := uuid.Parse(b)
+	return errA == nil && errB == nil && parsedA == parsedB
 }
 
 // Validate checks the fields that are needed before a subscription can be

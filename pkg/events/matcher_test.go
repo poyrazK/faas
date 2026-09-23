@@ -66,6 +66,20 @@ func TestSubscriptionMatchEnforcesTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestSubscriptionMatchAcceptsEquivalentUUIDSpellings(t *testing.T) {
+	compactAccountID := strings.ReplaceAll(accountA, "-", "")
+	event := testEnvelope(t, compactAccountID, "billing", "invoice.paid", `{}`)
+	subscription := Subscription{AccountID: accountA, Source: "billing", Type: "invoice.paid"}
+
+	matched, err := subscription.Match(event)
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if !matched {
+		t.Fatal("equivalent UUID spellings did not match")
+	}
+}
+
 func TestSubscriptionExplainMatch(t *testing.T) {
 	event := testEnvelope(t, accountA, "billing.stripe", "invoice.paid", `{"amount":150}`)
 	subscription := Subscription{
