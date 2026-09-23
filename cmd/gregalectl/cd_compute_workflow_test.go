@@ -72,6 +72,42 @@ func TestCDComputeWorkflowSharesSSHKeyWithFleetPreflight(t *testing.T) {
 	if key < 0 || fleet < 0 || key > fleet {
 		t.Fatal("the fleet preflight must inherit the operator SSH key before the batch branch")
 	}
+	for _, required := range []string{
+		`export ANSIBLE_REMOTE_USER="$SSH_USER"`,
+		`export ANSIBLE_REMOTE_PORT="$SSH_PORT"`,
+	} {
+		at := strings.Index(step, required)
+		if at < 0 || at > fleet {
+			t.Errorf("fleet peer preflight must inherit %q before the batch branch", required)
+		}
+	}
+	for _, required := range []string{
+		"ssh_user: ${{ steps.resolve_batch.outputs.ssh_user ||",
+		"ssh_port: ${{ steps.resolve_batch.outputs.ssh_port ||",
+		`printf 'node=fleet\nssh_user=%s\nssh_port=%s\n' "$SSH_USER" "$SSH_PORT"`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("batch preflight does not propagate fleet operator identity: missing %q", required)
+		}
+	}
+	platform, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatalf("read cd-platform workflow: %v", err)
+	}
+	prepare := string(platform)
+	start = strings.Index(prepare, "  compute-prepare:\n")
+	end = strings.Index(prepare, "  compute-prepare-compat:\n")
+	if start < 0 || end <= start {
+		t.Fatal("cannot isolate batch fleet preparation job")
+	}
+	for _, required := range []string{
+		"ssh_user: ${{ inputs.ssh_user }}",
+		"ssh_port: ${{ inputs.ssh_port }}",
+	} {
+		if !strings.Contains(prepare[start:end], required) {
+			t.Errorf("platform does not pass fleet operator identity to batch preflight: missing %q", required)
+		}
+	}
 }
 
 func TestCDComputeWorkflowPinsDynamicHostForPostJoinProbes(t *testing.T) {

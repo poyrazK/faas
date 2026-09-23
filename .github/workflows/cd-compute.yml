@@ -196,8 +196,8 @@ jobs:
     outputs:
       node: ${{ steps.resolve_batch.outputs.node || steps.resolve_bundle.outputs.node || steps.resolve_claim.outputs.node || steps.resolve_legacy.outputs.node }}
       ssh_host: ${{ steps.resolve_bundle.outputs.ssh_host || steps.resolve_claim.outputs.ssh_host || steps.resolve_legacy.outputs.ssh_host }}
-      ssh_user: ${{ steps.resolve_bundle.outputs.ssh_user || steps.resolve_claim.outputs.ssh_user || steps.resolve_legacy.outputs.ssh_user }}
-      ssh_port: ${{ steps.resolve_bundle.outputs.ssh_port || steps.resolve_claim.outputs.ssh_port || steps.resolve_legacy.outputs.ssh_port }}
+      ssh_user: ${{ steps.resolve_batch.outputs.ssh_user || steps.resolve_bundle.outputs.ssh_user || steps.resolve_claim.outputs.ssh_user || steps.resolve_legacy.outputs.ssh_user }}
+      ssh_port: ${{ steps.resolve_batch.outputs.ssh_port || steps.resolve_bundle.outputs.ssh_port || steps.resolve_claim.outputs.ssh_port || steps.resolve_legacy.outputs.ssh_port }}
       ssh_host_key_sha256: ${{ steps.resolve_bundle.outputs.host_key_sha256 || steps.resolve_claim.outputs.host_key_sha256 || steps.resolve_legacy.outputs.host_key_sha256 }}
       storage_device: ${{ steps.resolve_bundle.outputs.storage_device || steps.resolve_claim.outputs.storage_device || steps.resolve_legacy.outputs.storage_device }}
       format_storage: ${{ steps.resolve_bundle.outputs.format_storage || steps.resolve_claim.outputs.format_storage || steps.resolve_legacy.outputs.format_storage }}
@@ -320,7 +320,11 @@ jobs:
       - name: Resolve parallel fleet preparation targets
         if: inputs.compute_targets != ''
         id: resolve_batch
-        run: echo 'node=fleet' >> "$GITHUB_OUTPUT"
+        env:
+          SSH_USER: ${{ inputs.ssh_user }}
+          SSH_PORT: ${{ inputs.ssh_port }}
+        run: |
+          printf 'node=fleet\nssh_user=%s\nssh_port=%s\n' "$SSH_USER" "$SSH_PORT" >> "$GITHUB_OUTPUT"
 
       - name: Check out and validate the declarative node claim
         if: inputs.claim_file != ''
@@ -932,9 +936,11 @@ jobs:
         run: |
           set -euo pipefail
           # join-fleet's shared Ansible preflight also visits manifest peers
-          # outside COMPUTE_TARGETS. Give those peers the same operator key
-          # that join-node already uses; target host_vars alone are not enough.
+          # outside COMPUTE_TARGETS. Give those peers the fleet operator
+          # identity; target host_vars retain their provider-specific users.
           export ANSIBLE_PRIVATE_KEY_FILE="$ARTIFACT_DIR/compute-ssh-key"
+          export ANSIBLE_REMOTE_USER="$SSH_USER"
+          export ANSIBLE_REMOTE_PORT="$SSH_PORT"
           if [[ -n "$COMPUTE_TARGETS" ]]; then
             nodes_file="$ARTIFACT_DIR/compute-targets.json"
             jq -ce '{nodes: map({
@@ -974,8 +980,6 @@ jobs:
           # defaults so preflight and the control-plane convergence can reach
           # every existing peer; the generated target host vars still retain
           # the provider-specific SSH override and strict host-key policy.
-          export ANSIBLE_REMOTE_USER="$SSH_USER"
-          export ANSIBLE_REMOTE_PORT="$SSH_PORT"
           JOIN_ARGS=(
             deploy join-node
             --manifest-file "$ARTIFACT_DIR/production-manifest.yaml"

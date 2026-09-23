@@ -211,6 +211,9 @@ jobs:
     with:
       release_tag: ${{ inputs.release_tag }}
       compute_targets: ${{ needs.plan.outputs.targets }}
+      # The batch preflight also visits manifest peers outside compute_targets.
+      ssh_user: ${{ inputs.ssh_user }}
+      ssh_port: ${{ inputs.ssh_port }}
       rollout_phase: prepare
     secrets: inherit
 
