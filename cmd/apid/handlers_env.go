@@ -299,13 +299,12 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 	activityOutboxed := false
 	var persistErr error
 	if mutationStore, ok := s.store.(state.OrgActivityEnvMutationStore); ok {
-		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
-		if prepareErr != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not persist env var"))
-			return
+		if prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity); prepareErr == nil {
+			activityOutboxID, persistErr = mutationStore.UpsertAppEnvInScopeWithActivity(r.Context(), acct.ID, app.ID, scope, key, req.Value, prepared)
+			activityOutboxed = persistErr == nil
+		} else {
+			persistErr = s.store.UpsertAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key, req.Value)
 		}
-		activityOutboxID, persistErr = mutationStore.UpsertAppEnvInScopeWithActivity(r.Context(), acct.ID, app.ID, scope, key, req.Value, prepared)
-		activityOutboxed = persistErr == nil
 	} else {
 		persistErr = s.store.UpsertAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key, req.Value)
 	}
@@ -515,13 +514,12 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 	activityOutboxed := false
 	var deleteErr error
 	if mutationStore, ok := s.store.(state.OrgActivityEnvMutationStore); ok {
-		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
-		if prepareErr != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not prepare env activity"))
-			return
+		if prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity); prepareErr == nil {
+			activityOutboxID, deleteErr = mutationStore.DeleteAppEnvInScopeWithActivity(r.Context(), acct.ID, app.ID, scope, key, prepared)
+			activityOutboxed = deleteErr == nil
+		} else {
+			deleteErr = s.store.DeleteAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key)
 		}
-		activityOutboxID, deleteErr = mutationStore.DeleteAppEnvInScopeWithActivity(r.Context(), acct.ID, app.ID, scope, key, prepared)
-		activityOutboxed = deleteErr == nil
 	} else {
 		deleteErr = s.store.DeleteAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key)
 	}

@@ -1685,6 +1685,23 @@ type OrgActivity struct {
 	SourceID   string
 }
 
+type OrgActivityOutbox struct {
+	ID          int64
+	OrgID       pgtype.UUID
+	SourceType  string
+	SourceID    string
+	Activity    []byte
+	State       string
+	Attempts    int32
+	AvailableAt pgtype.Timestamptz
+	ClaimedBy   pgtype.Text
+	ClaimedAt   pgtype.Timestamptz
+	LeaseUntil  pgtype.Timestamptz
+	DeliveredAt pgtype.Timestamptz
+	LastError   pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+}
+
 type OrgInvitation struct {
 	ID                 pgtype.UUID
 	OrgID              pgtype.UUID
