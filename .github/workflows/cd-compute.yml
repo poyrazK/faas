@@ -440,6 +440,12 @@ jobs:
           }
 
           release_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
+          release_id="$(curl --fail --silent --show-error --location \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" "$release_api" |
+            jq -er '.id')"
+          release_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id}"
           manifest_url="$(curl --fail --silent --show-error --location \
             --header "Accept: application/vnd.github+json" \
             --header "Authorization: Bearer ${GH_TOKEN}" \
@@ -701,6 +707,13 @@ jobs:
           mkdir -p "$RELEASE_ROOT"
           release_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
           release_json="$RUNNER_TEMP/gregale-compute-release.json"
+          curl --fail --silent --show-error --location \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            -o "$release_json" "$release_api"
+          release_id="$(jq -er '.id' "$release_json")"
+          release_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id}"
           curl --fail --silent --show-error --location \
             --header "Accept: application/vnd.github+json" \
             --header "Authorization: Bearer ${GH_TOKEN}" \

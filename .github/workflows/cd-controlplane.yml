@@ -106,16 +106,20 @@ jobs:
           set -euo pipefail
           CANONICAL_ROOT="$RUNNER_TEMP/gregale-canonical"
           mkdir -p "$CANONICAL_ROOT"
-          gh release download "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern release.tar.gz \
-            --pattern release.cosign.bundle \
-            --pattern release.sbom.json \
-            --pattern release-manifest.json \
-            --pattern production-manifest.yaml \
-            --pattern runtime-bases.env \
-            --pattern SHA256SUMS \
-            --dir "$CANONICAL_ROOT"
+          # GitHub's by-tag response can lag asset uploads while the by-ID
+          # response is current. Resolve the tag to an ID, then use the ID
+          # response for the authoritative asset list.
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}")"
+          for asset in release.tar.gz release.cosign.bundle release.sbom.json \
+            release-manifest.json production-manifest.yaml runtime-bases.env SHA256SUMS; do
+            asset_url="$(jq -er --arg name "$asset" \
+              '.assets[] | select(.name == $name) | .browser_download_url' <<<"$release_json")"
+            curl --fail --silent --show-error --location \
+              --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              -o "$CANONICAL_ROOT/$asset" "$asset_url"
+          done
           (
             cd "$CANONICAL_ROOT"
             sha256sum -c SHA256SUMS
