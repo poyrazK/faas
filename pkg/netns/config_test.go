@@ -96,6 +96,9 @@ func TestSetupCreatesTapAndAddressing(t *testing.T) {
 		"addr add 10.100.0.9/16 dev " + c.VethPeer, // host identity on the peer
 		"link set " + c.VethHost + " master " + TenantBridge,
 		"net.ipv4.ip_forward=1",
+		// A short tap ARP retry lets readiness see a cold-booting guest as
+		// soon as its network is up, not at the next 1 s default retry.
+		fmt.Sprintf("net.ipv4.neigh.tap0.retrans_time_ms=%d", TapARPRetransMs),
 		// Netns default route via the bridge IP (HostBridgeCIDR). Without
 		// this argv guest packets to public destinations hit ENETUNREACH —
 		// was the silent tenant-egress P0.

@@ -13,14 +13,21 @@ import (
 // per-instance uniqueness lives entirely on the host side (veth + host IP),
 // never inside the guest. Do not make these per-VM.
 const (
-	GuestIP                 = "10.0.0.2"
-	GuestGateway            = "10.0.0.1"
-	GuestPrefix             = "10.0.0.2/30"
-	TapPrefix               = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
-	AppPort                 = 8080          // the :8080 contract (spec §2)
-	ServiceProxyPort        = 10080         // guest-to-guest service proxy on HostBridgeIP (ADR-169)
-	ServiceDiscoveryDNSPort = 53            // guest service-name resolver on HostBridgeIP (ADR-170)
-	TenantBridge            = "br-tenants"  // root-ns bridge the veth host-side enslaves to
+	GuestIP      = "10.0.0.2"
+	GuestGateway = "10.0.0.1"
+	GuestPrefix  = "10.0.0.2/30"
+	TapPrefix    = "10.0.0.1/30" // host (tap0) side of the /30 inside the netns
+	// TapARPRetransMs is the tap's ARP retry interval inside the netns. The
+	// readiness probe dials the guest before its network exists; with the
+	// kernel default (1000 ms) the first unanswered ARP left the host blind
+	// until the next retry, so a cold boot could not report ready before
+	// ~1 s however early the guest came up. The /30 has exactly one
+	// neighbour, so a short interval costs a handful of tiny frames.
+	TapARPRetransMs         = 50
+	AppPort                 = 8080         // the :8080 contract (spec §2)
+	ServiceProxyPort        = 10080        // guest-to-guest service proxy on HostBridgeIP (ADR-169)
+	ServiceDiscoveryDNSPort = 53           // guest service-name resolver on HostBridgeIP (ADR-170)
+	TenantBridge            = "br-tenants" // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
 	// value in the per-netns forward-chain argv, so goconst demands
 	// the literals live in named constants.
@@ -252,7 +259,9 @@ func (c Config) SetupCommands() [][]string {
 	cmds = append(cmds, privateNetworkRouteCommands(c)...)
 	cmds = append(cmds,
 		// Route guest traffic; enable forwarding inside the netns only.
-		inNetns("sysctl", "-w", "net.ipv4.ip_forward=1"),
+		// One sysctl process for both keys keeps setup's process count flat.
+		inNetns("sysctl", "-w", "net.ipv4.ip_forward=1",
+			fmt.Sprintf("net.ipv4.neigh.%s.retrans_time_ms=%d", c.Tap, TapARPRetransMs)),
 		// Netns default route via the bridge IP (HostBridgeCIDR). Without
 		// this, the kernel only knows two connected subnets inside the netns
 		// — 10.0.0.0/30 on tap0 and 10.100.0.0/16 on VethPeer — so a guest

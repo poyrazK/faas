@@ -138,7 +138,15 @@ const (
 // ~30k exits of a verbose boot cost ~0.6 s per cold boot. guest-init writes to
 // /dev/console directly and kernel errors are still printed, so the early
 // failure reports above are unaffected.
-const coldBootArgs = "console=ttyS0,115200n8 quiet reboot=k panic=1 pci=off " +
+//
+// i8042.nokbd i8042.noaux skip probing a PS/2 keyboard and aux port that
+// Firecracker does not emulate: the probe timed out for ~775 ms before init
+// could start. Firecracker's i8042 exists only to observe the guest's reset,
+// and reboot=k writes that reset to port 0x64 from arch code, not through
+// this driver.
+const guestBootConsoleArgs = "console=ttyS0,115200n8 quiet i8042.nokbd i8042.noaux "
+
+const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
@@ -151,7 +159,7 @@ const coldBootArgs = "console=ttyS0,115200n8 quiet reboot=k panic=1 pci=off " +
 // executionBootArgs intentionally omits kernel ip= autoconfiguration. The
 // dedicated execution VM has no Firecracker network interface, so even the
 // guest kernel receives no tenant route or DNS/gateway hint.
-const executionBootArgs = "console=ttyS0,115200n8 quiet reboot=k panic=1 pci=off " +
+const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
