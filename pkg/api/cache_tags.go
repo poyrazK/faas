@@ -21,10 +21,11 @@ func NormalizeCacheTag(raw string) (string, error) {
 	}
 	for i := 0; i < len(raw); i++ {
 		b := raw[i]
-		if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
-			(b >= '0' && b <= '9') || b == '-' || b == '_' || b == '.' || b == ':' || b == '/') {
-			return "", fmt.Errorf("cache tag contains an invalid character")
+		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+			(b >= '0' && b <= '9') || b == '-' || b == '_' || b == '.' || b == ':' || b == '/' {
+			continue
 		}
+		return "", fmt.Errorf("cache tag contains an invalid character")
 	}
 	return strings.ToLower(raw), nil
 }
