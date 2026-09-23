@@ -37,7 +37,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment (name defaults to linked context) |
 | [`diff`](#diff) | Compare two named environments in the linked project |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
-| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
+| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
@@ -1261,7 +1261,7 @@ Tear down a preview app (POST /v1/preview/{slug}/destroy)
 
 ## edge-rules
 
-Per-app edge rules (edge-rules list|create|get|update|rm --app &lt;slug&gt;)
+Per-app edge rules (edge-rules list|trace|create|get|update|rm --app &lt;slug&gt;)
 
 `gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
 
@@ -1278,6 +1278,16 @@ List edge rules
 |---|---|---|
 | `--app <slug>` | filter to a single app slug |  |
 | `--kind <value>` | filter to a single kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
+
+### edge-rules trace
+
+Preview which edge rules match a proposed request (no actions executed)
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--url <URL>` | absolute HTTP(S) request URL | required |
+| `--method <method>` | request method (default GET) |  |
 
 ### edge-rules create
 
