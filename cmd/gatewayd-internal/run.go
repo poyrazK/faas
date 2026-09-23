@@ -1298,6 +1298,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return gateway.App{}, false, err
 			}
+			liveDeployments, err := pgStore.LiveDeployments(ctx, app.ID)
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return gateway.App{}, false, err
+			}
+			companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
+			if err != nil {
+				return gateway.App{}, false, err
+			}
 			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
 			concurrencyOverflow := ""
 			maxQueueWaitMS := 0
@@ -1311,7 +1319,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -2227,7 +2235,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// harness path); production traffic terminates TLS at gatewayd-public
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
-	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	retryBudget := gateway.NewRetryBudget(0, nil)
+	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
 	if deps.pgStore != nil {
 		handler.WithMirrorResultStore(deps.pgStore)
 	}
@@ -3161,7 +3170,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		controlMux.HandleFunc("/v1/internal/apps/", func(w http.ResponseWriter, r *http.Request) {
 			// Path-keyed: ServeMux's HandleFunc uses prefix
 			// match, so /v1/internal/apps/foo/routes and
-			// /v1/internal/apps/foo/service-endpoints both
+			// /v1/internal/apps/foo/service-endpoints and
+			// /v1/internal/apps/foo/streaming-cap all
 			// reach this dispatcher. Each reader validates its
 			// complete suffix before serving a response.
 			resolve := gateway.ResolveSlugFn(func(slug string) (string, bool) { //nolint:contextcheck // ADR-093 ResolveSlugFn signature is fixed; ctx captured from per-request r.Context().
@@ -3171,6 +3181,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				return string(a.ID), true
 			})
+			if strings.HasSuffix(r.URL.Path, "/streaming-cap") {
+				internalStreamingCapHandler(deps.edgeRulesMatcher, resolve, log).ServeHTTP(w, r)
+				return
+			}
 			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
 				internalServiceEndpointsHandler(serviceEndpointProvider, resolve, log).ServeHTTP(w, r)
 				return
@@ -3217,8 +3231,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.
-			Breaker: egressBreakerGroup(),
-			Metrics: deps.metrics,
+			Breaker:     egressBreakerGroup(),
+			Metrics:     deps.metrics,
+			RetryBudget: retryBudget,
 			// Prefer a replica on this node before crossing the network.
 			// Empty NodeName (legacy single-box) keeps flat round-robin.
 			LocalNodeID: cfg.NodeName,

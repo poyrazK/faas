@@ -71,6 +71,13 @@ type PrivateNetworkStore interface {
 	ReleasePrivateNetworkAddress(context.Context, string, string, string, string) error
 }
 
+// PrivateNetworkDurableDeletionStore is the production-only atomic deletion
+// path: PostgreSQL removes the network and records fabric teardown in one
+// transaction. In-memory adapters continue using PrivateNetworkStore.
+type PrivateNetworkDurableDeletionStore interface {
+	DeletePrivateNetworkDurably(context.Context, string, string) error
+}
+
 // PrivateNetworkAddressListStore is the additive read surface for network
 // member inventory. Keeping it separate lets older Store adapters continue to
 // serve network creation and app attachments while the inventory endpoint is

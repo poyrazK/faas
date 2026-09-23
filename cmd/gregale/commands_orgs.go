@@ -31,6 +31,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -51,7 +52,7 @@ var orgSlugRe = regexp.MustCompile(api.OrgSlugPattern)
 // namespacing across all three surfaces.
 func cmdOrgs(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|update|rm|members|invitations|keys|transfer-ownership|seat-usage> [args]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|transfer-ownership|seat-usage> [args]", "orgs")
 		return 1
 	}
 	switch args[0] {
@@ -61,6 +62,8 @@ func cmdOrgs(args []string) int {
 		return cmdOrgsCreate(args[1:])
 	case subInfo:
 		return cmdOrgsInfo(args[1:])
+	case "activity":
+		return cmdOrgsActivity(args[1:])
 	case subUpdate:
 		return cmdOrgsUpdate(args[1:])
 	case subRm:
@@ -270,6 +273,62 @@ func cmdOrgsInfo(args []string) int {
 	fmt.Printf("created:   %s\n", o.CreatedAt)
 	fmt.Printf("updated:   %s\n", o.UpdatedAt)
 	return 0
+}
+
+func cmdOrgsActivity(args []string) int {
+	fs := newFlagSet("orgs activity", flag.ContinueOnError)
+	slug := fs.String("org", "", "org slug (required)")
+	before := fs.String("before", "", "opaque cursor from next_before")
+	kindPrefix := fs.String("kind-prefix", "", "filter by namespaced activity prefix")
+	actorType := fs.String("actor-type", "", "filter by user, api_key, github, system, or operator")
+	appID := fs.String("app-id", "", "filter by application UUID")
+	limit := fs.Int("limit", 50, "max rows (1..100)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) || *slug == "" || *limit < 1 || *limit > 100 || !validOrgActivityActor(*actorType) {
+		PrintUsage(os.Stderr, "usage: gregale orgs activity --org <slug> [--before <cursor>] [--kind-prefix <prefix>] [--actor-type <type>] [--app-id <uuid>] [--limit N]", "orgs")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	page, err := client.ListOrgActivity(context.Background(), *slug, *before, *kindPrefix, *actorType, *appID, *limit)
+	if err != nil {
+		return printErr("Could not list organization activity", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(page))
+	}
+	if len(page.Items) == 0 {
+		PrintProgress(osStdout, "(no activity)")
+		return 0
+	}
+	for _, item := range page.Items {
+		_, _ = fmt.Fprintf(osStdout, "%s  %s\n", activityDisplayTime(item.OccurredAt), item.Summary)
+	}
+	if page.NextBefore != "" {
+		PrintProgress(osStdout, "More activity: rerun with --before %s", page.NextBefore)
+	}
+	return 0
+}
+
+func validOrgActivityActor(actor string) bool {
+	switch actor {
+	case "", "user", "api_key", "github", "system", "operator":
+		return true
+	default:
+		return false
+	}
+}
+
+func activityDisplayTime(raw string) string {
+	at, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return raw
+	}
+	return at.Local().Format("2006-01-02 15:04")
 }
 
 func cmdOrgsRm(args []string) int {

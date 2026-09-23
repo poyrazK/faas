@@ -84,6 +84,7 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 			DiskIOProfile: sc.DiskIOProfile,
 			Port:          sc.Port,
 			Essential:     essential,
+			StartupProbe:  cloneAppManifestHealthcheck(sc.StartupProbe),
 			SealedEnv:     sealedEnv,
 			DependsOn:     append([]api.WorkloadDependency(nil), sc.DependsOn...),
 			// Cmd is retained as a legacy fallback for guest-init
@@ -99,6 +100,15 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 		}
 	}
 	return out, nil
+}
+
+func cloneAppManifestHealthcheck(in *api.AppManifestHealthcheck) *api.AppManifestHealthcheck {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Test = append([]string(nil), in.Test...)
+	return &out
 }
 
 // sealedSidecarEnv decodes the base64 transport wrapper used by the persisted

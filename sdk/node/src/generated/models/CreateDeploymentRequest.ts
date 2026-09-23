@@ -7,7 +7,7 @@ import type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
- * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The override field list is FROZEN — six fields, no more — and any extra field on the override object 400s the request (the handler's decoder rejects unknown keys; see ADR-053 §Decision 1). The optional `sidecars` array (issue #463 / ADR-068) attaches up to 2 stateless sidecars (1 init + 1 sidecar) per app — a one-shot DB migrator as `init`, a metrics scraper as `sidecar`. nil/omitted = no sidecars.
+ * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
  */
 export type CreateDeploymentRequest = {
   /**
@@ -23,7 +23,12 @@ export type CreateDeploymentRequest = {
    */
   require_signed?: boolean | null;
   /**
-   * Up to 2 stateless sidecars (1 init + 1 sidecar). nil/omitted = no sidecars. See ADR-068 for the hard 2-cap and stateless-only contract.
+   * Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with sidecars.
+   */
+  companions?: Array<Sidecar>;
+  /**
+   * Deprecated spelling of companions. Do not set both fields.
+   * @deprecated
    */
   sidecars?: Array<Sidecar>;
   /**

@@ -57,9 +57,10 @@ export class DelayedTasksService {
    * Schedule a delayed task to fire at a future time.
    * Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
    * bounded to one year. Cap-checked against the plan's
-   * MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
-   * re-checks at dispatch. Delivery is at least once; handlers should use
-   * the invocation id to make side effects idempotent.
+   * MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). Accepted
+   * tasks are grandfathered across later plan changes. Delivery is at
+   * least once; handlers should use the invocation id to make side effects
+   * idempotent.
    *
    * @returns DelayedTaskResponse The newly-scheduled task.
    * @throws ApiError

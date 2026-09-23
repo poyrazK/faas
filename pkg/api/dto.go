@@ -59,6 +59,31 @@ type EventSubscriptionListResponse struct {
 	Subscriptions []EventSubscriptionResponse `json:"subscriptions"`
 }
 
+// EventDeliveryResponse is the safe, metadata-only projection of an
+// event-triggered invocation. Payloads and handler results stay behind the
+// per-invocation endpoint; this view answers the operational question of
+// whether a published event reached a worker.
+type EventDeliveryResponse struct {
+	InvocationID   string     `json:"invocation_id"`
+	EventID        string     `json:"event_id"`
+	EventSource    string     `json:"event_source"`
+	EventType      string     `json:"event_type"`
+	SubscriptionID string     `json:"subscription_id,omitempty"`
+	State          string     `json:"state"`
+	Attempts       int        `json:"attempts"`
+	LastError      string     `json:"last_error,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+}
+
+// EventDeliveryListResponse is an app-scoped page of event-triggered
+// invocations, ordered newest first.
+type EventDeliveryListResponse struct {
+	AppSlug    string                  `json:"app_slug"`
+	Deliveries []EventDeliveryResponse `json:"deliveries"`
+	NextBefore string                  `json:"next_before,omitempty"`
+}
+
 // Wire DTOs for the v1 REST API (spec Appendix A). Defined once here so apid and
 // the faas CLI share exactly one contract; `--json` output stability (UX §3.2)
 // depends on these shapes.
@@ -1491,6 +1516,13 @@ type PublicAuthStatus struct {
 // below for the contract.
 type Sidecars []Sidecar
 
+// Companion and Companions are the customer-facing names for the bounded
+// helper workload model. Sidecar/Sidecars remain the storage and runtime wire
+// names for backwards compatibility with deployments created before the
+// companion API was introduced.
+type Companion = Sidecar
+type Companions = Sidecars
+
 // CreateDeploymentRequest ships a version (JSON variant; the multipart
 // variant is used for tarball/dockerfile deploys).
 type CreateDeploymentRequest struct {
@@ -1512,6 +1544,10 @@ type CreateDeploymentRequest struct {
 	// tarball deploys ignore this field (Railpack path bypasses the
 	// verify hook entirely).
 	RequireSigned *bool `json:"require_signed,omitempty"`
+	// Companions is the preferred customer-facing field for helper workloads.
+	// The server normalizes it into Sidecars before validation and persistence.
+	// A request must not set both fields.
+	Companions Companions `json:"companions,omitempty"`
 	// Sidecars (issue #463 / ADR-068) attaches up to 2 stateless
 	// sidecars (1 init + 1 sidecar) to the deployment. nil/empty
 	// = no sidecars. PR-A persists the field; PR-B wires the
@@ -1590,6 +1626,26 @@ type CreateDeploymentRequest struct {
 	// allow-auto setting, true forces full-rootfs, and false forces the
 	// legacy shared-base path.
 	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
+}
+
+// NormalizeCompanions preserves the existing sidecars persistence/runtime
+// contract while letting new clients use companion terminology. It mutates the
+// request once, at the deployment boundary, so all downstream code sees the
+// established Sidecars field.
+func (r *CreateDeploymentRequest) NormalizeCompanions() *Problem {
+	if r == nil {
+		return nil
+	}
+	if len(r.Companions) > 0 && len(r.Sidecars) > 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid companions",
+			"set either companions or the deprecated sidecars field, not both.")
+	}
+	if len(r.Companions) > 0 {
+		r.Sidecars = append(Sidecars(nil), r.Companions...)
+		r.Companions = nil
+	}
+	return nil
 }
 
 // CanaryPresetSpec is the canary ladder a customer asks for on a
@@ -2405,11 +2461,33 @@ type DeploymentResponse struct {
 	// 'pending' isn't "" — the dashboard fills in from
 	// pkg/state.SerializeDeployment which always stamps the
 	// resolved value).
-	RolloutState         string     `json:"rollout_state,omitempty"`
-	RolloutStartedAt     *time.Time `json:"rollout_started_at,omitempty"`
-	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
-	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
-	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	RolloutState          string                         `json:"rollout_state,omitempty"`
+	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
+}
+
+// ServiceRolloutHandoffResponse exposes the durable scheduler barrier state
+// for readiness-gated service deployments. Gateway lists contain registered
+// node names only; request or customer identifiers are never used as metric
+// labels or placed in this status payload.
+type ServiceRolloutHandoffResponse struct {
+	Action                  string     `json:"action"`
+	Phase                   string     `json:"phase"`
+	PredecessorDeploymentID string     `json:"predecessor_deployment_id,omitempty"`
+	Generation              int64      `json:"generation,omitempty"`
+	ExpectedGateways        []string   `json:"expected_gateways,omitempty"`
+	AcknowledgedGateways    []string   `json:"acknowledged_gateways,omitempty"`
+	MissingGateways         []string   `json:"missing_gateways,omitempty"`
+	RetryCount              int        `json:"retry_count"`
+	LastError               string     `json:"last_error,omitempty"`
+	Reason                  string     `json:"reason,omitempty"`
+	StartedAt               *time.Time `json:"started_at,omitempty"`
+	UpdatedAt               *time.Time `json:"updated_at,omitempty"`
+	AcknowledgedAt          *time.Time `json:"acknowledged_at,omitempty"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }
 
 // BuildPlan describes what the build pipeline did with the source
@@ -4820,6 +4898,46 @@ type ListAuditLogResponse struct {
 	NextBefore string          `json:"next_before,omitempty"`
 }
 
+// ActivityActorResponse is the captured identity shown beside one global
+// organization activity item. Label remains useful after an account or API
+// key is removed; AccountID is present only for human actors known locally.
+type ActivityActorResponse struct {
+	Type      string `json:"type"`
+	Label     string `json:"label"`
+	AccountID string `json:"account_id,omitempty"`
+}
+
+// ActivityResourceResponse identifies the primary object affected by an
+// activity item. ID may be absent for an external resource such as a domain.
+type ActivityResourceResponse struct {
+	Type  string `json:"type"`
+	ID    string `json:"id,omitempty"`
+	Label string `json:"label"`
+}
+
+// OrgActivityResponse is one safe, display-ready entry in an organization's
+// unified infrastructure history. Data contains kind-specific non-secret
+// metadata; clients must tolerate keys they do not recognize.
+type OrgActivityResponse struct {
+	ID           string                   `json:"id"`
+	OccurredAt   string                   `json:"occurred_at"`
+	Kind         string                   `json:"kind"`
+	Summary      string                   `json:"summary"`
+	Actor        ActivityActorResponse    `json:"actor"`
+	Resource     ActivityResourceResponse `json:"resource"`
+	AppID        string                   `json:"app_id,omitempty"`
+	ProjectID    string                   `json:"project_id,omitempty"`
+	DeploymentID string                   `json:"deployment_id,omitempty"`
+	Data         json.RawMessage          `json:"data"`
+}
+
+// ListOrgActivityResponse is a newest-first keyset page. NextBefore is opaque;
+// pass it back unchanged as the before query parameter.
+type ListOrgActivityResponse struct {
+	Items      []OrgActivityResponse `json:"items"`
+	NextBefore string                `json:"next_before,omitempty"`
+}
+
 // --- GitHub install bind picker (PR-B; §11) ---------------------------------
 //
 // InstallBindRequest is the body for both POST /v1/install/repos/list
@@ -5049,18 +5167,17 @@ const (
 // AppStreamingStatus is the per-request streaming classification
 // returned by GET /v1/apps/{slug}/streaming-cap (ADR-102 D6). It is
 // the wire-level mirror of pkg/gateway.(*Handler).decideStreaming —
-// a customer hitting this endpoint sees exactly what the gateway's
-// gate machine resolved for the next inbound request, with the same
-// status enum and the same effective cap.
+// a customer hitting this endpoint sees the same status enum and plan
+// cap; a route-aware request shape also resolves the matching gateway
+// edge-rule response cap.
 //
 // Status is one of the api.StreamingStatus* constants. CapKind
 // labels the cap source: "plan" means app.Plan.MaxResponseBodyBytes
 // (the buffered cap; for non-streaming statuses this is also the
-// streaming cap because no edge rule matched), "endpoint-rule"
-// means a kind=limit edge rule with a non-zero MaxBodyBytesStreaming
-// field matched and overrode the plan cap. CapKind is omitted from
-// the wire when there is no override so a customer whose plan cap
-// applied sees a clean three-field response.
+// streaming cap), "endpoint-rule" means a route-aware probe matched
+// a kind=limit edge rule with a non-zero MaxBodyBytesStreaming field
+// and overrode the plan cap. A plan-level probe or a gatewayd miss
+// returns CapKind="plan".
 //
 // PlanAllowed + FlagEnabled mirror the two booleans that gated the
 // decision, so a customer can self-diagnose without a separate
@@ -5796,8 +5913,9 @@ type AppSecurityResponse struct {
 }
 
 // AppSecurityPostureResponse is the read-only security posture projection for
-// an app. Findings are deterministic configuration checks; the response never
-// includes credentials, allowlist values, or other secret material.
+// an app. Findings cover deterministic configuration checks and the evidence
+// coverage of currently live images; the response never includes credentials,
+// allowlist values, or other secret material.
 type AppSecurityPostureResponse struct {
 	AppID          string                 `json:"app_id"`
 	Slug           string                 `json:"slug"`
@@ -5979,6 +6097,29 @@ const (
 	SidecarTypeSidecar SidecarType = "sidecar"
 )
 
+// CompanionPreset is the closed set of platform-managed companion images.
+// Deploy-time resolution replaces a preset-only declaration with an
+// operator-configured digest-pinned image before the deployment is persisted.
+type CompanionPreset string
+
+const (
+	CompanionPresetOpenTelemetry CompanionPreset = "opentelemetry"
+	CompanionPresetSentry        CompanionPreset = "sentry"
+	CompanionPresetDogStatsD     CompanionPreset = "datadog-dogstatsd"
+)
+
+// NormalizeCompanionPreset canonicalizes a preset name and reports whether it
+// belongs to the closed platform catalog.
+func NormalizeCompanionPreset(value string) (CompanionPreset, bool) {
+	preset := CompanionPreset(strings.ToLower(strings.TrimSpace(value)))
+	switch preset {
+	case CompanionPresetOpenTelemetry, CompanionPresetSentry, CompanionPresetDogStatsD:
+		return preset, true
+	default:
+		return "", false
+	}
+}
+
 // WorkloadDependencyCondition controls when a workload may start after one
 // of its dependencies reaches a lifecycle milestone. An empty condition is
 // treated as started for backwards-compatible clients that omit it.
@@ -6041,6 +6182,12 @@ var sidecarNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // PR-A the two-call-site duplication is acceptable.
 var sidecarImageRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
 
+// ValidCompanionImageReference reports whether ref is an immutable OCI digest
+// accepted for a custom or platform-managed companion.
+func ValidCompanionImageReference(ref string) bool {
+	return sidecarImageRe.MatchString(ref)
+}
+
 // Sidecar is one entry in the deploy request's `sidecars` array
 // (issue #463 / ADR-068). At most one with type=init and at most
 // one with type=sidecar per app (the 2-sidecar hard cap, enforced
@@ -6055,7 +6202,8 @@ var sidecarImageRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?
 // HTTP response — pinned by capture-based tests in
 // cmd/apid/handlers_deployments_test.go.
 //
-// The image reference MUST be digest-pinned (`repo@sha256:...`).
+// A custom image reference MUST be digest-pinned (`repo@sha256:...`). A
+// managed preset may omit it because apid resolves an operator-pinned digest.
 // Tag-pinning is the documented OCI supply-chain attack vector;
 // the runtime image already enforces this in pkg/imaged; the
 // API gate surfaces a useful error at the client side before
@@ -6074,9 +6222,14 @@ type Sidecar struct {
 	// Name matches the RFC 1123 label grammar. Unique within a
 	// single request. Required.
 	Name string `json:"name"`
+	// Preset selects a platform-managed companion. When Image is omitted, apid
+	// resolves the preset through its operator-configured digest catalog before
+	// validation and persistence. An explicit digest-pinned Image overrides the
+	// catalog while retaining the preset's manifest defaults.
+	Preset string `json:"preset,omitempty"`
 	// Image is the digest-pinned OCI reference (`repo@sha256:...`).
-	// Tag references rejected. Required.
-	Image string `json:"image"`
+	// Tag references are rejected. Required unless Preset is set.
+	Image string `json:"image,omitempty"`
 	// Type is the closed enum (init | sidecar). At most one of
 	// each per deployment. Required.
 	Type SidecarType `json:"type"`
@@ -6094,6 +6247,10 @@ type Sidecar struct {
 	// vmmd waitReady + runners ships in PR-B / PR-C; PR-A only
 	// persists the field.
 	Port int `json:"port,omitempty"`
+	// PrimaryIngress routes the application's normal public hostname to this
+	// long-running companion. This is intended for custom reverse proxies. It
+	// requires an explicit Port and is not valid for one-shot init workloads.
+	PrimaryIngress bool `json:"primary_ingress,omitempty"`
 	// RamMB is the cgroup memory ceiling for this sidecar. 0
 	// means "absent / inherit the plan RAM" (the common case).
 	// 32..512 enforced at the API layer.
@@ -6118,6 +6275,10 @@ type Sidecar struct {
 	// from "explicit true/false". PR-A only persists the field;
 	// the runtime effect is PR-B.
 	Essential *bool `json:"essential,omitempty"`
+	// StartupProbe optionally replaces the image's baked OCI HEALTHCHECK for
+	// this workload. The exec-style shape matches AppManifest.Healthcheck;
+	// use Test=["NONE"] to explicitly disable an image healthcheck.
+	StartupProbe *AppManifestHealthcheck `json:"startup_probe,omitempty"`
 	// DependsOn gates this workload on another workload's lifecycle state.
 	// At most WorkloadDependencyCapMax unique targets are accepted. An omitted
 	// condition means started. Init workloads remain prerequisites of the main
@@ -6146,7 +6307,20 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 			"Invalid sidecar name",
 			"sidecar name \"main\" is reserved for the primary workload.")
 	}
-	if !sidecarImageRe.MatchString(s.Image) {
+	if s.Preset != "" {
+		preset, ok := NormalizeCompanionPreset(s.Preset)
+		if !ok {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid companion preset",
+				fmt.Sprintf("companion %q uses unsupported preset %q.", s.Name, s.Preset))
+		}
+		s.Preset = string(preset)
+	}
+	if s.Image == "" && s.Preset == "" {
+		return ErrSidecarInvalidImage(s.Name,
+			fmt.Errorf("image is required when preset is omitted"))
+	}
+	if s.Image != "" && !sidecarImageRe.MatchString(s.Image) {
 		return ErrSidecarInvalidImage(s.Name,
 			fmt.Errorf("not a digest-pinned reference (got %q)", s.Image))
 	}
@@ -6160,8 +6334,10 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	// every reference shape. A 403 here pre-empts the request
 	// before it ever reaches imaged — the customer sees a useful
 	// error in their browser, not a pending→failed transition.
-	if hint, denied := statefuldenylist.Match(s.Image); denied {
-		return ErrSidecarStatefulDeniedWithHint(s.Name, s.Image, hint)
+	if s.Image != "" {
+		if hint, denied := statefuldenylist.Match(s.Image); denied {
+			return ErrSidecarStatefulDeniedWithHint(s.Name, s.Image, hint)
+		}
 	}
 	if s.Type != SidecarTypeInit && s.Type != SidecarTypeSidecar {
 		return ErrSidecarInvalidType(s.Name, string(s.Type))
@@ -6188,6 +6364,16 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	if s.Port != 0 && (s.Port < 1 || s.Port > 65535) {
 		return ErrSidecarInvalidPort(s.Port)
 	}
+	if s.PrimaryIngress && s.Type != SidecarTypeSidecar {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid companion ingress",
+			fmt.Sprintf("companion %q must be a long-running sidecar to serve primary ingress.", s.Name))
+	}
+	if s.PrimaryIngress && s.Port == 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid companion ingress",
+			fmt.Sprintf("companion %q must declare port when primary_ingress is true.", s.Name))
+	}
 	if s.RamMB != 0 && (s.RamMB < 32 || s.RamMB > 512) {
 		return ErrSidecarInvalidRamMB(s.RamMB)
 	}
@@ -6199,6 +6385,9 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	}
 	if !ValidSidecarDiskIOProfile(s.DiskIOProfile) {
 		return ErrSidecarInvalidDiskIOProfile(s.DiskIOProfile)
+	}
+	if p := validateSidecarStartupProbe(s.Name, s.StartupProbe); p != nil {
+		return p
 	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
@@ -6234,6 +6423,54 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	return nil
 }
 
+func validateSidecarStartupProbe(name string, probe *AppManifestHealthcheck) *Problem {
+	if probe == nil {
+		return nil
+	}
+	if len(probe.Test) == 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe.test must contain CMD, CMD-SHELL, or NONE; use [\"NONE\"] to disable the image probe.", name))
+	}
+	switch probe.Test[0] {
+	case "NONE":
+		if len(probe.Test) != 1 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test with NONE must contain exactly one element.", name))
+		}
+	case "CMD", "CMD-SHELL":
+		if len(probe.Test) < 2 || probe.Test[1] == "" {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test %s requires a non-empty command.", name, probe.Test[0]))
+		}
+		if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar startup probe",
+				fmt.Sprintf("sidecar[%q].startup_probe.test CMD-SHELL requires exactly one command string.", name))
+		}
+	default:
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe.test must start with CMD, CMD-SHELL, or NONE.", name))
+	}
+	if probe.IntervalS < 0 || probe.TimeoutS < 0 || probe.Retries < 0 || probe.StartPeriodS < 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe interval_s, timeout_s, retries, and start_period_s must be >= 0.", name))
+	}
+	// These values cross the vmmd protobuf boundary as int32. Reject values
+	// that would wrap and change the guest's probe timing or retry budget.
+	const maxProtoInt32 = 1<<31 - 1
+	if probe.IntervalS > maxProtoInt32 || probe.TimeoutS > maxProtoInt32 || probe.Retries > maxProtoInt32 || probe.StartPeriodS > maxProtoInt32 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar startup probe",
+			fmt.Sprintf("sidecar[%q].startup_probe timing and retry values must fit in int32.", name))
+	}
+	return nil
+}
+
 // Validate enforces the 2-cap (global `SidecarCapMax` constant),
 // type-uniqueness (at most one init + one sidecar), name
 // uniqueness, and per-sidecar `Validate`.
@@ -6251,6 +6488,7 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	}
 	seen := map[SidecarType]int{}
 	names := map[string]bool{}
+	primaryIngress := ""
 	for i := range ss {
 		if p := ss[i].Validate(limits); p != nil {
 			return p
@@ -6261,6 +6499,14 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 				fmt.Sprintf("sidecar name %q appears more than once.", ss[i].Name))
 		}
 		names[ss[i].Name] = true
+		if ss[i].PrimaryIngress {
+			if primaryIngress != "" {
+				return NewProblem(http.StatusBadRequest, CodeValidation,
+					"Invalid companion ingress",
+					fmt.Sprintf("companions %q and %q both request primary ingress; only one is allowed.", primaryIngress, ss[i].Name))
+			}
+			primaryIngress = ss[i].Name
+		}
 		seen[ss[i].Type]++
 		if seen[ss[i].Type] > 1 {
 			return ErrSidecarInvalidType(ss[i].Name,
@@ -6872,18 +7118,25 @@ type EdgeRuleRetryAction struct {
 	// MaxAttempts counts attempts, not retries: 2 is the original plus one
 	// replay. Zero applies EdgeRuleRetryDefaultMaxAttempts.
 	MaxAttempts int `json:"max_attempts,omitempty"`
-	// AllowNonIdempotent opts POST and PATCH into replay.
+	// AllowNonIdempotent opts POST and PATCH into replay when the request also
+	// carries a non-empty Idempotency-Key header.
 	//
 	// This is the only field here that can cost correctness rather than
 	// latency: a replayed POST runs the customer's side effect twice unless
-	// their handler is idempotent or they send an idempotency key. It
-	// defaults false and the CLI/docs state the consequence explicitly.
+	// their handler does not honor the idempotency key. It defaults false and
+	// the CLI/docs state the consequence explicitly.
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty"`
 	// MinRemainingMs is the request-budget floor below which a replay is
 	// skipped. Zero applies EdgeRuleRetryDefaultMinRemainingMs.
 	MinRemainingMs int `json:"min_remaining_ms,omitempty"`
 	// BackoffMs delays a replay. Defaults to 0.
 	BackoffMs int `json:"backoff_ms,omitempty"`
+	// BudgetPercent caps aggregate replay attempts relative to original
+	// requests in a short per-app window. Zero applies the 10% default.
+	BudgetPercent int `json:"budget_percent,omitempty"`
+	// BudgetMinRetries is the low-traffic retry allowance per window. Zero
+	// applies the default of one.
+	BudgetMinRetries int `json:"budget_min_retries,omitempty"`
 }
 
 // Validate applies the ADR-201 §1 defaults and bounds. It mutates the
@@ -6921,6 +7174,22 @@ func (a *EdgeRuleRetryAction) Validate() *Problem {
 		return ErrValidation(fmt.Sprintf(
 			"retry action: backoff_ms must be in 0..%d (got %d) — the failure being retried is a dead peer, so a delay rarely helps",
 			MaxEdgeRuleRetryBackoffMs, a.BackoffMs))
+	}
+	if a.BudgetPercent == 0 {
+		a.BudgetPercent = EdgeRuleRetryDefaultBudgetPercent
+	}
+	if a.BudgetPercent < 1 || a.BudgetPercent > MaxEdgeRuleRetryBudgetPercent {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: budget_percent must be in 1..%d (got %d)",
+			MaxEdgeRuleRetryBudgetPercent, a.BudgetPercent))
+	}
+	if a.BudgetMinRetries == 0 {
+		a.BudgetMinRetries = EdgeRuleRetryDefaultBudgetMin
+	}
+	if a.BudgetMinRetries < 0 || a.BudgetMinRetries > MaxEdgeRuleRetryBudgetMin {
+		return ErrValidation(fmt.Sprintf(
+			"retry action: budget_min_retries must be in 0..%d (got %d)",
+			MaxEdgeRuleRetryBudgetMin, a.BudgetMinRetries))
 	}
 	return nil
 }

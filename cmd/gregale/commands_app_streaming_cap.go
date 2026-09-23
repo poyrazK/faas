@@ -2,14 +2,15 @@ package main
 
 // `gregale apps streaming-cap <slug>` — operator shell entry point
 // for ADR-102 D6's per-app streaming classification probe. Prints
-// the same data the SDK `GetAppStreamingStatus` returns:
+// the plan-level shape returned by the SDK's zero-value
+// `GetAppStreamingStatus` call:
 //   - status enum (streaming | accept-json-downgrade | flag-disabled
 //     | plan-disallows | operator-disabled | upgrade-bypass)
 //   - effective_cap_bytes / plan_cap_bytes
 //   - flag_enabled / plan_allowed boolean pair
-//   - cap_kind (always "plan" in this PR; the per-edge-rule
-//     override lives in gatewayd-side state and is not part of
-//     the apid probe — see cmd/apid/handlers_streaming_cap.go)
+//   - cap_kind ("plan" for this no-argument CLI form; route-aware
+//     callers can supply host/path/method through the REST and SDK
+//     surfaces — see cmd/apid/handlers_streaming_cap.go)
 //
 // Reachable two ways (mirrors the routes subcommand pattern):
 //   - gregale apps streaming-cap <slug>      (dispatchApps arm in main.go)
@@ -17,7 +18,7 @@ package main
 //
 // Both dispatchers thread (slug, args[2:]) so the leaf signature
 // matches cmdAppsRoutes / cmdAppSecurity — same (slug, args) shape,
-// no flag parsing, single authed round-trip.
+// no route-shape flags in the CLI form, single authed round-trip.
 //
 // Out of scope: a real-time probe that reflects the operator
 // FAAS_GATEWAY_STREAMING env. That lives in the gatewayd process,
@@ -49,17 +50,17 @@ const subStreamingCap = "streaming-cap"
 // enum + cap snapshot for one app via the SDK-shaped
 // GET /v1/apps/{slug}/streaming-cap endpoint (apid-side mirror of
 // the gatewayd decideStreaming). The flag set is intentionally
-// empty — the surface is read-only and the customer can render the
-// response as text or JSON via the package-level --json toggle
-// already wired by every other leaf.
+// empty — route-aware host/path/method selection is available to
+// SDK callers while this CLI keeps its stable plan-level form; the
+// customer can render the response as text or JSON via the package-
+// level --json toggle already wired by every other leaf.
 //
-// Why no flags: --only-status / --only-cap would each be a
-// client-side filter that the existing probe doesn't have a
-// server-side contract for. Punting keeps the leaf honest with
-// the wire shape and lets the dashboard do any client-side
-// filtering.
+// Why no flags: keeping this command plan-level avoids making the
+// shell's positional syntax ambiguous with the three-part route
+// shape. The REST and generated SDKs expose route-aware callers
+// without changing this stable command form.
 func cmdAppsStreamingCap(slug string, args []string) int {
-	_ = args // no flags yet; future flags land here alongside a server DTO bump
+	_ = args // reserved for a future CLI route-shape form
 	if slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale apps streaming-cap <slug>", "apps")
 		return 1

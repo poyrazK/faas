@@ -54,15 +54,16 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 218 | [Curated global organization activity timeline](218-global-organization-activity-timeline.md) | accepted | Organization-scoped safe activity projection, stable keyset API, and explicit producer mappings |
 | 214 | [Distributed declarative response caching](214-distributed-declarative-response-cache.md) | accepted | Optional Redis L2, stale-while-revalidate, and shared invalidation for route-level response caching |
-| 211 | [Durable async routes](211-durable-async-routes.md) | accepted | Accept authenticated edge requests durably before waking apps, then expose invocation results |
 | 210 | [Runtime secret delivery status](210-runtime-secret-delivery.md) | accepted | Expose durable runtime-secret delivery outcomes and errors to operators |
 | 208 | [Acknowledged routing handoff for zero-downtime service rollouts](208-zero-downtime-service-rollout-handoff.md) | accepted | Two-phase route publication, serving-gateway acknowledgements, and post-ack per-instance request draining before predecessor retirement |
 | 212 | [Durable inbound webhook ingress](212-durable-inbound-webhook-ingress.md) | accepted | Provider-signed Stripe callbacks persist a deduplicated invocation before `202`, then reuse the scheduler wake, retry, and DLQ path |
 | 207 | [Bounded builder cache affinity](207-bounded-builder-cache-affinity.md) | accepted | Prefer the latest successful builder briefly so production rebuilds reuse node-local caches without sacrificing availability |
+| 216 | [Application companions without exposing an orchestration API](216-application-companions.md) | accepted | Preferred companion API, managed presets, task-local shared memory, and rollout-safe primary ingress |
 | 200 | [First-wake 5xx auto-rollback on every plan](200-auto-rollback-on-every-plan.md) | accepted | Health-driven rollback for the first wake of a new deployment, on every plan |
 | 201 | [Traffic resilience as a platform primitive](201-traffic-as-a-platform-primitive.md) | accepted | `kind=retry` + `kind=circuit_breaker` over instance health, and an nftables egress breaker driven by ADR-098 probe outcomes |
-| 211 | [Durable async routes](211-durable-async-routes.md) | accepted | `kind=async` turns a matched public request into the existing durable invocation lifecycle and returns `202` without waking the app |
+| 215 | [Durable async routes](215-durable-async-routes.md) | accepted | `kind=async` turns a matched public request into the existing durable invocation lifecycle and returns `202` without waking the app |
 | 193 | [Transactional per-node RAM reservation](193-transactional-node-reservation.md) | accepted | Invariant §6.2-2 enforced at the instances INSERT; ADR-062 retired NodeLedger's single-process premise |
 | 192 | [Wake hot path: single pre-boot staging session and full attribution](192-wake-hot-path-staging-and-attribution.md) | accepted | One loop-mount per wake for drive1 files; Manager.Wake phases and `stage_pre_boot_files_ms` on `wake.restore_breakdown` |
 | 190 | [Production BuildKit dependency cache](190-production-buildkit-cache.md) | accepted | Reuse app-scoped Railpack and Dockerfile records across production source edits |

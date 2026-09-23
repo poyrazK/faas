@@ -250,11 +250,17 @@ type DeploymentItem struct {
 	// carry into `gregale rollback --to` or an incident channel; the uuid
 	// stays on the row for the rows that predate the column (Revision 0),
 	// which the template renders as "—".
-	Revision  int
-	Status    string
-	Kind      string
-	CreatedAt string
-	Error     string
+	Revision              int
+	Status                string
+	Kind                  string
+	CreatedAt             string
+	RolloutState          string
+	ServiceHandoffAction  string
+	ServiceHandoffPhase   string
+	ServiceHandoffRetries int
+	ServiceHandoffMissing []string
+	ServiceHandoffError   string
+	Error                 string
 	// Issue #606 / SAFE-RELEASES-E.1: structured deployer
 	// attribution. All four fields are server-stamped from the
 	// HTTP request context (never client-supplied) and rendered

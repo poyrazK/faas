@@ -48,6 +48,9 @@ func breakerProxy(t *testing.T, group *circuit.Group, now func() time.Time) (*Se
 		EndpointTTL: time.Second,
 		Now:         now,
 		Breaker:     group,
+		// These tests isolate breaker behavior; do not let the independent
+		// aggregate retry limiter suppress the repeated probes under test.
+		RetryPolicy: RetryPolicy{MaxAttempts: 2, BudgetPercent: 100, BudgetMinRetries: 1},
 	})
 	return proxy, func() string { return lastServed }
 }

@@ -235,7 +235,7 @@ func TestDomainDoctor_StaleObservations(t *testing.T) {
 func buildGregale(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "gregale")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/gregale")
+	cmd := exec.Command("go", "build", "-o", bin, "../gregale")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go build gregale: %v\n%s", err, out)

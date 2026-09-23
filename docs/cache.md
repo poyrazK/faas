@@ -7,6 +7,22 @@ shares entries across gateway instances through Redis.
 
 ## Create a rule
 
+Inside a linked project, declare the common case directly:
+
+```sh
+gregale cache GET /products/:id for 30s \
+  --stale-while-revalidate 1m \
+  --stale-if-error 5m \
+  --vary-on Accept-Language
+```
+
+Pass `--app shop` when the current directory is not linked, and `--host
+api.example.com` to override the app's canonical hostname. Named route
+segments such as `:id` match one path segment; the command stores the gateway
+glob `/products/*`. `GET` and `HEAD` are supported.
+
+The lower-level edge-rule form exposes the same configuration explicitly:
+
 ```sh
 gregale edge-rules create \
   --app shop \

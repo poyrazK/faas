@@ -3,8 +3,11 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -119,6 +122,13 @@ func TestLimiter_RealBackend_PGErrorDegradesSoft(t *testing.T) {
 	// iterations — we need a deterministic drain.
 	frozen := time.Unix(1_700_000_000, 0)
 	l := NewLimiterWithCentralAndClock(fake, func() time.Time { return frozen })
+	var observed atomic.Int64
+	l.centralErrorObserver = func(_ context.Context, scope string, err error) {
+		if scope != rateLimitScopeApp || err == nil {
+			t.Errorf("central fallback observation = (scope=%q, err=%v), want (app, non-nil)", scope, err)
+		}
+		observed.Add(1)
+	}
 
 	// Scale-shaped bucket: 1500 rps, 3000 burst (per
 	// pkg/api/limits.go Scale plan). Drain under frozen clock,
@@ -134,6 +144,40 @@ func TestLimiter_RealBackend_PGErrorDegradesSoft(t *testing.T) {
 	}
 	if got := fake.consumeCalls.Load(); got == 0 {
 		t.Error("consume calls during PG-error test = 0")
+	}
+	if got, want := observed.Load(), fake.consumeCalls.Load(); got != want {
+		t.Errorf("degraded observations=%d, want one per failed consume (%d)", got, want)
+	}
+}
+
+func TestHandler_CentralFallbackIsObservableAndAuditCooledDown(t *testing.T) {
+	fake := newFakeCentral()
+	fake.consumeResult = func() (int, bool, error) { return 0, false, errors.New("postgres down") }
+	m := NewMetrics()
+	var logs bytes.Buffer
+	audit := &captureAuditor{}
+	h := NewHandlerWith(nil, m, slog.New(slog.NewJSONHandler(&logs, nil))).
+		WithRequireAuthn(nil, audit).
+		WithCentralBackend(fake)
+	const centralKey = "app:00000000-0000-0000-0000-000000000002:hobby"
+	for i := 0; i < 2; i++ {
+		if !h.limiter.AllowWithCentralParams(t.Context(), "app-1", 10, 10, centralKey) {
+			t.Fatalf("local fallback rejected request %d", i+1)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if want := `gateway_ratelimit_degraded_total{scope="app"} 2`; !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("metrics missing %q:\n%s", want, rec.Body.String())
+	}
+	if got := strings.Count(logs.String(), "gateway rate limiter fell back"); got != 1 {
+		t.Errorf("degraded warning count=%d, want 1 within cooldown; logs=%s", got, logs.String())
+	}
+	audit.mu.Lock()
+	defer audit.mu.Unlock()
+	if len(audit.captured) != 1 || audit.captured[0].kind != "ratelimit_degraded" {
+		t.Fatalf("degraded audits=%+v, want one ratelimit_degraded event", audit.captured)
 	}
 }
 

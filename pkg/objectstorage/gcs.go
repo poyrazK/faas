@@ -599,6 +599,27 @@ func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (Signed
 	return result, nil
 }
 
+func (p *GCS) PresignObjectRead(ctx context.Context, bucket, method, key string, expiresIn int64) (SignedRequest, error) {
+	r := SignRequest{Method: method, Key: key, ExpiresIn: expiresIn}
+	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil || method != http.MethodGet && method != http.MethodHead {
+		return SignedRequest{}, ErrInvalid
+	}
+	ttl := time.Duration(expiresIn) * time.Second
+	if ttl == 0 {
+		ttl = 5 * time.Minute
+	}
+	expiresAt := p.now().Add(ttl)
+	opts := storage.SignedURLOptions{
+		GoogleAccessID: p.serviceAccount, Method: method, Expires: expiresAt, Scheme: storage.SigningSchemeV4,
+		Style: storage.PathStyle(),
+	}
+	value, err := p.signedURL(ctx, bucket, key, opts)
+	if err != nil {
+		return SignedRequest{}, err
+	}
+	return SignedRequest{URL: value, Method: method, Headers: map[string]string{}, ExpiresAt: expiresAt}, nil
+}
+
 func gcsMetadataHeaders(metadata map[string]string) []string {
 	values := gcsMetadataHeaderValues(metadata)
 	keys := make([]string, 0, len(values))

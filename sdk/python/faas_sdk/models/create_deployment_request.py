@@ -34,11 +34,9 @@ T = TypeVar("T", bound="CreateDeploymentRequest")
 class CreateDeploymentRequest:
     """Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload.
     The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
-    different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The override field
-    list is FROZEN — six fields, no more — and any extra field on the override object 400s the request (the handler's
-    decoder rejects unknown keys; see ADR-053 §Decision 1). The optional `sidecars` array (issue #463 / ADR-068)
-    attaches up to 2 stateless sidecars (1 init + 1 sidecar) per app — a one-shot DB migrator as `init`, a metrics
-    scraper as `sidecar`. nil/omitted = no sidecars.
+    different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional
+    `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse
+    proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
 
     """
 
@@ -51,9 +49,11 @@ class CreateDeploymentRequest:
     """Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit the app's effective signature
     policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid
     when apps.require_signed is on or security_policy=enforce (operator policy wins)."""
+    companions: list[Sidecar] | Unset = UNSET
+    """Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with
+    sidecars."""
     sidecars: list[Sidecar] | Unset = UNSET
-    """Up to 2 stateless sidecars (1 init + 1 sidecar). nil/omitted = no sidecars. See ADR-068 for the hard 2-cap
-    and stateless-only contract."""
+    """Deprecated spelling of companions. Do not set both fields."""
     workflows: list[WorkflowSpec] | Unset = UNSET
     """Workflow DAG definitions for this deployment. Paid-plan only; persisted with the deployment and snapshotted
     at run start."""
@@ -114,6 +114,13 @@ class CreateDeploymentRequest:
             require_signed = UNSET
         else:
             require_signed = self.require_signed
+
+        companions: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.companions, Unset):
+            companions = []
+            for companions_item_data in self.companions:
+                companions_item = companions_item_data.to_dict()
+                companions.append(companions_item)
 
         sidecars: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.sidecars, Unset):
@@ -208,6 +215,8 @@ class CreateDeploymentRequest:
             field_dict["overrides"] = overrides
         if require_signed is not UNSET:
             field_dict["require_signed"] = require_signed
+        if companions is not UNSET:
+            field_dict["companions"] = companions
         if sidecars is not UNSET:
             field_dict["sidecars"] = sidecars
         if workflows is not UNSET:
@@ -272,6 +281,15 @@ class CreateDeploymentRequest:
             return cast(bool | None | Unset, data)
 
         require_signed = _parse_require_signed(d.pop("require_signed", UNSET))
+
+        _companions = d.pop("companions", UNSET)
+        companions: list[Sidecar] | Unset = UNSET
+        if _companions is not UNSET:
+            companions = []
+            for companions_item_data in _companions:
+                companions_item = Sidecar.from_dict(companions_item_data)
+
+                companions.append(companions_item)
 
         _sidecars = d.pop("sidecars", UNSET)
         sidecars: list[Sidecar] | Unset = UNSET
@@ -434,6 +452,7 @@ class CreateDeploymentRequest:
             image=image,
             overrides=overrides,
             require_signed=require_signed,
+            companions=companions,
             sidecars=sidecars,
             workflows=workflows,
             traffic_percent=traffic_percent,

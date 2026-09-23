@@ -471,18 +471,13 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.log.Warn("drain: incompatible invocation failed permanently", "inv", inv.ID, "app_id", inv.AppID, "workload_class", app.WorkloadClass, "execution_mode", app.Manifest.ExecutionMode)
 		return
 	}
-	// 1. Cap re-check (delayed_task source only — the plan may have
-	// been downgraded between EnqueueInvocation and now).
-	if inv.Source == state.InvocationDelayedTask {
-		if d.isOverDelayedCap(ctx, inv.AppID) {
-			// budget=0 keeps the legacy infinite-retry semantics on
-			// the delayed-task-cap path; that path is not plan-scoped
-			// (issue #394 only arms the budget for queue source).
-			_ = d.store.FailInvocation(ctx, inv.ID, "delayed-task cap exceeded on dispatch", 30*time.Second, 0)
-			d.log.Warn("drain: delayed-task cap on dispatch", "inv", inv.ID, "app_id", inv.AppID)
-			return
-		}
-	}
+	// 1. Delayed-task plan limits are admission limits, not dispatch
+	// limits. Once apid has durably accepted a task, it is grandfathered
+	// across plan changes. Re-counting pending work here also counts the
+	// candidate itself: an app at exactly its limit would otherwise defer
+	// every due task forever, so the backlog could never fall below the
+	// limit that is blocking it.
+	//
 	// 2. Account Active gate. The cron path has this (loop.go:580);
 	// the drain needs it too because rows queued while the account was
 	// Active may sit in 'pending' across a suspension (Free goes past
@@ -491,10 +486,8 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// a SLO; long enough that we don't churn cycles on a suspended
 	// account.
 	if !d.isAccountActive(ctx, inv.AppID) {
-		// budget=0: account-suspended retry does not consume the
-		// plan's per-message budget. Free customers hitting this path
-		// (a Free app can't queue, but can be a delayed_task/cron
-		// actor) never had a budget to begin with.
+		// budget=0: account-suspended deferral does not consume the row's
+		// delivery budget because no app delivery was attempted.
 		_ = d.store.FailInvocation(ctx, inv.ID, "account suspended", 5*time.Minute, 0)
 		d.log.Info("drain: account suspended; deferred",
 			"inv", inv.ID, "app_id", inv.AppID)
@@ -714,27 +707,6 @@ func (d *Drain) emitDone(ctx context.Context, inv state.Invocation, terminalStat
 	}
 }
 
-// isOverDelayedCap returns true when adding one more delayed_task to
-// this app would push past the plan cap. Reads the cap dynamically
-// (the customer may have downgraded) and delegates the count to
-// CountPendingInvocations (index-backed by invocations_app_pending_idx).
-func (d *Drain) isOverDelayedCap(ctx context.Context, appID string) bool {
-	app, err := d.engine.Store().AppByID(ctx, appID)
-	if err != nil {
-		return false
-	}
-	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
-	if err != nil {
-		return false
-	}
-	limits := api.MustLimitsFor(acct.Plan)
-	n, err := d.store.CountPendingInvocations(ctx, appID, state.InvocationDelayedTask)
-	if err != nil {
-		return false
-	}
-	return n >= limits.MaxDelayedTasksPerApp
-}
-
 // isAccountActive is the suspended-account gate for the drain. Mirrors
 // the cron loop's `if !acct.Active() { continue }` at loop.go:580 —
 // rows queued while the account was Active may sit in 'pending' across
@@ -777,30 +749,24 @@ func (d *Drain) isAccountActive(ctx context.Context, appID string) bool {
 // store call per dispatched row; if this becomes hot, a TTL'd
 // plan-cache keyed by account_id is the obvious follow-up.
 //
-// Telemetry: a lookup-error fail-open disables the retry ceiling for
-// the affected row, which lets a poisoned payload retry indefinitely
-// until the lookup recovers. The fail-open is the right behaviour for
-// the in-flight row (don't dead-letter on a Postgres hiccup) but it
-// MUST be observable — we slog a warning so the operator sees the
-// gate fall back. Without this, a sustained Postgres blip would
-// silently mask the dead-letter safety net issue #394 introduces.
+// Lookup failures fall back to the platform-wide safety ceiling. This may be
+// more generous than the account plan, but it remains finite: a control-plane
+// outage cannot turn a poisoned invocation into an infinite retry loop.
 func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
-	if policy := inv.RetryPolicy(); policy.MaxAttempts > 0 {
-		return policy.MaxAttempts
-	}
+	requested := inv.RetryPolicy().MaxAttempts
 	app, err := d.engine.Store().AppByID(ctx, inv.AppID)
 	if err != nil {
-		d.log.WarnContext(ctx, "invocationAttemptBudget: AppByID failed; falling back to legacy infinite retry",
+		d.log.WarnContext(ctx, "invocationAttemptBudget: AppByID failed; using finite safety ceiling",
 			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
-		return 0
+		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
 	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
 	if err != nil {
-		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; falling back to legacy infinite retry",
+		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; using finite safety ceiling",
 			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)
-		return 0
+		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
-	return api.MustLimitsFor(acct.Plan).MaxQueueAttempts
+	return api.EffectiveRetryMaxAttempts(requested, api.MustLimitsFor(acct.Plan).MaxQueueAttempts)
 }
 
 // invocationRetryDelay applies the per-row exponential backoff curve when

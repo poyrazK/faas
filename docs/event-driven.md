@@ -118,10 +118,18 @@ subscriptions directly:
 ```bash
 gregale events subscriptions APP
 gregale events subscriptions APP --json
+gregale events deliveries APP
+gregale events deliveries APP --state failed --json
 ```
 
 This is useful after a deploy or manifest change: it shows the normalized
 source, type, filter, and enabled state that the router will use.
+
+After publishing, use `events deliveries` to see the matching event id,
+delivery state, attempt count, and last lifecycle timestamp without searching
+the account-wide invocation ledger. `--event-id` narrows the view to one
+published event; `--state` can focus on pending, failed, or dead-lettered
+deliveries.
 
 The machine-readable event contract is published in
 [`api/asyncapi.yaml`](../api/asyncapi.yaml), including the authenticated

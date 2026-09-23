@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 )
 
 func scanPrivateNetwork(row interface{ Scan(...any) error }) (PrivateNetwork, error) {
@@ -289,6 +290,51 @@ func (s *PgStore) DeletePrivateNetwork(ctx context.Context, accountID, id string
 		return ErrNotFound
 	}
 	return ErrConflict
+}
+
+// DeletePrivateNetworkDurably commits the removal and its fabric teardown
+// handoff together. Without this boundary, an outbox failure after DELETE
+// would erase the CIDR needed to clean up host networking on every node.
+func (s *PgStore) DeletePrivateNetworkDurably(ctx context.Context, accountID, id string) error {
+	id = strings.TrimSpace(id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	var region, cidr string
+	err = tx.QueryRow(ctx, `delete from private_networks
+		where account_id = $1 and id = $2
+		  and not exists (select 1 from app_private_network_attachments a where a.account_id = $1 and a.network_id = $2)
+		  and not exists (select 1 from private_network_peerings p where p.account_id = $1 and (p.left_network_id = $2 or p.right_network_id = $2))
+		returning region, cidr::text`, mustPgUUID(accountID), id).Scan(&region, &cidr)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var exists bool
+		if err := tx.QueryRow(ctx, `select exists(select 1 from private_networks where account_id = $1 and id = $2)`, mustPgUUID(accountID), id).Scan(&exists); err != nil {
+			return mapErr(err)
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		return ErrConflict
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	payload, err := json.Marshal(struct {
+		Kind      string `json:"kind"`
+		AccountID string `json:"account_id"`
+		NetworkID string `json:"network_id"`
+		Region    string `json:"region"`
+		CIDR      string `json:"cidr"`
+	}{"private_network_deleted", accountID, id, region, cidr})
+	if err != nil {
+		return err
+	}
+	if err := db.EnqueueDurableNotificationTx(ctx, tx, db.NotifyPrivateNetworkChanged, string(payload)); err != nil {
+		return err
+	}
+	return mapErr(tx.Commit(ctx))
 }
 
 func (s *PgStore) CreatePrivateNetworkPeering(ctx context.Context, peering PrivateNetworkPeering) (PrivateNetworkPeering, error) {
