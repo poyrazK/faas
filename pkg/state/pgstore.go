@@ -6273,6 +6273,9 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // to supply a deterministic UUID; all other callers keep the database-generated
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
+		return Deployment{}, err
+	}
 	d.Scope = normalizedDeploymentScope(d.Scope)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -6422,7 +6425,8 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
-		                          stage_state, rollback_on_5xx)
+		                          stage_state, rollback_on_5xx,
+		                          release_command, release_command_shell)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -6436,7 +6440,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46)
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -6477,7 +6481,8 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
 		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
-		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx)
+		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx,
+		notNullEmptyTextArray(d.ReleaseCommand), d.ReleaseCommandShell)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -9276,7 +9281,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          reason, tag, deployed_by, pr_number,
 		                          priority,
 		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
-		                          traffic_percent_explicit)
+		                          traffic_percent_explicit,
+		                          release_command, release_command_shell)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -9290,7 +9296,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45)
+		         $40, $41, $42, $43, $44, $45, $46, $47)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -9318,7 +9324,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		nullString(newDep.Reason), nullString(newDep.Tag), nullString(newDep.DeployedBy), newDep.PRNumber,
 		newDep.Priority,
 		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile),
-		newDep.TrafficPercentExplicit)
+		newDep.TrafficPercentExplicit,
+		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -22833,7 +22840,8 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(workflows, '[]'::jsonb),
 	coalesce(full_rootfs_allow_auto, false), full_rootfs_override,
 	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
-	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
+	coalesce(release_command, ARRAY[]::text[]), release_command_shell`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -22888,7 +22896,8 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.workflows, '[]'::jsonb),
 	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override,
 	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
-	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
+	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -23004,6 +23013,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
 		&d.APIHostingReceipt,
 		&d.InferredProfile,
+		&d.ReleaseCommand, &d.ReleaseCommandShell,
 	); err != nil {
 		return mapErr(err)
 	}
@@ -23597,6 +23607,16 @@ func notNullEmptyJSONRaw(b json.RawMessage) any {
 		return "[]" // pgx encodes Go string as text → jsonb parser sees `[]`
 	}
 	return b
+}
+
+// notNullEmptyTextArray mirrors notNullEmptyJSONRaw for immutable array
+// metadata. pgx encodes a nil slice as SQL NULL, which would bypass the
+// column default and violate deployments.release_command's NOT NULL guard.
+func notNullEmptyTextArray(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 // nullableOverridePort returns nil when port is 0 (the "absent" sentinel

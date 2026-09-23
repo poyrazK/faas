@@ -418,6 +418,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
 	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !noTriggers)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -500,6 +505,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			CanaryTotalSteps:       rollout.CanaryTotalSteps,
 			CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 			CanaryStages:           rollout.CanaryStages,
+			ReleaseCommand:         releaseCommand.command,
+			ReleaseCommandShell:    releaseCommand.shell,
 			HostingObserver:        s.ops,
 			HostingFlow:            hostingFlow,
 			ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && trafficPercent == nil && canarySpec == nil,

@@ -2364,6 +2364,12 @@ type Deployment struct {
 	// the exact archive accepted for this deployment. It is kept as raw JSON so
 	// state does not depend on the framework-profile package's API shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
+	// ReleaseCommand is immutable pre-activation intent captured from the
+	// exact source version (gregale.yaml release.command or Procfile release:).
+	// The orchestrator converts it into the deployment's unique release task;
+	// an empty slice means the deployment has no release phase.
+	ReleaseCommand      []string `json:"release_command,omitempty"`
+	ReleaseCommandShell bool     `json:"release_command_shell,omitempty"`
 }
 
 // OperatorDeploymentFilter bounds the provider-side deployment incident
