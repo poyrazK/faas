@@ -3,7 +3,7 @@
 -- +goose Up
 -- +goose StatementBegin
 alter table object_buckets
-    add column environment_clone_source_bucket_id uuid;
+    add column if not exists environment_clone_source_bucket_id uuid;
 -- +goose StatementEnd
 
 -- +goose Down

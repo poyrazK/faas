@@ -11832,12 +11832,12 @@ paths:
       - name: slug
         in: path
         required: true
-        description: Project slug owning the environment.
+        description: Project whose environment state is requested.
         schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
       - name: environment
         in: path
         required: true
-        description: Environment whose effective state is requested.
+        description: Target environment whose effective state is returned.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
     get:
       tags: [projects]
@@ -11873,7 +11873,7 @@ paths:
       - name: from
         in: query
         required: true
-        description: Source environment to compare against the target.
+        description: Source environment being compared with the target environment.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
     get:
       tags: [projects]
@@ -11905,12 +11905,12 @@ paths:
       - name: environment
         in: path
         required: true
-        description: Target environment receiving the configuration comparison.
+        description: Destination environment for the configuration comparison.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
       - name: from
         in: query
         required: true
-        description: Source environment to compare against the target.
+        description: Baseline environment for the configuration snapshot comparison.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
     get:
       tags: [projects]
@@ -25557,6 +25557,7 @@ components:
         created_at: { type: string, format: date-time }
 
     ProjectEnvironmentVariableResponse:
+      description: Non-secret runtime variable attached to an environment workload.
       type: object
       required: [key, value]
       properties:
@@ -25577,6 +25578,7 @@ components:
         updated_at: { type: string, format: date-time }
 
     ProjectEnvironmentBindingResponse:
+      description: Managed resource binding and its target-scoped credential metadata.
       type: object
       required: [kind, binding_id, secret_keys]
       properties:
@@ -25588,6 +25590,7 @@ components:
           items: { type: string }
 
     ProjectEnvironmentStateWorkloadResponse:
+      description: Effective configuration and live release state for one workload.
       type: object
       required: [workload_slug, workload_name, release, variables, secrets, bindings]
       properties:
@@ -25605,6 +25608,7 @@ components:
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
 
     ProjectEnvironmentSharedResourceResponse:
+      description: Application-scoped resource that is shared by all environments.
       type: object
       required: [kind, ownership, note]
       properties:
@@ -25613,6 +25617,7 @@ components:
         note: { type: string }
 
     ProjectEnvironmentStateResponse:
+      description: Point-in-time effective state snapshot for a project environment.
       type: object
       required: [project_slug, environment, protected, configuration, workloads, shared_resources, generated_at]
       properties:
@@ -25629,6 +25634,7 @@ components:
         generated_at: { type: string, format: date-time }
 
     ProjectEnvironmentReleaseDiffResponse:
+      description: Before-and-after release state for a workload in an environment diff.
       type: object
       required: [kind, before, after]
       properties:
@@ -25637,6 +25643,7 @@ components:
         after: { $ref: '#/components/schemas/ProjectEnvironmentReleaseWorkloadResponse' }
 
     ProjectEnvironmentVariableChangeResponse:
+      description: Non-secret runtime variable change between two environments.
       type: object
       required: [key, kind]
       properties:
@@ -25657,6 +25664,7 @@ components:
         credential_generation: { type: integer, format: int64, minimum: 1 }
 
     ProjectEnvironmentSecretChangeResponse:
+      description: Secret metadata comparison that excludes secret values and ciphertext.
       type: object
       required: [key, kind, before, after]
       properties:
@@ -25666,6 +25674,7 @@ components:
         after: { $ref: '#/components/schemas/ProjectEnvironmentSecretCellResponse' }
 
     ProjectEnvironmentBindingChangeResponse:
+      description: Managed resource binding change between two environment states.
       type: object
       required: [kind, binding_id, change]
       properties:
@@ -25676,6 +25685,7 @@ components:
         after: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
 
     ProjectEnvironmentWorkloadDiffResponse:
+      description: Release, variable, secret, and binding changes for one workload.
       type: object
       required: [workload_slug, workload_name, release, variables, secrets, bindings]
       properties:
@@ -25693,6 +25703,7 @@ components:
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingChangeResponse' }
 
     ProjectEnvironmentDiffResponse:
+      description: Effective-state comparison from one project environment to another.
       type: object
       required: [project_slug, from_environment, to_environment, configuration, workloads, shared_resources, generated_at]
       properties:
@@ -25812,7 +25823,7 @@ components:
           type: string
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           not: { const: default }
-          description: Project environment slug; the reserved app scope `default` cannot be used.
+          description: Canonical slug to assign to the new environment; `default` is reserved for application scope.
         protected: { type: boolean, default: false }
         from_environment:
           type: string
