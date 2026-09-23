@@ -132,6 +132,10 @@ type AppManifest struct {
 	// StopSignal mirrors OCI STOPSIGNAL; runtime signal-forwarding
 	// lands in M-2 (ADR-X3 lifecycle contract).
 	StopSignal string `json:"stop_signal,omitempty"`
+	// SecretReloadSignal opts the main workload into live secret-file
+	// replacement followed by this signal. The application must handle the
+	// signal, reread FAAS_SECRETS_FILE, and apply the new values itself.
+	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
 	// StopGracePeriod mirrors OCI StopGracePeriod (the OCI image
 	// spec doesn't carry it; M-2 will populate from operator
 	// override or per-plan cap). Currently always zero.
@@ -185,6 +189,9 @@ type AppManifest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. The gateway fails open when that instance is gone.
 	SessionAffinity bool `json:"session_affinity,omitempty"`
+	// VersionAffinityCookie names a stable, non-secret browser cookie used as
+	// the rollout key when Gregale-Version-Key is absent.
+	VersionAffinityCookie string `json:"version_affinity_cookie,omitempty"`
 }
 
 const (
@@ -208,6 +215,20 @@ func (m AppManifest) ValidateCrawlerPolicy() error {
 		return nil
 	}
 	return fmt.Errorf("crawler_policy must be one of wake, cached, block")
+}
+
+var versionAffinityCookieNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
+
+// ValidateVersionAffinityCookieName keeps the configured lookup unambiguous
+// and bounded. The empty name disables cookie-derived affinity.
+func ValidateVersionAffinityCookieName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if !versionAffinityCookieNameRe.MatchString(name) || name == "gregale_affinity" {
+		return fmt.Errorf("version_affinity_cookie must be a 1-64 character cookie name (letters, digits, _, ., -) other than gregale_affinity")
+	}
+	return nil
 }
 
 // WorkloadPortProtocol is the transport protocol for a workload listener.
@@ -284,7 +305,7 @@ func ValidateWorkloadPorts(ports []WorkloadPort) error {
 type AppManifestHealthcheck struct {
 	// Test is the argv of the check command, prefixed by "CMD",
 	// "CMD-SHELL", or "NONE" per Docker semantics.
-	Test []string `json:"test" yaml:"test" toml:"test"`
+	Test []string `json:"test,omitempty" yaml:"test,omitempty" toml:"test,omitempty"`
 	// IntervalS is the poll cadence after StartPeriodS elapses.
 	// 0 = inherit platform default (Docker: 30s).
 	IntervalS int `json:"interval_s,omitempty" yaml:"interval_s,omitempty" toml:"interval_s,omitempty"`
@@ -296,6 +317,16 @@ type AppManifestHealthcheck struct {
 	// StartPeriodS is the startup grace during which failures
 	// don't count (Docker 17.05+).
 	StartPeriodS int `json:"start_period_s,omitempty" yaml:"start_period_s,omitempty" toml:"start_period_s,omitempty"`
+	// The following typed actions and Cloud Run-style timing fields are used
+	// by deployment sidecar probe overrides; image-baked OCI HEALTHCHECKs keep
+	// using the fields above.
+	Exec             *SidecarExecProbe      `json:"exec,omitempty" yaml:"exec,omitempty" toml:"exec,omitempty"`
+	HTTPGet          *SidecarHTTPGetProbe   `json:"http_get,omitempty" yaml:"http_get,omitempty" toml:"http_get,omitempty"`
+	TCPSocket        *SidecarTCPSocketProbe `json:"tcp_socket,omitempty" yaml:"tcp_socket,omitempty" toml:"tcp_socket,omitempty"`
+	PeriodS          int                    `json:"period_s,omitempty" yaml:"period_s,omitempty" toml:"period_s,omitempty"`
+	FailureThreshold int                    `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty" toml:"failure_threshold,omitempty"`
+	SuccessThreshold int                    `json:"success_threshold,omitempty" yaml:"success_threshold,omitempty" toml:"success_threshold,omitempty"`
+	InitialDelayS    int                    `json:"initial_delay_s,omitempty" yaml:"initial_delay_s,omitempty" toml:"initial_delay_s,omitempty"`
 }
 
 // EffectivePort returns Port or the default.
@@ -417,8 +448,21 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	if err := m.ValidateCrawlerPolicy(); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
+	if err := ValidateVersionAffinityCookieName(m.VersionAffinityCookie); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)
+	}
+	if m.SecretReloadSignal != "" {
+		switch m.SecretReloadSignal {
+		case "SIGHUP", "SIGUSR1", "SIGUSR2":
+		default:
+			return fmt.Errorf("app manifest: secret_reload_signal %q must be one of {SIGHUP,SIGUSR1,SIGUSR2}", m.SecretReloadSignal)
+		}
+		if m.SecretReloadSignal == canonicalStopSignal(m.StopSignal) {
+			return fmt.Errorf("app manifest: secret_reload_signal must differ from stop_signal %q", m.StopSignal)
+		}
 	}
 	if err := ValidateWorkloadPorts(m.Ports); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
@@ -602,6 +646,19 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		}
 	}
 	return nil
+}
+
+func canonicalStopSignal(raw string) string {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "SIGHUP", "HUP", "1":
+		return "SIGHUP"
+	case "SIGUSR1", "USR1", "10":
+		return "SIGUSR1"
+	case "SIGUSR2", "USR2", "12":
+		return "SIGUSR2"
+	default:
+		return "SIGTERM"
+	}
 }
 
 // WriteManifest encodes m as canonical JSON.

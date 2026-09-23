@@ -592,7 +592,7 @@ func TestCmdDeployment_HappyPath_DetailRendered(t *testing.T) {
 		"id:",
 		"app_id:",
 		"build_id:",
-		"build_cache:",
+		"artifact_cache:",
 		"hit (sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)",
 		"image_digest:",
 		"kind:",

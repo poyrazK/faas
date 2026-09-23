@@ -251,14 +251,14 @@ func traceSnapshotKey(result api.AccountTraceLookupResponse) string {
 	result.GeneratedAt = time.Time{}
 	encoded, err := json.Marshal(result)
 	if err != nil {
-		return fmt.Sprintf("%d/%d/%d/%t", len(result.Matches), len(result.Invocations), len(result.Spans), result.Partial)
+		return fmt.Sprintf("%d/%d/%d/%d/%t", len(result.Matches), len(result.Invocations), len(result.Logs), len(result.Spans), result.Partial)
 	}
 	return string(encoded)
 }
 
 func traceWatchComplete(result api.AccountTraceLookupResponse) bool {
 	if len(result.Invocations) == 0 {
-		return len(result.Matches) > 0 || len(result.Spans) > 0
+		return len(result.Matches) > 0 || len(result.Logs) > 0 || len(result.Spans) > 0
 	}
 	for _, invocation := range result.Invocations {
 		switch invocation.State {
@@ -276,25 +276,27 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 		if code != 0 {
 			return code
 		}
-		if len(result.Matches) == 0 && len(result.Invocations) == 0 {
+		if len(result.Matches) == 0 && len(result.Invocations) == 0 && len(result.Logs) == 0 {
 			return 1
 		}
 		return 0
 	}
 
-	if len(result.Matches) == 0 && len(result.Invocations) == 0 {
+	if len(result.Matches) == 0 && len(result.Invocations) == 0 && len(result.Logs) == 0 {
 		if result.Partial {
 			_, _ = fmt.Fprintf(osStdout, "Trace %s was not found; some trace data could not be queried.\n", traceID)
 		} else {
 			_, _ = fmt.Fprintf(osStdout, "No retained request evidence for trace %s.\n", traceID)
 		}
 	} else {
-		_, _ = fmt.Fprintf(osStdout, "TRACE %s · %d app match(es) · %d invocation(s) · %d span(s)\n", traceID, len(result.Matches), len(result.Invocations), len(result.Spans))
-		_, _ = fmt.Fprintln(osStdout, "MATCHES")
-		for _, match := range result.Matches {
-			request := match.Request
-			_, _ = fmt.Fprintf(osStdout, "  %s · %s %s · HTTP %d · %d ms · telemetry row %s\n",
-				match.App, request.Method, request.Route, request.Status, request.LatencyMS, request.ID)
+		_, _ = fmt.Fprintf(osStdout, "TRACE %s · %d app match(es) · %d invocation(s) · %d HTTP log(s) · %d span(s)\n", traceID, len(result.Matches), len(result.Invocations), len(result.Logs), len(result.Spans))
+		if len(result.Matches) > 0 {
+			_, _ = fmt.Fprintln(osStdout, "MATCHES")
+			for _, match := range result.Matches {
+				request := match.Request
+				_, _ = fmt.Fprintf(osStdout, "  %s · %s %s · HTTP %d · %d ms · telemetry row %s\n",
+					match.App, request.Method, request.Route, request.Status, request.LatencyMS, request.ID)
+			}
 		}
 		if len(result.Invocations) > 0 {
 			_, _ = fmt.Fprintln(osStdout, "INVOCATIONS")
@@ -305,6 +307,16 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 					_, _ = fmt.Fprintf(osStdout, " · duration=%s", formatTraceDuration(duration))
 				}
 				_, _ = fmt.Fprintln(osStdout)
+			}
+		}
+		if len(result.Logs) > 0 {
+			_, _ = fmt.Fprintln(osStdout, "HTTP ACCESS LOGS")
+			for _, event := range result.Logs {
+				_, _ = fmt.Fprintf(osStdout, "  %s · %s · %s %s · status=%d · latency=%dms · event %s\n",
+					event.Timestamp, event.App, event.Method, event.Route, event.Status, event.LatencyMS, event.ID)
+			}
+			if result.LogsTruncated {
+				_, _ = fmt.Fprintln(osStdout, "HTTP access logs truncated to the newest retained events")
 			}
 		}
 		renderTraceWaterfall(osStdout, result)
@@ -327,7 +339,7 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 	if result.Partial {
 		return 3
 	}
-	if len(result.Matches) == 0 && len(result.Invocations) == 0 {
+	if len(result.Matches) == 0 && len(result.Invocations) == 0 && len(result.Logs) == 0 {
 		return 1
 	}
 	return 0
@@ -353,7 +365,7 @@ type traceWaterfallEntry struct {
 // keeps labels metadata-only: no payloads, headers, or customer attributes
 // are introduced by the CLI.
 func renderTraceWaterfall(w io.Writer, result api.AccountTraceLookupResponse) {
-	entries := make([]traceWaterfallEntry, 0, len(result.Spans)+len(result.Invocations))
+	entries := make([]traceWaterfallEntry, 0, len(result.Spans)+len(result.Invocations)+len(result.Logs))
 	for _, span := range result.Spans {
 		start, end, ok := spanWindow(span)
 		if !ok {
@@ -380,6 +392,18 @@ func renderTraceWaterfall(w io.Writer, result api.AccountTraceLookupResponse) {
 			end:     completed,
 			label:   fmt.Sprintf("%s · %s %s · state=%s", inv.App, inv.Source, inv.ID, inv.State),
 			pending: pending,
+		})
+	}
+	for _, event := range result.Logs {
+		start, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+		if err != nil {
+			continue
+		}
+		end := start.Add(time.Duration(event.LatencyMS) * time.Millisecond)
+		entries = append(entries, traceWaterfallEntry{
+			start: start,
+			end:   end,
+			label: fmt.Sprintf("%s · HTTP %s %s · status=%d", event.App, event.Method, event.Route, event.Status),
 		})
 	}
 	if len(entries) == 0 {

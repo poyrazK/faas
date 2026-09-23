@@ -130,6 +130,9 @@ func TestCDComputeWorkflowPassesReleaseTagToBundleValidation(t *testing.T) {
 	if !strings.Contains(step, `/releases/tags/${RELEASE_TAG}`) {
 		t.Fatal("signed fleet enrollment validation does not use the exported release tag")
 	}
+	if !strings.Contains(step, `/releases/${release_id}`) {
+		t.Fatal("signed fleet enrollment validation must fetch assets from release ID metadata")
+	}
 }
 
 func TestFleetEnrollmentWorkflowsUseCachedSourceAndPinnedCosignBinary(t *testing.T) {
@@ -284,6 +287,37 @@ func TestCDComputeWorkflowDownloadsCanonicalAssetsFromOneLookupInParallel(t *tes
 	}
 	if got := strings.Count(download, "/releases/tags/${RELEASE_TAG}"); got != 1 {
 		t.Fatalf("canonical release metadata lookups = %d, want 1", got)
+	}
+	if !strings.Contains(download, `/releases/${release_id}`) {
+		t.Fatal("canonical release download must fetch assets from release ID metadata")
+	}
+}
+
+func TestCDControlplaneWorkflowDownloadsCanonicalAssetsByReleaseID(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	start := strings.Index(workflow, "- name: Download and verify canonical release")
+	end := strings.Index(workflow, "- name: Set up SSH")
+	if start < 0 || end < 0 || start >= end {
+		t.Fatal("cannot isolate control-plane canonical release download step")
+	}
+	download := workflow[start:end]
+	for _, want := range []string{
+		`/releases/tags/${RELEASE_TAG}`,
+		`/releases/${release_id}`,
+		`.assets[] | select(.name == $name) | .browser_download_url`,
+		`sha256sum -c SHA256SUMS`,
+		`cosign verify-blob`,
+	} {
+		if !strings.Contains(download, want) {
+			t.Errorf("control-plane canonical release download is missing %q", want)
+		}
+	}
+	if strings.Contains(download, `gh release download`) {
+		t.Fatal("control-plane canonical release download must not use by-tag asset listing")
 	}
 }
 

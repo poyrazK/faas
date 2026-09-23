@@ -3134,23 +3134,39 @@ type OrgInvitationItem struct {
 }
 
 // OrgDetailData is the /dashboard/orgs/{slug} payload. The page
-// fetches members + invitations via the store directly (apid is
+// fetches members, invitations, and activity via the store directly (apid is
 // the dashboard's data layer — no reverse-call needed because
 // the dashboard and apid share the process per ADR-011 §"Surface
 // partition"). The seat chip lives on the embedded OrgListItem
 // (PR-8 review — duplicating SeatUsed/SeatLimit at the top level
 // created two sources of truth for the same value).
 //
-// Error is a non-empty string when one of the three lookups
+// Error is a non-empty string when one of the org roster lookups
 // failed non-fatally (the page still renders whatever rows came
 // back, with the error surfaced above the table as a banner).
+// ActivityError is separate so an unavailable timeline does not
+// hide otherwise-useful org membership and invitation data.
 // The full nil-out path is for the truly catastrophic case where
 // the org row itself is missing — the handler short-circuits to
 // 404 then.
 type OrgDetailData struct {
-	Org         OrgListItem
-	Members     []OrgMemberItem
-	Invitations []OrgInvitationItem
-	CallersRole string
-	Error       string
+	Org                OrgListItem
+	Members            []OrgMemberItem
+	Invitations        []OrgInvitationItem
+	Activity           []OrgActivityItem
+	ActivityKindPrefix string
+	ActivityActorType  string
+	ActivityNextURL    string
+	ActivityError      string
+	CallersRole        string
+	Error              string
+}
+
+// OrgActivityItem is one safe, display-ready row in the organization
+// activity timeline. The raw metadata payload intentionally stays out
+// of dashboard templates.
+type OrgActivityItem struct {
+	OccurredAt string
+	Kind       string
+	Summary    string
 }

@@ -213,7 +213,7 @@ func (s *PgStore) ReconcileHostPortLeases(ctx context.Context) error {
 			SELECT 1
 			  FROM instances instance
 			 WHERE instance.id = lease.instance_id
-			   AND instance.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm')
+			   AND instance.state IN ('waking', 'cold_booting', 'running', 'draining', 'snapshotting', 'migrating', 'warm')
 		 )`)
 	if err != nil {
 		return hostPortLeaseError("reconcile", err)

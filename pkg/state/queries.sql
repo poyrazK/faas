@@ -2805,7 +2805,7 @@ WHERE lifecycle = 'active'
   AND NOT EXISTS (
       SELECT 1 FROM instances
       WHERE instances.node_id = compute_nodes.id
-        AND instances.state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating', 'warm')
+        AND instances.state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm')
   )
 ORDER BY name;
 
@@ -2821,7 +2821,7 @@ ORDER BY name;
 SELECT id, state, app_id, deployment_id, kind
 FROM instances
 WHERE node_id = $1
-  AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating', 'warm')
+  AND state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm')
 ORDER BY started_at;
 
 -- name: DeploymentRecordSnapshotMiss :exec
@@ -3098,8 +3098,8 @@ SELECT count(*) FROM object_buckets WHERE account_id = $1 AND state <> 'deleted'
 DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
 
 -- name: ObjectBucketInsert :one
-INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *;
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *;
 
 -- name: ObjectBucketList :many
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id;

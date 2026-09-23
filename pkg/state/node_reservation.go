@@ -75,7 +75,7 @@ const nodeReservationLockClass = 0x6E6F6465
 // This deliberately does NOT call State.CountsForRAM(). That predicate also
 // returns true for 'snapshotting' and 'migrating', while the SQL in
 // ComputeNodeUsedMB / ComputeNodeUsedMBByNode sums only
-// ('waking','cold_booting','running','warm'). The two have disagreed since
+// ('waking','cold_booting','running','draining','warm'). The two have disagreed since
 // the states were added, and the SQL set is the one the placement chooser
 // actually reads.
 //
@@ -87,7 +87,7 @@ const nodeReservationLockClass = 0x6E6F6465
 // not smuggled in under a correctness fix.
 func nodeUsageCounts(s State) bool {
 	switch s {
-	case StateWaking, StateColdBooting, StateRunning, StateWarm:
+	case StateWaking, StateColdBooting, StateRunning, StateDraining, StateWarm:
 		return true
 	default:
 		return false
@@ -152,7 +152,7 @@ func (s *PgStore) insertInstanceWithNodeReservation(
 		       coalesce((select sum(i.ram_mb + $2)
 		                   from instances i
 		                  where i.node_id = n.id
-		                    and i.state in ('waking','cold_booting','running','warm')), 0)::bigint
+		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint
 		  from compute_nodes n
 		 where n.id = $1`,
 		nodeID, api.PerVMOverheadMB,
@@ -255,7 +255,7 @@ func reserveNodeForMigration(ctx context.Context, tx pgx.Tx, instanceID, toNodeI
 		       coalesce((select sum(i.ram_mb + $3)
 		                   from instances i
 		                  where i.node_id = n.id
-		                    and i.state in ('waking','cold_booting','running','warm')), 0)::bigint,
+		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint,
 		       coalesce((select m.ram_mb from instances m where m.id = $2), 0)::bigint
 		  from compute_nodes n
 		 where n.id = $1`,

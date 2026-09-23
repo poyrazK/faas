@@ -109,25 +109,33 @@ func TestAppActivityUsesOwnerOrgNotCallerOrg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateOrg: %v", err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "owner-app"})
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, OrgID: shared.ID, Slug: "owner-app"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	key := &state.APIKey{OrgID: shared.ID, Label: "shared key"}
-	mem := &state.OrgMembership{OrgID: shared.ID, AccountID: e.acct.ID, Role: state.OrgRoleOwner}
+	key := &state.APIKey{OrgID: personal.ID, Label: "personal key"}
+	mem := &state.OrgMembership{OrgID: personal.ID, AccountID: e.acct.ID, Role: state.OrgRoleOwner}
 	r := httptest.NewRequest(http.MethodPut, "/v1/apps/owner-app/env/KEY", nil)
 	r = r.WithContext(authmw.WithPrincipal(r.Context(), e.acct, key, mem))
 	e.s.recordAppActivity(ctx, r, e.acct, app, state.OrgActivity{
 		Kind: "env.set", ResourceType: "environment_variable", ResourceLabel: "KEY",
 		SourceType: "test", SourceID: "owner-only",
 	})
+	sharedRows, err := e.store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(shared.ID), Limit: 10})
+	if err != nil || len(sharedRows) != 1 {
+		t.Fatalf("shared activity = %v, err = %v", sharedRows, err)
+	}
+
+	// Rows written before org_id attribution remain visible via the legacy
+	// account-to-personal-org fallback.
+	app.OrgID = ""
+	e.s.recordAppActivity(ctx, r, e.acct, app, state.OrgActivity{
+		Kind: "env.set", ResourceType: "environment_variable", ResourceLabel: "LEGACY_KEY",
+		SourceType: "test", SourceID: "legacy-fallback",
+	})
 	personalRows, err := e.store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(personal.ID), Limit: 10})
 	if err != nil || len(personalRows) != 1 {
-		t.Fatalf("personal activity = %v, err = %v", personalRows, err)
-	}
-	sharedRows, err := e.store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(shared.ID), Limit: 10})
-	if err != nil || len(sharedRows) != 0 {
-		t.Fatalf("shared activity = %v, err = %v", sharedRows, err)
+		t.Fatalf("legacy personal activity = %v, err = %v", personalRows, err)
 	}
 }
 

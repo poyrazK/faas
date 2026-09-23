@@ -247,6 +247,22 @@ func TestBuildEnv_FourLayerPrecedence(t *testing.T) {
 	}
 }
 
+func TestStampSecretsFileEnvPlatformOwnsOptInPath(t *testing.T) {
+	got := StampSecretsFileEnv([]string{"A=1", SecretsFileEnv + "=/attacker"}, true)
+	if got[len(got)-1] != SecretsFileEnv+"="+secretReloadFilePath {
+		t.Fatalf("secret file env = %q, want platform path", got[len(got)-1])
+	}
+	for _, entry := range got[:len(got)-1] {
+		if strings.HasPrefix(entry, SecretsFileEnv+"=") {
+			t.Fatalf("customer secret file path was not replaced: %v", got)
+		}
+	}
+	disabled := StampSecretsFileEnv([]string{"A=1"}, false)
+	if len(disabled) != 1 || disabled[0] != "A=1" {
+		t.Fatalf("disabled stamp changed env: %v", disabled)
+	}
+}
+
 // TestStampOverridePortEnv_AppendsLast pins issue #460 / ADR-053
 // (PR-C): the platform contract for the per-deployment override port
 // must reach the runner as PORT=<port>, appended AFTER BuildEnv so

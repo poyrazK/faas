@@ -378,9 +378,13 @@ func TestPg_CoverageSweepAppsAndKeys(t *testing.T) {
 
 	t.Run("CreateApp", func(t *testing.T) {
 		email := "pg-app-" + uuid.NewString() + "@example.com"
-		acct, err := s.CreateAccount(ctx, email, api.PlanFree)
+		acct, err := s.CreateAccount(ctx, email, api.PlanPro)
 		if err != nil {
 			t.Fatalf("CreateAccount: %v", err)
+		}
+		personalOrg, err := s.OrgByPersonalAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("OrgByPersonalAccount: %v", err)
 		}
 		app := state.App{
 			ID:        uuid.NewString(),
@@ -393,6 +397,25 @@ func TestPg_CoverageSweepAppsAndKeys(t *testing.T) {
 		}
 		if got.ID == "" {
 			t.Error("CreateApp returned empty ID")
+		}
+		if got.OrgID != personalOrg.ID {
+			t.Errorf("CreateApp OrgID = %q, want personal org %q", got.OrgID, personalOrg.ID)
+		}
+
+		sharedOrg, err := s.CreateOrg(ctx, state.Org{
+			Slug: "shared-" + uuid.NewString()[:8], Name: "Shared", Plan: acct.Plan, Status: state.OrgStatusActive,
+		})
+		if err != nil {
+			t.Fatalf("CreateOrg: %v", err)
+		}
+		quotaCreated, err := s.CreateAppIfUnderQuota(ctx, state.App{
+			AccountID: acct.ID, OrgID: sharedOrg.ID, Slug: "quota-app-" + uuid.NewString()[:8],
+		}, api.MustLimitsFor(acct.Plan))
+		if err != nil {
+			t.Fatalf("CreateAppIfUnderQuota: %v", err)
+		}
+		if quotaCreated.OrgID != sharedOrg.ID {
+			t.Errorf("CreateAppIfUnderQuota OrgID = %q, want explicit org %q", quotaCreated.OrgID, sharedOrg.ID)
 		}
 	})
 

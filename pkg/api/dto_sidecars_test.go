@@ -222,7 +222,7 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 		{
 			name:    "startup-probe-empty-test",
 			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{}},
-			wantSub: "startup_probe.test",
+			wantSub: "must specify exactly one",
 		},
 		{
 			name:    "startup-probe-invalid-kind",
@@ -235,9 +235,9 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			wantSub: "exactly one command string",
 		},
 		{
-			name:    "startup-probe-timing-overflows-wire",
-			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 1 << 31}},
-			wantSub: "must fit in int32",
+			name:    "startup-probe-legacy-interval-over-max",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 301}},
+			wantSub: "outside their supported ranges",
 		},
 		{
 			name: "env-value-too-long",

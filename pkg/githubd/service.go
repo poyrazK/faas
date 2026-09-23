@@ -1120,6 +1120,19 @@ func (s *Service) stampPreviewPrState(ctx context.Context, appID, prState string
 	return nil
 }
 
+// closePRPreview atomically stamps the closed state and its fixed grace
+// deadline. ErrNotFound means a concurrent teardown already won the race.
+func (s *Service) closePRPreview(ctx context.Context, appID string, expiresAt time.Time) (state.App, error) {
+	if s.Reconcile == nil || s.Reconcile.Store == nil {
+		return state.App{}, nil
+	}
+	updated, err := s.Reconcile.Store.ClosePRPreview(ctx, appID, expiresAt)
+	if errors.Is(err, state.ErrNotFound) {
+		return state.App{}, nil
+	}
+	return updated, err
+}
+
 // WritePreviewCheck is the seam HandlePullRequest uses for the
 // queued / building / live preview Check Run. Wired by
 // cmd/githubd/main.go to a *ChecksAPI.WritePreviewCheck;
@@ -1336,9 +1349,16 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: derive preview slug: %w", err)
 	}
+	closeExpiresAt := time.Time{}
 	if ev.Action == PullRequestActionClosed {
-		if closeErr := s.closePRDependencies(ctx, parentApp, ev.Number); closeErr != nil {
+		closeExpiresAt = time.Now().Add(state.PRPreviewClosedGrace)
+		if closeErr := s.closePRDependencies(ctx, parentApp, ev.Number, closeExpiresAt); closeErr != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: close PR preview siblings: %w", closeErr)
+		}
+		if sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore); ok {
+			if closeErr := sets.ClosePRPreviewSet(ctx, install.InstallationID, ev.Repository.FullName, ev.Number); closeErr != nil {
+				return reconcile.Result{}, fmt.Errorf("githubd: close PR preview set: %w", closeErr)
+			}
 		}
 		if _, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal); lookupErr != nil {
 			if errors.Is(lookupErr, state.ErrNotFound) {
@@ -1371,6 +1391,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		// UUIDv7 when App.ID is empty. The preview app is a fresh
 		// row; reusing the parent's ID would collide on the PK.
 		AccountID:        parentApp.AccountID,
+		OrgID:            parentApp.OrgID,
 		Slug:             previewSlugVal,
 		Type:             parentApp.Type,
 		Runtime:          parentApp.Runtime,
@@ -1544,14 +1565,22 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	//     opened-on-already-existing-row case (ErrConflict from
 	//     step 5), and (b) the explicit closed-action teardown
 	//     arm — even when the row was first provisioned earlier
-	//     in the PR's lifetime, we now flip the label so the
-	//     janitor's 24h grace clock starts. SetPreviewPrState
-	//     refuses production rows and out-of-vocabulary values,
-	//     so this UPDATE cannot relabel a customer's live app
-	//     or trip the CHECK constraint.
-	if err := s.stampPreviewPrState(ctx, created.ID, previewState); err != nil {
+	//     in the PR's lifetime, we atomically set the closed label
+	//     and start the janitor's 24h grace clock. ClosePRPreview
+	//     only accepts an active PR-preview row, so a delayed webhook
+	//     cannot revive a stale/torn-down preview or relabel a production
+	//     app. Duplicate close deliveries preserve the first deadline.
+	if ev.Action == PullRequestActionClosed {
+		closed, closeErr := s.closePRPreview(ctx, created.ID, closeExpiresAt)
+		if closeErr != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: close PR preview: %w", closeErr)
+		}
+		if closed.ID != "" {
+			created = closed
+		}
+	} else if stateErr := s.stampPreviewPrState(ctx, created.ID, previewState); stateErr != nil {
 		s.Log.Warn("githubd: stamp preview_pr_state",
-			"err", err, "app_id", created.ID, "state", previewState)
+			"err", stateErr, "app_id", created.ID, "state", previewState)
 	}
 
 	result := reconcile.Result{Added: []state.App{created}}
@@ -1645,6 +1674,24 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			result.Added = append(result.Added, preview)
 		}
 		toBuild = append(toBuild, created)
+		sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore)
+		if !ok {
+			return result, fmt.Errorf("githubd: preview store does not support revision sets")
+		}
+		memberIDs := make([]string, 0, len(toBuild))
+		for _, preview := range toBuild {
+			memberIDs = append(memberIDs, preview.ID)
+		}
+		if err := sets.PutPRPreviewSet(ctx, state.PRPreviewSet{
+			InstallationID: install.InstallationID,
+			RepoFullName:   ev.Repository.FullName,
+			PRNumber:       ev.Number,
+			CommitSHA:      ev.PullRequest.HeadSHA,
+			RootAppID:      created.ID,
+			MemberAppIDs:   memberIDs,
+		}); err != nil {
+			return result, fmt.Errorf("githubd: record PR preview set: %w", err)
+		}
 		project := state.Project{
 			AccountID:        binding.AccountID,
 			RepoFullName:     ev.Repository.FullName,

@@ -212,7 +212,7 @@ type PGBackend struct {
 	log     *slog.Logger
 	metrics *Metrics
 
-	routes *RouteCache // host -> app_id + optional pinned deployment (LRU)
+	routes *RouteCache // host -> app_id (LRU)
 	// stale (ADR-190) is the last-known-good host -> App tier consulted
 	// only when the Router errors. See stale_routes.go.
 	stale *staleRoutes
@@ -268,6 +268,10 @@ type PGBackend struct {
 	// original Admit notification. The narrow hook keeps gateway independent
 	// of pkg/state.
 	liveTargetLoader func(ctx context.Context, appID string) ([]Target, error)
+	// deploymentSmokeTargetLoader reads an unpromoted RUNNING candidate for
+	// authenticated verification only. It must not populate the ordinary
+	// picker, whose weights represent customer-routable live deployments.
+	deploymentSmokeTargetLoader func(ctx context.Context, appID, deploymentID string) (Target, bool, error)
 	// liveTargetHydration coalesces cache-reconciliation reads for the same
 	// app. A gateway restart can receive a burst before the first request has
 	// populated the process-local picker; those requests must share one
@@ -427,6 +431,35 @@ func (b *PGBackend) WithLiveTargetLoader(fn func(context.Context, string) ([]Tar
 		b.liveTargetLoader = fn
 	}
 	return b
+}
+
+// WithDeploymentSmokeTargetLoader installs the narrow lookup used when a
+// candidate was woken by another gateway replica before promotion.
+func (b *PGBackend) WithDeploymentSmokeTargetLoader(fn func(context.Context, string, string) (Target, bool, error)) *PGBackend {
+	if b != nil {
+		b.deploymentSmokeTargetLoader = fn
+	}
+	return b
+}
+
+// ResolveDeploymentSmokeTarget consults durable instance state without
+// publishing the unpromoted candidate into the customer-traffic picker.
+func (b *PGBackend) ResolveDeploymentSmokeTarget(ctx context.Context, appID, deploymentID string) (Target, bool, error) {
+	if b == nil || b.deploymentSmokeTargetLoader == nil || appID == "" || deploymentID == "" {
+		return Target{}, false, nil
+	}
+	target, found, err := b.deploymentSmokeTargetLoader(ctx, appID, deploymentID)
+	if err != nil || !found {
+		return Target{}, false, err
+	}
+	if target.InstanceID == "" || target.NodeID == "" || target.DeploymentID != deploymentID ||
+		(target.AppID != "" && target.AppID != appID) {
+		return Target{}, false, fmt.Errorf("gateway: invalid deployment smoke target for app %q deployment %q", appID, deploymentID)
+	}
+	if target.AppID == "" {
+		target.AppID = appID
+	}
+	return target, true, nil
 }
 
 // ReconcileLiveTargets hydrates the process-local picker from the authoritative
@@ -779,10 +812,13 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 // targetSet instances live inside sets and are protected by their own
 // mu (b.tgtMu).
 type appPicker struct {
-	weights []deploymentWeight
-	cum     []int                 // cum[i] = Σ_{j≤i} weights[j].Percent; cum[len-1] = 100
-	cursor  atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
-	sets    map[string]*targetSet // deploymentID → targetSet
+	weights           []deploymentWeight
+	cum               []int // cum[i] = Σ_{j≤i} weights[j].Percent; cum[len-1] = 100
+	affinityWeights   []deploymentWeight
+	affinityCum       []int
+	affinityNamespace string
+	cursor            atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
+	sets              map[string]*targetSet // deploymentID → targetSet
 }
 
 // deploymentWeight is the per-deployment row of the picker's
@@ -865,10 +901,10 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	// Lookup is on every request. Use the read-mostly cache operation so
 	// concurrent hits do not serialize behind LRU promotion; route changes
 	// still invalidate the cache through the existing notifier path.
-	if appID, pinnedDeploymentID, pinnedScope, ok := b.routes.PeekTarget(host); ok {
-		if app, ok := b.getApp(appID); ok {
-			app.PinnedDeploymentID = pinnedDeploymentID
-			app.PinnedDeploymentScope = pinnedScope
+	if target, ok := b.routes.PeekTarget(host); ok {
+		if app, ok := b.getApp(target.AppID); ok {
+			app.PinnedDeploymentID = target.PinnedDeploymentID
+			app.PinnedDeploymentScope = target.PinnedDeploymentScope
 			return app, true
 		}
 	}
@@ -881,13 +917,17 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		b.stale.Delete(host)
 		return App{}, false
 	}
-	resolvedApp := app
-	b.routes.PutTarget(host, app.ID, app.PinnedDeploymentID, app.PinnedDeploymentScope)
-	app.PinnedDeploymentID = ""
-	app.PinnedDeploymentScope = ""
-	b.putApp(app)
-	b.stale.Put(host, resolvedApp)
-	return resolvedApp, true
+	b.routes.PutTarget(host, RouteTarget{
+		AppID:                 app.ID,
+		PinnedDeploymentID:    app.PinnedDeploymentID,
+		PinnedDeploymentScope: app.PinnedDeploymentScope,
+	})
+	baseApp := app
+	baseApp.PinnedDeploymentID = ""
+	baseApp.PinnedDeploymentScope = ""
+	b.putApp(baseApp)
+	b.stale.Put(host, app)
+	return app, true
 }
 
 // lookupStale is the Router-error branch of Lookup (ADR-190).
@@ -961,25 +1001,15 @@ func (b *PGBackend) Pick(appID string) PickResult {
 		}
 	}
 	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
 	picker := b.appsPicker[appID]
 	if picker == nil || len(picker.weights) == 0 {
-		b.tgtMu.RUnlock()
 		return PickResult{}
 	}
 	// Single-deployment fast path: byte-identical to pre-PR-B.
 	if len(picker.weights) == 1 {
 		deploymentID := picker.weights[0].DeploymentID
-		set := picker.sets[deploymentID]
-		if set == nil {
-			b.tgtMu.RUnlock()
-			return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
-		}
-		t, ok := set.pick(warmHint)
-		b.tgtMu.RUnlock()
-		if !ok {
-			return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
-		}
-		return PickResult{Target: t, OK: true, Picked: deploymentID}
+		return pickDeploymentLocked(picker, deploymentID, warmHint, "")
 	}
 	// Multi-deployment weighted stride.
 	slot := int(picker.cursor.Add(1)-1) % 100
@@ -995,6 +1025,56 @@ func (b *PGBackend) Pick(appID string) PickResult {
 			lo = mid + 1
 		}
 	}
+	return pickDeploymentLocked(picker, chosen, warmHint, "")
+}
+
+// AffinityDeployment resolves a stable customer key to the rollout bucket
+// without requiring that bucket to be warm. The service proxy and response
+// cache use this before endpoint selection so they share the public picker's
+// exact cohort boundary.
+func (b *PGBackend) AffinityDeployment(appID, key string) (string, bool) {
+	if b == nil || appID == "" {
+		return "", false
+	}
+	key, ok := normalizeVersionAffinityKey(key)
+	if !ok {
+		return "", false
+	}
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	return affinityDeployment(appID, key, b.appsPicker[appID])
+}
+
+// PickForVersionKey deterministically selects a rollout deployment, then
+// rotates within that deployment's routable instances. A session-affinity
+// instance is preferred only when it belongs to the selected deployment.
+func (b *PGBackend) PickForVersionKey(appID, key, preferredInstanceID string) PickResult {
+	if b == nil || appID == "" {
+		return PickResult{}
+	}
+	key, ok := normalizeVersionAffinityKey(key)
+	if !ok {
+		return b.Pick(appID)
+	}
+	var warmHint string
+	if b.warmHint != nil {
+		if nodeID, found := b.warmHint(appID); found {
+			warmHint = nodeID
+		}
+	}
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	chosen, ok := affinityDeployment(appID, key, picker)
+	if !ok {
+		return PickResult{}
+	}
+	return pickDeploymentLocked(picker, chosen, warmHint, preferredInstanceID)
+}
+
+// pickDeploymentLocked selects inside chosen and preserves the existing cold
+// bucket fallback. Callers must hold b.tgtMu.RLock.
+func pickDeploymentLocked(picker *appPicker, chosen, warmHint, preferredInstanceID string) PickResult {
 	set := picker.sets[chosen]
 	if set == nil || len(set.entries) == 0 {
 		// Cold deployment — fall through to the largest-weight
@@ -1022,19 +1102,24 @@ func (b *PGBackend) Pick(appID string) PickResult {
 			}
 		}
 		if fallbackSet == nil {
-			b.tgtMu.RUnlock()
 			return PickResult{Picked: chosen, ColdBucket: chosen}
 		}
 		t, ok := fallbackSet.pick(warmHint)
-		b.tgtMu.RUnlock()
 		if !ok {
 			return PickResult{Picked: chosen, ColdBucket: chosen}
 		}
 		t.DeploymentID = fallbackID
 		return PickResult{Target: t, OK: true, Picked: chosen, ColdBucket: chosen}
 	}
+	if preferredInstanceID != "" {
+		for _, target := range set.entries {
+			if target.InstanceID == preferredInstanceID {
+				target.DeploymentID = chosen
+				return PickResult{Target: target, OK: true, Picked: chosen}
+			}
+		}
+	}
 	t, ok := set.pick(warmHint)
-	b.tgtMu.RUnlock()
 	if !ok {
 		return PickResult{Picked: chosen, ColdBucket: chosen}
 	}
@@ -1179,8 +1264,7 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 		picker.sets[bucket] = set
 	}
 	if len(picker.weights) == 0 {
-		picker.weights = []deploymentWeight{{DeploymentID: bucket, Percent: 100}}
-		picker.cum = []int{100}
+		setPickerWeights(picker, []deploymentWeight{{DeploymentID: bucket, Percent: 100}})
 	}
 	set.add(target)
 }
@@ -1414,8 +1498,7 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 	// app is a wake-fan-out signal (handled in PickResult.
 	// ColdBucket), not an implicit-100 override.
 	if len(picker.weights) == 0 {
-		picker.weights = []deploymentWeight{{DeploymentID: bucket, Percent: 100}}
-		picker.cum = []int{100}
+		setPickerWeights(picker, []deploymentWeight{{DeploymentID: bucket, Percent: 100}})
 	}
 	set.add(Target{
 		AppID:               appID,
@@ -1572,8 +1655,7 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 		picker = &appPicker{sets: map[string]*targetSet{}}
 		b.appsPicker[appID] = picker
 	}
-	picker.weights = next
-	picker.cum = buildCumulativeWeights(next)
+	setPickerWeights(picker, next)
 	// Existing per-deployment targetSets in picker.sets are
 	// preserved — instances stay routable through the picker.
 	//
@@ -1895,14 +1977,16 @@ func (b *PGBackend) FlushRoutes() {
 	b.appsMu.Unlock()
 }
 
-// InvalidateRoutesForApp drops host-specific routes to appID, including any
-// deployment-preview pins. It is called when deployment state changes so a
-// superseded revision cannot keep routing from the host cache.
+// InvalidateRoutesForApp drops every host route and stale fallback for appID.
+// Deployment changes can close an immutable preview URL without changing the
+// app row, so the next request must re-resolve that hostname against storage.
 func (b *PGBackend) InvalidateRoutesForApp(appID string) {
-	if b == nil || b.routes == nil {
+	if b == nil || appID == "" {
 		return
 	}
-	b.routes.InvalidateApp(appID)
+	if b.routes != nil {
+		b.routes.InvalidateApp(appID)
+	}
 	if b.stale != nil {
 		b.stale.DeleteApp(appID)
 	}
@@ -2050,8 +2134,6 @@ func (b *PGBackend) getApp(appID string) (App, bool) {
 }
 
 func (b *PGBackend) putApp(app App) {
-	app.PinnedDeploymentID = ""
-	app.PinnedDeploymentScope = ""
 	b.appsMu.Lock()
 	b.apps[app.ID] = app
 	b.appsMu.Unlock()

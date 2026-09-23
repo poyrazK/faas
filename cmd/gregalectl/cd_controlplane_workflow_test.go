@@ -79,6 +79,57 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	}
 }
 
+func TestCDControlPlanePlannedMaintenanceKeepsDeploymentFailureGate(t *testing.T) {
+	platformBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := string(platformBody)
+	for _, required := range []string{
+		"maintenance_mode:",
+		"maintenance_mode: ${{ inputs.maintenance_mode }}",
+	} {
+		if !strings.Contains(platform, required) {
+			t.Errorf("platform workflow is missing maintenance input wiring %q", required)
+		}
+	}
+
+	controlBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := string(controlBody)
+	if got := strings.Count(control, "      maintenance_mode:"); got != 2 {
+		t.Errorf("control-plane workflow has %d maintenance inputs, want workflow_call and workflow_dispatch", got)
+	}
+	for _, required := range []string{
+		"MAINTENANCE_MODE: ${{ inputs.maintenance_mode }}",
+		`if [[ "$MAINTENANCE_MODE" == "true" ]]; then`,
+		"baseline_samples=0",
+		"ROLLOUT_BASELINE_SAMPLE_COUNT=\"$baseline_samples\"",
+		`ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh`,
+		"control-plane rollout probe proxy did not become ready",
+	} {
+		if !strings.Contains(control, required) {
+			t.Errorf("control-plane workflow is missing maintenance behavior %q", required)
+		}
+	}
+	observerBody, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "observe_rollout_availability.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := string(observerBody)
+	for _, required := range []string{
+		"if (( command_status != 0 )); then",
+		"exit \"$command_status\"",
+		"baseline_total > 0 && baseline_success == baseline_total && rollout_failed > 0",
+	} {
+		if !strings.Contains(observer, required) {
+			t.Errorf("maintenance observer must preserve wrapped-command failure: missing %q", required)
+		}
+	}
+}
+
 func TestCDControlPlaneVerifiesSBOMBeforeActivationAndAcceptsAfterHealth(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
 	if err != nil {

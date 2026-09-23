@@ -30,6 +30,10 @@ export type AppManifest = {
    */
   stop_signal?: string | null;
   /**
+   * Opt the main workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Must differ from stop_signal (ADR-222).
+   */
+  secret_reload_signal?: 'SIGHUP' | 'SIGUSR1' | 'SIGUSR2';
+  /**
    * OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4.
    */
   stop_grace_period?: string | null;
@@ -83,5 +87,9 @@ export type AppManifest = {
    * Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically.
    */
   session_affinity?: boolean;
+  /**
+   * Configured browser cookie name for rollout affinity; omitted when disabled.
+   */
+  version_affinity_cookie?: string;
 };
 

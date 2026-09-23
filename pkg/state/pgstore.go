@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,6 +93,53 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 		_, _ = conn.Exec(unlockCtx, `select pg_advisory_unlock(hashtextextended($1, 0))`, appID)
 		cancel()
 		conn.Release()
+	}, nil
+}
+
+// AcquireDeploymentActivationLock holds a session-scoped advisory lock across
+// the public smoke request and the eventual live/failed transition. The
+// notification outbox broadcasts snapshot_written to every imaged process;
+// the loser reloads the deployment after this lock and observes the winner's
+// terminal state instead of running a second verification wake.
+func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (func(context.Context), error) {
+	deploymentID = strings.TrimSpace(deploymentID)
+	if deploymentID == "" {
+		return nil, errors.New("state: deployment activation lock requires deployment id")
+	}
+	if s == nil || s.pool == nil {
+		return nil, errors.New("state: pgstore has nil pool")
+	}
+	conn, err := db.DirectPool(s.pool).Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
+	}
+	const lockSQL = `select pg_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`
+	if _, err := conn.Exec(ctx, lockSQL, deploymentID); err != nil {
+		// Cancellation can race a server-side lock grant. Closing the
+		// session is the only safe way to rule out an orphaned lock.
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		_ = conn.Hijack().Close(closeCtx)
+		cancel()
+		return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+	}
+	var once sync.Once
+	return func(ctx context.Context) {
+		once.Do(func() {
+			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			var unlocked bool
+			unlockErr := conn.QueryRow(unlockCtx,
+				`select pg_advisory_unlock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&unlocked)
+			cancel()
+			if unlockErr != nil || !unlocked {
+				// Never return a connection carrying an uncertain session lock
+				// to the pool: a later activation could block behind itself.
+				closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+				_ = conn.Hijack().Close(closeCtx)
+				closeCancel()
+				return
+			}
+			conn.Release()
+		})
 	}, nil
 }
 
@@ -2103,8 +2151,8 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39::jsonb)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39::jsonb, coalesce(nullif($40, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)))
 		returning ` + appsSelectColumns
 	// status: pull from app.Status when non-empty (the API surfaces it on
 	// update / restore paths); fall back to 'active' on the Go zero so the
@@ -2179,7 +2227,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		// before reaching this path, so the floor is a
 		// last-line defence for internal callers that build an
 		// App by hand.
-		appProtocol, cpuMillicores, string(visibility), retryPolicy)
+		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID))
 	return scanApp(row)
 }
 
@@ -2223,6 +2271,24 @@ func (s *PgStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []Ap
 	}
 	if len(apps) == 0 {
 		return nil, nil
+	}
+	needsPersonalOrg := false
+	for _, app := range apps {
+		if app.OrgID == "" {
+			needsPersonalOrg = true
+			break
+		}
+	}
+	if needsPersonalOrg {
+		personalOrg, err := s.OrgByPersonalAccount(ctx, apps[0].AccountID)
+		if err != nil {
+			return nil, err
+		}
+		for i := range apps {
+			if apps[i].OrgID == "" {
+				apps[i].OrgID = personalOrg.ID
+			}
+		}
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -2404,8 +2470,8 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	if workloadClass == "" {
 		workloadClass = WorkloadClassHTTP
 	}
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb)
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb, coalesce(nullif($38, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)))
 		returning ` + appsSelectColumns
 	// status: same fallback as CreateApp above — empty Go Status would
 	// trip 23514 on the CHECK constraint, so coerce to AppActive. The
@@ -2467,7 +2533,7 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		// coerced to 'http1' so the schema DEFAULT and the
 		// explicit-write path converge on the same universal
 		// default. Mirrors the binding in CreateApp above.
-		appProtocol, cpuMillicores, string(visibility), retryPolicy)
+		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID))
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
@@ -2704,6 +2770,28 @@ func (s *PgStore) SetPreviewPrState(ctx context.Context, appID, prState string) 
 	return a, nil
 }
 
+// ClosePRPreview atomically starts the post-close grace period. A duplicate
+// webhook delivery leaves an already-closed preview's deadline unchanged;
+// stale or torn-down rows cannot be reopened by a delayed close event.
+func (s *PgStore) ClosePRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error) {
+	var a App
+	row := s.pool.QueryRow(ctx, `
+		update apps
+		set preview_pr_state = $2,
+		    preview_expires_at = case when preview_pr_state = $3 or preview_expires_at is null then $4 else preview_expires_at end
+		where id = $1
+		  and preview_of_slug is not null
+		  and coalesce(preview_pr_number, 0) > 0
+		  and status <> 'deleted'
+		  and preview_pr_state in ($3, $2)
+		returning `+appsSelectColumns,
+		appID, PreviewPrStateClosed, PreviewPrStateOpen, expiresAt)
+	if err := scanAppInto(&a, row); err != nil {
+		return App{}, mapErr(err)
+	}
+	return a, nil
+}
+
 // RefreshDevSession renews the lease on a CLI-created developer preview.
 // The preview_pr_number=0 guard keeps this path from reopening or extending a
 // GitHub PR preview, while the status predicate prevents reviving a row the
@@ -2885,8 +2973,8 @@ func (s *PgStore) ListInstancesForLifecycleReconciliation(ctx context.Context, n
 		   join apps a on a.id = i.app_id
 		   join accounts ac on ac.id = a.account_id
 		  where (
-		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','snapshotting','migrating','warm'))
-		     or (ac.status = 'deleted_pending' and i.state in ('waking','cold_booting','running','snapshotting','migrating','evicting_account_deleting'))
+		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))
+		     or (ac.status = 'deleted_pending' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','evicting_account_deleting'))
 		  )%s
 		  order by i.started_at asc, i.id asc
 		  limit $%d`, nodeClause, limitArg)
@@ -4846,9 +4934,33 @@ func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accoun
 }
 
 func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {
+	_, err := s.deleteProjectEnvironmentWithCleanup(ctx, accountID, projectID, slug, ProjectEnvironmentCleanupResources{}, "", 0)
+	return err
+}
+
+func (s *PgStore) DeleteProjectEnvironmentWithCleanup(
+	ctx context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
+	if !resources.Empty() && (leaseToken == "" || leaseDuration <= 0 || resources.ValidateForEnvironment(slug) != nil) {
+		return ProjectEnvironmentCleanupJob{}, ErrInvalidArgument
+	}
+	return s.deleteProjectEnvironmentWithCleanup(ctx, accountID, projectID, slug, resources, leaseToken, leaseDuration)
+}
+
+func (s *PgStore) deleteProjectEnvironmentWithCleanup(
+	ctx context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("state: begin project environment delete: %w", err)
+		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: begin project environment delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -4863,12 +4975,12 @@ func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, proje
 	`, accountID, projectID, slug).Scan(&projectSlug, &protected)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
+			return ProjectEnvironmentCleanupJob{}, ErrNotFound
 		}
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
-	if slug == "production" || protected {
-		return ErrConflict
+	if slug == "production" || slug == DefaultEnvScope || protected {
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 
 	var hasLiveRelease bool
@@ -4880,38 +4992,73 @@ func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, proje
 			 where a.project_id = $1 and d.scope = $2 and d.status = 'live'
 		)
 	`, projectID, slug).Scan(&hasLiveRelease); err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	if hasLiveRelease {
-		return ErrConflict
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	var job ProjectEnvironmentCleanupJob
+	if !resources.Empty() {
+		payload, err := json.Marshal(resources)
+		if err != nil {
+			return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: encode project environment cleanup resources: %w", err)
+		}
+		createdAt := time.Now().UTC()
+		job = ProjectEnvironmentCleanupJob{
+			ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: slug,
+			Resources: cloneProjectEnvironmentCleanupResources(resources), NextAttemptAt: createdAt,
+			LeaseToken: leaseToken, CreatedAt: createdAt,
+		}
+		job.LeaseUntil = job.CreatedAt.Add(leaseDuration)
+		if _, err := tx.Exec(ctx, `
+			insert into project_environment_cleanup_jobs
+			    (id, account_id, project_id, environment_slug, resources, next_attempt_at, lease_token, lease_until)
+			values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+		`, job.ID, accountID, projectID, slug, string(payload), job.NextAttemptAt, leaseToken, job.LeaseUntil); err != nil {
+			return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from app_envs e using apps a
+		 where e.app_id = a.id and a.account_id = $1 and a.project_id = $2 and e.scope = $3
+	`, accountID, projectID, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from app_secrets s using apps a
+		 where s.app_id = a.id and a.account_id = $1 and a.project_id = $2 and s.scope = $3
+		   and s.managed_postgres_binding_id is null
+		   and s.managed_object_storage_credential_id is null
+	`, accountID, projectID, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_config_versions
 		 where project_id = $1 and environment_slug = $2
 	`, projectID, slug); err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_approvals
 		 where account_id = $1 and project_slug = $2 and environment_slug = $3
 	`, accountID, projectSlug, slug); err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	tag, err := tx.Exec(ctx, `
 		delete from project_environments
 		 where project_id = $1 and slug = $2
 	`, projectID, slug)
 	if err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: commit project environment delete: %w", err)
+		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: commit project environment delete: %w", err)
 	}
-	return nil
+	return job, nil
 }
 
 // ApplyProjectPlan persists a project + its member apps + crons in
@@ -5093,9 +5240,9 @@ func (s *PgStore) ApplyProjectPlan(
 		    (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency,
 		     status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist,
 		     project_id, root_dir, workload_name, workload_class, start_command,
-		     preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, cpu_millicores)
+		     preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, cpu_millicores, org_id)
 		values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9, $10::cidr[], $11::cidr[],
-		        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+		        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, coalesce(nullif($22, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)))
 		returning ` + appsSelectColumns
 		row := tx.QueryRow(ctx, insertAppSQL,
 			project.AccountID, a.Slug, string(appType), runtime, ramMB, idle, maxConcurrency,
@@ -5108,7 +5255,7 @@ func (s *PgStore) ApplyProjectPlan(
 			// time. The preview path provisions rows via
 			// CreateApp / CreateAppIfUnderQuota directly.
 			nullString(a.PreviewOfSlug), a.PreviewPrNumber,
-			nullString(a.PreviewPrState), nullableTimestamptzPtr(a.PreviewExpiresAt), cpuMillicores,
+			nullString(a.PreviewPrState), nullableTimestamptzPtr(a.PreviewExpiresAt), cpuMillicores, nullString(a.OrgID),
 		)
 		app, err := scanApp(row)
 		if err != nil {
@@ -5480,15 +5627,15 @@ func insertProjectAppInTx(ctx context.Context, tx pgx.Tx, app App) (App, error) 
 			 project_id, root_dir, workload_name, start_command, min_instances,
 			 streaming_enabled, eviction_priority, require_authn, public_auth_mode,
 			 websocket_enabled, route_metrics_enabled, maintenance_mode, app_protocol,
-			 consumer_auth_mode, cpu_millicores, workload_class)
-		values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+		 consumer_auth_mode, cpu_millicores, workload_class, org_id)
+		values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,coalesce(nullif($25, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)))
 		returning `+appsSelectColumns,
 		app.AccountID, app.Slug, string(appType), nullString(app.Runtime), ramMB,
 		maxConcurrency, string(status), manifestBytes, nullString(app.ProjectID),
 		app.RootDir, app.WorkloadName, nullString(app.StartCommand), app.MinInstances,
 		app.StreamingEnabled, EvictionPriorityOrBestEffort(app.EvictionPriority), app.RequireAuthn,
 		publicAuth, app.WebSocketEnabled, app.RouteMetricsEnabled, app.MaintenanceMode,
-		protocol, string(consumerAuth), cpu, string(workloadClass))
+		protocol, string(consumerAuth), cpu, string(workloadClass), nullString(app.OrgID))
 	return scanApp(row)
 }
 
@@ -6720,7 +6867,7 @@ func (s *PgStore) SafedeployStampRollout(ctx context.Context, id string, rollout
 }
 
 // CountLiveInstancesByDeployment returns the number of instances in
-// {WAKING, COLD_BOOTING, RUNNING} for the given deployment_id (issue
+// {WAKING, COLD_BOOTING, RUNNING, DRAINING} for the given deployment_id (issue
 // #555 PR-6). The DeploymentCounterWatcher
 // (pkg/sched/deployment_counter_watcher.go) uses this to detect the
 // "last live instance parked" transition. The SQL is a single
@@ -6735,7 +6882,7 @@ func (s *PgStore) CountLiveInstancesByDeployment(ctx context.Context, deployment
 	err := s.pool.QueryRow(ctx, `
 		select count(*) from instances
 		where deployment_id = $1
-		  and state in ('waking', 'cold_booting', 'running')
+		  and state in ('waking', 'cold_booting', 'running', 'draining')
 	`, deploymentID).Scan(&n)
 	return n, err
 }
@@ -6928,13 +7075,13 @@ func (s *PgStore) ListDeploymentsByNodeID(ctx context.Context, nodeID string) ([
 // ConcurrencyForDeployment returns the live-instance count for a
 // (app, deployment) pair. Used by the floor trigger's per-deployment
 // floor arithmetic and the reaper's per-deployment idle floor
-// check. The three live states (waking, cold_booting, running) match
-// pkg/state/machine.go CountsForConcurrency. PARKING / PARKED /
+// check. The four concurrency states (waking, cold_booting, running,
+// draining) match pkg/state/machine.go CountsForConcurrency. PARKING / PARKED /
 // STOPPED do not count (they're shutting down or idle).
 //
 // Backed by the partial index `instances_app_deployment_idx`
-// (migration 00132) which restricts the index to the three live
-// states. A pre-00132 deploy has the index in place but the
+// (migration 00132, extended by the draining-state migration) which restricts
+// the index to those states. A pre-00132 deploy has the index in place but the
 // instances.deployment_id column may be NULL on legacy rows — the
 // predicate `deployment_id = $2` excludes those rows from the
 // match, which under-counts but is safe (the trigger floors on
@@ -6946,7 +7093,7 @@ func (s *PgStore) ConcurrencyForDeployment(ctx context.Context, appID, deploymen
 		select count(*) from instances
 		 where app_id = $1
 		   and deployment_id = $2
-		   and state in ('waking', 'cold_booting', 'running')
+		   and state in ('waking', 'cold_booting', 'running', 'draining')
 	`, appID, deploymentID).Scan(&n)
 	if err != nil {
 		return 0, err
@@ -15336,7 +15483,7 @@ func (s *PgStore) ListActiveInstancesForApp(ctx context.Context, appID string, l
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where app_id = $1 and state in ('waking','cold_booting','running','snapshotting','migrating','warm')
+		 where app_id = $1 and state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
 		 order by started_at desc limit $2`, appID, limit)
 	if err != nil {
 		return nil, err
@@ -15380,7 +15527,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where state in ('running','waking','cold_booting','snapshotting','warm')
+		 where state in ('running','waking','cold_booting','draining','snapshotting','warm')
 		 order by started_at desc`)
 	if err != nil {
 		return nil, err
@@ -15460,7 +15607,7 @@ func (s *PgStore) ListInstancesForAccountPaged(ctx context.Context, accountID st
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
-		   and i.state in ('waking', 'cold_booting', 'running', 'snapshotting', 'warm')
+		   and i.state in ('waking', 'cold_booting', 'running', 'draining', 'snapshotting', 'warm')
 		   and ($2 = '' or i.id::text < $2)
 		 order by i.id::text desc
 		 limit $3`, accountID, before, limit)
@@ -16670,7 +16817,7 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 // ComputeNodeUsedMB returns the Σ(ram_mb + api.PerVMOverheadMB) for live
 // instances on the given node. Mirrors the §6.2-2 invariant re-stated
 // per-node: Σ ≤ admission_ceiling_mb per active node. Live = state ∈
-// ('waking','cold_booting','running'); SNAPSHOTTING is excluded because
+// ('waking','cold_booting','running','draining'); SNAPSHOTTING is excluded because
 // the watchdog considers a snapshotting instance parked-from-RAM (its
 // resident memory is being flushed to disk, not held for requests).
 // The 8 MB per-vm constant lives in pkg/api (pkg/api.PerVMOverheadMB)
@@ -16684,7 +16831,7 @@ func (s *PgStore) ComputeNodeUsedMB(ctx context.Context, nodeID string) (int64, 
 		select coalesce(sum(ram_mb + $2), 0)::bigint
 		  from instances
 		 where node_id = $1
-		   and state in ('waking','cold_booting','running','warm')
+		   and state in ('waking','cold_booting','running','draining','warm')
 	`, nodeID, api.PerVMOverheadMB).Scan(&used)
 	if err != nil {
 		return 0, fmt.Errorf("state: compute_node %s used_mb: %w", nodeID, err)
@@ -16712,7 +16859,7 @@ func (s *PgStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string)
 		select node_id::text, coalesce(sum(ram_mb + $2), 0)::bigint
 		  from instances
 		 where node_id = any($1::uuid[])
-		   and state in ('waking','cold_booting','running','warm')
+		   and state in ('waking','cold_booting','running','draining','warm')
 		 group by node_id
 	`, parsedIDs, api.PerVMOverheadMB)
 	if err != nil {
@@ -16756,7 +16903,7 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 		  from instances i
 		  join apps a on a.id = i.app_id
 		 where i.node_id = any($1::uuid[])
-		   and i.state in ('waking','cold_booting','running','warm')
+		   and i.state in ('waking','cold_booting','running','draining','warm')
 		 group by i.node_id
 	`, parsedIDs, api.DefaultAppCPUMillicores)
 	if err != nil {
@@ -17078,7 +17225,7 @@ func (s *PgStore) PerNodeLiveStats(ctx context.Context) ([]PerNodeStats, error) 
 		       coalesce(sum(i.ram_mb + 8), 0)                    as ram_used_mb
 		from instances i
 		join compute_nodes n on n.id = i.node_id
-		where i.state in ('waking', 'cold_booting', 'running', 'warm')
+		where i.state in ('waking', 'cold_booting', 'running', 'draining', 'warm')
 		group by n.name
 		order by n.name
 	`)
@@ -17124,7 +17271,7 @@ func (s *PgStore) OperatorCapacity(ctx context.Context) (OperatorCapacitySnapsho
 			       count(*) filter (where i.state = 'cold_booting') as instances_cold_booting,
 			       coalesce(sum(i.ram_mb + 8), 0)::bigint as ram_used_mb
 			  from instances i
-			 where i.state in ('waking', 'cold_booting', 'running', 'warm')
+			 where i.state in ('waking', 'cold_booting', 'running', 'draining', 'warm')
 			 group by i.node_id
 		), placed as (
 			select a.node_id,
@@ -22394,6 +22541,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 	var declaredRoutesBytes []byte
 	var visibility string
 	var securityPolicy string
+	var orgID string
 	if err := row.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
 		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances, &allowlistText,
 		&publicAuthIPAllowlistText,
@@ -22503,7 +22651,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&a.StaticEgressIP, &a.StaticEgressIPSetAt,
 		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil,
 		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility,
-		&a.RetryPolicyJSON, &securityPolicy); err != nil {
+		&a.RetryPolicyJSON, &securityPolicy, &orgID); err != nil {
 		return mapErr(err)
 	}
 	if overflowNodeStr != "" {
@@ -22522,6 +22670,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 	a.OnlyAllowDeclaredRoutes = onlyAllowDeclaredRoutes
 	a.Visibility = api.NormalizeAppVisibility(api.AppVisibility(visibility))
 	a.SecurityPolicy = api.AppSecurityPolicy(securityPolicy)
+	a.OrgID = orgID
 	if !a.SecurityPolicy.Valid() {
 		a.SecurityPolicy = api.AppSecurityPolicyOff
 	}
@@ -22694,7 +22843,8 @@ const appsSelectColumns = `
 	coalesce(retry_policy, '{}'::jsonb),
 	-- Security posture enforcement is appended so existing positional
 	-- app columns remain stable for every caller of this projection.
-	coalesce(security_policy, 'off')`
+	coalesce(security_policy, 'off'),
+	coalesce(org_id::text, '')`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`

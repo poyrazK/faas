@@ -84,6 +84,12 @@ const (
 	// wakes one replacement instance.
 	TriggerAppRestart = "app.restart"
 
+	// TriggerRuntimeConfigRestart is the durable rolling refresh used after an
+	// environment or secret mutation. It permits one candidate to overlap the
+	// current serving set while the scheduler converges routes and drains old
+	// processes.
+	TriggerRuntimeConfigRestart = "runtime_config.restart"
+
 	// TriggerAppWake is an explicit customer pre-warm request from the API or
 	// dashboard. It is distinct from request-driven gateway recovery.
 	TriggerAppWake = "app.wake"

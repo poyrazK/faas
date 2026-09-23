@@ -48,6 +48,14 @@ const (
 	// admitted request. It is customer-facing diagnostic metadata; Server-
 	// Timing carries the same value for browser tooling.
 	QueueWaitHeader = "X-Gregale-Queue-Wait-Ms"
+	// VersionKeyHeader carries a customer-provided rollout cohort key. The
+	// gateway hashes it to a weighted deployment bucket; it is not a direct
+	// deployment selector and grants no access to otherwise unroutable code.
+	VersionKeyHeader = "Gregale-Version-Key"
+	// TargetDeploymentHeader selects one exact live deployment for a managed
+	// service call. The service proxy validates it after binding authorization;
+	// unlike VersionKeyHeader, it is not a weighted cohort key.
+	TargetDeploymentHeader = "Gregale-Target-Deployment"
 )
 
 // PlatformIdentity is the immutable identity of the workload that is about
@@ -116,7 +124,9 @@ func ClearGuestIdentityHeaders(h http.Header) {
 			h.Del(name)
 		}
 	}
-	for _, name := range []string{"X-Faas-App", "X-Faas-Instance", "X-Faas-Node"} {
+	// The exact-service selector is guest-authored on a managed service call,
+	// never inherited from a public client that an app might blindly forward.
+	for _, name := range []string{"X-Faas-App", "X-Faas-Instance", "X-Faas-Node", TargetDeploymentHeader} {
 		h.Del(name)
 	}
 }

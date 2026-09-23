@@ -786,6 +786,10 @@ from .list_workflow_steps_response import ListWorkflowStepsResponse
 from .log_excerpt import LogExcerpt
 from .log_excerpt_level import LogExcerptLevel
 from .log_excerpt_source import LogExcerptSource
+from .log_query_event import LogQueryEvent
+from .log_query_event_level import LogQueryEventLevel
+from .log_query_event_source import LogQueryEventSource
+from .log_query_event_stream import LogQueryEventStream
 from .magic_link_signup_request import MagicLinkSignupRequest
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
@@ -979,6 +983,13 @@ from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .preflight_finding import PreflightFinding
+from .preflight_level import PreflightLevel
+from .preflight_plan_budget import PreflightPlanBudget
+from .preflight_profile import PreflightProfile
+from .preflight_report import PreflightReport
+from .preflight_source import PreflightSource
+from .preflight_verdict import PreflightVerdict
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
 from .preview_service_calls_policy import PreviewServiceCallsPolicy
 from .prewarm_intent_response import PrewarmIntentResponse
@@ -1219,7 +1230,11 @@ from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
 from .sidecar_disk_io_profile import SidecarDiskIoProfile
 from .sidecar_env import SidecarEnv
+from .sidecar_exec_probe import SidecarExecProbe
+from .sidecar_http_get_probe import SidecarHTTPGetProbe
 from .sidecar_preset import SidecarPreset
+from .sidecar_probe import SidecarProbe
+from .sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 from .sidecar_timeline_response import SidecarTimelineResponse
 from .sidecar_timeline_status import SidecarTimelineStatus
 from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
@@ -2174,6 +2189,10 @@ __all__ = (
     "LogExcerpt",
     "LogExcerptLevel",
     "LogExcerptSource",
+    "LogQueryEvent",
+    "LogQueryEventLevel",
+    "LogQueryEventSource",
+    "LogQueryEventStream",
     "MagicLinkSignupRequest",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
@@ -2363,6 +2382,13 @@ __all__ = (
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
+    "PreflightFinding",
+    "PreflightLevel",
+    "PreflightPlanBudget",
+    "PreflightProfile",
+    "PreflightReport",
+    "PreflightSource",
+    "PreflightVerdict",
     "PreviewCreatedWebhookPayload",
     "PreviewServiceCallsPolicy",
     "PrewarmIntentResponse",
@@ -2583,7 +2609,11 @@ __all__ = (
     "SidecarCpuMillicores",
     "SidecarDiskIoProfile",
     "SidecarEnv",
+    "SidecarExecProbe",
+    "SidecarHTTPGetProbe",
     "SidecarPreset",
+    "SidecarProbe",
+    "SidecarTCPSocketProbe",
     "SidecarTimelineResponse",
     "SidecarTimelineStatus",
     "SidecarTimelineStatusStatus",

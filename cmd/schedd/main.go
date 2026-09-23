@@ -1574,11 +1574,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// populated by the persistent capacity stream and projected locally at the
 	// poller's 200 ms cadence; a meterd call before the first stream frame
 	// returns an empty list.
-	scheddgrpc.NewWithStats(engine, reader, ops, log).
-		WithPeerNodeResolver(nodeVerifier).
+	grpcHandler := scheddgrpc.NewWithStats(engine, reader, ops, log).
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
-		WithForeignReportRelay(engine).
-		Register(gsrv)
+		WithForeignReportRelay(engine)
+	// An empty NodeName is the single-box, Unix-socket posture. Passing a
+	// typed nil *PGNodeVerifier as the resolver still creates a non-nil
+	// interface and would require mTLS peer identity on that Unix socket.
+	if nodeVerifier != nil {
+		grpcHandler.WithPeerNodeResolver(nodeVerifier)
+	}
+	grpcHandler.Register(gsrv)
 
 	// Serve goroutine — must run AFTER Register or grpc fatals.
 	serveErr := make(chan error, 1)

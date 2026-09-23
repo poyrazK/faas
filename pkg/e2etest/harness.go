@@ -984,10 +984,66 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
+	// Multi-gateway tests need a named gateway without making the legacy
+	// single-box schedd claim the synthetic default-local node. Keep this
+	// test-only override scoped to gatewayd-internal.
+	for _, entry := range extraEnv {
+		if nodeName, ok := strings.CutPrefix(entry, "FAAS_E2E_GATEWAY_NODE_NAME="); ok {
+			env = append(env, "FAAS_NODE_NAME="+nodeName)
+		}
+	}
 	h.procs = append(h.procs, startProc(t, bin, "gatewayd-internal", env))
 	h.GatewayURL = "http://" + addr
 	h.GatewayControlURL = "http://" + controlAddr
 	waitReadyz(t, controlAddr, 30*time.Second)
+}
+
+// StartAdditionalGateway runs a second named gatewayd-internal against this
+// harness's database and schedd. Its independent listener, cache, and PG
+// subscription let rollout tests exercise the real fleet ACK barrier rather
+// than manufacturing acknowledgements in a notifier fake. The process is
+// owned by Harness.Stop like the primary gateway.
+func (h *Harness) StartAdditionalGateway(nodeName string, extraEnv ...string) string {
+	if h == nil || h.T == nil {
+		panic("e2etest: nil harness")
+	}
+	t := h.T
+	t.Helper()
+	if h.GatewayURL == "" || h.ScheddSock == "" || nodeName == "" {
+		t.Fatal("e2etest: additional gateway requires a running gateway, schedd, and node name")
+	}
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres:///faas?host=/run/postgresql&user=faas"
+	}
+	dbURL = daemonDSN(dbURL, h.Pool)
+	publicAddr := freeTCPAddr(t)
+	controlAddr := freeTCPAddr(t)
+	for controlAddr == publicAddr {
+		controlAddr = freeTCPAddr(t)
+	}
+	dir, err := os.MkdirTemp(h.SockDir, "gw-*")
+	if err != nil {
+		t.Fatalf("e2etest: create additional gateway socket dir: %v", err)
+	}
+	configPath := filepath.Join(dir, "gatewayd.toml")
+	config := fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\n", publicAddr, controlAddr, h.APIDURL)
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("e2etest: write additional gateway config: %v", err)
+	}
+	env := append(testEnvCommon(dbURL),
+		"FAAS_GATEWAY_LISTEN="+publicAddr,
+		"FAAS_GATEWAYD_CONFIG="+configPath,
+		"FAAS_GATEWAY_CONTROL_LISTEN="+controlAddr,
+		"FAAS_GATEWAY_SYNTH_SOCKET="+filepath.Join(dir, "gatewayd-internal.sock"),
+		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
+		"FAAS_APPS_DOMAIN="+testDomain,
+		"FAAS_NODE_NAME="+nodeName,
+	)
+	env = append(env, extraEnv...)
+	h.procs = append(h.procs, startProc(t, h.BinDir, "gatewayd-internal", env))
+	waitReadyz(t, controlAddr, 30*time.Second)
+	return "http://" + publicAddr
 }
 
 // startGatewaydPublic boots the public edge next to gatewayd-internal. It is
@@ -1489,6 +1545,17 @@ func (h *Harness) RestartSchedd() error {
 	if err := h.KillSchedd(); err != nil {
 		return err
 	}
+	// KillSchedd has reaped the prior process. It is no longer owned by
+	// Stop and must not be treated as a failed daemon when checking the
+	// replacement's startup health.
+	procs := h.procs[:0]
+	for _, candidate := range h.procs {
+		if candidate != nil && filepath.Base(candidate.Path) == "schedd" && candidate.ProcessState != nil {
+			continue
+		}
+		procs = append(procs, candidate)
+	}
+	h.procs = procs
 	_ = os.Remove(h.ScheddSock)
 	proc := startProc(h.T, h.BinDir, "schedd", append([]string(nil), h.scheddEnv...))
 	h.procs = append(h.procs, proc)

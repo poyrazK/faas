@@ -74,7 +74,7 @@ func TestCoverageSlice13MemStoreInstanceStateMachine(t *testing.T) {
 		StateParked, StateWaking, StateColdBooting, StateRunning,
 		StateSnapshotting, StateStopped, StateFailed,
 		StateEvictingAccountDeleting, StateMigrating,
-		StateWarm,
+		StateWarm, StateDraining,
 	} {
 		if !s.Valid() {
 			t.Errorf("State(%q).Valid() = false", s)
@@ -86,7 +86,7 @@ func TestCoverageSlice13MemStoreInstanceStateMachine(t *testing.T) {
 	}
 
 	// CountsForConcurrency: live states only.
-	for _, s := range []State{StateWaking, StateColdBooting, StateRunning} {
+	for _, s := range []State{StateWaking, StateColdBooting, StateRunning, StateDraining} {
 		if !s.CountsForConcurrency() {
 			t.Errorf("State(%q).CountsForConcurrency() = false, want true", s)
 		}
@@ -98,7 +98,7 @@ func TestCoverageSlice13MemStoreInstanceStateMachine(t *testing.T) {
 	// CountsForRAM is broader (includes snapshotting + stopped).
 	for _, s := range []State{
 		StateWaking, StateColdBooting, StateRunning, StateSnapshotting,
-		StateMigrating,
+		StateMigrating, StateDraining,
 		StateWarm,
 	} {
 		if !s.CountsForRAM() {

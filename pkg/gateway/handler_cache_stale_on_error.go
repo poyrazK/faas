@@ -43,17 +43,16 @@ type cacheRuleSnapshot struct {
 }
 
 // withCacheRuleContext stashes the snapshot on ctx.
-func withCacheRuleContext(ctx context.Context, rule *EdgeRuleCacheResolved, appID, method, path, query string, varyHash [32]byte, deploymentIDs ...string) context.Context {
+func withCacheRuleContext(ctx context.Context, rule *EdgeRuleCacheResolved, appID, method, path, query string, varyHash [32]byte) context.Context {
+	return withCacheRuleContextForDeployment(ctx, rule, appID, "", method, path, query, varyHash)
+}
+
+func withCacheRuleContextForDeployment(ctx context.Context, rule *EdgeRuleCacheResolved, appID, deploymentID, method, path, query string, varyHash [32]byte) context.Context {
 	if rule == nil {
 		return ctx
 	}
-	deploymentID := ""
-	if len(deploymentIDs) > 0 {
-		deploymentID = deploymentIDs[0]
-	}
 	return context.WithValue(ctx, cacheRuleContextKey{}, &cacheRuleSnapshot{
-		Rule: rule, AppID: appID, DeploymentID: deploymentID,
-		Method: method, Path: path, Query: query, VaryHash: varyHash,
+		Rule: rule, AppID: appID, DeploymentID: deploymentID, Method: method, Path: path, Query: query, VaryHash: varyHash,
 	})
 }
 
@@ -191,6 +190,17 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 		return
 	}
 	pick := h.backend.Pick(app.ID)
+	if versionKey, outcome := versionAffinityKeyFromRequest(r); outcome == versionAffinityKeyValid {
+		if picker, ok := h.backend.(versionAffinityPicker); ok {
+			pick = picker.PickForVersionKey(app.ID, versionKey, "")
+		}
+	}
+	// Never cache a sibling deployment's fallback response under the selected
+	// cohort. The foreground path can wake the exact cold bucket; a detached
+	// stale refresh simply waits for a later attempt.
+	if pick.ColdBucket != "" {
+		return
+	}
 	if !pick.OK {
 		return
 	}

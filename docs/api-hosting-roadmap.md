@@ -208,9 +208,13 @@ plan, and whether it works today.
 
    The reference-node target runs catalog fixtures tagged `runtime` and
    `quick` by default; set `FAAS_E2E_API_HOSTING_CATALOG=full` to exercise the
-   complete runtime-tagged matrix. Each selected fixture must leave a durable
-   hosting receipt, pass the public smoke, survive park/wake, and leave no
-   resident instance behind.
+   complete supported runtime matrix. The manual `qualify` lane also runs
+   `runtime-candidate` fixtures before they are promoted into `runtime`.
+   Workspace fixtures keep file paths relative to the repository root and
+   declare a nested `source_root`, so the gate validates both repository-
+   context upload and app-root inference. Each selected fixture must leave a
+   durable hosting receipt, pass the public smoke, survive park/wake, and leave
+   no resident instance behind.
 3. Create one machine-readable capability registry containing maturity,
    entitlement, documentation URL, operator flag, and acceptance test. Generate
    the public feature matrix and dashboard capability response from it. Keep

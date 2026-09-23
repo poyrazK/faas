@@ -71,7 +71,7 @@ var previewPgLimits = api.Limits{DeployedApps: 10000}
 
 func TestPg_ListPreviewsForTeardown_PicksClosedAndExpired(t *testing.T) {
 	s, ctx := pgStore(t)
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	open, _ := pgSeedPreview(t, s, ctx, "demo", "pr-1", 1, state.PreviewPrStateOpen, now.Add(24*time.Hour), false, 1)
 	closed, _ := pgSeedPreview(t, s, ctx, "demo", "pr-2", 2, state.PreviewPrStateClosed, now.Add(24*time.Hour), false, 2)
@@ -159,6 +159,50 @@ func TestPg_SetPreviewPrState_PreviewOnly(t *testing.T) {
 	}
 	if got.PreviewPrState != state.PreviewPrStateClosed {
 		t.Errorf("PreviewPrState = %q, want closed", got.PreviewPrState)
+	}
+}
+
+func TestPg_ClosePRPreviewStartsFixedGraceIdempotently(t *testing.T) {
+	s, ctx := pgStore(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	a, _ := pgSeedPreview(t, s, ctx, "demo", "pr-close", 17,
+		state.PreviewPrStateOpen, now.Add(7*24*time.Hour), false, 31)
+	deadline := now.Add(state.PRPreviewClosedGrace)
+
+	closed, err := s.ClosePRPreview(ctx, a.ID, deadline)
+	if err != nil {
+		t.Fatalf("ClosePRPreview: %v", err)
+	}
+	if closed.PreviewPrState != state.PreviewPrStateClosed || closed.PreviewExpiresAt == nil || !closed.PreviewExpiresAt.Equal(deadline) {
+		t.Fatalf("closed preview = state %q expiry %v, want closed at %v", closed.PreviewPrState, closed.PreviewExpiresAt, deadline)
+	}
+
+	replayed, err := s.ClosePRPreview(ctx, a.ID, deadline.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ClosePRPreview replay: %v", err)
+	}
+	if replayed.PreviewExpiresAt == nil || !replayed.PreviewExpiresAt.Equal(deadline) {
+		t.Fatalf("replayed close expiry = %v, want original deadline %v", replayed.PreviewExpiresAt, deadline)
+	}
+}
+
+func TestPg_ClosePRPreviewCannotReviveStaleOrDeveloperPreview(t *testing.T) {
+	s, ctx := pgStore(t)
+	now := time.Now().UTC()
+	stale, _ := pgSeedPreview(t, s, ctx, "demo", "pr-stale-close", 18,
+		state.PreviewPrStateStale, now.Add(time.Hour), false, 32)
+	if _, err := s.ClosePRPreview(ctx, stale.ID, now.Add(state.PRPreviewClosedGrace)); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("ClosePRPreview(stale) = %v, want ErrNotFound", err)
+	}
+	torn, _ := pgSeedPreview(t, s, ctx, "demo", "pr-torn-close", 19,
+		state.PreviewPrStateTornDown, now.Add(time.Hour), false, 34)
+	if _, err := s.ClosePRPreview(ctx, torn.ID, now.Add(state.PRPreviewClosedGrace)); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("ClosePRPreview(torn_down) = %v, want ErrNotFound", err)
+	}
+	dev, _ := pgSeedPreview(t, s, ctx, "demo", "dev-close", 0,
+		state.PreviewPrStateOpen, now.Add(time.Hour), false, 33)
+	if _, err := s.ClosePRPreview(ctx, dev.ID, now.Add(state.PRPreviewClosedGrace)); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("ClosePRPreview(developer preview) = %v, want ErrNotFound", err)
 	}
 }
 

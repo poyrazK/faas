@@ -125,6 +125,11 @@ func newNormalPathFixtureWithPlanAndEnv(t *testing.T, slug string, plan api.Plan
 // daemons to boot. Callers that need imaged in the loop pass e2etest.Imaged;
 // everyone else gets the same fixture as before.
 func newNormalPathFixtureWith(t *testing.T, slug string, plan api.Plan, extra e2etest.Which, extraEnv ...string) *normalPathFixture {
+	return newNormalPathFixtureWithRequest(t, slug, plan, extra,
+		api.CreateAppRequest{Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false)}, extraEnv...)
+}
+
+func newNormalPathFixtureWithRequest(t *testing.T, slug string, plan api.Plan, extra e2etest.Which, request api.CreateAppRequest, extraEnv ...string) *normalPathFixture {
 	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -194,8 +199,7 @@ func newNormalPathFixtureWith(t *testing.T, slug string, plan api.Plan, extra e2
 		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd|e2etest.GatewaydPublic|extra, extraEnv)
 	ctx := context.Background()
 	key := h.SeedAccount(ctx, plan, slug)
-	body, statusCode := doReq(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false)})
+	body, statusCode := doReq(t, h, key, http.MethodPost, "/v1/apps", request)
 	if statusCode != http.StatusCreated {
 		t.Fatalf("create app: status=%d body=%s", statusCode, body)
 	}

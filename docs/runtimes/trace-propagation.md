@@ -248,8 +248,12 @@ Queue messages sent through `POST /v1/apps/{slug}/queues/send` also carry the
 producer's W3C context and the canonical `X-Gregale-Trace-Id` in the durable
 invocation envelope. A delivery restores that context before dispatch, so the
 queue hop remains part of the same trace. `GET /v1/account/traces/{trace_id}`
-returns the retained request evidence plus a safe queue lifecycle projection;
-`gregale trace <trace-id>` renders both views without client-side app fan-out.
+returns retained request evidence, safe HTTP access-log events, and a safe
+queue lifecycle projection. The trace lookup uses tenant-scoped trace-id
+filtering for the durable HTTP log ledger; `gregale trace <trace-id>` renders
+the correlated events without client-side app fan-out. The command
+`gregale logs <app> --trace <trace-id>` selects the HTTP access events for one
+app and supports the usual route/status filters.
 
 ## Platform-to-guest transport
 

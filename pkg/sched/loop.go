@@ -2723,6 +2723,10 @@ func reaperInstanceState(s state.State) bool {
 	switch s {
 	case state.StateRunning, state.StateWaking, state.StateColdBooting, state.StateSnapshotting, state.StateWarm:
 		return true
+	case state.StateDraining:
+		// A durable runtime-config refresh owns this row until route and
+		// in-flight request drains finish; idle reaping must not park it.
+		return false
 	default:
 		return false
 	}

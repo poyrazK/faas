@@ -147,6 +147,12 @@ func (s *server) listAuditEvents(w http.ResponseWriter, r *http.Request, acct st
 		rows, err = s.store.ListEvents(r.Context(), acct.ID, listAuditEventsOverRead)
 	}
 	if err != nil {
+		s.log.WarnContext(r.Context(), "list audit events query failed",
+			"account_id", acct.ID,
+			"kind_prefix_set", prefix != "",
+			"app_id_filter_set", appIDFilter != "",
+			"include_anonymous", includeAnonymous,
+			"err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not list audit events"))
 		return
 	}

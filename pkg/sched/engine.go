@@ -1186,6 +1186,23 @@ func (e *Engine) IncAtCapacity(appID, kind string) {
 	}
 }
 
+// refuseExplicitDeployment records a refused wake of a named deployment. A
+// refused deployment smoke is a failed verification, not load: it is logged
+// with its reason, since the gateway can only answer 429, and it does not
+// feed the pressure aggregator. Counting it as pressure made the rebalancer
+// migrate an app between nodes while imaged kept retrying the smoke.
+func (e *Engine) refuseExplicitDeployment(appID, deploymentID string, deploymentSmoke bool, reason, status string) {
+	if !deploymentSmoke {
+		e.IncAtCapacity(appID, "admit")
+		return
+	}
+	if e.ops != nil {
+		e.ops.AppAtCapacityTotal(appID, "admit").Inc()
+	}
+	e.log.Warn("sched: deployment smoke refused",
+		"app", appID, "deployment", deploymentID, "reason", reason, "status", status)
+}
+
 // IncrementPressureSweepCounter (Tier A9 / ADR-087) bumps the
 // per-app consecutive-sweep counter the policy gate reads to
 // open the live-migration window. Called by the watcher at
@@ -1778,10 +1795,9 @@ func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (CoordOut
 	return e.restartApp(ctx, appID, wakeID, false)
 }
 
-// RefreshRuntimeConfig destroys resident VMs without capturing process memory,
-// invalidates every cached snapshot, and cold-wakes the app with its current
-// environment and secrets. Restoring or snapshotting here would preserve the
-// old process environment and defeat apply-now semantics.
+// RefreshRuntimeConfig rolls live deployments onto processes booted with the
+// current environment and secrets. Replacements become ready before stale
+// instances leave service; stale process memory is never captured.
 func (e *Engine) RefreshRuntimeConfig(ctx context.Context, appID, wakeID string) (CoordOutcome, error) {
 	return e.restartApp(ctx, appID, wakeID, true)
 }
@@ -1791,9 +1807,10 @@ func (e *Engine) RefreshRuntimeConfig(ctx context.Context, appID, wakeID string)
 // ownership, wake-correlation, and rate-limit behavior for the replacement.
 //
 // This is invoked by schedd after apid emits app_changed{kind:"restart"} or
-// the durable runtime_config_restart event. Apid writes the initial park
-// intent; schedd owns instance transitions and snapshot/VM operations, then
-// reactivates the app before the replacement wake.
+// the durable runtime_config_restart event. Apid claims the app lifecycle;
+// schedd owns every instance transition and VM operation. The normal restart
+// snapshots before waking again; a runtime-config refresh rolls through fresh
+// capacity and drains stale VMs without snapshotting them.
 func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRuntimeConfig bool) (out CoordOutcome, err error) {
 	if e == nil || appID == "" {
 		return CoordOutcome{}, fmt.Errorf("sched: restart app: empty app id")
@@ -1827,7 +1844,7 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 		e.restartMu.Lock()
 		call.out, call.err = out, err
 		if err == nil && out.Instance != nil && wakeID != "" {
-			e.restartCompleted[appID] = out.Instance.WakeID
+			e.restartCompleted[appID] = wakeID
 		}
 		close(call.done)
 		delete(e.restartInFlight, appID)
@@ -1848,6 +1865,15 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	if app.Status != state.AppActive && app.Status != state.AppEvictedCold {
 		// Deleted or otherwise non-live apps cannot be restarted.
 		return CoordOutcome{}, nil
+	}
+	if refreshRuntimeConfig {
+		out, err = e.refreshRuntimeConfigRolling(ctx, appID, wakeID)
+		if err == nil && out.Instance != nil && e.audit != nil {
+			e.audit.Emit(ctx, "app.runtime_config_restarted", &app.AccountID, map[string]any{
+				"app_id": appID, "slug": app.Slug, "wake_id": out.Instance.WakeID, "fresh": true,
+			})
+		}
+		return out, err
 	}
 
 	release := e.lockApp(appID)
@@ -1882,13 +1908,6 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 		}
 		switch state.State(fresh.State) {
 		case state.StateRunning, state.StateWarm:
-			if refreshRuntimeConfig {
-				if destroyErr := e.destroyForRuntimeConfigRestart(ctx, fresh); destroyErr != nil {
-					release()
-					return CoordOutcome{}, fmt.Errorf("sched: restart app: destroy instance %s: %w", fresh.ID, destroyErr)
-				}
-				continue
-			}
 			if state.State(fresh.State) == state.StateWarm {
 				continue
 			}
@@ -1897,25 +1916,12 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 				return CoordOutcome{}, fmt.Errorf("sched: restart app: park instance %s: %w", fresh.ID, parkErr)
 			}
 		case state.StateWaking, state.StateColdBooting:
-			if refreshRuntimeConfig {
-				if destroyErr := e.destroyForRuntimeConfigRestart(ctx, fresh); destroyErr != nil {
-					release()
-					return CoordOutcome{}, fmt.Errorf("sched: restart app: destroy instance %s: %w", fresh.ID, destroyErr)
-				}
-				continue
-			}
 			if destroyErr := e.timedDestroy(ctx, fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
 				release()
 				return CoordOutcome{}, fmt.Errorf("sched: restart app: destroy instance %s: %w", fresh.ID, destroyErr)
 			}
 			e.ledger.Release(fresh.ID)
 			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
-		}
-	}
-	if refreshRuntimeConfig {
-		if _, err := state.InvalidateAppSnapshots(ctx, e.store, appID); err != nil {
-			release()
-			return CoordOutcome{}, fmt.Errorf("sched: restart app: invalidate snapshots for %s: %w", appID, err)
 		}
 	}
 	active := state.AppActive
@@ -1928,14 +1934,11 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	out, err = e.EnsureWake(withRequestedWakeID(ctx, wakeID), appID, TriggerAppRestart)
 	if err == nil && out.Instance != nil && e.audit != nil {
 		auditKind := "app.restarted"
-		if refreshRuntimeConfig {
-			auditKind = "app.runtime_config_restarted"
-		}
 		e.audit.Emit(ctx, auditKind, &app.AccountID, map[string]any{
 			"app_id":  appID,
 			"slug":    app.Slug,
 			"wake_id": out.Instance.WakeID,
-			"fresh":   refreshRuntimeConfig,
+			"fresh":   false,
 		})
 	}
 	return out, err
@@ -2602,7 +2605,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if depErr != nil {
 			release()
 			if errors.Is(depErr, state.ErrNotFound) {
-				e.IncAtCapacity(appID, "admit")
+				e.refuseExplicitDeployment(appID, deploymentID, deploymentSmoke, "deployment_not_found", "")
 				return WakeResult{AtCapacity: true}, nil
 			}
 			return WakeResult{}, fmt.Errorf("sched: resolve explicit deployment: %w", depErr)
@@ -2610,7 +2613,11 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		smokeCandidate := deploymentSmoke && explicitDep.Status == state.DeploySnapshotting
 		if explicitDep.AppID != appID || (explicitDep.Status != state.DeployLive && !smokeCandidate) {
 			release()
-			e.IncAtCapacity(appID, "admit")
+			reason := "deployment_not_wakeable"
+			if explicitDep.AppID != appID {
+				reason = "deployment_app_mismatch"
+			}
+			e.refuseExplicitDeployment(appID, deploymentID, deploymentSmoke, reason, string(explicitDep.Status))
 			return WakeResult{AtCapacity: true}, nil
 		}
 		dep = explicitDep
@@ -2965,7 +2972,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// max+1 allowance the smoke verifier has always had. The ledger
 		// enforces the +1 bound (admission.go), and per-node RAM/vCPU
 		// ceilings are unaffected either way.
-		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke || e.rolloutGrantApplies(appID, dep.ID),
+		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke || trigger == TriggerRuntimeConfigRestart || e.rolloutGrantApplies(appID, dep.ID),
 		NodeID:                  placement.NodeID,
 		NodeCeilingMB:           placement.CeilingMB,
 		VCPUBudget:              placement.VCPUBudget,

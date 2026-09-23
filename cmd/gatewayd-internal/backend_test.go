@@ -85,42 +85,48 @@ func TestPgRouter_ResolveSlugHost(t *testing.T) {
 }
 
 func TestPgRouter_ResolveDeploymentPreviewPinsRevision(t *testing.T) {
-	ctx := context.Background()
 	store := state.NewMemStore()
-	app := seedApp(t, store, "orders-api", api.PlanPro)
-	deployment, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:preview",
+	app := seedApp(t, store, "orders", api.PlanPro)
+	deployment, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Status: state.DeployLive, Scope: "staging",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	qaDeployment, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:qa-preview", Scope: "qa",
-	})
-	if err != nil {
-		t.Fatalf("CreateDeployment(qa): %v", err)
+	host := gateway.BuildDeploymentPreviewURL(".gregale.dev", deployment.Revision, app.Slug)
+	router := pgRouter{
+		store: store, appsSuffix: ".gregale.dev", deploySuffix: ".gregale.dev",
 	}
-	r := pgRouter{store: store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev"}
 
-	got, ok, err := r.ResolveHost(ctx, "deploy-1-orders-api.gregale.dev")
+	resolved, ok, err := router.ResolveHost(context.Background(), host)
 	if err != nil || !ok {
-		t.Fatalf("deployment preview resolve ok=%v err=%v", ok, err)
+		t.Fatalf("ResolveHost(%q) ok=%v err=%v", host, ok, err)
 	}
-	if got.ID != app.ID || got.PinnedDeploymentID != deployment.ID || got.Scope != "" || got.PinnedDeploymentScope != "" {
-		t.Fatalf("resolved = %+v, want app %q pinned to %q in default scope", got, app.ID, deployment.ID)
+	if resolved.ID != app.ID || resolved.PinnedDeploymentID != deployment.ID || resolved.PinnedDeploymentScope != "staging" {
+		t.Fatalf("resolved = %+v, want app=%q deployment=%q scope=staging", resolved, app.ID, deployment.ID)
 	}
-	qa, ok, err := r.ResolveHost(ctx, "deploy-2-orders-api.gregale.dev")
-	if err != nil || !ok || qa.PinnedDeploymentID != qaDeployment.ID || qa.PinnedDeploymentScope != "qa" || qa.Scope != "" {
-		t.Fatalf("qa preview resolve = %+v, ok=%v, err=%v; want host-only qa pin", qa, ok, err)
-	}
-	if _, ok, err := r.ResolveHost(ctx, "deploy-3-orders-api.gregale.dev"); err != nil || ok {
-		t.Fatalf("unknown revision resolve ok=%v err=%v, want false/nil", ok, err)
-	}
-	if err := store.MarkDeploymentSuperseded(ctx, deployment.ID); err != nil {
+	if err := store.MarkDeploymentSuperseded(context.Background(), deployment.ID); err != nil {
 		t.Fatalf("MarkDeploymentSuperseded: %v", err)
 	}
-	if _, ok, err := r.ResolveHost(ctx, "deploy-1-orders-api.gregale.dev"); err != nil || ok {
-		t.Fatalf("superseded revision resolve ok=%v err=%v, want false/nil", ok, err)
+	if _, ok, err := router.ResolveHost(context.Background(), host); err != nil || ok {
+		t.Fatalf("superseded deployment preview ok=%v err=%v, want false/nil", ok, err)
+	}
+}
+
+func TestPgRouter_DeploymentPreviewRejectsInactiveRevision(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "orders-failed", api.PlanPro)
+	deployment, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Status: state.DeployFailed,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	host := gateway.BuildDeploymentPreviewURL(".gregale.dev", deployment.Revision, app.Slug)
+	router := pgRouter{store: store, deploySuffix: ".gregale.dev"}
+
+	if _, ok, err := router.ResolveHost(context.Background(), host); err != nil || ok {
+		t.Fatalf("inactive deployment route ok=%v err=%v, want false/nil", ok, err)
 	}
 }
 
@@ -286,14 +292,15 @@ func TestAppsSuffix(t *testing.T) {
 // the per-app cache delete semantics (those live in
 // pkg/gateway's pgbackend_test.go).
 type fakeInvalidator struct {
-	mu            sync.Mutex
-	evicted       map[string]string // instance_id -> app_id
-	flushCnt      int
-	publicAuthCnt int
-	refreshed     []string // app_ids that received RefreshDeploymentWeights
-	refreshOrder  []string // route refresh ordering: targets must precede weights
-	resetCnt      int      // ResetEdgeRules call count (ADR-089 PR 3)
-	resetApps     []string // app_ids that received ResetApp (ADR-091 amendment)
+	mu                 sync.Mutex
+	evicted            map[string]string // instance_id -> app_id
+	flushCnt           int
+	publicAuthCnt      int
+	refreshed          []string // app_ids that received RefreshDeploymentWeights
+	refreshOrder       []string // route refresh ordering: targets must precede weights
+	resetCnt           int      // ResetEdgeRules call count (ADR-089 PR 3)
+	resetApps          []string // app_ids that received ResetApp (ADR-091 amendment)
+	routeInvalidations []string
 	// responseCacheByApp (ADR-122 §Decision) records app_ids
 	// that received InvalidateResponseCacheByApp — paired
 	// 1:1 with resetApps in the NotifyAppChanged handler arm
@@ -319,7 +326,6 @@ type fakeInvalidator struct {
 	// pg_notify('cors_preset_changed', account_id) on every
 	// cors_presets INSERT / UPDATE / DELETE.
 	resetCorsPresetsAccounts []string
-	routeInvalidations       []string
 	// mirrorRefreshed (issue #72 / ADR-125 PR-A3) records
 	// app_ids that received RefreshMirrorRules via a
 	// kind="mirror" deployment_changed notify. Paired with
@@ -355,14 +361,14 @@ func (f *fakeInvalidator) ResetEdgeRules() {
 	f.resetCnt++
 	f.mu.Unlock()
 }
-func (f *fakeInvalidator) ResetApp(appID string) {
-	f.mu.Lock()
-	f.resetApps = append(f.resetApps, appID)
-	f.mu.Unlock()
-}
 func (f *fakeInvalidator) InvalidateRoutesForApp(appID string) {
 	f.mu.Lock()
 	f.routeInvalidations = append(f.routeInvalidations, appID)
+	f.mu.Unlock()
+}
+func (f *fakeInvalidator) ResetApp(appID string) {
+	f.mu.Lock()
+	f.resetApps = append(f.resetApps, appID)
 	f.mu.Unlock()
 }
 func (f *fakeInvalidator) InvalidateResponseCacheByApp(appID string) {
@@ -457,6 +463,7 @@ func TestHandleInvalidation(t *testing.T) {
 	}
 }
 
+// adr: 122
 // TestHandleInvalidation_DeploymentChangedRefreshesWeights (issue #556 /
 // PR-B) — a db.NotifyDeploymentChanged event must trigger
 // RefreshDeploymentWeights on the picker so a `faas traffic set`
@@ -757,7 +764,7 @@ func TestHandleInvalidation_TenantSurfaceChanged(t *testing.T) {
 // node whose VM is mid-Park-then-destroy — the next request must
 // re-admit which lands on the destination's wake path.
 func TestHandleInvalidation_TerminalStatesEvict(t *testing.T) {
-	for _, state := range []string{"stopped", "failed", "parked", "snapshotting", "migrating"} {
+	for _, state := range []string{"stopped", "failed", "parked", "snapshotting", "migrating", "draining"} {
 		f := &fakeInvalidator{}
 		log := testLogger()
 		payload := `{"instance_id":"i-term","app_id":"app-9","state":"` + state + `"}`

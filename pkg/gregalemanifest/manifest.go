@@ -109,21 +109,22 @@ type EventTrigger struct {
 // operator-configured immutable digest before persistence. Custom companions
 // must continue to provide an explicit digest-pinned image.
 type CompanionSpec struct {
-	Name           string                      `yaml:"name,omitempty" toml:"name,omitempty"`
-	Preset         string                      `yaml:"preset,omitempty" toml:"preset,omitempty"`
-	Image          string                      `yaml:"image,omitempty" toml:"image,omitempty"`
-	Type           api.SidecarType             `yaml:"type,omitempty" toml:"type,omitempty"`
-	Cmd            []string                    `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
-	Env            map[string]string           `yaml:"env,omitempty" toml:"env,omitempty"`
-	Port           int                         `yaml:"port,omitempty" toml:"port,omitempty"`
-	PrimaryIngress bool                        `yaml:"primary_ingress,omitempty" toml:"primary_ingress,omitempty"`
-	RamMB          int                         `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
-	ScratchMB      int                         `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
-	CPUMillicores  int                         `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
-	DiskIOProfile  string                      `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
-	Essential      *bool                       `yaml:"essential,omitempty" toml:"essential,omitempty"`
-	StartupProbe   *api.AppManifestHealthcheck `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
-	DependsOn      []ExtensionDependency       `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
+	Name           string                `yaml:"name,omitempty" toml:"name,omitempty"`
+	Preset         string                `yaml:"preset,omitempty" toml:"preset,omitempty"`
+	Image          string                `yaml:"image,omitempty" toml:"image,omitempty"`
+	Type           api.SidecarType       `yaml:"type,omitempty" toml:"type,omitempty"`
+	Cmd            []string              `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
+	Env            map[string]string     `yaml:"env,omitempty" toml:"env,omitempty"`
+	Port           int                   `yaml:"port,omitempty" toml:"port,omitempty"`
+	PrimaryIngress bool                  `yaml:"primary_ingress,omitempty" toml:"primary_ingress,omitempty"`
+	RamMB          int                   `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
+	ScratchMB      int                   `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
+	CPUMillicores  int                   `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
+	DiskIOProfile  string                `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
+	Essential      *bool                 `yaml:"essential,omitempty" toml:"essential,omitempty"`
+	StartupProbe   *api.SidecarProbe     `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
+	LivenessProbe  *api.SidecarProbe     `yaml:"liveness_probe,omitempty" toml:"liveness_probe,omitempty"`
+	DependsOn      []ExtensionDependency `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
 }
 
 // ExtensionSpec is the deprecated manifest name retained for source
@@ -221,7 +222,7 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 			Cmd: append([]string(nil), ext.Cmd...), Env: env,
 			Port: ext.Port, PrimaryIngress: ext.PrimaryIngress, RamMB: ext.RamMB, ScratchMB: ext.ScratchMB,
 			CPUMillicores: ext.CPUMillicores, DiskIOProfile: ext.DiskIOProfile,
-			Essential: ext.Essential, StartupProbe: ext.StartupProbe, DependsOn: deps,
+			Essential: ext.Essential, StartupProbe: ext.StartupProbe, LivenessProbe: ext.LivenessProbe, DependsOn: deps,
 		}
 		if sc.Port == 0 {
 			sc.Port = defaults.Port

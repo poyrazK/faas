@@ -74,6 +74,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apislogs"
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logarchive"
+	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -247,7 +248,7 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 	}
 	apislogs.StartSSE(w)
 	flusher, _ := w.(http.Flusher)
-	h.serveArchive(r.Context(), w, flusher, app.ID, instance, day)
+	h.serveArchiveWithAccount(r.Context(), w, flusher, app.ID, acct.ID, instance, day)
 }
 
 // streamUnauth is the whitebox seam. Mirrors stream()'s body
@@ -293,7 +294,7 @@ func (h *ArchiveLogsHandler) streamUnauth(w http.ResponseWriter, r *http.Request
 	}
 	apislogs.StartSSE(w)
 	flusher, _ := w.(http.Flusher)
-	h.serveArchive(r.Context(), w, flusher, appID, instance, day)
+	h.serveArchiveWithAccount(r.Context(), w, flusher, appID, acct.ID, instance, day)
 }
 
 // withinRetention reports whether day is inside the per-plan
@@ -339,8 +340,9 @@ func (h *ArchiveLogsHandler) withinRetention(plan api.Plan, day string) bool {
 // pipe-through-the-gzip-reader if any single-day archive ever
 // exceeds the stdlib heap budget; the wire shape stays the
 // same.
-func (h *ArchiveLogsHandler) serveArchive(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, instance, day string) {
+func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, accountID, instance, day string) {
 	key := archiveObjectKey(instance, day)
+	identity := resolveRuntimeLogIdentity(ctx_, h.Store, scheddgrpc.LogFrame{InstanceID: instance}, accountID, appID, "", make(map[string]api.PlatformIdentity))
 	backstop := h.Backstop
 	if backstop <= 0 {
 		backstop = defaultAppLogsBackstop
@@ -405,7 +407,7 @@ func (h *ArchiveLogsHandler) serveArchive(ctx_ context.Context, w http.ResponseW
 		if !scanner.Scan() {
 			break
 		}
-		if !renderArchiveLine(w, flusher, appID, instance, scanner.Bytes(), h.Ops) {
+		if !renderArchiveLineWithIdentity(w, flusher, appID, instance, scanner.Bytes(), identity, h.Ops) {
 			// Malformed JSON line — the producer side
 			// shouldn't generate these, but a third-party
 			// tool writing into the bucket could. Render
@@ -459,7 +461,7 @@ func archiveObjectKey(instance, day string) string {
 //
 // Returns false on a malformed JSON line so the caller can
 // surface a degraded terminal.
-func renderArchiveLine(w http.ResponseWriter, flusher http.Flusher, appID, instance string, raw []byte, ops *wire.OpsMetrics) bool {
+func renderArchiveLineWithIdentity(w http.ResponseWriter, flusher http.Flusher, appID, instance string, raw []byte, identity api.PlatformIdentity, ops *wire.OpsMetrics) bool {
 	var line struct {
 		Seq       int64     `json:"seq"`
 		Stream    string    `json:"stream"`
@@ -479,6 +481,27 @@ func renderArchiveLine(w http.ResponseWriter, flusher http.Flusher, appID, insta
 	}
 	if line.Level != "" {
 		payloadMap["level"] = line.Level
+	}
+	if identity.DeploymentID != "" {
+		payloadMap["deployment_id"] = identity.DeploymentID
+	}
+	if identity.NodeID != "" {
+		payloadMap["node_id"] = identity.NodeID
+	}
+	if identity.Region != "" {
+		payloadMap["region"] = identity.Region
+	}
+	if identity.CommitSHA != "" {
+		payloadMap["commit_sha"] = identity.CommitSHA
+	}
+	if identity.DeploymentTag != "" {
+		payloadMap["deployment_tag"] = identity.DeploymentTag
+	}
+	if identity.DeploymentCreatedAt != "" {
+		payloadMap["deployment_created_at"] = identity.DeploymentCreatedAt
+	}
+	if identity.ImageDigest != "" {
+		payloadMap["image_digest"] = identity.ImageDigest
 	}
 	payload, _ := json.Marshal(payloadMap)
 	_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", payload)

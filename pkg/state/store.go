@@ -852,6 +852,15 @@ type CronSuspensionStore interface {
 	ReactivateCronsForApp(ctx context.Context, appID string) (int, error)
 }
 
+// DeploymentActivationLocker serializes the post-snapshot verification and
+// live cutover for one deployment across all imaged processes. A
+// snapshot_written notification is broadcast to every compute node; checking
+// the deployment status without this lock lets several nodes smoke and wake
+// the same candidate at once.
+type DeploymentActivationLocker interface {
+	AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (release func(context.Context), err error)
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface
@@ -1758,6 +1767,10 @@ type Store interface {
 	// production app id is ErrNotFound, so a bug in the janitor's
 	// query can never relabel a customer's live app.
 	SetPreviewPrState(ctx context.Context, appID, prState string) (App, error)
+	// ClosePRPreview atomically marks a GitHub PR preview closed and starts its
+	// fixed post-close grace lease. Repeated close deliveries preserve the
+	// original deadline, and stale/torn-down previews cannot be revived.
+	ClosePRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error)
 	// RefreshDevSession extends an ad-hoc developer preview's lease and
 	// restores its serving state to open. Developer previews are encoded as
 	// preview rows with preview_pr_number=0; the implementation must refuse
@@ -1846,7 +1859,7 @@ type Store interface {
 	ListDeploymentsByNodeID(ctx context.Context, nodeID string) ([]Deployment, error)
 	// ConcurrencyForDeployment returns the live-instance count for a
 	// (app, deployment) pair — the sum of state IN ('waking',
-	// 'cold_booting', 'running'). Backed by the partial index added
+	// 'cold_booting', 'running', 'draining'). Backed by the partial index added
 	// in migration 00132.
 	ConcurrencyForDeployment(ctx context.Context, appID, deploymentID string) (int, error)
 	// UpdateDeploymentMinInstances stamps the per-deployment cold-wake
@@ -2243,10 +2256,11 @@ type Store interface {
 	CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error)
 	UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error)
 	// DeleteProjectEnvironment removes an unprotected, non-production
-	// environment when it has no live releases. Related configuration and
-	// approval rows are removed with the registry entry. ErrConflict protects
-	// production, protected environments, and environments still serving a
-	// live release.
+	// environment when it has no live releases. Scoped app variables and
+	// ordinary secrets plus related configuration/approval rows are removed;
+	// managed credential rows remain for the API layer to revoke safely.
+	// ErrConflict protects production, the reserved default app scope, protected
+	// environments, and environments still serving a live release.
 	DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error
 	CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error)
 	ProjectEnvironmentApprovalByID(ctx context.Context, accountID, projectSlug, environmentSlug, id string) (ProjectEnvironmentApproval, error)
@@ -2538,7 +2552,7 @@ type Store interface {
 	// the env overlay only contains that scope's rows.
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (Deployment, error)
 	// CountLiveInstancesByDeployment returns the number of instances
-	// currently in {WAKING, COLD_BOOTING, RUNNING} for the given
+	// currently in {WAKING, COLD_BOOTING, RUNNING, DRAINING} for the given
 	// deployment_id (issue #555 PR-6). The DeploymentCounterWatcher
 	// (pkg/sched/deployment_counter_watcher.go) consults this query
 	// to detect the "last live instance parked" transition that
@@ -4537,7 +4551,7 @@ type Store interface {
 	// ComputeNodeUsedMB returns the Σ(ram_mb + PerVMOverheadMB) for
 	// live instances on the given node. Single SQL aggregate, no
 	// client loop. Live = state IN ('waking','cold_booting',
-	// 'running') per spec §6.2-2 re-stated per-node. Atomic with
+	// 'running','draining') per spec §6.2-2 re-stated per-node. Atomic with
 	// the ledger; the ledger is the cache, this is the source of
 	// truth after a schedd restart. PerVMOverheadMB is the 8 MB
 	// fixed cost (spec §4.7 / billing model) added per live instance.

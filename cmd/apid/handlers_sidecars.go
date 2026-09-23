@@ -80,21 +80,22 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 		return []byte("[]"), nil
 	}
 	type sealedSidecar struct {
-		Name           string                      `json:"name"`
-		Preset         string                      `json:"preset,omitempty"`
-		Image          string                      `json:"image"`
-		Type           api.SidecarType             `json:"type"`
-		Cmd            []string                    `json:"cmd,omitempty"`
-		Env            map[string]string           `json:"env,omitempty"`
-		Port           int                         `json:"port,omitempty"`
-		PrimaryIngress bool                        `json:"primary_ingress,omitempty"`
-		RamMB          int                         `json:"ram_mb,omitempty"`
-		ScratchMB      int                         `json:"scratch_mb,omitempty"`
-		CPUMillicores  int                         `json:"cpu_millicores,omitempty"`
-		DiskIOProfile  string                      `json:"disk_io_profile,omitempty"`
-		Essential      *bool                       `json:"essential,omitempty"`
-		StartupProbe   *api.AppManifestHealthcheck `json:"startup_probe,omitempty"`
-		DependsOn      []api.WorkloadDependency    `json:"depends_on,omitempty"`
+		Name           string                   `json:"name"`
+		Preset         string                   `json:"preset,omitempty"`
+		Image          string                   `json:"image"`
+		Type           api.SidecarType          `json:"type"`
+		Cmd            []string                 `json:"cmd,omitempty"`
+		Env            map[string]string        `json:"env,omitempty"`
+		Port           int                      `json:"port,omitempty"`
+		PrimaryIngress bool                     `json:"primary_ingress,omitempty"`
+		RamMB          int                      `json:"ram_mb,omitempty"`
+		ScratchMB      int                      `json:"scratch_mb,omitempty"`
+		CPUMillicores  int                      `json:"cpu_millicores,omitempty"`
+		DiskIOProfile  string                   `json:"disk_io_profile,omitempty"`
+		Essential      *bool                    `json:"essential,omitempty"`
+		StartupProbe   *api.SidecarProbe        `json:"startup_probe,omitempty"`
+		LivenessProbe  *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+		DependsOn      []api.WorkloadDependency `json:"depends_on,omitempty"`
 	}
 	out := make([]sealedSidecar, 0, len(ss))
 	for _, s := range ss {
@@ -135,6 +136,7 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 			DiskIOProfile:  s.DiskIOProfile,
 			Essential:      s.Essential,
 			StartupProbe:   s.StartupProbe,
+			LivenessProbe:  s.LivenessProbe,
 			DependsOn:      s.DependsOn,
 		})
 	}

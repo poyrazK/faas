@@ -41,23 +41,41 @@ Every process receives loopback discovery variables such as
 available to the helper as `FAAS_WORKLOAD_MAIN_ADDR`. A helper without a port
 is valid for background processing.
 
-## Startup probes
+## Startup and liveness probes
 
-`startup_probe` optionally overrides the image's OCI `HEALTHCHECK`. Gregale
-runs the exec probe before marking a companion healthy and while monitoring
-it. Omit the field to use the image probe, or set `test: ["NONE"]` to disable
-a baked probe.
+`startup_probe` gates a workload's `healthy` dependency state. It may use an
+exec command, an HTTP GET, or a TCP connection check. Omit it to use the image's
+OCI `HEALTHCHECK`. A separate `liveness_probe` monitors a running companion;
+if omitted, Gregale keeps the previous behavior and reuses the effective
+startup probe for liveness. Set `startup_probe: {test: [NONE]}` to disable the
+baked image check when no startup or liveness check is desired; set
+`liveness_probe: {test: [NONE]}` to keep startup gating but disable ongoing
+liveness checks.
 
 ```yaml
 companions:
   - name: metrics
     image: registry.example.com/metrics@sha256:<64-hex-digest>
     startup_probe:
-      test: [CMD, /usr/local/bin/ready]
-      interval_s: 5
-      timeout_s: 2
-      retries: 3
+      http_get:
+        path: /ready
+        port: 9090
+      period_s: 2
+      timeout_s: 1
+      failure_threshold: 15
+    liveness_probe:
+      tcp_socket:
+        port: 9090
+      period_s: 10
+      failure_threshold: 3
 ```
+
+Use `exec: {command: [...]}`, `http_get: {path, port}`, or
+`tcp_socket: {port}`. A zero/omitted probe port uses the companion's declared
+port, then the image port, then Gregale's default port. Typed probes default
+to a 10-second period and 1-second timeout; legacy OCI `test` probes retain
+Docker's 30-second defaults and `interval_s`/`retries` aliases. Probe timeouts,
+periods, initial delay, and thresholds are bounded by API validation.
 
 Each companion also gets a named, in-memory shared directory at
 `/tmp/gregale/companions/<name>`. The same path is visible to the application

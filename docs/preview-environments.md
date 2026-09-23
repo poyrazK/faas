@@ -215,6 +215,16 @@ active production app cannot yet be provisioned as a preview. When a dependency
 preview is absent, the gateway considers the **production** service and its
 side effects are real if policy permits it.
 
+The `gregale-preview` GitHub check reports the **whole selected workload set**
+for the current PR head. It stays in progress until every member has a live
+preview deployment for that exact commit; a failed member fails the check and
+the PR comment names the workload. Deployment notifications for older commits
+or a closed PR cannot overwrite the current result. This is a readiness
+report, not a startup-order guarantee: a caller can start before a dependency,
+so applications should tolerate a brief unavailable dependency during boot.
+If two PRs share the same commit, the fixed-name GitHub check stays in progress
+until both PR environments are ready; each PR comment shows its own status.
+
 For new projects, Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before endpoint discovery or wake-up,
