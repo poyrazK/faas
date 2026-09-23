@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 224 | [Account-scoped release webhooks](224-account-scoped-release-webhooks.md) | accepted | Account-owned release receiver over the existing signed delivery ledger; bounded event filter and tenant isolation |
 | 223 | [Multiple long-running application companions](223-multiple-long-running-companions.md) | proposed | Bounded helper cardinality with up to four long-running companions, existing dependency/probe gates, and additive resource accounting |
 | 221 | [Replay-safe mirror rollups](221-replay-safe-mirror-rollups.md) | proposed | Atomic contribution receipts, UTC hourly buckets, retention safety, and coordinated legacy-writer cutover |
 | 222 | [Opt-in in-process secret reload](222-in-process-secret-reload.md) | accepted | App-owned signal handling over an atomic guest-local secret-file projection, limited to single-workload deployments |

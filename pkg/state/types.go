@@ -3270,12 +3270,24 @@ type UpdateAppWebhookParams struct {
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 }
 
-// AppWebhook is one per-app subscription row (issue #476 /
-// ADR-076). The webhook secret is at-rest sealed
-// (SecretSealed, age/X25519 via pkg/secretbox) and is never surfaced
-// on a read — the apid response carries a masked constant.
+// AppWebhookScope is the closed storage vocabulary for ADR-224. Existing
+// subscriptions are app-scoped; account scope is not yet publicly creatable.
+type AppWebhookScope string
+
+const (
+	AppWebhookScopeApp     AppWebhookScope = "app"
+	AppWebhookScopeAccount AppWebhookScope = "account"
+)
+
+// ErrInvalidAppWebhookScope prevents the app-only creation path from silently
+// creating an app subscription when passed an account-scoped request.
+var ErrInvalidAppWebhookScope = errors.New("state: invalid app webhook scope")
+
+// AppWebhook is a subscription row (ADR-076, ADR-224). Its sealed secret is
+// never surfaced on a read; the apid response carries a masked constant.
 type AppWebhook struct {
 	ID             string
+	Scope          AppWebhookScope
 	AppID          string
 	AccountID      string
 	TargetURL      string

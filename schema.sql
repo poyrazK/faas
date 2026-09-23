@@ -1398,7 +1398,7 @@ CREATE TABLE public.app_webhook_deliveries (
 
 CREATE TABLE public.app_webhooks (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
+    app_id uuid,
     account_id uuid NOT NULL,
     target_url text NOT NULL,
     secret_sealed bytea NOT NULL,
@@ -1407,7 +1407,11 @@ CREATE TABLE public.app_webhooks (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    delivery_format text DEFAULT 'json'::text NOT NULL,
+    scope text DEFAULT 'app'::text NOT NULL,
+    CONSTRAINT app_webhooks_delivery_format_chk CHECK ((delivery_format = ANY (ARRAY['json'::text, 'cloudevents'::text]))),
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
+    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 4) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text])))),
     CONSTRAINT app_webhooks_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
 
@@ -5922,6 +5926,13 @@ CREATE UNIQUE INDEX app_log_drains_app_target_uniq ON public.app_log_drains USIN
 --
 
 CREATE UNIQUE INDEX app_webhooks_app_target_uniq ON public.app_webhooks USING btree (app_id, target_url);
+
+
+--
+-- Name: app_webhooks_account_target_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_webhooks_account_target_uniq ON public.app_webhooks USING btree (account_id, target_url) WHERE (scope = 'account'::text);
 
 
 --

@@ -444,16 +444,18 @@ type AppTrustedSigner struct {
 }
 
 type AppWebhook struct {
-	ID           pgtype.UUID
-	AppID        pgtype.UUID
-	AccountID    pgtype.UUID
-	TargetUrl    string
-	SecretSealed []byte
-	EventFilter  []string
-	RetryPolicy  string
-	Enabled      bool
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	TargetUrl      string
+	SecretSealed   []byte
+	EventFilter    []string
+	RetryPolicy    string
+	Enabled        bool
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	DeliveryFormat string
+	Scope          string
 }
 
 type AppWebhookDelivery struct {
