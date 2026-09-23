@@ -63,6 +63,7 @@ const (
 	managedPostgresFile   = "managed_postgres.go"
 	openapiContractFile   = "openapi_contract.go"
 	executionsFile        = "executions.go"      // ADR-171 — disposable one-shot execution DTOs
+	appTasksFile          = "app_tasks.go"       // ADR-222 — deployment-attached one-off command DTOs
 	projectsFile          = "projects.go"        // issue #2201 — durable project lifecycle and recovery DTOs
 	devSyncFile           = "dev_sync.go"        // developer edit-to-live history
 	privateNetworkFile    = "private_network.go" // Gregale-owned private network fabric DTOs
@@ -303,6 +304,7 @@ var dtoExclude = map[string]bool{
 	"RealtimeLimits":               true, // internal plan policy, not a wire DTO
 	"ExecutionSnapshotShape":       true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":     true, // sealed scheduler intent, not a public DTO
+	"ResolvedCreateAppTaskRequest": true, // validated state admission input, not a public DTO
 	"AlertRuleRow":                 true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
 	// pkg/api ↔ pkg/state seam. The wire DTOs are OrgResponse /
@@ -959,6 +961,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
+		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),

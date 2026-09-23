@@ -330,6 +330,10 @@ type server struct {
 	// disposable execution admission surface (ADR-171). It remains false by
 	// default until the operator has enabled the scheduler/VM isolation path.
 	executionAPIEnabled bool
+	// appTaskAPIEnabled is the fail-closed public admission gate for commands
+	// attached to an app deployment (ADR-222). It remains separate from
+	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
+	appTaskAPIEnabled bool
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
 	// Postgres and the notification reconciler refreshes this snapshot.
@@ -695,6 +699,13 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 	return s
 }
 
+// WithAppTaskAPIEnabled attaches the boot-time gate for public app-task
+// admission. Scheduler dispatch remains independently gated.
+func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
+	s.appTaskAPIEnabled = enabled
+	return s
+}
+
 func (s *server) WithGitHubDeploysAvailable(probe func(context.Context) bool) *server {
 	s.githubDeploysAvailable = probe
 	return s
@@ -1037,6 +1048,9 @@ func newServerWithDeps(
 		// overwrites this from FAAS_EXECUTION_API_ENABLED after the host
 		// scheduler and VM isolation path have been installed.
 		executionAPIEnabled: false,
+		// Deployment-attached task admission is independently opt-in until
+		// the scheduler and app-runtime isolation path are qualified together.
+		appTaskAPIEnabled: false,
 		// pkg/auth.Middleware backs the s.requireMFA + s.requireScope
 		// facade (cmd/apid/auth_facade.go). The auditor's Emit is
 		// nil-safe so the auth.mfa_gate_hit audit row fires when the
@@ -1216,6 +1230,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getExecution))))
 	mux.HandleFunc("GET /v1/executions/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.streamExecutionEvents))))
 	mux.HandleFunc("DELETE /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelExecution)))))
+	// Deployment-attached one-off commands (ADR-222). The gate is checked
+	// before app lookup so a disabled host reveals no app existence. Public
+	// admission is manual-only; release tasks remain an internal consumer.
+	mux.HandleFunc("GET /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTasks))))
+	mux.HandleFunc("POST /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppTask)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppTask))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelAppTask)))))
 	mux.HandleFunc("POST /v1/admin/object-storage/usage-reports", s.authLimited(s.requireAdminMutation(s.recordObjectStorageUsage)))
 	// IAM-6 (issue #190 / ADR-061, PR 4): active-org whoami. The
 	// route is undocumented in api/openapi.yaml for PR 4 — PR 5

@@ -350,6 +350,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/executions/{id}":                    "GetExecution",
 	"GET /v1/executions/{id}/events":             "StreamExecution",
 	"DELETE /v1/executions/{id}":                 "CancelExecution",
+	"GET /v1/apps/{slug}/tasks":                  "ListAppTasks",
+	"POST /v1/apps/{slug}/tasks":                 "CreateAppTask",
+	"GET /v1/apps/{slug}/tasks/{id}":             "GetAppTask",
+	"DELETE /v1/apps/{slug}/tasks/{id}":          "CancelAppTask",
 	"POST /v1/account/restore":                   "RestoreAccount",
 	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap
 	"POST /v1/account/mfa/disable-email":         "PostAccountMfaDisableEmail",
