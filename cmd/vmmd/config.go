@@ -34,7 +34,7 @@ type Config struct {
 	// Three stays below the measured contention knee on four-vCPU hosts while
 	// still sustaining a high restore rate. Operators can tune 1..64.
 	RestoreConcurrency int `toml:"restore_concurrency"`
-	// DisableRestorePrefetch turns off the ADR-224 restore working-set
+	// DisableRestorePrefetch turns off the ADR-226 restore working-set
 	// prefetch. It is on by default; FAAS_RESTORE_PREFETCH=0 overrides TOML.
 	DisableRestorePrefetch bool `toml:"disable_restore_prefetch"`
 	// SocketPath is the unix-domain socket the gRPC server binds when

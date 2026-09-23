@@ -186,7 +186,7 @@ func residentBytes(t *testing.T, path string, ranges []fileRange) int64 {
 	return resident
 }
 
-// adr: 224 — a restore records the guest's working set from Firecracker's
+// adr: 226 — a restore records the guest's working set from Firecracker's
 // page table, and a later prefetch of that family brings those exact pages
 // back into the page cache without the guest running.
 func TestMetalRestorePrefetchRecordsAndWarms(t *testing.T) {
@@ -214,7 +214,7 @@ func TestMetalRestorePrefetchRecordsAndWarms(t *testing.T) {
 	r.wake(t)
 }
 
-// TestMetalRestorePrefetchBench is the ADR-224 evidence run: interleaved
+// TestMetalRestorePrefetchBench is the ADR-226 evidence run: interleaved
 // restores of one parked app with its mem evicted from the page cache, the
 // working-set prefetch alternately disabled and enabled. Opt-in:
 //

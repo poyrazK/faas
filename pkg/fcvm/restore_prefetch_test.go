@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
-// adr: 224 — every capture of one deployment shares a prefetch family, so a
+// adr: 226 — every capture of one deployment shares a prefetch family, so a
 // new capture's first wake reuses the previous capture's working set.
 func TestSnapshotPrefetchFamily(t *testing.T) {
 	for _, tc := range []struct{ key, want string }{
@@ -29,7 +29,7 @@ func TestSnapshotPrefetchFamily(t *testing.T) {
 	}
 }
 
-// adr: 224 — a recorded set is sorted, merged across small gaps, bounded in
+// adr: 226 — a recorded set is sorted, merged across small gaps, bounded in
 // range count by widening the gap, and truncated at the byte cap.
 func TestCoalesceFileRanges(t *testing.T) {
 	const page = 4096
@@ -85,7 +85,7 @@ func TestCoalesceFileRanges(t *testing.T) {
 	}
 }
 
-// adr: 224 — the store is bounded and evicts the oldest family first.
+// adr: 226 — the store is bounded and evicts the oldest family first.
 func TestRestorePrefetchStoreBounded(t *testing.T) {
 	s := newRestorePrefetchStore()
 	set := restorePrefetchSet{ranges: []fileRange{{0, 4096}}, bytes: 4096}
@@ -107,7 +107,7 @@ func TestRestorePrefetchStoreBounded(t *testing.T) {
 	}
 }
 
-// adr: 224 — prefetch is a no-op without a recorded set or when disabled.
+// adr: 226 — prefetch is a no-op without a recorded set or when disabled.
 func TestPrefetchRestoreNoopWithoutSet(t *testing.T) {
 	v := NewJailerVMM(t.TempDir(), 0)
 	if got := v.PrefetchRestore("snap/dep/captures/c/v2/mem"); got != 0 {
@@ -134,7 +134,7 @@ func (p *prefetchingFakeVMM) PrefetchRestore(storageKey string) int64 {
 	return 4096
 }
 
-// adr: 224 — Manager.Wake asks the VMM to prefetch the snapshot it is about
+// adr: 226 — Manager.Wake asks the VMM to prefetch the snapshot it is about
 // to restore, and never prefetches for a cold boot.
 func TestManagerWakePrefetchesSnapshot(t *testing.T) {
 	vmm := &prefetchingFakeVMM{fakeVMM: &fakeVMM{}}
@@ -156,7 +156,7 @@ func TestManagerWakePrefetchesSnapshot(t *testing.T) {
 	}
 }
 
-// adr: 224 — a recorded family prefetches when its snapshot is a local file,
+// adr: 226 — a recorded family prefetches when its snapshot is a local file,
 // and does nothing for a key the backend cannot resolve locally.
 func TestPrefetchRestoreLocalSnapshot(t *testing.T) {
 	root := t.TempDir()

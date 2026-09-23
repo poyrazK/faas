@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// Restore working-set prefetch (ADR-224).
+// Restore working-set prefetch (ADR-226).
 //
 // A restore demand-faults the guest's memory from the snapshot's mem file.
 // When those pages have left the host page cache — the normal state on a
@@ -154,7 +154,7 @@ type restorePrefetcher interface {
 	PrefetchRestore(storageKey string) int64
 }
 
-// WithRestorePrefetch enables or disables the ADR-224 working-set prefetch.
+// WithRestorePrefetch enables or disables the ADR-226 working-set prefetch.
 // It is enabled by default; disabling also stops recording.
 func (v *JailerVMM) WithRestorePrefetch(enabled bool) *JailerVMM {
 	if enabled {

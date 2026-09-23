@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// adr: 224 — /proc/<pid>/maps lines are matched by inode and device.
+// adr: 226 — /proc/<pid>/maps lines are matched by inode and device.
 func TestParseMapsLine(t *testing.T) {
 	v, ok := parseMapsLine("7f0000000000-7f0040000000 rw-p 00001000 fd:02 131 /mem")
 	if !ok {
@@ -37,7 +37,7 @@ func TestParseMapsLine(t *testing.T) {
 	}
 }
 
-// adr: 224 — only present or swapped pagemap entries count as touched.
+// adr: 226 — only present or swapped pagemap entries count as touched.
 func TestTouchedPages(t *testing.T) {
 	const page = 4096
 	entries := []uint64{0, pagemapPresent | 42, 0, pagemapSwapped, pagemapPresent}
@@ -74,7 +74,7 @@ func evictFromPageCache(t *testing.T, path string) {
 	}
 }
 
-// adr: 224 — end to end against a real MAP_PRIVATE file mapping (the shape
+// adr: 226 — end to end against a real MAP_PRIVATE file mapping (the shape
 // Firecracker uses for guest memory): every page read or written is reported
 // as a file range, and nothing outside the kernel's fault-around window of a
 // touched page is.
@@ -132,7 +132,7 @@ func TestTouchedFileRangesOwnMapping(t *testing.T) {
 	}
 }
 
-// adr: 224 — a prefetch must cover every recorded byte, not just the head of
+// adr: 226 — a prefetch must cover every recorded byte, not just the head of
 // each range: the kernel truncates one FADV_WILLNEED to the readahead window.
 func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
 	const size = 16 << 20
@@ -181,7 +181,7 @@ func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
 	}
 }
 
-// adr: 224 — recording reads the live process's page table off the wake
+// adr: 226 — recording reads the live process's page table off the wake
 // path and stores the family's working set; the test process stands in for
 // Firecracker by mapping the mem file itself.
 func TestRecordRestoreWorkingSet(t *testing.T) {

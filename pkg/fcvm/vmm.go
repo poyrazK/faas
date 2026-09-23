@@ -58,7 +58,7 @@ type JailerVMM struct {
 	// unbounded legacy behavior for direct test constructors.
 	restoreSlots chan struct{}
 	// restorePrefetch remembers each snapshot family's restore working set
-	// and warms it ahead of the next wake (ADR-224). nil disables both the
+	// and warms it ahead of the next wake (ADR-226). nil disables both the
 	// recording and the prefetch.
 	restorePrefetch *restorePrefetchStore
 	// storage is the artifact backend where snapshot blobs live per
@@ -1498,7 +1498,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	tDone := time.Now()
 	if !spec.KeepPaused {
-		// ADR-224: remember what this restore faulted so the family's next
+		// ADR-226: remember what this restore faulted so the family's next
 		// wake can prefetch it. Runs in the background after readiness.
 		v.recordRestoreWorkingSet(l.Instance, spec.StorageKey, memSrc)
 	}

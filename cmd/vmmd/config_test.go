@@ -872,7 +872,7 @@ func TestConfig_MetricsListener_OverridesRespected(t *testing.T) {
 	}
 }
 
-// adr: 224 — the restore working-set prefetch is on by default; TOML can
+// adr: 226 — the restore working-set prefetch is on by default; TOML can
 // disable it and FAAS_RESTORE_PREFETCH overrides TOML in either direction.
 func TestLoadConfig_RestorePrefetchSwitch(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))

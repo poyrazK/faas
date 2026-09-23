@@ -3580,7 +3580,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// successes slower than SlowWakeLogThreshold. The named `err`
 	// return is what lets this defer distinguish the two.
 	phases := newWakePhases()
-	// ADR-224: start warming the snapshot's recorded working set before the
+	// ADR-226: start warming the snapshot's recorded working set before the
 	// lease, network and restore gate so the reads overlap that work.
 	var restorePrefetchBytes int64
 	if req.Snapshot != nil {
