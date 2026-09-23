@@ -200,11 +200,12 @@ func TestE2E_MirrorDispatch_HappyPath(t *testing.T) {
 	notifyNormalPathDeploymentChanged(t, f, mirrorDeployment.ID)
 	notifyNormalPathInstanceChanged(t, f, sourceInstance.ID, string(state.StateRunning))
 
+	percent := 100
 	body, statusCode := doReq(t, f.h, f.key, http.MethodPost,
 		"/v1/apps/"+f.app.Slug+"/mirrors", api.CreateMirrorRuleRequest{
 			SourceDeploymentID: sourceDeployment.ID,
 			MirrorDeploymentID: mirrorDeployment.ID,
-			Percent:            100,
+			Percent:            &percent,
 		})
 	if statusCode != http.StatusCreated {
 		t.Fatalf("create mirror rule: status=%d body=%s", statusCode, body)

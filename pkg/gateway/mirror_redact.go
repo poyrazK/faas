@@ -11,19 +11,20 @@
 // custom `X-Tenant-Secret` they want kept out of the mirror even
 // though it's not standard auth material).
 //
-// Result classification: status_diff / schema_diff / body_diff /
-// crashed. The (status_diff, crashed) pair drives the dashboard
-// chip — "mismatch ratio" is status_diff / total, "crash ratio"
-// is crashed / total. schema_diff and bodyDiff are byte-equal
-// signatures for A3 (sha256 of the response body); JCS semantic
-// diff is a follow-on per ADR-124 §Follow-ons.
+// Result classification separates HTTP status, JSON shape, response values,
+// and mirror failures. Bounded or missing snapshots are marked incomplete
+// rather than being reported as equal.
 
 package gateway
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/textproto"
+	"sort"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -92,44 +93,158 @@ func StrippedRequestHeaders(rule state.MirrorRule, src http.Header) http.Header 
 	return dst
 }
 
-// ClassifyResult (issue #72 / ADR-124 / ADR-125 PR-A3) takes
-// the source and mirror response shapes and returns the four
-// outcome flags the ledger row + metric emit:
-//
-//   - statusDiff:  src/mirror HTTP status codes differ
-//   - schemaDiff:  sha256 of the response bodies differs
-//     (byte-equal signatures for A3; JCS
-//     semantic hash is a follow-on)
-//   - bodyDiff:    same predicate as schemaDiff; field is
-//     emitted distinct to keep the dashboard
-//     schema stable when semantic diff lands in
-//     A4.
-//   - crashed:     mirror VM couldn't produce a response
-//     (status >= 500 OR mirrorStatus == 0
-//     meaning the round-trip timed out /
-//     failed).
-//
-// All four flags participate in the ledger row's boolean
-// columns and the per-rule metric increments
-// (gateway_mirror_dispatched_total{result=...}). Callers MUST
-// not assume any ordering between the four — the classification
-// is a flat AND of independent predicates.
-//
-// mirrorStatus == 0 is the goroutine's signal that the round-
-// trip produced no HTTP response (transport error, deadline
-// exceeded, mirror VM not yet up). A source status of 0 means
-// the captured source body was nil (capture failure); that's
-// also "we don't know what the source did", and the
-// classify emits statusDiff=true so the dashboard surfaces
-// "everything looks wrong" rather than a silent no-diff.
-func ClassifyResult(srcStatus int, srcBody []byte, mirrorStatus int, mirrorBody []byte) (statusDiff, schemaDiff, bodyDiff, crashed bool) {
-	statusDiff, schemaDiff, bodyDiff, crashed, _, _ = ClassifyResultWithHashes(srcStatus, srcBody, mirrorStatus, mirrorBody)
-	return
+func safeMirrorMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
 }
 
-// ClassifyResultWithHashes returns the same classification plus the exact
-// SHA-256 fingerprints used for the body comparison. Ledger and replay callers
-// use these values so response content is hashed only once.
+// MirrorComparison is the body-free result of comparing bounded source and
+// mirror snapshots. Schema drift is based on JSON structure; body drift is
+// based on canonical JSON values (or exact bytes for non-JSON) and only runs
+// when enabled. Missing or truncated snapshots are marked incomplete. Hashes
+// are fingerprints only; raw bodies are never returned or persisted.
+type MirrorComparison struct {
+	StatusDiff       bool
+	SchemaDiff       bool
+	BodyDiff         bool
+	Crashed          bool
+	Incomplete       bool
+	SourceSchemaHash []byte
+	MirrorSchemaHash []byte
+	SourceBodyHash   []byte
+	MirrorBodyHash   []byte
+}
+
+// CompareMirrorResponses treats JSON whitespace and object-key order as
+// formatting. schema_diff means the JSON shape changed; body_diff means the
+// canonical JSON values (or raw non-JSON bytes) changed, and is only computed
+// when includeBody is enabled. Truncated or missing snapshots are inconclusive
+// for body/schema comparison rather than false matches or false differences.
+func CompareMirrorResponses(srcStatus int, srcBody []byte, srcTruncated bool, mirrorStatus int, mirrorBody []byte, mirrorTruncated bool, includeBody bool) MirrorComparison {
+	result := MirrorComparison{
+		Incomplete: srcStatus == 0 || mirrorStatus == 0 || srcTruncated || mirrorTruncated,
+		Crashed:    mirrorStatus == 0 || mirrorStatus >= http.StatusInternalServerError,
+	}
+	if srcStatus > 0 && mirrorStatus > 0 {
+		result.StatusDiff = srcStatus != mirrorStatus
+	}
+	if result.Incomplete {
+		return result
+	}
+	source := fingerprintResponse(srcBody)
+	mirror := fingerprintResponse(mirrorBody)
+	if source.isJSON && mirror.isJSON {
+		result.SourceSchemaHash = source.schemaHash
+		result.MirrorSchemaHash = mirror.schemaHash
+		result.SchemaDiff = !bytes.Equal(source.schemaHash, mirror.schemaHash)
+	} else if source.isJSON != mirror.isJSON {
+		result.SchemaDiff = true
+	}
+	if includeBody {
+		result.SourceBodyHash = source.bodyHash
+		result.MirrorBodyHash = mirror.bodyHash
+		result.BodyDiff = !bytes.Equal(source.bodyHash, mirror.bodyHash)
+	}
+	return result
+}
+
+type responseFingerprint struct {
+	isJSON     bool
+	schemaHash []byte
+	bodyHash   []byte
+}
+
+func fingerprintResponse(body []byte) responseFingerprint {
+	fingerprint := responseFingerprint{}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		fingerprint.bodyHash = hashBytes(body)
+		return fingerprint
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		fingerprint.bodyHash = hashBytes(body)
+		return fingerprint
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		fingerprint.bodyHash = hashBytes(body)
+		return fingerprint
+	}
+	shape, err := json.Marshal(jsonSchemaShape(value))
+	if err != nil {
+		fingerprint.bodyHash = hashBytes(body)
+		return fingerprint
+	}
+	fingerprint.isJSON = true
+	fingerprint.schemaHash = hashBytes(shape)
+	fingerprint.bodyHash = hashBytes(canonical)
+	return fingerprint
+}
+
+func hashBytes(body []byte) []byte {
+	hash := sha256.Sum256(body)
+	return append([]byte(nil), hash[:]...)
+}
+
+func jsonSchemaShape(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		properties := make(map[string]any, len(typed))
+		for key, property := range typed {
+			properties[key] = jsonSchemaShape(property)
+		}
+		return map[string]any{"type": "object", "properties": properties}
+	case []any:
+		if len(typed) == 0 {
+			return map[string]any{"type": "array"}
+		}
+		shapes := make(map[string]any, len(typed))
+		for _, item := range typed {
+			shape := jsonSchemaShape(item)
+			encoded, err := json.Marshal(shape)
+			if err == nil {
+				shapes[string(encoded)] = shape
+			}
+		}
+		keys := make([]string, 0, len(shapes))
+		for key := range shapes {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		items := make([]any, 0, len(keys))
+		for _, key := range keys {
+			items = append(items, shapes[key])
+		}
+		return map[string]any{"type": "array", "items": items}
+	case string:
+		return map[string]string{"type": "string"}
+	case json.Number:
+		return map[string]string{"type": "number"}
+	case bool:
+		return map[string]string{"type": "boolean"}
+	case nil:
+		return map[string]string{"type": "null"}
+	default:
+		return map[string]string{"type": "unknown"}
+	}
+}
+
+func ClassifyResult(srcStatus int, srcBody []byte, mirrorStatus int, mirrorBody []byte) (statusDiff, schemaDiff, bodyDiff, crashed bool) {
+	comparison := CompareMirrorResponses(srcStatus, srcBody, false, mirrorStatus, mirrorBody, false, true)
+	return comparison.StatusDiff, comparison.SchemaDiff, comparison.BodyDiff, comparison.Crashed
+}
+
+// ClassifyResultWithHashes returns exact raw-body SHA-256 hashes for callers
+// that compare against a caller-supplied historical hash. Live mirror
+// comparisons use CompareMirrorResponses so schema and value drift remain
+// distinct.
 func ClassifyResultWithHashes(srcStatus int, srcBody []byte, mirrorStatus int, mirrorBody []byte) (statusDiff, schemaDiff, bodyDiff, crashed bool, srcFingerprint, mirrorFingerprint [sha256.Size]byte) {
 	if srcStatus != mirrorStatus {
 		statusDiff = true

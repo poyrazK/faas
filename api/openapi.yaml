@@ -13297,10 +13297,8 @@ paths:
         mirror VM per request, billed per running second, capped at
         `MirrorMaxLifetimeSeconds=5`). Per-app quota returns 422
         `mirror_rule_quota_exceeded` once `Limits.MirrorTargetsPerApp`
-        is reached. The runtime dispatch (gateway goroutine, redaction,
-        schedd stamping) lands in PR-A3 — A2 stores the rule + emits
-        `mirror_rule.created` audit + pg_notify `kind="mirror"` so PR-A3
-        picks up the change within ~1s.
+        is reached. Sampling defaults to 5%; only GET, HEAD, and OPTIONS
+        are mirrored unless `allow_unsafe_methods` is explicitly enabled.
       requestBody:
         required: true
         content:
@@ -13309,8 +13307,9 @@ paths:
             example:
               source_deployment_id: "0123456789abcdef0123456789abcdef"
               mirror_deployment_id: "0123456789abcdef0123456789abcdf0"
-              percent: 100
+              percent: 5
               include_body: false
+              allow_unsafe_methods: false
               redact_headers: [X-Tenant-Id]
       responses:
         '201':
@@ -13438,10 +13437,10 @@ paths:
       description: |
         Read-only aggregate. Source: `mirror_invocation_results` rows
         whose `completed_at >= now - window_seconds`. Returns:
-        total invocations, status diff count, schema diff count, body
-        diff count, mean/p99 latency delta, crash count. PR-A2 returns
-        zeros (PR-A1's ledger has no writers until A3 ships the
-        runtime); post-A3 this is the dashboard widget's data source.
+        total invocations, complete changed-response count and percent,
+        status/schema/body diff counts, incomplete comparisons, mean/p99
+        latency delta, and mirror crash count. Incomplete rows are excluded
+        from the changed-response percentage denominator.
       responses:
         '200':
           description: Aggregated drift counts.
@@ -28718,14 +28717,18 @@ components:
     CreateMirrorRuleRequest:
       description: |
         Body for POST /v1/apps/{slug}/mirrors. Both deployments must
-        be `live` and belong to the same app. `include_body` defaults
-        to `false`; enabling it stores only request/response SHA-256
-        hashes for body-difference classification, never raw bodies.
+        be `live` and belong to the same app. `percent` defaults to
+        a 5% sample. `include_body` defaults to `false`; when enabled,
+        only response SHA-256 hashes are retained. Raw bodies are never
+        stored. POST, PUT, PATCH, and DELETE are skipped unless
+        `allow_unsafe_methods` is explicitly enabled.
         `redact_headers` is the
         customer's additive list on top of the always-stripped list
         (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
         WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
-        A2's storage layer).
+        A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
+        snapshot cap are safely skipped rather than sending a partial request
+        to the mirror deployment.
       type: object
       required: [source_deployment_id, mirror_deployment_id]
       properties:
@@ -28743,13 +28746,17 @@ components:
           type: integer
           minimum: 0
           maximum: 100
-          default: 100
-          description: "Fan-out percent. 100 = mirror every customer request; lower = sampled shadow."
-          example: 100
+          default: 5
+          description: "Fan-out percent. Defaults to a 5% sample; 100 mirrors every eligible request."
+          example: 5
         include_body:
           type: boolean
           default: false
-          description: "If true, the comparison ledger captures request/response SHA-256 hashes for body-difference classification. Raw bodies are never stored. Off by default."
+          description: "If true, compare response values using hashes. Raw response bodies are never stored. Off by default."
+        allow_unsafe_methods:
+          type: boolean
+          default: false
+          description: "If true, also mirror POST, PUT, PATCH, and DELETE. These methods may cause side effects in the mirror deployment."
         redact_headers:
           type: array
           description: "Customer-supplied additional header names to redact on top of the always-stripped list (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization, WWW-Authenticate)."
@@ -28775,7 +28782,10 @@ components:
           description: "Set false to pause the rule without removing it."
         include_body:
           type: boolean
-          description: "Toggle request/response body-hash comparison in the ledger. Raw bodies are never stored."
+          description: "Toggle response-value comparison using hashes. Raw bodies are never stored."
+        allow_unsafe_methods:
+          type: boolean
+          description: "Also mirror POST, PUT, PATCH, and DELETE; these can cause side effects in the mirror deployment."
         redact_headers:
           type: array
           description: "Replace the customer's redact list. Empty array clears it."
@@ -28797,6 +28807,7 @@ components:
         - percent
         - enabled
         - include_body
+        - allow_unsafe_methods
         - redact_headers
         - always_stripped_headers
         - created_at
@@ -28817,6 +28828,7 @@ components:
           maximum: 100
         enabled: { type: boolean }
         include_body: { type: boolean }
+        allow_unsafe_methods: { type: boolean }
         redact_headers:
           type: array
           items: { type: string }
@@ -28843,10 +28855,9 @@ components:
 
     MirrorSummaryResponse:
       description: |
-        Aggregated mirror drift counts over a trailing window. PR-A2
-        returns zeros (PR-A1's ledger has no writers until A3 ships
-        the runtime dispatch); post-A3 this is the dashboard widget's
-        data source.
+        Aggregated mirror drift counts over a trailing window. The changed
+        response percentage uses only complete comparisons; `incomplete_comparison_count`
+        separately reports missing or truncated response snapshots.
       type: object
       required:
         - total_invocations
@@ -28858,6 +28869,7 @@ components:
         - mean_latency_diff_ms
         - p99_latency_diff_ms
         - crash_count
+        - incomplete_comparison_count
         - window_seconds
       properties:
         total_invocations:
@@ -28866,13 +28878,13 @@ components:
         changed_response_count:
           type: integer
           format: int64
-          description: "Requests with any status, schema, or body difference; each request is counted once."
+          description: "Complete comparisons with any status, schema, or body difference; each request is counted once."
         changed_response_percent:
           type: number
           format: double
           minimum: 0
           maximum: 100
-          description: "100 × changed_response_count / total_invocations; zero when the window is empty."
+          description: "100 × changed_response_count / complete comparisons; zero when none are complete."
         status_diff_count:
           type: integer
           format: int64
@@ -28892,6 +28904,10 @@ components:
         crash_count:
           type: integer
           format: int64
+        incomplete_comparison_count:
+          type: integer
+          format: int64
+          description: "Comparisons skipped because a response was missing or exceeded the capture limit."
         window_seconds:
           type: integer
           minimum: 1
@@ -35473,6 +35489,9 @@ components:
         status_diff: { type: boolean }
         body_diff: { type: boolean }
         crashed: { type: boolean }
+        comparison_incomplete:
+          type: boolean
+          description: "True when neither source status nor source body hash was supplied, or the mirror produced no response."
 
 
   responses:

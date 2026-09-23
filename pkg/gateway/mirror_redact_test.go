@@ -106,14 +106,12 @@ func TestClassifyResult_StatusDiff(t *testing.T) {
 	if !crashed {
 		t.Error("crashed expected true on mirror 500")
 	}
-	if !schemaDiff || !bodyDiff {
-		t.Error("schemaDiff/bodyDiff expected true on different bodies")
+	if schemaDiff || !bodyDiff {
+		t.Error("non-JSON bodies should report bodyDiff only")
 	}
 }
 
-// TestClassifyResult_BodyDiff pins the byte-equal body diff branch.
-// sha256(src) != sha256(mirror) must produce schemaDiff=true
-// AND bodyDiff=true even when the HTTP status is the same.
+// TestClassifyResult_BodyDiff pins value drift independently from JSON shape drift.
 func TestClassifyResult_BodyDiff(t *testing.T) {
 	statusDiff, schemaDiff, bodyDiff, crashed := ClassifyResult(200, []byte(`{"a":1}`), 200, []byte(`{"a":2}`))
 	if statusDiff {
@@ -122,18 +120,16 @@ func TestClassifyResult_BodyDiff(t *testing.T) {
 	if crashed {
 		t.Error("crashed should be false on a 200 mirror")
 	}
-	if !schemaDiff || !bodyDiff {
-		t.Error("schemaDiff/bodyDiff expected true on different bodies")
+	if schemaDiff || !bodyDiff {
+		t.Error("same-shaped JSON with changed values should report bodyDiff only")
 	}
 }
 
 // TestClassifyResult_CrashOnTimeout pins the mirrorStatus==0
 // branch. mirrorStatus==0 is the goroutine's signal that the
 // round-trip produced no HTTP response (transport error,
-// deadline exceeded). A source status of 0 (capture failure)
-// also yields statusDiff=true so the dashboard surfaces the
-// "we don't know what happened" shape rather than a silent
-// no-diff.
+// deadline exceeded). A missing source status is represented as an incomplete
+// comparison instead of an invented status mismatch.
 func TestClassifyResult_CrashOnTimeout(t *testing.T) {
 	_, _, _, crashed := ClassifyResult(200, []byte("ok"), 0, nil)
 	if !crashed {

@@ -2742,8 +2742,9 @@ type CanaryAdvanceResponse struct {
 type CreateMirrorRuleRequest struct {
 	SourceDeploymentID string   `json:"source_deployment_id"`
 	MirrorDeploymentID string   `json:"mirror_deployment_id"`
-	Percent            int      `json:"percent"`
+	Percent            *int     `json:"percent,omitempty"`
 	IncludeBody        bool     `json:"include_body"`
+	AllowUnsafeMethods bool     `json:"allow_unsafe_methods"`
 	RedactHeaders      []string `json:"redact_headers"`
 }
 
@@ -2756,10 +2757,11 @@ type CreateMirrorRuleRequest struct {
 // the customer's additive list; a PATCH that omits the field
 // leaves it untouched.
 type UpdateMirrorRuleRequest struct {
-	Percent       *int      `json:"percent,omitempty"`
-	Enabled       *bool     `json:"enabled,omitempty"`
-	IncludeBody   *bool     `json:"include_body,omitempty"`
-	RedactHeaders *[]string `json:"redact_headers,omitempty"`
+	Percent            *int      `json:"percent,omitempty"`
+	Enabled            *bool     `json:"enabled,omitempty"`
+	IncludeBody        *bool     `json:"include_body,omitempty"`
+	AllowUnsafeMethods *bool     `json:"allow_unsafe_methods,omitempty"`
+	RedactHeaders      *[]string `json:"redact_headers,omitempty"`
 }
 
 // MirrorRuleResponse is the canonical mirror-rule response
@@ -2779,6 +2781,7 @@ type MirrorRuleResponse struct {
 	Percent               int       `json:"percent"`
 	Enabled               bool      `json:"enabled"`
 	IncludeBody           bool      `json:"include_body"`
+	AllowUnsafeMethods    bool      `json:"allow_unsafe_methods"`
 	RedactHeaders         []string  `json:"redact_headers"`
 	AlwaysStrippedHeaders []string  `json:"always_stripped_headers"`
 	CreatedAt             time.Time `json:"created_at"`
@@ -2809,16 +2812,17 @@ type MirrorRuleListResponse struct {
 // the parsed window in seconds so the CLI can render "last 1h"
 // without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations     int64   `json:"total_invocations"`
-	ChangedResponseCount int64   `json:"changed_response_count"`
-	ChangedResponsePct   float64 `json:"changed_response_percent"`
-	StatusDiffCount      int64   `json:"status_diff_count"`
-	SchemaDiffCount      int64   `json:"schema_diff_count"`
-	BodyDiffCount        int64   `json:"body_diff_count"`
-	MeanLatencyDiffMs    int64   `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs     int64   `json:"p99_latency_diff_ms"`
-	CrashCount           int64   `json:"crash_count"`
-	WindowSeconds        int     `json:"window_seconds"`
+	TotalInvocations          int64   `json:"total_invocations"`
+	ChangedResponseCount      int64   `json:"changed_response_count"`
+	ChangedResponsePct        float64 `json:"changed_response_percent"`
+	StatusDiffCount           int64   `json:"status_diff_count"`
+	SchemaDiffCount           int64   `json:"schema_diff_count"`
+	BodyDiffCount             int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs         int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs          int64   `json:"p99_latency_diff_ms"`
+	CrashCount                int64   `json:"crash_count"`
+	IncompleteComparisonCount int64   `json:"incomplete_comparison_count"`
+	WindowSeconds             int     `json:"window_seconds"`
 }
 
 // MirrorReplayBatchRequest is an explicitly sanitized historical request
@@ -9793,15 +9797,16 @@ type DebugReplayResponse struct {
 // durable replay invocation. It intentionally contains no request body,
 // headers, response body, or customer span attributes.
 type DebugReplayComparison struct {
-	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
-	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
-	SourceStatusCode   int    `json:"source_status_code"`
-	MirrorStatusCode   int    `json:"mirror_status_code"`
-	SourceLatencyMS    int    `json:"source_latency_ms"`
-	MirrorLatencyMS    int    `json:"mirror_latency_ms"`
-	StatusDiff         bool   `json:"status_diff"`
-	BodyDiff           bool   `json:"body_diff"`
-	Crashed            bool   `json:"crashed"`
+	SourceDeploymentID   string `json:"source_deployment_id,omitempty"`
+	MirrorDeploymentID   string `json:"mirror_deployment_id,omitempty"`
+	SourceStatusCode     int    `json:"source_status_code"`
+	MirrorStatusCode     int    `json:"mirror_status_code"`
+	SourceLatencyMS      int    `json:"source_latency_ms"`
+	MirrorLatencyMS      int    `json:"mirror_latency_ms"`
+	StatusDiff           bool   `json:"status_diff"`
+	BodyDiff             bool   `json:"body_diff"`
+	Crashed              bool   `json:"crashed"`
+	ComparisonIncomplete bool   `json:"comparison_incomplete"`
 }
 
 // ---- SAFE-RELEASES-R (issue #976 / ADR-122 / Mega PR #2 commit 6) ----

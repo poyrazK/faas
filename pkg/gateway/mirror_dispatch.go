@@ -6,8 +6,8 @@
 // schedd and stamps mode='mirror' on the new instances row),
 // then forwards a stripped copy of the source request to the
 // mirror VM via an injected MirrorRoundTripper. The result is
-// classified (status_diff / schema_diff / bodyDiff / crashed)
-// via pkg/gateway/mirror_redact.go::ClassifyResult and the
+// classified (status_diff / schema_diff / body_diff / crashed / incomplete)
+// via pkg/gateway/mirror_redact.go::CompareMirrorResponses and the
 // outcome is exposed via the gateway_mirror_dispatched_total
 // metric.
 //
@@ -258,7 +258,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
-	mirrorBody, readErr := readMirrorResponseBody(resp.Body)
+	mirrorBody, mirrorTruncated, readErr := readMirrorResponseSnapshot(resp.Body)
 	if readErr != nil {
 		if h.metrics != nil {
 			h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "mirror_roundtrip_error")
@@ -275,7 +275,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	// durable ledger row. This wait happens only in the detached goroutine.
 	statusDiff, _, bodyDiff, crashed := h.compareAndPersistMirror(
 		ctx, rule, sourceInstanceID, instanceID, requestID,
-		resp.StatusCode, mirrorBody, latency, sourceCapture,
+		resp.StatusCode, mirrorBody, latency, sourceCapture, mirrorTruncated,
 	)
 
 	// 5. Metric.
@@ -308,40 +308,42 @@ func (h *Handler) compareAndPersistMirror(
 	mirrorBody []byte,
 	mirrorLatency time.Duration,
 	sourceCapture *mirrorSourceCapture,
+	mirrorTruncated ...bool,
 ) (statusDiff, schemaDiff, bodyDiff, crashed bool) {
 	source, sourceOK := sourceCapture.wait(ctx)
-	statusDiff, schemaDiff, bodyDiff, crashed, sourceHash, mirrorHash := ClassifyResultWithHashes(source.StatusCode, source.Body, mirrorStatus, mirrorBody)
+	truncated := len(mirrorTruncated) > 0 && mirrorTruncated[0]
+	comparison := CompareMirrorResponses(source.StatusCode, source.Body, !sourceOK || source.Truncated, mirrorStatus, mirrorBody, truncated, rule.IncludeBody)
+	statusDiff, schemaDiff, bodyDiff, crashed = comparison.StatusDiff, comparison.SchemaDiff, comparison.BodyDiff, comparison.Crashed
 
 	result := state.MirrorInvocationResult{
-		MirrorRuleID:       rule.ID,
-		AccountID:          rule.AccountID,
-		AppID:              rule.AppID,
-		SourceDeploymentID: rule.SourceDeploymentID,
-		MirrorDeploymentID: rule.MirrorDeploymentID,
-		InstanceID:         instanceID,
-		SourceInstanceID:   sourceInstanceID,
-		StatusCode:         mirrorStatus,
-		LatencyMs:          mirrorDurationMilliseconds(mirrorLatency),
-		StatusDiff:         statusDiff,
-		SchemaDiff:         schemaDiff,
-		BodyDiff:           bodyDiff,
-		Crashed:            crashed,
-		RequestID:          requestID,
-		CompletedAt:        time.Now().UTC(),
+		MirrorRuleID:         rule.ID,
+		AccountID:            rule.AccountID,
+		AppID:                rule.AppID,
+		SourceDeploymentID:   rule.SourceDeploymentID,
+		MirrorDeploymentID:   rule.MirrorDeploymentID,
+		InstanceID:           instanceID,
+		SourceInstanceID:     sourceInstanceID,
+		StatusCode:           mirrorStatus,
+		LatencyMs:            mirrorDurationMilliseconds(mirrorLatency),
+		StatusDiff:           statusDiff,
+		SchemaDiff:           schemaDiff,
+		BodyDiff:             bodyDiff,
+		Crashed:              crashed,
+		ComparisonIncomplete: comparison.Incomplete,
+		RequestID:            requestID,
+		CompletedAt:          time.Now().UTC(),
 	}
-	if mirrorStatus != 0 {
-		result.SchemaHash = append([]byte(nil), mirrorHash[:]...)
-		if rule.IncludeBody {
-			result.BodyHash = append([]byte(nil), result.SchemaHash...)
-		}
+	if len(comparison.MirrorSchemaHash) > 0 {
+		result.SchemaHash = append([]byte(nil), comparison.MirrorSchemaHash...)
 	}
-	if sourceOK {
+	if len(comparison.MirrorBodyHash) > 0 {
+		result.BodyHash = append([]byte(nil), comparison.MirrorBodyHash...)
+	}
+	if sourceOK && !source.Truncated {
 		result.SourceStatusCode = source.StatusCode
 		result.SourceLatencyMs = mirrorDurationMilliseconds(source.Latency)
-		result.SourceSchemaHash = append([]byte(nil), sourceHash[:]...)
-		if rule.IncludeBody {
-			result.SourceBodyHash = append([]byte(nil), result.SourceSchemaHash...)
-		}
+		result.SourceSchemaHash = append([]byte(nil), comparison.SourceSchemaHash...)
+		result.SourceBodyHash = append([]byte(nil), comparison.SourceBodyHash...)
 	}
 	if h == nil || h.mirrorResultStore == nil {
 		return statusDiff, schemaDiff, bodyDiff, crashed
@@ -407,7 +409,7 @@ func (w *mirrorResponseCapture) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
-	remaining := int(mirrorResponseBodyCap) - w.body.Len()
+	remaining := int(mirrorResponseBodyCap+1) - w.body.Len()
 	if remaining > 0 {
 		_, _ = w.body.Write(p[:min(len(p), remaining)])
 	}
@@ -427,7 +429,20 @@ func (w *mirrorResponseCapture) response() *http.Response {
 }
 
 func readMirrorResponseBody(body io.Reader) ([]byte, error) {
-	return io.ReadAll(io.LimitReader(body, mirrorResponseBodyCap))
+	snapshot, _, err := readMirrorResponseSnapshot(body)
+	return snapshot, err
+}
+
+func readMirrorResponseSnapshot(body io.Reader) ([]byte, bool, error) {
+	snapshot, err := io.ReadAll(io.LimitReader(body, mirrorResponseBodyCap+1))
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := int64(len(snapshot)) > mirrorResponseBodyCap
+	if truncated {
+		snapshot = snapshot[:mirrorResponseBodyCap]
+	}
+	return snapshot, truncated, nil
 }
 
 // isCapAtMaxCode (PR-A3 code-review #5 fix) is the *api.Problem
@@ -566,22 +581,22 @@ func snapshotRequestForMirror(src *http.Request) *http.Request {
 // ReverseProxy downstream sees an intact Body regardless of
 // goroutine scheduling.
 //
-// The cap is api.MirrorBodySnapshotCap bytes (default 64 KiB)
-// — enough to detect status_diff / body_diff on a typical JSON
-// response, but bounded so a 1 GiB POST doesn't OOM the
-// gateway. Bodies exceeding the cap return a short snapshot
-// (truncated to cap) and the dispatch goroutine treats the
-// truncation as a soft "unknown body" (ClassifyResult emits
-// statusDiff=true to surface the "we don't know what the
-// source did" shape rather than a silent no-diff).
+// The cap is api.MirrorBodySnapshotCap bytes (default 64 KiB).
+// Request bodies larger than the cap are restored intact for the source
+// deployment but are not mirrored: sending only a prefix to v2 could produce
+// a misleading comparison or side effect.
 func snapshotSourceBody(r *http.Request) (body []byte, restore func()) {
+	body, _, restore = snapshotSourceBodyWithTruncation(r)
+	return body, restore
+}
+
+func snapshotSourceBodyWithTruncation(r *http.Request) (body []byte, truncated bool, restore func()) {
 	if r == nil || r.Body == nil {
-		return nil, func() {}
+		return nil, false, func() {}
 	}
 	original := r.Body
 	cap := int64(api.MirrorBodySnapshotCap)
-	limited := io.LimitReader(original, cap)
-	buf, err := io.ReadAll(limited)
+	buf, err := io.ReadAll(io.LimitReader(original, cap+1))
 	restore = func() {
 		// Replay the captured prefix and then continue from the original
 		// admitted body. Keeping the unread tail is load-bearing for bodies
@@ -593,12 +608,15 @@ func snapshotSourceBody(r *http.Request) (body []byte, restore func()) {
 		}
 	}
 	if err != nil {
-		// Capture failed (MaxBytesReader trip, network blip).
-		// Return nil to the mirror classifier, but still replay any prefix
-		// already consumed so the source request is not corrupted.
-		return nil, restore
+		// Capture failed (MaxBytesReader trip, network blip). Do not mirror
+		// a partial request, but still replay its captured prefix for the source.
+		return nil, true, restore
 	}
-	return buf, restore
+	truncated = int64(len(buf)) > cap
+	if truncated {
+		buf = buf[:cap]
+	}
+	return buf, truncated, restore
 }
 
 type prefixReplayReadCloser struct {

@@ -2339,7 +2339,7 @@ Show live deployment traffic weights for an app
 
 ## mirror
 
-Manage traffic mirroring and sanitized replay (Pro/Scale only)
+Manage traffic mirroring and sanitized replay (Pro/Scale only). New mirror rules default to a 5% sample and skip write methods. Bodies above the 64 KiB snapshot limit are not mirrored; raw response bodies are never retained.
 
 `gregale mirror [<subcommand>]`
 
@@ -2360,8 +2360,9 @@ Create a mirror rule
 | `--app <slug>` | app slug | required |
 | `--source <ID>` | source deployment id or vN revision (live) | required |
 | `--mirror <ID>` | mirror deployment id or vN revision (live; same app) | required |
-| `--percent <N>` | fan-out percent in [0, 100]; 100 = every request |  |
-| `--include-body` | include request/response body hashes in the comparison ledger |  |
+| `--percent <N>` | fan-out percent in [0, 100]; defaults to a 5% sample |  |
+| `--include-body` | compare response values and retain only body hashes |  |
+| `--allow-unsafe-methods` | also mirror POST, PUT, PATCH, and DELETE; these can cause v2 side effects |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 
 ### mirror info
@@ -2386,6 +2387,8 @@ Patch a mirror rule (patch semantics)
 | `--disable` | disable the rule (mutually exclusive with --enable) |  |
 | `--include-body` | enable body-hash comparison (mutually exclusive with --no-include-body) |  |
 | `--no-include-body` | disable body-hash comparison |  |
+| `--allow-unsafe-methods` | enable mirroring POST, PUT, PATCH, and DELETE |  |
+| `--safe-methods-only` | skip POST, PUT, PATCH, and DELETE |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 | `--clear-redact` | clear the customer&#39;s redact_headers list (drop to always-stripped only) |  |
 

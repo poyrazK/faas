@@ -768,8 +768,8 @@ type Metrics struct {
 	// mirrorBodyDiff (issue #72 / ADR-124 PR-A3) is the
 	// per-mirror-invocation body-drift counter, labelled by
 	// {app_id, rule_id}. Increment happens when
-	// ClassifyResult reports bodyDiff=true (sha256 of mirror
-	// response differs from source). Powers the §12 mirror
+	// CompareMirrorResponses reports bodyDiff=true when the opt-in response
+	// value fingerprints differ. Powers the §12 mirror
 	// drift-rate alert (mirror_drift_rate > 0.5 for 5m → page
 	// per ADR-127-style precedent on v2mmd_wake_failure_total).
 	mirrorBodyDiff *prometheus.CounterVec

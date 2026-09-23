@@ -6549,7 +6549,7 @@ haveApp:
 	//   - r.Body is restored to a fresh bytes.Reader so the proxy
 	//     downstream sees the full body unchanged.
 	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok { //nolint:contextcheck // request ctx at handler boundary.
-		requestBody, restoreBody := snapshotSourceBody(r)
+		requestBody, requestBodyTruncated, restoreBody := snapshotSourceBodyWithTruncation(r)
 		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
 		// it before the source proxy runs; deferring this until ServeHTTP exits
 		// leaves Content-Length non-zero with an empty body and turns mirrored
@@ -6561,7 +6561,19 @@ haveApp:
 		requestID := requestIDFrom(r)
 		for _, rule := range rules {
 			rule := rule
+			if !rule.AllowUnsafeMethods && !safeMirrorMethod(r.Method) {
+				if h.metrics != nil {
+					h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "unsafe_method_skipped")
+				}
+				continue
+			}
 			if !shouldMirrorRequest(rule.Percent, pick.Picked) {
+				continue
+			}
+			if requestBodyTruncated {
+				if h.metrics != nil {
+					h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "request_body_too_large")
+				}
 				continue
 			}
 			go h.dispatchMirror(r.Context(), target.InstanceID, &target, rule, snapshotRequestForMirror(r), requestBody, requestID, sourceCapture)

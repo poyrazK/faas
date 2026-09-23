@@ -490,7 +490,12 @@ func renderDebugReplayQueued(w io.Writer, resp api.DebugReplayResponse) {
 
 func decodeDebugReplayComparison(raw []byte) (api.DebugReplayComparison, bool) {
 	var comparison api.DebugReplayComparison
-	if len(raw) == 0 || json.Unmarshal(raw, &comparison) != nil || comparison.SourceStatusCode == 0 {
+	if len(raw) == 0 || json.Unmarshal(raw, &comparison) != nil {
+		return api.DebugReplayComparison{}, false
+	}
+	if comparison.SourceStatusCode == 0 && comparison.MirrorStatusCode == 0 &&
+		!comparison.ComparisonIncomplete && !comparison.StatusDiff && !comparison.BodyDiff && !comparison.Crashed &&
+		comparison.SourceDeploymentID == "" && comparison.MirrorDeploymentID == "" {
 		return api.DebugReplayComparison{}, false
 	}
 	return comparison, true
@@ -498,7 +503,9 @@ func decodeDebugReplayComparison(raw []byte) (api.DebugReplayComparison, bool) {
 
 func renderDebugReplayComparison(w io.Writer, comparison api.DebugReplayComparison) {
 	_, _ = fmt.Fprintln(w, "Replay comparison:")
-	if comparison.SourceDeploymentID != "" {
+	if comparison.SourceStatusCode == 0 {
+		_, _ = fmt.Fprintln(w, "  Source: no status expectation supplied")
+	} else if comparison.SourceDeploymentID != "" {
 		_, _ = fmt.Fprintf(w, "  Source: %s · HTTP %d · %d ms\n", comparison.SourceDeploymentID, comparison.SourceStatusCode, comparison.SourceLatencyMS)
 	} else {
 		_, _ = fmt.Fprintf(w, "  Source: HTTP %d · %d ms\n", comparison.SourceStatusCode, comparison.SourceLatencyMS)
@@ -510,7 +517,11 @@ func renderDebugReplayComparison(w io.Writer, comparison api.DebugReplayComparis
 	}
 	_, _ = fmt.Fprintf(w, "  Latency delta: %+d ms\n", comparison.MirrorLatencyMS-comparison.SourceLatencyMS)
 	_, _ = fmt.Fprintf(w, "  Status changed: %t\n", comparison.StatusDiff)
+	_, _ = fmt.Fprintf(w, "  Body changed:   %t\n", comparison.BodyDiff)
 	_, _ = fmt.Fprintf(w, "  Target crashed: %t\n", comparison.Crashed)
+	if comparison.ComparisonIncomplete {
+		_, _ = fmt.Fprintln(w, "  Comparison:     incomplete (missing source expectations or mirror response)")
+	}
 }
 
 func waitForDebugReplay(ctx context.Context, client *api.Client, id string, timeout, interval time.Duration) (api.Invocation, error) {
