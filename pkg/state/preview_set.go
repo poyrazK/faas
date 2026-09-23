@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -80,14 +81,60 @@ func previewSetKey(installationID int64, repo string, prNumber int) string {
 }
 
 // PutPRPreviewSet replaces the current head and expected members atomically.
-// A redelivery of the same head is idempotent; a new head supersedes old
-// deployment notifications without deleting historical deployment rows.
+// Removed members no longer referenced by any set become stale in the same
+// transaction. The preview janitor owns resource cleanup and tombstoning.
 func (s *PgStore) PutPRPreviewSet(ctx context.Context, set PRPreviewSet) error {
 	if err := validatePRPreviewSet(set); err != nil {
 		return err
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin PR preview set replacement: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	var accountID string
+	err = tx.QueryRow(ctx, `select account_id::text from apps where id = $1`, set.RootAppID).Scan(&accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("state: resolve PR preview root account: %w", err)
+	}
+	// Preview reservation and all set replacements for this account take the
+	// same lock. A sibling cannot be retired while another root adds it.
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, accountID).Scan(&locked); err != nil {
+		return fmt.Errorf("state: lock PR preview account: %w", err)
+	}
+	var previous []string
+	err = tx.QueryRow(ctx, `select member_app_ids from pr_preview_sets
+		where installation_id = $1 and repo_full_name = $2 and pr_number = $3`,
+		set.InstallationID, set.RepoFullName, set.PRNumber).Scan(&previous)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("state: load previous PR preview members: %w", err)
+	}
+	// Lock app rows before the set row. The janitor locks an app and may
+	// remove its set through the root-deletion trigger, so this order avoids
+	// deadlocking a concurrent teardown against this replacement.
+	lockIDs := append(append([]string(nil), previous...), set.MemberAppIDs...)
+	rows, err := tx.Query(ctx, `select id::text from apps where id::text = any($1::text[]) order by id for update`, lockIDs)
+	if err != nil {
+		return fmt.Errorf("state: lock PR preview members: %w", err)
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("state: scan locked PR preview member: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("state: iterate locked PR preview members: %w", err)
+	}
+	rows.Close()
 	var valid int
-	err := s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		select count(*)
 		from unnest($2::text[]) as expected(app_id)
 		join apps member on member.id = expected.app_id::uuid
@@ -96,14 +143,15 @@ func (s *PgStore) PutPRPreviewSet(ctx context.Context, set PRPreviewSet) error {
 		  and member.project_id is not distinct from root.project_id
 		  and member.preview_pr_number = $3
 		  and member.preview_of_slug is not null
-		  and member.status <> 'deleted'`, set.RootAppID, set.MemberAppIDs, set.PRNumber).Scan(&valid)
+		  and member.status <> 'deleted'
+		  and member.preview_pr_state is distinct from 'tearing_down'`, set.RootAppID, set.MemberAppIDs, set.PRNumber).Scan(&valid)
 	if err != nil {
 		return fmt.Errorf("state: validate PR preview members: %w", err)
 	}
 	if valid != len(set.MemberAppIDs) {
 		return fmt.Errorf("state: PR preview members do not share the root scope: %w", ErrConflict)
 	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		insert into pr_preview_sets
 		  (installation_id, repo_full_name, pr_number, commit_sha, root_app_id, member_app_ids)
 		values ($1, $2, $3, $4, $5, $6)
@@ -116,6 +164,24 @@ func (s *PgStore) PutPRPreviewSet(ctx context.Context, set PRPreviewSet) error {
 		set.PRNumber, set.CommitSHA, set.RootAppID, set.MemberAppIDs)
 	if err != nil {
 		return fmt.Errorf("state: put PR preview set: %w", err)
+	}
+	if len(previous) > 0 {
+		_, err = tx.Exec(ctx, `update apps as member
+			set preview_pr_state = $2, preview_expires_at = now()
+			where member.id::text = any($1::text[])
+			  and member.preview_of_slug is not null
+			  and member.status <> 'deleted'
+			  and member.preview_pr_state is distinct from 'tearing_down'
+			  and not exists (
+			    select 1 from pr_preview_sets as active_set
+			    where active_set.member_app_ids @> array[member.id::text]
+			  )`, previous, PreviewPrStateStale)
+		if err != nil {
+			return fmt.Errorf("state: retire removed PR preview members: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit PR preview set replacement: %w", err)
 	}
 	return nil
 }
@@ -217,16 +283,43 @@ func (m *MemStore) PutPRPreviewSet(_ context.Context, set PRPreviewSet) error {
 	for _, id := range set.MemberAppIDs {
 		member, ok := m.apps[id]
 		if !ok || member.AccountID != root.AccountID || member.ProjectID != root.ProjectID ||
-			member.PreviewPrNumber != set.PRNumber || member.PreviewOfSlug == "" || member.Status == AppDeleted {
+			member.PreviewPrNumber != set.PRNumber || member.PreviewOfSlug == "" || member.Status == AppDeleted ||
+			member.PreviewPrState == PreviewPrStateTearingDown {
 			return fmt.Errorf("state: PR preview members do not share the root scope: %w", ErrConflict)
 		}
 	}
 	if m.previewSets == nil {
 		m.previewSets = make(map[string]PRPreviewSet)
 	}
+	key := previewSetKey(set.InstallationID, set.RepoFullName, set.PRNumber)
+	previous := m.previewSets[key]
 	set.MemberAppIDs = append([]string(nil), set.MemberAppIDs...)
 	set.Closed = false
-	m.previewSets[previewSetKey(set.InstallationID, set.RepoFullName, set.PRNumber)] = set
+	m.previewSets[key] = set
+	for _, id := range previous.MemberAppIDs {
+		inUse := false
+		for _, current := range m.previewSets {
+			for _, memberID := range current.MemberAppIDs {
+				if id == memberID {
+					inUse = true
+					break
+				}
+			}
+			if inUse {
+				break
+			}
+		}
+		if inUse {
+			continue
+		}
+		app, ok := m.apps[id]
+		if !ok || app.PreviewOfSlug == "" || app.Status == AppDeleted || app.PreviewPrState == PreviewPrStateTearingDown {
+			continue
+		}
+		now := time.Now().UTC()
+		app.PreviewPrState, app.PreviewExpiresAt = PreviewPrStateStale, &now
+		m.apps[id] = app
+	}
 	return nil
 }
 

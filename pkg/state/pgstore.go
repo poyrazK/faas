@@ -2665,12 +2665,12 @@ func (s *PgStore) ListPreviewsForTeardown(ctx context.Context, now time.Time, ma
 	          from apps
 	         where preview_of_slug is not null
 	           and coalesce(preview_pr_state, '') <> $1
-	           and (coalesce(preview_pr_state, '') in ($2, $3)
-	                or (preview_expires_at is not null and preview_expires_at < $4))
+	           and (coalesce(preview_pr_state, '') in ($2, $3, $4)
+	                or (preview_expires_at is not null and preview_expires_at < $5))
 	         order by preview_expires_at asc nulls last
-	         limit $5`
+	         limit $6`
 	rows, err := s.pool.Query(ctx, sel,
-		PreviewPrStateTornDown, PreviewPrStateClosed, PreviewPrStateStale,
+		PreviewPrStateTornDown, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTearingDown,
 		now.UTC(), maxPerTick)
 	if err != nil {
 		return nil, fmt.Errorf("state: list previews for teardown: %w", err)
@@ -2697,6 +2697,7 @@ func (s *PgStore) SetPreviewPrState(ctx context.Context, appID, prState string) 
 	row := s.pool.QueryRow(ctx, `
 		update apps set preview_pr_state = $2
 		where id = $1 and preview_of_slug is not null
+		  and (preview_pr_state is distinct from 'tearing_down' or $2 = 'torn_down')
 		returning `+appsSelectColumns, appID, prState)
 	if err := scanAppInto(&a, row); err != nil {
 		return App{}, mapErr(err)
@@ -2717,7 +2718,9 @@ func (s *PgStore) RefreshDevSession(ctx context.Context, appID string, expiresAt
 		  and preview_of_slug is not null
 		  and coalesce(preview_pr_number, 0) = 0
 		  and status <> 'deleted'
-		returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
+		  and preview_pr_state is distinct from 'tearing_down'
+		  and preview_pr_state is distinct from 'torn_down'
+	returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
 	if err := scanAppInto(&a, row); err != nil {
 		return App{}, mapErr(err)
 	}
@@ -2735,7 +2738,9 @@ func (s *PgStore) RefreshPRPreview(ctx context.Context, appID string, expiresAt 
 		  and preview_of_slug is not null
 		  and coalesce(preview_pr_number, 0) > 0
 		  and status <> 'deleted'
-		returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
+		  and preview_pr_state is distinct from 'tearing_down'
+		  and preview_pr_state is distinct from 'torn_down'
+	returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
 	if err := scanAppInto(&a, row); err != nil {
 		return App{}, mapErr(err)
 	}

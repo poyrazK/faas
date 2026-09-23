@@ -105,6 +105,47 @@ func TestPg_ListPreviewsForTeardown_PicksClosedAndExpired(t *testing.T) {
 	}
 }
 
+func TestPg_ClaimPreviewTeardownRejectsReopenedLease(t *testing.T) {
+	s, ctx := pgStore(t)
+	now := time.Now().UTC()
+	app, _ := pgSeedPreview(t, s, ctx, "demo", "pr-claim", 42,
+		state.PreviewPrStateStale, now.Add(-time.Hour), false, 42)
+	if _, err := s.RefreshPRPreview(ctx, app.ID, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimPreviewTeardown(ctx, app, now); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("claim from stale snapshot = %v, want not found", err)
+	}
+	if _, err := s.SetPreviewPrState(ctx, app.ID, state.PreviewPrStateStale); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.ClaimPreviewTeardown(ctx, current, now)
+	if err != nil || claimed.PreviewPrState != state.PreviewPrStateTearingDown {
+		t.Fatalf("claim = (%+v, %v)", claimed, err)
+	}
+	if _, err := s.RefreshPRPreview(ctx, app.ID, now.Add(time.Hour)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("refresh after claim = %v, want not found", err)
+	}
+	if _, err := s.SoftDeleteAppCascade(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ListPreviewsForTeardown(ctx, now, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range rows {
+		found = found || row.ID == app.ID
+	}
+	if !found {
+		t.Fatal("claimed deleted preview is not recoverable by janitor")
+	}
+}
+
 func TestPg_ListPreviewsForTeardown_OrdersByExpiryASC(t *testing.T) {
 	s, ctx := pgStore(t)
 	now := time.Now().UTC()
