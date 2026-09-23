@@ -12,6 +12,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"golang.org/x/sys/unix"
@@ -28,12 +29,13 @@ type prefetchMetalRig struct {
 	memPath   string
 	statePath string
 	health    string
+	prepared  bool
 }
 
 // newPrefetchMetalRig cold-boots one guest and parks it under a production v2
 // capture key (which also captures the writable drive). base/layer default to
 // the self-contained v6 fixture.
-func newPrefetchMetalRig(t *testing.T, base, layer string, memMiB int, health string) *prefetchMetalRig {
+func newPrefetchMetalRig(t *testing.T, base, layer string, memMiB int, health string, prepared bool) *prefetchMetalRig {
 	t.Helper()
 	kernel := os.Getenv("FAAS_TEST_KERNEL")
 	if kernel == "" {
@@ -78,7 +80,7 @@ func newPrefetchMetalRig(t *testing.T, base, layer string, memMiB int, health st
 	key := func(leaf string) string { return "snap/prefetch-metal/captures/c1/v2/" + leaf }
 	r := &prefetchMetalRig{
 		m:   NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, nil, nil),
-		vmm: vmm, base: base, layer: layer, mem: memMiB, health: health,
+		vmm: vmm, base: base, layer: layer, mem: memMiB, health: health, prepared: prepared,
 		memPath: filepath.Join(root, key("mem")), statePath: filepath.Join(root, key("vmstate")),
 	}
 	r.snap = &Snapshot{FCVersion: fcVersion, StorageKey: key("mem"), VMStateStorageKey: key("vmstate"),
@@ -86,8 +88,18 @@ func newPrefetchMetalRig(t *testing.T, base, layer string, memMiB int, health st
 	r.spec = SnapshotSpec{VMStatePath: r.snap.VMStatePath, StorageKey: r.snap.StorageKey, VMStateStorageKey: r.snap.VMStateStorageKey}
 	t.Cleanup(func() { _ = r.m.Destroy(context.Background(), "prefetch-metal") })
 	ctx := context.Background()
-	if _, err := r.m.ColdBoot(ctx, ColdBootRequest{Instance: "prefetch-metal", Plan: "pro", BaseKey: base, LayerKey: layer,
-		VcpuCount: 2, MemSizeMiB: memMiB, HealthcheckPath: health, StartupDeadlineS: 60}); err != nil {
+	if prepared {
+		if err := r.m.EnablePreparedNetworks(ctx, 3); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = r.m.ClosePreparedNetworks() })
+	}
+	cold := ColdBootRequest{Instance: "prefetch-metal", Plan: "pro", BaseKey: base, LayerKey: layer,
+		VcpuCount: 2, MemSizeMiB: memMiB, HealthcheckPath: health, StartupDeadlineS: 60}
+	if prepared {
+		cold.Plan, cold.Port, cold.EgressMbit = "scale", netns.AppPort, 250
+	}
+	if _, err := r.m.ColdBoot(ctx, cold); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
 	}
 	if _, err := r.m.Park(ctx, "prefetch-metal", r.spec); err != nil {
@@ -110,14 +122,22 @@ func (r *prefetchMetalRig) evict() {
 
 func (r *prefetchMetalRig) wake(t *testing.T) time.Duration {
 	t.Helper()
+	req := WakeRequest{Instance: "prefetch-metal", Plan: "pro", BaseKey: r.base,
+		LayerKey: r.layer, VcpuCount: 2, MemSizeMiB: r.mem, Snapshot: r.snap, HealthcheckPath: r.health, StartupDeadlineS: 60}
+	if r.prepared {
+		req.Plan, req.Port, req.EgressMbit = "scale", netns.AppPort, 250
+		waitPreparedBenchmarkNetwork(t, r.m, context.Background())
+	}
 	start := time.Now()
-	out, err := r.m.Wake(context.Background(), WakeRequest{Instance: "prefetch-metal", Plan: "pro", BaseKey: r.base,
-		LayerKey: r.layer, VcpuCount: 2, MemSizeMiB: r.mem, Snapshot: r.snap, HealthcheckPath: r.health, StartupDeadlineS: 60})
+	out, err := r.m.Wake(context.Background(), req)
 	if err != nil {
 		t.Fatalf("wake: %v", err)
 	}
 	if out.Method != WakeRestore {
 		t.Fatalf("wake method = %s, want restore", out.Method)
+	}
+	if r.prepared && out.NetnsTapMs > 5 {
+		t.Fatalf("wake built its network inline (%d ms); the prepared pool missed", out.NetnsTapMs)
 	}
 	return time.Since(start)
 }
@@ -170,7 +190,7 @@ func residentBytes(t *testing.T, path string, ranges []fileRange) int64 {
 // page table, and a later prefetch of that family brings those exact pages
 // back into the page cache without the guest running.
 func TestMetalRestorePrefetchRecordsAndWarms(t *testing.T) {
-	r := newPrefetchMetalRig(t, "", "", 256, "")
+	r := newPrefetchMetalRig(t, "", "", 256, "", false)
 	r.wake(t)
 	set := r.waitRecorded(t)
 	if set.bytes <= 0 || set.bytes > restorePrefetchMaxBytes {
@@ -202,6 +222,10 @@ func TestMetalRestorePrefetchRecordsAndWarms(t *testing.T) {
 //	FAAS_RESTORE_PREFETCH_BENCH_BASE / _LAYER  real production images
 //	                                            (default: the v6 fixture)
 //	FAAS_RESTORE_PREFETCH_BENCH_MEM_MIB=1024
+//	FAAS_RESTORE_PREFETCH_BENCH_PREPARED=1     take each wake's network from
+//	                                            the prepared pool (production
+//	                                            shape: no inline netns setup
+//	                                            for the prefetch to overlap)
 func TestMetalRestorePrefetchBench(t *testing.T) {
 	cycles, _ := strconv.Atoi(os.Getenv("FAAS_RESTORE_PREFETCH_BENCH_CYCLES"))
 	if cycles <= 0 {
@@ -215,7 +239,7 @@ func TestMetalRestorePrefetchBench(t *testing.T) {
 	if base != "" {
 		health = "/healthz"
 	}
-	r := newPrefetchMetalRig(t, base, layer, memMiB, health)
+	r := newPrefetchMetalRig(t, base, layer, memMiB, health, os.Getenv("FAAS_RESTORE_PREFETCH_BENCH_PREPARED") == "1")
 	capture := newRestoreBreakdownCapture(t)
 	defer capture.restore()
 	store := r.vmm.restorePrefetch
