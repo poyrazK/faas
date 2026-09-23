@@ -6752,6 +6752,7 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			Essential:       sc.Essential,
 			StartupProbe:    cloneWorkloadProbe(sc.StartupProbe),
 			LivenessProbe:   cloneWorkloadProbe(sc.LivenessProbe),
+			ReadinessProbe:  cloneWorkloadProbe(sc.ReadinessProbe),
 			Cmd:             append([]string(nil), sc.Cmd...),
 			Entrypoint:      append([]string(nil), sc.Entrypoint...),
 			DependsOn:       append([]api.WorkloadDependency(nil), sc.DependsOn...),

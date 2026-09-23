@@ -387,6 +387,78 @@ func monitorSidecarProbe(ctx context.Context, probe *api.SidecarProbe, port int,
 	}
 }
 
+const sidecarReadinessHeartbeat = 30 * time.Second
+
+// monitorSidecarReadiness reports reversible routing state for the primary
+// ingress companion. Unlike liveness, a failed readiness threshold never
+// kills the process. Periodic ready heartbeats let a gateway that restarted
+// or missed a PostgreSQL notification rebuild its local route cache safely.
+func monitorSidecarReadiness(ctx context.Context, probe *api.SidecarProbe, port int, env []string, dir, root string, uid int, procAttr *syscall.SysProcAttr, onReady func(bool, string), log *slog.Logger) {
+	if log == nil {
+		log = slog.Default()
+	}
+	if sidecarProbeDisabled(probe) {
+		return
+	}
+	period, timeout, initialDelay, startPeriod, failures, successes := sidecarProbeSettings(probe)
+	startedAt := time.Now()
+	if !waitProbeDelay(ctx, initialDelay) {
+		return
+	}
+	ready := true // runSidecar completed the initial readiness gate.
+	lastReport := time.Now()
+	consecutiveFailures, consecutivePasses := 0, 0
+	for {
+		if !waitProbeDelay(ctx, period) {
+			return
+		}
+		report := runSidecarProbeOnce(ctx, probe, port, timeout, env, dir, root, uid, procAttr, log)
+		if ctx.Err() != nil {
+			return
+		}
+		if report.Status == healthcheckStatusPass {
+			consecutivePasses++
+			consecutiveFailures = 0
+			if !ready && consecutivePasses >= successes {
+				ready = true
+				lastReport = time.Now()
+				if onReady != nil {
+					onReady(true, "readiness_probe_passed")
+				}
+			} else if ready && time.Since(lastReport) >= sidecarReadinessHeartbeat {
+				lastReport = time.Now()
+				if onReady != nil {
+					onReady(true, "readiness_probe_heartbeat")
+				}
+			} else if !ready && time.Since(lastReport) >= sidecarReadinessHeartbeat {
+				lastReport = time.Now()
+				if onReady != nil {
+					onReady(false, "readiness_probe_unready_heartbeat")
+				}
+			}
+			continue
+		}
+		consecutivePasses = 0
+		if time.Since(startedAt) < startPeriod {
+			continue
+		}
+		consecutiveFailures++
+		if ready && consecutiveFailures >= failures {
+			ready = false
+			lastReport = time.Now()
+			log.Warn("sidecar readiness probe failed", "probe_type", sidecarProbeType(probe), "consecutive_failures", consecutiveFailures, "failure_threshold", failures)
+			if onReady != nil {
+				onReady(false, "readiness_probe_failed")
+			}
+		} else if !ready && time.Since(lastReport) >= sidecarReadinessHeartbeat {
+			lastReport = time.Now()
+			if onReady != nil {
+				onReady(false, "readiness_probe_unready_heartbeat")
+			}
+		}
+	}
+}
+
 func sidecarProbeType(probe *api.SidecarProbe) string {
 	switch {
 	case probe == nil:

@@ -6,7 +6,7 @@ import type { SidecarExecProbe } from './SidecarExecProbe.js';
 import type { SidecarHTTPGetProbe } from './SidecarHTTPGetProbe.js';
 import type { SidecarTCPSocketProbe } from './SidecarTCPSocketProbe.js';
 /**
- * Container-local startup or liveness probe for a companion. Specify
+ * Container-local startup, liveness, or readiness probe for a companion. Specify
  * exactly one action: exec, http_get, tcp_socket, or the legacy OCI
  * test field. Port 0/omitted uses the workload's declared port, then
  * the image port, then the platform default.

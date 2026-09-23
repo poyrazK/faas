@@ -3718,19 +3718,20 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // must be a single PR that updates both sides + the projection
 // helper.
 type workloadManifest struct {
-	Cmd           []string                 `json:"cmd,omitempty"`
-	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
-	DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
-	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
-	Entrypoint    []string                 `json:"entrypoint,omitempty"`
-	Essential     bool                     `json:"essential"`
-	LivenessProbe *api.SidecarProbe        `json:"liveness_probe,omitempty"`
-	Name          string                   `json:"name"`
-	Port          int                      `json:"port"`
-	RamMB         int                      `json:"ram_mb"`
-	ScratchMB     int                      `json:"scratch_mb,omitempty"`
-	StartupProbe  *api.SidecarProbe        `json:"startup_probe,omitempty"`
-	Type          string                   `json:"type"`
+	Cmd            []string                 `json:"cmd,omitempty"`
+	CPUMillicores  int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile  string                   `json:"disk_io_profile,omitempty"`
+	DependsOn      []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint     []string                 `json:"entrypoint,omitempty"`
+	Essential      bool                     `json:"essential"`
+	LivenessProbe  *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+	Name           string                   `json:"name"`
+	Port           int                      `json:"port"`
+	RamMB          int                      `json:"ram_mb"`
+	ScratchMB      int                      `json:"scratch_mb,omitempty"`
+	StartupProbe   *api.SidecarProbe        `json:"startup_probe,omitempty"`
+	ReadinessProbe *api.SidecarProbe        `json:"readiness_probe,omitempty"`
+	Type           string                   `json:"type"`
 }
 
 // workloadRosterPath is the in-guest location guest-init reads
@@ -3832,19 +3833,20 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 	}
 	for _, sc := range sidecars {
 		roster.Sidecars = append(roster.Sidecars, workloadManifest{
-			Name:          sc.Name,
-			Type:          sc.Type,
-			RamMB:         sc.RamMB,
-			CPUMillicores: sc.CPUMillicores,
-			ScratchMB:     sc.ScratchMB,
-			DiskIOProfile: sc.DiskIOProfile,
-			Port:          sc.Port,
-			Essential:     sc.Essential,
-			LivenessProbe: sc.LivenessProbe,
-			StartupProbe:  sc.StartupProbe,
-			Cmd:           sc.Cmd,
-			Entrypoint:    sc.Entrypoint,
-			DependsOn:     sc.DependsOn,
+			Name:           sc.Name,
+			Type:           sc.Type,
+			RamMB:          sc.RamMB,
+			CPUMillicores:  sc.CPUMillicores,
+			ScratchMB:      sc.ScratchMB,
+			DiskIOProfile:  sc.DiskIOProfile,
+			Port:           sc.Port,
+			Essential:      sc.Essential,
+			LivenessProbe:  sc.LivenessProbe,
+			ReadinessProbe: sc.ReadinessProbe,
+			StartupProbe:   sc.StartupProbe,
+			Cmd:            sc.Cmd,
+			Entrypoint:     sc.Entrypoint,
+			DependsOn:      sc.DependsOn,
 		})
 	}
 	blob, err := json.Marshal(roster)

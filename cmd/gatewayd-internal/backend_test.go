@@ -470,6 +470,31 @@ func TestHandleInvalidation(t *testing.T) {
 	}
 }
 
+func TestHandleInvalidation_InstanceReadiness(t *testing.T) {
+	backend := gateway.NewPGBackend(nil, nil, testLogger())
+	backend.RecordTarget("app-7", gateway.Target{
+		AppID: "app-7", NodeID: "node-1", InstanceID: "instance-1", RequiresReadiness: true,
+	})
+	readyAt := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+
+	handleInvalidation(context.Background(), backend, db.Notification{
+		Channel: db.NotifyInstanceReadinessChanged,
+		Payload: `{"app_id":"app-7","instance_id":"instance-1","status":"ready","at":"2026-09-23T12:00:00Z","event_id":8}`,
+	}, testLogger())
+	if got := backend.HealthyCount("app-7"); got != 1 {
+		t.Fatalf("HealthyCount after ready notification = %d, want 1", got)
+	}
+
+	unreadyAt := readyAt.Add(time.Second).Format(time.RFC3339Nano)
+	handleInvalidation(context.Background(), backend, db.Notification{
+		Channel: db.NotifyInstanceReadinessChanged,
+		Payload: `{"app_id":"app-7","instance_id":"instance-1","status":"unready","at":"` + unreadyAt + `","event_id":9}`,
+	}, testLogger())
+	if got := backend.HealthyCount("app-7"); got != 0 || backend.CapacityCount("app-7") != 1 {
+		t.Fatalf("counts after unready notification = healthy %d, capacity %d; want 0,1", got, backend.CapacityCount("app-7"))
+	}
+}
+
 // adr: 122
 // TestHandleInvalidation_DeploymentChangedRefreshesWeights (issue #556 /
 // PR-B) — a db.NotifyDeploymentChanged event must trigger

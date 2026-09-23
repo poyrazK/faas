@@ -586,21 +586,22 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 			}
 		}
 		out = append(out, fcvm.WorkloadSpec{
-			Name:          p.GetName(),
-			Type:          p.GetType(),
-			Image:         p.GetImage(),
-			StorageKey:    p.GetStorageKey(),
-			DriveID:       p.GetDriveSlot(),
-			RamMB:         int(p.GetRamMb()),
-			CPUMillicores: int(p.GetCpuMillicores()),
-			ScratchMB:     int(p.GetScratchMb()),
-			DiskIOProfile: p.GetDiskIoProfile(),
-			Port:          int(p.GetPort()),
-			Essential:     p.GetEssential(),
-			StartupProbe:  startupProbe,
-			LivenessProbe: sidecarProbeFromProto(p.GetLivenessProbe()),
-			SealedEnv:     sealedEnv,
-			DependsOn:     workloadDependenciesFromProto(p.GetDependsOn()),
+			Name:           p.GetName(),
+			Type:           p.GetType(),
+			Image:          p.GetImage(),
+			StorageKey:     p.GetStorageKey(),
+			DriveID:        p.GetDriveSlot(),
+			RamMB:          int(p.GetRamMb()),
+			CPUMillicores:  int(p.GetCpuMillicores()),
+			ScratchMB:      int(p.GetScratchMb()),
+			DiskIOProfile:  p.GetDiskIoProfile(),
+			Port:           int(p.GetPort()),
+			Essential:      p.GetEssential(),
+			StartupProbe:   startupProbe,
+			LivenessProbe:  sidecarProbeFromProto(p.GetLivenessProbe()),
+			ReadinessProbe: sidecarProbeFromProto(p.GetReadinessProbe()),
+			SealedEnv:      sealedEnv,
+			DependsOn:      workloadDependenciesFromProto(p.GetDependsOn()),
 		})
 	}
 	return out

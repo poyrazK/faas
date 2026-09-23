@@ -41,7 +41,7 @@ Every process receives loopback discovery variables such as
 available to the helper as `FAAS_WORKLOAD_MAIN_ADDR`. A helper without a port
 is valid for background processing.
 
-## Startup and liveness probes
+## Startup, liveness, and readiness probes
 
 `startup_probe` gates a workload's `healthy` dependency state. It may use an
 exec command, an HTTP GET, or a TCP connection check. Omit it to use the image's
@@ -51,6 +51,11 @@ startup probe for liveness. Set `startup_probe: {test: [NONE]}` to disable the
 baked image check when no startup or liveness check is desired; set
 `liveness_probe: {test: [NONE]}` to keep startup gating but disable ongoing
 liveness checks.
+
+For a `primary_ingress` companion, `readiness_probe` gates its initial serving
+state. Later failed thresholds withdraw that instance from public routing
+without killing it; passing thresholds restore routing. This is independent of
+liveness, which can still restart a process that is unhealthy.
 
 ```yaml
 companions:
@@ -95,12 +100,19 @@ companions:
     image: registry.example.com/edge-proxy@sha256:<64-hex-digest>
     port: 8081
     primary_ingress: true
+    readiness_probe:
+      http_get:
+        path: /readyz
+        port: 8081
     depends_on:
       - name: main
         condition: started
 ```
 
-Only one companion may set `primary_ingress`, and it must declare a port.
+Only one companion may set `primary_ingress`, and it must declare a port. It
+may also declare `readiness_probe`; failed checks temporarily remove that
+instance from request routing without killing the process, and passing checks
+restore it. Readiness gates initial traffic independently of liveness.
 During a traffic-split rollout, all traffic-bearing deployments must agree on
 the primary companion and port. Gregale fails routing closed when they do not,
 so a rollout cannot accidentally bypass the proxy. Deploy matching companion

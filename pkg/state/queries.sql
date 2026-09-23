@@ -3907,3 +3907,17 @@ SET circuit_breaker_enabled           = COALESCE(sqlc.narg('circuit_breaker_enab
     circuit_breaker_min_samples       = COALESCE(sqlc.narg('circuit_breaker_min_samples')::integer, circuit_breaker_min_samples),
     circuit_breaker_open_seconds      = COALESCE(sqlc.narg('circuit_breaker_open_seconds')::integer, circuit_breaker_open_seconds)
 WHERE id = $1 AND app_id = $2;
+
+-- name: LatestInstanceReadiness :many
+-- Gateway restart hydration: readiness is independent of the instance's
+-- RUNNING state, so replay only the latest reversible ready/unready event.
+SELECT DISTINCT ON (CAST(data->>'instance_id' AS text))
+       CAST(data->>'instance_id' AS text) AS instance_id,
+       CAST(data->>'status' AS text) AS status,
+       at,
+       id
+FROM events
+WHERE kind = 'wake.sidecar_health'
+  AND data->>'status' IN ('ready', 'unready')
+  AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
+ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC;
