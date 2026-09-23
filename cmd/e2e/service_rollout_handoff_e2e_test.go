@@ -42,7 +42,8 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 	}
 	role := "compute-only"
 	primary.Role = &role
-	primary.GatewayTargetURL = &f.h.GatewayURL
+	primaryGatewayTarget := "tcp://" + strings.TrimPrefix(f.h.GatewayURL, "http://")
+	primary.GatewayTargetURL = &primaryGatewayTarget
 	primary.TargetURL = "unix://" + f.h.VMMDSock
 	if _, err := f.store.UpsertComputeNodeFromOperator(f.ctx, primary); err != nil {
 		t.Fatalf("register primary gateway: %v", err)
@@ -52,7 +53,7 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 	secondary.Name = secondaryName
 	// The registry promises a serving gateway, but its process is not running
 	// yet. The first route generation must therefore time out safely.
-	missingURL := "http://127.0.0.1:1"
+	missingURL := "tcp://127.0.0.1:1"
 	secondary.GatewayTargetURL = &missingURL
 	if _, err := f.store.UpsertComputeNodeFromOperator(f.ctx, secondary); err != nil {
 		t.Fatalf("register missing secondary gateway: %v", err)
@@ -107,7 +108,8 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 		t.Fatalf("restart schedd during blocked handoff: %v", err)
 	}
 	secondaryURL := f.h.StartAdditionalGateway(secondaryName)
-	secondary.GatewayTargetURL = &secondaryURL
+	secondaryGatewayTarget := "tcp://" + strings.TrimPrefix(secondaryURL, "http://")
+	secondary.GatewayTargetURL = &secondaryGatewayTarget
 	if _, err := f.store.UpsertComputeNodeFromOperator(f.ctx, secondary); err != nil {
 		t.Fatalf("publish recovered secondary gateway: %v", err)
 	}
