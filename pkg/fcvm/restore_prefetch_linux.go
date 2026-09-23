@@ -19,6 +19,12 @@ const (
 	pagemapSwapped = uint64(1) << 62
 )
 
+// adviseChunk bounds one FADV_WILLNEED call. The kernel truncates a single
+// request to the device's readahead window (max of read_ahead_kb and the
+// optimal I/O size, 128 KiB by default), so a larger range must be advised
+// in pieces or only its head is read.
+const adviseChunk = 128 << 10
+
 // adviseWillNeed queues readahead for ranges of path. FADV_WILLNEED submits
 // the reads and returns without waiting for them.
 func adviseWillNeed(path string, ranges []fileRange) error {
@@ -28,17 +34,22 @@ func adviseWillNeed(path string, ranges []fileRange) error {
 	}
 	defer func() { _ = f.Close() }()
 	for _, r := range ranges {
-		if err := unix.Fadvise(int(f.Fd()), r.Off, r.Len, unix.FADV_WILLNEED); err != nil {
-			return fmt.Errorf("fadvise %d+%d: %w", r.Off, r.Len, err)
+		for off := r.Off; off < r.Off+r.Len; off += adviseChunk {
+			n := min(int64(adviseChunk), r.Off+r.Len-off)
+			if err := unix.Fadvise(int(f.Fd()), off, n, unix.FADV_WILLNEED); err != nil {
+				return fmt.Errorf("fadvise %d+%d: %w", off, n, err)
+			}
 		}
 	}
 	return nil
 }
 
 // touchedFileRanges returns the byte ranges of path that process pid has
-// mapped and touched: every page of a mapping of path's inode that is present
-// (or swapped) in the process page table. For Firecracker's MAP_PRIVATE guest
-// memory mapping those are exactly the guest pages faulted since restore.
+// mapped: every page of a mapping of path's inode that is present (or
+// swapped) in the process page table. For Firecracker's MAP_PRIVATE guest
+// memory mapping that is the guest pages faulted since restore, plus the
+// already-cached neighbours the kernel's fault-around mapped with them (at
+// most a fault_around_bytes window, 64 KiB by default, per fault).
 func touchedFileRanges(pid int, path string) ([]fileRange, error) {
 	var st unix.Stat_t
 	if err := unix.Stat(path, &st); err != nil {
