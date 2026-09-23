@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -66,6 +67,8 @@ type cacheWriter struct {
 	status    int
 	headerOK  bool // WriteHeader was called
 	bypass    bool // exceeded cap; stop buffering
+	tags      []string
+	badTags   bool
 	wroteBody bool
 	// managedVersionSetCookie is the exact per-request cookie the gateway
 	// added before installing the tee. Only this value may be omitted from
@@ -146,6 +149,18 @@ func (c *cacheWriter) WriteHeader(code int) {
 	}
 	c.status = code
 	c.headerOK = true
+	// Cache-Tag is control metadata, never a response header. Remove every
+	// spelling before committing the live response, including malformed values.
+	var tagValues []string
+	for key, values := range c.Header() {
+		if strings.EqualFold(key, "Cache-Tag") {
+			tagValues = append(tagValues, values...)
+			delete(c.Header(), key)
+		}
+	}
+	var err error
+	c.tags, err = api.ParseCacheTags(tagValues)
+	c.badTags = err != nil
 	// Defensive copy. We snapshot from the embedded
 	// ResponseWriter.Header() because that's where the
 	// upstream stdlib reverse-proxy / hand-rolled
@@ -211,6 +226,9 @@ func (c *cacheWriter) Write(b []byte) (int, error) {
 // buffer is committed at request-finish time, not in real
 // time.
 func (c *cacheWriter) Flush() {
+	if !c.headerOK {
+		c.WriteHeader(http.StatusOK)
+	}
 	if f, ok := c.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -245,6 +263,9 @@ func (c *cacheWriter) shouldStore() bool {
 	if c.bypass {
 		return false
 	}
+	if c.badTags {
+		return false
+	}
 	if !c.wroteBody {
 		return false
 	}
@@ -267,9 +288,8 @@ func (c *cacheWriter) shouldStore() bool {
 }
 
 // finishCacheCapture is the deferred hook from ServeHTTP that
-// commits a captured body to the cache. Returns true if a Put
-// fired (caller increments the appropriate metric in commit
-// 15); false on a no-store decision (caller increments
+// commits a captured body to the cache. Returns true when at least one tier
+// stored the entry; false on a no-store decision (caller increments
 // store_skipped).
 //
 // mustStore param is the matched rule + cache key + now() clock
@@ -293,7 +313,7 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 	staleWhileRevalidate := time.Duration(c.rule.StaleWhileRevalidateSeconds) * time.Second
 	staleIfError := time.Duration(c.rule.StaleIfErrorSeconds) * time.Second
 	freshUntil := now.Add(maxAge)
-	cache.PutWithWindows(
+	return cache.PutWithWindowsAndTags(
 		key,
 		c.status,
 		c.header,
@@ -302,6 +322,6 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 		freshUntil.Add(staleWhileRevalidate),
 		freshUntil.Add(staleIfError),
 		c.ruleAction,
+		c.tags,
 	)
-	return true
 }

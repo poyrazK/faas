@@ -2417,11 +2417,12 @@ Cache HEAD responses for a route
 
 ### cache purge
 
-Purge cached responses: cache purge &lt;slug&gt; [--path GLOB]
+Purge cached responses: cache purge &lt;slug&gt; [--path GLOB | --tag TAG]
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <GLOB>` | optional normalized request path glob |  |
+| `--tag <TAG>` | optional cache tag |  |
 
 
 ## upload-cache

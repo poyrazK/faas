@@ -256,6 +256,7 @@ type fakeInvalidator struct {
 		appID    string
 		pathGlob string
 	}
+	responseCacheByTag []struct{ appID, tag string }
 	// responseCacheAll counts InvalidateResponseCacheAll calls
 	// (the NotifyEdgeRuleChanged handler arm fires wholesale).
 	responseCacheAll int
@@ -323,6 +324,12 @@ func (f *fakeInvalidator) InvalidateResponseCacheByPath(appID, pathGlob string) 
 		appID    string
 		pathGlob string
 	}{appID: appID, pathGlob: pathGlob})
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeInvalidator) InvalidateResponseCacheByTag(appID, tag string) error {
+	f.mu.Lock()
+	f.responseCacheByTag = append(f.responseCacheByTag, struct{ appID, tag string }{appID, tag})
 	f.mu.Unlock()
 	return nil
 }
@@ -506,6 +513,14 @@ func TestHandleInvalidation_CachePurge(t *testing.T) {
 		Channel: db.NotifyCachePurge,
 		Payload: `not json`,
 	}, log)
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyCachePurge,
+		Payload: `{"app_id":"app-7","tag":"product:42"}`,
+	}, log)
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyCachePurge,
+		Payload: `{"app_id":"app-7","path_glob":"*","tag":"product:42"}`,
+	}, log)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -514,6 +529,9 @@ func TestHandleInvalidation_CachePurge(t *testing.T) {
 	}
 	if got := f.responseCacheByPath[0]; got.appID != "app-7" || got.pathGlob != "/products/*" {
 		t.Errorf("cache purge = %+v, want app-7 /products/*", got)
+	}
+	if len(f.responseCacheByTag) != 1 || f.responseCacheByTag[0].appID != "app-7" || f.responseCacheByTag[0].tag != "product:42" {
+		t.Errorf("tag purge = %+v, want app-7 product:42", f.responseCacheByTag)
 	}
 }
 

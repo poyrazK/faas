@@ -2128,6 +2128,13 @@ func (c *Client) PurgeAppCache(ctx context.Context, slug, pathGlob string) error
 	return c.do(ctx, "DELETE", endpoint, nil, nil)
 }
 
+// PurgeAppCacheTag asks gateways to evict responses carrying one cache tag.
+func (c *Client) PurgeAppCacheTag(ctx context.Context, slug, tag string) error {
+	q := url.Values{}
+	q.Set("tag", tag)
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/cache?"+q.Encode(), nil, nil)
+}
+
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
 	return c.ListInstancesWithHistory(ctx, slug, false)
 }
