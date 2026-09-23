@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ..models.app_configured_resources import AppConfiguredResources
     from ..models.app_effective_limits import AppEffectiveLimits
     from ..models.app_manifest import AppManifest
+    from ..models.app_service_binding import AppServiceBinding
     from ..models.declared_route import DeclaredRoute
     from ..models.parked_deployment_ref import ParkedDeploymentRef
     from ..models.public_auth_status import PublicAuthStatus
@@ -112,6 +113,9 @@ class AppResponse:
     """Preview lifecycle state. Absent for production apps."""
     preview_expires_at: datetime.datetime | None | Unset = UNSET
     """Automatic teardown deadline for a preview, when one is configured."""
+    service_bindings: list[AppServiceBinding] | Unset = UNSET
+    """Repository-declared same-account service dependencies currently injected into this workload. This is a read-
+    only discovery projection, not an enforcement allowlist."""
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
@@ -297,6 +301,13 @@ class AppResponse:
         else:
             preview_expires_at = self.preview_expires_at
 
+        service_bindings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.service_bindings, Unset):
+            service_bindings = []
+            for service_bindings_item_data in self.service_bindings:
+                service_bindings_item = service_bindings_item_data.to_dict()
+                service_bindings.append(service_bindings_item)
+
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
@@ -465,6 +476,8 @@ class AppResponse:
             field_dict["preview_pr_state"] = preview_pr_state
         if preview_expires_at is not UNSET:
             field_dict["preview_expires_at"] = preview_expires_at
+        if service_bindings is not UNSET:
+            field_dict["service_bindings"] = service_bindings
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
         if streaming_enabled is not UNSET:
@@ -527,6 +540,7 @@ class AppResponse:
         from ..models.app_configured_resources import AppConfiguredResources
         from ..models.app_effective_limits import AppEffectiveLimits
         from ..models.app_manifest import AppManifest
+        from ..models.app_service_binding import AppServiceBinding
         from ..models.declared_route import DeclaredRoute
         from ..models.parked_deployment_ref import ParkedDeploymentRef
         from ..models.public_auth_status import PublicAuthStatus
@@ -672,6 +686,15 @@ class AppResponse:
             return cast(datetime.datetime | None | Unset, data)
 
         preview_expires_at = _parse_preview_expires_at(d.pop("preview_expires_at", UNSET))
+
+        _service_bindings = d.pop("service_bindings", UNSET)
+        service_bindings: list[AppServiceBinding] | Unset = UNSET
+        if _service_bindings is not UNSET:
+            service_bindings = []
+            for service_bindings_item_data in _service_bindings:
+                service_bindings_item = AppServiceBinding.from_dict(service_bindings_item_data)
+
+                service_bindings.append(service_bindings_item)
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
@@ -898,6 +921,7 @@ class AppResponse:
             preview_pr_number=preview_pr_number,
             preview_pr_state=preview_pr_state,
             preview_expires_at=preview_expires_at,
+            service_bindings=service_bindings,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,

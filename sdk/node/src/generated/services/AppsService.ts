@@ -1035,16 +1035,19 @@ export class AppsService {
    * representative request to this app, plus the effective
    * response-body cap (in bytes) and the per-gate flags.
    *
-   * The probe is a pure read against the apid cache (the
-   * per-account `Plan` and the per-app `streaming_enabled`
-   * flag). It does NOT dial gatewayd-internal — the operator
-   * opt-in (`FAAS_GATEWAY_STREAMING` env) and per-edge-rule
-   * cap override are gatewayd-side state, so `effective_cap_bytes`
-   * reflects the plan cap (`cap_kind="plan"`) on every probe.
+   * With no query parameters the probe is a pure read against the
+   * apid cache (the per-account `Plan` and the per-app
+   * `streaming_enabled` flag). Supplying `host`, `path`, and `method`
+   * together performs a bounded loopback read of gatewayd's compiled
+   * kind=limit rules and reports a matching streaming response cap with
+   * `cap_kind="endpoint-rule"`. If gatewayd is unavailable or no rule
+   * matches, the response falls back to the plan cap.
+   *
+   * The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
+   * gatewayd-side state, so the canonical signal is the
+   * `Streaming-Status` response header on a real request, not this probe.
    * A customer evaluating "will my next request stream?" must
-   * consider the operator-side flag separately; the canonical
-   * signal is the `Streaming-Status` response header on a real
-   * request, not this probe.
+   * consider the operator-side flag separately.
    *
    * `status=plan-disallows` means the customer's plan tier
    * forbids `streaming_enabled=true`; the CreateApp gate (D5)
@@ -1058,17 +1061,39 @@ export class AppsService {
    */
   public static getAppStreamingCap({
     slug,
+    host,
+    path,
+    method,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Request host to resolve a per-edge-rule cap. Supply together
+     * with `path` and `method`; omit all three for the plan-level cap.
+     *
+     */
+    host?: string,
+    /**
+     * Request path to resolve against kind=limit rules.
+     */
+    path?: string,
+    /**
+     * HTTP method to resolve against kind=limit rules.
+     */
+    method?: string,
   }): CancelablePromise<AppStreamingStatus> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/streaming-cap',
       path: {
         'slug': slug,
+      },
+      query: {
+        'host': host,
+        'path': path,
+        'method': method,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

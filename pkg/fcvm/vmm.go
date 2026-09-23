@@ -3572,6 +3572,7 @@ func marshalWorkloadManifest(w WorkloadSpec) ([]byte, error) {
 		DiskIOProfile: w.DiskIOProfile,
 		Port:          w.Port,
 		Essential:     w.Essential,
+		StartupProbe:  w.StartupProbe,
 		Cmd:           w.Cmd,
 		Entrypoint:    w.Entrypoint,
 		DependsOn:     w.DependsOn,
@@ -3633,6 +3634,13 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	for _, dep := range w.DependsOn {
 		dependencyBytes += int64(len(dep.Name)+len(dep.Condition)) * 2
 	}
+	startupProbeBytes := int64(0)
+	if w.StartupProbe != nil {
+		for _, arg := range w.StartupProbe.Test {
+			startupProbeBytes += int64(len(arg)) * 2
+		}
+		startupProbeBytes += 64
+	}
 	// Three int fields (port, ram_mb, cpu_millicores) and a bool + 2 array
 	// fields. 11 bytes per int is the worst case for a 32-bit
 	// value; 5 bytes for "false". The 5 quoted keys + 2 numeric
@@ -3640,7 +3648,7 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	// overhead; we over-estimate at 128 to absorb the new
 	// cmd/entrypoint keys.
 	const fixedOverhead = 128
-	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + fixedOverhead
+	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + startupProbeBytes + fixedOverhead
 }
 
 // projectedWorkloadRosterBytes (issue #463 / ADR-069 / PR-B
@@ -3696,17 +3704,18 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // must be a single PR that updates both sides + the projection
 // helper.
 type workloadManifest struct {
-	Cmd           []string                 `json:"cmd,omitempty"`
-	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
-	DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
-	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
-	Entrypoint    []string                 `json:"entrypoint,omitempty"`
-	Essential     bool                     `json:"essential"`
-	Name          string                   `json:"name"`
-	Port          int                      `json:"port"`
-	RamMB         int                      `json:"ram_mb"`
-	ScratchMB     int                      `json:"scratch_mb,omitempty"`
-	Type          string                   `json:"type"`
+	Cmd           []string                    `json:"cmd,omitempty"`
+	CPUMillicores int                         `json:"cpu_millicores,omitempty"`
+	DiskIOProfile string                      `json:"disk_io_profile,omitempty"`
+	DependsOn     []api.WorkloadDependency    `json:"depends_on,omitempty"`
+	Entrypoint    []string                    `json:"entrypoint,omitempty"`
+	Essential     bool                        `json:"essential"`
+	Name          string                      `json:"name"`
+	Port          int                         `json:"port"`
+	RamMB         int                         `json:"ram_mb"`
+	ScratchMB     int                         `json:"scratch_mb,omitempty"`
+	StartupProbe  *api.AppManifestHealthcheck `json:"startup_probe,omitempty"`
+	Type          string                      `json:"type"`
 }
 
 // workloadRosterPath is the in-guest location guest-init reads
@@ -3781,6 +3790,7 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 			DiskIOProfile: main.DiskIOProfile,
 			Port:          main.Port,
 			Essential:     main.Essential,
+			StartupProbe:  main.StartupProbe,
 			DependsOn:     main.DependsOn,
 		},
 	}
@@ -3794,6 +3804,7 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 			DiskIOProfile: sc.DiskIOProfile,
 			Port:          sc.Port,
 			Essential:     sc.Essential,
+			StartupProbe:  sc.StartupProbe,
 			Cmd:           sc.Cmd,
 			Entrypoint:    sc.Entrypoint,
 			DependsOn:     sc.DependsOn,

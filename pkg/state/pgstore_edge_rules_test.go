@@ -71,6 +71,45 @@ func pgSampleGeoRuleParams(accountID, appID, host string) state.CreateEdgeRulePa
 	}
 }
 
+func pgSampleCacheRuleParams(accountID, appID, host string) state.CreateEdgeRuleParams {
+	return state.CreateEdgeRuleParams{
+		AccountID:    accountID,
+		AppID:        appID,
+		MatchHost:    host,
+		MatchPath:    "/products/*",
+		MatchMethods: []string{"GET"},
+		Priority:     100,
+		Enabled:      true,
+		Kind:         state.EdgeRuleKindCache,
+		Action: state.EdgeRuleAction{
+			Kind: state.EdgeRuleKindCache,
+			Cache: &state.EdgeRuleCacheAction{
+				MaxAgeSeconds: 30,
+				Methods:       []string{"GET"},
+			},
+		},
+	}
+}
+
+func TestPgStore_CreateEdgeRuleIfUnderQuota_CacheFreeZeroDenies(t *testing.T) {
+	s, ctx := pgStore(t)
+	limits := api.MustLimitsFor(api.PlanFree)
+	acct, app := pgEdgeRuleSeedAccount(t, s, ctx, api.PlanFree, "cache-free-zero")
+
+	_, err := s.CreateEdgeRuleIfUnderQuota(ctx,
+		pgSampleCacheRuleParams(acct, app, "cache-free-zero.example.com"), limits)
+	if err == nil {
+		t.Fatal("Free cache rule was accepted with EdgeRulesCachePerApp=0")
+	}
+	var quotaErr *state.EdgeRuleQuotaError
+	if !errors.As(err, &quotaErr) {
+		t.Fatalf("err = %T %v, want *state.EdgeRuleQuotaError", err, err)
+	}
+	if quotaErr.Limit != 0 || quotaErr.Kind != string(state.EdgeRuleKindCache) || !quotaErr.PerKind {
+		t.Fatalf("quota error = %+v, want closed cache quota", quotaErr)
+	}
+}
+
 // pgEdgeRuleSeedAccount stands up an account + app with a unique
 // slug + email so multiple tests in the same schema don't trip the
 // (email) UNIQUE or the (slug) UNIQUE on apps.

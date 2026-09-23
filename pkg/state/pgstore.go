@@ -4260,6 +4260,7 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		{"usage_daily", `delete from usage_daily where app_id = $1`},
 		{"snapshot_storage_daily", `delete from snapshot_storage_daily where app_id = $1`},
 		{"request_telemetry", `delete from request_telemetry where app_id = $1`},
+		{"log_events", `delete from log_events where app_id = $1`},
 		{"debug_regression_observations", `delete from debug_regression_observations where app_id = $1`},
 		{"mirror_invocation_results", `delete from mirror_invocation_results where app_id = $1`},
 		{"mirror_invocation_summary", `delete from mirror_invocation_summary where app_id = $1`},
@@ -4619,7 +4620,7 @@ func (s *PgStore) AppsForProject(ctx context.Context, accountID, projectID strin
 	}
 	sel := `select ` + appsSelectColumns + `
 		   from apps
-		  where project_id = $1 and status <> 'deleted'
+		  where project_id = $1 and preview_of_slug is null and status <> 'deleted'
 		  order by workload_name asc, created_at asc`
 	rows, err := s.pool.Query(ctx, sel, projectID)
 	if err != nil {
@@ -5124,7 +5125,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		return ProjectReconcileResult{}, err
 	}
 
-	rows, err := tx.Query(ctx, `select `+appsSelectColumns+` from apps where project_id = $1 and status <> 'deleted' for update`, project.ID)
+	rows, err := tx.Query(ctx, `select `+appsSelectColumns+` from apps where project_id = $1 and preview_of_slug is null and status <> 'deleted' for update`, project.ID)
 	if err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: load project apps: %w", err)
 	}
@@ -5148,6 +5149,9 @@ func (s *PgStore) ApplyProjectReconcile(
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "create":
+			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
+				return ProjectReconcileResult{}, ErrConflict
+			}
 			creates++
 			var collisionID string
 			if err := tx.QueryRow(ctx, `select id from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID); err == nil {
@@ -5219,7 +5223,7 @@ func (s *PgStore) ApplyProjectReconcile(
 			if marshalErr != nil {
 				return ProjectReconcileResult{}, fmt.Errorf("state: marshal project app manifest: %w", marshalErr)
 			}
-			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7 where id = $1 and project_id = $6 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes))
+			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7 where id = $1 and project_id = $6 and preview_of_slug is null and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes))
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
@@ -5233,7 +5237,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		case "create":
 			app := mutation.App
 			app.AccountID, app.ProjectID = project.AccountID, project.ID
-			tombstone, tombErr := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where account_id = $1 and project_id = $2 and workload_name = $3 and status = 'deleted' order by deleted_at desc nulls last limit 1 for update`, project.AccountID, project.ID, app.WorkloadName))
+			tombstone, tombErr := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where account_id = $1 and project_id = $2 and workload_name = $3 and preview_of_slug is null and status = 'deleted' order by deleted_at desc nulls last limit 1 for update`, project.AccountID, project.ID, app.WorkloadName))
 			if tombErr == nil {
 				tombstone.RootDir = app.RootDir
 				tombstone.WorkloadName = app.WorkloadName
@@ -5267,7 +5271,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		// Resolve the complete post-mutation workload → app map, then reconcile
 		// every desired (schedule,path) identity. Repeated applies retain IDs,
 		// update enabled state, and remove legacy or source-deleted rows.
-		rows, err = tx.Query(ctx, `select id, workload_name from apps where project_id = $1 and status <> 'deleted'`, project.ID)
+		rows, err = tx.Query(ctx, `select id, workload_name from apps where project_id = $1 and preview_of_slug is null and status <> 'deleted'`, project.ID)
 		if err != nil {
 			return ProjectReconcileResult{}, err
 		}
@@ -6951,7 +6955,7 @@ func (s *PgStore) UpdateDeploymentMinInstances(ctx context.Context, id string, m
 // the request path. The CHECK constraint (migration 00160) is the
 // third layer; any out-of-range value reaching this method trips a
 // 23514 SQLSTATE.
-func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int) (Deployment, error) {
+func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, fmt.Errorf("state: update deployment traffic %d: %w", newPercent, ErrInvalidTrafficPercent)
 	}
@@ -7030,6 +7034,20 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return Deployment{}, fmt.Errorf("state: iterate sibling weights: %w", err)
+	}
+	if len(expectedServingID) > 0 {
+		servingID := ""
+		servingCount := 0
+		for _, sibling := range siblings {
+			if sibling.Prior == 100 {
+				servingID = sibling.ID
+				servingCount++
+			}
+		}
+		if servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) {
+			return Deployment{}, fmt.Errorf("state: expected serving deployment %s, found %s: %w",
+				expectedServingID[0], servingID, ErrTrafficServingChanged)
+		}
 	}
 
 	if _, err := tx.Exec(ctx,
@@ -7795,6 +7813,69 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 	}
 
 	now := time.Now().UTC()
+	if IsServiceRollout(dep) {
+		// A service rollout cannot use the synchronous generic recovery
+		// transitions: changing weights and terminal state here would bypass
+		// the gateway acknowledgement and request-drain barriers owned by
+		// schedd. Record an idempotent abort intent instead; deployment_changed
+		// wakes schedd after this transaction commits.
+		if action != "abort" {
+			return dep, 0, ErrRolloutStateInvalid
+		}
+		handoff := dep.ServiceRolloutHandoff
+		if !handoff.ActiveAbort() {
+			var predecessorID string
+			if err := tx.QueryRow(ctx,
+				`select id
+				   from deployments
+				  where app_id = $1 and scope = $2 and status = 'live' and id <> $3
+				    and created_at < $4
+				    and not (canary_total_steps = 0 and rollout_state = 'rolling_out')
+				  order by created_at desc, id desc
+				  limit 1`, dep.AppID, dep.Scope, dep.ID, dep.CreatedAt).Scan(&predecessorID); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return dep, 0, ErrRolloutStateInvalid
+				}
+				return Deployment{}, 0, fmt.Errorf("state: request service rollout abort predecessor: %w", err)
+			}
+			handoff = ServiceRolloutHandoff{
+				Action:                  ServiceRolloutActionAbort,
+				Phase:                   ServiceRolloutPhasePending,
+				PredecessorDeploymentID: predecessorID,
+				Reason:                  reason,
+				StartedAt:               &now,
+				UpdatedAt:               &now,
+			}
+			payload, err := json.Marshal(handoff)
+			if err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: request service rollout abort encode: %w", err)
+			}
+			if _, err := tx.Exec(ctx,
+				`update deployments set service_rollout_handoff = $2::jsonb where id = $1`,
+				dep.ID, payload); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: request service rollout abort stamp: %w", err)
+			}
+		}
+		var auditID int64
+		if err := tx.QueryRow(ctx,
+			`insert into deployment_audit
+			    (deployment_id, account_id, kind, actor, at, data)
+			 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
+			 returning id`, dep.ID, nil, string(DeployRolledBack),
+			"operator:cli:recover_rollout", now,
+			rolloutAuditData("abort_requested", reason)).Scan(&auditID); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort audit: %w", err)
+		}
+		updated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+			`select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1`, dep.ID))
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort readback: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort commit: %w", err)
+		}
+		return updated, auditID, nil
+	}
 
 	var (
 		auditKind   DeploymentAuditKind
@@ -8777,15 +8858,10 @@ func (s *PgStore) MarkBuildCancelled(ctx context.Context, buildID, _ string, cas
 //     untouched — the active row stays active until a future
 //     `from != to` call closes it.
 //
-// Implementation: read-modify-write at the Go layer. The existing
-// `UpdateDeploymentStatus` (and `transition` chokepoint at
-// pkg/imaged/handler.go:2349) is itself a bare UPDATE with no
-// per-deployment mutex — concurrent transitions are "last write
-// wins" by design, so this method preserves that same posture. A
-// future PR could move the merge into a single SQL expression
-// with `jsonb_set + jsonb_build_array`, but the Go-side shape is
-// easier to reason about and matches the codebase's existing
-// transition-write pattern.
+// Implementation: read-modify-write at the Go layer, with a compare-and-swap
+// on stage_state. Duplicate notifications can overlap even when the status
+// transition is idempotent; only the writer that saw the current stage may
+// close it and report its duration.
 //
 // The from / to StageName vocabulary is enforced at the schema
 // layer via `deployments_stage_state_current_check`
@@ -8879,14 +8955,15 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 	if err != nil {
 		return Deployment{}, fmt.Errorf("AppendDeploymentStage: encode stage_state for %s: %w", id, err)
 	}
-	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1`, id, encoded)
+	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1 and stage_state = $3`, id, encoded, existing.StageState)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if tag.RowsAffected() == 0 {
 		return Deployment{}, ErrNotFound
 	}
-	return s.DeploymentByID(ctx, id)
+	existing.StageState = encoded
+	return existing, nil
 }
 
 // derefTime dereferences *time.Time to time.Time, returning the
@@ -8929,23 +9006,18 @@ func ptrTime(t time.Time) *time.Time {
 // Returns ErrNotFound when the deployment row does not exist or
 // when state.Current is the zero value (no stage ever started).
 func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at time.Time, reason string) (Deployment, error) {
-	var raw []byte
-	var createdAt time.Time
-	err := s.pool.QueryRow(ctx, `select stage_state, created_at from deployments where id = $1`, id).Scan(&raw, &createdAt)
+	existing, err := s.DeploymentByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, ErrNotFound
-		}
-		return Deployment{}, fmt.Errorf("MarkDeploymentStageFailed: read stage_state for %s: %w", id, err)
+		return Deployment{}, err
 	}
 	var state StageState
-	if uerr := json.Unmarshal(raw, &state); uerr != nil {
+	if uerr := json.Unmarshal(existing.StageState, &state); uerr != nil {
 		return Deployment{}, fmt.Errorf("MarkDeploymentStageFailed: decode stage_state for %s: %w", id, uerr)
 	}
 	if state.Current == "" {
 		return Deployment{}, ErrNotFound
 	}
-	ensureDeploymentStageStarted(&state, createdAt, at)
+	ensureDeploymentStageStarted(&state, existing.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -8975,14 +9047,15 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 	if err != nil {
 		return Deployment{}, fmt.Errorf("MarkDeploymentStageFailed: encode stage_state for %s: %w", id, err)
 	}
-	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1`, id, encoded)
+	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1 and stage_state = $3`, id, encoded, existing.StageState)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if tag.RowsAffected() == 0 {
 		return Deployment{}, ErrNotFound
 	}
-	return s.DeploymentByID(ctx, id)
+	existing.StageState = encoded
+	return existing, nil
 }
 
 // CloseDeploymentStage — pgstore mirror of the Store contract.
@@ -8991,17 +9064,12 @@ func (s *PgStore) MarkDeploymentStageFailed(ctx context.Context, id string, at t
 // status="completed" so the customer-facing wire shape carries a
 // `duration_ms` for the readiness stage on a successful deploy.
 func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name StageName, at time.Time) (Deployment, error) {
-	var raw []byte
-	var createdAt time.Time
-	err := s.pool.QueryRow(ctx, `select stage_state, created_at from deployments where id = $1`, id).Scan(&raw, &createdAt)
+	existing, err := s.DeploymentByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, ErrNotFound
-		}
-		return Deployment{}, fmt.Errorf("CloseDeploymentStage: read stage_state for %s: %w", id, err)
+		return Deployment{}, err
 	}
 	var state StageState
-	if uerr := json.Unmarshal(raw, &state); uerr != nil {
+	if uerr := json.Unmarshal(existing.StageState, &state); uerr != nil {
 		return Deployment{}, fmt.Errorf("CloseDeploymentStage: decode stage_state for %s: %w", id, uerr)
 	}
 	if state.Current == "" || state.Current != name {
@@ -9015,7 +9083,7 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 		// stamp.
 		return Deployment{}, ErrNotFound
 	}
-	ensureDeploymentStageStarted(&state, createdAt, at)
+	ensureDeploymentStageStarted(&state, existing.CreatedAt, at)
 	var durMs int64
 	if state.CurrentStartedAt != nil {
 		durMs = at.Sub(*state.CurrentStartedAt).Milliseconds()
@@ -9037,14 +9105,15 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 	if err != nil {
 		return Deployment{}, fmt.Errorf("CloseDeploymentStage: encode stage_state for %s: %w", id, err)
 	}
-	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1`, id, encoded)
+	tag, err := s.pool.Exec(ctx, `update deployments set stage_state = $2 where id = $1 and stage_state = $3`, id, encoded, existing.StageState)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if tag.RowsAffected() == 0 {
 		return Deployment{}, ErrNotFound
 	}
-	return s.DeploymentByID(ctx, id)
+	existing.StageState = encoded
+	return existing, nil
 }
 
 // RetryDeploymentFromStage creates a pending retry under the parent-app lock.
@@ -12502,34 +12571,9 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			}
 		}
 	}
-	// kind='cache' per-app quota (ADR-122 §Decision). Mirrors the
-	// throttle shape: tighter cap than EdgeRulesPerApp because per
-	// (host, path, vary) cache rules expand the route cardinality
-	// and a single customer could otherwise pin the in-process store
-	// (pkg/gateway/response_cache.go) to a fixed-size byte ceiling
-	// with one rule per `vary_on` value. Free customers get 0 rules
-	// under EdgeRulesCachePerApp (closed-set "Free cannot cache");
-	// Hobby 1; Pro 5; Scale 20. Same FOR UPDATE lock on apps carried
-	// by the throttle count above.
-	if in.Kind == EdgeRuleKindCache && limits.EdgeRulesCachePerApp > 0 {
-		var cachePerApp int
-		if err := tx.QueryRow(ctx,
-			`select count(*) from edge_rules where app_id = $1 and kind = 'cache'`, in.AppID,
-		).Scan(&cachePerApp); err != nil {
-			return EdgeRule{}, fmt.Errorf("state: count edge_rules by kind=cache for app %s: %w", in.AppID, err)
-		}
-		if cachePerApp >= limits.EdgeRulesCachePerApp {
-			return EdgeRule{}, &EdgeRuleQuotaError{
-				Limit:      limits.EdgeRulesCachePerApp,
-				Observed:   cachePerApp,
-				Kind:       string(EdgeRuleKindCache),
-				PerAppOnly: true,
-				PerKind:    true,
-			}
-		}
-	}
-	// ADR-201 §1/§2 per-kind quotas. Unlike the branches above, a zero
-	// quota DENIES rather than skipping the check — see
+	// Closed-zero per-kind quotas (ADR-122, ADR-201 §1/§2). Unlike the
+	// throttle/geo branches above, a zero quota DENIES rather than skipping
+	// the check — see
 	// pkg/state/edge_rule_kind_quota.go for why the two differ.
 	if denied := edgeRuleKindQuotaDenied(in.Kind, limits); denied != nil {
 		return EdgeRule{}, denied
@@ -14557,6 +14601,42 @@ func (s *PgStore) ListInvocationsForApp(ctx context.Context, appID string, state
 		where app_id = $1
 		  and state = any($2::text[])
 		order by created_at desc, id desc`, appID, stateStrs)
+	if err != nil {
+		return nil, err
+	}
+	return scanInvocations(rows)
+}
+
+// ListEventDeliveriesForApp returns the app's event-triggered invocations,
+// newest first. Event fan-out stamps the event id in headers; filtering there
+// keeps ordinary async invokes out of the delivery view. The optional event
+// id and state filters are intentionally exact matches.
+func (s *PgStore) ListEventDeliveriesForApp(ctx context.Context, appID string, limit int, before, eventID, deliveryState string) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	base := ` from invocations
+		where app_id = $1
+		  and source = 'async_invoke'
+		  and headers ? 'x-gregale-event-id'
+		  and ($2 = '' or headers->>'x-gregale-event-id' = $2)
+		  and ($3 = '' or state = $3)`
+	var rows pgx.Rows
+	var err error
+	if before == "" {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+base+`
+			order by created_at desc, id desc
+			limit $4`, appID, eventID, deliveryState, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+base+`
+			  and (created_at, id) < (
+				  select created_at, id from invocations
+				  where id = $4 and app_id = $1
+				    and source = 'async_invoke'
+				    and headers ? 'x-gregale-event-id')
+			order by created_at desc, id desc
+			limit $5`, appID, eventID, deliveryState, before, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -21035,7 +21115,11 @@ func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, 
 		 values ($1, $2, $3, $4, $5)
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
-		       updated_at = now()
+		       updated_at = now(),
+		       delivery_version = app_secrets.delivery_version + 1,
+		       delivery_status = 'pending',
+		       last_delivery_attempt_at = null,
+		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext)
@@ -21055,7 +21139,11 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
-		       updated_at = now()
+		       updated_at = now(),
+		       delivery_version = app_secrets.delivery_version + 1,
+		       delivery_status = 'pending',
+		       last_delivery_attempt_at = null,
+		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid)
@@ -21089,7 +21177,11 @@ func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context,
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
 		       value_hash = excluded.value_hash,
-		       updated_at = now()
+		       updated_at = now(),
+		       delivery_version = app_secrets.delivery_version + 1,
+		       delivery_status = 'pending',
+		       last_delivery_attempt_at = null,
+		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid, valueHash)
@@ -21155,6 +21247,26 @@ func (s *PgStore) PutManagedPostgresSecret(ctx context.Context, secret AppSecret
 			value_hash = excluded.value_hash,
 			managed_credential_ref = excluded.managed_credential_ref,
 			managed_credential_generation = excluded.managed_credential_generation,
+			delivery_version = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN app_secrets.delivery_version + 1
+				ELSE app_secrets.delivery_version
+			END,
+			delivery_status = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN 'pending'
+				ELSE app_secrets.delivery_status
+			END,
+			last_delivery_attempt_at = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN NULL
+				ELSE app_secrets.last_delivery_attempt_at
+			END,
+			last_delivery_error_code = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN NULL
+				ELSE app_secrets.last_delivery_error_code
+			END,
 			updated_at = now()
 		 where app_secrets.managed_postgres_binding_id = excluded.managed_postgres_binding_id
 		   and (
@@ -21237,6 +21349,10 @@ func (s *PgStore) PutManagedObjectStorageSecret(ctx context.Context, secret AppS
 			kid = excluded.kid,
 			value_hash = excluded.value_hash,
 			managed_object_storage_credential_id = excluded.managed_object_storage_credential_id,
+			delivery_version = app_secrets.delivery_version + 1,
+			delivery_status = 'pending',
+			last_delivery_attempt_at = null,
+			last_delivery_error_code = null,
 			updated_at = now()
 		 where app_secrets.managed_object_storage_credential_id = excluded.managed_object_storage_credential_id
 		   and app_secrets.managed_postgres_binding_id is null`,
@@ -21273,12 +21389,18 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 	err := s.pool.QueryRow(ctx,
 		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
-		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''), created_at, updated_at
+		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''),
+		        delivery_version, COALESCE(delivered_version, 0), delivery_status,
+		        last_delivery_attempt_at, last_delivered_at, COALESCE(last_delivery_error_code, ''),
+		        COALESCE(last_delivered_wake_id, ''), COALESCE(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
 		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.ValueHash,
 		&out.ManagedPostgresBindingID, &out.ManagedCredentialRef, &out.ManagedCredentialGeneration, &out.ManagedObjectStorageCredentialID,
+		&out.DeliveryVersion, &out.DeliveredVersion, &out.DeliveryStatus,
+		&out.LastDeliveryAttemptAt, &out.LastDeliveredAt, &out.LastDeliveryErrorCode,
+		&out.LastDeliveredWakeID, &out.LastDeliveredInstanceID,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -21484,7 +21606,10 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
+		        delivery_version, coalesce(delivered_version, 0), delivery_status,
+		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -21499,6 +21624,9 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
 			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
+			&r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
+			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
+			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -21526,7 +21654,10 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
+		        delivery_version, coalesce(delivered_version, 0), delivery_status,
+		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -21541,6 +21672,9 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
 			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
+			&r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
+			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
+			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -21619,6 +21753,74 @@ func (s *PgStore) CountAppSecrets(ctx context.Context, accountID, appID string) 
 		`select count(*) from app_secrets where account_id = $1 and app_id = $2`,
 		accountID, appID).Scan(&n)
 	return n, err
+}
+
+// RecordAppSecretDelivery updates only rows whose delivery_version still
+// matches the version schedd staged. This compare-and-set is the race fence
+// between an in-flight boot and a concurrent rotation.
+func (s *PgStore) RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error) {
+	if result.AccountID == "" || result.AppID == "" || result.WakeID == "" || result.InstanceID == "" {
+		return 0, ErrInvalidArgument
+	}
+	if result.Status != SecretDeliveryDelivered && result.Status != SecretDeliveryFailed {
+		return 0, ErrInvalidArgument
+	}
+	if result.Status == SecretDeliveryFailed && result.ErrorCode == "" {
+		return 0, ErrInvalidArgument
+	}
+	if len(result.Candidates) == 0 {
+		return 0, nil
+	}
+	attemptedAt := result.AttemptedAt.UTC()
+	if attemptedAt.IsZero() {
+		attemptedAt = time.Now().UTC()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	updated := 0
+	for _, candidate := range result.Candidates {
+		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
+			return 0, ErrInvalidArgument
+		}
+		var tag pgconn.CommandTag
+		if result.Status == SecretDeliveryDelivered {
+			tag, err = tx.Exec(ctx,
+				`update app_secrets
+				 set delivered_version = delivery_version,
+				     delivery_status = 'delivered',
+				     last_delivery_attempt_at = $7,
+				     last_delivered_at = $7,
+				     last_delivery_error_code = null,
+				     last_delivered_wake_id = $5,
+				     last_delivered_instance_id = $6
+				 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+				   and delivery_version = $8`,
+				result.AccountID, result.AppID, candidate.Scope, candidate.Key,
+				result.WakeID, result.InstanceID, attemptedAt, candidate.Version)
+		} else {
+			tag, err = tx.Exec(ctx,
+				`update app_secrets
+				 set delivery_status = 'failed',
+				     last_delivery_attempt_at = $5,
+				     last_delivery_error_code = $7
+				 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+				   and delivery_version = $6
+				   and coalesce(delivered_version, 0) < delivery_version`,
+				result.AccountID, result.AppID, candidate.Scope, candidate.Key,
+				attemptedAt, candidate.Version, result.ErrorCode)
+		}
+		if err != nil {
+			return 0, mapErr(err)
+		}
+		updated += int(tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, mapErr(err)
+	}
+	return updated, nil
 }
 
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------
@@ -22501,7 +22703,7 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(canary_preset, 'none'), canary_step, canary_total_steps,
 	canary_step_started_at, canary_stages, coalesce(nullif(rollout_state, ''), 'pending'),
 	rollout_started_at, rollout_completed_at, rollout_aborted_at,
-	coalesce(rollout_aborted_reason, ''),
+	coalesce(rollout_aborted_reason, ''), coalesce(service_rollout_handoff, '{}'::jsonb),
 	-- ADR-124 deployment queue controls (migration 00391/00491). priority
 	-- is NOT NULL DEFAULT 100 so the coalesce is purely for symmetry
 	-- with the rest of the projection (and for the rare pre-PR
@@ -22559,7 +22761,7 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.canary_preset, 'none'), d.canary_step, d.canary_total_steps,
 	d.canary_step_started_at, d.canary_stages, coalesce(nullif(d.rollout_state, ''), 'pending'),
 	d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at,
-	coalesce(d.rollout_aborted_reason, ''),
+	coalesce(d.rollout_aborted_reason, ''), coalesce(d.service_rollout_handoff, '{}'::jsonb),
 	-- ADR-124 deployment queue controls (migration 00391/00491). See the
 	-- unqualified-projection counterpart above for the rationale on
 	-- coalesce choices.
@@ -22613,6 +22815,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	var firstWakeAt, first5xxWindowEndsAt, lastAutoRollbackAt *time.Time
 	var canaryStepStartedAt *time.Time
 	var rolloutStartedAt, rolloutCompletedAt, rolloutAbortedAt *time.Time
+	var serviceRolloutHandoff json.RawMessage
 	// Issue #460 / ADR-053: six override columns scanned here so
 	// the SELECT projections in DeploymentByID / LatestDeployment /
 	// etc. match. The scan order matches the column order in the
@@ -22673,7 +22876,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.CanaryPreset, &d.CanaryStep, &d.CanaryTotalSteps,
 		&canaryStepStartedAt, &d.CanaryStages, &d.RolloutState,
 		&rolloutStartedAt, &rolloutCompletedAt, &rolloutAbortedAt,
-		&d.RolloutAbortedReason,
+		&d.RolloutAbortedReason, &serviceRolloutHandoff,
 		// ADR-124 deployment queue controls (migration 00391/00491). The
 		// scan order mirrors the SELECT projection above — see the
 		// docblock on deploymentSelectColumnsWithRootfs for the
@@ -22715,6 +22918,11 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	d.RolloutStartedAt = rolloutStartedAt
 	d.RolloutCompletedAt = rolloutCompletedAt
 	d.RolloutAbortedAt = rolloutAbortedAt
+	if len(serviceRolloutHandoff) > 0 {
+		if err := json.Unmarshal(serviceRolloutHandoff, &d.ServiceRolloutHandoff); err != nil {
+			return fmt.Errorf("state: decode service rollout handoff: %w", err)
+		}
+	}
 	return nil
 }
 

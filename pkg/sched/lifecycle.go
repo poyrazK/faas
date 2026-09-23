@@ -558,48 +558,116 @@ func serviceRouteFleetConfigured(nodes []state.ComputeNode, ownerNodeID string) 
 	return false
 }
 
+func sortedServiceGatewaySet(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (e *Engine) updateServiceRolloutHandoff(ctx context.Context, deploymentID string, mutate func(*state.ServiceRolloutHandoff)) {
+	dep, err := e.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: load service rollout handoff", "deployment", deploymentID, "err", err)
+		}
+		return
+	}
+	handoff := dep.ServiceRolloutHandoff
+	mutate(&handoff)
+	now := time.Now().UTC()
+	handoff.UpdatedAt = &now
+	if _, err := e.store.UpdateServiceRolloutHandoff(ctx, deploymentID, handoff); err != nil &&
+		!errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
+		e.log.Warn("sched: persist service rollout handoff", "deployment", deploymentID, "phase", handoff.Phase, "err", err)
+	}
+}
+
+func (e *Engine) failServiceRolloutHandoff(ctx context.Context, deploymentID, phase, reason string, missing []string) {
+	e.updateServiceRolloutHandoff(ctx, deploymentID, func(h *state.ServiceRolloutHandoff) {
+		h.Phase = phase
+		h.LastError = reason
+		h.MissingGateways = append([]string(nil), missing...)
+	})
+}
+
 // waitForServiceRouteConvergence publishes a unique routing generation and
 // waits for every registered serving gateway to confirm that both its weight
 // table and live targets reflect the cutover. The caller has already retained
 // the predecessor as a live zero-weight generation, so every failure path is
 // safe: old requests continue while reconciliation retries.
 func (e *Engine) waitForServiceRouteConvergence(ctx context.Context, appID, deploymentID string) (acknowledgedAt time.Time, fleetBarrier bool, ok bool) {
+	return e.waitForServiceRouteConvergenceForRollout(ctx, appID, deploymentID, deploymentID, state.ServiceRolloutActionPromote)
+}
+
+func (e *Engine) waitForServiceRouteConvergenceForRollout(ctx context.Context, appID, rolloutID, deploymentID, action string) (acknowledgedAt time.Time, fleetBarrier bool, ok bool) {
+	started := time.Now()
 	nodes, err := e.store.ListComputeNodes(ctx, false)
 	if err != nil {
 		e.log.Warn("sched: list serving gateways for rollout", "app", appID, "deployment", deploymentID, "err", err)
+		e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "list_serving_gateways_failed", nil)
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
 		return time.Time{}, false, false
 	}
 	expected := servingGatewayNames(nodes)
 	if len(expected) == 0 {
 		if serviceRouteFleetConfigured(nodes, e.ownerNodeID) {
 			e.log.Warn("sched: no active serving gateways registered for rollout", "app", appID, "deployment", deploymentID)
+			e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "no_active_serving_gateways", nil)
+			e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "timeout", time.Since(started).Seconds())
 			return time.Time{}, true, false
 		}
 		// Legacy single-box and unit-test installs have no registered gateway
 		// identity. Preserve their existing notify path without pretending it
 		// provides a fleet acknowledgement or telemetry drain barrier.
 		e.emitServiceRolloutChange(ctx, appID, deploymentID, state.DeployLive)
-		return time.Now(), false, true
+		now := time.Now().UTC()
+		e.updateServiceRolloutHandoff(ctx, rolloutID, func(h *state.ServiceRolloutHandoff) {
+			h.Phase = state.ServiceRolloutPhaseDraining
+			h.LastError = ""
+			h.AcknowledgedAt = &now
+		})
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "success", time.Since(started).Seconds())
+		return now, false, true
 	}
+	expectedNames := sortedServiceGatewaySet(expected)
 	subscriber, available := e.notif.(serviceRouteSubscriber)
 	if !available {
 		e.log.Warn("sched: deployment route acknowledgement subscriber unavailable", "app", appID, "deployment", deploymentID)
+		e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_ack_subscriber_unavailable", expectedNames)
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
 		return time.Time{}, true, false
 	}
 	allocator, available := e.store.(serviceRouteGenerationStore)
 	if !available {
 		e.log.Warn("sched: deployment route generation store unavailable", "app", appID, "deployment", deploymentID)
+		e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_generation_store_unavailable", expectedNames)
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
 		return time.Time{}, true, false
 	}
 	generation, err := allocator.NextDeploymentRouteGeneration(ctx)
 	if err != nil {
 		e.log.Warn("sched: allocate deployment route generation", "app", appID, "deployment", deploymentID, "err", err)
+		e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_generation_allocation_failed", expectedNames)
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
 		return time.Time{}, true, false
 	}
+	e.updateServiceRolloutHandoff(ctx, rolloutID, func(h *state.ServiceRolloutHandoff) {
+		h.Phase = state.ServiceRolloutPhaseRouting
+		h.Generation = generation
+		h.ExpectedGateways = append([]string(nil), expectedNames...)
+		h.AcknowledgedGateways = nil
+		h.MissingGateways = append([]string(nil), expectedNames...)
+		h.LastError = ""
+	})
 	payloadBytes, err := json.Marshal(db.DeploymentRouteChangedPayload{
 		AppID: appID, DeploymentID: deploymentID, Generation: generation,
 	})
 	if err != nil {
+		e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_payload_encode_failed", expectedNames)
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
 		return time.Time{}, true, false
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(api.ServiceRouteConvergenceTimeoutSeconds)*time.Second)
@@ -607,11 +675,15 @@ func (e *Engine) waitForServiceRouteConvergence(ctx context.Context, appID, depl
 	events, err := subscriber.Subscribe(waitCtx, []string{db.NotifyDeploymentRouteAck})
 	if err != nil {
 		e.log.Warn("sched: subscribe deployment route acknowledgements", "app", appID, "deployment", deploymentID, "generation", generation, "err", err)
+		e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_ack_subscribe_failed", expectedNames)
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
 		return time.Time{}, true, false
 	}
 	payload := string(payloadBytes)
 	if err := e.Notifier().Notify(waitCtx, db.NotifyDeploymentRouteChanged, payload); err != nil {
 		e.log.Warn("sched: publish deployment route generation", "app", appID, "deployment", deploymentID, "generation", generation, "err", err)
+		e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_publish_failed", expectedNames)
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
 		return time.Time{}, true, false
 	}
 	retry := time.NewTicker(time.Duration(api.ServiceRouteNotificationRetryMilliseconds) * time.Millisecond)
@@ -628,9 +700,13 @@ func (e *Engine) waitForServiceRouteConvergence(ctx context.Context, appID, depl
 			}
 			sort.Strings(missing)
 			e.log.Warn("sched: deployment route convergence incomplete", "app", appID, "deployment", deploymentID, "generation", generation, "missing", strings.Join(missing, ","))
+			e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_convergence_timeout", missing)
+			e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "timeout", time.Since(started).Seconds())
 			return time.Time{}, true, false
 		case event, open := <-events:
 			if !open {
+				e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_ack_stream_closed", expectedNames)
+				e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
 				return time.Time{}, true, false
 			}
 			ack, parseErr := db.ParseDeploymentRouteAckPayload(event.Payload)
@@ -639,21 +715,44 @@ func (e *Engine) waitForServiceRouteConvergence(ctx context.Context, appID, depl
 			}
 			if _, wanted := expected[ack.Node]; wanted {
 				seen[ack.Node] = struct{}{}
+				missing := make(map[string]struct{}, len(expected)-len(seen))
+				for node := range expected {
+					if _, ok := seen[node]; !ok {
+						missing[node] = struct{}{}
+					}
+				}
+				acknowledged := sortedServiceGatewaySet(seen)
+				missingNames := sortedServiceGatewaySet(missing)
+				e.updateServiceRolloutHandoff(ctx, rolloutID, func(h *state.ServiceRolloutHandoff) {
+					h.AcknowledgedGateways = acknowledged
+					h.MissingGateways = missingNames
+				})
 			}
 		case <-retry.C:
 			_ = e.Notifier().Notify(waitCtx, db.NotifyDeploymentRouteChanged, payload)
 		}
 	}
-	return time.Now(), true, true
+	now := time.Now().UTC()
+	e.updateServiceRolloutHandoff(ctx, rolloutID, func(h *state.ServiceRolloutHandoff) {
+		h.Phase = state.ServiceRolloutPhaseDraining
+		h.LastError = ""
+		h.MissingGateways = nil
+		h.AcknowledgedAt = &now
+	})
+	e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "success", time.Since(started).Seconds())
+	return now, true, true
 }
 
 // waitForServiceDeploymentDrain requires post-ack, fresh telemetry showing a
 // quiet zero-inflight window for every predecessor replica. Missing or stale
 // telemetry fails safe and keeps the predecessor resident.
-func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, deploymentID string, acknowledgedAt time.Time) bool {
+func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, rolloutID, deploymentID, action string, acknowledgedAt time.Time) bool {
+	started := time.Now()
 	replicas, err := listServiceReplicas(ctx, e.store, appID, deploymentID)
 	if err != nil {
 		e.log.Warn("sched: list predecessor replicas for drain", "app", appID, "deployment", deploymentID, "err", err)
+		e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseDraining, "list_drain_replicas_failed", nil)
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseDraining, "error", time.Since(started).Seconds())
 		return false
 	}
 	ids := make([]string, 0, len(replicas))
@@ -663,6 +762,7 @@ func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, deplo
 		}
 	}
 	if len(ids) == 0 {
+		e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseDraining, "success", time.Since(started).Seconds())
 		return true
 	}
 	drainCtx, cancel := context.WithTimeout(ctx, time.Duration(api.ServiceReplicaDrainTimeoutSeconds)*time.Second)
@@ -705,11 +805,15 @@ func (e *Engine) waitForServiceDeploymentDrain(ctx context.Context, appID, deplo
 			}
 		}
 		if allQuiet {
+			e.updateServiceRolloutHandoff(ctx, rolloutID, func(h *state.ServiceRolloutHandoff) { h.LastError = "" })
+			e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseDraining, "success", time.Since(started).Seconds())
 			return true
 		}
 		select {
 		case <-drainCtx.Done():
 			e.log.Warn("sched: predecessor request drain incomplete", "app", appID, "deployment", deploymentID)
+			e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseDraining, "request_drain_timeout", nil)
+			e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseDraining, "timeout", time.Since(started).Seconds())
 			return false
 		case <-ticker.C:
 		}
@@ -724,11 +828,11 @@ func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollou
 			}
 			return false
 		}
-		acknowledgedAt, fleetBarrier, converged := e.waitForServiceRouteConvergence(ctx, app.ID, rollout.ID)
+		acknowledgedAt, fleetBarrier, converged := e.waitForServiceRouteConvergenceForRollout(ctx, app.ID, rollout.ID, rollout.ID, state.ServiceRolloutActionPromote)
 		if !converged {
 			return false
 		}
-		if fleetBarrier && !e.waitForServiceDeploymentDrain(ctx, app.ID, previous.ID, acknowledgedAt) {
+		if fleetBarrier && !e.waitForServiceDeploymentDrain(ctx, app.ID, rollout.ID, previous.ID, state.ServiceRolloutActionPromote, acknowledgedAt) {
 			return false
 		}
 	}
@@ -743,6 +847,39 @@ func (e *Engine) finishServiceRollout(ctx context.Context, app state.App, rollou
 		e.drainServiceDeploymentInstances(ctx, previous.ID, true)
 	}
 	e.emitServiceRolloutChange(ctx, app.ID, updated.ID, updated.Status)
+	return true
+}
+
+func (e *Engine) reverseServiceRollout(ctx context.Context, app state.App, rollout state.Deployment) bool {
+	updated, err := e.store.BeginServiceRolloutAbort(ctx, rollout.ID)
+	if err != nil {
+		if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: begin service rollout abort", "app", app.ID, "deployment", rollout.ID, "err", err)
+		}
+		return false
+	}
+	predecessorID := updated.ServiceRolloutHandoff.PredecessorDeploymentID
+	if predecessorID == "" {
+		e.failServiceRolloutHandoff(ctx, rollout.ID, state.ServiceRolloutPhaseRouting, "predecessor_missing", nil)
+		return false
+	}
+	acknowledgedAt, fleetBarrier, converged := e.waitForServiceRouteConvergenceForRollout(ctx, app.ID, rollout.ID, predecessorID, state.ServiceRolloutActionAbort)
+	if !converged {
+		return false
+	}
+	if fleetBarrier && !e.waitForServiceDeploymentDrain(ctx, app.ID, rollout.ID, rollout.ID, state.ServiceRolloutActionAbort, acknowledgedAt) {
+		return false
+	}
+	final, err := e.store.AbortServiceRollout(ctx, rollout.ID, updated.ServiceRolloutHandoff.Reason)
+	if err != nil {
+		if !errors.Is(err, state.ErrServiceRolloutInvalid) && !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: finalize service rollout abort", "app", app.ID, "deployment", rollout.ID, "err", err)
+		}
+		return false
+	}
+	e.drainServiceDeploymentInstances(ctx, rollout.ID, false)
+	e.emitServiceRolloutChange(ctx, app.ID, predecessorID, state.DeployLive)
+	e.emitServiceRolloutChange(ctx, app.ID, final.ID, final.Status)
 	return true
 }
 
@@ -768,6 +905,10 @@ func (e *Engine) abortServiceRollout(ctx context.Context, app state.App, rollout
 // pass. The old generation keeps the remainder of the desired capacity until
 // the new generation proves readiness; the total temporary surge is one.
 func (e *Engine) reconcileServiceRollout(ctx context.Context, app state.App, rollout state.Deployment, deployments []state.Deployment) {
+	if rollout.ServiceRolloutHandoff.ActiveAbort() {
+		e.reverseServiceRollout(ctx, app, rollout)
+		return
+	}
 	desired := desiredServiceReplicas(app.Manifest)
 	previous := previousServiceDeployment(rollout, deployments)
 	replicas, err := listServiceReplicas(ctx, e.store, app.ID, rollout.ID)

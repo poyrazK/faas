@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // drainSynth is a recording GatewaySynth that captures the invocations
@@ -187,6 +190,59 @@ func TestDrain_DispatchesDueRow(t *testing.T) {
 	}
 }
 
+func TestDrain_ObservesDelayedTaskLagAndSuccess(t *testing.T) {
+	t.Parallel()
+	d, store, _, _, synth := newDrainHarness(t, api.PlanHobby, true)
+	metrics := wire.NewOpsMetrics("schedd")
+	d.ops = metrics
+	now := time.Now().UTC().Truncate(time.Second)
+	d.now = func() time.Time { return now }
+	d.accts = newAcctCache(d.now)
+
+	apps, err := store.ListAllApps(context.Background())
+	if err != nil || len(apps) == 0 {
+		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+	}
+	scheduledAt := now.Add(-30 * time.Second)
+	_, err = store.EnqueueInvocation(context.Background(), state.Invocation{
+		AppID: apps[0].ID, AccountID: apps[0].AccountID,
+		Source: state.InvocationDelayedTask, Method: http.MethodPost, Path: "/x",
+		DueAt: scheduledAt, ScheduledAt: &scheduledAt,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+
+	synth.transient.Store(true)
+	d.Tick(context.Background())
+	synth.transient.Store(false)
+	now = now.Add(10 * time.Second)
+	d.Tick(context.Background())
+
+	body := renderDrainMetrics(t, metrics)
+	for _, want := range []string{
+		`schedd_delayed_task_dispatch_total{outcome="success"} 1`,
+		`schedd_delayed_task_dispatch_total{outcome="retry"} 1`,
+		`schedd_delayed_task_schedule_lag_seconds_bucket{le="30"} 1`,
+		`schedd_delayed_task_schedule_lag_seconds_count 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing delayed-task metric %q in:\n%s", want, body)
+		}
+	}
+}
+
+func renderDrainMetrics(t *testing.T, metrics *wire.OpsMetrics) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want 200", rec.Code)
+	}
+	return rec.Body.String()
+}
+
 func TestDrain_DoesNotClaimAnotherNodesInvocation(t *testing.T) {
 	t.Parallel()
 	d, store, _, _, ds := newDrainHarness(t, api.PlanHobby, true)
@@ -321,16 +377,26 @@ func TestDrain_IncompatibleWorkerInvocationFailsWithoutWake(t *testing.T) {
 	}
 }
 
-func TestDrain_InvocationRetryPolicyOverridesPlanBudgetAndDelay(t *testing.T) {
+func TestDrain_InvocationRetryPolicyIsClampedByPlanAndKeepsDelay(t *testing.T) {
 	d, store, _, _, _ := newDrainHarness(t, api.PlanHobby, false)
 	inv := seedDrainInvocation(t, store, state.InvocationAsyncInvoke)
 	inv.RetryPolicyJSON = json.RawMessage(`{"max_attempts":7,"base_seconds":2,"max_seconds":10}`)
 	inv.Attempts = 3
-	if got := d.invocationAttemptBudget(context.Background(), inv); got != 7 {
-		t.Fatalf("attempt budget = %d, want 7", got)
+	if got := d.invocationAttemptBudget(context.Background(), inv); got != 3 {
+		t.Fatalf("attempt budget = %d, want Hobby cap 3", got)
 	}
 	if got := d.invocationRetryDelay(inv); got != 8*time.Second {
 		t.Fatalf("retry delay = %s, want 8s", got)
+	}
+}
+
+func TestDrain_InvocationRetryBudgetLookupFailureRemainsFinite(t *testing.T) {
+	d, store, _, _, _ := newDrainHarness(t, api.PlanHobby, false)
+	inv := seedDrainInvocation(t, store, state.InvocationAsyncInvoke)
+	inv.AppID = "missing-app"
+
+	if got := d.invocationAttemptBudget(context.Background(), inv); got != api.DurableRetryMaxAttempts {
+		t.Fatalf("attempt budget = %d, want finite safety ceiling %d", got, api.DurableRetryMaxAttempts)
 	}
 }
 
@@ -497,43 +563,44 @@ func TestDrain_TenantFairnessBuckets(t *testing.T) {
 	}
 }
 
-// TestDrain_DelayedTaskCapEnforced pins the config-drift re-check.
-// delayed_task source on Hobby plan has MaxDelayedTasksPerApp=5; a
-// 6th row sitting pending must be failed when the drain tries to
-// dispatch it.
-func TestDrain_DelayedTaskCapEnforced(t *testing.T) {
+// TestDrain_DelayedTaskAtCapDispatches protects the admission/dispatch
+// boundary. The pending count includes the candidate itself, so applying
+// the create-time cap again in the drain would strand all five accepted
+// Hobby tasks precisely when the app reaches its documented limit.
+func TestDrain_DelayedTaskAtCapDispatches(t *testing.T) {
 	t.Parallel()
-	d, store, _, _, _ := newDrainHarness(t, api.PlanHobby, true)
+	d, store, _, _, synth := newDrainHarness(t, api.PlanHobby, true)
 	ctx := context.Background()
 	apps, _ := store.ListAllApps(ctx)
 	app := apps[0]
-	// Hobby allows 5 pending delayed_task rows. Seed 5, then a 6th
-	// must fail on dispatch.
+	var due state.Invocation
 	for i := 0; i < 5; i++ {
-		if _, err := store.EnqueueInvocation(ctx, state.Invocation{
+		when := time.Now().Add(time.Duration(i+1) * time.Minute)
+		if i == 0 {
+			when = time.Now().Add(-time.Second)
+		}
+		created, err := store.EnqueueInvocation(ctx, state.Invocation{
 			ID: uuid.NewString(), AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationDelayedTask,
-			Method: "POST", Path: "/x", DueAt: time.Now().Add(time.Duration(i+1) * time.Minute),
-		}); err != nil {
+			Method: "POST", Path: "/x", DueAt: when,
+		})
+		if err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
-	}
-	over, err := store.EnqueueInvocation(ctx, state.Invocation{
-		AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationDelayedTask,
-		Method: "POST", Path: "/x", DueAt: time.Now().Add(-time.Second),
-	})
-	if err != nil {
-		t.Fatalf("EnqueueInvocation over-cap: %v", err)
+		if i == 0 {
+			due = created
+		}
 	}
 
 	d.Tick(ctx)
-	got, _ := store.InvocationByID(ctx, over.ID)
-	// The cap re-check failed the row (retryAfter=30s to give the
-	// customer a window to drain their queue).
-	if got.State != state.InvocationPending {
-		t.Errorf("over-cap row state = %q, want pending (with retryAfter=30s)", got.State)
+	got, err := store.InvocationByID(ctx, due.ID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
 	}
-	if got.LastError == "" {
-		t.Errorf("over-cap row last_error = empty, want set")
+	if got.State != state.InvocationCompleted {
+		t.Errorf("due row state = %q, want completed", got.State)
+	}
+	if calls := synth.calls.Load(); calls != 1 {
+		t.Errorf("synth calls = %d, want 1", calls)
 	}
 }
 

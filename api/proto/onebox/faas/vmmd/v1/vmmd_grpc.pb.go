@@ -45,6 +45,7 @@ const (
 	Vmmd_UpdateEgressCircuit_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
 	Vmmd_UpdatePrivateNetwork_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
 	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
+	Vmmd_RemovePrivateNetworkFabric_FullMethodName    = "/onebox.faas.vmmd.v1.Vmmd/RemovePrivateNetworkFabric"
 	Vmmd_SeccompStatus_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
 	Vmmd_Logs_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/Logs"
 	Vmmd_ForwardHTTPStream_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
@@ -269,6 +270,10 @@ type VmmdClient interface {
 	// provider. When transport_peers_managed is true, the peer list is also
 	// reconciled as the authoritative regional VXLAN topology.
 	ReconcilePrivateNetworkFabric(ctx context.Context, in *ReconcilePrivateNetworkFabricRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkFabricAck, error)
+	// RemovePrivateNetworkFabric tears down the node-local bridge and optional
+	// regional VXLAN link for a deleted Gregale-owned network. The operation is
+	// idempotent so durable delete notifications may be replayed safely.
+	RemovePrivateNetworkFabric(ctx context.Context, in *RemovePrivateNetworkFabricRequest, opts ...grpc.CallOption) (*RemovePrivateNetworkFabricAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing
 	// this instance. Spec §11: "Firecracker's default seccomp filter
@@ -702,6 +707,16 @@ func (c *vmmdClient) ReconcilePrivateNetworkFabric(ctx context.Context, in *Reco
 	return out, nil
 }
 
+func (c *vmmdClient) RemovePrivateNetworkFabric(ctx context.Context, in *RemovePrivateNetworkFabricRequest, opts ...grpc.CallOption) (*RemovePrivateNetworkFabricAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemovePrivateNetworkFabricAck)
+	err := c.cc.Invoke(ctx, Vmmd_RemovePrivateNetworkFabric_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest, opts ...grpc.CallOption) (*SeccompStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SeccompStatusResponse)
@@ -1068,6 +1083,10 @@ type VmmdServer interface {
 	// provider. When transport_peers_managed is true, the peer list is also
 	// reconciled as the authoritative regional VXLAN topology.
 	ReconcilePrivateNetworkFabric(context.Context, *ReconcilePrivateNetworkFabricRequest) (*ReconcilePrivateNetworkFabricAck, error)
+	// RemovePrivateNetworkFabric tears down the node-local bridge and optional
+	// regional VXLAN link for a deleted Gregale-owned network. The operation is
+	// idempotent so durable delete notifications may be replayed safely.
+	RemovePrivateNetworkFabric(context.Context, *RemovePrivateNetworkFabricRequest) (*RemovePrivateNetworkFabricAck, error)
 	// SeccompStatus (M8 §11 — jailer seccomp assertion) reports the
 	// Linux kernel seccomp state of the jailer child process backing
 	// this instance. Spec §11: "Firecracker's default seccomp filter
@@ -1330,6 +1349,9 @@ func (UnimplementedVmmdServer) UpdatePrivateNetwork(context.Context, *UpdatePriv
 }
 func (UnimplementedVmmdServer) ReconcilePrivateNetworkFabric(context.Context, *ReconcilePrivateNetworkFabricRequest) (*ReconcilePrivateNetworkFabricAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReconcilePrivateNetworkFabric not implemented")
+}
+func (UnimplementedVmmdServer) RemovePrivateNetworkFabric(context.Context, *RemovePrivateNetworkFabricRequest) (*RemovePrivateNetworkFabricAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemovePrivateNetworkFabric not implemented")
 }
 func (UnimplementedVmmdServer) SeccompStatus(context.Context, *SeccompStatusRequest) (*SeccompStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SeccompStatus not implemented")
@@ -1801,6 +1823,24 @@ func _Vmmd_ReconcilePrivateNetworkFabric_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_RemovePrivateNetworkFabric_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemovePrivateNetworkFabricRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RemovePrivateNetworkFabric(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RemovePrivateNetworkFabric_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RemovePrivateNetworkFabric(ctx, req.(*RemovePrivateNetworkFabricRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_SeccompStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SeccompStatusRequest)
 	if err := dec(in); err != nil {
@@ -2107,6 +2147,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReconcilePrivateNetworkFabric",
 			Handler:    _Vmmd_ReconcilePrivateNetworkFabric_Handler,
+		},
+		{
+			MethodName: "RemovePrivateNetworkFabric",
+			Handler:    _Vmmd_RemovePrivateNetworkFabric_Handler,
 		},
 		{
 			MethodName: "SeccompStatus",

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"filippo.io/age"
@@ -79,18 +80,21 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 		return []byte("[]"), nil
 	}
 	type sealedSidecar struct {
-		Name          string                   `json:"name"`
-		Image         string                   `json:"image"`
-		Type          api.SidecarType          `json:"type"`
-		Cmd           []string                 `json:"cmd,omitempty"`
-		Env           map[string]string        `json:"env,omitempty"`
-		Port          int                      `json:"port,omitempty"`
-		RamMB         int                      `json:"ram_mb,omitempty"`
-		ScratchMB     int                      `json:"scratch_mb,omitempty"`
-		CPUMillicores int                      `json:"cpu_millicores,omitempty"`
-		DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
-		Essential     *bool                    `json:"essential,omitempty"`
-		DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
+		Name           string                      `json:"name"`
+		Preset         string                      `json:"preset,omitempty"`
+		Image          string                      `json:"image"`
+		Type           api.SidecarType             `json:"type"`
+		Cmd            []string                    `json:"cmd,omitempty"`
+		Env            map[string]string           `json:"env,omitempty"`
+		Port           int                         `json:"port,omitempty"`
+		PrimaryIngress bool                        `json:"primary_ingress,omitempty"`
+		RamMB          int                         `json:"ram_mb,omitempty"`
+		ScratchMB      int                         `json:"scratch_mb,omitempty"`
+		CPUMillicores  int                         `json:"cpu_millicores,omitempty"`
+		DiskIOProfile  string                      `json:"disk_io_profile,omitempty"`
+		Essential      *bool                       `json:"essential,omitempty"`
+		StartupProbe   *api.AppManifestHealthcheck `json:"startup_probe,omitempty"`
+		DependsOn      []api.WorkloadDependency    `json:"depends_on,omitempty"`
 	}
 	out := make([]sealedSidecar, 0, len(ss))
 	for _, s := range ss {
@@ -117,18 +121,21 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 			envOut[k] = base64.StdEncoding.EncodeToString(ct)
 		}
 		out = append(out, sealedSidecar{
-			Name:          s.Name,
-			Image:         s.Image,
-			Type:          s.Type,
-			Cmd:           s.Cmd,
-			Env:           envOut,
-			Port:          s.Port,
-			RamMB:         s.RamMB,
-			ScratchMB:     s.ScratchMB,
-			CPUMillicores: s.CPUMillicores,
-			DiskIOProfile: s.DiskIOProfile,
-			Essential:     s.Essential,
-			DependsOn:     s.DependsOn,
+			Name:           s.Name,
+			Preset:         s.Preset,
+			Image:          s.Image,
+			Type:           s.Type,
+			Cmd:            s.Cmd,
+			Env:            envOut,
+			Port:           s.Port,
+			PrimaryIngress: s.PrimaryIngress,
+			RamMB:          s.RamMB,
+			ScratchMB:      s.ScratchMB,
+			CPUMillicores:  s.CPUMillicores,
+			DiskIOProfile:  s.DiskIOProfile,
+			Essential:      s.Essential,
+			StartupProbe:   s.StartupProbe,
+			DependsOn:      s.DependsOn,
 		})
 	}
 	raw, err := json.Marshal(out)
@@ -150,8 +157,36 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 // exists so a future PR can add a per-plan matrix without a
 // handler-side branch.
 func validateAndPlanSidecars(req *api.CreateDeploymentRequest, acct state.Account, limits api.Limits) *api.Problem {
+	return validateAndPlanSidecarsWithImages(req, acct, limits, nil)
+}
+
+func (s *server) validateAndPlanSidecars(req *api.CreateDeploymentRequest, acct state.Account, limits api.Limits) *api.Problem {
+	return validateAndPlanSidecarsWithImages(req, acct, limits, s.companionImages)
+}
+
+func validateAndPlanSidecarsWithImages(req *api.CreateDeploymentRequest, acct state.Account, limits api.Limits, managedImages map[string]string) *api.Problem {
+	if p := req.NormalizeCompanions(); p != nil {
+		return p
+	}
 	if len(req.Sidecars) == 0 {
 		return nil
+	}
+	for i := range req.Sidecars {
+		companion := &req.Sidecars[i]
+		if companion.Preset == "" || companion.Image != "" {
+			continue
+		}
+		preset, ok := api.NormalizeCompanionPreset(companion.Preset)
+		if !ok {
+			// Sidecar.Validate returns the customer-facing closed-set error.
+			continue
+		}
+		image := strings.TrimSpace(managedImages[string(preset)])
+		if image == "" || !api.ValidCompanionImageReference(image) {
+			return api.ErrCompanionPresetUnavailable(string(preset))
+		}
+		companion.Preset = string(preset)
+		companion.Image = image
 	}
 	if !acct.Plan.SidecarAllowed() {
 		return api.ErrSidecarNotAllowedOnPlan(acct.Plan)
@@ -540,7 +575,8 @@ func emitSidecarSetAudit(ctxr context.Context, audit *auditor, acct state.Accoun
 // the goroutine briefly (audit.Emit is sync; pkg/audit batches
 // async-flush). The log line sanitises req.Image at the sink
 // (CodeQL go/log-injection CWE-117).
-func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Account, app state.App, d state.Deployment, prev state.Deployment, req *api.CreateDeploymentRequest) {
+func notifyAndAuditDeployment(r *http.Request, s *server, acct state.Account, app state.App, d state.Deployment, prev state.Deployment, req *api.CreateDeploymentRequest) {
+	ctxr := r.Context()
 	// F-03: deployment_changed emits now carry status + deployment_id.
 	// status="pending" tells listeners this row is still in-flight
 	// (builderd will eventually stamp rootfs_path → imaged converts to
@@ -606,6 +642,8 @@ func notifyAndAuditDeployment(ctxr context.Context, s *server, acct state.Accoun
 		PRNumber:   d.PRNumber,
 	})
 	s.audit.EmitAs(ctxr, resolvedActor, "app.deployed", &acct.ID, mergeActorAudit(appDeployedData, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.recordDeploymentActivity(ctxr, r, acct, app, d,
+		map[string]any{"revision": d.Revision, "scope": d.Scope, "supersedes": supersedes})
 	// Issue #472 / ADR-054: emit app.signed_image_accepted here ONLY
 	// when effective signature enforcement is on for this deploy
 	// (apps.require_signed or security_policy=enforce). imaged will later emit

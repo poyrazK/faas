@@ -23,7 +23,7 @@ const workloadEndpointHost = "127.0.0.1"
 // workload. Explicit port collisions are rejected because two processes in a
 // shared netns cannot bind the same address.
 func buildWorkloadEndpointEnv(roster workloadRoster, mainManifest api.AppManifest) (map[string]string, error) {
-	endpoints := make(map[string]string, 4*(1+len(roster.Sidecars)))
+	endpoints := make(map[string]string, 5*(1+len(roster.Sidecars)))
 	ports := make(map[string]string, 1+len(roster.Sidecars))
 
 	mainPorts := append([]api.WorkloadPort(nil), roster.Main.Ports...)
@@ -48,6 +48,7 @@ func buildWorkloadEndpointEnv(roster workloadRoster, mainManifest api.AppManifes
 			return nil, fmt.Errorf("workload network: duplicate workload name %q", sidecar.Name)
 		}
 		seenNames[sidecar.Name] = struct{}{}
+		endpoints[workloadEndpointPrefix(sidecar.Name)+"_SHARED_DIR"] = companionSharedDirectory(sidecar.Name)
 		sidecarPorts := append([]api.WorkloadPort(nil), sidecar.Ports...)
 		if len(sidecarPorts) == 0 && sidecar.Port != 0 {
 			sidecarPorts = []api.WorkloadPort{{Port: sidecar.Port, Protocol: api.WorkloadPortTCP}}

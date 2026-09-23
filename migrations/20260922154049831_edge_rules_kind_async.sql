@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-211 — kind=async converts a matched public request into the existing
+-- ADR-215 — kind=async converts a matched public request into the existing
 -- durable async invocation lifecycle. Runtime and plan policy live above the
 -- database; this CHECK only widens the closed edge-rule vocabulary.
 ALTER TABLE edge_rules DROP CONSTRAINT IF EXISTS edge_rules_kind_check;

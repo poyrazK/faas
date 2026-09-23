@@ -60,7 +60,7 @@ func postStripeInboundWebhook(t *testing.T, e testEnv, endpointURL string, body 
 func TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "inbound-stripe")
-	retryPolicy := []byte(`{"max_attempts":4,"base_seconds":2,"max_seconds":30}`)
+	retryPolicy := []byte(`{"max_attempts":20,"base_seconds":2,"max_seconds":30}`)
 	if _, err := e.store.UpdateApp(t.Context(), appID, state.UpdateAppParams{RetryPolicyJSON: &retryPolicy, SetRetryPolicy: true}); err != nil {
 		t.Fatalf("set app retry policy: %v", err)
 	}
@@ -95,8 +95,13 @@ func TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries(t *testing.T
 	if invocation.Method != http.MethodPost || invocation.Path != "/internal/stripe" || !bytes.Equal(invocation.Payload, body) {
 		t.Fatalf("delivery envelope mismatch: method=%q path=%q payload=%s", invocation.Method, invocation.Path, invocation.Payload)
 	}
-	if !bytes.Equal(invocation.RetryPolicyJSON, retryPolicy) {
-		t.Fatalf("retry policy = %s, want app default %s", invocation.RetryPolicyJSON, retryPolicy)
+	var persistedRetryPolicy api.RetryPolicyDTO
+	if err := json.Unmarshal(invocation.RetryPolicyJSON, &persistedRetryPolicy); err != nil {
+		t.Fatalf("decode persisted retry policy: %v", err)
+	}
+	wantMaxAttempts := api.MustLimitsFor(api.PlanPro).MaxQueueAttempts
+	if persistedRetryPolicy.MaxAttempts != wantMaxAttempts || persistedRetryPolicy.BaseSeconds != 2 || persistedRetryPolicy.MaxSeconds != 30 {
+		t.Fatalf("retry policy = %+v, want app default capped to plan max attempts %d", persistedRetryPolicy, wantMaxAttempts)
 	}
 	var headers map[string]string
 	if err := json.Unmarshal(invocation.Headers, &headers); err != nil {

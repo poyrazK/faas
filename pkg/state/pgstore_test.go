@@ -3533,6 +3533,38 @@ func TestPg_ExplicitZeroTrafficPreservesStableRevision(t *testing.T) {
 	}
 }
 
+func TestPg_UpdateDeploymentTraffic_ExpectedServing(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, stableID := seedLiveDeploy(t, s, ctx, "conditional-promotion")
+	candidate, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: strings.Repeat("d", 64), Status: state.DeployPending,
+		TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateDeploymentTraffic(ctx, candidate.ID, 100, uuid.NewString()); !errors.Is(err, state.ErrTrafficServingChanged) {
+		t.Fatalf("stale promotion err = %v, want ErrTrafficServingChanged", err)
+	}
+	stable, _ := s.DeploymentByID(ctx, stableID)
+	candidateAfter, _ := s.DeploymentByID(ctx, candidate.ID)
+	if stable.TrafficPercent != 100 || candidateAfter.TrafficPercent != 0 {
+		t.Fatalf("stale promotion changed traffic: stable=%d candidate=%d", stable.TrafficPercent, candidateAfter.TrafficPercent)
+	}
+	if _, err := s.UpdateDeploymentTraffic(ctx, candidate.ID, 100, stableID); err != nil {
+		t.Fatalf("conditional promotion: %v", err)
+	}
+	stable, _ = s.DeploymentByID(ctx, stableID)
+	candidateAfter, _ = s.DeploymentByID(ctx, candidate.ID)
+	if stable.TrafficPercent != 0 || candidateAfter.TrafficPercent != 100 {
+		t.Fatalf("promotion traffic: stable=%d candidate=%d, want 0/100", stable.TrafficPercent, candidateAfter.TrafficPercent)
+	}
+}
+
 func TestPg_RunningInstanceForAppIgnoresZeroTrafficGeneration(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, _ := seedLiveDeploy(t, s, ctx, "running-zero-traffic")

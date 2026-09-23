@@ -804,17 +804,50 @@ func TestEdgeRuleThrottle_MissingIdentitySharedBucket(t *testing.T) {
 	}
 }
 
+func TestEdgeRuleThrottle_DimensionalBucketsDoNotShareParentBurst(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.edgeRules = stubEdgeRuleMatcher{throttle: &EdgeRuleThrottleResolved{
+		ID: "rule-isolated", AccountID: "acct-1", AppID: "app-1",
+		RequestsPerSecond: 0.01, Burst: 1,
+		KeyBy: api.ThrottleKeyByConsumerID, MaxKeysPerRule: 100,
+		MissingKeyPolicy: api.ThrottleMissingKeyReject,
+	}}
+	app := App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}
+	do := func(consumerID string) *httptest.ResponseRecorder {
+		t.Helper()
+		ctx := withAuthenticated(t.Context(), Authenticated{ConsumerID: consumerID})
+		req := httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		h.applyEdgeRuleThrottle(rec, req, app)
+		return rec
+	}
+
+	if rec := do("consumer-a"); rec.Code == http.StatusTooManyRequests {
+		t.Fatalf("consumer A first request unexpectedly throttled: %s", rec.Body.String())
+	}
+	if rec := do("consumer-a"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("consumer A second request status=%d, want 429", rec.Code)
+	}
+	if rec := do("consumer-b"); rec.Code == http.StatusTooManyRequests {
+		t.Fatalf("consumer B inherited consumer A's exhausted burst: %s", rec.Body.String())
+	}
+	if got := h.routeLimiter.BucketCount(); got != 0 {
+		t.Fatalf("shared parent buckets=%d, want 0 for a dimensional rule", got)
+	}
+	if got := h.routeConsumerLimiter.BucketCount(); got != 2 {
+		t.Fatalf("dimensional buckets=%d, want 2 independent consumer buckets", got)
+	}
+}
+
 // TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse — ADR-104
 // amendment 5 (issue #881 Phase 4 H1): when a per-consumer rule
 // (KeyBy="api_key") collapses the consumer into the __other__
-// bucket, the 429 path must emit
-// X-RouteRateLimit-Policy=per-consumer instead of the back-compat
-// "route" value. The collapse is driven by setting MaxKeysPerRule
+// bucket, the 429 path must emit per-consumer policy and read the numeric
+// headers from that collapsed bucket instead of the route-wide limiter. The
+// collapse is driven by setting MaxKeysPerRule
 // to 1 in the resolved rule and forcing the second distinct
 // consumer to land in __other__ via direct AllowWithConsumerKey
-// calls. The applier then consults routeConsumerLimiter.ConsumerIsTracked
-// to compute the policy — this is the single load-bearing assertion
-// for the new header.
+// calls.
 func TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.setLegacyHot()
@@ -828,8 +861,7 @@ func TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse(t *testing.T) {
 	// Per-consumer rule with MaxKeysPerRule=1 → any second distinct
 	// API key collapses into the __other__ bucket (consumer-set
 	// exceeds cap=1). KeyBy="api_key" → ThrottleKeyByIsPerConsumer
-	// returns true → the 429 path emits "per-consumer" when the
-	// consumer has collapsed.
+	// returns true → the dimensional 429 path emits "per-consumer".
 	h.edgeRules = stubEdgeRuleMatcher{
 		throttle: &EdgeRuleThrottleResolved{
 			ID: "rule-collapse", AccountID: "acct-1", AppID: b.app.ID,
@@ -851,9 +883,8 @@ func TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse(t *testing.T) {
 	if !h.routeConsumerLimiter.AllowWithConsumerKey(ruleKey, "key-B", 1, 1, 1) {
 		t.Fatal("consumer B first allow should succeed (collapsed into __other__ bucket)")
 	}
-	// Defensive: pin the invariant the policy-header computation
-	// depends on. ConsumerIsTracked must return false for the
-	// over-cap consumer (the collapse signal).
+	// Defensive: pin the collapse invariant. ConsumerIsTracked must return
+	// false for the over-cap consumer.
 	if h.routeConsumerLimiter.ConsumerIsTracked(ruleKey, "key-A") != true {
 		t.Fatal("consumer A should be tracked (under cap)")
 	}
@@ -861,12 +892,9 @@ func TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse(t *testing.T) {
 		t.Fatal("consumer B should NOT be tracked (collapsed to __other__)")
 	}
 
-	// Drive the applier through ServeHTTP. The applier will:
-	//   1. Decrement the rule-level bucket (1 token) — first call.
-	//   2. Call AllowWithConsumerKey for "key-B" → returns false
-	//      (the __other__ bucket was already drained above).
-	//   3. Set allowed=false → emit 429 + check collapse via
-	//      ConsumerIsTracked("key-B") → false → policy="per-consumer".
+	// Drive the applier through ServeHTTP. It consults only the concrete
+	// __other__ bucket for key-B; that bucket was drained above, so the request
+	// is rejected without touching a shared route bucket.
 	//
 	// The applier uses resolveConsumerKey(KeyBy="api_key") which
 	// reads Authenticated.APIKeyID off the request context. Without
@@ -877,9 +905,7 @@ func TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse(t *testing.T) {
 	// applier hits the per-consumer branch deterministically.
 	ctx := withAuthenticated(t.Context(), Authenticated{APIKeyID: "key-B"})
 
-	// First request — drains rule bucket + drains __other__ bucket
-	// via the collapsed consumer. Will 429 because both buckets
-	// were pre-drained above.
+	// The request 429s because the __other__ bucket was pre-drained above.
 	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -887,11 +913,15 @@ func TestEdgeRuleThrottlePolicyHeader_PerConsumerCollapse(t *testing.T) {
 		t.Fatalf("collapsed per-consumer request should 429; got code=%d body=%s",
 			rec.Code, rec.Body.String())
 	}
-	// X-RouteRateLimit-Policy must be "per-consumer" because the
-	// applier consulted ConsumerIsTracked("key-B") which returned
-	// false (collapsed to __other__).
+	// X-RouteRateLimit-Policy names the authoritative dimensional family.
 	if got := rec.Header().Get("X-RouteRateLimit-Policy"); got != "per-consumer" {
 		t.Errorf("collapsed per-consumer 429 should carry X-RouteRateLimit-Policy=per-consumer; got %q", got)
+	}
+	if got := rec.Header().Get("X-RouteRateLimit-Limit"); got != "1" {
+		t.Errorf("collapsed per-consumer 429 limit=%q, want 1 from __other__ bucket", got)
+	}
+	if got := rec.Header().Get("X-RouteRateLimit-Remaining"); got != "0" {
+		t.Errorf("collapsed per-consumer 429 remaining=%q, want 0 from __other__ bucket", got)
 	}
 	// The existing x-faas-rate-limit-scope enum stays "route"
 	// (unchanged by H1).

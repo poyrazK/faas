@@ -68,6 +68,17 @@ type AppSecretResponse struct {
 	// to discriminate equal-vs-different across scopes without
 	// ever unsealing. omitempty so pre-PR-C clients see no field.
 	ValueHash string `json:"value_hash,omitempty"`
+	// Delivery fields describe runtime delivery of this exact secret version.
+	// They contain identifiers and timestamps only; values and ciphertext never
+	// enter the status surface.
+	DeliveryVersion         int64  `json:"delivery_version"`
+	DeliveredVersion        int64  `json:"delivered_version,omitempty"`
+	DeliveryStatus          string `json:"delivery_status"`
+	LastDeliveryAttemptAt   string `json:"last_delivery_attempt_at,omitempty"`
+	LastDeliveredAt         string `json:"last_delivered_at,omitempty"`
+	LastDeliveryErrorCode   string `json:"last_delivery_error_code,omitempty"`
+	LastDeliveredWakeID     string `json:"last_delivered_wake_id,omitempty"`
+	LastDeliveredInstanceID string `json:"last_delivered_instance_id,omitempty"`
 }
 
 // ScopedAppSecretResponse is the per-row shape for the nested
@@ -95,7 +106,15 @@ type ScopedAppSecretResponse struct {
 	Kid       string `json:"kid,omitempty"`
 	// ValueHash — see AppSecretResponse.ValueHash for the
 	// semantics. omitempty so pre-PR-C clients see no field.
-	ValueHash string `json:"value_hash,omitempty"`
+	ValueHash               string `json:"value_hash,omitempty"`
+	DeliveryVersion         int64  `json:"delivery_version"`
+	DeliveredVersion        int64  `json:"delivered_version,omitempty"`
+	DeliveryStatus          string `json:"delivery_status"`
+	LastDeliveryAttemptAt   string `json:"last_delivery_attempt_at,omitempty"`
+	LastDeliveredAt         string `json:"last_delivered_at,omitempty"`
+	LastDeliveryErrorCode   string `json:"last_delivery_error_code,omitempty"`
+	LastDeliveredWakeID     string `json:"last_delivered_wake_id,omitempty"`
+	LastDeliveredInstanceID string `json:"last_delivered_instance_id,omitempty"`
 }
 
 // SecretByScope is the nested map shape returned under `secrets_by_scope`

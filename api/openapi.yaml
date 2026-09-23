@@ -4679,6 +4679,32 @@ paths:
       tags: [apps]
       operationId: getAppStreamingCap
       summary: Per-app streaming classification probe (ADR-102 D6).
+      parameters:
+        - name: host
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: |
+            Request host to resolve a per-edge-rule cap. Supply together
+            with `path` and `method`; omit all three for the plan-level cap.
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^/'
+            maxLength: 4096
+          description: Request path to resolve against kind=limit rules.
+        - name: method
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Z]+$'
+            maxLength: 32
+          description: HTTP method to resolve against kind=limit rules.
       description: |
         Returns the streaming-status enum (one of `streaming`,
         `accept-json-downgrade`, `flag-disabled`, `plan-disallows`,
@@ -4687,16 +4713,19 @@ paths:
         representative request to this app, plus the effective
         response-body cap (in bytes) and the per-gate flags.
 
-        The probe is a pure read against the apid cache (the
-        per-account `Plan` and the per-app `streaming_enabled`
-        flag). It does NOT dial gatewayd-internal — the operator
-        opt-in (`FAAS_GATEWAY_STREAMING` env) and per-edge-rule
-        cap override are gatewayd-side state, so `effective_cap_bytes`
-        reflects the plan cap (`cap_kind="plan"`) on every probe.
+        With no query parameters the probe is a pure read against the
+        apid cache (the per-account `Plan` and the per-app
+        `streaming_enabled` flag). Supplying `host`, `path`, and `method`
+        together performs a bounded loopback read of gatewayd's compiled
+        kind=limit rules and reports a matching streaming response cap with
+        `cap_kind="endpoint-rule"`. If gatewayd is unavailable or no rule
+        matches, the response falls back to the plan cap.
+
+        The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
+        gatewayd-side state, so the canonical signal is the
+        `Streaming-Status` response header on a real request, not this probe.
         A customer evaluating "will my next request stream?" must
-        consider the operator-side flag separately; the canonical
-        signal is the `Streaming-Status` response header on a real
-        request, not this probe.
+        consider the operator-side flag separately.
 
         `status=plan-disallows` means the customer's plan tier
         forbids `streaming_enabled=true`; the CreateApp gate (D5)
@@ -6508,10 +6537,13 @@ paths:
             on the in-flight row + 0 on the siblings. No stuck-check;
             this is the operator's "I'm sure, ship it" path.
 
-          - `abort`: flips `rollout_state = 'aborted'` with
-            `rollout_aborted_reason = reason`. Legal from
-            `rollout_state ∈ {pending, rolling_out}`. Emits a
-            `deploy.rolled_back` audit row.
+          - `abort`: ordinary canaries transition synchronously to
+            `rollout_state = 'aborted'`. A zero-step service rollout instead
+            records a durable abort request and returns 202; schedd restores
+            the predecessor route, waits for gateway acknowledgement and
+            candidate request drain, then finalises the abort. `advance` and
+            `promote` are invalid for service rollouts. Emits a
+            `deploy.rolled_back` audit row for the operator intent.
 
         Returns the post-transition Deployment + the audit row id
         so the operator's terminal can echo `audit_id=…`. Plan-tier
@@ -6533,6 +6565,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RolloutTransitionResponse'
+        '202':
+          description: A service-rollout abort was accepted for scheduler-owned zero-downtime handoff.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RolloutTransitionResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
@@ -6941,9 +6978,11 @@ paths:
       operationId: getGitHubDeploymentPolicy
       summary: Read the customer-owned GitHub deployment policy.
       description: |
-        Returns the project-level policy applied by githubd to source
-        staging and pull-request previews. Missing policy rows resolve to
-        backwards-compatible defaults.
+        Returns the project-level policy applied to source staging,
+        pull-request previews, and preview-to-production internal service
+        calls. A missing policy row resolves to the safe defaults for a new
+        project; projects created before preview service isolation was
+        introduced are migration-backed to the legacy allow_marked policy.
       security:
         - bearerAuth: [github:manage]
       responses:
@@ -6964,7 +7003,10 @@ paths:
         Updates project-level GitHub deployment behaviour. Fields are
         replace-on-write; omitted fields retain their current values. The
         ignored_paths list accepts exact paths, one-segment shell globs, and
-        trailing `/**` directory patterns. Mutations require MFA.
+        trailing `/**` directory patterns. `preview_service_policy=deny`
+        rejects preview calls to production dependencies before discovery or
+        wake-up; `allow_marked` preserves the marked-call compatibility mode.
+        Mutations require MFA.
       security:
         - bearerAuth: [github:manage]
       requestBody:
@@ -7728,8 +7770,9 @@ paths:
         flag and deploy-time posture policy. Mounted with
         `authLimited → requireMFA → requireScope(ScopesAdminOnly...)`.
         `security_policy=enforce` rejects new deploys while high-severity
-        posture findings remain; `warn` is advisory and `off` preserves
-        historical behavior.
+        configuration findings remain; live-image evidence findings remain
+        visible but do not block the replacement needed for recovery. `warn`
+        is advisory and `off` preserves historical behavior.
 
         Each field is optional; omitted fields are unchanged and supplied
         fields are applied atomically.
@@ -9172,8 +9215,10 @@ paths:
         Range-check [0, 100] is enforced at the handler (422
         `invalid_traffic_percent`). The Σ invariant is asserted
         post-write as a defensive backstop (409
-        `traffic_percent_sum_invalid`) — structurally unreachable
-        with zero-siblings, but pinned by the test suite.
+        `traffic_percent_sum_invalid`).
+        An optional expected_serving_deployment_id is checked under the
+        same live-row locks before rebalance. A stale expectation returns
+        409 `traffic_serving_changed` without changing traffic.
       requestBody:
         required: true
         content:
@@ -9201,10 +9246,11 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            `409 Conflict` — post-write Σ invariant check tripped.
-            Structurally unreachable with the zero-siblings rebalance
-            form, but pinned by the test suite as a defensive
-            backstop against future refactors.
+            `409 Conflict` — either the post-write Σ invariant check
+            tripped (`traffic_percent_sum_invalid`) or the optional
+            expected_serving_deployment_id was stale
+            (`traffic_serving_changed`). A stale expectation is checked
+            before any traffic write.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '422':
           description: |
@@ -14779,6 +14825,39 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/event-deliveries:
+    get:
+      tags: [events]
+      operationId: listEventDeliveries
+      summary: Inspect event delivery lifecycle for an app.
+      description: |
+        Returns event-triggered invocation metadata, newest first. The
+        projection includes the published event identity, subscription,
+        lifecycle state, attempts, and last error without returning payloads.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: event_id
+          in: query
+          schema: { type: string }
+          description: Exact published event id to inspect.
+        - name: state
+          in: query
+          schema: { type: string, enum: [pending, dispatching, completed, failed, dead_letter] }
+          description: Exact delivery state to include.
+        - $ref: '#/components/parameters/QueueCursorBefore'
+        - $ref: '#/components/parameters/QueueCursorLimit'
+      responses:
+        '200':
+          description: App-scoped event delivery page, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventDeliveryListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/dlq:replay_all:
     post:
       tags: [queues]
@@ -14893,9 +14972,10 @@ paths:
       description: |
         Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
         bounded to one year. Cap-checked against the plan's
-        MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
-        re-checks at dispatch. Delivery is at least once; handlers should use
-        the invocation id to make side effects idempotent.
+        MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). Accepted
+        tasks are grandfathered across later plan changes. Delivery is at
+        least once; handlers should use the invocation id to make side effects
+        idempotent.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -17513,6 +17593,60 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/activity:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgActivity
+      summary: List the organization's global infrastructure activity.
+      description: |
+        Returns one newest-first timeline across applications, deployments,
+        environment configuration, domains, certificates, and automated
+        platform actions. Every active member may read it (`org.view`).
+
+        Entries are a curated customer-facing projection, not raw provider or
+        security audit payloads. Labels are captured at write time and `data`
+        contains non-secret display metadata only; environment values and
+        credentials are never included. Pass `next_before` back unchanged as
+        `before` to fetch the next older page.
+      parameters:
+        - name: before
+          in: query
+          schema: { type: string }
+          description: Opaque cursor returned as `next_before` by the prior page.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Maximum number of activity items to return in this page.
+        - name: kind_prefix
+          in: query
+          schema: { type: string }
+          description: Optional namespaced kind prefix, such as `deploy.`.
+        - name: actor_type
+          in: query
+          schema:
+            type: string
+            enum: [user, api_key, github, system, operator]
+          description: Restrict results to one captured actor category.
+        - name: app_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: Restrict results to activity associated with this application.
+      responses:
+        '200':
+          description: A stable keyset page of organization activity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListOrgActivityResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller is not an active member with `org.view`.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{slug}/members:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -19176,7 +19310,7 @@ components:
     GitHubDeploymentPolicy:
       description: Customer-owned project-level GitHub deployment behaviour.
       type: object
-      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours]
+      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, preview_service_policy]
       properties:
         project_id: { type: string, format: uuid }
         root_dir:
@@ -19190,6 +19324,16 @@ components:
           description: Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds.
         preview_enabled: { type: boolean, default: true }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720, default: 168 }
+        preview_service_policy:
+          type: string
+          enum: [deny, allow_marked]
+          default: deny
+          description: |
+            Controls calls from project previews to production internal
+            services. `deny` rejects the call before discovery or wake-up;
+            `allow_marked` permits it and marks the request as preview-origin
+            traffic. Projects created before this policy was introduced are
+            migration-backed to `allow_marked`.
 
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
@@ -19203,6 +19347,9 @@ components:
           items: { type: string, minLength: 1, maxLength: 255 }
         preview_enabled: { type: boolean }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720 }
+        preview_service_policy:
+          type: string
+          enum: [deny, allow_marked]
 
     GitHubInstallMutationRequest:
       description: |
@@ -20144,6 +20291,20 @@ components:
             type: string
             enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, CONNECT, TRACE]
 
+    AppServiceBinding:
+      description: "A repository-declared dependency on another same-account app. The binding is injected for discovery; gateway authorization remains account-scoped until a separate bindings-only policy is enabled."
+      type: object
+      required: [binding, service]
+      properties:
+        binding:
+          type: string
+          pattern: '^GREGALE_SERVICE_[A-Z0-9_]+_URL$'
+          description: "Platform-owned environment key containing the internal service URL."
+        service:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,61})[a-z0-9]$'
+          description: "Stable target app name used by private service discovery."
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
@@ -20223,6 +20384,11 @@ components:
           format: date-time
           description: "Automatic teardown deadline for a preview, when one is configured."
         manifest: { $ref: '#/components/schemas/AppManifest' }
+        service_bindings:
+          description: "Repository-declared same-account service dependencies currently injected into this workload. This is a read-only discovery projection, not an enforcement allowlist."
+          type: array
+          items:
+            $ref: '#/components/schemas/AppServiceBinding'
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
         # the per-app outbound CIDR allowlist. Each entry is a
         # canonical CIDR string — v4 ("1.2.3.0/24") or v6
@@ -21988,11 +22154,17 @@ components:
         workflows:
           type: array
           items: { $ref: '#/components/schemas/WorkflowSpec' }
+        companions:
+          type: array
+          maxItems: 2
+          items: { $ref: '#/components/schemas/Sidecar' }
+          description: "Preferred field for companions carried across the resumable upload session."
         sidecars:
           type: array
           maxItems: 2
           items: { $ref: '#/components/schemas/Sidecar' }
-          description: "Up to 2 stateless sidecars (1 init + 1 sidecar) carried across the resumable upload session."
+          deprecated: true
+          description: "Deprecated spelling of companions."
         rollback_on_5xx:
           type: [boolean, "null"]
           description: "Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false."
@@ -22294,6 +22466,38 @@ components:
         rollout_aborted_reason:
           type: string
           description: "Operator or orchestrator reason recorded when the rollout is aborted."
+        service_rollout_handoff:
+          $ref: '#/components/schemas/ServiceRolloutHandoffResponse'
+
+    ServiceRolloutHandoffResponse:
+      description: Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff.
+      type: object
+      required: [action, phase, retry_count]
+      properties:
+        action:
+          type: string
+          enum: [promote, abort]
+        phase:
+          type: string
+          enum: [pending, routing, draining, complete]
+        predecessor_deployment_id: { type: string }
+        generation: { type: integer, format: int64, minimum: 0 }
+        expected_gateways:
+          type: array
+          items: { type: string }
+        acknowledged_gateways:
+          type: array
+          items: { type: string }
+        missing_gateways:
+          type: array
+          items: { type: string }
+        retry_count: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        reason: { type: string }
+        started_at: { type: [string, "null"], format: date-time }
+        updated_at: { type: [string, "null"], format: date-time }
+        acknowledged_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
 
     BuildPlan:
       description: "Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the exact source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection when the spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route."
@@ -22421,7 +22625,7 @@ components:
         older_than: { type: string, description: "Echoes the cutoff the store applied to this clear pass (e.g. 168h = 7 days)." }
 
     UpdateDeploymentTrafficRequest:
-      description: "Body for PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). Sets the per-deployment traffic-split weight (integer [0, 100]). PR-A uses the zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are rejected at 403 plan_traffic_split_not_allowed."
+      description: "Body for PATCH /v1/deployments/{id}/traffic. Optionally require a particular live sibling to remain the sole 100% serving deployment when the update commits."
       type: object
       required: [traffic_percent]
       properties:
@@ -22431,6 +22635,9 @@ components:
           maximum: 100
           description: "Per-deployment traffic-split weight. 0 = no traffic (used during rollback). 100 = sole live deployment."
           example: 25
+        expected_serving_deployment_id:
+          type: string
+          description: "Optional 32-hex or dashed deployment id. If this deployment is no longer the sole live 100% serving sibling at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."
 
     AdvanceCanaryRequest:
       description: "Body for POST /v1/deployments/{id}/canary/advance (issue #976 / ADR-122). expected_step is the persisted canary step observed by the progression worker; APID derives the next traffic percentage and rejects stale observations."
@@ -23167,6 +23374,35 @@ components:
           type: array
           items: { $ref: '#/components/schemas/EventSubscriptionResponse' }
 
+    EventDeliveryResponse:
+      description: Metadata-only lifecycle projection for one event-triggered invocation.
+      type: object
+      additionalProperties: false
+      required: [invocation_id, event_id, event_source, event_type, state, attempts, created_at]
+      properties:
+        invocation_id: { type: string, format: uuid }
+        event_id: { type: string }
+        event_source: { type: string }
+        event_type: { type: string }
+        subscription_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
+        attempts: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+
+    EventDeliveryListResponse:
+      description: App-scoped event delivery page, ordered newest first.
+      type: object
+      additionalProperties: false
+      required: [app_slug, deliveries]
+      properties:
+        app_slug: { type: string }
+        deliveries:
+          type: array
+          items: { $ref: '#/components/schemas/EventDeliveryResponse' }
+        next_before: { type: string, description: ID cursor for the next older page. }
+
     WorkflowRunResponse:
       description: "A persisted durable workflow run (ADR-081)."
       type: object
@@ -23241,7 +23477,7 @@ components:
         payload: {}
 
     CreateDeploymentRequest:
-      description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The override field list is FROZEN — six fields, no more — and any extra field on the override object 400s the request (the handler's decoder rejects unknown keys; see ADR-053 §Decision 1). The optional `sidecars` array (issue #463 / ADR-068) attaches up to 2 stateless sidecars (1 init + 1 sidecar) per app — a one-shot DB migrator as `init`, a metrics scraper as `sidecar`. nil/omitted = no sidecars."
+      description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients."
       type: object
       properties:
         image:
@@ -23264,7 +23500,13 @@ components:
           description: "Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit the app's effective signature policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid when apps.require_signed is on or security_policy=enforce (operator policy wins)."
           type: [boolean, "null"]
           example: true
-        # Issue #463 / ADR-068: up to 2 stateless sidecars
+        companions:
+          type: array
+          maxItems: 2
+          items:
+            $ref: '#/components/schemas/Sidecar'
+          description: "Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with sidecars."
+        # Issue #463 / ADR-068: backwards-compatible spelling.
         # (1 init + 1 sidecar). The runtime effect (imaged,
         # fcvm, guest-init) ships in PR-B; PR-A persists the
         # shape and the handler envelope-seals env values.
@@ -23273,7 +23515,8 @@ components:
           maxItems: 2
           items:
             $ref: '#/components/schemas/Sidecar'
-          description: "Up to 2 stateless sidecars (1 init + 1 sidecar). nil/omitted = no sidecars. See ADR-068 for the hard 2-cap and stateless-only contract."
+          deprecated: true
+          description: "Deprecated spelling of companions. Do not set both fields."
         # ADR-081: declarative workflow definitions attached to this
         # deployment. Plan-gated and validated before persistence.
         workflows:
@@ -23751,8 +23994,8 @@ components:
 
     Sidecar:
       description: |
-        One entry in the deploy request's `sidecars` array
-        (issue #463 / ADR-068). Up to 2 sidecars per app (1 init
+        One entry in the deploy request's preferred `companions` array
+        (legacy name: `sidecars`). Up to 2 helpers per app (1 init
         + 1 sidecar; the array is type-uniqueness + 2-capped at
         the schema layer via migration 00095's CHECK constraint).
         Stateless only — stateful base images (Postgres, Redis,
@@ -23768,8 +24011,10 @@ components:
         - `name` matches RFC 1123 label (lowercase alphanumeric
           + dash, 1..63 chars, starts with [a-z0-9]). Unique
           within a single request.
-        - `image` is the digest-pinned OCI reference. Tag
-          references rejected. State images rejected.
+        - `preset` selects a platform-managed helper. A preset may omit
+          `image`; apid resolves an operator-pinned immutable digest.
+        - `image` is required for a custom helper and must be a
+          digest-pinned OCI reference. Tag references are rejected.
         - `type` ∈ {`init`, `sidecar`}. At most one of each per
           deployment.
         - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
@@ -23779,6 +24024,8 @@ components:
           `EnvValueMaxBytes`. Plaintext values NEVER appear in
           any log, audit, or error.
         - `port` ∈ {0, 1..65535}. 0 = absent.
+        - `primary_ingress` routes the application's normal hostname and
+          custom domains through this long-running helper. It requires port.
         - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
         - `scratch_mb` ∈ {0, 16..512}. 0 = platform default; explicit values cap the sidecar's writable `/tmp` tmpfs.
         - `cpu_millicores` ∈ {0, 250, 500, 1000}. 0 = inherit app CPU quota.
@@ -23788,13 +24035,17 @@ components:
           (`failure_class=user_error`) and essential long-running
           sidecars restart-loop. If false, the failure is logged
           and the other workloads continue.
+        - `startup_probe` optionally replaces the image's baked OCI
+          `HEALTHCHECK` for this workload. It uses the exec-style
+          `AppManifestHealthcheck` shape; set `test` to [`NONE`] to
+          explicitly disable the image probe.
         - `depends_on` optionally gates this workload on `main` or
           another sidecar. Conditions are `started`, `healthy`, and
           `completed_successfully`; omitted condition means `started`.
           Init workloads are implicit prerequisites of main and long-running
           sidecars. Cycles and unknown workload names are rejected.
       type: object
-      required: [name, image, type]
+      required: [name, type]
       properties:
         name:
           type: string
@@ -23806,6 +24057,10 @@ components:
           type: string
           pattern: '^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$'
           description: "Digest-pinned OCI reference (repo@sha256:...). Tag references rejected with 400 `sidecar_invalid_image`."
+        preset:
+          type: string
+          enum: [opentelemetry, sentry, datadog-dogstatsd]
+          description: "Platform-managed companion preset. The installation must configure an immutable image digest."
         type:
           type: string
           enum: [init, sidecar]
@@ -23823,6 +24078,10 @@ components:
           minimum: 0
           maximum: 65535
           description: "Listen port. 0 = absent / fall back to image default."
+        primary_ingress:
+          type: boolean
+          default: false
+          description: "Route the app's primary public hostname through this long-running companion. Requires an explicit port."
         ram_mb:
           type: integer
           minimum: 0
@@ -23845,6 +24104,8 @@ components:
         essential:
           type: boolean
           description: "Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."
+        startup_probe:
+          $ref: '#/components/schemas/AppManifestHealthcheck'
         depends_on:
           type: array
           maxItems: 3
@@ -27003,9 +27264,10 @@ components:
         retryable conditions is not configurable.
 
         A replay additionally requires that the response has not
-        committed, a healthy sibling exists, and the remaining
-        `kind=budget` allowance is at least `min_remaining_ms`. A
-        retry can never extend a request's deadline.
+        committed, a healthy sibling exists, the aggregate per-app
+        retry budget has capacity, and the remaining `kind=budget`
+        allowance is at least `min_remaining_ms`. A retry can never
+        extend a request's deadline.
       type: object
       properties:
         max_attempts:
@@ -27027,13 +27289,15 @@ components:
           type: boolean
           default: false
           description: |
-            Opt POST and PATCH into replay. Off by default.
+            Opt POST and PATCH into replay. Off by default. Even when
+            enabled, these methods are replayed only when the request
+            carries a non-empty `Idempotency-Key` header.
 
             This is the only field here that can cost correctness
-            rather than latency: a replayed POST runs your handler's
-            side effect twice unless the handler is idempotent or the
-            caller sends an idempotency key. GET, HEAD, OPTIONS,
-            TRACE, PUT and DELETE are replayed without this flag.
+            rather than latency: your handler must honor the key and
+            return the stored result instead of repeating the side
+            effect. GET, HEAD, OPTIONS, TRACE, PUT and DELETE are
+            replayed without this flag.
         min_remaining_ms:
           type: integer
           minimum: 0
@@ -27055,6 +27319,25 @@ components:
             next instance is a different process — so waiting buys
             nothing. Raise it only when the sibling may still be
             waking.
+        budget_percent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+          description: |
+            Aggregate replay allowance as a percentage of original
+            requests in the gateway's short per-app window. For
+            example, 10 permits at most one replay per ten originals,
+            preventing a broad outage from doubling all traffic.
+        budget_min_retries:
+          type: integer
+          minimum: 0
+          maximum: 32
+          default: 1
+          description: |
+            Minimum replay allowance per app and accounting window.
+            The default preserves one recovery opportunity for a
+            low-traffic app even when budget_percent rounds down.
     EdgeRuleCircuitBreakerAction:
       description: |
         Instance health thresholds (ADR-201 §2, kind=circuit_breaker).
@@ -27340,7 +27623,7 @@ components:
 
     EdgeRuleAsyncAction:
       description: |
-        Marks the matched route for durable asynchronous execution (ADR-211).
+        Marks the matched route for durable asynchronous execution (ADR-215).
         The action is an empty object; retry, deadline, retention, and payload
         limits come from the existing invocation and account-plan contracts.
       type: object
@@ -28290,7 +28573,7 @@ components:
     AppSecretResponse:
       description: "A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the env-scope the row belongs to (ADR-092 PR-B). Pre-PR-B callers see scope='default' echoed on every row."
       type: object
-      required: [key, scope, created_at, updated_at]
+      required: [key, scope, created_at, updated_at, delivery_version, delivery_status]
       properties:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         # ADR-092 PR-B: scope echoes the env-scope the row was
@@ -28315,6 +28598,14 @@ components:
           maxLength: 16
           description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows. Same value across scopes = byte-identical plaintext."
           example: "abcdef0123456789"
+        delivery_version: { type: integer, format: int64, minimum: 1, description: "Opaque monotonic version of the runtime value. Advances on value mutation, not host-key reseal." }
+        delivered_version: { type: integer, format: int64, minimum: 1, description: "Newest version confirmed in a successfully started runtime. Omitted until the first successful delivery." }
+        delivery_status: { type: string, enum: [pending, delivered, failed], description: "Delivery state for the current delivery_version. A concurrent rotation remains pending until that exact version starts successfully." }
+        last_delivery_attempt_at: { type: string, format: date-time }
+        last_delivered_at: { type: string, format: date-time }
+        last_delivery_error_code: { type: string, enum: [runtime_start_failed], description: "Non-sensitive closed failure reason for the current version; omitted unless delivery_status is failed." }
+        last_delivered_wake_id: { type: string, description: "Wake correlation id of the most recent successful delivery." }
+        last_delivered_instance_id: { type: string, description: "Runtime instance that most recently received a secret version." }
 
     # ADR-092 PR-B: per-row shape for the nested secrets_by_scope
     # response (mirror of ScopedAppEnvResponse). Reserved for the
@@ -28329,7 +28620,7 @@ components:
         a second lookup. Value is NEVER echoed (same posture as
         AppSecretResponse).
       type: object
-      required: [scope, key, created_at, updated_at]
+      required: [scope, key, created_at, updated_at, delivery_version, delivery_status]
       properties:
         scope:
           type: string
@@ -28348,6 +28639,14 @@ components:
           maxLength: 16
           description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows."
           example: "abcdef0123456789"
+        delivery_version: { type: integer, format: int64, minimum: 1, description: "Opaque monotonic version of the runtime value." }
+        delivered_version: { type: integer, format: int64, minimum: 1, description: "Newest version confirmed in a successfully started runtime." }
+        delivery_status: { type: string, enum: [pending, delivered, failed] }
+        last_delivery_attempt_at: { type: string, format: date-time }
+        last_delivered_at: { type: string, format: date-time }
+        last_delivery_error_code: { type: string, enum: [runtime_start_failed] }
+        last_delivered_wake_id: { type: string }
+        last_delivered_instance_id: { type: string }
 
     AppSecretListResponse:
       description: "Paginated list of sealed-secret envelopes (no plaintext). Discriminated union: `secrets` is the flat arm; `secrets_by_scope` is the `?scope=__all__` arm (ADR-092 PR-B)."
@@ -29644,11 +29943,13 @@ components:
           - `upgrade-bypass` — request is an HTTP/1.1 Upgrade (e.g.
             WebSocket) and bypasses the streaming path.
 
-        `effective_cap_bytes` is the plan cap (`cap_kind="plan"`)
-        on every probe in this PR. The per-edge-rule override lives
-        in gatewayd state and is not part of the apid cache; a
-        customer who needs the live cap fires a real request and
-        reads the `Streaming-Status` response header.
+        `effective_cap_bytes` is the plan cap (`cap_kind="plan"`) when
+        no route shape is supplied. A route-aware probe may return
+        `cap_kind="endpoint-rule"` when the compiled gatewayd rule
+        matches; gatewayd failures and non-matches fall back to the
+        plan cap. A customer who needs the canonical live status still
+        fires a real request and reads the `Streaming-Status` response
+        header.
       type: object
       required: [app_id, status, effective_cap_bytes, plan_cap_bytes, flag_enabled, plan_allowed]
       properties:
@@ -29684,10 +29985,9 @@ components:
           x-since: "2026-08"
           x_issue: "102"
           description: |
-            `plan` is the only value this probe ever returns in
-            this PR. The endpoint-rule and none values are reserved
-            for the future gatewayd-side dial path described in
-            `cmd/apid/handlers_streaming_cap.go`.
+            `plan` is the plan-level fallback, `endpoint-rule` is a
+            matching compiled gatewayd response cap, and `none` is
+            reserved for a future explicit no-cap result.
 
     ListInstancesResponse:
       description: |
@@ -31053,9 +31353,9 @@ components:
         retry_policy:
           type: [object, "null"]
           additionalProperties: true
-          description: "ADR-134 PR-B. Per-row retry curve override. Shape mirrors dispatch.RetryPolicy: { max_attempts, base_seconds, max_seconds, jitter_seconds }."
+          description: "ADR-134 PR-B. Per-row retry curve override. max_attempts counts the original, is capped by the account plan, and 0 inherits that finite cap."
           properties:
-            max_attempts:    { type: integer }
+            max_attempts:    { type: integer, minimum: 0, maximum: 25 }
             base_seconds:    { type: number }
             max_seconds:     { type: number }
             jitter_seconds:  { type: number, description: "Fraction (0..1). 0.2 means ±20%." }
@@ -31181,26 +31481,46 @@ components:
 
     RetryPolicyDTO:
       description: |
-        ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. The handler
-        decodes this DTO into a dispatch.RetryPolicy before persisting
-        to invocations.retry_policy JSONB. Lives in pkg/api so the SDK
-        can type the override without importing pkg/dispatch directly.
+        ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
+        is a requested total-attempt count; zero inherits the applicable
+        account plan and never means unlimited. Durable invocation
+        producers materialize the effective plan-capped value, and the
+        scheduler re-clamps it at dispatch time to account for later plan
+        downgrades. Lives in pkg/api so the SDK can type the policy
+        without importing pkg/dispatch directly.
       type: object
       properties:
-        max_attempts:    { type: integer }
+        max_attempts:    { type: integer, minimum: 0, maximum: 25, description: "Total delivery attempts including the original. 0 inherits the current plan cap; it never means unlimited." }
         base_seconds:    { type: number }
         max_seconds:     { type: number }
         jitter_seconds:  { type: number, description: "Fraction (0..1) added to the backoff delay. 0.2 means ±20% jitter on top of the exponential curve." }
 
     DelayedTaskRequest:
       description: "Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling form; the maximum delay is 31,536,000 seconds (365 days)."
-      type: object
       oneOf:
-        - required: [scheduled_at]
-        - required: [delay_seconds]
+        - $ref: '#/components/schemas/DelayedTaskAtRequest'
+        - $ref: '#/components/schemas/DelayedTaskAfterRequest'
+
+    DelayedTaskAtRequest:
+      description: Schedule a delayed task at an absolute RFC 3339 timestamp.
+      type: object
+      required: [scheduled_at]
       properties:
         payload: { type: object, additionalProperties: true }
         scheduled_at: { type: string, format: date-time }
+        headers: { type: object, additionalProperties: true }
+        method: { type: string, default: POST }
+        path: { type: string, default: "/" }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+        retention_seconds: { type: integer, minimum: 0 }
+        destinations: { $ref: '#/components/schemas/InvocationDestinations' }
+
+    DelayedTaskAfterRequest:
+      description: Schedule a delayed task after a relative whole-second delay.
+      type: object
+      required: [delay_seconds]
+      properties:
+        payload: { type: object, additionalProperties: true }
         delay_seconds: { type: integer, format: int64, minimum: 1, maximum: 31536000 }
         headers: { type: object, additionalProperties: true }
         method: { type: string, default: POST }
@@ -31905,7 +32225,7 @@ components:
         security_policy:
           type: [string, "null"]
           enum: [off, warn, enforce]
-          description: "Deploy-time response to high-severity posture findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated and require a trusted signature for OCI images."
+          description: "Deploy-time response to high-severity configuration findings. off = advisory report only; warn = non-blocking; enforce = reject new deploys until remediated and require a trusted signature for OCI images."
           example: enforce
 
     AppSecurityResponse:
@@ -31924,7 +32244,7 @@ components:
           example: enforce
 
     AppSecurityPostureResponse:
-      description: "Read-only deterministic configuration posture for an app, including an active image-scan quarantine when present."
+      description: "Read-only configuration posture and live-image scan-evidence coverage for an app, including an active image-scan quarantine when present."
       type: object
       required: [app_id, slug, profile, score, security_policy, findings]
       properties:
@@ -31942,7 +32262,7 @@ components:
         security_policy:
           type: string
           enum: [off, warn, enforce]
-          description: "The app's deploy-time response to high-severity posture findings."
+          description: "The app's deploy-time response to high-severity configuration findings."
         findings:
           type: array
           items: { $ref: '#/components/schemas/AppSecurityFinding' }
@@ -31999,7 +32319,7 @@ components:
           enum: [active]
 
     AppSecurityFinding:
-      description: "One actionable security posture finding."
+      description: "One actionable security posture finding. Codes beginning with image_scan_ describe live-image scan-evidence coverage."
       type: object
       required: [code, severity, title, detail, remediation]
       properties:
@@ -32481,6 +32801,74 @@ components:
         orgs:
           type: array
           items: { $ref: '#/components/schemas/OrgResponse' }
+
+    ActivityActorResponse:
+      description: Captured identity responsible for an activity item.
+      type: object
+      required: [type, label]
+      properties:
+        type:
+          type: string
+          enum: [user, api_key, github, system, operator]
+        label:
+          type: string
+          description: Actor name captured when the activity occurred.
+        account_id:
+          type: string
+          format: uuid
+          description: Present for a locally-known human actor.
+
+    ActivityResourceResponse:
+      description: Primary infrastructure object affected by an activity item.
+      type: object
+      required: [type, label]
+      properties:
+        type:
+          type: string
+          example: app
+        id:
+          type: string
+          description: Stable resource identifier, when one exists.
+        label:
+          type: string
+          description: Resource name captured when the activity occurred.
+
+    OrgActivityResponse:
+      description: One safe, display-ready organization activity fact.
+      type: object
+      required: [id, occurred_at, kind, summary, actor, resource, data]
+      properties:
+        id:
+          type: string
+          description: Monotonic bigint row id encoded as a string.
+        occurred_at: { type: string, format: date-time }
+        kind:
+          type: string
+          example: app.deployed
+        summary:
+          type: string
+          example: Bahadir deployed payments
+        actor: { $ref: '#/components/schemas/ActivityActorResponse' }
+        resource: { $ref: '#/components/schemas/ActivityResourceResponse' }
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        data:
+          type: object
+          additionalProperties: true
+          description: Kind-specific non-secret display metadata.
+
+    ListOrgActivityResponse:
+      description: Newest-first global organization activity page.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrgActivityResponse' }
+        next_before:
+          type: string
+          description: Continue from this value to retrieve older organization activity.
 
     OrgWithRole:
       description: |

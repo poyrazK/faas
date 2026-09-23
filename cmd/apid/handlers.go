@@ -588,7 +588,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
-	if p := validateAndPlanSidecars(&req, acct, limits); p != nil {
+	if p := s.validateAndPlanSidecars(&req, acct, limits); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
@@ -663,7 +663,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		s.writeDeploymentCreateError(w, err)
 		return
 	}
-	notifyAndAuditDeployment(r.Context(), s, acct, app, d, prev, &req)
+	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
 }
 
@@ -791,6 +791,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			HealthPathWakes:  a.Manifest.HealthPathWakes,
 			SessionAffinity:  a.Manifest.SessionAffinity,
 		},
+		ServiceBindings: append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
 		EgressAllowlist: ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger
 		// targets. 0 = "disabled" (no autoscale rule). Reactive

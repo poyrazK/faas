@@ -1592,9 +1592,9 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 	return append([]api.WorkflowSpec{}, m.Workflows...), nil
 }
 
-// loadExtensionSidecarsManifestForDeploy resolves the manifest's named
-// telemetry presets before any deployment mutation. The image digest stays
-// customer-supplied; the preset only contributes stable defaults.
+// loadExtensionSidecarsManifestForDeploy resolves the manifest's companion
+// declarations before any deployment mutation. Preset-only companions keep
+// their image empty here; apid resolves the operator-pinned digest.
 func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) (api.Sidecars, error) {
 	if cwd == "" {
 		return nil, nil
@@ -1603,7 +1603,7 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 	if err != nil {
 		return nil, err
 	}
-	if !ok || m == nil || len(m.Extensions) == 0 {
+	if !ok || m == nil || (len(m.Companions) == 0 && len(m.Extensions) == 0) {
 		return nil, nil
 	}
 	if err := m.Validate(); err != nil {
@@ -1611,7 +1611,7 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 	}
 	acct, err := client.Whoami(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("resolve account plan for extension manifest: %w", err)
+		return nil, fmt.Errorf("resolve account plan for companion manifest: %w", err)
 	}
 	if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
 		return nil, err
@@ -3626,7 +3626,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Canary:         canarySpec,
 			RollbackOn5xx:  rollbackOn5xxPtr,
 			NoTriggers:     *noTriggers,
-			Sidecars:       sidecarDefs,
+			Companions:     sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3655,7 +3655,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
 				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx,
 				Reason: ann.Reason, Tag: ann.Tag,
-				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Sidecars: sidecarDefs,
+				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
 			}
 			var progress resumableUploadProgress
@@ -3783,7 +3783,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:    *environment,
 		RollbackOn5xx:  rollbackOn5xxPtr,
 		Workflows:      workflowDefs,
-		Sidecars:       sidecarDefs,
+		Companions:     sidecarDefs,
 		TrafficPercent: optTrafficPercent(*trafficPercent),
 		Reason:         annPtr(*reason),
 		Tag:            annPtr(*tag),
@@ -4098,6 +4098,108 @@ func cmdTrafficSet(args []string) int {
 	return 0
 }
 
+// TrafficPromotionReceipt is the machine-readable result of
+// `gregale traffic promote`. The nested deployment is the server's refreshed
+// row after the atomic sibling rebalance; the transition fields let automation
+// distinguish a real promotion from an idempotent retry.
+type TrafficPromotionReceipt struct {
+	Deployment      api.DeploymentResponse `json:"deployment"`
+	FromPercent     int                    `json:"from_percent"`
+	ToPercent       int                    `json:"to_percent"`
+	AlreadyPromoted bool                   `json:"already_promoted"`
+}
+
+// cmdTrafficPromote is the intent-level counterpart to traffic set. It keeps
+// the low-level percentage command available while making the common dark
+// deployment transition explicit and idempotent. The existing traffic PATCH
+// performs the atomic sibling rebalance, audit write, and gateway notification.
+func cmdTrafficPromote(args []string) int {
+	fs := newFlagSet("traffic promote", flag.ContinueOnError)
+	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
+	deployment := fs.String("deployment", "", "deployment id or vN revision to promote to 100% production traffic")
+	ifServing := fs.String("if-serving", "", "promote only if this deployment id or vN revision still serves 100% of production traffic")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
+	if strings.TrimSpace(*deployment) == "" {
+		PrintUsage(os.Stderr, "usage: gregale traffic promote [--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
+		return 1
+	}
+	var ifServingSet bool
+	fs.Visit(func(f *flag.Flag) { ifServingSet = ifServingSet || f.Name == "if-serving" })
+	if ifServingSet && !validDeploymentRef(*ifServing) {
+		return printErr("Traffic promote failed", fmt.Errorf("--if-serving requires a deployment id or vN revision"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	deploymentID, err := resolveDeploymentArg(ctx, client, *app, *deployment)
+	if err != nil {
+		return printErr("Traffic promote failed", err)
+	}
+	var servingID string
+	if ifServingSet {
+		resolved, resolveErr := resolveDeploymentArg(ctx, client, *app, *ifServing)
+		if resolveErr != nil {
+			return printErr("Traffic promote failed", resolveErr)
+		}
+		serving, readErr := client.GetDeployment(ctx, resolved)
+		if readErr != nil {
+			return printErr("Traffic promote failed", readErr)
+		}
+		servingID = serving.ID
+		if servingID == deploymentID {
+			return printErr("Traffic promote failed", fmt.Errorf("--if-serving must name a different deployment from --deployment"))
+		}
+	}
+	current, err := client.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return printErr("Traffic promote failed", err)
+	}
+	if current.Status != statusLive {
+		return printErr("Traffic promote failed", fmt.Errorf("deployment %s is %s; only live deployments can be promoted", deploymentLabel(current), current.Status))
+	}
+
+	receipt := TrafficPromotionReceipt{
+		Deployment:  current,
+		FromPercent: current.TrafficPercent,
+		ToPercent:   100,
+	}
+	if current.TrafficPercent == 100 {
+		receipt.AlreadyPromoted = true
+		if jsonOutput {
+			return jsonOut(writeJSON(receipt))
+		}
+		PrintOK(osStdout, "%s is already promoted at 100%% production traffic.", deploymentLabel(current))
+		return 0
+	}
+
+	var updated api.DeploymentResponse
+	if ifServingSet {
+		updated, err = client.PatchDeploymentTrafficIfServing(ctx, deploymentID, 100, servingID)
+	} else {
+		updated, err = client.PatchDeploymentsIdTraffic(ctx, deploymentID, 100)
+	}
+	if err != nil {
+		return printErr("Traffic promote failed", err)
+	}
+	if updated.TrafficPercent != 100 {
+		return printErr("Traffic promote failed", fmt.Errorf("deployment %s reports %d%% production traffic after promotion; expected 100%%", deploymentLabel(updated), updated.TrafficPercent))
+	}
+	receipt.Deployment = updated
+	receipt.ToPercent = updated.TrafficPercent
+	if jsonOutput {
+		return jsonOut(writeJSON(receipt))
+	}
+	PrintOK(osStdout, "Promoted %s: %d%% → %d%% production traffic.", deploymentLabel(updated), receipt.FromPercent, receipt.ToPercent)
+	return 0
+}
+
 // cmdTrafficStatus prints the live deployment weights that currently make up
 // an app's routing table. Read access is available on every plan; Free and
 // Hobby apps normally show one 100% row while Pro/Scale may show a split.
@@ -4154,16 +4256,18 @@ func cmdTrafficStatus(args []string) int {
 // cmdTraffic dispatches the implemented traffic leaves.
 func cmdTraffic(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic <set|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic <set|promote|status> [args]", "traffic")
 		return 1
 	}
 	switch args[0] {
 	case "set":
 		return cmdTrafficSet(args[1:])
+	case "promote":
+		return cmdTrafficPromote(args[1:])
 	case "status":
 		return cmdTrafficStatus(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale traffic <set|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic <set|promote|status> [args]", "traffic")
 		return 1
 	}
 }
@@ -5302,9 +5406,16 @@ func cmdLogs(args []string) int {
 	fs := newFlagSet("logs", flag.ContinueOnError)
 	follow := fs.Bool("follow", false, "follow new lines")
 	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
+	fs.StringVar(deployment, "release", "", "release id or revision (alias for --deployment)")
+	source := fs.String("source", "", "log source (runtime|http)")
 	grep := fs.String("grep", "", "only show lines matching this substring")
-	since := fs.String("since", "", "only show lines at or after this RFC3339 timestamp")
+	since := fs.String("since", "", "lookback duration (15m, 3d) or RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
+	status := fs.Int("status", 0, "only show HTTP requests with this status (100..599)")
+	route := fs.String("route", "", "only show HTTP requests for this route")
+	requestID := fs.String("request", "", "show one HTTP request by public request id or row id")
+	limit := fs.Int("limit", 100, "HTTP request page size (1..200)")
+	all := fs.Bool("all", false, "read every retained HTTP request page")
 	archive := fs.Bool("archive", false, "read durable logs for one instance and UTC day")
 	archiveInstance := fs.String("instance", "", "instance id for --archive")
 	archiveDate := fs.String("date", "", "UTC day for --archive (YYYY-MM-DD)")
@@ -5317,7 +5428,7 @@ func cmdLogs(args []string) int {
 	// whole stream to know which error fired.
 	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
 	if err := parseAppLogFlags(fs, args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain] [--archive --instance ID --date YYYY-MM-DD]", "logs")
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID] [--limit N|--all]", "logs")
 		return 1
 	}
 	if *explain && jsonOutput {
@@ -5325,7 +5436,7 @@ func cmdLogs(args []string) int {
 		return 2
 	}
 	if fs.NArg() > 1 {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain] [--archive --instance ID --date YYYY-MM-DD] (slug defaults to linked project context)", "logs")
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID] [--limit N|--all] (slug defaults to linked project context)", "logs")
 		return 1
 	}
 	slug := ""
@@ -5342,6 +5453,37 @@ func cmdLogs(args []string) int {
 			return printErr("Could not read local project context", resolveErr)
 		}
 	}
+	if logsFlagWasSet(fs, "deployment") && logsFlagWasSet(fs, "release") {
+		PrintUsage(os.Stderr, "--release and --deployment are aliases; use only one", "logs")
+		return 2
+	}
+	httpQueryRequested := logsFlagWasSet(fs, "status") || logsFlagWasSet(fs, "route") ||
+		logsFlagWasSet(fs, "request") || logsFlagWasSet(fs, "limit") || logsFlagWasSet(fs, "all")
+	logSource, sourceErr := normalizeLogsSource(*source, httpQueryRequested)
+	if sourceErr != nil {
+		PrintUsage(os.Stderr, sourceErr.Error(), "logs")
+		return 2
+	}
+	if logSource == logsSourceRuntime && httpQueryRequested {
+		PrintUsage(os.Stderr, "--status, --route, --request, --limit, and --all require --source http", "logs")
+		return 2
+	}
+	if logsFlagWasSet(fs, "status") && (*status < 100 || *status > 599) {
+		PrintUsage(os.Stderr, "--status must be between 100 and 599", "logs")
+		return 2
+	}
+	if logSource == logsSourceHTTP && (*limit < 1 || *limit > 200) {
+		PrintUsage(os.Stderr, "--limit must be between 1 and 200", "logs")
+		return 2
+	}
+	if logsFlagWasSet(fs, "request") && strings.TrimSpace(*requestID) == "" {
+		PrintUsage(os.Stderr, "--request requires a non-empty request id", "logs")
+		return 2
+	}
+	if strings.TrimSpace(*requestID) != "" && (*all || logsFlagWasSet(fs, "limit")) {
+		PrintUsage(os.Stderr, "--request cannot be combined with --all or --limit", "logs")
+		return 2
+	}
 	archiveRequested := *archive || *archiveInstance != "" || *archiveDate != ""
 	var archiveSelector *api.ArchiveLogSelector
 	if archiveRequested {
@@ -5349,8 +5491,8 @@ func cmdLogs(args []string) int {
 			PrintUsage(os.Stderr, "--archive, --instance ID, and --date YYYY-MM-DD must be used together", "logs")
 			return 2
 		}
-		if *follow || *deployment != "" || *grep != "" || *since != "" || *level != "" {
-			PrintUsage(os.Stderr, "--archive cannot be combined with --follow, --deployment, --grep, --since, or --level", "logs")
+		if logSource == logsSourceHTTP || *follow || *deployment != "" || *grep != "" || *since != "" || *level != "" || httpQueryRequested {
+			PrintUsage(os.Stderr, "--archive cannot be combined with HTTP queries, --follow, --release, --deployment, --grep, --since, or --level", "logs")
 			return 2
 		}
 		parsedDate, err := time.Parse("2006-01-02", *archiveDate)
@@ -5359,6 +5501,10 @@ func cmdLogs(args []string) int {
 			return 2
 		}
 		archiveSelector = &api.ArchiveLogSelector{InstanceID: *archiveInstance, Date: *archiveDate}
+	}
+	if logSource == logsSourceHTTP && (*follow || *grep != "" || *level != "" || *explain || archiveRequested) {
+		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --follow, --grep, --level, --explain, or --archive", "logs")
+		return 2
 	}
 	// Validate --level early so a typo costs the customer a network
 	// round-trip; --since is validated next so the SDK never sees a
@@ -5371,11 +5517,11 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, "--level must be one of: info, warn, error", "logs")
 		return 2
 	}
-	if *since != "" {
-		if _, err := time.Parse(time.RFC3339, *since); err != nil {
-			PrintUsage(os.Stderr, "--since must be an RFC3339 timestamp (e.g. 2026-07-28T00:00:00Z)", "logs")
-			return 2
-		}
+	now := time.Now()
+	normalizedSince, sinceErr := normalizeLogsSince(*since, logSource, now)
+	if sinceErr != nil {
+		PrintUsage(os.Stderr, sinceErr.Error(), "logs")
+		return 2
 	}
 	// ADR-198: --deployment accepts a vN handle. `slug` is already
 	// resolved above (positional, else linked project), so the revision is
@@ -5392,9 +5538,12 @@ func cmdLogs(args []string) int {
 		}
 		deploymentRef = resolved
 	}
+	if logSource == logsSourceHTTP {
+		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), *route, normalizedSince, *status, *limit, *all, now)
+	}
 	return runLogs(context.Background(), slug, deploymentRef, api.LogFilter{
 		Grep:  *grep,
-		Since: *since,
+		Since: normalizedSince,
 		Level: *level,
 	}, archiveSelector, *follow, *explain)
 }
@@ -5413,7 +5562,7 @@ func cmdLogsTail(args []string) int {
 	follow := fs.Bool("follow", false, "follow new lines (alias always follows; flag is redundant)")
 	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
 	grep := fs.String("grep", "", "only show lines matching this substring")
-	since := fs.String("since", "", "only show lines at or after this RFC3339 timestamp")
+	since := fs.String("since", "", "lookback duration (15m, 3d) or RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
 	if err := parseAppLogFlags(fs, args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale logs tail <slug> [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error]", "logs")
@@ -5445,15 +5594,14 @@ func cmdLogsTail(args []string) int {
 		PrintUsage(os.Stderr, "--level must be one of: info, warn, error", "logs")
 		return 2
 	}
-	if *since != "" {
-		if _, err := time.Parse(time.RFC3339, *since); err != nil {
-			PrintUsage(os.Stderr, "--since must be an RFC3339 timestamp (e.g. 2026-07-28T00:00:00Z)", "logs")
-			return 2
-		}
+	normalizedSince, sinceErr := normalizeLogsSince(*since, logsSourceRuntime, time.Now())
+	if sinceErr != nil {
+		PrintUsage(os.Stderr, sinceErr.Error(), "logs")
+		return 2
 	}
 	return runLogs(context.Background(), slug, *deployment, api.LogFilter{
 		Grep:  *grep,
-		Since: *since,
+		Since: normalizedSince,
 		Level: *level,
 	}, nil, true, false)
 }

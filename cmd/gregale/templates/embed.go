@@ -1,4 +1,4 @@
-// Package templates ships the sixteen `gregale deploy --template <name>`
+// Package templates ships the seventeen `gregale deploy --template <name>`
 // starter projects as an embed.FS so the CLI is a single static
 // binary. Precedent: migrations/embed.go:13 — `//go:embed` pulls in
 // the sibling subdirectories at compile time.
@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -61,6 +61,7 @@ var Names = []string{
 	"function-node24",
 	"function-python313",
 	"event-worker",
+	"queue-worker",
 	"s3-uploader",
 	"slack-bot",
 	"rest-api-postgres",
@@ -237,7 +238,7 @@ func NameIsValid(name string) bool {
 //	"hello"              — first-touch smoke tests (3)
 //	"function"           — generic runtimes the customer customises (6)
 //	"stateless-contract" — managed-service scaffolds that BYO credentials (5)
-//	"event-driven"       — internal event router starter (1)
+//	"event-driven"       — internal event and queue worker starters (2)
 //	"ai"                 — LLM-facing scaffolds that BYO keys (1)
 //	""                   — unknown / not in Names
 //
@@ -251,7 +252,7 @@ func CategoryFor(name string) string {
 		return "hello"
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example":
 		return "function"
-	case "event-worker":
+	case "event-worker", "queue-worker":
 		return "event-driven"
 	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver":
 		return "stateless-contract"

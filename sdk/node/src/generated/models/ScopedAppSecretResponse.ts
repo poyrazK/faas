@@ -25,5 +25,19 @@ export type ScopedAppSecretResponse = {
    * 16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows.
    */
   value_hash?: string;
+  /**
+   * Opaque monotonic version of the runtime value.
+   */
+  delivery_version: number;
+  /**
+   * Newest version confirmed in a successfully started runtime.
+   */
+  delivered_version?: number;
+  delivery_status: 'pending' | 'delivered' | 'failed';
+  last_delivery_attempt_at?: string;
+  last_delivered_at?: string;
+  last_delivery_error_code?: 'runtime_start_failed';
+  last_delivered_wake_id?: string;
+  last_delivered_instance_id?: string;
 };
 

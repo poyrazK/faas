@@ -94,10 +94,8 @@ func invocationOutcomeForError(err error) state.InvocationOutcome {
 //     hot path Move 2 can short-circuit using ListAppsForWake +
 //     RunningInstanceForApp. For Move 1 we pay the round-trip for
 //     correctness.
-//   - Cap re-checks: row may sit in pending for a long time; if the
-//     customer's plan changed (e.g. downgrade), CountPendingInvocations
-//     re-checks the cap right before claiming. The drain never trusts
-//     apid's prior gate.
+//   - Delayed-task caps are admission-only. Once apid has durably accepted a
+//     task, the drain dispatches it even if the account later changes plans.
 //   - No new daemon: drains live inside cmd/schedd. The schedd main
 //     goroutine subscribes to invocation_due + runDrainTick (1s).
 type Drain struct {
@@ -431,13 +429,12 @@ func (d *Drain) dispatchParallel(ctx context.Context, rows []state.Invocation) {
 
 // dispatchOne is per-row. The lifecycle:
 //
-//  1. Cap re-check (delayed_task only — config-drift protection).
-//  2. ClaimInvocation (pending → dispatching, lease, attempts++).
-//  3. engine.Wake (idempotent — may return an existing RUNNING instance).
-//  4. StampInstanceInvocation — write the live handle onto the row
+//  1. ClaimInvocation (pending → dispatching, lease, attempts++).
+//  2. engine.Wake (idempotent — may return an existing RUNNING instance).
+//  3. StampInstanceInvocation — write the live handle onto the row
 //     so the meter's CountInstanceInvocationsInMinute join lands.
-//  5. gateway.Invoke (delivers envelope through wake gate).
-//  6. CompleteInvocation (state → completed; result blob attached).
+//  4. gateway.Invoke (delivers envelope through wake gate).
+//  5. CompleteInvocation (state → completed; result blob attached).
 //
 // Errors branch on transient vs permanent: transient = retryAfter 5s
 // (Claim → re-set to pending); permanent = terminal failed. The
@@ -471,18 +468,13 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.log.Warn("drain: incompatible invocation failed permanently", "inv", inv.ID, "app_id", inv.AppID, "workload_class", app.WorkloadClass, "execution_mode", app.Manifest.ExecutionMode)
 		return
 	}
-	// 1. Cap re-check (delayed_task source only — the plan may have
-	// been downgraded between EnqueueInvocation and now).
-	if inv.Source == state.InvocationDelayedTask {
-		if d.isOverDelayedCap(ctx, inv.AppID) {
-			// budget=0 keeps the legacy infinite-retry semantics on
-			// the delayed-task-cap path; that path is not plan-scoped
-			// (issue #394 only arms the budget for queue source).
-			_ = d.store.FailInvocation(ctx, inv.ID, "delayed-task cap exceeded on dispatch", 30*time.Second, 0)
-			d.log.Warn("drain: delayed-task cap on dispatch", "inv", inv.ID, "app_id", inv.AppID)
-			return
-		}
-	}
+	// 1. Delayed-task plan limits are admission limits, not dispatch
+	// limits. Once apid has durably accepted a task, it is grandfathered
+	// across plan changes. Re-counting pending work here also counts the
+	// candidate itself: an app at exactly its limit would otherwise defer
+	// every due task forever, so the backlog could never fall below the
+	// limit that is blocking it.
+	//
 	// 2. Account Active gate. The cron path has this (loop.go:580);
 	// the drain needs it too because rows queued while the account was
 	// Active may sit in 'pending' across a suspension (Free goes past
@@ -491,10 +483,8 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// a SLO; long enough that we don't churn cycles on a suspended
 	// account.
 	if !d.isAccountActive(ctx, inv.AppID) {
-		// budget=0: account-suspended retry does not consume the
-		// plan's per-message budget. Free customers hitting this path
-		// (a Free app can't queue, but can be a delayed_task/cron
-		// actor) never had a budget to begin with.
+		// budget=0: account-suspended deferral does not consume the row's
+		// delivery budget because no app delivery was attempted.
 		_ = d.store.FailInvocation(ctx, inv.ID, "account suspended", 5*time.Minute, 0)
 		d.log.Info("drain: account suspended; deferred",
 			"inv", inv.ID, "app_id", inv.AppID)
@@ -521,6 +511,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// ClaimInvocation increments attempts atomically; keeping the pre-claim
 	// snapshot here would delay the terminal callback by one delivery cycle.
 	inv = claimed
+	d.observeDelayedTaskClaim(inv)
 	// Debug replays are mirror-only work. They carry a small set of
 	// platform-owned metadata headers (the request body and credentials are
 	// intentionally absent from request_telemetry), so let gatewayd-internal
@@ -594,6 +585,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err))
+		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
 			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
 		}
@@ -624,6 +616,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// row so the meter gets its tick.
 		if err := d.store.CompleteInvocation(ctx, inv.ID, nil); err == nil {
 			d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, nil, "")
+			d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
 		}
 		d.emitDone(ctx, inv)
 		return
@@ -644,6 +637,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err))
+		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
 			d.emitInvocationDestination(ctx, inv, invocationOutcomeForError(err), nil, err.Error())
 			d.emitDone(ctx, inv, state.InvocationFailed)
@@ -664,7 +658,38 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	d.emitInvocationDestination(ctx, inv, state.OutcomeSuccess, dispatched.Result, "")
+	d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
 	d.emitDone(ctx, inv)
+}
+
+func (d *Drain) observeDelayedTaskClaim(inv state.Invocation) {
+	if inv.Source != state.InvocationDelayedTask || inv.Attempts != 1 {
+		return
+	}
+	scheduledAt := inv.DueAt
+	if inv.ScheduledAt != nil {
+		scheduledAt = *inv.ScheduledAt
+	}
+	d.ops.ObserveDelayedTaskScheduleLag(d.now().Sub(scheduledAt))
+}
+
+func (d *Drain) observeDelayedTaskFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr error) {
+	if failErr != nil {
+		return
+	}
+	outcome := wire.DelayedTaskDispatchRetry
+	if retryAfter == 0 {
+		outcome = wire.DelayedTaskDispatchFailed
+	} else if budget > 0 && inv.Attempts >= budget {
+		outcome = wire.DelayedTaskDispatchDeadLetter
+	}
+	d.observeDelayedTaskDispatch(inv, outcome)
+}
+
+func (d *Drain) observeDelayedTaskDispatch(inv state.Invocation, outcome string) {
+	if inv.Source == state.InvocationDelayedTask {
+		d.ops.ObserveDelayedTaskDispatch(outcome)
+	}
 }
 
 // isDebugMirrorReplay distinguishes the debugger's replay envelope from the
@@ -714,27 +739,6 @@ func (d *Drain) emitDone(ctx context.Context, inv state.Invocation, terminalStat
 	}
 }
 
-// isOverDelayedCap returns true when adding one more delayed_task to
-// this app would push past the plan cap. Reads the cap dynamically
-// (the customer may have downgraded) and delegates the count to
-// CountPendingInvocations (index-backed by invocations_app_pending_idx).
-func (d *Drain) isOverDelayedCap(ctx context.Context, appID string) bool {
-	app, err := d.engine.Store().AppByID(ctx, appID)
-	if err != nil {
-		return false
-	}
-	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
-	if err != nil {
-		return false
-	}
-	limits := api.MustLimitsFor(acct.Plan)
-	n, err := d.store.CountPendingInvocations(ctx, appID, state.InvocationDelayedTask)
-	if err != nil {
-		return false
-	}
-	return n >= limits.MaxDelayedTasksPerApp
-}
-
 // isAccountActive is the suspended-account gate for the drain. Mirrors
 // the cron loop's `if !acct.Active() { continue }` at loop.go:580 —
 // rows queued while the account was Active may sit in 'pending' across
@@ -777,30 +781,24 @@ func (d *Drain) isAccountActive(ctx context.Context, appID string) bool {
 // store call per dispatched row; if this becomes hot, a TTL'd
 // plan-cache keyed by account_id is the obvious follow-up.
 //
-// Telemetry: a lookup-error fail-open disables the retry ceiling for
-// the affected row, which lets a poisoned payload retry indefinitely
-// until the lookup recovers. The fail-open is the right behaviour for
-// the in-flight row (don't dead-letter on a Postgres hiccup) but it
-// MUST be observable — we slog a warning so the operator sees the
-// gate fall back. Without this, a sustained Postgres blip would
-// silently mask the dead-letter safety net issue #394 introduces.
+// Lookup failures fall back to the platform-wide safety ceiling. This may be
+// more generous than the account plan, but it remains finite: a control-plane
+// outage cannot turn a poisoned invocation into an infinite retry loop.
 func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
-	if policy := inv.RetryPolicy(); policy.MaxAttempts > 0 {
-		return policy.MaxAttempts
-	}
+	requested := inv.RetryPolicy().MaxAttempts
 	app, err := d.engine.Store().AppByID(ctx, inv.AppID)
 	if err != nil {
-		d.log.WarnContext(ctx, "invocationAttemptBudget: AppByID failed; falling back to legacy infinite retry",
+		d.log.WarnContext(ctx, "invocationAttemptBudget: AppByID failed; using finite safety ceiling",
 			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
-		return 0
+		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
 	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
 	if err != nil {
-		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; falling back to legacy infinite retry",
+		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; using finite safety ceiling",
 			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)
-		return 0
+		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
-	return api.MustLimitsFor(acct.Plan).MaxQueueAttempts
+	return api.EffectiveRetryMaxAttempts(requested, api.MustLimitsFor(acct.Plan).MaxQueueAttempts)
 }
 
 // invocationRetryDelay applies the per-row exponential backoff curve when

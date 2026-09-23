@@ -26,22 +26,23 @@ func TestPgStoreGitHubDeployPolicyParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGitHubDeployPolicy(default): %v", err)
 	}
-	if !defaults.PreviewEnabled || defaults.PreviewTTLHours != state.GitHubDeployPolicyDefaultPreviewTTLHours {
+	if !defaults.PreviewEnabled || defaults.PreviewTTLHours != state.GitHubDeployPolicyDefaultPreviewTTLHours || defaults.PreviewServicePolicy != state.PreviewServicePolicyDeny {
 		t.Fatalf("defaults = %+v", defaults)
 	}
 	policy := state.GitHubDeployPolicy{
-		ProjectID:       project.ID,
-		AccountID:       acct.ID,
-		RootDir:         "apps/web",
-		IgnoredPaths:    []string{"docs/**", "README.md"},
-		PreviewEnabled:  false,
-		PreviewTTLHours: 72,
+		ProjectID:            project.ID,
+		AccountID:            acct.ID,
+		RootDir:              "apps/web",
+		IgnoredPaths:         []string{"docs/**", "README.md"},
+		PreviewEnabled:       false,
+		PreviewTTLHours:      72,
+		PreviewServicePolicy: state.PreviewServicePolicyAllowMarked,
 	}
 	stored, err := store.UpsertGitHubDeployPolicy(ctx, policy)
 	if err != nil {
 		t.Fatalf("UpsertGitHubDeployPolicy: %v", err)
 	}
-	if stored.UpdatedAt.IsZero() || stored.RootDir != policy.RootDir || stored.PreviewEnabled {
+	if stored.UpdatedAt.IsZero() || stored.RootDir != policy.RootDir || stored.PreviewEnabled || stored.PreviewServicePolicy != state.PreviewServicePolicyAllowMarked {
 		t.Fatalf("stored policy = %+v", stored)
 	}
 	got, err := store.GetGitHubDeployPolicy(ctx, project.ID, acct.ID)
@@ -77,7 +78,7 @@ func TestPgStoreGitHubDeployPolicyDatabaseErrors(t *testing.T) {
 		t.Fatal("GetGitHubDeployPolicy with canceled context succeeded")
 	}
 	if _, err := store.UpsertGitHubDeployPolicy(canceled, state.GitHubDeployPolicy{
-		ProjectID: project.ID, AccountID: acct.ID, PreviewEnabled: true, PreviewTTLHours: 168,
+		ProjectID: project.ID, AccountID: acct.ID, PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: state.PreviewServicePolicyDeny,
 	}); err == nil {
 		t.Fatal("UpsertGitHubDeployPolicy with canceled context succeeded")
 	}
@@ -94,7 +95,7 @@ func TestPgStoreGitHubDeployPolicyDecodeAndValidationErrors(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 	if _, err := store.UpsertGitHubDeployPolicy(ctx, state.GitHubDeployPolicy{
-		ProjectID: project.ID, AccountID: acct.ID, PreviewEnabled: true, PreviewTTLHours: 168,
+		ProjectID: project.ID, AccountID: acct.ID, PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: state.PreviewServicePolicyDeny,
 	}); err != nil {
 		t.Fatalf("seed policy: %v", err)
 	}

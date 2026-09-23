@@ -1032,6 +1032,25 @@ func (c *VMMClient) ReconcilePrivateNetworkFabricWithPeers(ctx context.Context, 
 	return c.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, peers, true)
 }
 
+// RemovePrivateNetworkFabric tears down the node-local Gregale network
+// bridge. The vmmd operation is idempotent so a replayed delete notification
+// is safe during scheduler or node recovery.
+func (c *VMMClient) RemovePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix) error {
+	ack, err := c.cli.RemovePrivateNetworkFabric(ctx, &vmmdpb.RemovePrivateNetworkFabricRequest{
+		AccountId: accountID,
+		NetworkId: networkID,
+		Region:    region,
+		Cidr:      cidr.String(),
+	})
+	if err != nil {
+		return liftErr(err)
+	}
+	if ack == nil {
+		return fmt.Errorf("vmmd remove private network fabric: empty acknowledgement")
+	}
+	return nil
+}
+
 func (c *VMMClient) reconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, peers []netip.Addr, managed bool) error {
 	peerStrings := make([]string, 0, len(peers))
 	for _, peer := range peers {
@@ -1370,20 +1389,34 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 				Condition: string(dep.Condition),
 			})
 		}
+		var startupProbeTest []string
+		var startupProbeIntervalS, startupProbeTimeoutS, startupProbeRetries, startupProbeStartPeriodS int32
+		if sc.StartupProbe != nil {
+			startupProbeTest = append([]string(nil), sc.StartupProbe.Test...)
+			startupProbeIntervalS = int32(sc.StartupProbe.IntervalS)
+			startupProbeTimeoutS = int32(sc.StartupProbe.TimeoutS)
+			startupProbeRetries = int32(sc.StartupProbe.Retries)
+			startupProbeStartPeriodS = int32(sc.StartupProbe.StartPeriodS)
+		}
 		sidecars = append(sidecars, &vmmdpb.SidecarSpec{
-			Name:          sc.Name,
-			Type:          sc.Type,
-			Image:         sc.Image,
-			RamMb:         int32(sc.RamMB),
-			CpuMillicores: int32(sc.CPUMillicores),
-			ScratchMb:     int32(sc.ScratchMB),
-			DiskIoProfile: sc.DiskIOProfile,
-			Port:          uint32(sc.Port),
-			Essential:     sc.Essential,
-			StorageKey:    sc.StorageKey,
-			DriveSlot:     sc.DriveID,
-			SealedEnv:     sealedSidecarEnv,
-			DependsOn:     dependsOn,
+			Name:                     sc.Name,
+			Type:                     sc.Type,
+			Image:                    sc.Image,
+			RamMb:                    int32(sc.RamMB),
+			CpuMillicores:            int32(sc.CPUMillicores),
+			ScratchMb:                int32(sc.ScratchMB),
+			DiskIoProfile:            sc.DiskIOProfile,
+			Port:                     uint32(sc.Port),
+			Essential:                sc.Essential,
+			StorageKey:               sc.StorageKey,
+			DriveSlot:                sc.DriveID,
+			SealedEnv:                sealedSidecarEnv,
+			DependsOn:                dependsOn,
+			StartupProbeTest:         startupProbeTest,
+			StartupProbeIntervalS:    startupProbeIntervalS,
+			StartupProbeTimeoutS:     startupProbeTimeoutS,
+			StartupProbeRetries:      startupProbeRetries,
+			StartupProbeStartPeriodS: startupProbeStartPeriodS,
 		})
 	}
 	out := &vmmdpb.AppSpec{

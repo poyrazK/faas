@@ -145,7 +145,7 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 		app, resp.Count, resp.Quota, len(scopes))
 	for _, s := range scopes {
 		for _, row := range resp.SecretsByScope[s] {
-			_, _ = fmt.Fprintf(w, "  %s/%s\n", s, row.Key)
+			_, _ = fmt.Fprintf(w, "  %-48s %s\n", s+"/"+row.Key, secretDeliveryLabel(row.DeliveryStatus))
 		}
 	}
 }
@@ -162,8 +162,15 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse) {
 	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets\n", app, resp.Count, resp.Quota)
 	for _, s := range resp.Secrets {
-		_, _ = fmt.Fprintf(w, "  %s/%s\n", scopeOrDefault(s.Scope), s.Key)
+		_, _ = fmt.Fprintf(w, "  %-48s %s\n", scopeOrDefault(s.Scope)+"/"+s.Key, secretDeliveryLabel(s.DeliveryStatus))
 	}
+}
+
+func secretDeliveryLabel(status string) string {
+	if status == "" {
+		return "delivery unknown"
+	}
+	return "delivery " + status
 }
 
 // --- set -------------------------------------------------------------------

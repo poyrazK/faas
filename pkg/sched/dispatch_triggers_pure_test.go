@@ -179,7 +179,8 @@ func TestRetryExhausted(t *testing.T) {
 		maxAttempts int32
 		want        bool
 	}{
-		{name: "legacy unlimited", nextAttempt: 100, maxAttempts: 0, want: false},
+		{name: "legacy zero below safety ceiling", nextAttempt: api.DurableRetryMaxAttempts - 1, maxAttempts: 0, want: false},
+		{name: "legacy zero reaches safety ceiling", nextAttempt: api.DurableRetryMaxAttempts, maxAttempts: 0, want: true},
 		{name: "below cap", nextAttempt: 2, maxAttempts: 3, want: false},
 		{name: "at cap", nextAttempt: 3, maxAttempts: 3, want: true},
 		{name: "past cap", nextAttempt: 4, maxAttempts: 3, want: true},

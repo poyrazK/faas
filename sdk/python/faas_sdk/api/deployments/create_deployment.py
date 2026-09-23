@@ -127,11 +127,9 @@ def sync_detailed(
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
             (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
             different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the
-            image. The override field list is FROZEN — six fields, no more — and any extra field on
-            the override object 400s the request (the handler's decoder rejects unknown keys; see
-            ADR-053 §Decision 1). The optional `sidecars` array (issue #463 / ADR-068) attaches up to
-            2 stateless sidecars (1 init + 1 sidecar) per app — a one-shot DB migrator as `init`, a
-            metrics scraper as `sidecar`. nil/omitted = no sidecars.
+            image. The optional `companions` array attaches bounded helper workloads such as an
+            OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars`
+            spelling remains accepted for existing clients.
         body (CreateDeploymentFilesBody):
 
     Raises:
@@ -179,11 +177,9 @@ def sync(
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
             (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
             different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the
-            image. The override field list is FROZEN — six fields, no more — and any extra field on
-            the override object 400s the request (the handler's decoder rejects unknown keys; see
-            ADR-053 §Decision 1). The optional `sidecars` array (issue #463 / ADR-068) attaches up to
-            2 stateless sidecars (1 init + 1 sidecar) per app — a one-shot DB migrator as `init`, a
-            metrics scraper as `sidecar`. nil/omitted = no sidecars.
+            image. The optional `companions` array attaches bounded helper workloads such as an
+            OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars`
+            spelling remains accepted for existing clients.
         body (CreateDeploymentFilesBody):
 
     Raises:
@@ -226,11 +222,9 @@ async def asyncio_detailed(
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
             (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
             different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the
-            image. The override field list is FROZEN — six fields, no more — and any extra field on
-            the override object 400s the request (the handler's decoder rejects unknown keys; see
-            ADR-053 §Decision 1). The optional `sidecars` array (issue #463 / ADR-068) attaches up to
-            2 stateless sidecars (1 init + 1 sidecar) per app — a one-shot DB migrator as `init`, a
-            metrics scraper as `sidecar`. nil/omitted = no sidecars.
+            image. The optional `companions` array attaches bounded helper workloads such as an
+            OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars`
+            spelling remains accepted for existing clients.
         body (CreateDeploymentFilesBody):
 
     Raises:
@@ -276,11 +270,9 @@ async def asyncio(
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
             (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
             different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the
-            image. The override field list is FROZEN — six fields, no more — and any extra field on
-            the override object 400s the request (the handler's decoder rejects unknown keys; see
-            ADR-053 §Decision 1). The optional `sidecars` array (issue #463 / ADR-068) attaches up to
-            2 stateless sidecars (1 init + 1 sidecar) per app — a one-shot DB migrator as `init`, a
-            metrics scraper as `sidecar`. nil/omitted = no sidecars.
+            image. The optional `companions` array attaches bounded helper workloads such as an
+            OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars`
+            spelling remains accepted for existing clients.
         body (CreateDeploymentFilesBody):
 
     Raises:

@@ -47,6 +47,7 @@ func Run(t *testing.T, open Open) {
 		fn   func(*testing.T, *Fixture)
 	}{
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
+		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
@@ -64,6 +65,7 @@ func Run(t *testing.T, open Open) {
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
+		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
@@ -102,6 +104,7 @@ func Run(t *testing.T, open Open) {
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
+		{"log_event_insert_is_idempotent_and_queries_are_tenant_scoped", testLogEventInsertAndList},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
@@ -1978,6 +1981,54 @@ func testAppLimits(t *testing.T, fx *Fixture) {
 	}
 }
 
+func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
+	const key = "DATABASE_URL"
+	scope := api.DefaultEnvScope
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v1")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v1): %v", err)
+	}
+	first, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope(v1): %v", err)
+	}
+	if first.DeliveryVersion != 1 || first.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("initial delivery metadata = version %d status %q, want 1/pending", first.DeliveryVersion, first.DeliveryStatus)
+	}
+
+	result := state.AppSecretDeliveryResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, WakeID: "wake-conformance",
+		InstanceID: "instance-conformance", Status: state.SecretDeliveryDelivered,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: first.DeliveryVersion}},
+	}
+	updated, err := fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
+	if err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretDelivery(v1): updated=%d err=%v, want 1/nil", updated, err)
+	}
+
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v2")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v2): %v", err)
+	}
+	rotated, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope(v2): %v", err)
+	}
+	if rotated.DeliveryVersion != 2 || rotated.DeliveredVersion != 1 || rotated.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("rotated delivery metadata = current %d delivered %d status %q, want 2/1/pending", rotated.DeliveryVersion, rotated.DeliveredVersion, rotated.DeliveryStatus)
+	}
+
+	updated, err = fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
+	if err != nil || updated != 0 {
+		t.Fatalf("stale RecordAppSecretDelivery(v1): updated=%d err=%v, want 0/nil", updated, err)
+	}
+	current, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope(after stale delivery): %v", err)
+	}
+	if current.DeliveryVersion != 2 || current.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("stale delivery changed current metadata = version %d status %q, want 2/pending", current.DeliveryVersion, current.DeliveryStatus)
+	}
+}
+
 func testVmmdUpsertPreservesOperatorState(t *testing.T, fx *Fixture) {
 	operatorNode, err := fx.Store.CreateComputeNode(fx.Ctx, state.ComputeNode{
 		Name:               "operator-" + uuid.NewString(),
@@ -2079,6 +2130,93 @@ func testPrepareDeploymentRollback(t *testing.T, fx *Fixture) {
 	}
 	if _, err := fx.Store.PrepareDeploymentRollback(fx.Ctx, fx.App.ID, current.ID); !errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 		t.Fatalf("PrepareDeploymentRollback(live target) = %v, want ErrRollbackTargetAlreadyLive", err)
+	}
+}
+
+func testServiceRolloutAbortHandoff(t *testing.T, fx *Fixture) {
+	started := time.Now().UTC().Add(-time.Minute)
+	candidate, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID:            fx.App.ID,
+		Kind:             state.DeploymentKindImage,
+		ImageDigest:      "sha256:conformance-service-next",
+		Status:           state.DeployPending,
+		Scope:            state.DefaultEnvScope,
+		TrafficPercent:   0,
+		RolloutState:     "rolling_out",
+		RolloutStartedAt: &started,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(service rollout): %v", err)
+	}
+	if err := fx.Store.MarkDeploymentLive(fx.Ctx, candidate.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(service rollout): %v", err)
+	}
+
+	handoff := state.ServiceRolloutHandoff{
+		Action:                  state.ServiceRolloutActionAbort,
+		Phase:                   state.ServiceRolloutPhasePending,
+		PredecessorDeploymentID: fx.Deployment.ID,
+		Generation:              42,
+		ExpectedGateways:        []string{"gateway-a", "gateway-b"},
+		MissingGateways:         []string{"gateway-a", "gateway-b"},
+		Reason:                  "conformance abort",
+		StartedAt:               &started,
+		UpdatedAt:               &started,
+	}
+	requested, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, handoff)
+	if err != nil {
+		t.Fatalf("UpdateServiceRolloutHandoff(pending): %v", err)
+	}
+	if !reflect.DeepEqual(requested.ServiceRolloutHandoff, handoff) {
+		t.Fatalf("pending handoff = %+v, want %+v", requested.ServiceRolloutHandoff, handoff)
+	}
+	if _, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, state.ServiceRolloutHandoff{Action: "invalid", Phase: state.ServiceRolloutPhasePending}); !errors.Is(err, state.ErrServiceRolloutInvalid) {
+		t.Fatalf("UpdateServiceRolloutHandoff(invalid action) = %v, want ErrServiceRolloutInvalid", err)
+	}
+
+	routing, err := fx.Store.BeginServiceRolloutAbort(fx.Ctx, candidate.ID)
+	if err != nil {
+		t.Fatalf("BeginServiceRolloutAbort: %v", err)
+	}
+	if routing.Status != state.DeployLive || routing.TrafficPercent != 0 || routing.RolloutState != "rolling_out" {
+		t.Fatalf("candidate during reverse handoff = %+v, want live/0/rolling_out", routing)
+	}
+	if got := routing.ServiceRolloutHandoff; got.Action != state.ServiceRolloutActionAbort || got.Phase != state.ServiceRolloutPhaseRouting || got.PredecessorDeploymentID != fx.Deployment.ID || got.RetryCount != 1 || got.Generation != 42 {
+		t.Fatalf("routing handoff = %+v, want abort/routing/predecessor/retry=1/generation=42", got)
+	}
+	stalePromotion := routing.ServiceRolloutHandoff
+	stalePromotion.Action = state.ServiceRolloutActionPromote
+	if _, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, stalePromotion); !errors.Is(err, state.ErrServiceRolloutInvalid) {
+		t.Fatalf("stale promotion replaced abort intent: %v", err)
+	}
+	staleGeneration := routing.ServiceRolloutHandoff
+	staleGeneration.Generation--
+	if _, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, staleGeneration); !errors.Is(err, state.ErrServiceRolloutInvalid) {
+		t.Fatalf("stale generation replaced newer routing state: %v", err)
+	}
+	unchanged, err := fx.Store.DeploymentByID(fx.Ctx, candidate.ID)
+	if err != nil || unchanged.ServiceRolloutHandoff.Action != state.ServiceRolloutActionAbort || unchanged.ServiceRolloutHandoff.Generation != 42 {
+		t.Fatalf("abort intent changed after stale updates: handoff=%+v err=%v", unchanged.ServiceRolloutHandoff, err)
+	}
+	predecessor, err := fx.Store.DeploymentByID(fx.Ctx, fx.Deployment.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(predecessor): %v", err)
+	}
+	if predecessor.Status != state.DeployLive || predecessor.TrafficPercent != 100 {
+		t.Fatalf("predecessor during reverse handoff = %+v, want live/100", predecessor)
+	}
+
+	draining := routing.ServiceRolloutHandoff
+	draining.Phase = state.ServiceRolloutPhaseDraining
+	draining.AcknowledgedGateways = []string{"gateway-a", "gateway-b"}
+	draining.MissingGateways = nil
+	draining.AcknowledgedAt = draining.UpdatedAt
+	updated, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, draining)
+	if err != nil {
+		t.Fatalf("UpdateServiceRolloutHandoff(draining): %v", err)
+	}
+	if !reflect.DeepEqual(updated.ServiceRolloutHandoff, draining) {
+		t.Fatalf("draining handoff = %+v, want %+v", updated.ServiceRolloutHandoff, draining)
 	}
 }
 

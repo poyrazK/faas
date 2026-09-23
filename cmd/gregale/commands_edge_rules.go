@@ -281,9 +281,11 @@ func cmdEdgeRulesCreate(args []string) int {
 	// arms a replay — a guest that answered 5xx has served the
 	// request — so there is deliberately no "retry on status" flag.
 	retryMaxAttempts := fs.Int("retry-max-attempts", 0, "kind=retry: total attempts, NOT retries (2 = original + one replay; default 2; max 3)")
-	retryAllowNonIdempotent := fs.Bool("retry-allow-non-idempotent", false, "kind=retry: also replay POST and PATCH — your handler MUST be idempotent or a replay runs its side effect twice")
+	retryAllowNonIdempotent := fs.Bool("retry-allow-non-idempotent", false, "kind=retry: allow POST/PATCH replay only with Idempotency-Key; your handler MUST honor that key")
 	retryMinRemainingMs := fs.Int("retry-min-remaining-ms", 0, "kind=retry: skip the replay below this much remaining request budget (default 250; max 30000)")
 	retryBackoffMs := fs.Int("retry-backoff-ms", 0, "kind=retry: delay before a replay in ms (default 0; max 1000)")
+	retryBudgetPercent := fs.Int("retry-budget-percent", 0, "kind=retry: aggregate retries as percent of originals per window (default 10; max 100)")
+	retryBudgetMin := fs.Int("retry-budget-min-retries", 0, "kind=retry: low-traffic retries allowed per window (default 1; max 32)")
 
 	// circuit_breaker (ADR-201 §2). Tunes a breaker that already runs
 	// for every app on every plan; a rule only moves the thresholds.
@@ -361,6 +363,8 @@ func cmdEdgeRulesCreate(args []string) int {
 		RetryAllowNonIdempotent:          *retryAllowNonIdempotent,
 		RetryMinRemainingMs:              *retryMinRemainingMs,
 		RetryBackoffMs:                   *retryBackoffMs,
+		RetryBudgetPercent:               *retryBudgetPercent,
+		RetryBudgetMinRetries:            *retryBudgetMin,
 		CircuitFailureThreshold:          *circuitFailureThreshold,
 		CircuitMinRequests:               *circuitMinRequests,
 		CircuitWindowSeconds:             *circuitWindowSeconds,
@@ -531,9 +535,11 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// arms a replay — a guest that answered 5xx has served the
 	// request — so there is deliberately no "retry on status" flag.
 	retryMaxAttempts := fs.Int("retry-max-attempts", 0, "kind=retry: total attempts, NOT retries (2 = original + one replay; default 2; max 3)")
-	retryAllowNonIdempotent := fs.Bool("retry-allow-non-idempotent", false, "kind=retry: also replay POST and PATCH — your handler MUST be idempotent or a replay runs its side effect twice")
+	retryAllowNonIdempotent := fs.Bool("retry-allow-non-idempotent", false, "kind=retry: allow POST/PATCH replay only with Idempotency-Key; your handler MUST honor that key")
 	retryMinRemainingMs := fs.Int("retry-min-remaining-ms", 0, "kind=retry: skip the replay below this much remaining request budget (default 250; max 30000)")
 	retryBackoffMs := fs.Int("retry-backoff-ms", 0, "kind=retry: delay before a replay in ms (default 0; max 1000)")
+	retryBudgetPercent := fs.Int("retry-budget-percent", 0, "kind=retry: aggregate retries as percent of originals per window (default 10; max 100)")
+	retryBudgetMin := fs.Int("retry-budget-min-retries", 0, "kind=retry: low-traffic retries allowed per window (default 1; max 32)")
 
 	// circuit_breaker (ADR-201 §2). Tunes a breaker that already runs
 	// for every app on every plan; a rule only moves the thresholds.
@@ -650,6 +656,8 @@ func cmdEdgeRulesUpdate(args []string) int {
 			RetryAllowNonIdempotent:          *retryAllowNonIdempotent,
 			RetryMinRemainingMs:              *retryMinRemainingMs,
 			RetryBackoffMs:                   *retryBackoffMs,
+			RetryBudgetPercent:               *retryBudgetPercent,
+			RetryBudgetMinRetries:            *retryBudgetMin,
 			CircuitFailureThreshold:          *circuitFailureThreshold,
 			CircuitMinRequests:               *circuitMinRequests,
 			CircuitWindowSeconds:             *circuitWindowSeconds,
@@ -808,6 +816,8 @@ type edgeRuleActionInputs struct {
 	RetryAllowNonIdempotent bool
 	RetryMinRemainingMs     int
 	RetryBackoffMs          int
+	RetryBudgetPercent      int
+	RetryBudgetMinRetries   int
 	// circuit_breaker (ADR-201 §2). Instance health thresholds. Also all
 	// optional: the breaker runs with platform defaults whether or not a
 	// rule exists, so a bare rule is a no-op rather than an error.
@@ -1071,6 +1081,8 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			AllowNonIdempotent: in.RetryAllowNonIdempotent,
 			MinRemainingMs:     in.RetryMinRemainingMs,
 			BackoffMs:          in.RetryBackoffMs,
+			BudgetPercent:      in.RetryBudgetPercent,
+			BudgetMinRetries:   in.RetryBudgetMinRetries,
 		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
@@ -1310,6 +1322,8 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"cache-max-age-seconds", "cache-stale-while-revalidate-seconds", "cache-stale-if-error-seconds",
 		"cache-vary-on", "cache-methods",
 		"budget-ms", "budget-allow-override-header",
+		"retry-max-attempts", "retry-allow-non-idempotent", "retry-min-remaining-ms", "retry-backoff-ms",
+		"retry-budget-percent", "retry-budget-min-retries",
 		"maintenance-retry-after-seconds", "maintenance-message",
 		"respond-status", "respond-body",
 	}

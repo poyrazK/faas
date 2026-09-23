@@ -40,10 +40,12 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -133,9 +135,23 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 			"actor":            acct.ID,
 		})
 	}
-	// (8) 200 RolloutTransitionResponse. Caller can echo the
+	status := http.StatusOK
+	if state.IsServiceRollout(updated) && updated.ServiceRolloutHandoff.ActiveAbort() {
+		status = http.StatusAccepted
+		if s.notif != nil {
+			payload, _ := json.Marshal(map[string]any{
+				"kind": "service_rollout_abort", "status": string(updated.Status),
+				"app_id": app.ID, "deployment_id": updated.ID,
+			})
+			if err := s.notif.Notify(r.Context(), db.NotifyDeploymentChanged, string(payload)); err != nil {
+				s.log.Warn("apid: notify service rollout abort failed", "app", app.ID, "deployment", updated.ID, "err", err)
+			}
+		}
+	}
+	// (8) RolloutTransitionResponse. A service abort is asynchronous and
+	// therefore returns 202 while its durable handoff remains rolling_out.
 	// audit id on the operator's terminal.
-	writeJSON(w, http.StatusOK, api.RolloutTransitionResponse{
+	writeJSON(w, status, api.RolloutTransitionResponse{
 		Deployment: s.deploymentResponse(updated, app),
 		AuditID:    int64ToAuditIDString(auditID),
 	})

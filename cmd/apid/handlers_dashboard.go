@@ -3075,17 +3075,23 @@ func severityOrdinal(s string) int {
 func dashboardDeploymentItem(d state.Deployment) dashboard.DeploymentItem {
 	repoURL, commitURL, checksURL, commitSHA, commitShort := githubDeploymentLinks(d.SourceURL, d.CommitSHA)
 	return dashboard.DeploymentItem{
-		ID:                d.ID,
-		Revision:          d.Revision, // ADR-198
-		Status:            string(d.Status),
-		Kind:              string(d.Kind),
-		CreatedAt:         d.CreatedAt.UTC().Format(time.RFC3339),
-		Error:             d.Error,
-		ErrorCode:         d.ErrorCode,
-		ErrorHint:         d.ErrorHint,
-		ErrorWhy:          d.ErrorWhy,
-		ErrorFix:          d.ErrorFix,
-		ErrorRelevantLogs: d.ErrorRelevantLogs,
+		ID:                    d.ID,
+		Revision:              d.Revision, // ADR-198
+		Status:                string(d.Status),
+		Kind:                  string(d.Kind),
+		CreatedAt:             d.CreatedAt.UTC().Format(time.RFC3339),
+		RolloutState:          state.NormalizeRolloutState(d.RolloutState),
+		ServiceHandoffAction:  d.ServiceRolloutHandoff.Action,
+		ServiceHandoffPhase:   d.ServiceRolloutHandoff.Phase,
+		ServiceHandoffRetries: d.ServiceRolloutHandoff.RetryCount,
+		ServiceHandoffMissing: append([]string(nil), d.ServiceRolloutHandoff.MissingGateways...),
+		ServiceHandoffError:   d.ServiceRolloutHandoff.LastError,
+		Error:                 d.Error,
+		ErrorCode:             d.ErrorCode,
+		ErrorHint:             d.ErrorHint,
+		ErrorWhy:              d.ErrorWhy,
+		ErrorFix:              d.ErrorFix,
+		ErrorRelevantLogs:     d.ErrorRelevantLogs,
 		// Issue #606 / SAFE-RELEASES-E.1: structured deployer
 		// attribution surfaced on the dashboard deploy detail
 		// page. Server-stamped from the HTTP request context

@@ -1876,6 +1876,19 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	if req.ExpectedServingDeploymentID != nil {
+		if !deploymentIDRefPattern.MatchString(*req.ExpectedServingDeploymentID) {
+			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
+			return
+		}
+		parsed, parseErr := uuid.Parse(*req.ExpectedServingDeploymentID)
+		if parseErr != nil {
+			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
+			return
+		}
+		canonical := parsed.String()
+		req.ExpectedServingDeploymentID = &canonical
+	}
 	// Plan tier gate (issue #556). Pro + Scale only. Hobby is
 	// locked: the canary-rollout audience is more expensive
 	// (RAM-billable per-running-second for two deployments) than
@@ -1885,7 +1898,12 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	prev := d.TrafficPercent
-	updated, err := s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent)
+	var updated state.Deployment
+	if req.ExpectedServingDeploymentID != nil {
+		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
+	} else {
+		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
@@ -1908,6 +1926,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			// for target=0 on a sole live row (legitimate Σ=0 —
 			// pinned by TestPg_UpdateDeploymentTraffic_SoleLiveRow).
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
+		case errors.Is(err, state.ErrTrafficServingChanged):
+			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		default:
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "update failed", err.Error()))
 		}
@@ -1977,7 +1997,7 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
-	target, problem := s.rollbackAppCore(r.Context(), acct, app, req)
+	target, problem := s.rollbackAppCore(r, acct, app, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -1989,7 +2009,8 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
 // two entry points cannot drift.
-func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
+func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
+	ctx := r.Context()
 	alertRuleID := uuid.Nil
 	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
 		if parsed, parseErr := uuid.Parse(*req.AlertRuleID); parseErr == nil {
@@ -2108,6 +2129,14 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 	if _, err := s.store.AppendDeploymentAudit(ctx, auditEntry); err != nil {
 		s.log.Warn("rollback: append deployment_audit failed", "app", app.ID, "deployment", target.ID, "err", err.Error())
 	}
+	activity := state.OrgActivity{
+		Kind: "deploy.rolled_back", SourceType: "rollback", SourceID: activitySourceID(r, target.ID),
+		Data: activityData(map[string]any{"from": current.ID, "to": target.ID, "mode": mode, "phase": "readiness_requested"}),
+	}
+	if targetID, err := uuid.Parse(target.ID); err == nil {
+		activity.DeploymentID = &targetID
+	}
+	s.recordAppActivity(ctx, r, acct, app, activity)
 	return target, nil
 }
 
@@ -2556,6 +2585,11 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	s.audit.Emit(r.Context(), "domain.added", &acct.ID, map[string]any{
 		"app_id": d.AppID,
 		"domain": d.Domain,
+	})
+	s.recordAppActivity(r.Context(), r, acct, app, state.OrgActivity{
+		Kind: "domain.added", ResourceType: "domain", ResourceID: d.Domain,
+		ResourceLabel: d.Domain, SourceType: "domain.added", SourceID: activitySourceID(r, d.Domain),
+		Data: activityData(map[string]any{"app_id": d.AppID}),
 	})
 	writeJSON(w, http.StatusAccepted, domainResponse(d))
 }
@@ -4935,6 +4969,25 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		RolloutAbortedAt:     d.RolloutAbortedAt,
 		RolloutAbortedReason: d.RolloutAbortedReason,
 		APIHostingReceipt:    d.APIHostingReceipt,
+	}
+	if d.ServiceRolloutHandoff.Action != "" {
+		h := d.ServiceRolloutHandoff
+		resp.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{
+			Action:                  h.Action,
+			Phase:                   h.Phase,
+			PredecessorDeploymentID: h.PredecessorDeploymentID,
+			Generation:              h.Generation,
+			ExpectedGateways:        append([]string(nil), h.ExpectedGateways...),
+			AcknowledgedGateways:    append([]string(nil), h.AcknowledgedGateways...),
+			MissingGateways:         append([]string(nil), h.MissingGateways...),
+			RetryCount:              h.RetryCount,
+			LastError:               h.LastError,
+			Reason:                  h.Reason,
+			StartedAt:               h.StartedAt,
+			UpdatedAt:               h.UpdatedAt,
+			AcknowledgedAt:          h.AcknowledgedAt,
+			CompletedAt:             h.CompletedAt,
+		}
 	}
 	if len(d.OverrideEntrypoint) > 0 {
 		resp.OverrideEntrypoint = d.OverrideEntrypoint

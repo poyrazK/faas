@@ -47,7 +47,7 @@ func (s *server) dashboardRollback(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	_, problem := s.rollbackAppCore(r.Context(), acct, app, api.RollbackRequest{TargetDeploymentID: &targetID})
+	_, problem := s.rollbackAppCore(r, acct, app, api.RollbackRequest{TargetDeploymentID: &targetID})
 	if problem != nil {
 		http.Redirect(w, r, "/dashboard/apps/"+slug+"?rollback=error", http.StatusSeeOther)
 		return

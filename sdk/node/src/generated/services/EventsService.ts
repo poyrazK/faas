@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { PublishEventRequest } from '../models/PublishEventRequest.js';
 import type { PublishEventResponse } from '../models/PublishEventResponse.js';
@@ -75,6 +76,66 @@ export class EventsService {
         'slug': slug,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect event delivery lifecycle for an app.
+   * Returns event-triggered invocation metadata, newest first. The
+   * projection includes the published event identity, subscription,
+   * lifecycle state, attempts, and last error without returning payloads.
+   *
+   * @returns EventDeliveryListResponse App-scoped event delivery page, newest first.
+   * @throws ApiError
+   */
+  public static listEventDeliveries({
+    slug,
+    eventId,
+    state,
+    before,
+    limit = 20,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact published event id to inspect.
+     */
+    eventId?: string,
+    /**
+     * Exact delivery state to include.
+     */
+    state?: 'pending' | 'dispatching' | 'completed' | 'failed' | 'dead_letter',
+    /**
+     * Cursor — the last id from the previous page (omit for the first page).
+     */
+    before?: string,
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+  }): CancelablePromise<EventDeliveryListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-deliveries',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'event_id': eventId,
+        'state': state,
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429. Two response shapes:

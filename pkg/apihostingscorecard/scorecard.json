@@ -16,6 +16,15 @@
       ]
     },
     {
+      "id": "companion-runtime",
+      "name": "Application companion readiness",
+      "category": "reliability",
+      "description": "A bounded companion boots with the application, remains isolated by its own resource controls, and preserves the shared instance lifecycle contract.",
+      "capabilities": ["companions"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [{"kind": "test", "locator": "pkg/fcvm/sidecar_metal_test.go::TestMetalTwoSidecarsColdBoot"}]
+    },
+    {
       "id": "container-compatibility",
       "name": "Normal OCI container compatibility",
       "category": "compatibility",
