@@ -2834,6 +2834,11 @@ type Store interface {
 	// (e.g. "apps/<slug>/<depID>.ext4"); schedd carries it on the wake
 	// wire and vmmd resolves it via Storage.Get before staging the chroot.
 	SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error
+	// SetDeploymentRuntimeProfile records image-config-derived runtime metadata
+	// before snapshot prime. In particular, a single OCI EXPOSE port must be
+	// durable so schedd and vmmd agree on the guest DNAT target at first boot
+	// and every later wake. Only imaged writes this deployment-owned field.
+	SetDeploymentRuntimeProfile(ctx context.Context, id string, profile []byte) error
 
 	// UpsertDeploymentScanResult records the per-deploy grype CVE
 	// scan on the deployment row (issue #464 / ADR-055 / PR-3).

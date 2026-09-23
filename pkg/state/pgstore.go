@@ -9793,6 +9793,27 @@ func (s *PgStore) SetDeploymentRootfsIfActive(ctx context.Context, id, path, key
 	return ErrInvalidStateTransition
 }
 
+func (s *PgStore) SetDeploymentRuntimeProfile(ctx context.Context, id string, profile []byte) error {
+	if !json.Valid(profile) {
+		return errors.New("state: deployment runtime profile must be valid JSON")
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update deployments set inferred_profile = $2::jsonb
+		  where id = $1 and kind = 'image'
+		    and status in ('pending', 'building', 'imaging')`, id, profile)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+	var status DeploymentStatus
+	if err := s.pool.QueryRow(ctx, `select status from deployments where id = $1`, id).Scan(&status); err != nil {
+		return mapErr(err)
+	}
+	return ErrInvalidStateTransition
+}
+
 // UpsertDeploymentScanResult records the per-deploy grype CVE
 // scan on the deployment row (issue #464 / ADR-055 / PR-3).
 // The whole row's scan columns are overwritten — scan_result +

@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -2067,6 +2068,23 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
+	}
+	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 {
+		// The image config may advertise a single non-8080 TCP port. The
+		// guest manifest already has that port, but schedd reads the durable
+		// deployment row to configure vmmd's host:8080 -> guest:<port> DNAT.
+		// Without this handoff, the guest can listen successfully while every
+		// first-boot readiness probe targets the wrong guest port.
+		profile, marshalErr := json.Marshal(frameworkprofile.Profile{
+			Version: frameworkprofile.Version, Framework: "unknown", Port: manifest.Port,
+		})
+		if marshalErr != nil {
+			return fmt.Errorf("imaged: encode OCI runtime profile: %w", marshalErr)
+		}
+		if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, profile); err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "persist OCI runtime port")
+			return fmt.Errorf("imaged: persist OCI runtime port: %w", err)
+		}
 	}
 
 	// M6 wired-up build path: when the puller implements oci.ManifestPuller

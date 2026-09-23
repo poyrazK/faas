@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -1339,6 +1340,44 @@ func TestHandleDeployment_OverridePortStampsManifest(t *testing.T) {
 	}
 	if h.bld.calls[0].Manifest.Port != 9090 {
 		t.Errorf("Manifest.Port = %d, want 9090", h.bld.calls[0].Manifest.Port)
+	}
+	dep, err := h.store.DeploymentByID(context.Background(), h.dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dep.InferredProfile) != 0 || sched.DeploymentRuntimePort(dep) != 9090 {
+		t.Fatalf("explicit override lost: inferred_profile=%s runtime_port=%d", dep.InferredProfile, sched.DeploymentRuntimePort(dep))
+	}
+}
+
+func TestHandleDeployment_OCIExposedPortPersistsForFirstBoot(t *testing.T) {
+	h := newTestHarness(t, state.DeploymentKindImage, api.PlanHobby, "")
+	puller := fakePuller{digest: "sha256:abc", cfg: oci.ImageConfig{
+		Cmd: []string{"/http-echo"}, ExposedPorts: map[string]struct{}{"5678/tcp": {}},
+	}}
+	handler := New(h.store, h.notif, puller, h.bld, "./init", h.appsR, silentLogger())
+	if err := handler.HandleNotification(context.Background(), db.Notification{
+		Channel: db.NotifyDeploymentChanged,
+		Payload: `{"app_id":"` + h.app.ID + `","to":"` + h.dep.ID + `","kind":"image","image_digest":"sha256:abc"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := h.store.DeploymentByID(context.Background(), h.dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile frameworkprofile.Profile
+	if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.Version != frameworkprofile.Version || profile.Port != 5678 {
+		t.Fatalf("runtime profile = %+v, want durable OCI port 5678", profile)
+	}
+	if got := sched.DeploymentRuntimePort(dep); got != 5678 {
+		t.Fatalf("scheduler runtime port = %d, want 5678", got)
+	}
+	if len(h.bld.calls) != 1 || h.bld.calls[0].Manifest.Port != 5678 {
+		t.Fatalf("built manifest port = %v, want 5678", h.bld.calls)
 	}
 }
 

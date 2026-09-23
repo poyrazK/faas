@@ -2364,9 +2364,10 @@ type Deployment struct {
 	// after the readiness probe. Raw JSON keeps state independent of the API
 	// hosting receipt package.
 	APIHostingReceipt json.RawMessage `json:"api_hosting_receipt,omitempty"`
-	// InferredProfile is the versioned, non-secret source profile captured from
-	// the exact archive accepted for this deployment. It is kept as raw JSON so
-	// state does not depend on the framework-profile package's API shape.
+	// InferredProfile is the versioned, non-secret runtime profile derived from
+	// the accepted source archive or an OCI image config. The OCI projection
+	// carries the advertised serving port across imaged -> schedd -> vmmd.
+	// Raw JSON keeps state independent of the framework-profile package shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
 	// ReleaseCommand is immutable pre-activation intent captured from the
 	// exact source version (gregale.yaml release.command or Procfile release:).
