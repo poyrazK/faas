@@ -609,11 +609,11 @@ export class ProjectsService {
     environment,
   }: {
     /**
-     * Project slug owning the environment.
+     * Project whose environment state is requested.
      */
     slug: string,
     /**
-     * Environment whose effective state is requested.
+     * Target environment whose effective state is returned.
      */
     environment: string,
   }): CancelablePromise<ProjectEnvironmentStateResponse> {
@@ -658,7 +658,7 @@ export class ProjectsService {
      */
     environment: string,
     /**
-     * Source environment to compare against the target.
+     * Source environment being compared with the target environment.
      */
     from: string,
   }): CancelablePromise<ProjectEnvironmentDiffResponse> {
@@ -698,11 +698,11 @@ export class ProjectsService {
      */
     slug: string,
     /**
-     * Target environment receiving the configuration comparison.
+     * Destination environment for the configuration comparison.
      */
     environment: string,
     /**
-     * Source environment to compare against the target.
+     * Baseline environment for the configuration snapshot comparison.
      */
     from: string,
   }): CancelablePromise<ProjectEnvironmentConfigDiffResponse> {

@@ -6,6 +6,9 @@ import type { ProjectEnvironmentBindingResponse } from './ProjectEnvironmentBind
 import type { ProjectEnvironmentReleaseWorkloadResponse } from './ProjectEnvironmentReleaseWorkloadResponse.js';
 import type { ProjectEnvironmentSecretResponse } from './ProjectEnvironmentSecretResponse.js';
 import type { ProjectEnvironmentVariableResponse } from './ProjectEnvironmentVariableResponse.js';
+/**
+ * Effective configuration and live release state for one workload.
+ */
 export type ProjectEnvironmentStateWorkloadResponse = {
   workload_slug: string;
   workload_name: string;

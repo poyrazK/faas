@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Non-secret runtime variable attached to an environment workload.
+ */
 export type ProjectEnvironmentVariableResponse = {
   key: string;
   value: string;

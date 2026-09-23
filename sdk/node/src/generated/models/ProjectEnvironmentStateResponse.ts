@@ -5,6 +5,9 @@
 import type { ProjectEnvironmentConfigResponse } from './ProjectEnvironmentConfigResponse.js';
 import type { ProjectEnvironmentSharedResourceResponse } from './ProjectEnvironmentSharedResourceResponse.js';
 import type { ProjectEnvironmentStateWorkloadResponse } from './ProjectEnvironmentStateWorkloadResponse.js';
+/**
+ * Point-in-time effective state snapshot for a project environment.
+ */
 export type ProjectEnvironmentStateResponse = {
   project_slug: string;
   environment: string;

@@ -6,6 +6,9 @@ import type { ProjectEnvironmentBindingChangeResponse } from './ProjectEnvironme
 import type { ProjectEnvironmentReleaseDiffResponse } from './ProjectEnvironmentReleaseDiffResponse.js';
 import type { ProjectEnvironmentSecretChangeResponse } from './ProjectEnvironmentSecretChangeResponse.js';
 import type { ProjectEnvironmentVariableChangeResponse } from './ProjectEnvironmentVariableChangeResponse.js';
+/**
+ * Release, variable, secret, and binding changes for one workload.
+ */
 export type ProjectEnvironmentWorkloadDiffResponse = {
   workload_slug: string;
   workload_name: string;

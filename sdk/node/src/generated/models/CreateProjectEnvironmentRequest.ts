@@ -7,7 +7,7 @@
  */
 export type CreateProjectEnvironmentRequest = {
   /**
-   * Project environment slug; the reserved app scope `default` cannot be used.
+   * Canonical slug to assign to the new environment; `default` is reserved for application scope.
    */
   slug: string;
   protected?: boolean;

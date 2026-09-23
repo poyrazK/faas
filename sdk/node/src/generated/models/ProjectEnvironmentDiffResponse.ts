@@ -5,6 +5,9 @@
 import type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentSharedResourceResponse } from './ProjectEnvironmentSharedResourceResponse.js';
 import type { ProjectEnvironmentWorkloadDiffResponse } from './ProjectEnvironmentWorkloadDiffResponse.js';
+/**
+ * Effective-state comparison from one project environment to another.
+ */
 export type ProjectEnvironmentDiffResponse = {
   project_slug: string;
   from_environment: string;

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProjectEnvironmentSecretCellResponse } from './ProjectEnvironmentSecretCellResponse.js';
+/**
+ * Secret metadata comparison that excludes secret values and ciphertext.
+ */
 export type ProjectEnvironmentSecretChangeResponse = {
   key: string;
   kind: 'added' | 'removed' | 'changed' | 'unknown';
