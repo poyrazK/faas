@@ -56,7 +56,7 @@ func TestStagePreBootFiles_SingleMountSession(t *testing.T) {
 		{Name: "main", Type: "app", RamMB: 256, Port: 8080, Essential: true},
 		{Name: "metrics", Type: "sidecar", RamMB: 64, Port: 9100, preparedEnvJSON: []byte(`{"A":"1"}`)},
 	}
-	err := v.stagePreBootFiles("inst-preboot", workloads, []byte(`{"S":"x"}`), []byte(`{"K":"v"}`), "10.156.0.1")
+	err := v.stagePreBootFiles("inst-preboot", workloads, []byte(`{"S":"x"}`), []byte(`{"K":"v"}`), "10.156.0.1", true)
 	if err != nil {
 		t.Fatalf("stagePreBootFiles: %v", err)
 	}
@@ -67,6 +67,7 @@ func TestStagePreBootFiles_SingleMountSession(t *testing.T) {
 		"upper/etc/faas/secrets.env",
 		"upper/etc/faas/env.json",
 		"upper/etc/resolv.conf",
+		"upper/etc/faas/app-task.json",
 		"upper/etc/faas/workloads/metrics/env.json",
 		"upper/etc/faas/workload.json",
 		"upper/etc/faas/workloads.json",
@@ -92,7 +93,7 @@ func TestStagePreBootFiles_SingleMountSession(t *testing.T) {
 func TestStagePreBootFiles_NothingToWrite_NoMount(t *testing.T) {
 	sessions, _ := fakeLoopMounts(t)
 	v := NewJailerVMM(t.TempDir(), 0) // no chroot, no drive1 on purpose
-	if err := v.stagePreBootFiles("inst-empty", []WorkloadSpec{{Name: "main"}}, nil, nil, ""); err != nil {
+	if err := v.stagePreBootFiles("inst-empty", []WorkloadSpec{{Name: "main"}}, nil, nil, "", false); err != nil {
 		t.Fatalf("stagePreBootFiles: %v", err)
 	}
 	if *sessions != 0 {
@@ -129,7 +130,7 @@ func TestStagePreBootFiles_ValidationBeforeMount(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			sessions, _ := fakeLoopMounts(t)
 			v := newStagingVMM(t, "inst-validate")
-			err := v.stagePreBootFiles("inst-validate", tc.workloads, nil, nil, tc.resolverIP)
+			err := v.stagePreBootFiles("inst-validate", tc.workloads, nil, nil, tc.resolverIP, false)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
 			}
@@ -159,7 +160,7 @@ func TestStagePreBootFiles_WriteErrorNamesOperation(t *testing.T) {
 	}
 	t.Cleanup(func() { loopMountSession = prev })
 
-	err := v.stagePreBootFiles("inst-fail", nil, []byte(`{"S":"x"}`), nil, "")
+	err := v.stagePreBootFiles("inst-fail", nil, []byte(`{"S":"x"}`), nil, "", false)
 	if err == nil || !strings.HasPrefix(err.Error(), "stage secrets.env: ") {
 		t.Fatalf("err = %v, want prefix %q", err, "stage secrets.env: ")
 	}
