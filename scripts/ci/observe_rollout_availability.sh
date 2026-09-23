@@ -203,7 +203,7 @@ if (( command_status != 0 )); then
   exit "$command_status"
 fi
 if (( gate_status != 0 )); then
-  echo "customer path lost after a healthy pre-rollout baseline" >&2
+  echo "public readiness or canary app failed after a healthy pre-rollout baseline" >&2
   exit 1
 fi
 

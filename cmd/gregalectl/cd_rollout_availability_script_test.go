@@ -20,8 +20,8 @@ func TestRolloutAvailabilitySeparatesStatusAndCustomerPaths(t *testing.T) {
 		wantText           string
 	}{
 		{name: "status timeout is diagnostic", failTarget: "status", wantExit: 0, wantText: "status: HTTP status counts: 000"},
-		{name: "canary app failure gates", failTarget: "app", wantExit: 1, wantText: "customer path lost after a healthy pre-rollout baseline"},
-		{name: "API readiness failure gates", failTarget: "api", wantExit: 1, wantText: "customer path lost after a healthy pre-rollout baseline"},
+		{name: "canary app failure gates", failTarget: "app", wantExit: 1, wantText: "public readiness or canary app failed after a healthy pre-rollout baseline"},
+		{name: "API readiness failure gates", failTarget: "api", wantExit: 1, wantText: "public readiness or canary app failed after a healthy pre-rollout baseline"},
 		{name: "unhealthy app baseline is inconclusive", baselineFailTarget: "app", wantExit: 0, wantText: "app: rollout attribution is **inconclusive**"},
 		{name: "API-only observer supports empty optional targets", withoutOptional: true, wantExit: 0, wantText: "api: HTTP status counts: 200"},
 		{name: "wrapped command failure wins", failTarget: "app", commandExit: 17, wantExit: 17, wantText: "app: HTTP status counts: 000"},

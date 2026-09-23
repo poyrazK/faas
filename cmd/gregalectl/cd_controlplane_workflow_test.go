@@ -68,7 +68,7 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 		"HTTP status counts:",
 		"curl exit counts:",
 		`target != "status" and baseline_ready and failed`,
-		"customer path lost after a healthy pre-rollout baseline",
+		"public readiness or canary app failed after a healthy pre-rollout baseline",
 		"ROLLOUT_PROBE_PROXY",
 		`--proxy "$probe_proxy"`,
 	} {
