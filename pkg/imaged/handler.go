@@ -2846,6 +2846,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			h.log.Debug("imaged: snapshot activation already complete", "deployment_id", dep.ID)
 			return nil
 		}
+		// A terminal deployment cannot become live, so a redelivered
+		// activation has nothing left to verify. Before this guard, a failed
+		// smoke marked the deployment failed and returned an error; the outbox
+		// then redelivered for minutes, and every redelivery smoked a failed
+		// candidate that schedd refuses to wake, producing hundreds of 429s that
+		// the pressure rebalancer read as load.
+		if dep.Status.IsTerminal() {
+			h.log.Info("imaged: snapshot activation skipped for terminal deployment",
+				"deployment_id", dep.ID, "status", dep.Status)
+			return nil
+		}
 	}
 
 	// Snapshot candidates are verified through the gateway's authenticated,

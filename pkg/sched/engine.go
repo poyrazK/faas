@@ -1186,6 +1186,23 @@ func (e *Engine) IncAtCapacity(appID, kind string) {
 	}
 }
 
+// refuseExplicitDeployment records a refused wake of a named deployment. A
+// refused deployment smoke is a failed verification, not load: it is logged
+// with its reason, since the gateway can only answer 429, and it does not
+// feed the pressure aggregator. Counting it as pressure made the rebalancer
+// migrate an app between nodes while imaged kept retrying the smoke.
+func (e *Engine) refuseExplicitDeployment(appID, deploymentID string, deploymentSmoke bool, reason, status string) {
+	if !deploymentSmoke {
+		e.IncAtCapacity(appID, "admit")
+		return
+	}
+	if e.ops != nil {
+		e.ops.AppAtCapacityTotal(appID, "admit").Inc()
+	}
+	e.log.Warn("sched: deployment smoke refused",
+		"app", appID, "deployment", deploymentID, "reason", reason, "status", status)
+}
+
 // IncrementPressureSweepCounter (Tier A9 / ADR-087) bumps the
 // per-app consecutive-sweep counter the policy gate reads to
 // open the live-migration window. Called by the watcher at
@@ -2588,7 +2605,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if depErr != nil {
 			release()
 			if errors.Is(depErr, state.ErrNotFound) {
-				e.IncAtCapacity(appID, "admit")
+				e.refuseExplicitDeployment(appID, deploymentID, deploymentSmoke, "deployment_not_found", "")
 				return WakeResult{AtCapacity: true}, nil
 			}
 			return WakeResult{}, fmt.Errorf("sched: resolve explicit deployment: %w", depErr)
@@ -2596,7 +2613,11 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		smokeCandidate := deploymentSmoke && explicitDep.Status == state.DeploySnapshotting
 		if explicitDep.AppID != appID || (explicitDep.Status != state.DeployLive && !smokeCandidate) {
 			release()
-			e.IncAtCapacity(appID, "admit")
+			reason := "deployment_not_wakeable"
+			if explicitDep.AppID != appID {
+				reason = "deployment_app_mismatch"
+			}
+			e.refuseExplicitDeployment(appID, deploymentID, deploymentSmoke, reason, string(explicitDep.Status))
 			return WakeResult{AtCapacity: true}, nil
 		}
 		dep = explicitDep

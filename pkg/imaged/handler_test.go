@@ -2084,3 +2084,43 @@ func TestManifestFromImageConfig_NoCmdYieldsEmptyEntrypoint(t *testing.T) {
 		t.Errorf("Env = %v, want nil (helper short-circuited)", manifest.Env)
 	}
 }
+
+// A failed smoke marks the candidate failed and returns an error, so the
+// durable outbox redelivers snapshot_written. The redelivery must be
+// acknowledged without another smoke: schedd refuses to wake a failed
+// candidate, and in production each redelivered smoke produced 429s for
+// minutes that the pressure rebalancer read as load.
+func TestHandleSnapshotWritten_RedeliveryAfterFailedSmokeIsAcknowledged(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "hosting-smoke-redelivery", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	candidate, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Kind: state.DeploymentKindImage,
+		Scope: state.DefaultEnvScope,
+	})
+	_ = store.UpdateDeploymentStatus(context.Background(), candidate.ID, state.DeploySnapshotting, "")
+	smokes := 0
+	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
+		func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			smokes++
+			return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeFailed, StatusCode: http.StatusBadGateway}, errors.New("candidate unhealthy")
+		},
+	)
+	notification := db.Notification{
+		Channel: db.NotifySnapshotWritten,
+		Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID +
+			`/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`,
+	}
+
+	if err := h.HandleNotification(context.Background(), notification); err == nil {
+		t.Fatal("first delivery: want the smoke failure reported")
+	}
+	if err := h.HandleNotification(context.Background(), notification); err != nil {
+		t.Fatalf("redelivery for a failed candidate = %v, want acknowledged", err)
+	}
+	if smokes != 1 {
+		t.Fatalf("smoke ran %d times, want 1", smokes)
+	}
+}
