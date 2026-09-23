@@ -2845,7 +2845,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// wake-tier-mix counter so the dashboard shows the ratio of warm
 	// restores vs init restores vs cold-boot fallbacks. nil-safe
 	// accessor (OpsMetrics = nil → no-op).
-	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
+	choice := e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
+	snap, haveSnap, chosenTier, coldReason := choice.snap, choice.ok, choice.tier, choice.coldReason
 	if !usesSnapshots {
 		// Worker/job state belongs to the running process and must never be
 		// resurrected from a request-oriented HTTP snapshot. Their lifecycle
@@ -2853,6 +2854,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		snap = state.Snapshot{}
 		haveSnap = false
 		chosenTier = "cold_boot_fallback"
+		coldReason = ColdReasonInstanceMode
 		backoffActive = false
 	}
 	if !haveSnap && usesSnapshots {
@@ -2862,10 +2864,25 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if hasHistory, historyErr := e.store.HasSnapshotHistory(ctx, dep.ID); historyErr != nil {
 			e.log.Warn("wake: snapshot history lookup failed", "deployment_id", dep.ID, "err", historyErr)
 		} else if hasHistory {
+			if coldReason == ColdReasonNoSnapshot {
+				// Rows exist but none is usable: every capture was marked
+				// stale (or is being deleted) before this wake.
+				coldReason = ColdReasonSnapshotsStale
+			}
 			_, _, _ = e.RecordSnapshotMiss(ctx, dep.ID, backoff.SnapshotMissCount)
 		}
+		// One line per cold wake of a snapshot-backed app. Without it the
+		// timeline says only tier=cold_boot_fallback, never why.
+		e.log.Info("wake: no usable snapshot; cold booting",
+			"app_id", appID, "deployment_id", dep.ID, "plan", string(acct.Plan),
+			"reason", coldReason, "snapshot_id", choice.rejected.ID,
+			"snapshot_tier", choice.rejected.Tier, "snapshot_fc_version", choice.rejected.FCVersion,
+			"fc_version", e.fcVer, "snapshot_created_at", choice.rejected.CreatedAt)
 	}
 	if e.ops != nil {
+		if c := e.ops.WakeColdReason(coldReason); c != nil && !haveSnap {
+			c.Inc()
+		}
 		e.ops.WakeSnapshotTier(chosenTier).Inc()
 		if backoffActive {
 			e.ops.SnapshotBackoffGateOutcome("miss").Inc()
@@ -3260,6 +3277,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		queuedCount:        concurrency,
 		concurrencyAtAdmit: concurrency,
 		chosenTier:         chosenTier,
+		coldReason:         coldReason,
 		atCapacity:         atCapacity,
 	}
 	// issue #517 / PR-C / ADR-064 — emit wake.queue_accepted at
@@ -3393,6 +3411,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			NodeID:             bootInput.nodeID,
 			Method:             method,
 			Tier:               bootInput.chosenTier,
+			ColdReason:         bootInput.coldReason,
 			RequestedAt:        bootInput.startedAt, // best-effort stamp
 			Trigger:            bootInput.trigger,
 			TriggerClass:       inboundCorr.TriggerClass,
@@ -3830,6 +3849,9 @@ type bootInput struct {
 	queuedCount        int
 	concurrencyAtAdmit int
 	chosenTier         string
+	// coldReason says why a wake cold-booted instead of restoring (one of
+	// the ColdReason* values); empty on a restore.
+	coldReason string
 	// atCapacity (PR-A) is the bool returned by admitGate's
 	// wakeAdmit branch — true when the pre-admit ledger reading is
 	// maxConc-1 and this admit pushes the post-admit ledger to the
@@ -7422,35 +7444,103 @@ func (e *Engine) loadAPIEnv(ctx context.Context, accountID, appID, scope string)
 // calling the metric accessor directly — keeps the function
 // testable without a metric registry.
 func (e *Engine) usableSnapshotForWake(ctx context.Context, deploymentID, plan string, expectedRAMMB int, appProtocol string) (state.Snapshot, bool, string) {
-	if !planAllowsWarm(plan) {
-		snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
-		if err != nil || !e.snapshotCompatible(ctx, snap, expectedRAMMB, appProtocol) {
-			return state.Snapshot{}, false, wakeTierColdBootFallback
-		}
-		return snap, true, wakeTierInit
-	}
-	// PR C / ADR-074: prefer warm when available. LatestSnapshot
-	// already ranks warm > init, but checking tier explicitly lets us
-	// distinguish warm-wake from init-wake for the operator metric.
-	warm, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierWarm)
-	if err == nil && e.snapshotCompatible(ctx, warm, expectedRAMMB, appProtocol) {
-		return warm, true, wakeTierWarm
-	}
-	snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
-	if err != nil || !e.snapshotCompatible(ctx, snap, expectedRAMMB, appProtocol) {
-		return state.Snapshot{}, false, wakeTierColdBootFallback
-	}
-	return snap, true, wakeTierInit
+	choice := e.chooseWakeSnapshot(ctx, deploymentID, plan, expectedRAMMB, appProtocol)
+	return choice.snap, choice.ok, choice.tier
 }
 
 func (e *Engine) snapshotCompatible(ctx context.Context, snap state.Snapshot, expectedRAMMB int, appProtocol string) bool {
-	if snap.Stale || snap.FCVersion != e.fcVer || state.SnapshotDriveKey(snap) == "" || !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB) {
-		return false
+	return e.snapshotRejection(ctx, snap, expectedRAMMB, appProtocol) == ""
+}
+
+// Cold-boot reasons (spec §6.3, ADR-005). A wake that does not restore
+// records exactly one of these on the wake.boot_started event, the
+// schedd log and {prefix}_wake_cold_reason_total. The set is closed so the
+// metric's label space stays bounded.
+const (
+	// ColdReasonNoSnapshot: the deployment has never had a snapshot row.
+	ColdReasonNoSnapshot = "no_snapshot"
+	// ColdReasonSnapshotsStale: snapshot rows exist but none is usable
+	// (all stale or pending deletion).
+	ColdReasonSnapshotsStale = "snapshots_stale"
+	// ColdReasonLookupFailed: the snapshot query itself failed.
+	ColdReasonLookupFailed = "snapshot_lookup_failed"
+	// ColdReasonFCVersion: captured by a different Firecracker version.
+	ColdReasonFCVersion = "fc_version_mismatch"
+	// ColdReasonNoDrive: a legacy capture without its writable drive.
+	ColdReasonNoDrive = "snapshot_without_drive"
+	// ColdReasonRAM: captured at a different guest RAM size.
+	ColdReasonRAM = "ram_mismatch"
+	// ColdReasonBaseImage: an HTTP/2 or gRPC app's runner base changed.
+	ColdReasonBaseImage = "base_image_mismatch"
+	// ColdReasonStale: the chosen row was stale (defensive: the latest-row
+	// query already excludes stale rows).
+	ColdReasonStale = "snapshot_stale"
+	// ColdReasonInstanceMode: worker and job instances never restore.
+	ColdReasonInstanceMode = "instance_mode"
+)
+
+// ColdReasons is the closed set, in a stable order, for metric
+// pre-instantiation and tests.
+var ColdReasons = []string{
+	ColdReasonNoSnapshot, ColdReasonSnapshotsStale, ColdReasonLookupFailed,
+	ColdReasonFCVersion, ColdReasonNoDrive, ColdReasonRAM, ColdReasonBaseImage,
+	ColdReasonStale, ColdReasonInstanceMode,
+}
+
+// snapshotRejection returns why snap cannot be restored for this wake, or ""
+// when it can. The checks run in the order snapshotCompatible always used;
+// the RAM check has side effects (it may mark the row stale), so it must
+// keep running only after the cheaper checks pass.
+func (e *Engine) snapshotRejection(ctx context.Context, snap state.Snapshot, expectedRAMMB int, appProtocol string) string {
+	switch {
+	case snap.Stale:
+		return ColdReasonStale
+	case snap.FCVersion != e.fcVer:
+		return ColdReasonFCVersion
+	case state.SnapshotDriveKey(snap) == "":
+		return ColdReasonNoDrive
+	case !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB):
+		return ColdReasonRAM
 	}
-	if appProtocol == api.AppProtocolHTTP2 || appProtocol == api.AppProtocolGRPC {
-		return snap.BaseImageVersion == fcvm.FAAS_BASE_IMAGE_VERSION
+	if (appProtocol == api.AppProtocolHTTP2 || appProtocol == api.AppProtocolGRPC) &&
+		snap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
+		return ColdReasonBaseImage
 	}
-	return true
+	return ""
+}
+
+// wakeSnapshotChoice is chooseWakeSnapshot's decision. On a cold boot,
+// coldReason says why and rejected holds the init-tier row that was refused
+// (zero when there was none).
+type wakeSnapshotChoice struct {
+	snap       state.Snapshot
+	ok         bool
+	tier       string
+	coldReason string
+	rejected   state.Snapshot
+}
+
+// chooseWakeSnapshot is usableSnapshotForWake plus the reason a cold boot was
+// chosen. The init tier decides the reason: it is the last tier every plan
+// falls back to.
+func (e *Engine) chooseWakeSnapshot(ctx context.Context, deploymentID, plan string, expectedRAMMB int, appProtocol string) wakeSnapshotChoice {
+	if planAllowsWarm(plan) {
+		warm, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierWarm)
+		if err == nil && e.snapshotCompatible(ctx, warm, expectedRAMMB, appProtocol) {
+			return wakeSnapshotChoice{snap: warm, ok: true, tier: wakeTierWarm}
+		}
+	}
+	snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: ColdReasonNoSnapshot}
+	case err != nil:
+		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: ColdReasonLookupFailed}
+	}
+	if reason := e.snapshotRejection(ctx, snap, expectedRAMMB, appProtocol); reason != "" {
+		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: reason, rejected: snap}
+	}
+	return wakeSnapshotChoice{snap: snap, ok: true, tier: wakeTierInit}
 }
 
 // snapshotMatchesRAM rejects machine-state artifacts created for a different

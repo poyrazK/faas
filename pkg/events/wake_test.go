@@ -318,6 +318,19 @@ func TestBootStarted_Shape_IncludesNewFields(t *testing.T) {
 // Also pins the always-present contract: at_capacity is unconditional
 // (unlike Trigger which is conditional), so both true and false
 // leaves appear in the jsonb.
+// adr: 005 — cold_reason is carried only when a wake cold-booted instead of
+// restoring; a restore's payload has no key at all.
+func TestBootStarted_ColdReason(t *testing.T) {
+	cold := BootStarted{EmitAt: time.Now(), WakeID: "w", Method: "cold_boot", Tier: "cold_boot_fallback", ColdReason: "fc_version_mismatch"}
+	if got := cold.Payload()["cold_reason"]; got != "fc_version_mismatch" {
+		t.Fatalf("cold payload cold_reason = %v", got)
+	}
+	restore := BootStarted{EmitAt: time.Now(), WakeID: "w", Method: "restore", Tier: "init"}
+	if _, ok := restore.Payload()["cold_reason"]; ok {
+		t.Fatal("restore payload must not carry cold_reason")
+	}
+}
+
 func TestBootStarted_AtCapacity(t *testing.T) {
 	cases := []struct {
 		name string
