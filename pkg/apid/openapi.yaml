@@ -31036,7 +31036,7 @@ components:
     AccountTraceLookupResponse:
       type: object
       description: "Tenant-scoped distributed-trace correlation envelope."
-      required: [trace_id, generated_at, limit, matches, invocations, spans, spans_truncated]
+      required: [trace_id, generated_at, limit, matches, invocations, logs, logs_truncated, spans, spans_truncated]
       properties:
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         generated_at: { type: string, format: date-time }
@@ -31047,6 +31047,11 @@ components:
         invocations:
           type: array
           items: { $ref: '#/components/schemas/AccountTraceInvocation' }
+        logs:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/LogQueryEvent' }
+        logs_truncated: { type: boolean }
         spans:
           type: array
           maxItems: 100
@@ -31056,6 +31061,29 @@ components:
         errors:
           type: array
           items: { $ref: '#/components/schemas/AccountTraceLookupError' }
+
+    LogQueryEvent:
+      type: object
+      description: "Safe source-neutral log query event; trace lookup returns the HTTP access-log projection."
+      required: [id, timestamp, source, message]
+      properties:
+        id: { type: string, format: uuid }
+        app: { type: string }
+        timestamp: { type: string, format: date-time }
+        source: { type: string, enum: [runtime, http] }
+        deployment_id: { type: string, format: uuid }
+        instance_id: { type: string }
+        request_id: { type: string }
+        trace_id: { type: string }
+        route: { type: string }
+        method: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        level: { type: string, enum: [trace, debug, info, warn, error, fatal] }
+        stream: { type: string, enum: [stdout, stderr, system, access] }
+        message: { type: string, minLength: 1, maxLength: 16384 }
+        latency_ms: { type: integer, minimum: 0 }
+        count: { type: integer, minimum: 1 }
+        cold_boot: { type: boolean }
 
     AccountTraceMatch:
       type: object
