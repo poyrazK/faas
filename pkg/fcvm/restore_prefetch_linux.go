@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -93,7 +94,7 @@ func touchedFileRanges(pid int, path string) ([]fileRange, error) {
 }
 
 type mapsVMA struct {
-	start, end   uint64
+	start, end   int64
 	offset       int64
 	major, minor uint32
 	inode        uint64
@@ -111,14 +112,15 @@ func parseMapsLine(line string) (mapsVMA, bool) {
 		return mapsVMA{}, false
 	}
 	var v mapsVMA
+	var ok bool
+	if v.start, ok = parseHexAddr(addrs[0]); !ok {
+		return mapsVMA{}, false
+	}
+	if v.end, ok = parseHexAddr(addrs[1]); !ok || v.end <= v.start {
+		return mapsVMA{}, false
+	}
 	var err error
-	if v.start, err = strconv.ParseUint(addrs[0], 16, 64); err != nil {
-		return mapsVMA{}, false
-	}
-	if v.end, err = strconv.ParseUint(addrs[1], 16, 64); err != nil || v.end <= v.start {
-		return mapsVMA{}, false
-	}
-	if v.offset, err = strconv.ParseInt(f[2], 16, 64); err != nil {
+	if v.offset, err = strconv.ParseInt(f[2], 16, 64); err != nil || v.offset < 0 {
 		return mapsVMA{}, false
 	}
 	major, err := strconv.ParseUint(dev[0], 16, 32)
@@ -136,12 +138,22 @@ func parseMapsLine(line string) (mapsVMA, bool) {
 	return v, true
 }
 
+// parseHexAddr parses a /proc/<pid>/maps address. User-space addresses are
+// far below 2^63; anything larger is rejected rather than wrapped.
+func parseHexAddr(s string) (int64, bool) {
+	u, err := strconv.ParseUint(s, 16, 64)
+	if err != nil || u > math.MaxInt64 {
+		return 0, false
+	}
+	return int64(u), true
+}
+
 // touchedPages returns the indexes, relative to start, of the pages in
 // [start,end) whose pagemap entry is present or swapped.
-func touchedPages(pagemap io.ReaderAt, start, end uint64, page int64) ([]int64, error) {
+func touchedPages(pagemap io.ReaderAt, start, end, page int64) ([]int64, error) {
 	const chunk = 64 << 10 // entries per read (512 KiB)
-	total := int64(end-start) / page
-	first := int64(start) / page
+	total := (end - start) / page
+	first := start / page
 	buf := make([]byte, chunk*8)
 	var out []int64
 	for done := int64(0); done < total; {

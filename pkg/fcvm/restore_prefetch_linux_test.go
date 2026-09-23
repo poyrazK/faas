@@ -28,6 +28,7 @@ func TestParseMapsLine(t *testing.T) {
 	for _, bad := range []string{
 		"", "7f00-7e00 rw-p 0 fd:02 131 /mem", "7f00-7f10 rw-p 0 fd:02 0",
 		"zz-7f10 rw-p 0 fd:02 5 /x", "7f00-7f10 rw-p 0 fd02 5 /x",
+		"ffffffffffffff00-ffffffffffffff10 rw-p 0 fd:02 5 /x",
 	} {
 		if _, ok := parseMapsLine(bad); ok {
 			t.Errorf("parseMapsLine(%q) accepted a malformed or anonymous mapping", bad)
@@ -43,7 +44,7 @@ func TestTouchedPages(t *testing.T) {
 	for _, e := range entries {
 		_ = binary.Write(buf, binary.LittleEndian, e)
 	}
-	got, err := touchedPages(bytes.NewReader(buf.Bytes()), 0, uint64(len(entries)*page), page)
+	got, err := touchedPages(bytes.NewReader(buf.Bytes()), 0, int64(len(entries)*page), page)
 	if err != nil {
 		t.Fatal(err)
 	}
