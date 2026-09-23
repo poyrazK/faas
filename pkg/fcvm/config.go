@@ -132,7 +132,13 @@ const (
 // world (ADR-009) is configured by the kernel's ip= autoconfig so guest-init
 // carries no networking code: guest 10.0.0.2, gateway 10.0.0.1, /30 mask. Every
 // VM boots with the same line — uniqueness lives entirely on the host side.
-const coldBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
+//
+// quiet drops the kernel's routine boot log from the console. Each byte on the
+// emulated 8250 is a VM exit, and on nested-virtualization compute nodes the
+// ~30k exits of a verbose boot cost ~0.6 s per cold boot. guest-init writes to
+// /dev/console directly and kernel errors are still printed, so the early
+// failure reports above are unaffected.
+const coldBootArgs = "console=ttyS0,115200n8 quiet reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
@@ -145,7 +151,7 @@ const coldBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
 // executionBootArgs intentionally omits kernel ip= autoconfiguration. The
 // dedicated execution VM has no Firecracker network interface, so even the
 // guest kernel receives no tenant route or DNS/gateway hint.
-const executionBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
+const executionBootArgs = "console=ttyS0,115200n8 quiet reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"

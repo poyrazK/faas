@@ -3,6 +3,7 @@ package fcvm
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -204,6 +205,25 @@ func TestColdBootBootArgsDisableConsole(t *testing.T) {
 	cfg := BuildColdBootConfig(validColdSpec(), 0)
 	if !strings.Contains(cfg.BootSource.BootArgs, "console=ttyS0,115200n8") {
 		t.Errorf("boot args should expose the serial console: %q", cfg.BootSource.BootArgs)
+	}
+}
+
+// adr: 005 — cold boot is the always-available wake path, so its kernel line
+// must stay quiet: every routine boot message is a serial-port VM exit, and a
+// verbose boot measured ~0.6 s slower on the nested-virtualization compute
+// nodes. The console itself must stay attached for guest-init's reports.
+func TestBootArgsKeepConsoleButSuppressRoutineKernelLog(t *testing.T) {
+	for name, spec := range map[string]ColdBootSpec{
+		"cold boot": validColdSpec(),
+		"execution": func() ColdBootSpec { s := validColdSpec(); s.Networkless = true; return s }(),
+	} {
+		args := strings.Fields(BuildColdBootConfig(spec, 0).BootSource.BootArgs)
+		if !slices.Contains(args, "quiet") {
+			t.Errorf("%s boot args missing quiet: %q", name, args)
+		}
+		if !slices.Contains(args, "console=ttyS0,115200n8") {
+			t.Errorf("%s boot args must keep the serial console: %q", name, args)
+		}
 	}
 }
 
