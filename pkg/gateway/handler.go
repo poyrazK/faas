@@ -347,6 +347,9 @@ type App struct {
 	// VersionAffinityCookie is an optional stable browser cookie used when
 	// the explicit Gregale-Version-Key header is absent.
 	VersionAffinityCookie string
+	// VersionAffinityManagedCookie lets the edge issue an opaque, host-only
+	// rollout cookie. It is mutually exclusive with VersionAffinityCookie.
+	VersionAffinityManagedCookie bool
 }
 
 type concurrencyAdmissionConfig struct {
@@ -5690,6 +5693,10 @@ haveApp:
 	// forwarded header all use the same key. A configured browser cookie is
 	// only used when no explicit (or rule-authored) version header is present.
 	versionKey, versionKeyOutcome := versionAffinityKeyFromPublicRequest(r, app.VersionAffinityCookie)
+	managedVersionToken := ""
+	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
+		versionKey, versionKeyOutcome, managedVersionToken = versionAffinityKeyFromManagedRequest(r)
+	}
 	if h.metrics != nil {
 		h.metrics.ObserveVersionAffinityKey(versionAffinitySurfacePublic, versionKeyOutcome)
 	}
@@ -5870,6 +5877,16 @@ haveApp:
 	if h.applyEdgeRuleRespond(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
+		stripManagedVersionAffinityCookie(r)
+		if managedVersionToken != "" {
+			http.SetCookie(w, &http.Cookie{
+				Name: api.ManagedVersionAffinityCookieName, Value: managedVersionToken,
+				Path: "/", MaxAge: 7 * 24 * 60 * 60, Secure: true,
+				HttpOnly: true, SameSite: http.SameSiteLaxMode,
+			})
+		}
 	}
 
 	// ADR-122 §Decision: kind=cache serve path. Consulted AFTER

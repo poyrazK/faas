@@ -163,6 +163,18 @@ values fall back to normal weighted routing. Set the field to `""` to disable
 cookie sourcing. This setting is distinct from `session_affinity`, which
 targets a running VM rather than a rollout revision.
 
+If the app has no visitor cookie, set
+`{"version_affinity_managed_cookie":true}` instead. Gregale mints a random,
+opaque `__Host-gregale_version` cookie before the first rollout decision, so
+the initial page and its later assets share a cohort across gateways. It is
+host-only, Secure, HttpOnly, SameSite=Lax, and expires after seven days. An
+explicit `Gregale-Version-Key` still wins. The edge removes its own cookie
+before forwarding the request or evaluating response-cache eligibility;
+customer cookies retain the normal cache bypass, and responses setting a cookie
+are never stored. The first cache miss that issues the cookie is therefore
+served from the origin without populating the response cache. This option and
+`version_affinity_cookie` are mutually exclusive. Set it to `false` to disable.
+
 Traffic splitting and canary rollouts are available on every plan. During a
 rollout an app runs one instance above its plan's concurrency limit so both
 revisions can serve at once; that extra instance lasts only as long as the

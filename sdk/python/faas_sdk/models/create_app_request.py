@@ -118,6 +118,11 @@ class CreateAppRequest:
     """Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."""
     session_affinity: bool | Unset = False
     """Enable best-effort cookie-based routing to the same running instance. Omitted uses false."""
+    version_affinity_cookie: str | Unset = UNSET
+    """Use a stable, non-secret browser cookie for rollout affinity. Omit to disable."""
+    version_affinity_managed_cookie: bool | Unset = False
+    """Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with
+    version_affinity_cookie; omitted uses false."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -250,6 +255,10 @@ class CreateAppRequest:
 
         session_affinity = self.session_affinity
 
+        version_affinity_cookie = self.version_affinity_cookie
+
+        version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -339,6 +348,10 @@ class CreateAppRequest:
             field_dict["health_path_wakes"] = health_path_wakes
         if session_affinity is not UNSET:
             field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -506,6 +519,10 @@ class CreateAppRequest:
 
         session_affinity = d.pop("session_affinity", UNSET)
 
+        version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
+
+        version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -569,6 +586,8 @@ class CreateAppRequest:
             health_path=health_path,
             health_path_wakes=health_path_wakes,
             session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,

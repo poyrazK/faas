@@ -192,7 +192,12 @@ type AppManifest struct {
 	// VersionAffinityCookie names a stable, non-secret browser cookie used as
 	// the rollout key when Gregale-Version-Key is absent.
 	VersionAffinityCookie string `json:"version_affinity_cookie,omitempty"`
+	// VersionAffinityManagedCookie issues an opaque edge-owned browser cookie
+	// before the first rollout pick. It cannot be combined with a cookie source.
+	VersionAffinityManagedCookie bool `json:"version_affinity_managed_cookie,omitempty"`
 }
+
+const ManagedVersionAffinityCookieName = "__Host-gregale_version"
 
 const (
 	CrawlerPolicyWake   = "wake"
@@ -225,8 +230,8 @@ func ValidateVersionAffinityCookieName(name string) error {
 	if name == "" {
 		return nil
 	}
-	if !versionAffinityCookieNameRe.MatchString(name) || name == "gregale_affinity" {
-		return fmt.Errorf("version_affinity_cookie must be a 1-64 character cookie name (letters, digits, _, ., -) other than gregale_affinity")
+	if !versionAffinityCookieNameRe.MatchString(name) || name == "gregale_affinity" || name == ManagedVersionAffinityCookieName {
+		return fmt.Errorf("version_affinity_cookie must be a 1-64 character cookie name (letters, digits, _, ., -) other than reserved platform cookies")
 	}
 	return nil
 }
@@ -450,6 +455,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if err := ValidateVersionAffinityCookieName(m.VersionAffinityCookie); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.VersionAffinityManagedCookie && m.VersionAffinityCookie != "" {
+		return fmt.Errorf("app manifest: version_affinity_managed_cookie and version_affinity_cookie are mutually exclusive")
 	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)
