@@ -16,7 +16,17 @@
 - **Why:** A restore demand-faults guest memory from the mem file. On a
   production node the file is usually no longer in the page cache, because
   later parks write new snapshots and evict it; each fault then blocks a vCPU
-  on a disk read. EVIDENCE_PLACEHOLDER
+  on a disk read. Production restore p50 was 181 ms (vmmd logs, 2026-09-23)
+  against ~95 ms for a warm page cache; a mem-evicted restore of a real app
+  measures ~190–220 ms, the production shape. Measured on fsn-4 (nested
+  virtualization, like production compute) with real production app layers,
+  1 GiB guests, mem evicted, prefetch interleaved off/on, 12 restores each:
+  restore p50 186 → 95 ms (Go container) and 191 → 107 ms (Node function)
+  when the wake builds its network inline; 221 → 170 ms and 211 → 143 ms when
+  it takes a prepared network, which leaves less work to overlap.
+  `resume_hook` returns to its warm-cache value (~32–48 ms from ~100–110 ms).
+  Blind prefetch loses (see Rejected alternatives); only the recorded set,
+  ~30–50 MiB for these apps, is read.
 - **Consequences:** The first restore of a family after a vmmd restart, and a
   family's very first restore, get no prefetch. A capture whose layout differs
   from the recorded one prefetches some pages the guest will not touch; the
