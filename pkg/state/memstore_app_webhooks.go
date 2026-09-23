@@ -14,11 +14,64 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// enqueueDeploymentLifecycleWebhooksLocked mirrors the database status
+// trigger. Callers hold m.mu and invoke it only on a changed terminal status.
+func (m *MemStore) enqueueDeploymentLifecycleWebhooksLocked(dep Deployment) {
+	app, ok := m.apps[dep.AppID]
+	if !ok {
+		return
+	}
+	var event AppWebhookEvent
+	var payload any
+	switch dep.Status {
+	case DeployLive:
+		event = AppWebhookEventDeploymentLive
+		payload = api.DeploymentLiveWebhookPayload{
+			AppID: dep.AppID, DeploymentID: dep.ID, Status: string(DeployLive),
+		}
+	case DeployFailed:
+		event = AppWebhookEventDeploymentFailed
+		payload = api.DeploymentFailedWebhookPayload{
+			AppID: dep.AppID, DeploymentID: dep.ID, Status: string(DeployFailed),
+			ErrorCode: dep.ErrorCode, ErrorHint: dep.ErrorHint,
+			ErrorWhy: dep.ErrorWhy, ErrorFix: dep.ErrorFix,
+		}
+	default:
+		return
+	}
+	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
+	now := time.Now().UTC()
+	for _, hook := range m.appWebhooks {
+		if !hook.Enabled || hook.AppID != dep.AppID || hook.AccountID != app.AccountID || !appWebhookMatches(hook.EventFilter, event) {
+			continue
+		}
+		id := newID()
+		m.appWebhookDeliveries[id] = AppWebhookDelivery{
+			ID: id, WebhookID: hook.ID, AppID: dep.AppID, AccountID: app.AccountID,
+			Event: event, Payload: json.RawMessage(body), Status: AppWebhookDeliveryPending,
+			NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+	}
+}
+
+func appWebhookMatches(filter []string, event AppWebhookEvent) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, candidate := range filter {
+		if candidate == string(event) {
+			return true
+		}
+	}
+	return false
+}
 
 // CreateAppWebhook rejects on duplicate (app_id, target_url) before
 // insert — same invariant the Postgres unique index holds.

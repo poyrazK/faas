@@ -888,6 +888,14 @@ type Deployment struct {
 	Revision                 int32
 }
 
+type DeploymentAlias struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type DeploymentAudit struct {
 	ID           int64
 	DeploymentID pgtype.UUID

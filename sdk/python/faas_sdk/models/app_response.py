@@ -141,6 +141,9 @@ class AppResponse:
     version_affinity_cookie: str | Unset = UNSET
     """Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes
     the value before forwarding it as a key."""
+    version_affinity_managed_cookie: bool | Unset = False
+    """Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually
+    exclusive with version_affinity_cookie."""
     route_metrics_enabled: bool | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
@@ -340,6 +343,8 @@ class AppResponse:
 
         version_affinity_cookie = self.version_affinity_cookie
 
+        version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
         route_metrics_enabled = self.route_metrics_enabled
 
         only_allow_declared_routes = self.only_allow_declared_routes
@@ -514,6 +519,8 @@ class AppResponse:
             field_dict["session_affinity"] = session_affinity
         if version_affinity_cookie is not UNSET:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
         if route_metrics_enabled is not UNSET:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
         if only_allow_declared_routes is not UNSET:
@@ -748,6 +755,8 @@ class AppResponse:
 
         version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
 
+        version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
+
         route_metrics_enabled = d.pop("route_metrics_enabled", UNSET)
 
         only_allow_declared_routes = d.pop("only_allow_declared_routes", UNSET)
@@ -973,6 +982,7 @@ class AppResponse:
             websocket_enabled=websocket_enabled,
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
             route_metrics_enabled=route_metrics_enabled,
             only_allow_declared_routes=only_allow_declared_routes,
             declared_routes=declared_routes,

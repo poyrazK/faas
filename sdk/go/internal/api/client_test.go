@@ -220,6 +220,13 @@ func TestDo_MutatingCallsCarryIdempotencyKey(t *testing.T) {
 			_, err := c.ClearObsoleteDeployments(context.Background(), "x", 168*time.Hour)
 			return err
 		}},
+		{"SetDeploymentAlias", func(c *Client) error {
+			_, err := c.SetDeploymentAlias(context.Background(), "x", "candidate", SetDeploymentAliasRequest{DeploymentID: "d1"})
+			return err
+		}},
+		{"DeleteDeploymentAlias", func(c *Client) error {
+			return c.DeleteDeploymentAlias(context.Background(), "x", "candidate")
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -256,6 +263,7 @@ func TestDo_GETCallsDoNotCarryIdempotencyKey(t *testing.T) {
 		{"ListApps", func(c *Client) error { _, err := c.ListApps(context.Background()); return err }},
 		{"GetApp", func(c *Client) error { _, err := c.GetApp(context.Background(), "x"); return err }},
 		{"ListInstances", func(c *Client) error { _, err := c.ListInstances(context.Background(), "x"); return err }},
+		{"ListDeploymentAliases", func(c *Client) error { _, err := c.ListDeploymentAliases(context.Background(), "x"); return err }},
 		{"ListDomains", func(c *Client) error { _, err := c.ListDomains(context.Background()); return err }},
 		{"DomainDoctor", func(c *Client) error { _, err := c.DomainDoctor(context.Background(), "x"); return err }},
 		{"ListCrons", func(c *Client) error { _, err := c.ListCrons(context.Background(), "x"); return err }},

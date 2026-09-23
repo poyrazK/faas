@@ -1,10 +1,14 @@
 from typing import Literal
 
-AppWebhookResponseEventFilterItem = Literal["app.parked", "app.woken", "usage_statement.finalized"]
+AppWebhookResponseEventFilterItem = Literal[
+    "app.parked", "app.woken", "deployment.failed", "deployment.live", "usage_statement.finalized"
+]
 
 APP_WEBHOOK_RESPONSE_EVENT_FILTER_ITEM_VALUES: set[AppWebhookResponseEventFilterItem] = {
     "app.parked",
     "app.woken",
+    "deployment.failed",
+    "deployment.live",
     "usage_statement.finalized",
 }
 

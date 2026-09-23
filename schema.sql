@@ -10138,3 +10138,29 @@ CREATE INDEX project_environment_cleanup_jobs_lease_idx ON public.project_enviro
 
 
 --
+-- Name: deployment_aliases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_aliases (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_aliases_name_format_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+);
+
+
+ALTER TABLE ONLY public.deployment_aliases
+    ADD CONSTRAINT deployment_aliases_pkey PRIMARY KEY (app_id, name);
+
+ALTER TABLE ONLY public.deployment_aliases
+    ADD CONSTRAINT deployment_aliases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.deployment_aliases
+    ADD CONSTRAINT deployment_aliases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+CREATE INDEX deployment_aliases_deployment_idx ON public.deployment_aliases USING btree (deployment_id);
+
+
+--

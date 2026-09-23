@@ -11,7 +11,7 @@
 export type CreateAppWebhookRequest = {
   target_url: string;
   webhook_secret: string;
-  event_filter?: Array<'app.parked' | 'app.woken' | 'usage_statement.finalized'>;
+  event_filter?: Array<'app.parked' | 'app.woken' | 'deployment.live' | 'deployment.failed' | 'usage_statement.finalized'>;
   retry_policy?: 'default' | 'aggressive' | 'none';
   /**
    * Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured mode.

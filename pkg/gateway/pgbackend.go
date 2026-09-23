@@ -1977,6 +1977,21 @@ func (b *PGBackend) FlushRoutes() {
 	b.appsMu.Unlock()
 }
 
+// InvalidateRoutesForApp drops every host route and stale fallback for appID.
+// Deployment changes can close an immutable preview URL without changing the
+// app row, so the next request must re-resolve that hostname against storage.
+func (b *PGBackend) InvalidateRoutesForApp(appID string) {
+	if b == nil || appID == "" {
+		return
+	}
+	if b.routes != nil {
+		b.routes.InvalidateApp(appID)
+	}
+	if b.stale != nil {
+		b.stale.DeleteApp(appID)
+	}
+}
+
 // InvalidatePublicAuth (issue #477 / ADR-079) drops every
 // entry in the per-app basic-auth unsealed-credential cache.
 // gatewayd-internal calls this on a db.NotifyKeyChanged notification
@@ -2175,6 +2190,18 @@ func (b *PGBackend) InvalidateResponseCacheByPath(appID, pathGlob string) error 
 		return nil
 	}
 	err := b.responseCache.InvalidateByAppPath(appID, pathGlob)
+	if err == nil {
+		b.refreshResponseCacheMetrics()
+	}
+	return err
+}
+
+// InvalidateResponseCacheByTag drops the matching tagged entries for one app.
+func (b *PGBackend) InvalidateResponseCacheByTag(appID, tag string) error {
+	if b == nil || b.responseCache == nil {
+		return nil
+	}
+	err := b.responseCache.InvalidateByAppTag(appID, tag)
 	if err == nil {
 		b.refreshResponseCacheMetrics()
 	}

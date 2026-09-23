@@ -216,6 +216,7 @@ type MemStore struct {
 	// the in-memory implementation of the I1 cooldown gate.
 	deployFailedEmailAt map[string]time.Time
 	deployments         map[string]Deployment
+	deploymentAliases   map[string]DeploymentAlias
 	devSyncHistory      map[string]DevSyncHistory
 	// statusIncidents (issue #599 / ADR-130) is the in-memory
 	// mirror of the status_incidents table (migrations/00412).
@@ -941,6 +942,7 @@ func NewMemStore() *MemStore {
 		mailSuppressions:    map[string]mailSuppressionRow{},
 		deployFailedEmailAt: map[string]time.Time{},
 		deployments:         map[string]Deployment{},
+		deploymentAliases:   map[string]DeploymentAlias{},
 		devSyncHistory:      map[string]DevSyncHistory{},
 		statusCreateKeys:    map[string]string{},
 		statusUpdateKeys:    map[string]string{},
@@ -7432,12 +7434,16 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
+	previousStatus := d.Status
 	if status == DeployFailed {
 		m.failDeploymentLocked(d, errMsg)
 	} else {
 		d.Status = status
 		d.Error = errMsg
 		m.deployments[id] = d
+		if status == DeployLive && previousStatus != DeployLive {
+			m.enqueueDeploymentLifecycleWebhooksLocked(d)
+		}
 	}
 	if status == DeployFailed || status == DeployCancelled {
 		m.markDeploymentSnapshotsStaleLocked(id)
@@ -7446,6 +7452,7 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 }
 
 func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
+	previousStatus := d.Status
 	now := time.Now().UTC()
 	d.Status = DeployFailed
 	d.Error = message
@@ -7472,6 +7479,9 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 		}
 	}
 	m.deployments[d.ID] = d
+	if previousStatus != DeployFailed {
+		m.enqueueDeploymentLifecycleWebhooksLocked(d)
+	}
 
 	var fallbackID string
 	var fallback Deployment
@@ -7526,13 +7536,21 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 	return m.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
-func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
+func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
 	}
+	previousStatus := d.Status
+	defer func() {
+		if err == nil && previousStatus != DeployLive {
+			if current, exists := m.deployments[id]; exists && current.Status == DeployLive {
+				m.enqueueDeploymentLifecycleWebhooksLocked(current)
+			}
+		}
+	}()
 	if d.Status == DeployCancelled {
 		return ErrInvalidStateTransition
 	}
@@ -8280,6 +8298,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	}
 	m.deployments[currentDeploymentID] = cur
 	m.deployments[targetID] = target
+	m.enqueueDeploymentLifecycleWebhooksLocked(target)
 	return targetID, nil
 }
 
@@ -9538,6 +9557,7 @@ func (m *MemStore) SweepStuckRunningBuildsWithIDs(_ context.Context, threshold t
 				d.Error = "build timed out"
 				d.ErrorCode = api.CodeBuildTimeout
 				m.deployments[b.DeploymentID] = d
+				m.enqueueDeploymentLifecycleWebhooksLocked(d)
 			}
 		}
 		ids = append(ids, id)

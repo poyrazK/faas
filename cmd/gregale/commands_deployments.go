@@ -138,6 +138,8 @@ func cmdDeployments(args []string) int {
 	// FlagSet chokes on the unrecognised "exclude" verb.
 	if len(args) > 0 {
 		switch args[0] {
+		case "alias":
+			return cmdDeploymentAliases(args[1:])
 		case "exclude":
 			return cmdDeploymentsExclude(args[1:])
 		}

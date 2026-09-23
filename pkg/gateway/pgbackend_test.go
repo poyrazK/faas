@@ -83,6 +83,37 @@ func TestPGBackend_LookupKeepsDeploymentPinsHostLocal(t *testing.T) {
 	}
 }
 
+func TestPGBackend_InvalidateRoutesForAppDropsOnlyMatchingRoutesAndStaleEntries(t *testing.T) {
+	const previewHost = "deploy-42-orders.gregale.dev"
+	const otherHost = "billing.apps.gregale.dev"
+	router := &fakeRouter{byID: map[string]gateway.App{
+		previewHost: {
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			PinnedDeploymentID: "deployment-42", PinnedDeploymentScope: "staging",
+		},
+		otherHost: {ID: "app-2", AccountID: "acct-2", Plan: api.PlanPro},
+	}}
+	b := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
+	if _, ok := b.Lookup(context.Background(), previewHost); !ok {
+		t.Fatal("preview route failed to warm")
+	}
+	if _, ok := b.Lookup(context.Background(), otherHost); !ok {
+		t.Fatal("other app route failed to warm")
+	}
+
+	router.mu.Lock()
+	router.err = errors.New("pg down")
+	router.mu.Unlock()
+	b.InvalidateRoutesForApp("app-1")
+
+	if _, ok := b.Lookup(context.Background(), previewHost); ok {
+		t.Fatal("invalidated preview route was served from route or stale cache")
+	}
+	if app, ok := b.Lookup(context.Background(), otherHost); !ok || app.ID != "app-2" {
+		t.Fatalf("unrelated cached route = %+v, ok=%v; want app-2", app, ok)
+	}
+}
+
 func TestPGBackend_LookupUnknownHost(t *testing.T) {
 	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, gateway.NewFakeScheduler(""), nil)
 	if _, ok := b.Lookup(context.Background(), "nope.example.com"); ok {

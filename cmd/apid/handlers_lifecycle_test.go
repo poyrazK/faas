@@ -96,6 +96,45 @@ func TestAppVersionAffinityCookieRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAppManagedVersionAffinityCookieRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "managed-cookie-app", VersionAffinityManagedCookie: true}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.VersionAffinityManagedCookie || !out.Manifest.VersionAffinityManagedCookie {
+		t.Fatalf("managed cookie omitted from response: %+v", out)
+	}
+	stored, err := e.store.AppBySlug(t.Context(), "managed-cookie-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Manifest.VersionAffinityManagedCookie {
+		t.Fatal("managed cookie not persisted")
+	}
+	name := "visitor_id"
+	rec = e.do(t, "PATCH", "/v1/apps/managed-cookie-app", api.UpdateAppRequest{VersionAffinityCookie: &name}, nil)
+	if rec.Code != 400 {
+		t.Fatalf("conflicting cookie source: %d %s", rec.Code, rec.Body)
+	}
+	disabled := false
+	rec = e.do(t, "PATCH", "/v1/apps/managed-cookie-app", api.UpdateAppRequest{VersionAffinityManagedCookie: &disabled, VersionAffinityCookie: &name}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("switch to app cookie: %d %s", rec.Code, rec.Body)
+	}
+	stored, err = e.store.AppBySlug(t.Context(), "managed-cookie-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Manifest.VersionAffinityManagedCookie || stored.Manifest.VersionAffinityCookie != name {
+		t.Fatalf("stored source after switch: %+v", stored.Manifest)
+	}
+}
+
 func TestUpdateApp_LifecycleIsPartialAndValidated(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	if rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "lifecycle-app"}, nil); rec.Code != 201 {

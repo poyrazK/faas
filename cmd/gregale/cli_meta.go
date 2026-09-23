@@ -187,6 +187,9 @@ type cliSub struct {
 	// (plan names, metric enums, etc.) — completion backends
 	// expand these inline.
 	Flags []cliFlag
+	// Subcommands contains one additional command level for verbs such
+	// as `deployments alias list`. Most command families remain flat.
+	Subcommands []cliSub
 }
 
 // cliFlag is one CLI flag.
@@ -743,7 +746,25 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployments,
 		DocSlug: "deployments",
-		Short:   "List deployments (--app SLUG or linked context | --limit N | --before C | --all | --wide)",
+		Short:   "List deployments or manage stable named URLs for immutable revisions",
+		Subcommands: []cliSub{{
+			Name:  "alias",
+			Short: "Manage stable named URLs for immutable deployments",
+			Subcommands: []cliSub{
+				{Name: "list", Short: "List deployment aliases for an app", Flags: []cliFlag{
+					{Name: "app", Short: "app slug; defaults to the linked project", Value: "SLUG"},
+				}},
+				{Name: "set", Short: "Point an alias at an exact deployment revision", Flags: []cliFlag{
+					{Name: "app", Short: "app slug; defaults to the linked project", Value: "SLUG"},
+					{Name: "name", Short: "lowercase DNS-label alias name", Req: true, Value: "NAME"},
+					{Name: "deployment", Short: "deployment ID or app revision (vN)", Req: true, Value: "ID|vN"},
+				}},
+				{Name: "delete", Short: "Remove an alias without deleting its deployment", Flags: []cliFlag{
+					{Name: "app", Short: "app slug; defaults to the linked project", Value: "SLUG"},
+					{Name: "name", Short: "lowercase DNS-label alias name", Req: true, Value: "NAME"},
+				}},
+			},
+		}},
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug (app-scoped deployment history)", Value: "slug"},
 			{Name: "limit", Short: "page size (1-200)", Value: "N"},
@@ -1825,8 +1846,9 @@ var cliCommands = []cliCommand{
 				{Name: "vary-on", Short: "header included in the cache key", Value: "HEADER", ClosedSet: []string{"Accept-Language", "Accept-Encoding"}},
 				{Name: "priority", Short: "match priority (lower wins)", Value: "N"},
 			}},
-			{Name: "purge", Short: "Purge cached responses: cache purge <slug> [--path GLOB]", Flags: []cliFlag{
+			{Name: "purge", Short: "Purge cached responses: cache purge <slug> [--path GLOB | --tag TAG]", Flags: []cliFlag{
 				{Name: "path", Short: "optional normalized request path glob", Value: "GLOB"},
+				{Name: "tag", Short: "optional cache tag", Value: "TAG"},
 			}},
 		},
 	},
