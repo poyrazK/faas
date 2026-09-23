@@ -24,6 +24,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -31,6 +32,9 @@ import (
 // CreateAppWebhook is the un-capped insert path used by tests.
 // Production callers use CreateAppWebhookIfUnderQuota.
 func (s *PgStore) CreateAppWebhook(ctx context.Context, in AppWebhook) (AppWebhook, error) {
+	if in.Scope != "" && in.Scope != AppWebhookScopeApp {
+		return AppWebhook{}, ErrInvalidAppWebhookScope
+	}
 	filterArr := in.EventFilter
 	if filterArr == nil {
 		filterArr = []string{}
@@ -46,7 +50,7 @@ func (s *PgStore) CreateAppWebhook(ctx context.Context, in AppWebhook) (AppWebho
 			(app_id, account_id, target_url, secret_sealed,
 			 event_filter, retry_policy, delivery_format, enabled)
 		values ($1, $2, $3, $4, $5::text[], $6, $7, $8)
-		returning id, app_id, account_id, target_url, secret_sealed,
+		returning id, app_id::text, account_id, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, in.AppID, in.AccountID, in.TargetURL, in.SecretSealed,
@@ -61,22 +65,33 @@ func (s *PgStore) CreateAppWebhook(ctx context.Context, in AppWebhook) (AppWebho
 	return w, nil
 }
 
-// CreateAppWebhookIfUnderQuota mirrors CreateCronIfUnderQuota:
-// locks the parent apps row, counts per-app + per-account under
-// the same transaction, inserts under the lock. Returns
-// AppWebhookQuotaError on cap trips, ErrNotFound when the app row
-// is missing, ErrConflict on a duplicate (app_id, target_url).
+// CreateAppWebhookIfUnderQuota locks the account before the app, counts
+// both scopes against the shared account cap and app rows against the app
+// cap, then inserts. Returns AppWebhookQuotaError on cap trips,
+// ErrNotFound on a missing/foreign app, and ErrConflict on a duplicate.
 func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhook, limits api.Limits) (AppWebhook, error) {
+	if in.Scope != "" && in.Scope != AppWebhookScopeApp {
+		return AppWebhook{}, ErrInvalidAppWebhookScope
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return AppWebhook{}, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 
+	// Use one account lock for the shared cap across different apps. Acquire
+	// it before the app lock, matching app-creation's lock order.
 	var locked int
+	err = tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, in.AccountID).Scan(&locked)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AppWebhook{}, ErrNotFound
+		}
+		return AppWebhook{}, fmt.Errorf("state: lock webhook account %s: %w", in.AccountID, err)
+	}
 	err = tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and status <> 'deleted' for update`,
-		in.AppID,
+		`select 1 from apps where id = $1 and account_id = $2 and status <> 'deleted' for update`,
+		in.AppID, in.AccountID,
 	).Scan(&locked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -99,19 +114,15 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 		}
 	}
 
-	var accountID string
-	if err := tx.QueryRow(ctx,
-		`select account_id from apps where id = $1`, in.AppID,
-	).Scan(&accountID); err != nil {
-		return AppWebhook{}, fmt.Errorf("state: read account_id for app %s: %w", in.AppID, err)
-	}
 	var accountCount int
 	if err := tx.QueryRow(ctx, `
 		select count(*) from app_webhooks w
-		 join apps a on a.id = w.app_id
-		 where a.account_id = $1 and a.status <> 'deleted'
-	`, accountID).Scan(&accountCount); err != nil {
-		return AppWebhook{}, fmt.Errorf("state: count app_webhooks for account %s: %w", accountID, err)
+		 left join apps a on a.id = w.app_id
+		 where w.account_id = $1
+		   and (w.scope = 'account' or
+		        (w.scope = 'app' and a.account_id = $1 and a.status <> 'deleted'))
+	`, in.AccountID).Scan(&accountCount); err != nil {
+		return AppWebhook{}, fmt.Errorf("state: count app_webhooks for account %s: %w", in.AccountID, err)
 	}
 	if accountCount >= limits.WebhookPerAccount {
 		return AppWebhook{}, &AppWebhookQuotaError{
@@ -136,7 +147,7 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 			(app_id, account_id, target_url, secret_sealed,
 			 event_filter, retry_policy, delivery_format, enabled)
 		values ($1, $2, $3, $4, $5::text[], $6, $7, $8)
-		returning id, app_id, account_id, target_url, secret_sealed,
+		returning id, app_id::text, account_id, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, in.AppID, in.AccountID, in.TargetURL, in.SecretSealed,
@@ -156,7 +167,7 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 
 func (s *PgStore) AppWebhookByID(ctx context.Context, id string) (AppWebhook, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, app_id, account_id, target_url, secret_sealed,
+		select id, app_id::text, account_id, target_url, secret_sealed,
 		       event_filter, retry_policy, delivery_format, enabled,
 		       created_at, updated_at
 		  from app_webhooks where id = $1
@@ -216,7 +227,7 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 			secret_sealed = $7,
 			updated_at = now()
 		where id = $1
-		returning id, app_id, account_id, target_url, secret_sealed,
+		returning id, app_id::text, account_id, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, id, current.TargetURL, filterArr, string(current.RetryPolicy),
@@ -241,7 +252,7 @@ func (s *PgStore) DeleteAppWebhook(ctx context.Context, id string) error {
 
 func (s *PgStore) ListAppWebhooksForApp(ctx context.Context, appID string) ([]AppWebhook, error) {
 	rows, err := s.pool.Query(ctx, `
-		select id, app_id, account_id, target_url, secret_sealed,
+		select id, app_id::text, account_id, target_url, secret_sealed,
 		       event_filter, retry_policy, delivery_format, enabled,
 		       created_at, updated_at
 		  from app_webhooks
@@ -257,7 +268,7 @@ func (s *PgStore) ListAppWebhooksForApp(ctx context.Context, appID string) ([]Ap
 
 func (s *PgStore) ListAppWebhooksForAccount(ctx context.Context, accountID string) ([]AppWebhook, error) {
 	rows, err := s.pool.Query(ctx, `
-		select id, app_id, account_id, target_url, secret_sealed,
+		select id, app_id::text, account_id, target_url, secret_sealed,
 		       event_filter, retry_policy, delivery_format, enabled,
 		       created_at, updated_at
 		  from app_webhooks
@@ -578,16 +589,23 @@ type appWebhookScanner interface {
 func scanAppWebhook(s appWebhookScanner) (AppWebhook, error) {
 	var (
 		w      AppWebhook
+		appID  pgtype.Text
 		filter []string
 		retry  string
 		format string
 	)
 	err := s.Scan(
-		&w.ID, &w.AppID, &w.AccountID, &w.TargetURL, &w.SecretSealed,
+		&w.ID, &appID, &w.AccountID, &w.TargetURL, &w.SecretSealed,
 		&filter, &retry, &format, &w.Enabled, &w.CreatedAt, &w.UpdatedAt,
 	)
 	if err != nil {
 		return AppWebhook{}, err
+	}
+	if appID.Valid {
+		w.AppID = appID.String
+		w.Scope = AppWebhookScopeApp
+	} else {
+		w.Scope = AppWebhookScopeAccount
 	}
 	w.RetryPolicy = AppWebhookRetryPolicy(retry)
 	w.DeliveryFormat = AppWebhookDeliveryFormat(format)

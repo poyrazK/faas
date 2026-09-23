@@ -222,6 +222,20 @@ gregale events publish --id evt-123 --source billing.stripe --type invoice.paid 
   --data '{"amount":150}'
 ```
 
+Before publishing, check which enabled subscriptions would receive a sample.
+Preview uses the router's matcher but does not persist the event or enqueue
+invocations:
+
+```bash
+gregale events preview billing.stripe invoice.paid \
+  --data '{"amount":150}'
+```
+
+The summary separates subscriptions that would receive the event from those
+rejected by content filters. `--id` and `--time` can be supplied when a filter
+inspects those CloudEvents attributes. `--json` returns the bounded samples and
+complete match counts; previews require only the read API-key scope.
+
 To confirm what Gregale reconciled for an app, list its active manifest
 subscriptions directly:
 

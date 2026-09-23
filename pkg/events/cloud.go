@@ -1,6 +1,7 @@
 package events
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +44,8 @@ const (
 
 // Normalize fills server-owned defaults and validates the complete envelope.
 // accountID is always authoritative; a caller-supplied account_id must match
-// it so a publish can never cross tenant boundaries.
+// it so a publish can never cross tenant boundaries. Compact 32-hex UUIDs are
+// accepted alongside the standard hyphenated spelling used by SQL.
 func (e Envelope) Normalize(accountID string, now time.Time) (Envelope, error) {
 	e.ID = strings.TrimSpace(e.ID)
 	e.Source = strings.TrimSpace(e.Source)
@@ -63,9 +65,14 @@ func (e Envelope) Normalize(accountID string, now time.Time) (Envelope, error) {
 	}
 	e.Time = e.Time.UTC()
 
-	if e.AccountID != "" && e.AccountID != accountID {
+	if e.AccountID != "" && !sameAccountID(e.AccountID, accountID) {
 		return Envelope{}, fmt.Errorf("account_id must match the authenticated account")
 	}
+	if _, err := parseAccountUUID(accountID); err != nil {
+		return Envelope{}, errors.New("account_id must be a UUID")
+	}
+	// The authenticated account is authoritative even when the caller omitted
+	// account_id. Keep its supplied spelling so API responses remain stable.
 	e.AccountID = accountID
 	if err := e.Validate(); err != nil {
 		return Envelope{}, err
@@ -90,7 +97,7 @@ func (e Envelope) Validate() error {
 	if e.DataContentType != JSONDataContentType {
 		return fmt.Errorf("data_content_type must be %q", JSONDataContentType)
 	}
-	if _, err := uuid.Parse(e.AccountID); err != nil {
+	if _, err := parseAccountUUID(e.AccountID); err != nil {
 		return errors.New("account_id must be a UUID")
 	}
 	if len(e.Data) == 0 || !json.Valid(e.Data) {
@@ -100,4 +107,18 @@ func (e Envelope) Validate() error {
 		return errors.New("time is required")
 	}
 	return nil
+}
+
+func parseAccountUUID(value string) (uuid.UUID, error) {
+	if parsed, err := uuid.Parse(value); err == nil {
+		return parsed, nil
+	}
+	if len(value) == 32 {
+		if raw, err := hex.DecodeString(value); err == nil && len(raw) == 16 {
+			var parsed uuid.UUID
+			copy(parsed[:], raw)
+			return parsed, nil
+		}
+	}
+	return uuid.Nil, errors.New("account_id must be a UUID")
 }

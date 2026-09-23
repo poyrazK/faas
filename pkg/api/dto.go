@@ -38,6 +38,45 @@ type PublishEventResponse struct {
 	AccountID  string    `json:"account_id"`
 }
 
+// PreviewEventRequest asks the router to evaluate an event without persisting
+// or delivering it. ID and Time are optional and receive the same defaults as
+// publish when omitted.
+type PreviewEventRequest struct {
+	ID              string          `json:"id,omitempty"`
+	Source          string          `json:"source"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"data_content_type,omitempty"`
+	Data            json.RawMessage `json:"data"`
+}
+
+// EventPreviewSubscription describes an enabled subscription considered by a
+// read-only routing preview. Filter is the normalized manifest predicate.
+type EventPreviewSubscription struct {
+	AppSlug        string          `json:"app_slug"`
+	SubscriptionID string          `json:"subscription_id"`
+	Source         string          `json:"source"`
+	Type           string          `json:"type"`
+	Filter         json.RawMessage `json:"filter"`
+	Reason         string          `json:"reason"`
+}
+
+// PreviewEventResponse summarizes the same account-scoped matching decision
+// used by the asynchronous fanout worker. Subscription slices are bounded
+// samples; the counts cover every candidate.
+type PreviewEventResponse struct {
+	EventID             string                     `json:"event_id"`
+	Source              string                     `json:"source"`
+	Type                string                     `json:"type"`
+	CandidateCount      int                        `json:"candidate_count"`
+	MatchedCount        int                        `json:"matched_count"`
+	FilterMismatchCount int                        `json:"filter_mismatch_count"`
+	OtherMismatchCount  int                        `json:"other_mismatch_count"`
+	Matches             []EventPreviewSubscription `json:"matches"`
+	NonMatches          []EventPreviewSubscription `json:"non_matches"`
+	Truncated           bool                       `json:"truncated"`
+}
+
 // SendAppMessageRequest is the application-inbox contract. Gregale wraps the
 // caller's data in a CloudEvents 1.0 envelope and places it on the target
 // application's durable invocation queue. Source defaults to "gregale.send";
@@ -2769,8 +2808,9 @@ type CanaryAdvanceResponse struct {
 type CreateMirrorRuleRequest struct {
 	SourceDeploymentID string   `json:"source_deployment_id"`
 	MirrorDeploymentID string   `json:"mirror_deployment_id"`
-	Percent            int      `json:"percent"`
+	Percent            *int     `json:"percent,omitempty"`
 	IncludeBody        bool     `json:"include_body"`
+	AllowUnsafeMethods bool     `json:"allow_unsafe_methods"`
 	RedactHeaders      []string `json:"redact_headers"`
 }
 
@@ -2783,10 +2823,11 @@ type CreateMirrorRuleRequest struct {
 // the customer's additive list; a PATCH that omits the field
 // leaves it untouched.
 type UpdateMirrorRuleRequest struct {
-	Percent       *int      `json:"percent,omitempty"`
-	Enabled       *bool     `json:"enabled,omitempty"`
-	IncludeBody   *bool     `json:"include_body,omitempty"`
-	RedactHeaders *[]string `json:"redact_headers,omitempty"`
+	Percent            *int      `json:"percent,omitempty"`
+	Enabled            *bool     `json:"enabled,omitempty"`
+	IncludeBody        *bool     `json:"include_body,omitempty"`
+	AllowUnsafeMethods *bool     `json:"allow_unsafe_methods,omitempty"`
+	RedactHeaders      *[]string `json:"redact_headers,omitempty"`
 }
 
 // MirrorRuleResponse is the canonical mirror-rule response
@@ -2806,6 +2847,7 @@ type MirrorRuleResponse struct {
 	Percent               int       `json:"percent"`
 	Enabled               bool      `json:"enabled"`
 	IncludeBody           bool      `json:"include_body"`
+	AllowUnsafeMethods    bool      `json:"allow_unsafe_methods"`
 	RedactHeaders         []string  `json:"redact_headers"`
 	AlwaysStrippedHeaders []string  `json:"always_stripped_headers"`
 	CreatedAt             time.Time `json:"created_at"`
@@ -2836,16 +2878,17 @@ type MirrorRuleListResponse struct {
 // the parsed window in seconds so the CLI can render "last 1h"
 // without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations     int64   `json:"total_invocations"`
-	ChangedResponseCount int64   `json:"changed_response_count"`
-	ChangedResponsePct   float64 `json:"changed_response_percent"`
-	StatusDiffCount      int64   `json:"status_diff_count"`
-	SchemaDiffCount      int64   `json:"schema_diff_count"`
-	BodyDiffCount        int64   `json:"body_diff_count"`
-	MeanLatencyDiffMs    int64   `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs     int64   `json:"p99_latency_diff_ms"`
-	CrashCount           int64   `json:"crash_count"`
-	WindowSeconds        int     `json:"window_seconds"`
+	TotalInvocations          int64   `json:"total_invocations"`
+	ChangedResponseCount      int64   `json:"changed_response_count"`
+	ChangedResponsePct        float64 `json:"changed_response_percent"`
+	StatusDiffCount           int64   `json:"status_diff_count"`
+	SchemaDiffCount           int64   `json:"schema_diff_count"`
+	BodyDiffCount             int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs         int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs          int64   `json:"p99_latency_diff_ms"`
+	CrashCount                int64   `json:"crash_count"`
+	IncompleteComparisonCount int64   `json:"incomplete_comparison_count"`
+	WindowSeconds             int     `json:"window_seconds"`
 }
 
 // MirrorReplayBatchRequest is an explicitly sanitized historical request
@@ -4560,13 +4603,16 @@ type AccountTraceMatch struct {
 // Payloads, result bodies, and arbitrary invocation headers are intentionally
 // absent. Source distinguishes async, queue, delayed, cron, and replay rows.
 type AccountTraceInvocation struct {
-	App         string `json:"app"`
-	ID          string `json:"id"`
-	Source      string `json:"source"`
-	QueueName   string `json:"queue_name,omitempty"`
-	State       string `json:"state"`
-	Attempts    int    `json:"attempts"`
-	CreatedAt   string `json:"created_at"`
+	App       string `json:"app"`
+	ID        string `json:"id"`
+	Source    string `json:"source"`
+	QueueName string `json:"queue_name,omitempty"`
+	State     string `json:"state"`
+	Attempts  int    `json:"attempts"`
+	CreatedAt string `json:"created_at"`
+	// StartedAt is the most recent claim/delivery time. It is updated when
+	// an invocation is retried and is omitted until the first claim.
+	StartedAt   string `json:"started_at,omitempty"`
 	CompletedAt string `json:"completed_at,omitempty"`
 	Traceparent string `json:"traceparent,omitempty"`
 }
@@ -9839,15 +9885,16 @@ type DebugReplayResponse struct {
 // durable replay invocation. It intentionally contains no request body,
 // headers, response body, or customer span attributes.
 type DebugReplayComparison struct {
-	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
-	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
-	SourceStatusCode   int    `json:"source_status_code"`
-	MirrorStatusCode   int    `json:"mirror_status_code"`
-	SourceLatencyMS    int    `json:"source_latency_ms"`
-	MirrorLatencyMS    int    `json:"mirror_latency_ms"`
-	StatusDiff         bool   `json:"status_diff"`
-	BodyDiff           bool   `json:"body_diff"`
-	Crashed            bool   `json:"crashed"`
+	SourceDeploymentID   string `json:"source_deployment_id,omitempty"`
+	MirrorDeploymentID   string `json:"mirror_deployment_id,omitempty"`
+	SourceStatusCode     int    `json:"source_status_code"`
+	MirrorStatusCode     int    `json:"mirror_status_code"`
+	SourceLatencyMS      int    `json:"source_latency_ms"`
+	MirrorLatencyMS      int    `json:"mirror_latency_ms"`
+	StatusDiff           bool   `json:"status_diff"`
+	BodyDiff             bool   `json:"body_diff"`
+	Crashed              bool   `json:"crashed"`
+	ComparisonIncomplete bool   `json:"comparison_incomplete"`
 }
 
 // ---- SAFE-RELEASES-R (issue #976 / ADR-122 / Mega PR #2 commit 6) ----

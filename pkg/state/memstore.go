@@ -22584,6 +22584,7 @@ func (m *MemStore) CreateMirrorRuleIfUnderQuota(_ context.Context, in CreateMirr
 		Percent:            in.Percent,
 		Enabled:            in.Enabled,
 		IncludeBody:        in.IncludeBody,
+		AllowUnsafeMethods: in.AllowUnsafeMethods,
 		RedactHeaders:      in.RedactHeaders,
 		CreatedAt:          now,
 		UpdatedAt:          now,
@@ -22653,6 +22654,9 @@ func (m *MemStore) UpdateMirrorRule(_ context.Context, id string, patch MirrorRu
 	}
 	if patch.IncludeBody != nil {
 		r.IncludeBody = *patch.IncludeBody
+	}
+	if patch.AllowUnsafeMethods != nil {
+		r.AllowUnsafeMethods = *patch.AllowUnsafeMethods
 	}
 	if patch.RedactHeaders != nil {
 		r.RedactHeaders = *patch.RedactHeaders
@@ -22740,20 +22744,23 @@ func (m *MemStore) MirrorSummary(_ context.Context, ruleID string, since time.Ti
 			continue
 		}
 		s.TotalInvocations++
-		if r.StatusDiff || r.SchemaDiff || r.BodyDiff {
+		if !r.ComparisonIncomplete && (r.StatusDiff || r.SchemaDiff || r.BodyDiff) {
 			s.ChangedResponseCount++
 		}
 		if r.StatusDiff {
 			s.StatusDiffCount++
 		}
-		if r.SchemaDiff {
+		if !r.ComparisonIncomplete && r.SchemaDiff {
 			s.SchemaDiffCount++
 		}
-		if r.BodyDiff {
+		if !r.ComparisonIncomplete && r.BodyDiff {
 			s.BodyDiffCount++
 		}
 		if r.Crashed {
 			s.CrashCount++
+		}
+		if r.ComparisonIncomplete {
+			s.IncompleteComparisonCount++
 		}
 		if r.LatencyMs > 0 && r.SourceLatencyMs > 0 {
 			latencyDiffs = append(latencyDiffs, r.LatencyMs-r.SourceLatencyMs)

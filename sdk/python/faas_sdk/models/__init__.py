@@ -613,6 +613,8 @@ from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_state import EventDeliveryResponseState
+from .event_preview_subscription import EventPreviewSubscription
+from .event_preview_subscription_filter import EventPreviewSubscriptionFilter
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
@@ -1003,6 +1005,9 @@ from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
 from .preview_environment_status_response import PreviewEnvironmentStatusResponse
 from .preview_environment_status_response_phase import PreviewEnvironmentStatusResponsePhase
+from .preview_event_request import PreviewEventRequest
+from .preview_event_request_data_content_type import PreviewEventRequestDataContentType
+from .preview_event_response import PreviewEventResponse
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
     PreviewProductionChangesResponseConfigurationChangedGroupsItem,
@@ -2063,6 +2068,8 @@ __all__ = (
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseState",
+    "EventPreviewSubscription",
+    "EventPreviewSubscriptionFilter",
     "EventSubscriptionListResponse",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
@@ -2449,6 +2456,9 @@ __all__ = (
     "PreviewEnvironmentMemberResponse",
     "PreviewEnvironmentStatusResponse",
     "PreviewEnvironmentStatusResponsePhase",
+    "PreviewEventRequest",
+    "PreviewEventRequestDataContentType",
+    "PreviewEventResponse",
     "PreviewProductionChangesResponse",
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
     "PreviewResourceLinksResponse",

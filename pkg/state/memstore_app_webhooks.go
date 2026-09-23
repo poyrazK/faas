@@ -139,6 +139,9 @@ func appWebhookMatches(filter []string, event AppWebhookEvent) bool {
 // CreateAppWebhook rejects on duplicate (app_id, target_url) before
 // insert — same invariant the Postgres unique index holds.
 func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhook, error) {
+	if in.Scope != "" && in.Scope != AppWebhookScopeApp {
+		return AppWebhook{}, ErrInvalidAppWebhookScope
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.appWebhooks {
@@ -149,6 +152,7 @@ func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhoo
 	if in.ID == "" {
 		in.ID = newID()
 	}
+	in.Scope = AppWebhookScopeApp
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}
@@ -169,9 +173,12 @@ func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhoo
 // CreateAppWebhookIfUnderQuota enforces the per-app + per-account
 // caps with the same TOCTOU-defence shape as CreateCronIfUnderQuota:
 // MemStore is single-process so a single critical section (m.mu)
-// gates the count + insert. Unlike alert rules, an outbound webhook
-// always pins an app (no account-wide shape).
+// gates the count + insert. This app-only creation method never creates
+// account-scoped subscriptions (ADR-224).
 func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook, limits api.Limits) (AppWebhook, error) {
+	if in.Scope != "" && in.Scope != AppWebhookScopeApp {
+		return AppWebhook{}, ErrInvalidAppWebhookScope
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.appWebhooks {
@@ -180,12 +187,11 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 		}
 	}
 	if in.AppID == "" {
-		// app_id is required for an outbound webhook (no account-wide
-		// shape, unlike alert rules).
+		// The app-only creation method requires an app ID.
 		return AppWebhook{}, ErrNotFound
 	}
 	app, ok := m.apps[in.AppID]
-	if !ok || app.Status == AppDeleted {
+	if !ok || app.Status == AppDeleted || app.AccountID != in.AccountID {
 		return AppWebhook{}, ErrNotFound
 	}
 	appCount := 0
@@ -206,6 +212,10 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 		if w.AccountID != in.AccountID {
 			continue
 		}
+		if w.Scope == AppWebhookScopeAccount {
+			accountCount++
+			continue
+		}
 		if a, ok := m.apps[w.AppID]; ok && a.Status != AppDeleted {
 			accountCount++
 		}
@@ -220,6 +230,7 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 	if in.ID == "" {
 		in.ID = newID()
 	}
+	in.Scope = AppWebhookScopeApp
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}

@@ -3,20 +3,19 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Aggregated mirror drift counts over a trailing window. PR-A2
- * returns zeros (PR-A1's ledger has no writers until A3 ships
- * the runtime dispatch); post-A3 this is the dashboard widget's
- * data source.
+ * Aggregated mirror drift counts over a trailing window. The changed
+ * response percentage uses only complete comparisons; `incomplete_comparison_count`
+ * separately reports missing or truncated response snapshots.
  *
  */
 export type MirrorSummaryResponse = {
   total_invocations: number;
   /**
-   * Requests with any status, schema, or body difference; each request is counted once.
+   * Complete comparisons with any status, schema, or body difference; each request is counted once.
    */
   changed_response_count: number;
   /**
-   * 100 × changed_response_count / total_invocations; zero when the window is empty.
+   * 100 × changed_response_count / complete comparisons; zero when none are complete.
    */
   changed_response_percent: number;
   status_diff_count: number;
@@ -28,6 +27,10 @@ export type MirrorSummaryResponse = {
   mean_latency_diff_ms: number;
   p99_latency_diff_ms: number;
   crash_count: number;
+  /**
+   * Comparisons skipped because a response was missing or exceeded the capture limit.
+   */
+  incomplete_comparison_count: number;
   /**
    * The window's length in seconds. Matches the requested `?window=` value.
    */

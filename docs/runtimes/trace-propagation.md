@@ -255,6 +255,12 @@ the correlated events without client-side app fan-out. The command
 `gregale logs <app> --trace <trace-id>` selects the HTTP access events for one
 app and supports the usual route/status filters.
 
+For queue and async invocations, the trace projection includes the most recent
+claim time (`started_at`). The CLI waterfall separates enqueue-to-latest-claim
+from latest-attempt-to-completion and names the queue. Retries overwrite the
+claim time, so earlier attempt intervals are not fabricated; total lifetime
+remains visible separately.
+
 ## Platform-to-guest transport
 
 The vmmd HTTP bridge emits a platform-owned client span for the host-side

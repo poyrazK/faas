@@ -11,18 +11,17 @@ T = TypeVar("T", bound="MirrorSummaryResponse")
 
 @_attrs_define
 class MirrorSummaryResponse:
-    """Aggregated mirror drift counts over a trailing window. PR-A2
-    returns zeros (PR-A1's ledger has no writers until A3 ships
-    the runtime dispatch); post-A3 this is the dashboard widget's
-    data source.
+    """Aggregated mirror drift counts over a trailing window. The changed
+    response percentage uses only complete comparisons; `incomplete_comparison_count`
+    separately reports missing or truncated response snapshots.
 
     """
 
     total_invocations: int
     changed_response_count: int
-    """Requests with any status, schema, or body difference; each request is counted once."""
+    """Complete comparisons with any status, schema, or body difference; each request is counted once."""
     changed_response_percent: float
-    """100 × changed_response_count / total_invocations; zero when the window is empty."""
+    """100 × changed_response_count / complete comparisons; zero when none are complete."""
     status_diff_count: int
     schema_diff_count: int
     body_diff_count: int
@@ -30,6 +29,8 @@ class MirrorSummaryResponse:
     """Signed: mirror - source. Positive = mirror slower."""
     p99_latency_diff_ms: int
     crash_count: int
+    incomplete_comparison_count: int
+    """Comparisons skipped because a response was missing or exceeded the capture limit."""
     window_seconds: int
     """The window's length in seconds. Matches the requested `?window=` value."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -53,6 +54,8 @@ class MirrorSummaryResponse:
 
         crash_count = self.crash_count
 
+        incomplete_comparison_count = self.incomplete_comparison_count
+
         window_seconds = self.window_seconds
 
         field_dict: dict[str, Any] = {}
@@ -68,6 +71,7 @@ class MirrorSummaryResponse:
                 "mean_latency_diff_ms": mean_latency_diff_ms,
                 "p99_latency_diff_ms": p99_latency_diff_ms,
                 "crash_count": crash_count,
+                "incomplete_comparison_count": incomplete_comparison_count,
                 "window_seconds": window_seconds,
             }
         )
@@ -95,6 +99,8 @@ class MirrorSummaryResponse:
 
         crash_count = d.pop("crash_count")
 
+        incomplete_comparison_count = d.pop("incomplete_comparison_count")
+
         window_seconds = d.pop("window_seconds")
 
         mirror_summary_response = cls(
@@ -107,6 +113,7 @@ class MirrorSummaryResponse:
             mean_latency_diff_ms=mean_latency_diff_ms,
             p99_latency_diff_ms=p99_latency_diff_ms,
             crash_count=crash_count,
+            incomplete_comparison_count=incomplete_comparison_count,
             window_seconds=window_seconds,
         )
 

@@ -29398,14 +29398,14 @@ func (s *PgStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appI
 // ----------------------------------------------------------------------------
 
 const mirrorRuleSelectCols = `id, account_id, app_id, source_deployment_id,
-       mirror_deployment_id, percent, enabled, include_body, redact_headers,
+       mirror_deployment_id, percent, enabled, include_body, allow_unsafe_methods, redact_headers,
        created_at, updated_at`
 
 const mirrorResultSelectCols = `id, mirror_rule_id, account_id, app_id,
        source_deployment_id, mirror_deployment_id, instance_id, source_instance_id,
        status_code, source_status_code, latency_ms, source_latency_ms,
        body_hash, source_body_hash, schema_hash, source_schema_hash,
-       status_diff, schema_diff, body_diff, crashed, request_id, completed_at`
+       status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at`
 
 // scanMirrorRule reads a single mirror_rule row. ErrNotFound on
 // no-rows; mapErr handles raw errors (e.g. constraint violations).
@@ -29442,7 +29442,7 @@ func scanMirrorRuleCols(scan func(...any) error) (MirrorRule, error) {
 	)
 	if err := scan(
 		&r.ID, &r.AccountID, &r.AppID, &r.SourceDeploymentID,
-		&r.MirrorDeploymentID, &r.Percent, &r.Enabled, &r.IncludeBody,
+		&r.MirrorDeploymentID, &r.Percent, &r.Enabled, &r.IncludeBody, &r.AllowUnsafeMethods,
 		&redactHeaders, &r.CreatedAt, &r.UpdatedAt,
 	); err != nil {
 		return MirrorRule{}, err
@@ -29472,7 +29472,7 @@ func scanMirrorResult(scan func(...any) error) (MirrorInvocationResult, error) {
 		&r.SourceDeploymentID, &r.MirrorDeploymentID, &instanceID, &sourceInstanceID,
 		&statusCode, &sourceStatusCode, &latencyMs, &sourceLatencyMs,
 		&r.BodyHash, &r.SourceBodyHash, &r.SchemaHash, &r.SourceSchemaHash,
-		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.RequestID, &r.CompletedAt,
+		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.ComparisonIncomplete, &r.RequestID, &r.CompletedAt,
 	); err != nil {
 		return MirrorInvocationResult{}, err
 	}
@@ -29586,14 +29586,14 @@ func (s *PgStore) CreateMirrorRuleIfUnderQuota(ctx context.Context, in CreateMir
 	row := tx.QueryRow(ctx, `
 		insert into mirror_rules (
 			account_id, app_id, source_deployment_id, mirror_deployment_id,
-			percent, enabled, include_body, redact_headers
+			percent, enabled, include_body, allow_unsafe_methods, redact_headers
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
-			$5, $6, $7, $8
+			$5, $6, $7, $8, $9
 		)
 		returning `+mirrorRuleSelectCols,
 		in.AccountID, in.AppID, in.SourceDeploymentID, in.MirrorDeploymentID,
-		in.Percent, in.Enabled, in.IncludeBody, redactHeaders,
+		in.Percent, in.Enabled, in.IncludeBody, in.AllowUnsafeMethods, redactHeaders,
 	)
 	r, err := s.scanMirrorRule(row)
 	if err != nil {
@@ -29681,10 +29681,11 @@ func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorR
 	// pattern for partial-update SQL and keeps the call site free
 	// of dynamic SQL string-build.
 	var (
-		setPercent       *int
-		setEnabled       *bool
-		setIncludeBody   *bool
-		setRedactHeaders *[]string
+		setPercent            *int
+		setEnabled            *bool
+		setIncludeBody        *bool
+		setAllowUnsafeMethods *bool
+		setRedactHeaders      *[]string
 	)
 	if patch.Percent != nil {
 		p := *patch.Percent
@@ -29697,6 +29698,10 @@ func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorR
 	if patch.IncludeBody != nil {
 		b := *patch.IncludeBody
 		setIncludeBody = &b
+	}
+	if patch.AllowUnsafeMethods != nil {
+		b := *patch.AllowUnsafeMethods
+		setAllowUnsafeMethods = &b
 	}
 	if patch.RedactHeaders != nil {
 		headers := *patch.RedactHeaders
@@ -29711,10 +29716,11 @@ func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorR
 		    enabled        = coalesce($3::boolean,    enabled),
 		    include_body   = coalesce($4::boolean,    include_body),
 		    redact_headers = coalesce($5::text[],     redact_headers),
+		    allow_unsafe_methods = coalesce($6::boolean, allow_unsafe_methods),
 		    updated_at     = now()
 		where id = $1::uuid
 		returning `+mirrorRuleSelectCols,
-		id, setPercent, setEnabled, setIncludeBody, setRedactHeaders,
+		id, setPercent, setEnabled, setIncludeBody, setRedactHeaders, setAllowUnsafeMethods,
 	)
 	r, err := s.scanMirrorRule(row)
 	if err != nil {
@@ -29802,22 +29808,22 @@ func (s *PgStore) InsertMirrorResult(ctx context.Context, r MirrorInvocationResu
 			source_deployment_id, mirror_deployment_id,
 			instance_id, source_instance_id,
 			status_code, source_status_code, latency_ms, source_latency_ms,
-			body_hash, source_body_hash, schema_hash, source_schema_hash,
-			status_diff, schema_diff, body_diff, crashed, request_id, completed_at
+		    body_hash, source_body_hash, schema_hash, source_schema_hash,
+		    status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at
 		) values (
 			$1::uuid, $2::uuid, $3::uuid,
 			$4::uuid, $5::uuid,
 			$6, $7,
 			$8, $9, $10, $11,
 			$12, $13, $14, $15,
-			$16, $17, $18, $19, $20, $21
+		    $16, $17, $18, $19, $20, $21, $22
 		)`,
 		r.MirrorRuleID, r.AccountID, r.AppID,
 		r.SourceDeploymentID, r.MirrorDeploymentID,
 		instanceID, srcInstanceID,
 		statusCode, srcStatusCode, latencyMs, srcLatencyMs,
 		bodyHash, srcBodyHash, schemaHash, srcSchemaHash,
-		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.RequestID, r.CompletedAt,
+		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.ComparisonIncomplete, r.RequestID, r.CompletedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("state: insert mirror_invocation_result: %w", err)
@@ -29863,11 +29869,12 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 	if err := s.pool.QueryRow(ctx, `
 		select
 			count(*),
-			coalesce(sum(case when status_diff or schema_diff or body_diff then 1 else 0 end), 0),
+			coalesce(sum(case when not comparison_incomplete and (status_diff or schema_diff or body_diff) then 1 else 0 end), 0),
 			coalesce(sum(case when status_diff then 1 else 0 end), 0),
-			coalesce(sum(case when schema_diff then 1 else 0 end), 0),
-			coalesce(sum(case when body_diff   then 1 else 0 end), 0),
+			coalesce(sum(case when not comparison_incomplete and schema_diff then 1 else 0 end), 0),
+			coalesce(sum(case when not comparison_incomplete and body_diff   then 1 else 0 end), 0),
 			coalesce(sum(case when crashed     then 1 else 0 end), 0),
+			coalesce(sum(case when comparison_incomplete then 1 else 0 end), 0),
 			avg(case when latency_ms is not null and source_latency_ms is not null
 			         then (latency_ms - source_latency_ms)::double precision
 			         else null end),
@@ -29879,7 +29886,7 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2`,
 		ruleID, since,
-	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
+	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &s2.IncompleteComparisonCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
 		return MirrorSummary{}, fmt.Errorf("state: mirror summary for rule %s: %w", ruleID, err)
 	}
 	if meanLatencyDiff != nil {

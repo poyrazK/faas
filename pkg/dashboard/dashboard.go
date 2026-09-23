@@ -758,6 +758,7 @@ type MirrorPageItem struct {
 	Percent               int
 	Enabled               bool
 	IncludeBody           bool
+	AllowUnsafeMethods    bool
 	RedactHeaders         []string
 	AlwaysStrippedHeaders []string
 	CreatedAt             string
@@ -768,16 +769,17 @@ type MirrorPageItem struct {
 // MirrorSummaryPageItem mirrors api.MirrorSummaryResponse without exposing
 // API package types to dashboard templates.
 type MirrorSummaryPageItem struct {
-	TotalInvocations     int64
-	ChangedResponseCount int64
-	ChangedResponsePct   float64
-	StatusDiffCount      int64
-	SchemaDiffCount      int64
-	BodyDiffCount        int64
-	MeanLatencyDiffMs    int64
-	P99LatencyDiffMs     int64
-	CrashCount           int64
-	WindowLabel          string
+	TotalInvocations          int64
+	ChangedResponseCount      int64
+	ChangedResponsePct        float64
+	StatusDiffCount           int64
+	SchemaDiffCount           int64
+	BodyDiffCount             int64
+	MeanLatencyDiffMs         int64
+	P99LatencyDiffMs          int64
+	CrashCount                int64
+	IncompleteComparisonCount int64
+	WindowLabel               string
 }
 
 // StorageData is the customer-facing projection for the per-app object

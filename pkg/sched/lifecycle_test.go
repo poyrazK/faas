@@ -144,6 +144,23 @@ func TestWaitForServiceRouteConvergenceRequiresEveryServingGateway(t *testing.T)
 	}
 }
 
+func TestServiceRouteAckStreamFailurePrefersDeadlineOutcome(t *testing.T) {
+	deadlineCtx, cancelDeadline := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelDeadline()
+	<-deadlineCtx.Done()
+
+	reason, outcome := serviceRouteAckStreamFailure(deadlineCtx)
+	if reason != "route_convergence_timeout" || outcome != "timeout" {
+		t.Fatalf("deadline stream failure = (%q, %q), want convergence timeout", reason, outcome)
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if reason, outcome := serviceRouteAckStreamFailure(canceledCtx); reason != "route_ack_stream_closed" || outcome != "error" {
+		t.Fatalf("unexpected stream close = (%q, %q), want stream-closed error", reason, outcome)
+	}
+}
+
 // adr: 208 — a configured fleet without a registered serving gateway fails
 // closed instead of silently using the single-box compatibility path.
 func TestWaitForServiceRouteConvergenceFailsClosedWithoutFleetGateway(t *testing.T) {

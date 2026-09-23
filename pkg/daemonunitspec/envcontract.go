@@ -410,6 +410,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REQUIRE_SHARED_ARTIFACTS", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_RESIDENCY_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_RESTORE_CONCURRENCY", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional snapshot-restore concurrency override (1–64); production default is 3"},
+	{Name: "FAAS_RESTORE_PREFETCH", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean kill switch for the ADR-224 restore working-set prefetch; production default is enabled"},
 	{Name: "FAAS_RETENTION_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_RUNTIME_KIND", Owners: []string{"guest"}, Source: EnvSourceGuest},

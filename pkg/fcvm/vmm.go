@@ -57,6 +57,10 @@ type JailerVMM struct {
 	// its latency SLO through CPU and mount contention. nil preserves the
 	// unbounded legacy behavior for direct test constructors.
 	restoreSlots chan struct{}
+	// restorePrefetch remembers each snapshot family's restore working set
+	// and warms it ahead of the next wake (ADR-224). nil disables both the
+	// recording and the prefetch.
+	restorePrefetch *restorePrefetchStore
 	// storage is the artifact backend where snapshot blobs live per
 	// #96 / ADR-025 axis 2. Restore resolves StorageKey → local tmp;
 	// Snapshot Streams the produced mem blob back through Storage.Put.
@@ -513,6 +517,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		materialisedTmp:          make(map[string][]string),
 		bindMounts:               make(map[string][]ephemeralBind),
 		bindSourceModes:          make(map[string]bindSourceMode),
+		restorePrefetch:          newRestorePrefetchStore(),
 	}
 }
 
@@ -1492,6 +1497,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tDone := time.Now()
+	if !spec.KeepPaused {
+		// ADR-224: remember what this restore faulted so the family's next
+		// wake can prefetch it. Runs in the background after readiness.
+		v.recordRestoreWorkingSet(l.Instance, spec.StorageKey, memSrc)
+	}
 	breakdown := restoreTimingBreakdown{
 		Prepare:              spec.Prepare,
 		RestoreGateWaitMs:    restoreAdmitted.Sub(t0).Milliseconds(),

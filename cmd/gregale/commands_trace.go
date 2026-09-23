@@ -303,8 +303,14 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 			for _, inv := range result.Invocations {
 				_, _ = fmt.Fprintf(osStdout, "  %s · %s %s · state=%s · attempts=%d · created_at=%s",
 					inv.App, inv.Source, inv.ID, inv.State, inv.Attempts, inv.CreatedAt)
+				if inv.QueueName != "" {
+					_, _ = fmt.Fprintf(osStdout, " · queue=%s", inv.QueueName)
+				}
+				if inv.StartedAt != "" {
+					_, _ = fmt.Fprintf(osStdout, " · started_at=%s", inv.StartedAt)
+				}
 				if duration, ok := invocationDuration(inv); ok {
-					_, _ = fmt.Fprintf(osStdout, " · duration=%s", formatTraceDuration(duration))
+					_, _ = fmt.Fprintf(osStdout, " · total=%s", formatTraceDuration(duration))
 				}
 				_, _ = fmt.Fprintln(osStdout)
 			}
@@ -382,16 +388,48 @@ func renderTraceWaterfall(w io.Writer, result api.AccountTraceLookupResponse) {
 		if err != nil {
 			continue
 		}
-		completed, err := time.Parse(time.RFC3339Nano, inv.CompletedAt)
-		pending := inv.CompletedAt == "" || err != nil
-		if pending {
-			completed = created
+		started, startErr := time.Parse(time.RFC3339Nano, inv.StartedAt)
+		completed, completedErr := time.Parse(time.RFC3339Nano, inv.CompletedAt)
+		label := traceInvocationLabel(inv)
+		attempt := inv.Attempts
+		if attempt < 1 {
+			attempt = 1
+		}
+		if inv.StartedAt != "" && startErr == nil && !started.Before(created) {
+			entries = append(entries, traceWaterfallEntry{
+				start: created,
+				end:   started,
+				label: fmt.Sprintf("%s · enqueued → latest claim (attempt=%d)", label, attempt),
+			})
+			if inv.CompletedAt != "" && completedErr == nil && !completed.Before(started) {
+				entries = append(entries, traceWaterfallEntry{
+					start: started,
+					end:   completed,
+					label: fmt.Sprintf("%s · latest attempt → completion", label),
+				})
+			} else {
+				entries = append(entries, traceWaterfallEntry{
+					start:   started,
+					label:   fmt.Sprintf("%s · state=%s after latest claim", label, inv.State),
+					pending: true,
+				})
+			}
+			continue
+		}
+		if inv.CompletedAt != "" && completedErr == nil && !completed.Before(created) {
+			// Older retained rows may not have a claim timestamp. Keep their
+			// end-to-end lifecycle visible without implying a queue/execute split.
+			entries = append(entries, traceWaterfallEntry{
+				start: created,
+				end:   completed,
+				label: fmt.Sprintf("%s · lifecycle (start timestamp unavailable)", label),
+			})
+			continue
 		}
 		entries = append(entries, traceWaterfallEntry{
 			start:   created,
-			end:     completed,
-			label:   fmt.Sprintf("%s · %s %s · state=%s", inv.App, inv.Source, inv.ID, inv.State),
-			pending: pending,
+			label:   fmt.Sprintf("%s · state=%s", label, inv.State),
+			pending: true,
 		})
 	}
 	for _, event := range result.Logs {
@@ -429,6 +467,13 @@ func renderTraceWaterfall(w io.Writer, result api.AccountTraceLookupResponse) {
 		}
 		_, _ = fmt.Fprintf(w, "  %8.2fms → %-8s | %s\n", startMS, formatTraceDuration(duration), entry.label)
 	}
+}
+
+func traceInvocationLabel(inv api.AccountTraceInvocation) string {
+	if inv.QueueName != "" {
+		return fmt.Sprintf("%s · queue=%s · invocation=%s", inv.App, inv.QueueName, inv.ID)
+	}
+	return fmt.Sprintf("%s · %s %s", inv.App, inv.Source, inv.ID)
 }
 
 func invocationDuration(inv api.AccountTraceInvocation) (time.Duration, bool) {

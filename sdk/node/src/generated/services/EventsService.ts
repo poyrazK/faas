@@ -4,12 +4,47 @@
 /* eslint-disable */
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
+import type { PreviewEventRequest } from '../models/PreviewEventRequest.js';
+import type { PreviewEventResponse } from '../models/PreviewEventResponse.js';
 import type { PublishEventRequest } from '../models/PublishEventRequest.js';
 import type { PublishEventResponse } from '../models/PublishEventResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class EventsService {
+  /**
+   * Preview event routing without publishing.
+   * Evaluates an event against the authenticated account's enabled
+   * subscriptions using the same matcher as asynchronous fanout. The
+   * preview is read-only: it does not persist the event or enqueue work.
+   * Counts cover every source/type candidate; response lists are bounded
+   * samples and `truncated` is true when either sample omits candidates.
+   *
+   * @returns PreviewEventResponse Routing preview completed without publishing the event.
+   * @throws ApiError
+   */
+  public static previewEvent({
+    requestBody,
+  }: {
+    requestBody: PreviewEventRequest,
+  }): CancelablePromise<PreviewEventResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/events:preview',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        500: `The router could not read the current subscription set.`,
+      },
+    });
+  }
   /**
    * Publish one tenant-scoped internal event.
    * Persists a canonical CloudEvents-shaped envelope for later content

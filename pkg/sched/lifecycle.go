@@ -529,6 +529,13 @@ type serviceRouteSubscriber interface {
 	Subscribe(context.Context, []string) (<-chan db.Notification, error)
 }
 
+func serviceRouteAckStreamFailure(waitCtx context.Context) (reason, outcome string) {
+	if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+		return "route_convergence_timeout", "timeout"
+	}
+	return "route_ack_stream_closed", "error"
+}
+
 type serviceRouteGenerationStore interface {
 	NextDeploymentRouteGeneration(context.Context) (int64, error)
 }
@@ -710,8 +717,23 @@ func (e *Engine) waitForServiceRouteConvergenceForRollout(ctx context.Context, a
 			return time.Time{}, true, false
 		case event, open := <-events:
 			if !open {
-				e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_ack_stream_closed", expectedNames)
-				e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
+				// SubscribeWithReconnect closes its output when waitCtx expires.
+				// Both this case and waitCtx.Done are then ready, so select may
+				// choose the channel first; preserve the actual timeout outcome.
+				reason, outcome := serviceRouteAckStreamFailure(waitCtx)
+				missing := expectedNames
+				if outcome == "timeout" {
+					missing = make([]string, 0, len(expected)-len(seen))
+					for node := range expected {
+						if _, found := seen[node]; !found {
+							missing = append(missing, node)
+						}
+					}
+					sort.Strings(missing)
+					e.log.Warn("sched: deployment route convergence incomplete", "app", appID, "deployment", deploymentID, "generation", generation, "missing", strings.Join(missing, ","))
+				}
+				e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, reason, missing)
+				e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, outcome, time.Since(started).Seconds())
 				return time.Time{}, true, false
 			}
 			ack, parseErr := db.ParseDeploymentRouteAckPayload(event.Payload)

@@ -18,6 +18,7 @@ export type MirrorRuleResponse = {
   percent: number;
   enabled: boolean;
   include_body: boolean;
+  allow_unsafe_methods: boolean;
   redact_headers: Array<string>;
   /**
    * Headers the gateway ALWAYS strips regardless of the customer's redact_headers setting.
