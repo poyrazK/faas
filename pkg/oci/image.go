@@ -42,6 +42,8 @@ type Config struct {
 	// StopSignal mirrors OCI STOPSIGNAL (default "SIGTERM").
 	// Runtime wiring in M-2 (ADR-X3 lifecycle contract).
 	StopSignal string
+	// SecretReloadSignal is populated by the Gregale opt-in OCI label.
+	SecretReloadSignal string
 	// StopGracePeriodS mirrors OCI StopGracePeriodSeconds. Runtime
 	// wiring in M-2.
 	StopGracePeriodS int
@@ -95,16 +97,17 @@ func ParseConfig(r io.Reader) (Config, error) {
 	}
 	f := raw.resolved()
 	return Config{
-		Env:              envSliceToMap(f.Env),
-		Entrypoint:       f.Entrypoint,
-		Cmd:              f.Cmd,
-		WorkingDir:       f.WorkingDir,
-		User:             f.User,
-		ExposedPorts:     clonePortSet(f.ExposedPorts),
-		Healthcheck:      healthcheckFromRaw(raw.resolvedHealthcheck()),
-		StopSignal:       raw.resolvedStopSignal(),
-		StopGracePeriodS: stopGraceFromRaw(raw),
-		DiffIDs:          raw.RootFS.DiffIDs,
+		Env:                envSliceToMap(f.Env),
+		Entrypoint:         f.Entrypoint,
+		Cmd:                f.Cmd,
+		WorkingDir:         f.WorkingDir,
+		User:               f.User,
+		ExposedPorts:       clonePortSet(f.ExposedPorts),
+		Healthcheck:        healthcheckFromRaw(raw.resolvedHealthcheck()),
+		StopSignal:         raw.resolvedStopSignal(),
+		SecretReloadSignal: raw.resolvedSecretReloadSignal(),
+		StopGracePeriodS:   stopGraceFromRaw(raw),
+		DiffIDs:            raw.RootFS.DiffIDs,
 	}, nil
 }
 
@@ -275,6 +278,9 @@ func ManifestFromConfig(cfg Config) (api.AppManifest, error) {
 	}
 	if cfg.StopSignal != "" {
 		m.StopSignal = cfg.StopSignal
+	}
+	if cfg.SecretReloadSignal != "" {
+		m.SecretReloadSignal = cfg.SecretReloadSignal
 	}
 	if cfg.StopGracePeriodS > 0 {
 		m.StopGracePeriod = time.Duration(cfg.StopGracePeriodS) * time.Second

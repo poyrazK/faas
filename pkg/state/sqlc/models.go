@@ -888,6 +888,14 @@ type Deployment struct {
 	Revision                 int32
 }
 
+type DeploymentAlias struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type DeploymentAudit struct {
 	ID           int64
 	DeploymentID pgtype.UUID
@@ -1683,6 +1691,23 @@ type OrgActivity struct {
 	Data       []byte
 	SourceType string
 	SourceID   string
+}
+
+type OrgActivityOutbox struct {
+	ID          int64
+	OrgID       pgtype.UUID
+	SourceType  string
+	SourceID    string
+	Activity    []byte
+	State       string
+	Attempts    int32
+	AvailableAt pgtype.Timestamptz
+	ClaimedBy   pgtype.Text
+	ClaimedAt   pgtype.Timestamptz
+	LeaseUntil  pgtype.Timestamptz
+	DeliveredAt pgtype.Timestamptz
+	LastError   pgtype.Text
+	CreatedAt   pgtype.Timestamptz
 }
 
 type OrgInvitation struct {

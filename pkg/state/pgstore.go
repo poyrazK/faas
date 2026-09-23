@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,6 +93,53 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 		_, _ = conn.Exec(unlockCtx, `select pg_advisory_unlock(hashtextextended($1, 0))`, appID)
 		cancel()
 		conn.Release()
+	}, nil
+}
+
+// AcquireDeploymentActivationLock holds a session-scoped advisory lock across
+// the public smoke request and the eventual live/failed transition. The
+// notification outbox broadcasts snapshot_written to every imaged process;
+// the loser reloads the deployment after this lock and observes the winner's
+// terminal state instead of running a second verification wake.
+func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (func(context.Context), error) {
+	deploymentID = strings.TrimSpace(deploymentID)
+	if deploymentID == "" {
+		return nil, errors.New("state: deployment activation lock requires deployment id")
+	}
+	if s == nil || s.pool == nil {
+		return nil, errors.New("state: pgstore has nil pool")
+	}
+	conn, err := db.DirectPool(s.pool).Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
+	}
+	const lockSQL = `select pg_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`
+	if _, err := conn.Exec(ctx, lockSQL, deploymentID); err != nil {
+		// Cancellation can race a server-side lock grant. Closing the
+		// session is the only safe way to rule out an orphaned lock.
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		_ = conn.Hijack().Close(closeCtx)
+		cancel()
+		return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+	}
+	var once sync.Once
+	return func(ctx context.Context) {
+		once.Do(func() {
+			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			var unlocked bool
+			unlockErr := conn.QueryRow(unlockCtx,
+				`select pg_advisory_unlock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&unlocked)
+			cancel()
+			if unlockErr != nil || !unlocked {
+				// Never return a connection carrying an uncertain session lock
+				// to the pool: a later activation could block behind itself.
+				closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+				_ = conn.Hijack().Close(closeCtx)
+				closeCancel()
+				return
+			}
+			conn.Release()
+		})
 	}, nil
 }
 
@@ -2716,6 +2764,28 @@ func (s *PgStore) SetPreviewPrState(ctx context.Context, appID, prState string) 
 		update apps set preview_pr_state = $2
 		where id = $1 and preview_of_slug is not null
 		returning `+appsSelectColumns, appID, prState)
+	if err := scanAppInto(&a, row); err != nil {
+		return App{}, mapErr(err)
+	}
+	return a, nil
+}
+
+// ClosePRPreview atomically starts the post-close grace period. A duplicate
+// webhook delivery leaves an already-closed preview's deadline unchanged;
+// stale or torn-down rows cannot be reopened by a delayed close event.
+func (s *PgStore) ClosePRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error) {
+	var a App
+	row := s.pool.QueryRow(ctx, `
+		update apps
+		set preview_pr_state = $2,
+		    preview_expires_at = case when preview_pr_state = $3 or preview_expires_at is null then $4 else preview_expires_at end
+		where id = $1
+		  and preview_of_slug is not null
+		  and coalesce(preview_pr_number, 0) > 0
+		  and status <> 'deleted'
+		  and preview_pr_state in ($3, $2)
+		returning `+appsSelectColumns,
+		appID, PreviewPrStateClosed, PreviewPrStateOpen, expiresAt)
 	if err := scanAppInto(&a, row); err != nil {
 		return App{}, mapErr(err)
 	}

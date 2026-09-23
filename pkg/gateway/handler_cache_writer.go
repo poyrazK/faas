@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -34,7 +35,8 @@ import (
 //
 //   - status code is in the cacheable set
 //     {200, 203, 300, 301, 308, 404, 410}
-//   - response did NOT carry Set-Cookie
+//   - response did NOT carry an origin Set-Cookie (the one exact edge-issued
+//     rollout cookie is stripped from the captured copy, not the live reply)
 //   - response did NOT carry Cache-Control: no-store / private
 //   - bypass did NOT fire (i.e., we buffered the full body)
 //   - the body is non-empty (empty bodies are still stored on
@@ -65,7 +67,13 @@ type cacheWriter struct {
 	status    int
 	headerOK  bool // WriteHeader was called
 	bypass    bool // exceeded cap; stop buffering
+	tags      []string
+	badTags   bool
 	wroteBody bool
+	// managedVersionSetCookie is the exact per-request cookie the gateway
+	// added before installing the tee. Only this value may be omitted from
+	// the captured copy; origin cookies still veto storage.
+	managedVersionSetCookie string
 
 	// ruleAction is the state-typed view of the rule, captured
 	// once at install time so Put on the cache has the
@@ -111,6 +119,22 @@ func newCacheWriter(w http.ResponseWriter, rec *statusRecorder, rule *EdgeRuleCa
 	}
 }
 
+// excludeManagedVersionCookie records the one platform-authored cookie that
+// was already present on the live response before the origin ran. Matching
+// its full value (including the random token and attributes), then removing
+// only one occurrence, prevents an origin Set-Cookie from becoming cacheable.
+func (c *cacheWriter) excludeManagedVersionCookie(value string) {
+	if value == "" {
+		return
+	}
+	for _, existing := range c.Header().Values("Set-Cookie") {
+		if existing == value {
+			c.managedVersionSetCookie = value
+			return
+		}
+	}
+}
+
 // WriteHeader captures the status code + a defensive copy of
 // the header map at the moment the upstream commits. The cache
 // store uses header to replay the response verbatim on a hit;
@@ -125,6 +149,18 @@ func (c *cacheWriter) WriteHeader(code int) {
 	}
 	c.status = code
 	c.headerOK = true
+	// Cache-Tag is control metadata, never a response header. Remove every
+	// spelling before committing the live response, including malformed values.
+	var tagValues []string
+	for key, values := range c.Header() {
+		if strings.EqualFold(key, "Cache-Tag") {
+			tagValues = append(tagValues, values...)
+			delete(c.Header(), key)
+		}
+	}
+	var err error
+	c.tags, err = api.ParseCacheTags(tagValues)
+	c.badTags = err != nil
 	// Defensive copy. We snapshot from the embedded
 	// ResponseWriter.Header() because that's where the
 	// upstream stdlib reverse-proxy / hand-rolled
@@ -135,11 +171,17 @@ func (c *cacheWriter) WriteHeader(code int) {
 	// own Header() override (e.g. capWriter). The embedded
 	// ResponseWriter is the lowest-level writer in the
 	// chain — its Header() is the canonical live map.
+	excludedManagedCookie := false
 	for k, vs := range c.Header() {
 		if isPerRequestPlatformHeader(k) {
 			continue
 		}
 		for _, v := range vs {
+			if strings.EqualFold(k, "Set-Cookie") && !excludedManagedCookie &&
+				c.managedVersionSetCookie != "" && v == c.managedVersionSetCookie {
+				excludedManagedCookie = true
+				continue
+			}
 			c.header.Add(k, v)
 		}
 	}
@@ -184,6 +226,9 @@ func (c *cacheWriter) Write(b []byte) (int, error) {
 // buffer is committed at request-finish time, not in real
 // time.
 func (c *cacheWriter) Flush() {
+	if !c.headerOK {
+		c.WriteHeader(http.StatusOK)
+	}
 	if f, ok := c.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -201,9 +246,9 @@ func (c *cacheWriter) Flush() {
 //     method-preserving-temporarily-redirecting kind, and
 //     caching a 302 would re-route a POST that the platform
 //     only just re-routed.
-//   - no Set-Cookie: a Set-Cookie on the response binds the
-//     response to a single client session; caching it would
-//     leak that session to other callers behind the cache.
+//   - no origin Set-Cookie: a Set-Cookie on the origin response binds it to a
+//     client session. The exact edge-issued rollout cookie is excluded from
+//     the stored copy while remaining on this caller's live response.
 //   - no Cache-Control: no-store / private: the app opted
 //     out of caching; honour the opt-out. Other directives
 //     (max-age, public) are advisory only — the cache TTL is
@@ -218,6 +263,9 @@ func (c *cacheWriter) shouldStore() bool {
 	if c.bypass {
 		return false
 	}
+	if c.badTags {
+		return false
+	}
 	if !c.wroteBody {
 		return false
 	}
@@ -226,7 +274,7 @@ func (c *cacheWriter) shouldStore() bool {
 	default:
 		return false
 	}
-	if c.header.Get("Set-Cookie") != "" {
+	if len(c.header.Values("Set-Cookie")) != 0 {
 		return false
 	}
 	cc := c.header.Get("Cache-Control")
@@ -240,9 +288,8 @@ func (c *cacheWriter) shouldStore() bool {
 }
 
 // finishCacheCapture is the deferred hook from ServeHTTP that
-// commits a captured body to the cache. Returns true if a Put
-// fired (caller increments the appropriate metric in commit
-// 15); false on a no-store decision (caller increments
+// commits a captured body to the cache. Returns true when at least one tier
+// stored the entry; false on a no-store decision (caller increments
 // store_skipped).
 //
 // mustStore param is the matched rule + cache key + now() clock
@@ -266,7 +313,7 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 	staleWhileRevalidate := time.Duration(c.rule.StaleWhileRevalidateSeconds) * time.Second
 	staleIfError := time.Duration(c.rule.StaleIfErrorSeconds) * time.Second
 	freshUntil := now.Add(maxAge)
-	cache.PutWithWindows(
+	return cache.PutWithWindowsAndTags(
 		key,
 		c.status,
 		c.header,
@@ -275,6 +322,6 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 		freshUntil.Add(staleWhileRevalidate),
 		freshUntil.Add(staleIfError),
 		c.ruleAction,
+		c.tags,
 	)
-	return true
 }

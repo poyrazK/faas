@@ -2128,6 +2128,13 @@ func (c *Client) PurgeAppCache(ctx context.Context, slug, pathGlob string) error
 	return c.do(ctx, "DELETE", endpoint, nil, nil)
 }
 
+// PurgeAppCacheTag asks gateways to evict responses carrying one cache tag.
+func (c *Client) PurgeAppCacheTag(ctx context.Context, slug, tag string) error {
+	q := url.Values{}
+	q.Set("tag", tag)
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/cache?"+q.Encode(), nil, nil)
+}
+
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
 	return c.ListInstancesWithHistory(ctx, slug, false)
 }
@@ -5983,11 +5990,20 @@ func (c *Client) GetAppDebugRequestEvidence(ctx context.Context, slug, reqID str
 }
 
 // GetAccountTrace returns the durable tenant-scoped trace correlation view.
-// The server joins retained debugger evidence with queue invocation lifecycle
-// rows so callers do not need to fan out across every app in the account.
+// The server joins retained debugger and HTTP access-log evidence with queue
+// invocation lifecycle rows so callers do not fan out across the account.
 func (c *Client) GetAccountTrace(ctx context.Context, traceID string) (AccountTraceLookupResponse, error) {
+	return c.GetAccountTraceWithLimit(ctx, traceID, 0)
+}
+
+// GetAccountTraceWithLimit is the bounded form used by callers that need to
+// choose how much per-trace evidence to display. Zero preserves the API default.
+func (c *Client) GetAccountTraceWithLimit(ctx context.Context, traceID string, limit int) (AccountTraceLookupResponse, error) {
 	var out AccountTraceLookupResponse
 	path := "/v1/account/traces/" + url.PathEscape(traceID)
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 

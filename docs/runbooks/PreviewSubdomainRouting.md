@@ -235,10 +235,9 @@ Metric: `faas_preview_janitor_outcomes_total{outcome="ok|failed|torn_down"}`.
 
 ### Symptoms
 
-- A preview app stays in `preview_pr_state='closed'` or
-  `'open'` longer than 24h after `preview_expires_at` (default
-  provisioning is `created_at + 7d`, so this is only a symptom
-  when the dispatcher or TTL is non-standard).
+- A preview app stays in `preview_pr_state='closed'` longer than
+  24h plus one janitor tick, or an open preview remains after its
+  configured TTL.
 - `closed` rows not transitioning to `stale` / `torn_down`.
 - A row stuck at `preview_pr_state='torn_down'` but
   `apps.status='active'` (the janitor's two writes
@@ -326,8 +325,8 @@ declare break-glass and follow [database repair](../break-glass/database-repair.
 
 #### Stale row stuck in 'closed' for too long
 
-Either the TTL was set wrong, or a future-dated
-`preview_expires_at` was never refreshed. Inspect:
+The close webhook should set `preview_expires_at` to the close time
+plus the fixed 24-hour grace. Inspect that timestamp and webhook logs:
 
 ```bash
 psql -U faas -d faas -c "

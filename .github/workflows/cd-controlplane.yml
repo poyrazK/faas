@@ -696,8 +696,9 @@ jobs:
             exit 1
           }
           REMOTE
-          # Observe the public, unauthenticated customer path throughout the
-          # mutating activation window. GitHub-hosted runner egress is blocked
+          # Observe API readiness and a real canary app independently during
+          # activation. The telemetry-heavy status route is diagnostic only.
+          # GitHub-hosted runner egress is blocked
           # by the production edge policy, so use the control-plane VM only as
           # a SOCKS egress point while still traversing public DNS + Cloudflare.
           probe_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
@@ -722,7 +723,7 @@ jobs:
             for _ in $(seq 1 20); do
               if curl --fail --silent --show-error --proxy "$probe_proxy" \
                 --connect-timeout 1 --max-time 3 \
-                'https://api.gregale.dev/v1/status?rollout_probe=proxy-preflight' \
+                'https://api.gregale.dev/readyz?rollout_probe=proxy-preflight' \
                 >/dev/null; then
                 proxy_ready=1
                 break
@@ -736,8 +737,10 @@ jobs:
             }
           fi
           ROLLOUT_BASELINE_SAMPLE_COUNT="$baseline_samples" \
+            ROLLOUT_APP_PROBE_URL="https://gregale-api-demo.gregale.dev/" \
+            ROLLOUT_STATUS_PROBE_URL="https://api.gregale.dev/v1/status" \
             ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh \
-            "https://api.gregale.dev/v1/status" -- \
+            "https://api.gregale.dev/readyz" -- \
             ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
             "${release_dir}/bin/deployctl bundle-check-installed ${release_dir} &&
@@ -765,6 +768,15 @@ jobs:
              mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
           cleanup_probe_proxy
           trap - EXIT
+
+      - name: Upload control-plane rollout probe evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: control-plane-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Verify PostgreSQL backup namespace contract
         run: |

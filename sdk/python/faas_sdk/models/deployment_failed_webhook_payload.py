@@ -6,6 +6,10 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.deployment_failed_webhook_payload_status import (
+    DeploymentFailedWebhookPayloadStatus,
+    check_deployment_failed_webhook_payload_status,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="DeploymentFailedWebhookPayload")
@@ -13,10 +17,13 @@ T = TypeVar("T", bound="DeploymentFailedWebhookPayload")
 
 @_attrs_define
 class DeploymentFailedWebhookPayload:
-    """Deployment failure details delivered with deployment.failed."""
+    """Deployment failure details delivered with deployment.failed. Delivery IDs are stable across retries."""
 
     app_id: str
+    """App that owns this failed deployment."""
     deployment_id: str
+    """Deployment that entered the failed state."""
+    status: DeploymentFailedWebhookPayloadStatus
     error_code: str | Unset = UNSET
     error_hint: str | Unset = UNSET
     error_why: str | Unset = UNSET
@@ -28,6 +35,8 @@ class DeploymentFailedWebhookPayload:
         app_id = self.app_id
 
         deployment_id = self.deployment_id
+
+        status: str = self.status
 
         error_code = self.error_code
 
@@ -47,6 +56,7 @@ class DeploymentFailedWebhookPayload:
             {
                 "app_id": app_id,
                 "deployment_id": deployment_id,
+                "status": status,
             }
         )
         if error_code is not UNSET:
@@ -69,6 +79,8 @@ class DeploymentFailedWebhookPayload:
 
         deployment_id = d.pop("deployment_id")
 
+        status = check_deployment_failed_webhook_payload_status(d.pop("status"))
+
         error_code = d.pop("error_code", UNSET)
 
         error_hint = d.pop("error_hint", UNSET)
@@ -82,6 +94,7 @@ class DeploymentFailedWebhookPayload:
         deployment_failed_webhook_payload = cls(
             app_id=app_id,
             deployment_id=deployment_id,
+            status=status,
             error_code=error_code,
             error_hint=error_hint,
             error_why=error_why,

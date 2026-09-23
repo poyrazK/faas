@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.project_environment_clone_response import ProjectEnvironmentCloneResponse
+
 
 T = TypeVar("T", bound="ProjectEnvironmentResponse")
 
@@ -17,9 +23,14 @@ class ProjectEnvironmentResponse:
     id: str
     project_id: str
     slug: str
+    """Project environment slug; the reserved app scope `default` cannot be used."""
     protected: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    cloned_from: str | Unset = UNSET
+    clone: ProjectEnvironmentCloneResponse | Unset = UNSET
+    """Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only
+    after explicit opt-in."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +46,12 @@ class ProjectEnvironmentResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        cloned_from = self.cloned_from
+
+        clone: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.clone, Unset):
+            clone = self.clone.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -47,11 +64,17 @@ class ProjectEnvironmentResponse:
                 "updated_at": updated_at,
             }
         )
+        if cloned_from is not UNSET:
+            field_dict["cloned_from"] = cloned_from
+        if clone is not UNSET:
+            field_dict["clone"] = clone
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_environment_clone_response import ProjectEnvironmentCloneResponse
+
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -65,6 +88,15 @@ class ProjectEnvironmentResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        cloned_from = d.pop("cloned_from", UNSET)
+
+        _clone = d.pop("clone", UNSET)
+        clone: ProjectEnvironmentCloneResponse | Unset
+        if isinstance(_clone, Unset):
+            clone = UNSET
+        else:
+            clone = ProjectEnvironmentCloneResponse.from_dict(_clone)
+
         project_environment_response = cls(
             id=id,
             project_id=project_id,
@@ -72,6 +104,8 @@ class ProjectEnvironmentResponse:
             protected=protected,
             created_at=created_at,
             updated_at=updated_at,
+            cloned_from=cloned_from,
+            clone=clone,
         )
 
         project_environment_response.additional_properties = d

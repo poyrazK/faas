@@ -919,6 +919,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}()
 		}
+		if _, ok := srv.store.(state.OrgActivityOutboxStore); ok {
+			go func() {
+				if err := runOrgActivityOutbox(ctx, srv.store, log); err != nil && ctx.Err() == nil {
+					log.Error("activity: durable outbox exited", "err", err)
+				}
+			}()
+		}
 		// ADR-126 / issue #975 item #2: bridge the two pg_notify
 		// channels that mutate the `?source=auto` cache inputs
 		// (NotifyAppOpenAPIDocChanged + NotifyEdgeRuleChanged)

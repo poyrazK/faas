@@ -33,6 +33,10 @@ def _get_kwargs(
 
 
 def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | Problem | None:
+    if response.status_code == 202:
+        response_202 = cast(Any, None)
+        return response_202
+
     if response.status_code == 204:
         response_204 = cast(Any, None)
         return response_204
@@ -84,7 +88,9 @@ def sync_detailed(
      Deletes only an unprotected, non-production environment that has no
     live releases. Configuration and approval history for the registry
     entry is removed with it. Production, protected environments, and
-    environments still serving a live release return 409.
+    environments still serving a live release return 409. If managed
+    resources cannot be revoked immediately, cleanup is durably queued and
+    retried; the deleted environment returns 202 while cleanup is pending.
 
     Args:
         slug (str):
@@ -124,7 +130,9 @@ def sync(
      Deletes only an unprotected, non-production environment that has no
     live releases. Configuration and approval history for the registry
     entry is removed with it. Production, protected environments, and
-    environments still serving a live release return 409.
+    environments still serving a live release return 409. If managed
+    resources cannot be revoked immediately, cleanup is durably queued and
+    retried; the deleted environment returns 202 while cleanup is pending.
 
     Args:
         slug (str):
@@ -159,7 +167,9 @@ async def asyncio_detailed(
      Deletes only an unprotected, non-production environment that has no
     live releases. Configuration and approval history for the registry
     entry is removed with it. Production, protected environments, and
-    environments still serving a live release return 409.
+    environments still serving a live release return 409. If managed
+    resources cannot be revoked immediately, cleanup is durably queued and
+    retried; the deleted environment returns 202 while cleanup is pending.
 
     Args:
         slug (str):
@@ -197,7 +207,9 @@ async def asyncio(
      Deletes only an unprotected, non-production environment that has no
     live releases. Configuration and approval history for the registry
     entry is removed with it. Production, protected environments, and
-    environments still serving a live release return 409.
+    environments still serving a live release return 409. If managed
+    resources cannot be revoked immediately, cleanup is durably queued and
+    retried; the deleted environment returns 202 while cleanup is pending.
 
     Args:
         slug (str):

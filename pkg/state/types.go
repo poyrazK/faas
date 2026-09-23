@@ -1525,7 +1525,9 @@ type AppManifest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is persisted in the manifest; legacy rows remain
 	// disabled when the field is absent.
-	SessionAffinity bool `json:"session_affinity,omitempty"`
+	SessionAffinity              bool   `json:"session_affinity,omitempty"`
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1564,7 +1566,7 @@ func (m AppManifest) IsZero() bool {
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
-		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -2449,6 +2451,21 @@ func (d Deployment) DeploymentPreviewActive() bool {
 	}
 }
 
+// DeploymentAliasActive reports whether a named alias may keep routing to its
+// pinned revision. Unlike a deployment-preview URL, an alias deliberately
+// remains valid after a newer revision supersedes its target. Failed or
+// cancelled targets are never routable, and soft-deletion is checked by the
+// caller because it is stored separately from status.
+func (d Deployment) DeploymentAliasActive() bool {
+	switch d.Status {
+	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting,
+		DeployLive, DeploySuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 // StageState is the typed view of the
 // `deployments.stage_state` jsonb column (ADR-117,
 // migration 00302). Shape:
@@ -3143,6 +3160,7 @@ const (
 	AppWebhookEventAppWoken                AppWebhookEvent = "app.woken"
 	AppWebhookEventBuildSucceeded          AppWebhookEvent = "build.succeeded"
 	AppWebhookEventBuildFailed             AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentLive          AppWebhookEvent = "deployment.live"
 	AppWebhookEventDeploymentFailed        AppWebhookEvent = "deployment.failed"
 	AppWebhookEventRolloutAborted          AppWebhookEvent = "rollout.aborted"
 	AppWebhookEventErrorNew                AppWebhookEvent = "error.new"
@@ -3166,6 +3184,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventAppWoken,
 	AppWebhookEventBuildSucceeded,
 	AppWebhookEventBuildFailed,
+	AppWebhookEventDeploymentLive,
 	AppWebhookEventDeploymentFailed,
 	AppWebhookEventRolloutAborted,
 	AppWebhookEventErrorNew,

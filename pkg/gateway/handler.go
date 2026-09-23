@@ -344,6 +344,12 @@ type App struct {
 	// running instance. The picker fails open when the instance is gone or
 	// cannot accept work, so scale-out and health recovery remain intact.
 	SessionAffinity bool
+	// VersionAffinityCookie is an optional stable browser cookie used when
+	// the explicit Gregale-Version-Key header is absent.
+	VersionAffinityCookie string
+	// VersionAffinityManagedCookie lets the edge issue an opaque, host-only
+	// rollout cookie. It is mutually exclusive with VersionAffinityCookie.
+	VersionAffinityManagedCookie bool
 }
 
 type concurrencyAdmissionConfig struct {
@@ -775,6 +781,14 @@ type affinityPicker interface {
 // deployment: verification must either reach the requested candidate or fail.
 type deploymentTargetPicker interface {
 	PickForDeployment(appID, deploymentID string) PickResult
+}
+
+// deploymentSmokeTargetResolver looks up a RUNNING snapshotting candidate
+// without adding it to the ordinary customer-traffic picker. The live-target
+// cache intentionally excludes unpromoted deployments, so another gateway
+// replica cannot discover a peer's verification instance through that cache.
+type deploymentSmokeTargetResolver interface {
+	ResolveDeploymentSmokeTarget(ctx context.Context, appID, deploymentID string) (Target, bool, error)
 }
 
 // liveTargetValidator checks an idle-aged cached target against durable
@@ -5356,7 +5370,12 @@ func (h *Handler) writeWebSocketNotAllowed(w http.ResponseWriter, appID string, 
 // pickForRequest applies the optional session-affinity hint before the normal
 // warm-path picker. A stale cookie falls through to the ordinary picker in the
 // same request, preserving availability during scale-in and restarts.
-func (h *Handler) pickForRequest(app App, preferredInstanceID string) PickResult {
+func (h *Handler) pickForRequest(app App, preferredInstanceID, versionKey string) PickResult {
+	if versionKey != "" {
+		if picker, ok := h.backend.(versionAffinityPicker); ok {
+			return picker.PickForVersionKey(app.ID, versionKey, preferredInstanceID)
+		}
+	}
 	if preferredInstanceID != "" {
 		if picker, ok := h.backend.(affinityPicker); ok {
 			pick := picker.PickForInstance(app.ID, preferredInstanceID)
@@ -5371,7 +5390,12 @@ func (h *Handler) pickForRequest(app App, preferredInstanceID string) PickResult
 	return PickResult{}
 }
 
-func (h *Handler) pickAfterCapacity(app App, preferredInstanceID string) PickResult {
+func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey string) PickResult {
+	if versionKey != "" {
+		if picker, ok := h.backend.(versionAffinityPicker); ok {
+			return picker.PickForVersionKey(app.ID, versionKey, preferredInstanceID)
+		}
+	}
 	if preferredInstanceID != "" {
 		if picker, ok := h.backend.(affinityPicker); ok {
 			if pick := picker.PickForInstance(app.ID, preferredInstanceID); pick.OK {
@@ -5674,6 +5698,29 @@ haveApp:
 	}
 	h.matchAndApplyRewrite(r, app)
 	h.applyEdgeRuleHeaders(w, r, app, rec)
+	// Resolve affinity after request-header rules so the picker, cache and
+	// forwarded header all use the same key. A configured browser cookie is
+	// only used when no explicit (or rule-authored) version header is present.
+	versionKey, versionKeyOutcome := versionAffinityKeyFromPublicRequest(r, app.VersionAffinityCookie)
+	managedVersionToken := ""
+	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
+		versionKey, versionKeyOutcome, managedVersionToken = versionAffinityKeyFromManagedRequest(r)
+		r = withManagedVersionCookieProtection(r)
+	}
+	if h.metrics != nil {
+		h.metrics.ObserveVersionAffinityKey(versionAffinitySurfacePublic, versionKeyOutcome)
+	}
+	versionDeploymentID := ""
+	if !deploymentSmoke {
+		versionDeploymentID = versionAffinityDeploymentForRequest(h.backend, app.ID, r)
+		if versionDeploymentID != "" {
+			r = r.WithContext(withVersionAffinityDeployment(r.Context(), versionDeploymentID))
+		}
+	} else {
+		// Authenticated smoke traffic is explicitly pinned by deployment id;
+		// a customer rollout key must not participate in its picker retries.
+		versionKey = ""
+	}
 	// Issue #561 / ADR-091 PR 5 — apply kind=cors preflight AFTER
 	// rewrite (so a rewritten path is matched against CORS rules)
 	// and AFTER headers (so request-side header ops don't shadow
@@ -5841,6 +5888,19 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	managedVersionSetCookie := ""
+	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
+		stripManagedVersionAffinityCookie(r)
+		if managedVersionToken != "" {
+			cookie := &http.Cookie{
+				Name: api.ManagedVersionAffinityCookieName, Value: managedVersionToken,
+				Path: "/", MaxAge: 7 * 24 * 60 * 60, Secure: true,
+				HttpOnly: true, SameSite: http.SameSiteLaxMode,
+			}
+			http.SetCookie(w, cookie)
+			managedVersionSetCookie = cookie.String()
+		}
+	}
 
 	// ADR-122 §Decision: kind=cache serve path. Consulted AFTER
 	// enforcePublicAuth (so a cache hit cannot bypass the auth
@@ -5859,6 +5919,11 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// A keyed cache entry may only contain a response from the deployment
+	// selected by that key. The picker can temporarily serve a warm sibling
+	// while the selected cold bucket is waking; never cache that fallback in
+	// the selected deployment's partition.
+	servedDeploymentID := ""
 	var asyncRule *EdgeRuleAsyncResolved
 	if !deploymentSmoke {
 		asyncRule = h.matchAsyncRoute(r, sidecarName)
@@ -5877,7 +5942,7 @@ haveApp:
 		// store-skipped capture. The wake leader continues to the origin;
 		// its normal cache writer refreshes this entry after the instance is
 		// ready.
-		r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
+		r = r.WithContext(withCacheRuleContextForDeployment(r.Context(), rule, app.ID, versionDeploymentID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
 		wakeInFlight := h.gate != nil && h.gate.Inflight(app.ID)
 		if wakeInFlight {
 			if served, _ := h.tryServeStaleWhileWaking(w, r, app, rec); served {
@@ -5898,12 +5963,13 @@ haveApp:
 		// cannot reach the tee even if applyEdgeRuleCache
 		// itself short-circuited to a miss.
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
+		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		w = cw
 		defer func() {
-			if cw.shouldStore() {
+			if cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
 				key := CacheKey{
 					AppID:          app.ID,
-					DeploymentID:   "",
+					DeploymentID:   versionDeploymentID,
 					RuleID:         rule.ID,
 					Method:         r.Method,
 					NormalizedPath: r.URL.Path,
@@ -5912,8 +5978,8 @@ haveApp:
 				}
 				cw.finishCacheCapture(h.responseCache, key, time.Now())
 			} else {
-				// shouldStore() returned false — bump the
-				// store_skipped counter so the dashboard
+				// The response was uncacheable or came from a warm
+				// fallback revision — bump store_skipped so the dashboard
 				// chip surfaces "why isn't my cache
 				// populating?". The actual reason is opaque
 				// (predicate veto) — a follow-on ADR can
@@ -6109,6 +6175,20 @@ haveApp:
 			return
 		}
 		pick = picker.PickForDeployment(app.ID, exactDeploymentID)
+		if !pick.OK && deploymentSmoke {
+			if resolver, ok := h.backend.(deploymentSmokeTargetResolver); ok {
+				target, found, resolveErr := resolver.ResolveDeploymentSmokeTarget(r.Context(), app.ID, smokeDeploymentID)
+				if resolveErr != nil {
+					api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+						"Deployment verification unavailable", "candidate target lookup failed"))
+					h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+					return
+				}
+				if found {
+					pick = PickResult{Target: target, OK: true, Picked: smokeDeploymentID}
+				}
+			}
+		}
 		if !pick.OK {
 			// A snapshot candidate or zero-percent live deployment can be cold
 			// before its exact URL is visited. Admit one deployment-scoped
@@ -6137,7 +6217,7 @@ haveApp:
 			}
 		}
 	} else {
-		pick = h.pickForRequest(app, preferredInstanceID)
+		pick = h.pickForRequest(app, preferredInstanceID, versionKey)
 	}
 	if pick.OK && h.warmTargetNeedsValidation(app, pick.Target, time.Now()) {
 		if validator, ok := h.backend.(liveTargetValidator); ok {
@@ -6279,7 +6359,7 @@ haveApp:
 	// for siblings. Keep the single PickWarm call on ordinary warm traffic
 	// so round-robin cursors advance only once per request.
 	if !exactDeployment && (!pick.OK || waitedForBurst) {
-		pick = h.pickAfterCapacity(app, preferredInstanceID)
+		pick = h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 	}
 
 	// Wake-fan-out (issue #556 / PR-C): when Pick landed on a
@@ -6317,7 +6397,7 @@ haveApp:
 		} else if bucketWakeID != "" {
 			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}
-		pick = h.pickAfterCapacity(app, preferredInstanceID)
+		pick = h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 	}
 	if !pick.OK {
 		// Race: every cached instance was evicted between
@@ -6348,7 +6428,7 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),
@@ -6394,6 +6474,7 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
+	servedDeploymentID = target.DeploymentID
 	if app.SessionAffinity {
 		if _, ok := h.backend.(affinityPicker); ok {
 			h.setSessionAffinityCookie(w, app.ID, target.InstanceID)
@@ -7891,6 +7972,29 @@ func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
 	return err
 }
 
+// EnsureServiceDeploymentCapacity restores the exact rollout cohort selected
+// for a keyed service call. A warm stable revision must not make ensureCapacity
+// short-circuit while the selected candidate remains parked.
+func (h *Handler) EnsureServiceDeploymentCapacity(ctx context.Context, app App, deploymentID string) error {
+	if deploymentID == "" {
+		return h.EnsureServiceCapacity(ctx, app)
+	}
+	if picker, ok := h.backend.(deploymentTargetPicker); ok {
+		if pick := picker.PickForDeployment(app.ID, deploymentID); pick.OK {
+			return nil
+		}
+	}
+	limits, ok := api.LimitsFor(app.Plan)
+	if !ok {
+		limits = api.Limits{}
+	}
+	// Match the public cold-bucket fan-out allowance: rollout capacity is
+	// governed by the plan ceiling here, while schedd remains authoritative
+	// for the temporary rollout-instance exception.
+	_, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
+	return err
+}
+
 func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Time) bool {
 	idleSeconds := app.IdleTimeoutS
 	if idleSeconds <= 0 {
@@ -8243,6 +8347,7 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
+		stripGuestManagedVersionCookieResponseHeader(resp)
 		return nil
 	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the

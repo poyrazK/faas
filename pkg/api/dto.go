@@ -200,6 +200,9 @@ type CreateAppRequest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is off by default.
 	SessionAffinity *bool `json:"session_affinity,omitempty"`
+	// VersionAffinityCookie derives rollout affinity from this browser cookie.
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -439,6 +442,9 @@ type UpdateAppRequest struct {
 	// SessionAffinity toggles best-effort cookie-based routing to the same
 	// running instance. Nil leaves the current setting unchanged.
 	SessionAffinity *bool `json:"session_affinity,omitempty"`
+	// VersionAffinityCookie replaces the cookie source; empty disables it.
+	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1261,7 +1267,9 @@ type AppResponse struct {
 	WebSocketEnabled bool `json:"websocket_enabled"`
 	// SessionAffinity reports whether best-effort cookie-based instance
 	// routing is enabled for this app.
-	SessionAffinity bool `json:"session_affinity"`
+	SessionAffinity              bool   `json:"session_affinity"`
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -2658,6 +2666,32 @@ type DeploymentPreviewURL struct {
 	// LastCheckedAt is when certmagic last validated the cert
 	// under Host. nil for never-touched hostnames.
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+}
+
+// SetDeploymentAliasRequest is the body for PUT
+// /v1/apps/{slug}/deployment-aliases/{name}. The deployment ID is explicit:
+// an alias is a stable name for one immutable row, not a moving "latest"
+// selector.
+type SetDeploymentAliasRequest struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+// DeploymentAliasResponse is the persisted mapping returned by the
+// deployment-alias API. Revision is included as the readable vN handle for
+// the immutable target; Host and URL expose its stable public route.
+type DeploymentAliasResponse struct {
+	Name         string    `json:"name"`
+	DeploymentID string    `json:"deployment_id"`
+	Revision     int       `json:"revision"`
+	Host         string    `json:"host,omitempty"`
+	URL          string    `json:"url,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// DeploymentAliasListResponse is the bounded per-app alias list shape.
+type DeploymentAliasListResponse struct {
+	Items []DeploymentAliasResponse `json:"items"`
 }
 
 // UpdateDeploymentTrafficRequest is the body for
@@ -4445,15 +4479,44 @@ type QueueReceiveResponse struct {
 	Traceparent string          `json:"traceparent,omitempty"`
 }
 
+// LogQueryEvent is the stable, source-neutral shape emitted by database-backed
+// log queries. Fields that do not apply to a source are omitted so future
+// build, deploy, network, and DNS sources can join the same stream without
+// changing the existing HTTP event contract.
+type LogQueryEvent struct {
+	ID           string    `json:"id"`
+	App          string    `json:"app,omitempty"`
+	Timestamp    string    `json:"timestamp"`
+	Source       LogSource `json:"source"`
+	DeploymentID string    `json:"deployment_id,omitempty"`
+	InstanceID   string    `json:"instance_id,omitempty"`
+	RequestID    string    `json:"request_id,omitempty"`
+	TraceID      string    `json:"trace_id,omitempty"`
+	Route        string    `json:"route,omitempty"`
+	Method       string    `json:"method,omitempty"`
+	Status       int       `json:"status,omitempty"`
+	Level        string    `json:"level,omitempty"`
+	Stream       string    `json:"stream,omitempty"`
+	Message      string    `json:"message"`
+	LatencyMS    int       `json:"latency_ms,omitempty"`
+	Count        int       `json:"count,omitempty"`
+	ColdBoot     bool      `json:"cold_boot,omitempty"`
+}
+
 // AccountTraceLookupResponse is the tenant-scoped correlation envelope used
-// by `gregale trace`. It combines retained request evidence with durable queue
-// lifecycle rows without exposing request payloads or raw headers.
+// by `gregale trace`. It combines retained request evidence and safe access
+// log projections with durable queue lifecycle rows without exposing request
+// payloads or raw headers.
 type AccountTraceLookupResponse struct {
-	TraceID        string                    `json:"trace_id"`
-	GeneratedAt    time.Time                 `json:"generated_at"`
-	Limit          int                       `json:"limit"`
-	Matches        []AccountTraceMatch       `json:"matches"`
-	Invocations    []AccountTraceInvocation  `json:"invocations"`
+	TraceID     string                   `json:"trace_id"`
+	GeneratedAt time.Time                `json:"generated_at"`
+	Limit       int                      `json:"limit"`
+	Matches     []AccountTraceMatch      `json:"matches"`
+	Invocations []AccountTraceInvocation `json:"invocations"`
+	// Logs contains metadata-only HTTP access events within trace retention.
+	Logs []LogQueryEvent `json:"logs"`
+	// LogsTruncated indicates that the bounded per-trace log result omitted rows.
+	LogsTruncated  bool                      `json:"logs_truncated"`
 	Spans          []DebugTelemetrySpan      `json:"spans"`
 	SpansTruncated bool                      `json:"spans_truncated"`
 	Partial        bool                      `json:"partial,omitempty"`

@@ -1320,7 +1320,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, VersionAffinityCookie: app.Manifest.VersionAffinityCookie, VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1392,6 +1392,34 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}
 			return targets, nil
+		}).
+		WithDeploymentSmokeTargetLoader(func(ctx context.Context, appID, deploymentID string) (gateway.Target, bool, error) {
+			dep, err := pgStore.DeploymentByID(ctx, deploymentID)
+			if errors.Is(err, state.ErrNotFound) {
+				return gateway.Target{}, false, nil
+			}
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			if dep.AppID != appID || (dep.Status != state.DeploySnapshotting && dep.Status != state.DeployLive) {
+				return gateway.Target{}, false, nil
+			}
+			instances, err := pgStore.ListInstancesForApp(ctx, appID)
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			for _, instance := range instances {
+				if instance.DeploymentID != deploymentID || instance.State != string(state.StateRunning) ||
+					instance.ID == "" || instance.NodeID == "" {
+					continue
+				}
+				return gateway.Target{
+					AppID: appID, InstanceID: instance.ID, NodeID: instance.NodeID,
+					WakeID: instance.WakeID, DeploymentID: deploymentID,
+					Port: schedpkg.DeploymentRuntimePort(dep), AddedAt: time.Now(),
+				}, true, nil
+			}
+			return gateway.Target{}, false, nil
 		}).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
@@ -3244,7 +3272,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// forces customers to pin min_instances on every dependency and
 			// gives up the platform's central economic claim for precisely
 			// the workloads that are idle most of the time.
-			Wake: newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
+			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.
