@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -78,16 +79,23 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 	}
 	reserved := make([]App, 0, len(apps))
 	for _, desired := range apps {
-		app, createErr := createAppIfUnderQuotaTx(ctx, tx, desired, limits)
-		if errors.Is(createErr, ErrConflict) {
-			app, createErr = scanApp(tx.QueryRow(ctx,
-				`select `+appsSelectColumns+` from apps where slug = $1 and status <> 'deleted'`, desired.Slug))
-			if createErr == nil && (!samePRPreview(app, desired) || app.PreviewPrState == PreviewPrStateTearingDown || app.PreviewPrState == PreviewPrStateTornDown) {
+		// A deleted row still owns its globally unique slug. Detect it before
+		// INSERT; a uniqueness error would abort the whole PostgreSQL transaction.
+		app, lookupErr := scanApp(tx.QueryRow(ctx,
+			`select `+appsSelectColumns+` from apps where slug = $1`, desired.Slug))
+		switch {
+		case lookupErr == nil:
+			if app.Status == AppDeleted || !samePRPreview(app, desired) ||
+				app.PreviewPrState == PreviewPrStateTearingDown || app.PreviewPrState == PreviewPrStateTornDown {
 				return nil, ErrConflict
 			}
-		}
-		if createErr != nil {
-			return nil, createErr
+		case errors.Is(lookupErr, ErrNotFound):
+			app, err = createAppIfUnderQuotaTx(ctx, tx, desired, limits)
+			if err != nil {
+				return nil, err
+			}
+		default:
+			return nil, lookupErr
 		}
 		app, err = scanApp(tx.QueryRow(ctx, `update apps set preview_pr_state = $2, preview_expires_at = $3
 			where id = $1 and status <> 'deleted' and preview_pr_state is distinct from 'tearing_down'
@@ -191,7 +199,11 @@ func retireReplacedPreviewMembersTx(ctx context.Context, tx pgx.Tx, head PRPrevi
 		return ErrConflict
 	}
 	now := time.Now().UTC()
-	tag, err := tx.Exec(ctx, `update apps set status = 'deleted', preview_pr_state = $2,
+	// Slugs are globally unique even on deleted rows. Move only these retired
+	// PR previews to ID-derived tombstone slugs so a later PR head can add the
+	// same dependency again without reviving old builds or changing app IDs.
+	tag, err := tx.Exec(ctx, `update apps set status = 'deleted',
+		slug = 'retired-pr-' || replace(id::text, '-', ''), preview_pr_state = $2,
 		preview_expires_at = $3, deleted_at = coalesce(deleted_at, $3),
 		delete_grace_until = coalesce(delete_grace_until, $4)
 		where id::text = any($1::text[]) and status <> 'deleted'`,
@@ -264,6 +276,7 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		original[id] = old
 		now := time.Now().UTC()
 		deadline := now.Add(AppDeleteGraceDuration())
+		old.Slug = "retired-pr-" + strings.ReplaceAll(old.ID, "-", "")
 		old.Status, old.PreviewPrState, old.PreviewExpiresAt = AppDeleted, PreviewPrStateStale, &now
 		if old.DeletedAt == nil {
 			old.DeletedAt = &now
@@ -275,25 +288,27 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 	}
 	reserved := make([]App, 0, len(apps))
 	for _, desired := range apps {
-		row, err := m.createAppIfUnderQuotaLocked(desired, limits)
-		newlyInserted := err == nil
-		if errors.Is(err, ErrConflict) {
-			for _, existing := range m.apps {
-				if existing.Slug == desired.Slug && existing.Status != AppDeleted {
-					row = existing
-					if samePRPreview(existing, desired) && existing.PreviewPrState != PreviewPrStateTearingDown && existing.PreviewPrState != PreviewPrStateTornDown {
-						err = nil
-					}
-					break
-				}
+		var row App
+		found := false
+		for _, existing := range m.apps {
+			if existing.Slug != desired.Slug {
+				continue
 			}
-		} else if err == nil {
+			if existing.Status == AppDeleted || !samePRPreview(existing, desired) ||
+				existing.PreviewPrState == PreviewPrStateTearingDown || existing.PreviewPrState == PreviewPrStateTornDown {
+				return rollback(ErrConflict)
+			}
+			row, found = existing, true
+			break
+		}
+		if !found {
+			var err error
+			row, err = m.createAppIfUnderQuotaLocked(desired, limits)
+			if err != nil {
+				return rollback(err)
+			}
 			inserted = append(inserted, row.ID)
-		}
-		if err != nil {
-			return rollback(err)
-		}
-		if !newlyInserted {
+		} else {
 			original[row.ID] = row
 		}
 		row.PreviewPrState = PreviewPrStateOpen

@@ -75,12 +75,17 @@ func TestMemStorePRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 	if _, err := m.SoftDeleteAppCascade(ctx, conflict.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := m.ReservePRPreviewSet(ctx, head, []App{preview("api"), preview("db")}, limits); !errors.Is(err, ErrConflict) {
+		t.Fatalf("deleted foreign slug error = %v, want conflict", err)
+	}
+	delete(m.apps, conflict.ID) // remove only this test fixture's slug reservation
 	second, err := m.ReservePRPreviewSet(ctx, head, []App{preview("api"), preview("db")}, limits)
 	if err != nil || len(second) != 2 || second[0].ID != first[0].ID {
 		t.Fatalf("quota-neutral swap = (%+v, %v)", second, err)
 	}
 	oldWorker, err := m.AppByID(ctx, first[1].ID)
-	if err != nil || oldWorker.Status != AppDeleted || oldWorker.PreviewPrState != PreviewPrStateStale {
+	if err != nil || oldWorker.Status != AppDeleted || oldWorker.PreviewPrState != PreviewPrStateStale ||
+		oldWorker.Slug == preview("worker").Slug {
 		t.Fatalf("retired worker = (%+v, %v)", oldWorker, err)
 	}
 	count, err = m.CountDeployedApps(ctx, account.ID)
@@ -94,16 +99,26 @@ func TestMemStorePRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 	if _, err := m.ReservePRPreviewSet(ctx, head, []App{preview("api"), preview("db")}, limits); err != nil {
 		t.Fatalf("idempotent retry at quota: %v", err)
 	}
+	head.CommitSHA = strings.Repeat("c", 40)
+	third, err := m.ReservePRPreviewSet(ctx, head, []App{preview("api"), preview("worker")}, limits)
+	if err != nil || len(third) != 2 || third[1].ID == first[1].ID {
+		t.Fatalf("re-add retired dependency = (%+v, %v)", third, err)
+	}
+	head.CommitSHA = strings.Repeat("d", 40)
+	fourth, err := m.ReservePRPreviewSet(ctx, head, []App{preview("api"), preview("db")}, limits)
+	if err != nil || len(fourth) != 2 || fourth[1].ID == second[1].ID {
+		t.Fatalf("re-add db dependency = (%+v, %v)", fourth, err)
+	}
 	if err := m.PutPRPreviewSet(ctx, PRPreviewSet{InstallationID: 7, RepoFullName: "octo/db",
-		PRNumber: 42, CommitSHA: head.CommitSHA, RootAppID: second[1].ID,
-		MemberAppIDs: []string{second[1].ID}}); err != nil {
+		PRNumber: 42, CommitSHA: head.CommitSHA, RootAppID: fourth[1].ID,
+		MemberAppIDs: []string{fourth[1].ID}}); err != nil {
 		t.Fatal(err)
 	}
-	head.CommitSHA = strings.Repeat("c", 40)
+	head.CommitSHA = strings.Repeat("e", 40)
 	if _, err := m.ReservePRPreviewSet(ctx, head, []App{preview("api"), preview("worker")}, limits); !errors.Is(err, ErrQuotaExceeded) {
 		t.Fatalf("swap of shared db = %v, want quota error", err)
 	}
-	if db, err := m.AppByID(ctx, second[1].ID); err != nil || db.Status != AppActive {
+	if db, err := m.AppByID(ctx, fourth[1].ID); err != nil || db.Status != AppActive {
 		t.Fatalf("shared db was retired = (%+v, %v)", db, err)
 	}
 }
