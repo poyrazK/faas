@@ -119,6 +119,10 @@ const (
 	// toward resident RAM/vCPU, but not serving concurrency until the
 	// scheduler resumes it for a request.
 	KindWarmPool
+	// KindAppTask is a deployment-attached one-off command. It consumes real
+	// node RAM/vCPU/CPU but is not a serving replica and therefore must not
+	// consume the app's request-concurrency budget.
+	KindAppTask
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -126,7 +130,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask
 }
 
 // Request is an admission request for one instance (a wake or a build).

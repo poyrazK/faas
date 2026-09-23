@@ -17,6 +17,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/netns"
@@ -31,9 +32,12 @@ import (
 // fakeVMM is the server-side VmmdAPI (pkg/vmmdgrpc.VmmdAPI). It mirrors the
 // resource shape of pkg/fcvm.Manager so the handlers take no test-only branch.
 type fakeVMM struct {
-	wakeFn func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
-	parkFn func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
-	destFn func(ctx context.Context, instance string) error
+	wakeFn             func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
+	parkFn             func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
+	destFn             func(ctx context.Context, instance string) error
+	appTaskWake        fcvm.AppTaskWakeRequest
+	appTaskExecute     apptaskproto.Request
+	appTaskStreamCalls int
 }
 
 func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
@@ -81,6 +85,31 @@ func (f *fakeVMM) Destroy(ctx context.Context, instance string) error {
 		return f.destFn(ctx, instance)
 	}
 	return nil
+}
+
+func (f *fakeVMM) WakeAppTask(ctx context.Context, request fcvm.AppTaskWakeRequest) (*fcvm.Instance, error) {
+	f.appTaskWake = request
+	inst, err := f.Wake(ctx, request.WakeRequest)
+	if inst != nil {
+		inst.AppTaskOnly = true
+	}
+	return inst, err
+}
+
+func (f *fakeVMM) ExecuteAppTask(_ context.Context, _ string, request apptaskproto.Request) (apptaskproto.Result, error) {
+	f.appTaskExecute = request
+	exit := 0
+	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, Stdout: []byte("done\n")}, nil
+}
+
+func (f *fakeVMM) ExecuteAppTaskWithOutput(ctx context.Context, _ string, request apptaskproto.Request, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	f.appTaskExecute = request
+	f.appTaskStreamCalls++
+	if err := receive(ctx, "stdout", []byte("live\n")); err != nil {
+		return apptaskproto.Result{}, err
+	}
+	exit := 0
+	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, Stdout: []byte("live\n")}, nil
 }
 
 // StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
@@ -249,6 +278,43 @@ func TestVMMClient_CreateColdBoot(t *testing.T) {
 	}
 	if out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		t.Errorf("method = %v, want WAKE_COLD_BOOT", out.Method)
+	}
+}
+
+func TestVMMClient_AppTaskRestoreAndStreamingExecute(t *testing.T) {
+	fake := &fakeVMM{}
+	c := newClient(t, fake)
+	app := sched.AppSpec{
+		BaseKey: "base/node22.ext4", LayerKey: "apps/app-1/dep-1.ext4",
+		VCPUCount: 2, MemSizeMiB: 512, CPUMillicores: 500,
+		Plan: api.PlanPro, AccountID: "acct-1", AppID: "app-1", DeploymentID: "dep-1", Runtime: "node22",
+	}
+	restored, err := c.RestoreAppTask(context.Background(), sched.AppTaskRestoreSpec{
+		Instance: "task-1", DeploymentID: "dep-1", App: app,
+	})
+	if err != nil {
+		t.Fatalf("RestoreAppTask: %v", err)
+	}
+	if restored.Instance != "task-1" || fake.appTaskWake.AppID != "app-1" || fake.appTaskWake.DeploymentID != "dep-1" {
+		t.Fatalf("restore = %#v, wake = %#v", restored, fake.appTaskWake)
+	}
+	request := apptaskproto.Request{
+		Version: apptaskproto.Version, TaskID: "task-1", Command: []string{"bin/migrate"},
+		TimeoutSeconds: 30, MaxOutputBytes: 2048,
+	}
+	var chunks int
+	result, err := c.ExecuteAppTaskWithOutput(context.Background(), "task-1", request, func(_ context.Context, stream string, chunk []byte) error {
+		if stream != "stdout" || string(chunk) != "live\n" {
+			t.Fatalf("output = %q/%q", stream, chunk)
+		}
+		chunks++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ExecuteAppTaskWithOutput: %v", err)
+	}
+	if fake.appTaskStreamCalls != 1 || chunks != 1 || string(result.Stdout) != "live\n" || result.ExitCode == nil || *result.ExitCode != 0 {
+		t.Fatalf("stream result/calls = %#v/%d/%d", result, fake.appTaskStreamCalls, chunks)
 	}
 }
 
