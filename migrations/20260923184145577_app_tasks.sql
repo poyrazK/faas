@@ -1,4 +1,4 @@
--- filename: 20260923210000001_app_tasks.sql
+-- filename: 20260923184145577_app_tasks.sql
 
 -- +goose Up
 -- +goose StatementBegin
