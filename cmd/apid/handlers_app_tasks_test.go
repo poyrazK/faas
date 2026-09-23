@@ -1,4 +1,4 @@
-// adr: 222 — public app-task admission pins a live deployment, remains
+// adr: 230 — public app-task admission pins a live deployment, remains
 // fail-closed by default, and never exposes scheduler or artifact internals.
 
 package main

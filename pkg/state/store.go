@@ -3339,7 +3339,7 @@ type Store interface {
 	// durable boundary.
 	ExecutionStore
 
-	// Commands attached to one immutable application deployment (ADR-222).
+	// Commands attached to one immutable application deployment (ADR-230).
 	// This stays separate from ExecutionStore because app tasks inherit the
 	// app's artifact, scoped configuration, bindings, and network policy.
 	AppTaskStore

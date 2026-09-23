@@ -462,7 +462,7 @@ type MemStore struct {
 	// runtime stream. It is deliberately separate from guest scratch storage.
 	executionEvents      map[string][]ExecutionEvent
 	nextExecutionEventID int64
-	// appTasks are deployment-attached command intents (ADR-222). Unlike
+	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are

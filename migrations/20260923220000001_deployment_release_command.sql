@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-222: pin a release command to the immutable deployment that declared
+-- ADR-230: pin a release command to the immutable deployment that declared
 -- it. A later migration/orchestrator slice consumes this contract to create
 -- the unique release app task before traffic activation.
 ALTER TABLE deployments
