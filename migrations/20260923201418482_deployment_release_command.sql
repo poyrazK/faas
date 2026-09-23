@@ -1,4 +1,4 @@
--- filename: 20260923220000001_deployment_release_command.sql
+-- filename: 20260923201418482_deployment_release_command.sql
 
 -- +goose Up
 -- +goose StatementBegin
