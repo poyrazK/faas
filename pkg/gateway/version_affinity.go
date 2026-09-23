@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -100,13 +101,77 @@ func versionAffinityKeyFromPublicRequest(r *http.Request, cookieName string) (st
 	if !ok {
 		return "", versionAffinityKeyInvalid
 	}
+	return setCookieVersionAffinityKey(r, cookieName, value), versionAffinityKeyValid
+}
+
+func setCookieVersionAffinityKey(r *http.Request, cookieName, value string) string {
 	digest := sha256.Sum256([]byte("gregale-version-cookie\x00" + cookieName + "\x00" + value))
 	key := hex.EncodeToString(digest[:])
 	if r.Header == nil {
 		r.Header = make(http.Header)
 	}
 	r.Header.Set(api.VersionKeyHeader, key)
-	return key, versionAffinityKeyValid
+	return key
+}
+
+// versionAffinityKeyFromManagedRequest returns a newly minted token only when
+// the request has neither an explicit key nor a managed cookie. Invalid or
+// duplicate cookies fail open to unkeyed routing instead of silently rotating.
+func versionAffinityKeyFromManagedRequest(r *http.Request) (key, outcome, newToken string) {
+	if r == nil {
+		return "", versionAffinityKeyMissing, ""
+	}
+	if _, present := r.Header[http.CanonicalHeaderKey(api.VersionKeyHeader)]; present {
+		key, outcome = versionAffinityKeyFromRequest(r)
+		return key, outcome, ""
+	}
+	var value string
+	count := 0
+	for _, cookie := range r.Cookies() {
+		if cookie.Name == api.ManagedVersionAffinityCookieName {
+			count++
+			value = cookie.Value
+		}
+	}
+	if count > 1 {
+		return "", versionAffinityKeyInvalid, ""
+	}
+	if count == 1 {
+		decoded, err := hex.DecodeString(value)
+		if err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != value {
+			return "", versionAffinityKeyInvalid, ""
+		}
+		return setCookieVersionAffinityKey(r, api.ManagedVersionAffinityCookieName, value), versionAffinityKeyValid, ""
+	}
+	token := make([]byte, 16)
+	if _, err := rand.Read(token); err != nil {
+		return "", versionAffinityKeyMissing, ""
+	}
+	newToken = hex.EncodeToString(token)
+	return setCookieVersionAffinityKey(r, api.ManagedVersionAffinityCookieName, newToken), versionAffinityKeyValid, newToken
+}
+
+// The managed cookie is a routing primitive, not application session state.
+// Remove only this reserved cookie before cache eligibility and guest proxying;
+// all customer cookies remain, so the ordinary cache safety gate still applies.
+func stripManagedVersionAffinityCookie(r *http.Request) {
+	if r == nil {
+		return
+	}
+	var kept []string
+	for _, line := range r.Header.Values("Cookie") {
+		for _, part := range strings.Split(line, ";") {
+			part = strings.TrimSpace(part)
+			if part == "" || strings.TrimSpace(strings.SplitN(part, "=", 2)[0]) == api.ManagedVersionAffinityCookieName {
+				continue
+			}
+			kept = append(kept, part)
+		}
+	}
+	r.Header.Del("Cookie")
+	if len(kept) > 0 {
+		r.Header.Set("Cookie", strings.Join(kept, "; "))
+	}
 }
 
 func normalizeVersionAffinityKey(raw string) (string, bool) {

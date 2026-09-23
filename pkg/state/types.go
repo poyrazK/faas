@@ -1525,8 +1525,9 @@ type AppManifest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is persisted in the manifest; legacy rows remain
 	// disabled when the field is absent.
-	SessionAffinity       bool   `json:"session_affinity,omitempty"`
-	VersionAffinityCookie string `json:"version_affinity_cookie,omitempty"`
+	SessionAffinity              bool   `json:"session_affinity,omitempty"`
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1565,7 +1566,7 @@ func (m AppManifest) IsZero() bool {
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
-		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == ""
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {

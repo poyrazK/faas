@@ -104,6 +104,10 @@ export type CreateAppRequest = {
    */
   version_affinity_cookie?: string;
   /**
+   * Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with version_affinity_cookie; omitted uses false.
+   */
+  version_affinity_managed_cookie?: boolean;
+  /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */
   streaming_enabled?: boolean;

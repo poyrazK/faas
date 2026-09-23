@@ -1,6 +1,7 @@
 package gateway
 
 // adr: 084 — keyed affinity refines the existing traffic-split routing contract.
+// adr: 122 — the managed cookie must preserve response-cache isolation.
 
 import (
 	"context"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -155,6 +157,115 @@ func TestVersionAffinityHeaderRulePrecedesCookieSelection(t *testing.T) {
 	}
 	if affinity.pickedKey != "rule-key" || req.Header.Get(api.VersionKeyHeader) != "rule-key" {
 		t.Fatalf("picker/forwarded key = %q/%q, want rule-key", affinity.pickedKey, req.Header.Get(api.VersionKeyHeader))
+	}
+}
+
+func TestManagedVersionAffinityCookieFirstRequestAndReplay(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	backend.app.VersionAffinityManagedCookie = true
+	backend.AddTarget(Target{NodeID: backend.upstream, InstanceID: "candidate-1", DeploymentID: "dep-candidate"})
+	affinity := &cookieAffinityBackend{fakeBackend: backend}
+	h.backend = affinity
+
+	first := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/page", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, first)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first status = %d: %s", w.Code, w.Body.String())
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != api.ManagedVersionAffinityCookieName {
+		t.Fatalf("issued cookies = %+v", cookies)
+	}
+	cookie := cookies[0]
+	if !cookie.Secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" || cookie.Domain != "" || cookie.MaxAge != 7*24*60*60 {
+		t.Fatalf("insecure managed cookie = %+v", cookie)
+	}
+	if len(cookie.Value) != 32 || affinity.pickedKey == "" || affinity.pickedKey != first.Header.Get(api.VersionKeyHeader) {
+		t.Fatalf("first request key = %q, forwarded = %q, cookie = %q", affinity.pickedKey, first.Header.Get(api.VersionKeyHeader), cookie.Value)
+	}
+	firstKey := affinity.pickedKey
+	second := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/asset.js", nil)
+	second.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, second)
+	if w.Code != http.StatusOK || affinity.pickedKey != firstKey || second.Header.Get(api.VersionKeyHeader) != firstKey {
+		t.Fatalf("replay status/key = %d/%q, want %q", w.Code, affinity.pickedKey, firstKey)
+	}
+	if got := w.Result().Cookies(); len(got) != 0 {
+		t.Fatalf("unexpected reissued cookie = %+v", got)
+	}
+	if hasSessionCookie(second) || second.Header.Get("Cookie") != "" {
+		t.Fatalf("platform cookie reached cache/guest: %q", second.Header.Get("Cookie"))
+	}
+}
+
+func TestManagedVersionAffinityCookieInvalidAndCustomerCookie(t *testing.T) {
+	for _, header := range []string{
+		api.ManagedVersionAffinityCookieName + "=bad",
+		api.ManagedVersionAffinityCookieName + "=00112233445566778899aabbccddeeff; " + api.ManagedVersionAffinityCookieName + "=ffeeddccbbaa99887766554433221100",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "http://app.example/", nil)
+		r.Header.Set("Cookie", header)
+		key, outcome, token := versionAffinityKeyFromManagedRequest(r)
+		if key != "" || outcome != versionAffinityKeyInvalid || token != "" {
+			t.Fatalf("invalid cookie %q yielded %q/%q/%q", header, key, outcome, token)
+		}
+	}
+	r := httptest.NewRequest(http.MethodGet, "http://app.example/", nil)
+	r.Header.Set(api.VersionKeyHeader, "manual-key")
+	r.Header.Set("Cookie", api.ManagedVersionAffinityCookieName+"=00112233445566778899aabbccddeeff; session=private")
+	key, outcome, token := versionAffinityKeyFromManagedRequest(r)
+	if key != "manual-key" || outcome != versionAffinityKeyValid || token != "" {
+		t.Fatalf("explicit key = %q/%q/%q", key, outcome, token)
+	}
+	stripManagedVersionAffinityCookie(r)
+	if r.Header.Get("Cookie") != "session=private" || !hasSessionCookie(r) {
+		t.Fatalf("customer session cookie lost: %q", r.Header.Get("Cookie"))
+	}
+	r = httptest.NewRequest(http.MethodGet, "http://app.example/", nil)
+	r.Header[api.VersionKeyHeader] = []string{"", "duplicate"}
+	key, outcome, token = versionAffinityKeyFromManagedRequest(r)
+	if key != "" || outcome != versionAffinityKeyInvalid || token != "" {
+		t.Fatalf("invalid explicit header fell back to mint: %q/%q/%q", key, outcome, token)
+	}
+}
+
+func TestManagedVersionAffinityCookieCacheIsolation(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	backend.app.VersionAffinityManagedCookie = true
+	affinity := &cookieAffinityBackend{fakeBackend: backend}
+	h.backend = affinity
+	now := time.Now()
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+	h.WithResponseCache(cache)
+	rule := EdgeRuleCacheResolved{ID: "rule-cache", PathGlob: "/catalog", MaxAgeSeconds: 60}
+	seedCacheRule(t, h, backend.host, rule)
+	cache.Put(CacheKey{AppID: backend.app.ID, DeploymentID: "dep-candidate", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog", VaryHash: hashStable("")},
+		200, http.Header{"Content-Type": []string{"text/plain"}}, []byte("public cached body"), now.Add(time.Minute), now.Add(time.Minute), rule.toStateEdgeRuleCacheAction())
+
+	first := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/catalog", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, first)
+	if w.Code != 200 || w.Body.String() != "public cached body" || len(w.Result().Cookies()) != 1 {
+		t.Fatalf("first cache hit = %d/%q, cookies = %+v", w.Code, w.Body.String(), w.Result().Cookies())
+	}
+	issued := w.Result().Cookies()[0]
+	second := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/catalog", nil)
+	second.AddCookie(issued)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, second)
+	if w.Code != 200 || w.Body.String() != "public cached body" || len(w.Result().Cookies()) != 0 {
+		t.Fatalf("replay cache hit = %d/%q, cookies = %+v", w.Code, w.Body.String(), w.Result().Cookies())
+	}
+
+	private := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/catalog", nil)
+	private.AddCookie(issued)
+	private.AddCookie(&http.Cookie{Name: "session", Value: "private"})
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, private)
+	if w.Code != 200 || w.Body.String() == "public cached body" {
+		t.Fatalf("customer cookie reached shared cache: %d/%q", w.Code, w.Body.String())
 	}
 }
 

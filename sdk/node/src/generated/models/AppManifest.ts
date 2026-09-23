@@ -91,5 +91,9 @@ export type AppManifest = {
    * Configured browser cookie name for rollout affinity; omitted when disabled.
    */
   version_affinity_cookie?: string;
+  /**
+   * Whether the edge issues its own host-only rollout-affinity cookie.
+   */
+  version_affinity_managed_cookie?: boolean;
 };
 
