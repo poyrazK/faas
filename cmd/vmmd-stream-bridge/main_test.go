@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,98 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestHandleH1Stream_FlushesFirstSSEEventBeforeGuestCompletes(t *testing.T) {
+	releaseSecond := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseSecond) }) }
+	defer release()
+
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: first\n\n")
+		w.(http.Flusher).Flush()
+		<-releaseSecond
+		_, _ = io.WriteString(w, "data: second\n\n")
+	}))
+	defer guest.Close()
+	host, portText, err := net.SplitHostPort(guest.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleH1Stream(w, r, host, uint16(port), time.Now().Add(5*time.Second))
+	}))
+	defer bridge.Close()
+
+	first := make(chan string, 1)
+	second := make(chan string, 1)
+	failure := make(chan error, 1)
+	go func() {
+		req, err := http.NewRequest(http.MethodGet, bridge.URL+"/events", nil)
+		if err != nil {
+			failure <- err
+			return
+		}
+		req.Header.Set(bridgeRequestMarkerHeader, "1")
+		client := &http.Client{Timeout: 4 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			failure <- err
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			failure <- fmt.Errorf("status = %d, want 200", resp.StatusCode)
+			return
+		}
+		reader := bufio.NewReader(resp.Body)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			failure <- err
+			return
+		}
+		first <- line
+		line, err = reader.ReadString('\n') // blank line between SSE events
+		if err != nil || line != "\n" {
+			failure <- fmt.Errorf("first event terminator = %q, err=%v", line, err)
+			return
+		}
+		line, err = reader.ReadString('\n')
+		if err != nil {
+			failure <- err
+			return
+		}
+		second <- line
+	}()
+
+	select {
+	case line := <-first:
+		if line != "data: first\n" {
+			t.Fatalf("first SSE line = %q", line)
+		}
+	case err := <-failure:
+		t.Fatalf("read first SSE event: %v", err)
+	case <-time.After(time.Second):
+		release()
+		t.Fatal("first SSE event was buffered until the guest completed")
+	}
+	release()
+	select {
+	case line := <-second:
+		if line != "data: second\n" {
+			t.Fatalf("second SSE line = %q", line)
+		}
+	case err := <-failure:
+		t.Fatalf("read second SSE event: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("second SSE event did not arrive")
+	}
+}
 
 func TestNewGuestRequest_PreservesInboundBodyFraming(t *testing.T) {
 	cases := []struct {
