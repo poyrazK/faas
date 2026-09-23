@@ -289,7 +289,7 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 	// binds the guest-initiated vsock listener before Firecracker receives its
 	// config. A short job therefore cannot beat the host listener, and the
 	// customer image/cache is never modified to carry per-run state.
-	return v.bootNoWait(ctx, l, BuildJobColdBootConfig(spec, l.Slot), nil, nil, nil, "", &manifest)
+	return v.bootNoWait(ctx, l, BuildJobColdBootConfig(spec, l.Slot), nil, nil, nil, "", false, &manifest)
 }
 
 // stageJobManifest writes the JSON-encoded JobManifest to the private drive1

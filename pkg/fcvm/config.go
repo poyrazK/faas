@@ -211,6 +211,10 @@ type ColdBootSpec struct {
 	// only by the dedicated disposable-execution path; ordinary app and job
 	// boots retain the identical inner network contract.
 	Networkless bool
+	// AppTask stages the platform-owned marker that makes guest-init wait for
+	// one command on the app-task vsock channel instead of starting the app.
+	// Unlike Networkless, it retains the deployment's normal network policy.
+	AppTask bool
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -390,6 +394,10 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: mem_size_mib %d < 1", s.MemSizeMiB)
 	case s.Tap == "" && !s.Networkless:
 		return fmt.Errorf("fcvm: cold boot: empty tap device")
+	case s.AppTask && s.Networkless:
+		return fmt.Errorf("fcvm: cold boot: app task cannot be networkless")
+	case s.AppTask && !s.SkipReady:
+		return fmt.Errorf("fcvm: cold boot: app task must skip app readiness")
 	case s.StartupDeadlineS < 0:
 		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
 	case !validCharacterizationExecutionMode(s.ExecutionMode):
