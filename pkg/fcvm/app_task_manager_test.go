@@ -1,3 +1,5 @@
+// adr: 222
+
 package fcvm
 
 import (
@@ -20,11 +22,11 @@ func TestManagerExecuteAppTaskRejectsOrdinaryAppInstance(t *testing.T) {
 
 type appTaskTestVMM struct{ *fakeVMM }
 
-func (v *appTaskTestVMM) DialAppTask(_ context.Context, _ Lease) (*AppTaskSession, error) {
+func (v *appTaskTestVMM) DialAppTask(ctx context.Context, _ Lease) (*AppTaskSession, error) {
 	host, guest := net.Pipe()
 	go func() {
 		defer guest.Close()
-		_ = apptaskproto.Serve(context.Background(), guest, func(context.Context, apptaskproto.Request, *apptaskproto.OutputWriter, *apptaskproto.OutputWriter) (apptaskproto.Result, error) {
+		_ = apptaskproto.Serve(ctx, guest, func(context.Context, apptaskproto.Request, *apptaskproto.OutputWriter, *apptaskproto.OutputWriter) (apptaskproto.Result, error) {
 			exit := 0
 			return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit}, nil
 		})

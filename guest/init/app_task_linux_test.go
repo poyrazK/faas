@@ -44,7 +44,7 @@ func TestInvalidAppTaskMarkerFailsClosed(t *testing.T) {
 
 func TestExecuteAppTaskCommandUsesScopedEnvironmentAndWorkingDir(t *testing.T) {
 	dir := t.TempDir()
-	manifest := api.AppManifest{WorkingDir: dir, Env: map[string]string{"LAYER": "manifest", "MANIFEST_ONLY": "yes"}}
+	manifest := api.AppManifest{User: "0", WorkingDir: dir, Env: map[string]string{"LAYER": "manifest", "MANIFEST_ONLY": "yes"}}
 	req := apptaskproto.Request{
 		Version: apptaskproto.Version, TaskID: "task-1", CommandShell: true,
 		Command:        []string{"printf '%s|%s|%s|%s' \"$PWD\" \"$LAYER\" \"$MANIFEST_ONLY\" \"$SECRET\""},

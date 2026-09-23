@@ -132,20 +132,20 @@ func appTaskHandler(log *slog.Logger) apptaskproto.Handler {
 		//nolint:forbidigo // platform-owned app manifest, staged in the immutable deployment image
 		f, err := os.Open(api.AppManifestPath)
 		if err != nil {
-			return appTaskInfraFailure("manifest_unavailable", "app manifest could not be loaded", 126), nil
+			return appTaskInfraFailure("manifest_unavailable", "app manifest could not be loaded", 126), nil //nolint:nilerr // the protocol carries infrastructure failures as terminal results
 		}
 		manifest, manifestErr := api.ReadManifest(f)
 		_ = f.Close()
 		if manifestErr != nil {
-			return appTaskInfraFailure("manifest_invalid", "app manifest is invalid", 126), nil
+			return appTaskInfraFailure("manifest_invalid", "app manifest is invalid", 126), nil //nolint:nilerr // the protocol carries infrastructure failures as terminal results
 		}
 		secrets, err := loadSecrets(log)
 		if err != nil {
-			return appTaskInfraFailure("secrets_unavailable", "scoped secrets could not be loaded", 126), nil
+			return appTaskInfraFailure("secrets_unavailable", "scoped secrets could not be loaded", 126), nil //nolint:nilerr // the protocol carries infrastructure failures as terminal results
 		}
 		apiEnv, err := loadAPIEnv(log)
 		if err != nil {
-			return appTaskInfraFailure("environment_unavailable", "scoped environment could not be loaded", 126), nil
+			return appTaskInfraFailure("environment_unavailable", "scoped environment could not be loaded", 126), nil //nolint:nilerr // the protocol carries infrastructure failures as terminal results
 		}
 		return executeAppTaskCommand(ctx, req, manifest, secrets, apiEnv, stdout, stderr)
 	}
