@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -177,5 +178,56 @@ func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
 			t.Fatalf("%d advised pages never reached the page cache", missing)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// adr: 224 — recording reads the live process's page table off the wake
+// path and stores the family's working set; the test process stands in for
+// Firecracker by mapping the mem file itself.
+func TestRecordRestoreWorkingSet(t *testing.T) {
+	page := os.Getpagesize()
+	path := filepath.Join(t.TempDir(), "mem")
+	if err := os.WriteFile(path, make([]byte, 64*page), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	b, err := unix.Mmap(int(f.Fd()), 0, 64*page, unix.PROT_READ, unix.MAP_PRIVATE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Munmap(b) }()
+	touchSink += b[40*page]
+	self, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := NewJailerVMM(t.TempDir(), 0)
+	v.proc["self"] = &exec.Cmd{Process: self}
+	v.recs["self"] = &instanceRecord{}
+	const key = "snap/dep-rec/captures/c1/v2/mem"
+	v.recordRestoreWorkingSet("self", key, path)
+	v.recordRestoreWorkingSet("gone", key, path) // no live process: ignored
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if set, ok := v.restorePrefetch.get("snap/dep-rec"); ok {
+			found := false
+			for _, r := range set.ranges {
+				if int64(40*page) >= r.Off && int64(40*page) < r.Off+r.Len {
+					found = true
+				}
+			}
+			if !found || set.bytes <= 0 {
+				t.Fatalf("recorded set %+v does not cover the touched page", set)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("working set was never recorded")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

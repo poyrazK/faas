@@ -2,6 +2,7 @@ package fcvm
 
 import (
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -181,6 +182,11 @@ func (v *JailerVMM) PrefetchRestore(storageKey string) int64 {
 	if err != nil || !local || path == "" {
 		// A remote snapshot is materialised by a full streamed copy, which
 		// leaves it resident; prefetch only helps a local cached file.
+		return 0
+	}
+	if _, err := os.Stat(path); err != nil {
+		// Local backends map a key to a path without checking it exists; do
+		// not report a prefetch for a file that is not there.
 		return 0
 	}
 	go func() {

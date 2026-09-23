@@ -1,9 +1,16 @@
 package fcvm
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // adr: 224 — every capture of one deployment shares a prefetch family, so a
@@ -110,5 +117,80 @@ func TestPrefetchRestoreNoopWithoutSet(t *testing.T) {
 	v.recordRestoreWorkingSet("inst", "snap/dep/captures/c/v2/mem", "/nonexistent")
 	if got := v.PrefetchRestore("snap/dep/captures/c/v2/mem"); got != 0 {
 		t.Fatalf("disabled PrefetchRestore = %d, want 0", got)
+	}
+}
+
+// prefetchingFakeVMM records the keys Manager.Wake asks it to prefetch.
+type prefetchingFakeVMM struct {
+	*fakeVMM
+	mu   sync.Mutex
+	keys []string
+}
+
+func (p *prefetchingFakeVMM) PrefetchRestore(storageKey string) int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.keys = append(p.keys, storageKey)
+	return 4096
+}
+
+// adr: 224 — Manager.Wake asks the VMM to prefetch the snapshot it is about
+// to restore, and never prefetches for a cold boot.
+func TestManagerWakePrefetchesSnapshot(t *testing.T) {
+	vmm := &prefetchingFakeVMM{fakeVMM: &fakeVMM{}}
+	m := newTestManager(&fakeRunner{}, vmm)
+	if _, err := m.ColdBoot(context.Background(), req("cold")); err != nil {
+		t.Fatalf("cold boot: %v", err)
+	}
+	snap := usableSnapshot()
+	if _, err := m.Wake(context.Background(), WakeRequest{
+		Instance: "warm", BaseKey: "/b.ext4", LayerKey: "/l.ext4",
+		VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby, Snapshot: snap,
+	}); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if !reflect.DeepEqual(vmm.keys, []string{snap.StorageKey}) {
+		t.Fatalf("prefetched keys = %v, want exactly [%s]", vmm.keys, snap.StorageKey)
+	}
+}
+
+// adr: 224 — a recorded family prefetches when its snapshot is a local file,
+// and does nothing for a key the backend cannot resolve locally.
+func TestPrefetchRestoreLocalSnapshot(t *testing.T) {
+	root := t.TempDir()
+	const key = "snap/dep-9/captures/c1/v2/mem"
+	if err := os.MkdirAll(filepath.Join(root, "snap/dep-9/captures/c1/v2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, key), make([]byte, 64<<10), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewLocalStorageBackend(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := NewJailerVMM(t.TempDir(), 0).WithRestorePrefetch(false).WithRestorePrefetch(true).WithStorage(store)
+	set := coalesceFileRanges([]fileRange{{0, 8192}, {32768, 4096}}, 0, 16, 1<<20)
+	v.restorePrefetch.put(snapshotPrefetchFamily(key), set)
+	// A later capture of the same deployment uses the family's set.
+	const next = "snap/dep-9/captures/c2/v2/mem"
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(next)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, next), make([]byte, 64<<10), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{key, next} {
+		if got := v.PrefetchRestore(k); got != set.bytes {
+			t.Errorf("PrefetchRestore(%s) = %d, want %d", k, got, set.bytes)
+		}
+	}
+	if got := v.PrefetchRestore("snap/dep-9/captures/c3/v2/mem"); got != 0 {
+		t.Errorf("PrefetchRestore of a missing local file = %d, want 0", got)
+	}
+	if got := v.PrefetchRestore("snap/other/captures/c1/v2/mem"); got != 0 {
+		t.Errorf("PrefetchRestore of an unrecorded family = %d, want 0", got)
 	}
 }
