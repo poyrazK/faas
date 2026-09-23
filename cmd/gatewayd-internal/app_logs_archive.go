@@ -340,10 +340,6 @@ func (h *ArchiveLogsHandler) withinRetention(plan api.Plan, day string) bool {
 // pipe-through-the-gzip-reader if any single-day archive ever
 // exceeds the stdlib heap budget; the wire shape stays the
 // same.
-func (h *ArchiveLogsHandler) serveArchive(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, instance, day string) {
-	h.serveArchiveWithAccount(ctx_, w, flusher, appID, "", instance, day)
-}
-
 func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, accountID, instance, day string) {
 	key := archiveObjectKey(instance, day)
 	identity := resolveRuntimeLogIdentity(ctx_, h.Store, scheddgrpc.LogFrame{InstanceID: instance}, accountID, appID, "", make(map[string]api.PlatformIdentity))
@@ -465,10 +461,6 @@ func archiveObjectKey(instance, day string) string {
 //
 // Returns false on a malformed JSON line so the caller can
 // surface a degraded terminal.
-func renderArchiveLine(w http.ResponseWriter, flusher http.Flusher, appID, instance string, raw []byte, ops *wire.OpsMetrics) bool {
-	return renderArchiveLineWithIdentity(w, flusher, appID, instance, raw, api.PlatformIdentity{InstanceID: instance}, ops)
-}
-
 func renderArchiveLineWithIdentity(w http.ResponseWriter, flusher http.Flusher, appID, instance string, raw []byte, identity api.PlatformIdentity, ops *wire.OpsMetrics) bool {
 	var line struct {
 		Seq       int64     `json:"seq"`
