@@ -522,6 +522,26 @@ func TestPg_Jobs_CreateAndClaimJobInstanceRollsBackLosingInsert(t *testing.T) {
 	}
 }
 
+func TestPg_Jobs_CreateAndClaimJobInstanceAllowsControlPlaneOwner(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, tasks := pgJobsSeed(t, s, ctx, "task-control-plane-claim")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	instanceID := uuid.NewString()
+	leaseToken := uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 128, nodeID, instanceID, leaseToken, time.Now().Add(5*time.Minute), ""); err != nil {
+		t.Fatalf("control-plane create and claim: %v", err)
+	}
+	claimed, err := s.JobTaskGet(ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil {
+		t.Fatalf("read claimed task: %v", err)
+	}
+	if claimed.Status != "claimed" || claimed.InstanceID == nil || *claimed.InstanceID != instanceID ||
+		claimed.LastLeaseNode == nil || *claimed.LastLeaseNode != "" {
+		t.Fatalf("claimed task = %+v, want instance and empty text owner", claimed)
+	}
+}
+
 func TestPg_Jobs_JobTaskMarkTerminal(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
 	_, run, fanned := pgJobsSeed(t, s, ctx, "task-3")
