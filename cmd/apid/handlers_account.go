@@ -952,7 +952,8 @@ func buildDeploymentsForExport(rows []state.Deployment) ([]api.DeploymentRespons
 			// context. Stamped from dep.Scope (already populated by
 			// the SELECT projection in pgstore.DeploymentByID /
 			// ListDeployments*).
-			Scope: d.Scope,
+			Scope:                  d.Scope,
+			DisableStartupCPUBoost: d.DisableStartupCPUBoost,
 			// Issue #977 / ADR-116: annotation echo on export
 			// fixtures. The four columns are operator-supplied
 			// metadata (free-text reason, closed-set tag, actor

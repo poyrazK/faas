@@ -207,6 +207,7 @@ type EnqueueParams struct {
 	TrafficPercent         int
 	TrafficPercentExplicit bool
 	RollbackOn5xx          bool
+	DisableStartupCPUBoost bool
 	CanaryPreset           string
 	CanaryStep             int
 	CanaryTotalSteps       int
@@ -462,6 +463,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		TrafficPercent:         p.TrafficPercent,
 		TrafficPercentExplicit: p.TrafficPercentExplicit,
 		RollbackOn5xx:          p.RollbackOn5xx,
+		DisableStartupCPUBoost: p.DisableStartupCPUBoost,
 		CanaryPreset:           p.CanaryPreset,
 		CanaryStep:             p.CanaryStep,
 		CanaryTotalSteps:       p.CanaryTotalSteps,

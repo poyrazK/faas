@@ -102,6 +102,28 @@ func TestBuildDeploymentForInsert_PreservesRollbackOn5xx(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentForInsert_DisablesStartupCPUBoostWhenRequested(t *testing.T) {
+	disable := true
+	app := state.App{ID: "app", Manifest: state.AppManifest{}}
+	dep, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{
+		Image: "sha256:test", DisableStartupCPUBoost: &disable,
+	}, nil, testSidecarLimits(), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	if !dep.DisableStartupCPUBoost {
+		t.Fatal("deployment should preserve disable_startup_cpu_boost=true")
+	}
+
+	dep, problem = buildDeploymentForInsert(app, &api.CreateDeploymentRequest{Image: "sha256:test"}, nil, testSidecarLimits(), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert with omitted option: %v", problem)
+	}
+	if dep.DisableStartupCPUBoost {
+		t.Fatal("omitted disable_startup_cpu_boost should preserve the default boost")
+	}
+}
+
 // adr: 200
 //
 // ADR-200 opened first-wake 5xx auto-rollback to every plan, so Free and
