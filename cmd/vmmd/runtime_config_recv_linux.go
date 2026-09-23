@@ -483,10 +483,6 @@ func writeRuntimeConfigFrame(w io.Writer, body []byte) error {
 	return nil
 }
 
-func readRuntimeConfigFrame(r io.Reader) ([]byte, error) {
-	return readRuntimeConfigFrameLimit(r, runtimeConfigMaxFrame)
-}
-
 func readRuntimeConfigRequestFrame(r io.Reader) ([]byte, error) {
 	return readRuntimeConfigFrameLimit(r, runtimeConfigMaxRequestFrame)
 }
