@@ -64,6 +64,16 @@ guest-init runs a restore reseed barrier for Node and Python workloads.
 5. **Opt-out.** `GREGALE_RESTORE_RESEED=off` in the app's env disables
    injection. The docs mark it unsafe for any app that generates secrets or
    nonces.
+6. **Host enforcement.** When the barrier ran, the OK ACK carries a
+   capability byte (`0x01`). vmmd refuses a restore without it
+   (`ErrGuestLacksRestoreReseed`): the manager cold-boots, schedd marks the
+   snapshot stale, and the next park captures one from the current
+   guest-init. Without this, idle parks would keep reusing snapshots taken by
+   an older guest-init indefinitely. An app guest whose barrier failed to
+   start omits the byte, so every wake cold-boots until the node is fixed. A
+   warm builder advertises the byte without a barrier: it runs no workload
+   process across the snapshot, and each build starts its processes after
+   the restore. Hosts that read a one-byte ACK ignore the trailer.
 
 The addon is built from `guest/init/rngpreload/reseed.c` with
 `zig cc -nostdlib`. It has no libc dependency, so one x86_64 ELF loads under
@@ -91,6 +101,10 @@ committed binary matches the source.
   it on.
 - A new NACK code (13) joins the fail-closed resume vocabulary; older hosts
   already treat every non-zero value as a NACK.
+- Rollout: every snapshot taken by an older guest-init is refused once, so
+  each deployment pays one cold boot on its first wake after the new vmmd
+  and base image reach its node. This is the same wave ADR-005 accepts for a
+  Firecracker upgrade.
 - Evidence gate: the `test-metal` suite must restore one snapshot twice and
   show distinct userspace randomness from a Node and a Python workload before
   a release carries this change.

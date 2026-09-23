@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 	"testing"
@@ -52,12 +53,46 @@ func TestResumeAckWaitsForUserspaceReseed(t *testing.T) {
 			go func() { _, _ = host.Write(msg) }()
 
 			handleResumeConn(guest, slog.Default())
-			ack := make([]byte, 1)
-			if _, err := host.Read(ack); err != nil {
-				t.Fatalf("read ack: %v", err)
+			frame, err := io.ReadAll(host)
+			if err != nil || len(frame) == 0 {
+				t.Fatalf("read ack frame: %v (%d bytes)", err, len(frame))
 			}
-			if ack[0] != tc.wantAck {
-				t.Fatalf("ack = %d, want %d", ack[0], tc.wantAck)
+			if frame[0] != tc.wantAck {
+				t.Fatalf("ack = %d, want %d", frame[0], tc.wantAck)
+			}
+			wantCap := tc.wantAck == VsockResumeAckOK
+			if gotCap := len(frame) == 2 && frame[1] == VsockResumeCapUserspaceReseed; gotCap != wantCap {
+				t.Fatalf("ack frame %v: reseed capability = %v, want %v", frame, gotCap, wantCap)
+			}
+		})
+	}
+}
+
+func TestResumeCapabilityAdvertisement(t *testing.T) {
+	cases := []struct {
+		name        string
+		barrier     bool
+		warmBuilder bool
+		want        bool
+	}{
+		{name: "app guest with barrier", barrier: true, want: true},
+		{name: "app guest whose barrier never started", want: false},
+		{name: "warm builder", warmBuilder: true, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			origBuilder := warmBuilderEnabled.Load()
+			t.Cleanup(func() {
+				activeRestoreReseedBarrier.Store(nil)
+				warmBuilderEnabled.Store(origBuilder)
+			})
+			activeRestoreReseedBarrier.Store(nil)
+			if tc.barrier {
+				activeRestoreReseedBarrier.Store(newRestoreReseedBarrier(nil))
+			}
+			warmBuilderEnabled.Store(tc.warmBuilder)
+			if got := restoreReseedContractHolds(); got != tc.want {
+				t.Fatalf("restoreReseedContractHolds() = %v, want %v", got, tc.want)
 			}
 		})
 	}

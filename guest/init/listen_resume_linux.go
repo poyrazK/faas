@@ -329,7 +329,7 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	}
 	SetResumeTraceparent(req.Traceparent)
 	ackFrame := []byte{VsockResumeAckOK}
-	if activeRestoreReseedBarrier.Load() != nil {
+	if restoreReseedContractHolds() {
 		ackFrame = append(ackFrame, VsockResumeCapUserspaceReseed)
 	}
 	_, _ = f.Write(ackFrame)
