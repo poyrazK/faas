@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { SidecarExecProbe } from './SidecarExecProbe.js';
+import type { SidecarHTTPGetProbe } from './SidecarHTTPGetProbe.js';
+import type { SidecarTCPSocketProbe } from './SidecarTCPSocketProbe.js';
 /**
  * Container-local startup or liveness probe for a companion. Specify
  * exactly one action: exec, http_get, tcp_socket, or the legacy OCI
@@ -14,28 +17,9 @@ export type SidecarProbe = {
    * Legacy OCI exec form: CMD, CMD-SHELL, or NONE. Retained for startup_probe compatibility.
    */
   test?: Array<string>;
-  exec?: {
-    /**
-     * Argv executed in the image root; no shell is implied.
-     */
-    command: Array<string>;
-  };
-  http_get?: {
-    /**
-     * HTTP path; defaults to /.
-     */
-    path?: string;
-    /**
-     * HTTP container port; 0/omitted inherits the workload port.
-     */
-    port?: number;
-  };
-  tcp_socket?: {
-    /**
-     * TCP container port; 0/omitted inherits the workload port.
-     */
-    port?: number;
-  };
+  exec?: SidecarExecProbe;
+  http_get?: SidecarHTTPGetProbe;
+  tcp_socket?: SidecarTCPSocketProbe;
   /**
    * Probe interval in seconds; typed-probe default 10, legacy OCI default 30.
    */

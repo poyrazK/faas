@@ -8,13 +8,15 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="SidecarProbeTcpSocket")
+T = TypeVar("T", bound="SidecarTCPSocketProbe")
 
 
 @_attrs_define
-class SidecarProbeTcpSocket:
+class SidecarTCPSocketProbe:
+    """TCP connection probe opened from inside the container."""
+
     port: int | Unset = UNSET
-    """Container port; 0/omitted inherits the workload port."""
+    """TCP container port; 0/omitted inherits the workload port."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,12 +35,12 @@ class SidecarProbeTcpSocket:
         d = dict(src_dict)
         port = d.pop("port", UNSET)
 
-        sidecar_probe_tcp_socket = cls(
+        sidecar_tcp_socket_probe = cls(
             port=port,
         )
 
-        sidecar_probe_tcp_socket.additional_properties = d
-        return sidecar_probe_tcp_socket
+        sidecar_tcp_socket_probe.additional_properties = d
+        return sidecar_tcp_socket_probe
 
     @property
     def additional_keys(self) -> list[str]:

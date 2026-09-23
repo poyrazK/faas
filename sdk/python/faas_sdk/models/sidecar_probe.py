@@ -9,9 +9,9 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.sidecar_probe_exec import SidecarProbeExec
-    from ..models.sidecar_probe_http_get import SidecarProbeHttpGet
-    from ..models.sidecar_probe_tcp_socket import SidecarProbeTcpSocket
+    from ..models.sidecar_exec_probe import SidecarExecProbe
+    from ..models.sidecar_http_get_probe import SidecarHTTPGetProbe
+    from ..models.sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 
 
 T = TypeVar("T", bound="SidecarProbe")
@@ -28,9 +28,12 @@ class SidecarProbe:
 
     test: list[str] | Unset = UNSET
     """Legacy OCI exec form: CMD, CMD-SHELL, or NONE. Retained for startup_probe compatibility."""
-    exec_: SidecarProbeExec | Unset = UNSET
-    http_get: SidecarProbeHttpGet | Unset = UNSET
-    tcp_socket: SidecarProbeTcpSocket | Unset = UNSET
+    exec_: SidecarExecProbe | Unset = UNSET
+    """Exec probe command passed as argv inside the container; no shell is implied."""
+    http_get: SidecarHTTPGetProbe | Unset = UNSET
+    """HTTP GET probe sent from inside the container."""
+    tcp_socket: SidecarTCPSocketProbe | Unset = UNSET
+    """TCP connection probe opened from inside the container."""
     period_s: int | Unset = UNSET
     """Probe interval in seconds; typed-probe default 10, legacy OCI default 30."""
     interval_s: int | Unset = UNSET
@@ -114,33 +117,33 @@ class SidecarProbe:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.sidecar_probe_exec import SidecarProbeExec
-        from ..models.sidecar_probe_http_get import SidecarProbeHttpGet
-        from ..models.sidecar_probe_tcp_socket import SidecarProbeTcpSocket
+        from ..models.sidecar_exec_probe import SidecarExecProbe
+        from ..models.sidecar_http_get_probe import SidecarHTTPGetProbe
+        from ..models.sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 
         d = dict(src_dict)
         test = cast(list[str], d.pop("test", UNSET))
 
         _exec_ = d.pop("exec", UNSET)
-        exec_: SidecarProbeExec | Unset
+        exec_: SidecarExecProbe | Unset
         if isinstance(_exec_, Unset):
             exec_ = UNSET
         else:
-            exec_ = SidecarProbeExec.from_dict(_exec_)
+            exec_ = SidecarExecProbe.from_dict(_exec_)
 
         _http_get = d.pop("http_get", UNSET)
-        http_get: SidecarProbeHttpGet | Unset
+        http_get: SidecarHTTPGetProbe | Unset
         if isinstance(_http_get, Unset):
             http_get = UNSET
         else:
-            http_get = SidecarProbeHttpGet.from_dict(_http_get)
+            http_get = SidecarHTTPGetProbe.from_dict(_http_get)
 
         _tcp_socket = d.pop("tcp_socket", UNSET)
-        tcp_socket: SidecarProbeTcpSocket | Unset
+        tcp_socket: SidecarTCPSocketProbe | Unset
         if isinstance(_tcp_socket, Unset):
             tcp_socket = UNSET
         else:
-            tcp_socket = SidecarProbeTcpSocket.from_dict(_tcp_socket)
+            tcp_socket = SidecarTCPSocketProbe.from_dict(_tcp_socket)
 
         period_s = d.pop("period_s", UNSET)
 

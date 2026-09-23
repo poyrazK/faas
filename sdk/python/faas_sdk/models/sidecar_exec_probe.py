@@ -6,13 +6,15 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="SidecarProbeExec")
+T = TypeVar("T", bound="SidecarExecProbe")
 
 
 @_attrs_define
-class SidecarProbeExec:
+class SidecarExecProbe:
+    """Exec probe command passed as argv inside the container; no shell is implied."""
+
     command: list[str]
-    """Argv executed in the image root; no shell is implied."""
+    """Executable and arguments, in order."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,12 +35,12 @@ class SidecarProbeExec:
         d = dict(src_dict)
         command = cast(list[str], d.pop("command"))
 
-        sidecar_probe_exec = cls(
+        sidecar_exec_probe = cls(
             command=command,
         )
 
-        sidecar_probe_exec.additional_properties = d
-        return sidecar_probe_exec
+        sidecar_exec_probe.additional_properties = d
+        return sidecar_exec_probe
 
     @property
     def additional_keys(self) -> list[str]:

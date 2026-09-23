@@ -8,15 +8,17 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="SidecarProbeHttpGet")
+T = TypeVar("T", bound="SidecarHTTPGetProbe")
 
 
 @_attrs_define
-class SidecarProbeHttpGet:
+class SidecarHTTPGetProbe:
+    """HTTP GET probe sent from inside the container."""
+
     path: str | Unset = UNSET
     """HTTP path; defaults to /."""
     port: int | Unset = UNSET
-    """Container port; 0/omitted inherits the workload port."""
+    """HTTP container port; 0/omitted inherits the workload port."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,13 +43,13 @@ class SidecarProbeHttpGet:
 
         port = d.pop("port", UNSET)
 
-        sidecar_probe_http_get = cls(
+        sidecar_http_get_probe = cls(
             path=path,
             port=port,
         )
 
-        sidecar_probe_http_get.additional_properties = d
-        return sidecar_probe_http_get
+        sidecar_http_get_probe.additional_properties = d
+        return sidecar_http_get_probe
 
     @property
     def additional_keys(self) -> list[str]:

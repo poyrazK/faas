@@ -1219,11 +1219,11 @@ from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
 from .sidecar_disk_io_profile import SidecarDiskIoProfile
 from .sidecar_env import SidecarEnv
+from .sidecar_exec_probe import SidecarExecProbe
+from .sidecar_http_get_probe import SidecarHTTPGetProbe
 from .sidecar_preset import SidecarPreset
 from .sidecar_probe import SidecarProbe
-from .sidecar_probe_exec import SidecarProbeExec
-from .sidecar_probe_http_get import SidecarProbeHttpGet
-from .sidecar_probe_tcp_socket import SidecarProbeTcpSocket
+from .sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 from .sidecar_timeline_response import SidecarTimelineResponse
 from .sidecar_timeline_status import SidecarTimelineStatus
 from .sidecar_timeline_status_status import SidecarTimelineStatusStatus
@@ -2587,11 +2587,11 @@ __all__ = (
     "SidecarCpuMillicores",
     "SidecarDiskIoProfile",
     "SidecarEnv",
+    "SidecarExecProbe",
+    "SidecarHTTPGetProbe",
     "SidecarPreset",
     "SidecarProbe",
-    "SidecarProbeExec",
-    "SidecarProbeHttpGet",
-    "SidecarProbeTcpSocket",
+    "SidecarTCPSocketProbe",
     "SidecarTimelineResponse",
     "SidecarTimelineStatus",
     "SidecarTimelineStatusStatus",
