@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -105,6 +106,29 @@ func TestServiceProxyMetricsOutcomes(t *testing.T) {
 				t.Errorf("%s = %v, want 1", tc.want, got)
 			}
 		})
+	}
+}
+
+func TestServiceProxyReportsBindingDenialSeparately(t *testing.T) {
+	m := NewMetrics()
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{}, ErrServiceProxyBindingDenied
+		},
+		Metrics: m,
+	})
+	rec := meteredGET(t, proxy)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "has not declared") {
+		t.Fatalf("response = %d %q, want binding-specific 403", rec.Code, rec.Body.String())
+	}
+	if got := callCount(t, m, ServiceCallBindingDenied); got != 1 {
+		t.Fatalf("binding_denied = %v, want 1", got)
+	}
+	if got := callCount(t, m, ServiceCallDenied); got != 0 {
+		t.Fatalf("denied = %v, want 0 for a binding policy rejection", got)
 	}
 }
 

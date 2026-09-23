@@ -15,6 +15,8 @@ T = TypeVar("T", bound="DeliverAppEventResponse")
 
 @_attrs_define
 class DeliverAppEventResponse:
+    """Durable receipt for an accepted outbound webhook delivery."""
+
     id: str
     webhook_id: str
     destination: str

@@ -70,6 +70,9 @@ var (
 	// Keep it distinct from ErrServiceProxyDenied: cross-account access is an
 	// identity failure, while this one has an actionable project setting.
 	ErrServiceProxyPreviewProductionDenied = errors.New("preview-to-production service call denied")
+	// ErrServiceProxyBindingDenied is returned after the same-account boundary
+	// succeeds when a strict caller has not declared the target service.
+	ErrServiceProxyBindingDenied = errors.New("service proxy binding denied")
 )
 
 // ServiceTarget is the resolved routing identity of a named service. It
@@ -115,8 +118,8 @@ type ServiceCaller struct {
 	InstanceID string
 }
 
-// ServiceProxyAuthorizer enforces the tenant boundary between caller and
-// target apps. A nil authorizer is treated as a wiring error and fails closed.
+// ServiceProxyAuthorizer enforces the tenant boundary and any caller-side
+// declared-binding policy. A nil authorizer is a wiring error and fails closed.
 type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID string) (ServiceCaller, error)
 
 // ServiceProxyCallerResolver binds the caller header to the network identity
@@ -422,6 +425,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"Preview dependency denied",
 				"this project blocks preview applications from calling production services; use an isolated preview dependency or explicitly set preview_service_policy to allow_marked",
 			))
+			return
+		}
+		if errors.Is(err, ErrServiceProxyBindingDenied) {
+			p.metrics.IncServiceCall(ServiceCallBindingDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has not declared this service binding")
 			return
 		}
 		if errors.Is(err, ErrServiceProxyDenied) {

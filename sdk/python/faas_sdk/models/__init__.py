@@ -1199,6 +1199,7 @@ from .send_app_message_request import SendAppMessageRequest
 from .send_app_message_request_data_content_type import SendAppMessageRequestDataContentType
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
+from .service_binding_policy import ServiceBindingPolicy
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
@@ -2561,6 +2562,7 @@ __all__ = (
     "SendAppMessageRequestDataContentType",
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
+    "ServiceBindingPolicy",
     "ServiceReplicas",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",

@@ -116,7 +116,9 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 		case errors.Is(err, state.ErrRolloutStateInvalid):
 			api.WriteProblem(w, api.ErrRolloutStateInvalid(updated.RolloutState))
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "recover failed", err.Error()))
+			writeCustomerInternalProblem(w, r, s.log, "recover rollout",
+				"Gregale could not recover this rollout.",
+				"Retry the request in a moment; if it continues, contact support.", err)
 		}
 		return
 	}

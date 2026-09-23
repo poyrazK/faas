@@ -356,7 +356,7 @@ func (s *server) renderResetForm(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		s.log.Error("dashboard render reset form", "err", err)
-		http.Error(w, "render failed", http.StatusInternalServerError)
+		renderProblem(w, s.log, err)
 	}
 }
 
@@ -445,7 +445,7 @@ func (s *server) postReset(w http.ResponseWriter, r *http.Request) {
 func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -1075,13 +1075,13 @@ func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(raw) != 32 {
-		http.Error(w, "verification link expired or already used", http.StatusGone)
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
 	accountID, err := s.store.ConsumeEmailVerificationToken(r.Context(), api.HashToken(raw))
 	if err != nil {
 		s.log.Info("email_verification.invalid_token", "err", err)
-		http.Error(w, "verification link expired or already used", http.StatusGone)
+		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
 	s.audit.Emit(r.Context(), "auth.email_verified", &accountID, map[string]any{
@@ -1090,7 +1090,7 @@ func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
 	page := dashboard.Page{Title: "Email verified", Body: "email_verified"}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		s.log.Error("dashboard render email verified", "err", err)
-		http.Error(w, "render failed", http.StatusInternalServerError)
+		renderProblem(w, s.log, err)
 	}
 }
 

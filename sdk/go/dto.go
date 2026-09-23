@@ -25,6 +25,7 @@ type (
 	AppEffectiveLimits     = api.AppEffectiveLimits
 	AppConfiguredResources = api.AppConfiguredResources
 	AppServiceBinding      = api.AppServiceBinding
+	ServiceBindingPolicy   = api.ServiceBindingPolicy
 	DeclaredRoute          = api.DeclaredRoute
 	RetryPolicyDTO         = api.RetryPolicyDTO
 
@@ -214,6 +215,11 @@ type (
 	// RaiseOverageCap).
 	SetAccountEgressAllowlistExtraRequest = api.SetAccountEgressAllowlistExtraRequest
 	AccountEgressAllowlistExtraResponse   = api.AccountEgressAllowlistExtraResponse
+)
+
+const (
+	ServiceBindingPolicyAccount  = api.ServiceBindingPolicyAccount
+	ServiceBindingPolicyDeclared = api.ServiceBindingPolicyDeclared
 )
 
 const (

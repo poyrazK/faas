@@ -48,6 +48,13 @@ func TestCreatePreview_ProvisionsStablePRAppAndReusesIt(t *testing.T) {
 		AccountID: e.acct.ID, Slug: "acme", Type: "stateless", Runtime: "node22",
 		RAMMB: 512, CPUMillicores: 500, MaxConcurrency: 8, IdleTimeoutS: 45,
 		Status: state.AppActive, WorkloadClass: state.WorkloadClassHTTP,
+		Manifest: state.AppManifest{
+			ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+			ServiceBindings: []api.AppServiceBinding{{
+				Binding: "GREGALE_SERVICE_BILLING_URL",
+				Service: "billing",
+			}},
+		},
 	}, api.MustLimitsFor(api.PlanPro))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
@@ -67,12 +74,18 @@ func TestCreatePreview_ProvisionsStablePRAppAndReusesIt(t *testing.T) {
 	if got.Status != api.AppStatusUndeployed {
 		t.Fatalf("preview status = %q, want %q", got.Status, api.AppStatusUndeployed)
 	}
+	if got.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared || len(got.ServiceBindings) != 1 {
+		t.Fatalf("preview service binding policy = %q, bindings = %#v; want inherited strict policy", got.ServiceBindingPolicy, got.ServiceBindings)
+	}
 	created, err := e.store.AppBySlug(context.Background(), "pr-42-acme")
 	if err != nil {
 		t.Fatalf("lookup preview: %v", err)
 	}
 	if created.RAMMB != parent.RAMMB || created.CPUMillicores != parent.CPUMillicores || created.MaxConcurrency != parent.MaxConcurrency {
 		t.Fatalf("preview config = %+v, parent = %+v", created, parent)
+	}
+	if created.Manifest.EffectiveServiceBindingPolicy() != api.ServiceBindingPolicyDeclared || len(created.Manifest.ServiceBindings) != 1 {
+		t.Fatalf("persisted preview manifest did not inherit service binding policy: %#v", created.Manifest)
 	}
 
 	repeat := e.do(t, "POST", "/v1/apps/acme/previews", api.CreatePreviewRequest{PRNumber: 42, TTLHours: 24}, nil)

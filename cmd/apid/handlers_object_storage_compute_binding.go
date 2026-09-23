@@ -219,11 +219,15 @@ func (s *server) createObjectStorageComputeBinding(w http.ResponseWriter, r *htt
 func (s *server) persistObjectStorageBindingSecrets(r *http.Request, acct state.Account, app state.App, credentialID, scope string, values []struct{ key, value string }, limits api.Limits) *api.Problem {
 	recipient := setSecretRecipient()
 	if recipient == nil {
-		return api.ErrCapacity("host age recipient not loaded — refusing to seal")
+		return customerCapacityProblem(s.log, "store object-storage credentials", "Credential storage temporarily unavailable",
+			"Gregale could not securely store these credentials.",
+			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	hmacKey := hostHMACKey()
 	if len(hmacKey) == 0 {
-		return api.ErrCapacity("host hmac key not loaded — refusing to seal")
+		return customerCapacityProblem(s.log, "store object-storage credentials", "Credential storage temporarily unavailable",
+			"Gregale could not securely store these credentials.",
+			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	var idents []*age.X25519Identity
 	if mfaIdentities != nil {
@@ -235,23 +239,31 @@ func (s *server) persistObjectStorageBindingSecrets(r *http.Request, acct state.
 		}
 	}
 	if len(idents) == 0 {
-		return api.ErrCapacity("host age identities not loaded — refusing to seal")
+		return customerCapacityProblem(s.log, "store object-storage credentials", "Credential storage temporarily unavailable",
+			"Gregale could not securely store these credentials.",
+			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	kid, err := secretbox.IdentityFingerprint(idents)
 	if err != nil {
-		return api.ErrCapacity("could not resolve kid: " + err.Error())
+		return customerCapacityProblem(s.log, "fingerprint object-storage credential identity", "Credential storage temporarily unavailable",
+			"Gregale could not securely store these credentials.",
+			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
 	for _, item := range values {
 		valueHash, err := secretbox.ValueFingerprint([]byte(item.value), hmacKey)
 		if err != nil {
-			return api.ErrCapacity("could not compute value_hash: " + err.Error())
+			return customerCapacityProblem(s.log, "fingerprint object-storage credential", "Credential storage temporarily unavailable",
+				"Gregale could not securely store these credentials.",
+				"Retry in a few seconds; if it still fails, contact support.", err)
 		}
 		ciphertext, err := secretbox.SealOne(recipient, item.key, item.value, limits.SecretValueMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
 				return prob
 			}
-			return api.ErrCapacity("could not seal secret")
+			return customerCapacityProblem(s.log, "encrypt object-storage credential", "Credential storage temporarily unavailable",
+				"Gregale could not securely store these credentials.",
+				"Retry in a few seconds; if it still fails, contact support.", err)
 		}
 		if err := s.store.PutManagedObjectStorageSecret(r.Context(), state.AppSecret{
 			AccountID: acct.ID, AppID: app.ID, Scope: scope, Key: item.key, Ciphertext: ciphertext,

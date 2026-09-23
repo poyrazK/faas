@@ -1488,8 +1488,11 @@ type AppManifest struct {
 	// Compose depends_on edges. Keeping it beside the generated service URL
 	// environment makes the declaration inspectable without parsing env text.
 	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
-	WorkingDir      string                  `json:"working_dir,omitempty"`
-	Port            int                     `json:"port,omitempty"`
+
+	ServiceBindingPolicy api.ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+
+	WorkingDir string `json:"working_dir,omitempty"`
+	Port       int    `json:"port,omitempty"`
 	// Ports is the app-owned listener declaration. It is merged into every
 	// deployment manifest so the gateway can expose named TCP listeners while
 	// UDP listeners remain available to workloads through guest discovery.
@@ -1531,12 +1534,19 @@ func (m AppManifest) EffectiveCrawlerPolicy() string {
 	}
 }
 
+// EffectiveServiceBindingPolicy returns the runtime authorization policy.
+// Empty legacy manifests retain same-account reachability; unknown non-empty
+// values fail closed through api.ServiceBindingPolicy.Effective.
+func (m AppManifest) EffectiveServiceBindingPolicy() api.ServiceBindingPolicy {
+	return m.ServiceBindingPolicy.Effective()
+}
+
 // IsZero reports whether the manifest carries no runner or lifecycle fields.
 // It keeps the legacy empty-manifest JSON shape while allowing lifecycle-only
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1550,6 +1560,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
+	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {

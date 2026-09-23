@@ -22,8 +22,9 @@ class Problem:
     """RFC 9457 problem+json envelope. The `code` field is the stable
     machine-readable identifier; clients branch on it. `limit` and
     `observed` are populated on quota errors. `docs_url` points the
-    user at the next action. `billing_portal_url` is populated on
-    `code: payment_required` when the customer already has a
+    user at the next action. Common customer-facing codes and recovery
+    guidance are listed in `docs/errors.md`. `billing_portal_url` is
+    populated on `code: payment_required` when the customer already has a
     provider subscription and must update it in the provider
     portal. `checkout_url` is populated when a new hosted checkout
     is required. `paddle_checkout_url` is retained as a legacy

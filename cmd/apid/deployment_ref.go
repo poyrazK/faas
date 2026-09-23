@@ -85,7 +85,9 @@ func (s *server) resolveDeploymentRef(ctx context.Context, appID, ref string) (s
 		if errors.Is(err, state.ErrNotFound) {
 			return "", api.ErrRollbackTargetNotFound(fmt.Sprintf("no deployment %s exists for this app", renderRevision(revision)))
 		}
-		return "", api.ErrCapacity(fmt.Sprintf("resolve deployment revision: %v", err))
+		return "", customerCapacityProblem(s.log, "resolve deployment revision", "Deployment temporarily unavailable",
+			"Gregale could not resolve this deployment reference right now.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 	}
 	return dep.ID, nil
 }

@@ -186,6 +186,7 @@ injects the URLs for you, so nothing hard-codes a hostname:
 services:
   public-api:
     depends_on: [auth, billing, recommendation]
+    x-gregale-service-policy: declared
 ```
 
 `public-api` then starts with `GREGALE_SERVICE_AUTH_URL`,
@@ -195,8 +196,11 @@ unknown names, self-edges, and ambiguous names are rejected.
 
 The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, and queue
-bindings. A service binding is currently a discovery and deploy-order
-declaration, not a network allowlist: omitting an edge does not deny traffic.
+bindings. The default `account` policy keeps the backwards-compatible behavior:
+omitting an edge does not deny same-account traffic. Opt into the `declared`
+policy with `x-gregale-service-policy: declared`; the gateway then returns 403
+for calls to services that are not listed in `depends_on`. The CLI reports
+those service bindings as `enforced`.
 
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot

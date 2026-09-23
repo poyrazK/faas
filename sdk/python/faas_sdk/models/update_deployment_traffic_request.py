@@ -6,24 +6,29 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="UpdateDeploymentTrafficRequest")
 
 
 @_attrs_define
 class UpdateDeploymentTrafficRequest:
-    """Body for PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). Sets the per-deployment traffic-split weight (integer
-    [0, 100]). PR-A uses the zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live
-    row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are rejected at 403
-    plan_traffic_split_not_allowed.
+    """Body for PATCH /v1/deployments/{id}/traffic. Optionally require a particular live sibling to remain the sole 100%
+    serving deployment when the update commits.
 
     """
 
     traffic_percent: int
     """Per-deployment traffic-split weight. 0 = no traffic (used during rollback). 100 = sole live deployment."""
+    expected_serving_deployment_id: str | Unset = UNSET
+    """Optional 32-hex or dashed deployment id. If this deployment is no longer the sole live 100% serving sibling
+    at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         traffic_percent = self.traffic_percent
+
+        expected_serving_deployment_id = self.expected_serving_deployment_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -32,6 +37,8 @@ class UpdateDeploymentTrafficRequest:
                 "traffic_percent": traffic_percent,
             }
         )
+        if expected_serving_deployment_id is not UNSET:
+            field_dict["expected_serving_deployment_id"] = expected_serving_deployment_id
 
         return field_dict
 
@@ -40,8 +47,11 @@ class UpdateDeploymentTrafficRequest:
         d = dict(src_dict)
         traffic_percent = d.pop("traffic_percent")
 
+        expected_serving_deployment_id = d.pop("expected_serving_deployment_id", UNSET)
+
         update_deployment_traffic_request = cls(
             traffic_percent=traffic_percent,
+            expected_serving_deployment_id=expected_serving_deployment_id,
         )
 
         update_deployment_traffic_request.additional_properties = d

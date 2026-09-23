@@ -10,6 +10,8 @@ T = TypeVar("T", bound="DeliverAppEventRequest")
 
 @_attrs_define
 class DeliverAppEventRequest:
+    """Request to enqueue a signed webhook delivery owned by the source app."""
+
     destination: str
     """A webhook id or exact registered target URL owned by the source app."""
     type_: str

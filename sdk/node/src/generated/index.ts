@@ -577,7 +577,6 @@ export type { QueueWorkloadProfileRequest } from './models/QueueWorkloadProfileR
 export type { QueueWorkloadProfileResponse } from './models/QueueWorkloadProfileResponse.js';
 export type { QuotaBlock } from './models/QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './models/RaiseOverageCapRequest.js';
-export type { RateLimitPlain } from './models/RateLimitPlain.js';
 export type { RecordDevSyncRequest } from './models/RecordDevSyncRequest.js';
 export type { RecoverRolloutRequest } from './models/RecoverRolloutRequest.js';
 export type { RekeyProgress } from './models/RekeyProgress.js';
@@ -626,6 +625,7 @@ export type { SecurityQuarantineRecoveryRequest } from './models/SecurityQuarant
 export type { SecurityQuarantineRecoveryResponse } from './models/SecurityQuarantineRecoveryResponse.js';
 export type { SendAppMessageRequest } from './models/SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './models/SendAppMessageResponse.js';
+export type { ServiceBindingPolicy } from './models/ServiceBindingPolicy.js';
 export type { ServiceReplicas } from './models/ServiceReplicas.js';
 export type { ServiceRolloutHandoffResponse } from './models/ServiceRolloutHandoffResponse.js';
 export type { SessionInfo } from './models/SessionInfo.js';

@@ -13,9 +13,8 @@ info:
     with `Idempotent-Replayed: true`.
 
     Errors use RFC 9457 `application/problem+json` with a stable `code`
-    field — see `Problem` schema. The single documented exception is the
-    429 response from the authlimiter middleware: plain text only
-    (`pkg/middleware/authlimit.go`).
+    field — see `Problem` schema. Authentication rate limits use the same
+    envelope with `code: auth_rate_limited` and a `Retry-After` header.
 
     Operator routes (`/v1/compute-nodes`), dashboard routes (`/dashboard/*`),
     webhook receivers (`/v1/webhooks/stripe`), SSE streams (`/v1/events`,
@@ -20357,7 +20356,7 @@ components:
             enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, CONNECT, TRACE]
 
     AppServiceBinding:
-      description: "A repository-declared dependency on another same-account app. The binding is injected for discovery; gateway authorization remains account-scoped until a separate bindings-only policy is enabled."
+      description: "A repository-declared dependency on another same-account app. The binding is injected for discovery and becomes an authorization capability when the caller selects the `declared` service binding policy."
       type: object
       required: [binding, service]
       properties:
@@ -20369,6 +20368,11 @@ components:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]{1,61})[a-z0-9]$'
           description: "Stable target app name used by private service discovery."
+
+    ServiceBindingPolicy:
+      description: "Caller-side authorization policy for internal service requests. `account` preserves same-account reachability; `declared` permits only targets present in the caller's service bindings."
+      type: string
+      enum: [account, declared]
 
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
@@ -20450,10 +20454,13 @@ components:
           description: "Automatic teardown deadline for a preview, when one is configured."
         manifest: { $ref: '#/components/schemas/AppManifest' }
         service_bindings:
-          description: "Repository-declared same-account service dependencies currently injected into this workload. This is a read-only discovery projection, not an enforcement allowlist."
+          description: "Repository-declared same-account service dependencies currently injected into this workload. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy."
           type: array
           items:
             $ref: '#/components/schemas/AppServiceBinding'
+        service_binding_policy:
+          $ref: '#/components/schemas/ServiceBindingPolicy'
+          description: "Effective internal-service authorization policy. Legacy apps without a stored value return `account`."
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
         # the per-app outbound CIDR allowlist. Each entry is a
         # canonical CIDR string — v4 ("1.2.3.0/24") or v6
@@ -26078,6 +26085,9 @@ components:
           type: array
           items: { type: string }
           description: "Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies."
+        service_binding_policy:
+          $ref: '#/components/schemas/ServiceBindingPolicy'
+          description: "Effective policy selected by the Compose `x-gregale-service-policy` extension. Defaults to `account`."
         class:
           type: string
           enum: [http, graphql, grpc, job, worker, server, unknown]
@@ -31881,8 +31891,9 @@ components:
         RFC 9457 problem+json envelope. The `code` field is the stable
         machine-readable identifier; clients branch on it. `limit` and
         `observed` are populated on quota errors. `docs_url` points the
-        user at the next action. `billing_portal_url` is populated on
-        `code: payment_required` when the customer already has a
+        user at the next action. Common customer-facing codes and recovery
+        guidance are listed in `docs/errors.md`. `billing_portal_url` is
+        populated on `code: payment_required` when the customer already has a
         provider subscription and must update it in the provider
         portal. `checkout_url` is populated when a new hosted checkout
         is required. `paddle_checkout_url` is retained as a legacy
@@ -32036,13 +32047,6 @@ components:
         source: { type: string, enum: [build, vm-init, app, gateway], example: "app" }
         message: { type: string, example: "the kernel OOM-killer fired on the workload" }
 
-    RateLimitPlain:
-      type: string
-      description: |
-        Plain-text body returned ONLY by the authlimiter middleware
-        (`pkg/middleware/authlimit.go`, around line 200). All other 429s
-        return a `Problem` with `code: plan_limit_concurrency` or
-        `code: quota_exhausted`.
     # ------------------------------------------------------------------ MFA
     # IAM-2 (issue #186): TOTP MFA on dashboard sessions. The five
     # /v1/account/mfa/* routes and their wire shapes live here so
@@ -35114,9 +35118,9 @@ components:
 
     TooManyRequests:
       description: |
-        429. Two response shapes:
-        - `application/problem+json` for code-driven 429s (`plan_limit_concurrency`, `quota_exhausted`).
-        - `text/plain` for the authlimiter middleware (`pkg/middleware/authlimit.go`).
+        429 application/problem+json response. Authentication throttling uses
+        `auth_rate_limited`; plan and usage limits use their specific stable
+        codes such as `plan_limit_concurrency` and `quota_exhausted`.
       headers:
         Retry-After:
           schema: { type: integer, example: 60 }
@@ -35133,8 +35137,6 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
-        text/plain:
-          schema: { $ref: '#/components/schemas/RateLimitPlain' }
 
     # ─── Inbound-webhook problem responses (ADR-212) ───────────────────────────
     InboundWebhookInvalid:

@@ -524,10 +524,11 @@ var schemaSpecOnly = map[string]bool{
 	// Same pattern as TriggerKind above: the DTO scanner walks
 	// struct types only; a `type X string` definition isn't a
 	// struct so it doesn't surface as a scanner name.
-	"FilterCriteriaOp":   true,
-	"KafkaSASLMechanism": true,
-	"EnvDiffKind":        true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
-	"ResourceProfile":    true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
+	"FilterCriteriaOp":     true,
+	"KafkaSASLMechanism":   true,
+	"EnvDiffKind":          true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
+	"ResourceProfile":      true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
+	"ServiceBindingPolicy": true, // Typed-string enum in pkg/api/service_bindings.go; the schema is still part of the wire contract.
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.
@@ -1117,7 +1118,7 @@ func testErrorCodesParity(t *testing.T, root string, spec *specDoc) {
 
 	// Every code in code must have a corresponding response in spec
 	// whose status is StatusForCode(code) AND whose content includes
-	// application/problem+json (with the exception of plain-text 429s).
+	// application/problem+json.
 	// codes is pre-filtered by scanErrorCodes against codeExclude so
 	// non-public codes (CLI auth) never reach this loop.
 	var missing []string
@@ -1139,15 +1140,11 @@ func testErrorCodesParity(t *testing.T, root string, spec *specDoc) {
 		}
 	}
 
-	// Documented exception: 429 must declare BOTH application/problem+json
-	// (for code-driven 429s) AND text/plain (for the authlimiter). Hard
-	// fail if either is missing.
+	// Authentication throttling uses the same structured Problem contract as
+	// every other 429, so the shared response must retain problem+json.
 	if media, ok := spec.Responses["429"]; ok {
 		if !media["application/problem+json"] {
-			t.Errorf("429 must declare application/problem+json (for plan_limit_concurrency / quota_exhausted)")
-		}
-		if !media["text/plain"] {
-			t.Errorf("429 must declare text/plain (authlimiter middleware in pkg/middleware/authlimit.go)")
+			t.Errorf("429 must declare application/problem+json")
 		}
 	}
 }

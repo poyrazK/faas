@@ -52,7 +52,9 @@ func (s *server) getAccountRateLimits(w http.ResponseWriter, r *http.Request, ac
 	now := timeNow().UTC()
 	snapshot, err := s.readAccountDeployRate(r.Context(), acct, now)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("read account deploy rate: "+err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "read account deploy rate limits",
+			"Gregale could not load this account's deployment limits.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.AccountRateLimitsResponse{Deploys: accountDeployRateDTO(snapshot)})
@@ -62,7 +64,9 @@ func (s *server) admitAccountDeploy(w http.ResponseWriter, r *http.Request, acct
 	now := timeNow().UTC()
 	snapshot, err := s.consumeAccountDeployRate(r.Context(), acct, now)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("consume account deploy rate: "+err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "apply account deploy rate limits",
+			"Gregale could not check this account's deployment limit.",
+			"Retry the deployment in a moment; if it continues, contact support.", err)
 		return false
 	}
 	writeDeployRateHeaders(w.Header(), snapshot, now)

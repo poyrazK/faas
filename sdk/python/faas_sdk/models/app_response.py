@@ -19,6 +19,7 @@ from ..models.app_response_type import AppResponseType, check_app_response_type
 from ..models.app_response_visibility import AppResponseVisibility, check_app_response_visibility
 from ..models.app_response_workload_class import AppResponseWorkloadClass, check_app_response_workload_class
 from ..models.resource_profile import ResourceProfile, check_resource_profile
+from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -114,8 +115,12 @@ class AppResponse:
     preview_expires_at: datetime.datetime | None | Unset = UNSET
     """Automatic teardown deadline for a preview, when one is configured."""
     service_bindings: list[AppServiceBinding] | Unset = UNSET
-    """Repository-declared same-account service dependencies currently injected into this workload. This is a read-
-    only discovery projection, not an enforcement allowlist."""
+    """Repository-declared same-account service dependencies currently injected into this workload. They are
+    discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared`
+    policy."""
+    service_binding_policy: ServiceBindingPolicy | Unset = UNSET
+    """Caller-side authorization policy for internal service requests. `account` preserves same-account
+    reachability; `declared` permits only targets present in the caller's service bindings."""
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
@@ -308,6 +313,10 @@ class AppResponse:
                 service_bindings_item = service_bindings_item_data.to_dict()
                 service_bindings.append(service_bindings_item)
 
+        service_binding_policy: str | Unset = UNSET
+        if not isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = self.service_binding_policy
+
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
@@ -478,6 +487,8 @@ class AppResponse:
             field_dict["preview_expires_at"] = preview_expires_at
         if service_bindings is not UNSET:
             field_dict["service_bindings"] = service_bindings
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
         if streaming_enabled is not UNSET:
@@ -695,6 +706,13 @@ class AppResponse:
                 service_bindings_item = AppServiceBinding.from_dict(service_bindings_item_data)
 
                 service_bindings.append(service_bindings_item)
+
+        _service_binding_policy = d.pop("service_binding_policy", UNSET)
+        service_binding_policy: ServiceBindingPolicy | Unset
+        if isinstance(_service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        else:
+            service_binding_policy = check_service_binding_policy(_service_binding_policy)
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
@@ -922,6 +940,7 @@ class AppResponse:
             preview_pr_state=preview_pr_state,
             preview_expires_at=preview_expires_at,
             service_bindings=service_bindings,
+            service_binding_policy=service_binding_policy,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,

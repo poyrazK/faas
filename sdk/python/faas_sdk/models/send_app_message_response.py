@@ -16,6 +16,8 @@ T = TypeVar("T", bound="SendAppMessageResponse")
 
 @_attrs_define
 class SendAppMessageResponse:
+    """Durable receipt for a queued app-to-app message."""
+
     id: str
     """Durable invocation identifier."""
     event_id: str
