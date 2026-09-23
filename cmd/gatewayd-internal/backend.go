@@ -45,6 +45,11 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 	if revision, slug, matched := gateway.DeploymentScopeFromHost(r.deploySuffix, host); matched {
 		return r.deploymentPreview(ctx, slug, revision)
 	}
+	if label, ok := r.deploymentAliasLabelForHost(host); ok {
+		if app, found, err := r.deploymentAliasByHostLabel(ctx, label); err != nil || found {
+			return app, found, err
+		}
+	}
 	if slug, ok := r.slugFor(host); ok {
 		return r.appBySlug(ctx, slug)
 	}
@@ -67,6 +72,60 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 		}
 	}
 	return r.customDomain(ctx, host)
+}
+
+func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
+	if r.appsSuffix == "" {
+		return "", false
+	}
+	label, ok := strings.CutSuffix(host, r.appsSuffix)
+	if !ok || !strings.HasPrefix(label, "tag-") || strings.Contains(label, ".") {
+		return "", false
+	}
+	return label, true
+}
+
+func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel string) (gateway.App, bool, error) {
+	lookup, ok := r.store.(state.DeploymentAliasRoutingStore)
+	if !ok {
+		return gateway.App{}, false, nil
+	}
+	alias, err := lookup.DeploymentAliasByHostLabel(ctx, hostLabel)
+	if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrConflict) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	app, err := r.store.AppByID(ctx, alias.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
+	}
+	deployment, err := r.store.DeploymentByID(ctx, alias.DeploymentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
+		return gateway.App{}, false, nil
+	}
+	resolved, found, err := r.toApp(ctx, app)
+	if err != nil || !found {
+		return resolved, found, err
+	}
+	resolved.PinnedDeploymentID = deployment.ID
+	if deployment.Scope != "default" {
+		resolved.PinnedDeploymentScope = deployment.Scope
+	}
+	return resolved, true, nil
 }
 
 // deploymentPreview resolves a deployment-preview hostname to its parent app
@@ -557,6 +616,9 @@ type invalidator interface {
 	// key, which it doesn't. The cache is advisory so a
 	// brief staleness window is fine.
 	ResetEdgeRules()
+	// InvalidateRoutesForApp removes cached host routes and last-known-good
+	// entries for an app when its deployment state changes.
+	InvalidateRoutesForApp(appID string)
 	// ResetApp (ADR-091 amendment / §4.1.2.0) drops a single app
 	// from the apps LRU when its apps.maintenance_mode (or any
 	// other customer-visible column) flips. The companion trigger
@@ -837,6 +899,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				primer.PreInstantiateAppMetrics(appID)
 			}
 			inv.ResetApp(appID)
+			inv.InvalidateRoutesForApp(appID)
 			inv.InvalidateResponseCacheByApp(appID)
 		} else {
 			if observer, ok := inv.(interface{ ObserveNotificationPayloadRejected() }); ok {
@@ -936,6 +999,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			// refreshing weights; otherwise a new proxy route, including an
 			// exact deployment-preview pin, could remain stale for the lifetime
 			// of the gateway process.
+			inv.InvalidateRoutesForApp(p.AppID)
 			inv.ResetApp(p.AppID)
 			// v1 cache lookup happens before target selection, so the
 			// deployment dimension is currently empty. Fence rollout and

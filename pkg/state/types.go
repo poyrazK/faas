@@ -2451,6 +2451,21 @@ func (d Deployment) DeploymentPreviewActive() bool {
 	}
 }
 
+// DeploymentAliasActive reports whether a named alias may keep routing to its
+// pinned revision. Unlike a deployment-preview URL, an alias deliberately
+// remains valid after a newer revision supersedes its target. Failed or
+// cancelled targets are never routable, and soft-deletion is checked by the
+// caller because it is stored separately from status.
+func (d Deployment) DeploymentAliasActive() bool {
+	switch d.Status {
+	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting,
+		DeployLive, DeploySuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 // StageState is the typed view of the
 // `deployments.stage_state` jsonb column (ADR-117,
 // migration 00302). Shape:

@@ -1571,6 +1571,12 @@ func (s *server) handler() http.Handler {
 	// loadApp so cross-account probes collapse to the same 404 surface as
 	// the latest-deployment endpoint; pagination stays on the app's index.
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.listAppDeployments))))
+	// Stable customer-managed names for immutable deployment rows. These
+	// control-plane operations do not change production traffic; the gateway
+	// hostname integration is a follow-up stack PR.
+	mux.HandleFunc("GET /v1/apps/{slug}/deployment-aliases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.listDeploymentAliases))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/deployment-aliases/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setDeploymentAlias))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/deployment-aliases/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteDeploymentAlias))))
 	// App-scoped release cockpit: current deployment, predecessor, field-level
 	// diff, and the eligible rollback target in one read.
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{id}/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getAppDeploymentSummary))))

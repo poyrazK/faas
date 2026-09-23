@@ -106,6 +106,20 @@ func (c *RouteCache) PutTarget(host string, target RouteTarget) {
 	}
 }
 
+// InvalidateApp removes every host route targeting appID. Deployment status
+// changes can close an immutable preview URL while leaving its app unchanged.
+func (c *RouteCache) InvalidateApp(appID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for el := c.ll.Front(); el != nil; {
+		next := el.Next()
+		if el.Value.(*routeEntry).target.AppID == appID {
+			c.removeElement(el)
+		}
+		el = next
+	}
+}
+
 // Invalidate drops host from the cache (on a route change / app delete). The next
 // request re-reads it from Postgres.
 func (c *RouteCache) Invalidate(host string) {
