@@ -1739,7 +1739,7 @@ type Store interface {
 	// ListPreviewsForTeardown (ADR-095 PR-C / issue #272) returns
 	// preview rows the teardown janitor should consider this tick:
 	// every non-torn_down preview that is either in a terminal-ish
-	// PR state (closed / stale) or past its preview_expires_at TTL.
+	// PR state (closed / stale / tearing_down) or past its preview_expires_at TTL.
 	//
 	// Deliberately NOT filtered on status <> 'deleted': the janitor
 	// is the component that sets status='deleted', and it must be
@@ -1755,6 +1755,10 @@ type Store interface {
 	// than a full-table scan. Ordered by preview_expires_at ASC
 	// (nulls last) so the most overdue rows are reaped first.
 	ListPreviewsForTeardown(ctx context.Context, now time.Time, maxPerTick int) ([]App, error)
+	// ClaimPreviewTeardown atomically fences a janitor candidate only when its
+	// state and lease still match the sweep snapshot. A reopened preview returns
+	// ErrNotFound. A claimed row remains claimable for crash recovery.
+	ClaimPreviewTeardown(ctx context.Context, observed App, now time.Time) (App, error)
 	// SetPreviewPrState (ADR-095 PR-C / issue #272) advances one
 	// preview row's lifecycle label. Returns the updated row, or
 	// ErrNotFound when no row matches the id.

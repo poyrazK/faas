@@ -143,7 +143,8 @@ func (s *PgStore) PutPRPreviewSet(ctx context.Context, set PRPreviewSet) error {
 		  and member.project_id is not distinct from root.project_id
 		  and member.preview_pr_number = $3
 		  and member.preview_of_slug is not null
-		  and member.status <> 'deleted'`, set.RootAppID, set.MemberAppIDs, set.PRNumber).Scan(&valid)
+		  and member.status <> 'deleted'
+		  and member.preview_pr_state is distinct from 'tearing_down'`, set.RootAppID, set.MemberAppIDs, set.PRNumber).Scan(&valid)
 	if err != nil {
 		return fmt.Errorf("state: validate PR preview members: %w", err)
 	}
@@ -170,6 +171,7 @@ func (s *PgStore) PutPRPreviewSet(ctx context.Context, set PRPreviewSet) error {
 			where member.id::text = any($1::text[])
 			  and member.preview_of_slug is not null
 			  and member.status <> 'deleted'
+			  and member.preview_pr_state is distinct from 'tearing_down'
 			  and not exists (
 			    select 1 from pr_preview_sets as active_set
 			    where active_set.member_app_ids @> array[member.id::text]
@@ -281,7 +283,8 @@ func (m *MemStore) PutPRPreviewSet(_ context.Context, set PRPreviewSet) error {
 	for _, id := range set.MemberAppIDs {
 		member, ok := m.apps[id]
 		if !ok || member.AccountID != root.AccountID || member.ProjectID != root.ProjectID ||
-			member.PreviewPrNumber != set.PRNumber || member.PreviewOfSlug == "" || member.Status == AppDeleted {
+			member.PreviewPrNumber != set.PRNumber || member.PreviewOfSlug == "" || member.Status == AppDeleted ||
+			member.PreviewPrState == PreviewPrStateTearingDown {
 			return fmt.Errorf("state: PR preview members do not share the root scope: %w", ErrConflict)
 		}
 	}
@@ -310,7 +313,7 @@ func (m *MemStore) PutPRPreviewSet(_ context.Context, set PRPreviewSet) error {
 			continue
 		}
 		app, ok := m.apps[id]
-		if !ok || app.PreviewOfSlug == "" || app.Status == AppDeleted {
+		if !ok || app.PreviewOfSlug == "" || app.Status == AppDeleted || app.PreviewPrState == PreviewPrStateTearingDown {
 			continue
 		}
 		now := time.Now().UTC()
