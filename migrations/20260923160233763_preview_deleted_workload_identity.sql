@@ -1,4 +1,4 @@
--- filename: 20260923120926560_preview_deleted_workload_identity.sql
+-- filename: 20260923160233763_preview_deleted_workload_identity.sql
 
 -- +goose Up
 -- +goose StatementBegin

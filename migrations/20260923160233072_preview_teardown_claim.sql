@@ -1,3 +1,5 @@
+-- filename: 20260923160233072_preview_teardown_claim.sql
+
 -- +goose Up
 -- +goose StatementBegin
 -- A claimed teardown cannot be reopened, but remains visible to the janitor

@@ -52,6 +52,25 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 	if err := validatePRPreviewHead(head, apps); err != nil {
 		return nil, err
 	}
+	apps = append([]App(nil), apps...)
+	needsPersonalOrg := false
+	for _, app := range apps {
+		if app.OrgID == "" {
+			needsPersonalOrg = true
+			break
+		}
+	}
+	if needsPersonalOrg {
+		personalOrg, err := s.OrgByPersonalAccount(ctx, apps[0].AccountID)
+		if err != nil {
+			return nil, err
+		}
+		for i := range apps {
+			if apps[i].OrgID == "" {
+				apps[i].OrgID = personalOrg.ID
+			}
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("state: begin PR preview replacement: %w", err)
@@ -221,10 +240,14 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 	if err := validatePRPreviewHead(head, apps); err != nil {
 		return nil, err
 	}
+	apps = append([]App(nil), apps...)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.accounts[apps[0].AccountID]; !ok {
 		return nil, ErrNotFound
+	}
+	for i := range apps {
+		m.ensureAppOrgLocked(&apps[i])
 	}
 	key := previewSetKey(head.InstallationID, head.RepoFullName, head.PRNumber)
 	previous := m.previewSets[key]
