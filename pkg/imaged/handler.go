@@ -2721,6 +2721,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	if deploymentID == "" {
 		return errors.New("imaged: deployment activation missing deployment_id")
 	}
+	locker, ok := h.store.(state.DeploymentActivationLocker)
+	if !ok {
+		if h.nodeName != "" {
+			return errors.New("imaged: deployment activation requires a fleet-wide store lock")
+		}
+	} else {
+		release, lockErr := locker.AcquireDeploymentActivationLock(ctx, deploymentID)
+		if lockErr != nil {
+			return fmt.Errorf("imaged: acquire deployment activation lock: %w", lockErr)
+		}
+		defer release(ctx)
+	}
 	dep, err := h.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)

@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -465,6 +466,79 @@ func TestHandleSnapshotWritten_HostingSmokeRunsBeforeCutover(t *testing.T) {
 	}
 	if receipt.Smoke.Status != apihostingreceipt.SmokeVerified || receipt.Smoke.StatusCode != http.StatusOK {
 		t.Fatalf("hosting smoke = %+v, want verified HTTP 200", receipt.Smoke)
+	}
+}
+
+func TestHandleSnapshotWritten_SingleActivationAcrossImagedSubscribers(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "activation-lock@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "activation-lock", RAMMB: 256, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:activation-lock", Kind: state.DeploymentKindImage,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeploySnapshotting, ""); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	unblock := make(chan struct{})
+	defer func() {
+		select {
+		case <-unblock:
+		default:
+			close(unblock)
+		}
+	}()
+	var smokeCalls atomic.Int32
+	smoke := func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+		if smokeCalls.Add(1) == 1 {
+			close(entered)
+			<-unblock
+		}
+		return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeVerified, Path: "/healthz", StatusCode: http.StatusOK}, nil
+	}
+	h1 := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(smoke)
+	h2 := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(smoke)
+	n := db.Notification{Channel: db.NotifySnapshotWritten, Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"snap/` + dep.ID + `/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`}
+	results := make(chan error, 2)
+	go func() { results <- h1.HandleNotification(ctx, n) }()
+	select {
+	case <-entered:
+	case err := <-results:
+		t.Fatalf("first subscriber ended before smoke: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("first subscriber did not reach smoke")
+	}
+	go func() { results <- h2.HandleNotification(ctx, n) }()
+	// Let the second subscriber contend while the first verifier is held.
+	time.Sleep(50 * time.Millisecond)
+	if got := smokeCalls.Load(); got != 1 {
+		close(unblock)
+		t.Fatalf("concurrent smoke calls = %d, want one", got)
+	}
+	close(unblock)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := smokeCalls.Load(); got != 1 {
+		t.Fatalf("smoke calls = %d, want one", got)
+	}
+	got, err := store.DeploymentByID(ctx, dep.ID)
+	if err != nil || got.Status != state.DeployLive {
+		t.Fatalf("deployment = %+v, err=%v, want live", got, err)
 	}
 }
 

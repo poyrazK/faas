@@ -133,6 +133,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	deploymentActivationMu    sync.Mutex
+	deploymentActivationLocks map[string]*deploymentActivationLock
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
 	runtimeConfigChangedAt map[string]time.Time
 	// serviceCallerKeys mirrors service_caller_keys: one published

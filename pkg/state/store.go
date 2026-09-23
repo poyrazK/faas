@@ -852,6 +852,15 @@ type CronSuspensionStore interface {
 	ReactivateCronsForApp(ctx context.Context, appID string) (int, error)
 }
 
+// DeploymentActivationLocker serializes the post-snapshot verification and
+// live cutover for one deployment across all imaged processes. A
+// snapshot_written notification is broadcast to every compute node; checking
+// the deployment status without this lock lets several nodes smoke and wake
+// the same candidate at once.
+type DeploymentActivationLocker interface {
+	AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (release func(context.Context), err error)
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface

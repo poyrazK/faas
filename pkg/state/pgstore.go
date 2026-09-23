@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,6 +93,53 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 		_, _ = conn.Exec(unlockCtx, `select pg_advisory_unlock(hashtextextended($1, 0))`, appID)
 		cancel()
 		conn.Release()
+	}, nil
+}
+
+// AcquireDeploymentActivationLock holds a session-scoped advisory lock across
+// the public smoke request and the eventual live/failed transition. The
+// notification outbox broadcasts snapshot_written to every imaged process;
+// the loser reloads the deployment after this lock and observes the winner's
+// terminal state instead of running a second verification wake.
+func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (func(context.Context), error) {
+	deploymentID = strings.TrimSpace(deploymentID)
+	if deploymentID == "" {
+		return nil, errors.New("state: deployment activation lock requires deployment id")
+	}
+	if s == nil || s.pool == nil {
+		return nil, errors.New("state: pgstore has nil pool")
+	}
+	conn, err := db.DirectPool(s.pool).Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
+	}
+	const lockSQL = `select pg_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`
+	if _, err := conn.Exec(ctx, lockSQL, deploymentID); err != nil {
+		// Cancellation can race a server-side lock grant. Closing the
+		// session is the only safe way to rule out an orphaned lock.
+		closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = conn.Hijack().Close(closeCtx)
+		cancel()
+		return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+	}
+	var once sync.Once
+	return func(ctx context.Context) {
+		once.Do(func() {
+			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			var unlocked bool
+			unlockErr := conn.QueryRow(unlockCtx,
+				`select pg_advisory_unlock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&unlocked)
+			cancel()
+			if unlockErr != nil || !unlocked {
+				// Never return a connection carrying an uncertain session lock
+				// to the pool: a later activation could block behind itself.
+				closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = conn.Hijack().Close(closeCtx)
+				closeCancel()
+				return
+			}
+			conn.Release()
+		})
 	}, nil
 }
 
