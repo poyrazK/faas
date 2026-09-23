@@ -448,7 +448,7 @@ func runSidecarProbeOnce(ctx context.Context, probe *api.SidecarProbe, container
 		if err != nil {
 			return HealthcheckReport{Status: healthcheckStatusFail, Output: []byte(err.Error())}
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, VsockHealthcheckMaxOutput))
 		if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusBadRequest {
 			return HealthcheckReport{Status: healthcheckStatusPass}
