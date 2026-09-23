@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 )
 
@@ -432,6 +433,18 @@ type executionRestoreVMMClient interface {
 	RestoreExecution(context.Context, ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error)
 }
 
+type appTaskVMMClient interface {
+	ExecuteAppTask(context.Context, string, apptaskproto.Request) (apptaskproto.Result, error)
+}
+
+type appTaskOutputVMMClient interface {
+	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
+type appTaskRestoreVMMClient interface {
+	RestoreAppTask(context.Context, AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error)
+}
+
 // ExecuteExecution routes the post-restore one-shot exchange to the node
 // owning the disposable VM. The capability is optional so a mixed-version
 // cluster can continue serving ordinary app wakes while execution support is
@@ -479,6 +492,49 @@ func (r *VMMRouter) RestoreExecution(ctx context.Context, nodeID string, req Exe
 			"Execution unavailable", "vmmd client does not support disposable VM restore")
 	}
 	return restoreClient.RestoreExecution(ctx, req)
+}
+
+// RestoreAppTask routes the command-free app runtime envelope to one node.
+func (r *VMMRouter) RestoreAppTask(ctx context.Context, nodeID string, spec AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	restoreClient, ok := cli.(appTaskRestoreVMMClient)
+	if !ok {
+		return nil, api.NewProblem(501, api.CodeNotImplemented,
+			"App tasks unavailable", "vmmd client does not support app task restore")
+	}
+	return restoreClient.RestoreAppTask(ctx, spec)
+}
+
+// ExecuteAppTask routes one post-fence command to its restored VM.
+func (r *VMMRouter) ExecuteAppTask(ctx context.Context, nodeID, instance string, req apptaskproto.Request) (apptaskproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return apptaskproto.Result{}, err
+	}
+	taskClient, ok := cli.(appTaskVMMClient)
+	if !ok {
+		return apptaskproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"App tasks unavailable", "vmmd client does not support app task execution")
+	}
+	return taskClient.ExecuteAppTask(ctx, instance, req)
+}
+
+// ExecuteAppTaskWithOutput uses the additive streaming transport when the
+// selected node supports it.
+func (r *VMMRouter) ExecuteAppTaskWithOutput(ctx context.Context, nodeID, instance string, req apptaskproto.Request, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return apptaskproto.Result{}, err
+	}
+	taskClient, ok := cli.(appTaskOutputVMMClient)
+	if !ok {
+		return apptaskproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"App task streaming unavailable", "vmmd client does not support app task output streaming")
+	}
+	return taskClient.ExecuteAppTaskWithOutput(ctx, instance, req, receive)
 }
 
 type jobVMMClient interface {

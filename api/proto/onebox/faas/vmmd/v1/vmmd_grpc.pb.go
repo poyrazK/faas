@@ -28,6 +28,9 @@ const (
 	Vmmd_ExecuteExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
 	Vmmd_ExecuteExecutionStream_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
 	Vmmd_RestoreExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
+	Vmmd_RestoreAppTask_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
+	Vmmd_ExecuteAppTask_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
+	Vmmd_ExecuteAppTaskStream_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
 	Vmmd_WaitJobExit_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
@@ -94,6 +97,16 @@ type VmmdClient interface {
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
 	RestoreExecution(ctx context.Context, in *RestoreExecutionRequest, opts ...grpc.CallOption) (*RestoreExecutionResponse, error)
+	// RestoreAppTask creates a fresh deployment-attached VM without carrying
+	// command data. The command crosses the trust boundary only after schedd
+	// has committed the durable running fence.
+	RestoreAppTask(ctx context.Context, in *RestoreAppTaskRequest, opts ...grpc.CallOption) (*RestoreAppTaskResponse, error)
+	// ExecuteAppTask dispatches exactly one command to a restored app-task VM.
+	// vmmd tears the disposable VM down before returning the terminal result.
+	ExecuteAppTask(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (*ExecuteAppTaskResponse, error)
+	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
+	// metadata-only because stdout/stderr have already arrived as chunks.
+	ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error)
@@ -537,6 +550,45 @@ func (c *vmmdClient) RestoreExecution(ctx context.Context, in *RestoreExecutionR
 	return out, nil
 }
 
+func (c *vmmdClient) RestoreAppTask(ctx context.Context, in *RestoreAppTaskRequest, opts ...grpc.CallOption) (*RestoreAppTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreAppTaskResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RestoreAppTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) ExecuteAppTask(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (*ExecuteAppTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecuteAppTaskResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ExecuteAppTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecuteAppTaskRequest, ExecuteAppTaskEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteAppTaskStreamClient = grpc.ServerStreamingClient[ExecuteAppTaskEvent]
+
 func (c *vmmdClient) WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JobExitResponse)
@@ -729,7 +781,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -748,7 +800,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +813,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -774,7 +826,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -907,6 +959,16 @@ type VmmdServer interface {
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
 	RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error)
+	// RestoreAppTask creates a fresh deployment-attached VM without carrying
+	// command data. The command crosses the trust boundary only after schedd
+	// has committed the durable running fence.
+	RestoreAppTask(context.Context, *RestoreAppTaskRequest) (*RestoreAppTaskResponse, error)
+	// ExecuteAppTask dispatches exactly one command to a restored app-task VM.
+	// vmmd tears the disposable VM down before returning the terminal result.
+	ExecuteAppTask(context.Context, *ExecuteAppTaskRequest) (*ExecuteAppTaskResponse, error)
+	// ExecuteAppTaskStream is the live-output variant. The terminal frame is
+	// metadata-only because stdout/stderr have already arrived as chunks.
+	ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc.ServerStreamingServer[ExecuteAppTaskEvent]) error
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error)
@@ -1299,6 +1361,15 @@ func (UnimplementedVmmdServer) ExecuteExecutionStream(*ExecuteExecutionRequest, 
 func (UnimplementedVmmdServer) RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreExecution not implemented")
 }
+func (UnimplementedVmmdServer) RestoreAppTask(context.Context, *RestoreAppTaskRequest) (*RestoreAppTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreAppTask not implemented")
+}
+func (UnimplementedVmmdServer) ExecuteAppTask(context.Context, *ExecuteAppTaskRequest) (*ExecuteAppTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExecuteAppTask not implemented")
+}
+func (UnimplementedVmmdServer) ExecuteAppTaskStream(*ExecuteAppTaskRequest, grpc.ServerStreamingServer[ExecuteAppTaskEvent]) error {
+	return status.Error(codes.Unimplemented, "method ExecuteAppTaskStream not implemented")
+}
 func (UnimplementedVmmdServer) WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitJobExit not implemented")
 }
@@ -1516,6 +1587,53 @@ func _Vmmd_RestoreExecution_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _Vmmd_RestoreAppTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreAppTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RestoreAppTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RestoreAppTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RestoreAppTask(ctx, req.(*RestoreAppTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ExecuteAppTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteAppTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ExecuteAppTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ExecuteAppTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ExecuteAppTask(ctx, req.(*ExecuteAppTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ExecuteAppTaskStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ExecuteAppTaskRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VmmdServer).ExecuteAppTaskStream(m, &grpc.GenericServerStream[ExecuteAppTaskRequest, ExecuteAppTaskEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteAppTaskStreamServer = grpc.ServerStreamingServer[ExecuteAppTaskEvent]
 
 func _Vmmd_WaitJobExit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(WaitJobExitRequest)
@@ -2081,6 +2199,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_RestoreExecution_Handler,
 		},
 		{
+			MethodName: "RestoreAppTask",
+			Handler:    _Vmmd_RestoreAppTask_Handler,
+		},
+		{
+			MethodName: "ExecuteAppTask",
+			Handler:    _Vmmd_ExecuteAppTask_Handler,
+		},
+		{
 			MethodName: "WaitJobExit",
 			Handler:    _Vmmd_WaitJobExit_Handler,
 		},
@@ -2197,6 +2323,11 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ExecuteExecutionStream",
 			Handler:       _Vmmd_ExecuteExecutionStream_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ExecuteAppTaskStream",
+			Handler:       _Vmmd_ExecuteAppTaskStream_Handler,
 			ServerStreams: true,
 		},
 		{
