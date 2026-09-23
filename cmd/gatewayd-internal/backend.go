@@ -581,6 +581,7 @@ type invalidator interface {
 	// InvalidateResponseCacheByPath drops only the requested path subset
 	// for one app. Malformed globs are logged and ignored by the consumer.
 	InvalidateResponseCacheByPath(appID, pathGlob string) error
+	InvalidateResponseCacheByTag(appID, tag string) error
 	// RequestCertForSurface (ADR-100 / issue #879) is the
 	// cert-remint goroutine's entry point. A
 	// tenant_surface_changed notification (any insert / update /
@@ -965,13 +966,24 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		var p struct {
 			AppID    string `json:"app_id"`
 			PathGlob string `json:"path_glob"`
+			Tag      string `json:"tag"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" {
 			log.Warn("gatewayd: bad cache purge payload", "payload", n.Payload)
 			return
 		}
-		if err := inv.InvalidateResponseCacheByPath(p.AppID, p.PathGlob); err != nil {
-			log.Warn("gatewayd: cache purge failed", "app", p.AppID, "path", p.PathGlob, "err", err)
+		if p.Tag != "" && p.PathGlob != "" {
+			log.Warn("gatewayd: cache purge has both path and tag", "app", p.AppID)
+			return
+		}
+		var err error
+		if p.Tag != "" {
+			err = inv.InvalidateResponseCacheByTag(p.AppID, p.Tag)
+		} else {
+			err = inv.InvalidateResponseCacheByPath(p.AppID, p.PathGlob)
+		}
+		if err != nil {
+			log.Warn("gatewayd: cache purge failed", "app", p.AppID, "path", p.PathGlob, "tag", p.Tag, "err", err)
 		}
 	case db.NotifyEdgeRuleChanged:
 		// Issue #561 / ADR-089 PR 3. A create / update /

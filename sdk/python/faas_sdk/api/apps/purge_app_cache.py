@@ -14,11 +14,14 @@ def _get_kwargs(
     slug: str,
     *,
     path: str | Unset = UNSET,
+    tag: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     params["path"] = path
+
+    params["tag"] = tag
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -37,6 +40,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
     if response.status_code == 204:
         response_204 = cast(Any, None)
         return response_204
+
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -83,17 +91,20 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     path: str | Unset = UNSET,
+    tag: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Purge cached responses for an app.
 
      Requests a response-cache purge on every gateway and on the optional
     distributed cache tier. The optional path glob limits the purge to
-    matching normalized request paths; omit it to purge the complete app
-    cache.
+    matching normalized request paths. The optional tag limits it to
+    responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+    omit both to purge the complete app cache.
 
     Args:
         slug (str):
         path (str | Unset):
+        tag (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -106,6 +117,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         path=path,
+        tag=tag,
     )
 
     response = client.get_httpx_client().request(
@@ -120,17 +132,20 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     path: str | Unset = UNSET,
+    tag: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Purge cached responses for an app.
 
      Requests a response-cache purge on every gateway and on the optional
     distributed cache tier. The optional path glob limits the purge to
-    matching normalized request paths; omit it to purge the complete app
-    cache.
+    matching normalized request paths. The optional tag limits it to
+    responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+    omit both to purge the complete app cache.
 
     Args:
         slug (str):
         path (str | Unset):
+        tag (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -144,6 +159,7 @@ def sync(
         slug=slug,
         client=client,
         path=path,
+        tag=tag,
     ).parsed
 
 
@@ -152,17 +168,20 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     path: str | Unset = UNSET,
+    tag: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Purge cached responses for an app.
 
      Requests a response-cache purge on every gateway and on the optional
     distributed cache tier. The optional path glob limits the purge to
-    matching normalized request paths; omit it to purge the complete app
-    cache.
+    matching normalized request paths. The optional tag limits it to
+    responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+    omit both to purge the complete app cache.
 
     Args:
         slug (str):
         path (str | Unset):
+        tag (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,6 +194,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         path=path,
+        tag=tag,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -187,17 +207,20 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     path: str | Unset = UNSET,
+    tag: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Purge cached responses for an app.
 
      Requests a response-cache purge on every gateway and on the optional
     distributed cache tier. The optional path glob limits the purge to
-    matching normalized request paths; omit it to purge the complete app
-    cache.
+    matching normalized request paths. The optional tag limits it to
+    responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+    omit both to purge the complete app cache.
 
     Args:
         slug (str):
         path (str | Unset):
+        tag (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -212,5 +235,6 @@ async def asyncio(
             slug=slug,
             client=client,
             path=path,
+            tag=tag,
         )
     ).parsed

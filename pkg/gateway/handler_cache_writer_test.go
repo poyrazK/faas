@@ -41,6 +41,53 @@ func TestCacheWriter_Stores200(t *testing.T) {
 	}
 }
 
+// adr: 122
+func TestCacheWriter_CacheTagsAreMetadata(t *testing.T) {
+	now := time.Now()
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+	rule := EdgeRuleCacheResolved{ID: "rule-1", MaxAgeSeconds: 60}
+	key := CacheKey{AppID: "app-1", RuleID: rule.ID, Method: "GET", NormalizedPath: "/products/42"}
+	for _, tc := range []struct {
+		name, value string
+		wantStored  bool
+	}{
+		{"valid", "Product:42, collection-winter", true},
+		{"invalid", "product:42,", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := newTestStatusRecorder(httptest.NewRecorder())
+			cw := newCacheWriter(rec, rec, &rule, ResponseCachePerEntryMaxBytes)
+			cw.Header().Set("Cache-Tag", tc.value)
+			cw.WriteHeader(200)
+			_, _ = cw.Write([]byte("public body"))
+			if got := cw.finishCacheCapture(cache, key, now); got != tc.wantStored {
+				t.Fatalf("stored = %v, want %v", got, tc.wantStored)
+			}
+			if got := rec.Header().Get("Cache-Tag"); got != "" {
+				t.Errorf("live Cache-Tag = %q, want stripped", got)
+			}
+			if tc.wantStored {
+				_, entry := cache.Get(key)
+				if entry == nil || !hasCacheTag(entry.tags, "product:42") || entry.header["Cache-Tag"] != nil {
+					t.Errorf("cached tags/header = %+v", entry)
+				}
+			}
+		})
+	}
+}
+
+// adr: 122
+func TestCacheWriter_FlushStripsCacheTag(t *testing.T) {
+	rule := EdgeRuleCacheResolved{ID: "rule-1", MaxAgeSeconds: 60}
+	rec := newTestStatusRecorder(httptest.NewRecorder())
+	cw := newCacheWriter(rec, rec, &rule, ResponseCachePerEntryMaxBytes)
+	cw.Header().Set("Cache-Tag", "product:42")
+	cw.Flush()
+	if !cw.headerOK || rec.Header().Get("Cache-Tag") != "" {
+		t.Fatalf("flush left control header live: headerOK=%v header=%v", cw.headerOK, rec.Header())
+	}
+}
+
 // TestCacheWriter_Skips304 verifies 304 is not in the cacheable
 // status set — caching a Not-Modified would require ETag logic
 // (deferred). The store path treats 304 as not-cacheable.

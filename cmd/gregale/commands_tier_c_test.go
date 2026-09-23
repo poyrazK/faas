@@ -372,6 +372,32 @@ func TestTierC_CachePurge_PositionalFirstPath(t *testing.T) {
 	}
 }
 
+func TestTierC_CachePurge_Tag(t *testing.T) {
+	resetJSONOut(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "test-token")
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	if code := run([]string{"cache", "purge", "demo", "--tag", "Product:42"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if query != "tag=product%3A42" {
+		t.Errorf("query = %q, want canonical tag", query)
+	}
+	if code := cmdCache([]string{"purge", "demo", "--path", "*", "--tag", "product:42"}); code == 0 {
+		t.Fatal("combined --path and --tag accepted")
+	}
+	if code := cmdCache([]string{"purge", "demo", "--tag", ""}); code == 0 {
+		t.Fatal("empty --tag accepted as app-wide purge")
+	}
+}
+
 func TestTierC_PositionalFirstFlagsRejectUnknownAndExtraArgs(t *testing.T) {
 	resetJSONOut(t)
 	if code := cmdInvoke([]string{"demo", "--unknown"}); code != 1 {
