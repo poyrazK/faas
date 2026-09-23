@@ -145,7 +145,7 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	defer m.mu.Unlock()
 	task, ok := m.appTasks[taskID]
 	if !ok || task.Status != AppTaskRestoring || task.LeaseToken == nil ||
-		*task.LeaseToken != leaseToken || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(startedAt) {
+		*task.LeaseToken != leaseToken || task.CancelRequested != nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(startedAt) {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if startedAt.Before(task.CreatedAt) {
@@ -156,6 +156,26 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	task.UpdatedAt = startedAt
 	m.appTasks[task.ID] = task
 	return cloneAppTask(task), nil
+}
+
+func (m *MemStore) RenewAppTaskLease(_ context.Context, taskID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error {
+	if taskID == "" || leaseToken == "" || renewedAt.IsZero() || leaseDuration <= 0 {
+		return ErrAppTaskInvalid
+	}
+	renewedAt = renewedAt.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.appTasks[taskID]
+	if !ok || (task.Status != AppTaskRestoring && task.Status != AppTaskRunning) ||
+		task.LeaseToken == nil || *task.LeaseToken != leaseToken || task.CancelRequested != nil ||
+		task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(renewedAt) {
+		return ErrAppTaskLeaseLost
+	}
+	expiresAt := renewedAt.Add(leaseDuration).UTC()
+	task.LeaseExpiresAt = &expiresAt
+	task.UpdatedAt = renewedAt
+	m.appTasks[task.ID] = task
+	return nil
 }
 
 func (m *MemStore) RequestAppTaskCancellation(_ context.Context, accountID, appID, taskID string, requestedAt time.Time) (AppTask, error) {
@@ -198,6 +218,9 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	}
 	if err := validateCompleteAppTask(params, task.MaxOutputBytes); err != nil {
 		return AppTask{}, err
+	}
+	if task.CancelRequested != nil && params.Status != AppTaskCancelled {
+		return AppTask{}, ErrAppTaskCancellationPending
 	}
 	if params.Status == AppTaskSucceeded && task.Status != AppTaskRunning {
 		return AppTask{}, fmt.Errorf("%w: a task must be running before it can succeed", ErrAppTaskInvalid)

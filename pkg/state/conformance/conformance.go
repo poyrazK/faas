@@ -171,9 +171,21 @@ func testAppTaskLifecycle(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.ClaimNextAppTask(fx.Ctx, "schedd-b", claimedAt, time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("second ClaimNextAppTask = %v, want ErrNotFound", err)
 	}
+	if err := fx.Store.RenewAppTaskLease(fx.Ctx, created.ID, *claimed.LeaseToken, claimedAt.Add(500*time.Millisecond), time.Minute); err != nil {
+		t.Fatalf("RenewAppTaskLease: %v", err)
+	}
+	if err := fx.Store.RenewAppTaskLease(fx.Ctx, created.ID, uuid.NewString(), claimedAt.Add(750*time.Millisecond), time.Minute); !errors.Is(err, state.ErrAppTaskLeaseLost) {
+		t.Fatalf("RenewAppTaskLease(stale token) = %v, want ErrAppTaskLeaseLost", err)
+	}
 	cancelledIntent, err := fx.Store.RequestAppTaskCancellation(fx.Ctx, fx.Account.ID, fx.App.ID, created.ID, claimedAt.Add(time.Second))
 	if err != nil || cancelledIntent.Status != state.AppTaskRestoring || cancelledIntent.CancelRequested == nil {
 		t.Fatalf("RequestAppTaskCancellation(restoring) = %+v, err=%v", cancelledIntent, err)
+	}
+	if err := fx.Store.RenewAppTaskLease(fx.Ctx, created.ID, *claimed.LeaseToken, claimedAt.Add(1500*time.Millisecond), time.Minute); !errors.Is(err, state.ErrAppTaskLeaseLost) {
+		t.Fatalf("RenewAppTaskLease(cancelled) = %v, want ErrAppTaskLeaseLost", err)
+	}
+	if _, err := fx.Store.MarkAppTaskRunning(fx.Ctx, created.ID, *claimed.LeaseToken, claimedAt.Add(1500*time.Millisecond)); !errors.Is(err, state.ErrAppTaskLeaseLost) {
+		t.Fatalf("MarkAppTaskRunning(cancelled) = %v, want ErrAppTaskLeaseLost", err)
 	}
 	terminal, err := fx.Store.CompleteAppTask(fx.Ctx, state.CompleteAppTaskParams{
 		ID: created.ID, LeaseToken: *claimed.LeaseToken, Status: state.AppTaskCancelled,
@@ -215,6 +227,36 @@ func testAppTaskLifecycle(t *testing.T, fx *Fixture) {
 		ExitCode: &exitZero, FinishedAt: base.Add(8 * time.Second),
 	}); !errors.Is(err, state.ErrAppTaskLeaseLost) {
 		t.Fatalf("replayed CompleteAppTask = %v, want ErrAppTaskLeaseLost", err)
+	}
+
+	raceIntent, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: fx.Deployment.ID,
+		Kind: state.AppTaskKindManual, Command: []string{"bin/race"}, CreatedAt: base.Add(8 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("CreateAppTask(cancellation race): %v", err)
+	}
+	raceClaim, err := fx.Store.ClaimNextAppTask(fx.Ctx, "schedd-a", base.Add(8*time.Second+100*time.Millisecond), time.Minute)
+	if err != nil || raceClaim.ID != raceIntent.ID {
+		t.Fatalf("ClaimNextAppTask(cancellation race) = %+v, err=%v", raceClaim, err)
+	}
+	if _, err := fx.Store.MarkAppTaskRunning(fx.Ctx, raceIntent.ID, *raceClaim.LeaseToken, base.Add(8*time.Second+200*time.Millisecond)); err != nil {
+		t.Fatalf("MarkAppTaskRunning(cancellation race): %v", err)
+	}
+	if _, err := fx.Store.RequestAppTaskCancellation(fx.Ctx, fx.Account.ID, fx.App.ID, raceIntent.ID, base.Add(8*time.Second+300*time.Millisecond)); err != nil {
+		t.Fatalf("RequestAppTaskCancellation(running): %v", err)
+	}
+	if _, err := fx.Store.CompleteAppTask(fx.Ctx, state.CompleteAppTaskParams{
+		ID: raceIntent.ID, LeaseToken: *raceClaim.LeaseToken, Status: state.AppTaskSucceeded,
+		ExitCode: &exitZero, FinishedAt: base.Add(8*time.Second + 400*time.Millisecond),
+	}); !errors.Is(err, state.ErrAppTaskCancellationPending) {
+		t.Fatalf("CompleteAppTask(success after cancellation) = %v, want ErrAppTaskCancellationPending", err)
+	}
+	if _, err := fx.Store.CompleteAppTask(fx.Ctx, state.CompleteAppTaskParams{
+		ID: raceIntent.ID, LeaseToken: *raceClaim.LeaseToken, Status: state.AppTaskCancelled,
+		FinishedAt: base.Add(8*time.Second + 500*time.Millisecond),
+	}); err != nil {
+		t.Fatalf("CompleteAppTask(cancellation race): %v", err)
 	}
 
 	restoreIntent, err := fx.Store.CreateAppTask(fx.Ctx, state.CreateAppTaskParams{

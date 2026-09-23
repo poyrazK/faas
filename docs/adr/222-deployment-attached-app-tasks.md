@@ -58,13 +58,18 @@ database state can be rolled back.
 1. This change lands the schema and the shared PostgreSQL/MemStore lifecycle.
    No public route is mounted, so an operator cannot enqueue work before a
    scheduler can execute it.
-2. A follow-up adds the app-task dispatcher by reusing jobs' admission, fresh
-   cold boot, exit capture, metering, and teardown primitives. It must load the
-   app's scoped env, secrets, bindings, and network policy without routing the
-   VM as a serving instance.
-3. The public `POST /v1/apps/{slug}/tasks` and `gregale app exec` surface ships
+2. A scheduler-only follow-up adds the bounded app-task coordinator, lease
+   renewal, cancellation race fence, restore-to-running dispatch boundary,
+   output bounds, and teardown-before-acknowledgement contract behind a runtime
+   interface. It remains disabled until that interface has a production
+   implementation.
+3. A vmmd/guest follow-up implements that runtime interface by reusing jobs'
+   admission, fresh cold boot, exit capture, metering, and teardown primitives.
+   It must load the app's scoped env, secrets, bindings, and network policy
+   without routing the VM as a serving instance.
+4. The public `POST /v1/apps/{slug}/tasks` and `gregale app exec` surface ships
    behind a runtime gate after the dispatcher and metal isolation tests land.
-4. Release phase becomes the first internal consumer: `release.command` and a
+5. Release phase becomes the first internal consumer: `release.command` and a
    Procfile `release:` entry enqueue a `release` task for the candidate
    deployment, and deployment activation waits for its successful terminal
    state.
