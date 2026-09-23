@@ -54,6 +54,8 @@ printf '200\t0.010\t0.001\t0.005'
 			command.Env = append(os.Environ(),
 				"PATH="+temp+":"+os.Getenv("PATH"),
 				"RUNNER_TEMP="+temp,
+				"GITHUB_RUN_ID=local",
+				"GITHUB_RUN_ATTEMPT=1",
 				"ROLLOUT_BASELINE_SAMPLE_COUNT=1",
 				"ROLLOUT_PROBE_INTERVAL_SECONDS=0.02",
 				"FAKE_ROLLOUT_MARKER="+marker,
