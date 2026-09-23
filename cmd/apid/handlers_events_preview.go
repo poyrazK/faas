@@ -132,11 +132,11 @@ func (s *server) previewEvent(w http.ResponseWriter, r *http.Request, acct state
 }
 
 func canonicalEventPreviewUUID(value string) string {
-	parsed, err := uuid.Parse(value)
-	if err != nil {
+	compact := strings.ReplaceAll(value, "-", "")
+	if len(compact) != 32 {
 		return value
 	}
-	return parsed.String()
+	return compact[:8] + "-" + compact[8:12] + "-" + compact[12:16] + "-" + compact[16:20] + "-" + compact[20:]
 }
 
 func appendEventPreviewSample(dst *[]api.EventPreviewSubscription, item api.EventPreviewSubscription, truncated *bool) {

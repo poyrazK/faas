@@ -8,8 +8,6 @@ import (
 	"io"
 	"math/big"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 // Subscription is the declarative event target used by the internal router.
@@ -155,8 +153,8 @@ func sameAccountID(a, b string) bool {
 	if a == b {
 		return true
 	}
-	parsedA, errA := uuid.Parse(a)
-	parsedB, errB := uuid.Parse(b)
+	parsedA, errA := parseAccountUUID(a)
+	parsedB, errB := parseAccountUUID(b)
 	return errA == nil && errB == nil && parsedA == parsedB
 }
 
