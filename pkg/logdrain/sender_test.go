@@ -14,7 +14,12 @@ import (
 )
 
 func TestSenderHTTPJSONDelivery(t *testing.T) {
-	record := Record{AppID: "app-1", AccountID: "acct-1", InstanceID: "vm-1", Sequence: 7, Stream: "stdout", Line: "hello", WrittenAt: time.Unix(10, 20).UTC()}
+	record := Record{
+		AppID: "app-1", AccountID: "acct-1", TenantID: "acct-1", RequestID: "req-1", TraceID: "trace-1",
+		DeploymentID: "dep-1", InstanceID: "vm-1", NodeID: "node-1", Region: "eu-fsn1",
+		CommitSHA: "abc123", DeploymentTag: "stable", DeploymentCreatedAt: "2026-09-23T10:11:12.123Z",
+		ImageDigest: "sha256:deadbeef", Sequence: 7, Stream: "stdout", Line: "hello", WrittenAt: time.Unix(10, 20).UTC(),
+	}
 	got := make(chan httpRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body Record
@@ -65,11 +70,16 @@ func TestSenderOTLPDelivery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go sender.Run(ctx)
-	sender.Enqueue(Record{AppID: "app-1", AccountID: "acct-1", InstanceID: "vm-1", Sequence: 1, Line: "line", WrittenAt: time.Unix(1, 2)})
+	sender.Enqueue(Record{
+		AppID: "app-1", AccountID: "acct-1", TenantID: "acct-1", RequestID: "req-1", TraceID: "trace-1",
+		DeploymentID: "dep-1", InstanceID: "vm-1", NodeID: "node-1", Region: "eu-fsn1",
+		CommitSHA: "abc123", DeploymentTag: "stable", DeploymentCreatedAt: "2026-09-23T10:11:12.123Z",
+		ImageDigest: "sha256:deadbeef", Sequence: 1, Line: "line", WrittenAt: time.Unix(1, 2),
+	})
 	select {
 	case body := <-bodyCh:
 		payload := string(body)
-		for _, fragment := range []string{`"resourceLogs"`, `"logRecords"`, `"faas.app.id"`, `"line"`} {
+		for _, fragment := range []string{`"resourceLogs"`, `"logRecords"`, `"faas.app.id"`, `"faas.deployment.id"`, `"faas.commit.sha"`, `"faas.image.digest"`, `"line"`} {
 			if !strings.Contains(payload, fragment) {
 				t.Fatalf("OTLP payload missing %q: %s", fragment, payload)
 			}

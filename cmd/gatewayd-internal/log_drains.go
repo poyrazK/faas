@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/logdrain"
+	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -47,6 +48,33 @@ type appLogDrainHealthLookupStore interface {
 
 type appLogDrainLookupStore interface {
 	AppLogDrainByID(context.Context, string) (state.AppLogDrain, error)
+}
+
+// These optional lookup seams let runtime log records recover immutable
+// deployment provenance without widening the schedd log-stream protocol.
+// The production state store implements all three; small test stores can keep
+// implementing only appLogDrainStore and records will retain their legacy
+// fields.
+type appLogDrainInstanceLookupStore interface {
+	InstanceByID(context.Context, string) (state.Instance, error)
+}
+
+type appLogDrainDeploymentLookupStore interface {
+	DeploymentByID(context.Context, string) (state.Deployment, error)
+}
+
+type appLogDrainNodeLookupStore interface {
+	ComputeNodeByID(context.Context, string) (state.ComputeNode, error)
+}
+
+type appLogDrainProvenance struct {
+	DeploymentID        string
+	NodeID              string
+	Region              string
+	CommitSHA           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
 }
 
 type appLogDrainManager struct {
@@ -276,6 +304,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 
 func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLogDrain, sender *logdrain.Sender) {
 	lastSeq := sender.LastSequences()
+	provenanceCache := make(map[string]appLogDrainProvenance)
 	backoff := time.Second
 	streamEstablished := false
 	for {
@@ -317,9 +346,17 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 					if frame.InstanceID == "" || frame.Seq <= lastSeq[frame.InstanceID] {
 						continue
 					}
+					provenance := m.provenanceForFrame(ctx, frame, provenanceCache)
+					deploymentID := frame.DeploymentID
+					if deploymentID == "" {
+						deploymentID = provenance.DeploymentID
+					}
 					if !sender.Enqueue(logdrain.Record{
-						AppID: spec.AppID, AccountID: spec.AccountID,
-						DeploymentID: frame.DeploymentID, InstanceID: frame.InstanceID,
+						AppID: spec.AppID, AccountID: spec.AccountID, TenantID: spec.AccountID,
+						DeploymentID: deploymentID, InstanceID: frame.InstanceID,
+						NodeID: provenance.NodeID, Region: provenance.Region,
+						CommitSHA: provenance.CommitSHA, DeploymentTag: provenance.DeploymentTag,
+						DeploymentCreatedAt: provenance.DeploymentCreatedAt, ImageDigest: provenance.ImageDigest,
 						Sequence: uint64(frame.Seq), Stream: frame.Stream, Line: frame.Line, WrittenAt: frame.WrittenAt,
 					}) {
 						// Keep the source cursor unchanged and reconnect rather than
@@ -347,6 +384,55 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 			backoff *= 2
 		}
 	}
+}
+
+// provenanceForFrame resolves immutable deployment identity once per instance
+// and reuses it for the lifetime of one drain worker. Runtime log frames are
+// instance-scoped rather than request-scoped, so request and trace IDs remain
+// optional Record fields for sources that can provide them; they are not
+// fabricated here.
+func (m *appLogDrainManager) provenanceForFrame(ctx context.Context, frame scheddgrpc.LogFrame, cache map[string]appLogDrainProvenance) appLogDrainProvenance {
+	if frame.InstanceID == "" {
+		return appLogDrainProvenance{DeploymentID: frame.DeploymentID}
+	}
+	if cached, ok := cache[frame.InstanceID]; ok {
+		if frame.DeploymentID == "" || cached.DeploymentID == "" || cached.DeploymentID == frame.DeploymentID {
+			if cached.DeploymentID == "" {
+				cached.DeploymentID = frame.DeploymentID
+			}
+			return cached
+		}
+	}
+	resolved := appLogDrainProvenance{DeploymentID: frame.DeploymentID}
+	if lookup, ok := m.store.(appLogDrainInstanceLookupStore); ok {
+		if instance, err := lookup.InstanceByID(ctx, frame.InstanceID); err == nil {
+			resolved.NodeID = instance.NodeID
+			if resolved.DeploymentID == "" {
+				resolved.DeploymentID = instance.DeploymentID
+			}
+		}
+	}
+	if resolved.DeploymentID != "" {
+		if lookup, ok := m.store.(appLogDrainDeploymentLookupStore); ok {
+			if deployment, err := lookup.DeploymentByID(ctx, resolved.DeploymentID); err == nil {
+				resolved.CommitSHA = deployment.CommitSHA
+				resolved.DeploymentTag = deployment.Tag
+				resolved.ImageDigest = deployment.ImageDigest
+				if !deployment.CreatedAt.IsZero() {
+					resolved.DeploymentCreatedAt = deployment.CreatedAt.UTC().Format(time.RFC3339Nano)
+				}
+			}
+		}
+	}
+	if resolved.NodeID != "" {
+		if lookup, ok := m.store.(appLogDrainNodeLookupStore); ok {
+			if node, err := lookup.ComputeNodeByID(ctx, resolved.NodeID); err == nil && node.Region != nil {
+				resolved.Region = *node.Region
+			}
+		}
+	}
+	cache[frame.InstanceID] = resolved
+	return resolved
 }
 
 func (m *appLogDrainManager) stopAll() {
