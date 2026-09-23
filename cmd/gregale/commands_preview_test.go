@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,6 +113,45 @@ func TestPreviewShowIncludesLatestDeployment(t *testing.T) {
 	}
 }
 
+func TestPreviewShowUsesCurrentHeadEnvironment(t *testing.T) {
+	resetJSONOut(t)
+	setPreviewTestAuth(t)
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+	jsonOutput = true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/pr-42-web":
+			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active"})
+		case "/v1/apps/pr-42-web/deployments/latest":
+			writeJSONTest(w, api.DeploymentResponse{ID: "old-root", AppID: "preview-web", Status: statusLive})
+		case "/v1/preview/pr-42-web/environment":
+			writeJSONTest(w, previewEnvironmentFixture("building", false, "building"))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+
+	if code := cmdPreviewShow([]string{"pr-42-web"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got previewSummary
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	if got.Environment == nil || got.Environment.Phase != "building" || got.Environment.TotalWorkloads != 2 {
+		t.Fatalf("environment = %+v", got.Environment)
+	}
+	if got.LatestDeployment == nil || got.LatestDeployment.ID != "current-root" {
+		t.Fatalf("latest deployment = %+v, want current-head root", got.LatestDeployment)
+	}
+}
+
 func TestPreviewShowRejectsProductionAppBeforeDeploymentLookup(t *testing.T) {
 	resetJSONOut(t)
 	setPreviewTestAuth(t)
@@ -126,6 +167,24 @@ func TestPreviewShowRejectsProductionAppBeforeDeploymentLookup(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	if code := cmdPreviewShow([]string{"web"}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
+	}
+}
+
+func TestPreviewEnvironmentLookupOnlyFallsBackOnNotFound(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "forbidden", "Forbidden", "deployment read permission required"))
+	}))
+	defer srv.Close()
+	client := api.NewClient(srv.URL, "test-token")
+	if got, err := previewEnvironmentForApp(context.Background(), client, api.AppResponse{Slug: "dev-web"}); err != nil || got != nil || requests.Load() != 0 {
+		t.Fatalf("developer preview lookup = %+v, %v; requests = %d", got, err, requests.Load())
+	}
+	_, err := previewEnvironmentForApp(context.Background(), client, api.AppResponse{Slug: "pr-42-web", PreviewPRNumber: 42})
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Problem.Status != http.StatusForbidden {
+		t.Fatalf("error = %v, want forbidden API error", err)
 	}
 }
 
@@ -173,6 +232,111 @@ func TestPreviewWaitReturnsReadyReceipt(t *testing.T) {
 	}
 	if got.Deployment == nil || got.Deployment.ID != "deploy-42" || got.Deployment.Status != statusLive {
 		t.Fatalf("deployment = %+v, want live deploy-42", got.Deployment)
+	}
+}
+
+func TestPreviewWaitRequiresWholeEnvironment(t *testing.T) {
+	resetJSONOut(t)
+	setPreviewTestAuth(t)
+	oldInterval := previewWaitPollInterval
+	previewWaitPollInterval = time.Millisecond
+	defer func() { previewWaitPollInterval = oldInterval }()
+	var reads atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/pr-42-web":
+			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active", URL: "https://pr-42-web.gregale.dev"})
+		case "/v1/apps/pr-42-web/deployments/latest":
+			writeJSONTest(w, api.DeploymentResponse{ID: "old-root", AppID: "preview-web", Status: statusLive})
+		case "/v1/preview/pr-42-web/environment":
+			if reads.Add(1) == 1 {
+				oldHead := previewEnvironmentFixture("building", false, "building")
+				oldHead.CommitSHA = "old-sha"
+				oldHead.Members[0].DeploymentID = "old-root"
+				writeJSONTest(w, oldHead)
+			} else {
+				writeJSONTest(w, previewEnvironmentFixture("live", true, statusLive))
+			}
+		case "/v1/deployments/current-root":
+			writeJSONTest(w, api.DeploymentResponse{ID: "current-root", AppID: "preview-web", Status: statusLive})
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+	jsonOutput = true
+
+	if code := cmdPreviewWait([]string{"pr-42-web", "--timeout", "1"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got previewWaitReceipt
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	if reads.Load() < 2 || !got.Ready || got.Environment == nil || got.Environment.LiveWorkloads != 2 || got.Environment.CommitSHA != "current-sha" {
+		t.Fatalf("receipt = %+v, environment reads = %d", got, reads.Load())
+	}
+	if got.Deployment == nil || got.Deployment.ID != "current-root" {
+		t.Fatalf("deployment = %+v, want current-head root", got.Deployment)
+	}
+}
+
+func TestPreviewWaitFailsForSiblingDeployment(t *testing.T) {
+	resetJSONOut(t)
+	setPreviewTestAuth(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/pr-42-web":
+			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active"})
+		case "/v1/apps/pr-42-web/deployments/latest":
+			writeJSONTest(w, api.DeploymentResponse{ID: "current-root", AppID: "preview-web", Status: statusLive})
+		case "/v1/preview/pr-42-web/environment":
+			writeJSONTest(w, previewEnvironmentFixture("failed", false, "failed"))
+		case "/v1/deployments/current-root":
+			writeJSONTest(w, api.DeploymentResponse{ID: "current-root", AppID: "preview-web", Status: statusLive})
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+	jsonOutput = true
+
+	if code := cmdPreviewWait([]string{"pr-42-web", "--timeout", "1"}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	var got previewWaitReceipt
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	if got.Ready || got.Environment == nil || got.Environment.Phase != "failed" || got.NextAction != "gregale logs pr-42-worker --deployment worker-deploy --follow" {
+		t.Fatalf("receipt = %+v", got)
+	}
+}
+
+func previewEnvironmentFixture(phase string, ready bool, workerStatus string) api.PreviewEnvironmentStatusResponse {
+	live := 1
+	if ready {
+		live = 2
+	}
+	return api.PreviewEnvironmentStatusResponse{
+		RootSlug: "pr-42-web", PRNumber: 42, CommitSHA: "current-sha", Phase: phase,
+		Ready: ready, Summary: "PR preview " + phase, LiveWorkloads: live, TotalWorkloads: 2,
+		Members: []api.PreviewEnvironmentMemberResponse{
+			{AppID: "preview-web", Slug: "pr-42-web", WorkloadName: "web", AppStatus: "active", PreviewState: "open", DeploymentID: "current-root", DeploymentStatus: statusLive},
+			{AppID: "preview-worker", Slug: "pr-42-worker", WorkloadName: "worker", AppStatus: "active", PreviewState: "open", DeploymentID: "worker-deploy", DeploymentStatus: workerStatus},
+		},
 	}
 }
 
