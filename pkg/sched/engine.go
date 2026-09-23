@@ -7498,6 +7498,13 @@ func (e *Engine) snapshotRejection(ctx context.Context, snap state.Snapshot, exp
 	case snap.FCVersion != e.fcVer:
 		return ColdReasonFCVersion
 	case state.SnapshotDriveKey(snap) == "":
+		// A legacy capture without its writable drive can never be
+		// restored, yet as the live row of its tier it holds the
+		// (deployment, tier) unique slot, so imaged discards every newer
+		// capture in its favour and the deployment cold-boots forever.
+		// Retire it like a RAM-incompatible row so the next park's capture
+		// becomes the live row.
+		e.retireUnrestorableSnapshot(ctx, snap, ColdReasonNoDrive)
 		return ColdReasonNoDrive
 	case !e.snapshotMatchesRAM(ctx, snap, expectedRAMMB):
 		return ColdReasonRAM
@@ -7507,6 +7514,22 @@ func (e *Engine) snapshotRejection(ctx context.Context, snap state.Snapshot, exp
 		return ColdReasonBaseImage
 	}
 	return ""
+}
+
+// retireUnrestorableSnapshot marks a snapshot row that no wake can ever
+// restore stale. Best-effort: a failed mark leaves the row as it was and the
+// wake still cold-boots.
+func (e *Engine) retireUnrestorableSnapshot(ctx context.Context, snap state.Snapshot, reason string) {
+	if snap.ID == "" {
+		return
+	}
+	if err := e.store.MarkSnapshotStale(ctx, snap.ID); err != nil {
+		e.log.Warn("wake: mark unrestorable snapshot stale", "snapshot_id", snap.ID,
+			"deployment_id", snap.DeploymentID, "reason", reason, "err", err)
+		return
+	}
+	e.log.Info("wake: retired unrestorable snapshot", "snapshot_id", snap.ID,
+		"deployment_id", snap.DeploymentID, "tier", snap.Tier, "reason", reason)
 }
 
 // wakeSnapshotChoice is chooseWakeSnapshot's decision. On a cold boot,

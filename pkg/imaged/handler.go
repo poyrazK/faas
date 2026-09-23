@@ -2965,10 +2965,27 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			if createErr != nil {
 				return fmt.Errorf("imaged: load existing snapshot: %w", createErr)
 			}
+			// A live row without its writable drive (a legacy capture) can
+			// never be restored. Keeping it and discarding this capture would
+			// leave the deployment cold-booting on every wake, so retire it
+			// and publish the new capture instead.
+			if state.SnapshotDriveKey(stored) == "" && state.SnapshotDriveKey(snap) != "" {
+				if markErr := h.store.MarkSnapshotStale(ctx, stored.ID); markErr != nil {
+					return fmt.Errorf("imaged: retire unrestorable snapshot %s: %w", stored.ID, markErr)
+				}
+				h.log.Info("imaged: retired unrestorable snapshot for a new capture",
+					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID)
+				retired := stored.ID
+				if stored, createErr = h.store.CreateSnapshot(ctx, snap); createErr != nil {
+					return fmt.Errorf("imaged: create snapshot after retiring %s: %w", retired, createErr)
+				}
+			}
 		}
 		if stored.StorageKey != snapshot.StorageKey && state.IsSnapshotCaptureKey(snapshot.StorageKey) {
 			// A second capture can finish before the first notification is read.
 			// Keep the already-published pair and discard only this unused one.
+			h.log.Info("imaged: discarded capture; deployment already has a live snapshot",
+				"deployment", snapshot.DeploymentID, "tier", snap.Tier, "kept", stored.ID)
 			h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: snapshot.StorageKey})
 		}
 		if snapshot.NodeID != "" && stored.StorageKey == snapshot.StorageKey {
