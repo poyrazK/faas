@@ -112,7 +112,7 @@ func TestServiceProxyMetricsOutcomes(t *testing.T) {
 func TestServiceProxyReportsBindingDenialSeparately(t *testing.T) {
 	m := NewMetrics()
 	proxy := NewServiceProxy(ServiceProxyConfig{
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
