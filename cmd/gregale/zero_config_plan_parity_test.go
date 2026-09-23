@@ -37,40 +37,57 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 		fixtures[fixture.ID] = fixture
 	}
 
-	for _, tc := range []struct {
-		name           string
-		fixtureID      string
-		workspace      bool
-		worktree       bool
-		dirtyOverride  bool
-		wantSourceRoot string
-		wantPort       int
-		wantHealth     string
-		wantConfigFile bool
-	}{
+	type parityCase struct {
+		name             string
+		fixtureID        string
+		workspace        bool
+		goWorkspace      bool
+		worktree         bool
+		dirtyOverride    bool
+		wantSourceRoot   string
+		wantPort         int
+		wantHealth       string
+		workspaceSibling string
+	}
+	testCases := []parityCase{
 		{name: "committed FastAPI root ignores dirty config", fixtureID: "fastapi", dirtyOverride: true, wantPort: 8000, wantHealth: "/healthz"},
-		{name: "committed Express workspace member", fixtureID: "express", workspace: true, wantSourceRoot: "apps/api", wantPort: 3000, wantHealth: "/healthz"},
-		{name: "Express workspace worktree includes dirty config", fixtureID: "express", workspace: true, worktree: true, dirtyOverride: true, wantSourceRoot: "apps/api", wantPort: 8787, wantHealth: "/ready", wantConfigFile: true},
-	} {
+		{name: "committed Express workspace member", fixtureID: "express", workspace: true, wantSourceRoot: "apps/api", wantPort: 3000, wantHealth: "/healthz", workspaceSibling: "packages/shared/index.js"},
+		{name: "Express workspace worktree includes dirty config", fixtureID: "express", workspace: true, worktree: true, dirtyOverride: true, wantSourceRoot: "apps/api", wantPort: 8787, wantHealth: "/ready", workspaceSibling: "packages/shared/index.js"},
+		{name: "Go workspace member preserves repository context", fixtureID: "go-net-http", goWorkspace: true, wantSourceRoot: "apps/api", workspaceSibling: "apps/worker/go.mod"},
+	}
+	for _, fixture := range catalog.Fixtures {
+		if fixture.Expected.Framework == "" || fixture.Expected.Framework == "oci" {
+			continue
+		}
+		testCases = append(testCases, parityCase{name: "catalog " + fixture.ID, fixtureID: fixture.ID})
+	}
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture, ok := fixtures[tc.fixtureID]
 			if !ok {
 				t.Fatalf("API hosting catalog is missing %q", tc.fixtureID)
 			}
 			repo := initZeroConfigRepo(t)
-			if tc.fixtureID == "fastapi" {
-				// The shared Git helper seeds a Node marker. Remove it so
-				// this case represents the catalog's Python source tree.
+			if fixture.Expected.PackageManager != "npm" {
+				// The shared Git helper seeds a Node marker. Remove it for
+				// Python and Go fixtures so they exercise their own markers.
 				if err := os.Remove(filepath.Join(repo, "package.json")); err != nil {
 					t.Fatal(err)
 				}
 			}
 			member := repo
-			if tc.workspace {
+			if tc.workspace || tc.goWorkspace {
 				member = filepath.Join(repo, "apps", "api")
+			}
+			if tc.workspace {
 				writeParityFile(t, repo, "package.json", `{"private":true,"workspaces":["apps/*","packages/*"]}`)
 				writeParityFile(t, repo, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
 				writeParityFile(t, repo, "packages/shared/index.js", "module.exports = {}\n")
+			}
+			if tc.goWorkspace {
+				writeParityFile(t, repo, "go.work", "go 1.24\n\nuse (\n  ./apps/api\n  ./apps/worker\n)\n")
+				writeParityFile(t, repo, "apps/worker/go.mod", "module example.com/worker\ngo 1.24\n")
+				writeParityFile(t, repo, "apps/worker/main.go", "package main\nfunc main() {}\n")
 			}
 			for name, body := range fixture.Files {
 				writeParityFile(t, member, name, body)
@@ -133,7 +150,7 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 			args := []string{"--json", "--name", "demo", "--profile", "small"}
-			if tc.workspace {
+			if tc.workspace || tc.goWorkspace {
 				args = append(args, "--path", "apps/api")
 			}
 			if tc.worktree {
@@ -149,8 +166,15 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			if stub.gotCalls["create"] != 1 || stub.gotCalls["deploy"] != 1 {
 				t.Fatalf("deploy calls = %+v, want one create and upload", stub.gotCalls)
 			}
-			if plan.Framework != fixture.Expected.Framework || plan.Port != tc.wantPort || plan.HealthPath != tc.wantHealth {
-				t.Fatalf("plan profile = %+v, want %s :%d %s", plan, fixture.Expected.Framework, tc.wantPort, tc.wantHealth)
+			wantPort, wantHealth := fixture.Expected.Port, fixture.Expected.HealthPath
+			if tc.wantPort != 0 {
+				wantPort = tc.wantPort
+			}
+			if tc.wantHealth != "" {
+				wantHealth = tc.wantHealth
+			}
+			if plan.Framework != fixture.Expected.Framework || plan.Port != wantPort || plan.HealthPath != wantHealth {
+				t.Fatalf("plan profile = %+v, want %s :%d %s", plan, fixture.Expected.Framework, wantPort, wantHealth)
 			}
 			if created.Type != "app" || created.ExecutionMode != plan.ExecutionMode || created.HealthPath != plan.HealthPath || created.ResourceProfile != plan.ResourceProfile {
 				t.Errorf("created app = %+v, differs from plan %+v", created, plan)
@@ -178,12 +202,13 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 				t.Errorf("uploaded profile = %+v, differs from plan %+v", profile, plan)
 			}
 			_, shippedOverride := entries[path.Join(sourceRoot, "gregale.yaml")]
-			if shippedOverride != tc.wantConfigFile {
-				t.Errorf("uploaded hosting override present = %t, want %t", shippedOverride, tc.wantConfigFile)
+			wantConfigFile := fixture.Expected.ConfigFile != "" || (tc.worktree && tc.dirtyOverride)
+			if shippedOverride != wantConfigFile {
+				t.Errorf("uploaded hosting override present = %t, want %t", shippedOverride, wantConfigFile)
 			}
-			if tc.workspace {
-				if _, ok := entries["packages/shared/index.js"]; !ok {
-					t.Error("workspace upload lost the sibling package")
+			if tc.workspaceSibling != "" {
+				if _, ok := entries[tc.workspaceSibling]; !ok {
+					t.Errorf("workspace upload lost sibling %q", tc.workspaceSibling)
 				}
 			}
 		})
