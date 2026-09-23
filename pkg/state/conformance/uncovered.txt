@@ -606,7 +606,6 @@ SetInstanceRuntime
 SetMFARequired
 SetMFASecret
 SetProjectScanSource
-SoftDeleteAppCascade
 SoftDeleteOrg
 StampAppScaleIn
 StampAppScaleOut

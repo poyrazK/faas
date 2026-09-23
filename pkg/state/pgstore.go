@@ -4219,6 +4219,17 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 	row := s.pool.QueryRow(ctx, `
 		with removed_crons as (
 			delete from crons where app_id = $1 returning id
+		), cancelled_app_tasks as (
+			update app_tasks
+			   set status = case when status = 'queued' then 'cancelled' else status end,
+			       cancel_requested_at = case
+			           when status in ('restoring', 'running') then coalesce(cancel_requested_at, now())
+			           else cancel_requested_at
+			       end,
+			       finished_at = case when status = 'queued' then now() else finished_at end,
+			       updated_at = now()
+			 where app_id = $1 and status in ('queued', 'restoring', 'running')
+			 returning id
 		)
 		update apps
 		   set status = 'deleted',
@@ -4476,6 +4487,18 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 	}
 	if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, id); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app remove crons: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update app_tasks
+		   set status = case when status = 'queued' then 'cancelled' else status end,
+		       cancel_requested_at = case
+		           when status in ('restoring', 'running') then coalesce(cancel_requested_at, $2)
+		           else cancel_requested_at
+		       end,
+		       finished_at = case when status = 'queued' then $2 else finished_at end,
+		       updated_at = $2
+		 where app_id = $1 and status in ('queued', 'restoring', 'running')`, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app cancel app tasks: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		with candidates as (

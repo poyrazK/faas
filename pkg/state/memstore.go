@@ -465,6 +465,9 @@ type MemStore struct {
 	// runtime stream. It is deliberately separate from guest scratch storage.
 	executionEvents      map[string][]ExecutionEvent
 	nextExecutionEventID int64
+	// appTasks are deployment-attached command intents (ADR-230). Unlike
+	// disposable executions they reference an app artifact and scope.
+	appTasks map[string]AppTask
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -992,6 +995,7 @@ func NewMemStore() *MemStore {
 		workflowRuns:                   map[string]WorkflowRun{},
 		workflowSteps:                  map[string]map[string]WorkflowStep{},
 		workflowEvents:                 map[string][]WorkflowEvent{},
+		appTasks:                       map[string]AppTask{},
 		fireNowRequests:                map[string]FireNowRequest{},
 		operatorIntents:                map[string]OperatorIntent{},
 		runtimeConfigs:                 map[string]RuntimeConfig{},
@@ -5662,6 +5666,7 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 	wasDeleted := a.Status == AppDeleted
 	a.Status = AppDeleted
 	m.apps[id] = a
+	m.cancelAppTasksForAppLocked(id, now)
 	if !wasDeleted {
 		delete(m.appDeletionClaims, id)
 	}
@@ -5833,6 +5838,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.invocations, key)
 		}
 	}
+	for key, task := range m.appTasks {
+		if task.AppID == id {
+			delete(m.appTasks, key)
+		}
+	}
 	for key, v := range m.crons {
 		if v.AppID == id {
 			delete(m.crons, key)
@@ -5925,6 +5935,7 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 		a.DeleteGraceUntil = &deadline
 	}
 	m.apps[id] = a
+	m.cancelAppTasksForAppLocked(id, now)
 	for cronID, cron := range m.crons {
 		if cron.AppID == id {
 			delete(m.crons, cronID)
@@ -18832,6 +18843,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for iid, ins := range m.instances {
 		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
 			delete(m.instances, iid)
+		}
+	}
+	for taskID, task := range m.appTasks {
+		if task.AccountID == id {
+			delete(m.appTasks, taskID)
 		}
 	}
 	// Snapshots + builds are keyed by deployment_id; resolve the
