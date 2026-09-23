@@ -66,8 +66,11 @@ type rawNestedConfig struct {
 	User         string              `json:"User"`
 	ExposedPorts map[string]struct{} `json:"ExposedPorts"`
 	StopSignal   string              `json:"StopSignal"`
+	Labels       map[string]string   `json:"Labels"`
 	Healthcheck  *rawHealthcheck     `json:"Healthcheck"`
 }
+
+const secretReloadSignalLabel = "com.gregale.secret-reload-signal"
 
 // rawHealthcheck is the unmarshal target for HEALTHCHECK in either
 // envelope. The struct fields mirror Docker semantics:
@@ -164,6 +167,13 @@ func (r *rawConfig) resolvedStopSignal() string {
 		return r.Config.StopSignal
 	}
 	return ""
+}
+
+func (r *rawConfig) resolvedSecretReloadSignal() string {
+	if r.Config == nil || r.Config.Labels == nil {
+		return ""
+	}
+	return r.Config.Labels[secretReloadSignalLabel]
 }
 
 // validate returns an error if the rootfs.type is set to anything other

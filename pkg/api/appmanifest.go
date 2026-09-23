@@ -132,6 +132,10 @@ type AppManifest struct {
 	// StopSignal mirrors OCI STOPSIGNAL; runtime signal-forwarding
 	// lands in M-2 (ADR-X3 lifecycle contract).
 	StopSignal string `json:"stop_signal,omitempty"`
+	// SecretReloadSignal opts the main workload into live secret-file
+	// replacement followed by this signal. The application must handle the
+	// signal, reread FAAS_SECRETS_FILE, and apply the new values itself.
+	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
 	// StopGracePeriod mirrors OCI StopGracePeriod (the OCI image
 	// spec doesn't carry it; M-2 will populate from operator
 	// override or per-plan cap). Currently always zero.
@@ -420,6 +424,16 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)
 	}
+	if m.SecretReloadSignal != "" {
+		switch m.SecretReloadSignal {
+		case "SIGHUP", "SIGUSR1", "SIGUSR2":
+		default:
+			return fmt.Errorf("app manifest: secret_reload_signal %q must be one of {SIGHUP,SIGUSR1,SIGUSR2}", m.SecretReloadSignal)
+		}
+		if m.SecretReloadSignal == canonicalStopSignal(m.StopSignal) {
+			return fmt.Errorf("app manifest: secret_reload_signal must differ from stop_signal %q", m.StopSignal)
+		}
+	}
 	if err := ValidateWorkloadPorts(m.Ports); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
@@ -602,6 +616,19 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		}
 	}
 	return nil
+}
+
+func canonicalStopSignal(raw string) string {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "SIGHUP", "HUP", "1":
+		return "SIGHUP"
+	case "SIGUSR1", "USR1", "10":
+		return "SIGUSR1"
+	case "SIGUSR2", "USR2", "12":
+		return "SIGUSR2"
+	default:
+		return "SIGTERM"
+	}
 }
 
 // WriteManifest encodes m as canonical JSON.

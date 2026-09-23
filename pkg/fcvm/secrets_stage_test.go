@@ -276,6 +276,20 @@ func TestWake_TamperedCiphertext_FailsOpen(t *testing.T) {
 	}
 }
 
+func TestUnsealRuntimeSecretsBindsCiphertextToAuthorizedKey(t *testing.T) {
+	id := newIdentity(t)
+	blob := sealEnv(t, id, secretbox.Envelope{"OTHER": "must-not-escape"})
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	m.SetHostIdentity(id)
+	secrets, err := m.UnsealRuntimeSecrets([]SealedEnvEntry{{Key: "DB_URL", Ciphertext: blob}})
+	if err == nil {
+		t.Fatal("runtime unseal accepted ciphertext whose inner key differs from the allowlisted row")
+	}
+	if len(secrets) != 0 {
+		t.Fatalf("runtime unseal returned unauthorized values: %#v", secrets)
+	}
+}
+
 func TestWake_StageErr_FailsWakeAndCleansUp(t *testing.T) {
 	// When StageSecretsEnv itself returns an error (e.g. missing drive1
 	// chroot), the deferred cleanup runs and the instance does NOT

@@ -63,6 +63,10 @@ func TestManifestValidate(t *testing.T) {
 		{"empty argv0", AppManifest{Entrypoint: []string{""}}, false},
 		{"bad port", AppManifest{Entrypoint: []string{"x"}, Port: 70000}, false},
 		{"neg port", AppManifest{Entrypoint: []string{"x"}, Port: -1}, false},
+		{"secret reload SIGHUP", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP"}, true},
+		{"secret reload SIGUSR1", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGUSR1"}, true},
+		{"secret reload invalid signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGTERM"}, false},
+		{"secret reload collides with stop signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP", StopSignal: "HUP"}, false},
 		{"protocol ports", AppManifest{Entrypoint: []string{"x"}, Ports: []WorkloadPort{
 			{Name: "http", Port: 8080, Protocol: WorkloadPortTCP},
 			{Name: "dns", Port: 8080, Protocol: WorkloadPortUDP},

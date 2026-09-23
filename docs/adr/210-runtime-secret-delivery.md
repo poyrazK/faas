@@ -37,9 +37,10 @@
   environment. With `--restart`, fresh processes receive the new value before
   old processes stop serving. At most one concurrency slot above the app's
   configured ceiling is permitted, and ordinary node RAM/CPU admission still
-  applies. In-process file
-  delivery and reload hooks are deferred because environment variables cannot
-  be changed safely in an existing process. Multi-node fleets require
+  applies. General in-process file delivery and reload hooks are deferred
+  because environment variables cannot be changed safely in an existing
+  process; the later opt-in, single-workload exception is defined in ADR-222.
+  Multi-node fleets require
   registered gateway acknowledgements and fresh VM telemetry; legacy
   single-box installs retain the local-notification compatibility path.
 - **Failure posture:** If durable enqueue or the request-time snapshot
