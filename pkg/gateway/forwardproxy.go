@@ -384,11 +384,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	for name, vals := range guestHeaders {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
 			!strings.EqualFold(name, api.InvocationIDHeader) &&
+			!(isSyntheticInvocation(r.Context()) && strings.EqualFold(name, api.InvocationSourceHeader)) &&
 			!api.IsGuestIdentityHeader(name) {
-			// The guest receives only platform-authored identity, client IP,
-			// and invocation headers. Handler.ServeHTTP overwrites identity
-			// values immediately before dispatch; every other x-faas-* header
-			// remains internal metadata.
+			// The guest receives platform-authored identity, client IP, and
+			// invocation headers. Only a scheduler-marked synthetic request may
+			// carry invocation source; customer-authored values remain internal.
 			if !strings.EqualFold(name, wire.ClientIPHeader) {
 				continue
 			}
@@ -1012,6 +1012,7 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 	for name := range headers {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
 			!strings.EqualFold(name, api.InvocationIDHeader) &&
+			!(isSyntheticInvocation(r.Context()) && strings.EqualFold(name, api.InvocationSourceHeader)) &&
 			!api.IsGuestIdentityHeader(name) &&
 			!strings.EqualFold(name, wire.ClientIPHeader) {
 			headers.Del(name)

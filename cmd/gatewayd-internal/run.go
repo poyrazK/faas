@@ -760,7 +760,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	identity.AppID = inv.AppID
 	identity.ApplyGuestHeaders(req.Header)
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
-	req.Header.Set("x-faas-invocation-source", string(inv.Source))
+	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
 	// The synthetic marker is intentionally attached to this derived request
 	// context so the internal bridge can preserve platform-owned headers.
 	//nolint:contextcheck // gateway.WithSyntheticInvocation inherits req.Context.
