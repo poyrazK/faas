@@ -4560,13 +4560,16 @@ type AccountTraceMatch struct {
 // Payloads, result bodies, and arbitrary invocation headers are intentionally
 // absent. Source distinguishes async, queue, delayed, cron, and replay rows.
 type AccountTraceInvocation struct {
-	App         string `json:"app"`
-	ID          string `json:"id"`
-	Source      string `json:"source"`
-	QueueName   string `json:"queue_name,omitempty"`
-	State       string `json:"state"`
-	Attempts    int    `json:"attempts"`
-	CreatedAt   string `json:"created_at"`
+	App       string `json:"app"`
+	ID        string `json:"id"`
+	Source    string `json:"source"`
+	QueueName string `json:"queue_name,omitempty"`
+	State     string `json:"state"`
+	Attempts  int    `json:"attempts"`
+	CreatedAt string `json:"created_at"`
+	// StartedAt is the most recent claim/delivery time. It is updated when
+	// an invocation is retried and is omitted until the first claim.
+	StartedAt   string `json:"started_at,omitempty"`
 	CompletedAt string `json:"completed_at,omitempty"`
 	Traceparent string `json:"traceparent,omitempty"`
 }

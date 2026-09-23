@@ -31942,6 +31942,7 @@ components:
         state: { type: string }
         attempts: { type: integer, minimum: 0 }
         created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, description: "Most recent claim/delivery time; updated on retry and omitted before the first claim." }
         completed_at: { type: string, format: date-time }
         traceparent: { type: string }
 
