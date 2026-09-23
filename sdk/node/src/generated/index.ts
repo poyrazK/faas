@@ -639,6 +639,7 @@ export type { SetObjectBucketAccessGrantRequest } from './models/SetObjectBucket
 export type { SetPasswordRequest } from './models/SetPasswordRequest.js';
 export type { SeverityCounts } from './models/SeverityCounts.js';
 export type { Sidecar } from './models/Sidecar.js';
+export type { SidecarProbe } from './models/SidecarProbe.js';
 export type { SidecarTimelineResponse } from './models/SidecarTimelineResponse.js';
 export type { SidecarTimelineStatus } from './models/SidecarTimelineStatus.js';
 export type { SLODuration } from './models/SLODuration.js';

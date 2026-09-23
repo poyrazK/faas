@@ -22124,6 +22124,88 @@ components:
           type: [integer, "null"]
           description: "Startup grace during which failures don't count (Docker 17.05+, default 0s)."
 
+    SidecarProbe:
+      description: |
+        Container-local startup or liveness probe for a companion. Specify
+        exactly one action: exec, http_get, tcp_socket, or the legacy OCI
+        test field. Port 0/omitted uses the workload's declared port, then
+        the image port, then the platform default.
+      type: object
+      properties:
+        test:
+          type: array
+          items: { type: string }
+          description: "Legacy OCI exec form: CMD, CMD-SHELL, or NONE. Retained for startup_probe compatibility."
+        exec:
+          type: object
+          required: [command]
+          properties:
+            command:
+              type: array
+              minItems: 1
+              items: { type: string, minLength: 1 }
+              description: "Argv executed in the image root; no shell is implied."
+        http_get:
+          type: object
+          properties:
+            path:
+              type: string
+              pattern: '^/'
+              description: "HTTP path; defaults to /."
+            port:
+              type: integer
+              minimum: 0
+              maximum: 65535
+              description: "Container port; 0/omitted inherits the workload port."
+        tcp_socket:
+          type: object
+          properties:
+            port:
+              type: integer
+              minimum: 0
+              maximum: 65535
+              description: "Container port; 0/omitted inherits the workload port."
+        period_s:
+          type: integer
+          minimum: 0
+          maximum: 300
+          description: "Probe interval in seconds; typed-probe default 10, legacy OCI default 30."
+        interval_s:
+          type: integer
+          minimum: 0
+          maximum: 300
+          description: "Legacy alias for period_s."
+        timeout_s:
+          type: integer
+          minimum: 0
+          maximum: 120
+          description: "Probe timeout in seconds; defaults to 1 for typed probes and 30 for legacy OCI probes."
+        failure_threshold:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: "Consecutive failures before startup fails or liveness restarts the workload; defaults to 3."
+        retries:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: "Legacy alias for failure_threshold."
+        success_threshold:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: "Consecutive passes required to become healthy; defaults to 1."
+        initial_delay_s:
+          type: integer
+          minimum: 0
+          maximum: 600
+          description: "Delay before the first probe."
+        start_period_s:
+          type: integer
+          minimum: 0
+          maximum: 600
+          description: "Legacy OCI liveness grace period during which failures do not count."
+
     ServiceReplicas:
       description: "Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E). Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land in M-4."
       type: object
@@ -24143,10 +24225,10 @@ components:
           (`failure_class=user_error`) and essential long-running
           sidecars restart-loop. If false, the failure is logged
           and the other workloads continue.
-        - `startup_probe` optionally replaces the image's baked OCI
-          `HEALTHCHECK` for this workload. It uses the exec-style
-          `AppManifestHealthcheck` shape; set `test` to [`NONE`] to
-          explicitly disable the image probe.
+        - `startup_probe` gates healthy dependency state and supports exec,
+          HTTP GET, and TCP probes. Omit it to use the image OCI `HEALTHCHECK`.
+        - `liveness_probe` independently monitors a running sidecar; when
+          omitted, the effective startup probe is reused for compatibility.
         - `depends_on` optionally gates this workload on `main` or
           another sidecar. Conditions are `started`, `healthy`, and
           `completed_successfully`; omitted condition means `started`.
@@ -24213,7 +24295,9 @@ components:
           type: boolean
           description: "Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."
         startup_probe:
-          $ref: '#/components/schemas/AppManifestHealthcheck'
+          $ref: '#/components/schemas/SidecarProbe'
+        liveness_probe:
+          $ref: '#/components/schemas/SidecarProbe'
         depends_on:
           type: array
           maxItems: 3

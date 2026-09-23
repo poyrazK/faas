@@ -634,6 +634,7 @@ export type { SetObjectBucketAccessGrantRequest } from './SetObjectBucketAccessG
 export type { SetPasswordRequest } from './SetPasswordRequest.js';
 export type { SeverityCounts } from './SeverityCounts.js';
 export type { Sidecar } from './Sidecar.js';
+export type { SidecarProbe } from './SidecarProbe.js';
 export type { SidecarTimelineResponse } from './SidecarTimelineResponse.js';
 export type { SidecarTimelineStatus } from './SidecarTimelineStatus.js';
 export type { Slug } from './Slug.js';

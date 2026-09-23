@@ -3572,6 +3572,7 @@ func marshalWorkloadManifest(w WorkloadSpec) ([]byte, error) {
 		DiskIOProfile: w.DiskIOProfile,
 		Port:          w.Port,
 		Essential:     w.Essential,
+		LivenessProbe: w.LivenessProbe,
 		StartupProbe:  w.StartupProbe,
 		Cmd:           w.Cmd,
 		Entrypoint:    w.Entrypoint,
@@ -3634,13 +3635,7 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	for _, dep := range w.DependsOn {
 		dependencyBytes += int64(len(dep.Name)+len(dep.Condition)) * 2
 	}
-	startupProbeBytes := int64(0)
-	if w.StartupProbe != nil {
-		for _, arg := range w.StartupProbe.Test {
-			startupProbeBytes += int64(len(arg)) * 2
-		}
-		startupProbeBytes += 64
-	}
+	probeBytes := projectedSidecarProbeBytes(w.StartupProbe) + projectedSidecarProbeBytes(w.LivenessProbe)
 	// Three int fields (port, ram_mb, cpu_millicores) and a bool + 2 array
 	// fields. 11 bytes per int is the worst case for a 32-bit
 	// value; 5 bytes for "false". The 5 quoted keys + 2 numeric
@@ -3648,7 +3643,26 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	// overhead; we over-estimate at 128 to absorb the new
 	// cmd/entrypoint keys.
 	const fixedOverhead = 128
-	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + startupProbeBytes + fixedOverhead
+	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + probeBytes + fixedOverhead
+}
+
+func projectedSidecarProbeBytes(probe *api.SidecarProbe) int64 {
+	if probe == nil {
+		return 0
+	}
+	bytes := int64(128)
+	for _, value := range probe.Test {
+		bytes += int64(len(value)) * 2
+	}
+	if probe.Exec != nil {
+		for _, value := range probe.Exec.Command {
+			bytes += int64(len(value))*2 + 4
+		}
+	}
+	if probe.HTTPGet != nil {
+		bytes += int64(len(probe.HTTPGet.Path)) * 2
+	}
+	return bytes
 }
 
 // projectedWorkloadRosterBytes (issue #463 / ADR-069 / PR-B
@@ -3704,18 +3718,19 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // must be a single PR that updates both sides + the projection
 // helper.
 type workloadManifest struct {
-	Cmd           []string                    `json:"cmd,omitempty"`
-	CPUMillicores int                         `json:"cpu_millicores,omitempty"`
-	DiskIOProfile string                      `json:"disk_io_profile,omitempty"`
-	DependsOn     []api.WorkloadDependency    `json:"depends_on,omitempty"`
-	Entrypoint    []string                    `json:"entrypoint,omitempty"`
-	Essential     bool                        `json:"essential"`
-	Name          string                      `json:"name"`
-	Port          int                         `json:"port"`
-	RamMB         int                         `json:"ram_mb"`
-	ScratchMB     int                         `json:"scratch_mb,omitempty"`
-	StartupProbe  *api.AppManifestHealthcheck `json:"startup_probe,omitempty"`
-	Type          string                      `json:"type"`
+	Cmd           []string                 `json:"cmd,omitempty"`
+	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
+	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint    []string                 `json:"entrypoint,omitempty"`
+	Essential     bool                     `json:"essential"`
+	LivenessProbe *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+	Name          string                   `json:"name"`
+	Port          int                      `json:"port"`
+	RamMB         int                      `json:"ram_mb"`
+	ScratchMB     int                      `json:"scratch_mb,omitempty"`
+	StartupProbe  *api.SidecarProbe        `json:"startup_probe,omitempty"`
+	Type          string                   `json:"type"`
 }
 
 // workloadRosterPath is the in-guest location guest-init reads
@@ -3790,6 +3805,7 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 			DiskIOProfile: main.DiskIOProfile,
 			Port:          main.Port,
 			Essential:     main.Essential,
+			LivenessProbe: main.LivenessProbe,
 			StartupProbe:  main.StartupProbe,
 			DependsOn:     main.DependsOn,
 		},
@@ -3804,6 +3820,7 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 			DiskIOProfile: sc.DiskIOProfile,
 			Port:          sc.Port,
 			Essential:     sc.Essential,
+			LivenessProbe: sc.LivenessProbe,
 			StartupProbe:  sc.StartupProbe,
 			Cmd:           sc.Cmd,
 			Entrypoint:    sc.Entrypoint,

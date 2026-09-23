@@ -6706,7 +6706,8 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			DiskIOProfile:   sc.DiskIOProfile,
 			Port:            sc.Port,
 			Essential:       sc.Essential,
-			StartupProbe:    cloneWorkloadStartupProbe(sc.StartupProbe),
+			StartupProbe:    cloneWorkloadProbe(sc.StartupProbe),
+			LivenessProbe:   cloneWorkloadProbe(sc.LivenessProbe),
 			Cmd:             append([]string(nil), sc.Cmd...),
 			Entrypoint:      append([]string(nil), sc.Entrypoint...),
 			DependsOn:       append([]api.WorkloadDependency(nil), sc.DependsOn...),
@@ -6717,12 +6718,25 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 	return out
 }
 
-func cloneWorkloadStartupProbe(in *api.AppManifestHealthcheck) *api.AppManifestHealthcheck {
+func cloneWorkloadProbe(in *api.SidecarProbe) *api.SidecarProbe {
 	if in == nil {
 		return nil
 	}
 	out := *in
 	out.Test = append([]string(nil), in.Test...)
+	if in.Exec != nil {
+		execProbe := *in.Exec
+		execProbe.Command = append([]string(nil), in.Exec.Command...)
+		out.Exec = &execProbe
+	}
+	if in.HTTPGet != nil {
+		httpProbe := *in.HTTPGet
+		out.HTTPGet = &httpProbe
+	}
+	if in.TCPSocket != nil {
+		tcpProbe := *in.TCPSocket
+		out.TCPSocket = &tcpProbe
+	}
 	return &out
 }
 

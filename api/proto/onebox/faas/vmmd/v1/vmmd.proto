@@ -688,6 +688,29 @@ message SidecarSpec {
   int32 startup_probe_timeout_s = 16;
   int32 startup_probe_retries = 17;
   int32 startup_probe_start_period_s = 18;
+  // Typed startup and liveness probes. The legacy startup_probe_* fields
+  // above remain populated for older vmmd binaries during rolling upgrades.
+  SidecarProbeSpec startup_probe = 19;
+  SidecarProbeSpec liveness_probe = 20;
+}
+
+// SidecarProbeSpec carries one container-local startup or liveness probe.
+// probe_type is one of exec, http, tcp, or none. test plus the legacy timing
+// aliases preserve the original OCI HEALTHCHECK-shaped sidecar override.
+message SidecarProbeSpec {
+  string probe_type = 1;
+  repeated string test = 2;
+  repeated string command = 3;
+  string path = 4;
+  uint32 port = 5;
+  int32 period_s = 6;
+  int32 interval_s = 7;
+  int32 timeout_s = 8;
+  int32 failure_threshold = 9;
+  int32 success_threshold = 10;
+  int32 initial_delay_s = 11;
+  int32 retries = 12;
+  int32 start_period_s = 13;
 }
 
 // SealedSecret is one (key, ciphertext) pair from an app or sidecar env
