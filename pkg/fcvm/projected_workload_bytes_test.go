@@ -1,5 +1,7 @@
 //go:build !metal
 
+// adr: 223
+
 // Whitebox tests for the pre-marshal byte projection helpers
 // (issue #463 / ADR-069 / PR-B review finding #7). The cap is
 // enforced BEFORE json.Marshal so a malicious or buggy wire

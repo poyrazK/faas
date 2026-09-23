@@ -1,5 +1,7 @@
 //go:build !metal
 
+// adr: 223
+
 // Whitebox tests for the workload-helper surface (issue #463 /
 // ADR-069 / PR-B review finding #3 — reject sidecar named "main").
 // The helpers are package-internal; a whitebox test pins their
