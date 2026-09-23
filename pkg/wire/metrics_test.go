@@ -1892,6 +1892,33 @@ func TestOpsMetrics_GuestInitDurationNilSafe(t *testing.T) {
 	}
 }
 
+// TestOpsMetrics_WakeColdReason pins the closed reason label set: every
+// reason plus "unknown" is pre-instantiated, and an out-of-set value is
+// folded into "unknown" so the series count stays bounded.
+func TestOpsMetrics_WakeColdReason(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.WakeColdReason("snapshots_stale").Inc()
+	m.WakeColdReason("snapshots_stale").Inc()
+	m.WakeColdReason("made-up reason").Inc()
+	body := render(t, m)
+	for _, want := range []string{
+		`schedd_wake_cold_reason_total{reason="snapshots_stale"} 2`,
+		`schedd_wake_cold_reason_total{reason="unknown"} 1`,
+		`schedd_wake_cold_reason_total{reason="fc_version_mismatch"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q", want)
+		}
+	}
+	if strings.Contains(body, "made-up reason") {
+		t.Error("out-of-set reason leaked into a label value")
+	}
+	var nilMetrics *wire.OpsMetrics
+	if nilMetrics.WakeColdReason("no_snapshot") != nil {
+		t.Error("nil OpsMetrics must return a nil counter")
+	}
+}
+
 // TestOpsMetrics_WakeSnapshotTier (issue #470 / PR C / ADR-074)
 // pins the closed-set tier label ({warm, init, cold_boot_fallback}).
 // All three labels are pre-instantiated at boot so the

@@ -353,6 +353,7 @@ type BootStarted struct {
 	NodeID             string
 	Method             string
 	Tier               string // warm, init, or cold_boot_fallback
+	ColdReason         string // why a cold boot did not restore (pkg/sched ColdReason*); empty on restore
 	RequestedAt        time.Time
 	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
 	TriggerClass       string // issue #1398 — user|monitor|crawler|preview_bot|unknown
@@ -590,6 +591,9 @@ func (e BootStarted) Payload() map[string]any {
 	}
 	if e.Tier != "" {
 		p["tier"] = e.Tier
+	}
+	if e.ColdReason != "" {
+		p["cold_reason"] = e.ColdReason
 	}
 	return p
 }

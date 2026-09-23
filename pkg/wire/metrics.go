@@ -291,6 +291,10 @@ type OpsMetrics struct {
 	// Pre-instantiated at boot so the wake-tier-mix panel has zero
 	// rows from idle fleet, non-zero as soon as production wakes happen.
 	wakeSnapshotTier *prometheus.CounterVec
+	// wakeColdReason counts why a wake cold-booted instead of restoring,
+	// one increment per cold wake. Labels are the closed WakeColdReasons set
+	// plus "unknown"; pre-instantiated so an idle fleet exports zero rows.
+	wakeColdReason *prometheus.CounterVec
 	// executionActive, executionTotal, executionPhaseDuration, and
 	// executionFailures are the scheduler-owned disposable-run signals.
 	// Labels are deliberately closed and payload-free: runtime is the four
@@ -2324,6 +2328,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	wakeSnapshotTier.WithLabelValues("warm")
 	wakeSnapshotTier.WithLabelValues("init")
 	wakeSnapshotTier.WithLabelValues("cold_boot_fallback")
+	wakeColdReason := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_wake_cold_reason_total",
+		Help: "Count of wakes that cold-booted instead of restoring a snapshot, labelled by reason (the pkg/sched ColdReason closed set: no_snapshot, snapshots_stale, snapshot_lookup_failed, fc_version_mismatch, snapshot_without_drive, ram_mismatch, base_image_mismatch, snapshot_stale, instance_mode; unknown for anything else). Sums to the cold_boot_fallback row of _wake_snapshot_tier_total minus snapshot-miss backoff gates.",
+	}, []string{"reason"})
+	for _, reason := range append(append([]string(nil), WakeColdReasons...), "unknown") {
+		wakeColdReason.WithLabelValues(reason)
+	}
 	// Disposable execution observability (ADR-171). Keep every label drawn
 	// from a closed set so untrusted runtime values and backend errors cannot
 	// create unbounded Prometheus series. The unknown rows are intentional
@@ -3678,7 +3689,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -5079,6 +5090,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		gatewayInflightRequests:                    gatewayInflightRequests,
 		egressCircuitState:                         egressCircuitState,
 		wakeSnapshotTier:                           wakeSnapshotTier,
+		wakeColdReason:                             wakeColdReason,
 		executionActive:                            executionActive,
 		executionTotal:                             executionTotal,
 		executionPhaseDuration:                     executionPhaseDuration,
@@ -5973,6 +5985,28 @@ func (m *OpsMetrics) WakeSnapshotTier(tier string) prometheus.Counter {
 		return nil
 	}
 	return m.wakeSnapshotTier.WithLabelValues(tier)
+}
+
+// WakeColdReasons mirrors pkg/sched's ColdReasons closed set (pkg/wire cannot
+// import pkg/sched); a pkg/sched test pins the two lists equal.
+var WakeColdReasons = []string{
+	"no_snapshot", "snapshots_stale", "snapshot_lookup_failed",
+	"fc_version_mismatch", "snapshot_without_drive", "ram_mismatch",
+	"base_image_mismatch", "snapshot_stale", "instance_mode",
+}
+
+// WakeColdReason returns the counter for one cold-boot reason. Values outside
+// the closed set land in "unknown" so the label space stays bounded.
+func (m *OpsMetrics) WakeColdReason(reason string) prometheus.Counter {
+	if m == nil || m.wakeColdReason == nil {
+		return nil
+	}
+	for _, known := range WakeColdReasons {
+		if reason == known {
+			return m.wakeColdReason.WithLabelValues(reason)
+		}
+	}
+	return m.wakeColdReason.WithLabelValues("unknown")
 }
 
 // RecordExecutionStarted increments the active disposable-execution gauge.
