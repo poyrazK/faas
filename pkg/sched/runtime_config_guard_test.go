@@ -3,7 +3,9 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -111,5 +113,47 @@ func TestInvalidateAppSnapshotsStampsRuntimeConfigChange(t *testing.T) {
 	}
 	if _, ok, err := store.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || !ok {
 		t.Fatalf("AppRuntimeConfigChangedAt = (ok=%v, err=%v), want stamped", ok, err)
+	}
+}
+
+// changeLookupFailingStore fails the runtime-config stamp read, standing in
+// for a database error during park.
+type changeLookupFailingStore struct {
+	*state.MemStore
+}
+
+func (changeLookupFailingStore) AppRuntimeConfigChangedAt(context.Context, string) (time.Time, bool, error) {
+	return time.Time{}, false, errors.New("database unavailable")
+}
+
+// A failed stamp read must skip the capture: a missed snapshot costs one
+// cold boot, a stale one keeps a credential the customer replaced.
+func TestPark_RuntimeConfigLookupFailureSkipsCapture(t *testing.T) {
+	ctx := context.Background()
+	mem := state.NewMemStore()
+	store := changeLookupFailingStore{MemStore: mem}
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	vmm := &fakeVMM{}
+	notif := &fakeNotifier{}
+	e := newEngine(t, store, vmm, notif, "1.10.0")
+	insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
+	capturesBefore := vmm.snapshots
+	publishedBefore := notif.count(db.NotifySnapshotWritten)
+
+	if err := e.Park(ctx, insID); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+	if got := vmm.snapshots - capturesBefore; got != 0 {
+		t.Errorf("init captures = %d, want 0 when the change stamp cannot be read", got)
+	}
+	if got := notif.count(db.NotifySnapshotWritten) - publishedBefore; got != 0 {
+		t.Errorf("snapshot_written = %d, want 0", got)
+	}
+	ins, err := store.InstanceByID(ctx, insID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if state.State(ins.State) != state.StateStopped {
+		t.Errorf("state = %q, want %q", ins.State, state.StateStopped)
 	}
 }

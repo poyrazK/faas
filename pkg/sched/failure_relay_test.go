@@ -86,3 +86,46 @@ func TestRelayedInstanceFailure_RejectsMalformedReports(t *testing.T) {
 		t.Errorf("HandleRelayedInstanceFailure(missing instance) = %v, want nil", err)
 	}
 }
+
+// The relay reaches the owner through the scheduler loop's LISTEN arm, and
+// both report kinds must land on their destroy path.
+func TestLoopAppliesRelayedInstanceFailureKinds(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload func(instanceID, appID string) string
+	}{
+		{name: "liveness", payload: func(i, a string) string {
+			return `{"instance_id":"` + i + `","app_id":"` + a + `","kind":"liveness","reason":"liveness_process_exited"}`
+		}},
+		{name: "workload_oom", payload: func(i, a string) string {
+			return `{"instance_id":"` + i + `","app_id":"` + a + `","kind":"workload_oom","peak_mb":300,"plan_mb":256}`
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+			if err := store.SetAppNodeID(ctx, app.ID, "node-owner"); err != nil {
+				t.Fatalf("SetAppNodeID: %v", err)
+			}
+			vmm := &fakeVMM{}
+			owner := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("node-owner")
+			inst := runningInstance(t, store, app, dep, vmm, owner)
+			loop := NewLoop(nil, owner, testLog())
+
+			loop.handleNotification(ctx, db.Notification{
+				Channel: db.NotifyInstanceFailureRelayed,
+				Payload: tc.payload(inst.ID, app.ID),
+			})
+
+			got, err := store.InstanceByID(ctx, inst.ID)
+			if err != nil {
+				t.Fatalf("InstanceByID: %v", err)
+			}
+			if state.State(got.State) != state.StateStopped {
+				t.Fatalf("instance state = %q, want %q", got.State, state.StateStopped)
+			}
+		})
+	}
+}
