@@ -403,6 +403,7 @@ func TestHandleInvalidation(t *testing.T) {
 	}
 }
 
+// adr: 122
 // TestHandleInvalidation_DeploymentChangedRefreshesWeights (issue #556 /
 // PR-B) — a db.NotifyDeploymentChanged event must trigger
 // RefreshDeploymentWeights on the picker so a `faas traffic set`

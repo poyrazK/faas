@@ -212,6 +212,7 @@ func TestProjectEnvironmentCloneCopiesScopedStateAtomically(t *testing.T) {
 	}
 }
 
+// adr: 211
 func TestProjectEnvironmentCloneFailsClosedWhenManagedResourceIsolationUnavailable(t *testing.T) {
 	srv, store, acct, project, app := newProjectLifecycleFixture(t)
 	ctx := context.Background()
