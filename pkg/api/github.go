@@ -46,8 +46,8 @@ func (c *Client) DisconnectGitHubConnection(ctx context.Context, slug string) (G
 	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/github", nil, &out)
 }
 
-// GetGitHubDeploymentPolicy returns the project-level GitHub deployment
-// policy used by githubd for source staging and PR previews.
+// GetGitHubDeploymentPolicy returns the project-level deployment policy used
+// for source staging, PR previews, and preview-to-production service calls.
 func (c *Client) GetGitHubDeploymentPolicy(ctx context.Context, slug string) (GitHubDeploymentPolicy, error) {
 	var out GitHubDeploymentPolicy
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/github/deployment-policy", nil, &out)

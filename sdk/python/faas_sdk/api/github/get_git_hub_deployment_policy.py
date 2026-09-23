@@ -77,9 +77,11 @@ def sync_detailed(
 ) -> Response[GitHubDeploymentPolicy | Problem]:
     """Read the customer-owned GitHub deployment policy.
 
-     Returns the project-level policy applied by githubd to source
-    staging and pull-request previews. Missing policy rows resolve to
-    backwards-compatible defaults.
+     Returns the project-level policy applied to source staging,
+    pull-request previews, and preview-to-production internal service
+    calls. A missing policy row resolves to the safe defaults for a new
+    project; projects created before preview service isolation was
+    introduced are migration-backed to the legacy allow_marked policy.
 
     Args:
         slug (str):
@@ -110,9 +112,11 @@ def sync(
 ) -> GitHubDeploymentPolicy | Problem | None:
     """Read the customer-owned GitHub deployment policy.
 
-     Returns the project-level policy applied by githubd to source
-    staging and pull-request previews. Missing policy rows resolve to
-    backwards-compatible defaults.
+     Returns the project-level policy applied to source staging,
+    pull-request previews, and preview-to-production internal service
+    calls. A missing policy row resolves to the safe defaults for a new
+    project; projects created before preview service isolation was
+    introduced are migration-backed to the legacy allow_marked policy.
 
     Args:
         slug (str):
@@ -138,9 +142,11 @@ async def asyncio_detailed(
 ) -> Response[GitHubDeploymentPolicy | Problem]:
     """Read the customer-owned GitHub deployment policy.
 
-     Returns the project-level policy applied by githubd to source
-    staging and pull-request previews. Missing policy rows resolve to
-    backwards-compatible defaults.
+     Returns the project-level policy applied to source staging,
+    pull-request previews, and preview-to-production internal service
+    calls. A missing policy row resolves to the safe defaults for a new
+    project; projects created before preview service isolation was
+    introduced are migration-backed to the legacy allow_marked policy.
 
     Args:
         slug (str):
@@ -169,9 +175,11 @@ async def asyncio(
 ) -> GitHubDeploymentPolicy | Problem | None:
     """Read the customer-owned GitHub deployment policy.
 
-     Returns the project-level policy applied by githubd to source
-    staging and pull-request previews. Missing policy rows resolve to
-    backwards-compatible defaults.
+     Returns the project-level policy applied to source staging,
+    pull-request previews, and preview-to-production internal service
+    calls. A missing policy row resolves to the safe defaults for a new
+    project; projects created before preview service isolation was
+    introduced are migration-backed to the legacy allow_marked policy.
 
     Args:
         slug (str):

@@ -815,6 +815,22 @@ func (r *VMMRouter) ReconcilePrivateNetworkFabricWithPeers(ctx context.Context, 
 	return fabricator.ReconcilePrivateNetworkFabricWithPeers(ctx, accountID, networkID, region, cidr, peers)
 }
 
+// RemovePrivateNetworkFabric routes the idempotent node-local fabric teardown
+// to one compute node after the durable network row has been deleted.
+func (r *VMMRouter) RemovePrivateNetworkFabric(ctx context.Context, nodeID, accountID, networkID, region string, cidr netip.Prefix) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	remover, ok := cli.(interface {
+		RemovePrivateNetworkFabric(context.Context, string, string, string, netip.Prefix) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: private network fabric teardown unsupported by node %q", nodeID)
+	}
+	return remover.RemovePrivateNetworkFabric(ctx, accountID, networkID, region, cidr)
+}
+
 // UpdateStaticEgressIP (ADR-119) routes the patch to the
 // vmmd that owns the live instance. The egress_drift
 // subscriber hands us a single (appID, ip) pair; we

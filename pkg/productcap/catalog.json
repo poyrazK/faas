@@ -13,6 +13,21 @@
       "acceptance_test": "pkg/gateway/service_proxy_circuit_test.go::TestServiceProxyBreakerReadmitsRecoveredEndpoint"
     },
     {
+      "id": "companions",
+      "name": "Application companions",
+      "category": "runtime",
+      "description": "Attach a bounded helper such as an OpenTelemetry collector, database proxy, or custom reverse proxy to an application instance.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/companions",
+      "acceptance_test": "pkg/fcvm/sidecar_metal_test.go::TestMetalTwoSidecarsColdBoot"
+    },
+    {
       "id": "container-deployments",
       "name": "Container deployments",
       "category": "delivery",
@@ -250,7 +265,7 @@
       "id": "request-retry",
       "name": "Request retry",
       "category": "edge",
-      "description": "Replay a request that died in transport against a different healthy instance of the same app.",
+      "description": "Replay a transport-failed request against a different healthy instance within hard per-request and aggregate app budgets; POST/PATCH also require explicit opt-in and an Idempotency-Key.",
       "maturity": "internal",
       "plans": [],
       "docs_url": "/docs/adr/201-traffic-as-a-platform-primitive",

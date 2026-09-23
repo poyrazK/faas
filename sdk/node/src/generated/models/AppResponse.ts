@@ -5,6 +5,7 @@
 import type { AppConfiguredResources } from './AppConfiguredResources.js';
 import type { AppEffectiveLimits } from './AppEffectiveLimits.js';
 import type { AppManifest } from './AppManifest.js';
+import type { AppServiceBinding } from './AppServiceBinding.js';
 import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { ParkedDeploymentRef } from './ParkedDeploymentRef.js';
 import type { PublicAuthStatus } from './PublicAuthStatus.js';
@@ -89,6 +90,10 @@ export type AppResponse = {
    */
   preview_expires_at?: string | null;
   manifest: AppManifest;
+  /**
+   * Repository-declared same-account service dependencies currently injected into this workload. This is a read-only discovery projection, not an enforcement allowlist.
+   */
+  service_bindings?: Array<AppServiceBinding>;
   /**
    * Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.
    */

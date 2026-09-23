@@ -44,6 +44,14 @@ type EventSubscriptionMatcherStore interface {
 	ListMatchingEventSubscriptionsForAccount(context.Context, string, string, string, EventSubscriptionCursor, int) ([]EventSubscription, error)
 }
 
+// EventDeliveryStore exposes the bounded, app-scoped read used by the
+// customer event-delivery inspection surface. Implementations only return
+// invocations carrying the canonical event id header; ordinary async invokes
+// therefore stay out of this view.
+type EventDeliveryStore interface {
+	ListEventDeliveriesForApp(context.Context, string, int, string, string, string) ([]Invocation, error)
+}
+
 // EventSubscriptionCursor is the stable keyset cursor for candidate pages.
 // A zero cursor requests the first page.
 type EventSubscriptionCursor struct {

@@ -85,6 +85,24 @@ func TestMetricsConcurrencyThrottled(t *testing.T) {
 	}
 }
 
+func TestMetricsRateLimitDegraded(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveRateLimitDegraded("rule")
+	m.ObserveRateLimitDegraded("unexpected")
+
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_ratelimit_degraded_total{scope="rule"} 1`,
+		`gateway_ratelimit_degraded_total{scope="other"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics body missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestRequestTelemetryMetricsExposition(t *testing.T) {
 	m := NewMetrics()
 	m.IncRequestTelemetryOverwritten()

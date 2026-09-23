@@ -1436,6 +1436,34 @@ func (c *Client) GetOrg(ctx context.Context, slug string) (OrgResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/orgs/"+slug, nil, &out)
 }
 
+// ListOrgActivity returns one newest-first page of the organization's global
+// infrastructure history. before is the opaque NextBefore value from the
+// prior page; empty-string filters are omitted.
+func (c *Client) ListOrgActivity(ctx context.Context, slug, before, kindPrefix, actorType, appID string, limit int) (ListOrgActivityResponse, error) {
+	var out ListOrgActivityResponse
+	q := url.Values{}
+	if before != "" {
+		q.Set("before", before)
+	}
+	if kindPrefix != "" {
+		q.Set("kind_prefix", kindPrefix)
+	}
+	if actorType != "" {
+		q.Set("actor_type", actorType)
+	}
+	if appID != "" {
+		q.Set("app_id", appID)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/orgs/" + slug + "/activity"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // PatchOrg applies a partial update to the org (name and/or plan).
 // Authz routing:
 //   - Name → org.manage_billing (owner + billing)

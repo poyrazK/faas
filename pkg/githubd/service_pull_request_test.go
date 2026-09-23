@@ -42,13 +42,22 @@ import (
 // WritePreviewCheck / WritePreviewCheckForkRefused seams.
 type previewTestRig struct {
 	*testRig
-	parentSlug string
-	parentID   string
+	parentSlug         string
+	parentID           string
+	parentProjectID    string
+	parentWorkloadName string
 }
 
 func newPreviewRig(t *testing.T) *previewTestRig {
 	t.Helper()
 	rig := newRig(t, nil)
+	project, err := rig.mem.CreateProject(context.Background(), state.Project{
+		AccountID: rig.acct,
+		Slug:      "demo-project",
+	})
+	if err != nil {
+		t.Fatalf("seed parent project: %v", err)
+	}
 	// Parent app — slug "demo-app", bound to the project's
 	// installation. The handler resolves parentApp via
 	// Reoncile.Store.AppByID(binding.AppID), so the binding
@@ -61,22 +70,18 @@ func newPreviewRig(t *testing.T) *previewTestRig {
 		MaxConcurrency: 1,
 		IdleTimeoutS:   30,
 		Status:         state.AppActive,
+		ProjectID:      project.ID,
+		WorkloadName:   "api",
 	})
 	if err != nil {
 		t.Fatalf("seed parent app: %v", err)
 	}
-	// Project with AppID set so the preview handler can pick
-	// up the parent via Reoncile.Store.ProjectByRepo... wait,
-	// the handler resolves via binding.AppID directly (the
-	// bind row carries the parent app). The project is just
-	// a sentinel for the binding adapter; the handler doesn't
-	// call ProjectByRepo. We seed a minimal project for
-	// shape-completeness but it's unused.
-	_ = rig
 	return &previewTestRig{
-		testRig:    rig,
-		parentSlug: "demo-app",
-		parentID:   parent.ID,
+		testRig:            rig,
+		parentSlug:         "demo-app",
+		parentID:           parent.ID,
+		parentProjectID:    project.ID,
+		parentWorkloadName: "api",
 	}
 }
 
@@ -319,6 +324,12 @@ func TestHandlePullRequest_HappyPath_Opened(t *testing.T) {
 	}
 	if got.PreviewOfSlug != "demo-app" {
 		t.Errorf("PreviewOfSlug = %q, want demo-app", got.PreviewOfSlug)
+	}
+	if got.ProjectID != rig.parentProjectID {
+		t.Errorf("ProjectID = %q, want parent project %q", got.ProjectID, rig.parentProjectID)
+	}
+	if got.WorkloadName != rig.parentWorkloadName {
+		t.Errorf("WorkloadName = %q, want parent workload %q", got.WorkloadName, rig.parentWorkloadName)
 	}
 	if got.PreviewPrNumber != 42 {
 		t.Errorf("PreviewPrNumber = %d, want 42", got.PreviewPrNumber)

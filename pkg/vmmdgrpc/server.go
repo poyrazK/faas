@@ -1562,6 +1562,33 @@ func (s *Server) ReconcilePrivateNetworkFabric(ctx context.Context, req *vmmdpb.
 	return s.privateNetworkFabricAck(ctx, req, nil, false)
 }
 
+// RemovePrivateNetworkFabric tears down the node-local bridge and optional
+// transport link after a Gregale-owned network has been deleted from durable
+// state. The Manager operation is idempotent so the durable delete
+// notification can be replayed until every active node acknowledges cleanup.
+func (s *Server) RemovePrivateNetworkFabric(ctx context.Context, req *vmmdpb.RemovePrivateNetworkFabricRequest) (*vmmdpb.RemovePrivateNetworkFabricAck, error) {
+	const op = "RemovePrivateNetworkFabric"
+	start := time.Now()
+	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
+	if req.GetAccountId() == "" || req.GetNetworkId() == "" {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Missing network identity", "account_id and network_id are required").WithDocs(wire.DocsBaseURL + "/vmmd#remove-private-network-fabric")))
+	}
+	prefix, err := api.ValidatePrivateNetworkCIDR(req.GetCidr())
+	if err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	remover, ok := s.vmm.(interface {
+		RemovePrivateNetworkFabric(context.Context, string, string, string, netip.Prefix) error
+	})
+	if !ok {
+		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.Unavailable), "private_network_fabric_unavailable", "Private network fabric unavailable", "vmmd private-network fabric teardown is not wired")))
+	}
+	if err := remover.RemovePrivateNetworkFabric(ctx, req.GetAccountId(), req.GetNetworkId(), req.GetRegion(), prefix); err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.RemovePrivateNetworkFabricAck{}, nil
+}
+
 func (s *Server) privateNetworkFabricAck(ctx context.Context, req *vmmdpb.ReconcilePrivateNetworkFabricRequest, peers []netip.Addr, peersManaged bool) (*vmmdpb.ReconcilePrivateNetworkFabricAck, error) {
 	ack := &vmmdpb.ReconcilePrivateNetworkFabricAck{}
 	checker, ok := s.vmm.(interface {

@@ -34,7 +34,12 @@ export type UploadDeployOptions = {
   pr_number?: number;
   workflows?: Array<WorkflowSpec>;
   /**
-   * Up to 2 stateless sidecars (1 init + 1 sidecar) carried across the resumable upload session.
+   * Preferred field for companions carried across the resumable upload session.
+   */
+  companions?: Array<Sidecar>;
+  /**
+   * Deprecated spelling of companions.
+   * @deprecated
    */
   sidecars?: Array<Sidecar>;
   /**

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/circuit"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -89,6 +90,48 @@ func TestServiceProxyRetriesStaleGETAndCachesLease(t *testing.T) {
 	}
 	if got := seenInstance.Load(); got != "instance-b" {
 		t.Fatalf("last downstream instance = %v, want instance-b", got)
+	}
+}
+
+func TestServiceProxyHonorsAggregateRetryBudget(t *testing.T) {
+	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-orders", Endpoints: []ServiceEndpoint{
+		{InstanceID: "instance-a", NodeID: "node-a", Port: 8080},
+		{InstanceID: "instance-b", NodeID: "node-b", Port: 8081},
+	}}}
+	now := time.Unix(100, 0)
+	metrics := NewMetrics()
+	var calls atomic.Int32
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				markStaleTarget(r.Context())
+				http.Error(w, "stale", http.StatusServiceUnavailable)
+			})
+		},
+		Metrics:     metrics,
+		Now:         func() time.Time { return now },
+		RetryBudget: NewRetryBudget(time.Minute, func() time.Time { return now }),
+		// Keep endpoints selectable so this test isolates retry admission
+		// rather than the circuit breaker opening on the first failure.
+		Breaker: circuit.NewGroup(circuit.DefaultConfig(), func() time.Time { return now }),
+	})
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil)
+		req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
+		proxy.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("forward calls = %d, want first request retried and second capped (2+1)", got)
+	}
+	if got := labelledCounterValue(t, metrics.Registry(), "gateway_retry_exhausted_total", "reason", RetrySkipAggregate); got != 1 {
+		t.Fatalf("aggregate budget exhaustions = %v, want 1", got)
 	}
 }
 

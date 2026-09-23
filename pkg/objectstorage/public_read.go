@@ -154,7 +154,7 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "object storage is temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	signed, err := backend.Provider.Presign(r.Context(), bucket.PhysicalName, SignRequest{Method: r.Method, Key: key, ExpiresIn: 60})
+	signed, err := PresignObjectRead(r.Context(), backend.Provider, bucket.PhysicalName, r.Method, key, 60)
 	if err != nil {
 		http.Error(w, "object not found", http.StatusNotFound)
 		return

@@ -239,7 +239,8 @@ func quoteShellArg(arg string) string {
 }
 
 // diffFieldsChanged returns the subset of {"root_dir", "workload_name",
-// "workload_class", "start_command", "source", "dockerfile", "service_env"} that actually changed
+// "workload_class", "start_command", "source", "dockerfile", "service_env",
+// "service_bindings"} that actually changed
 // between the existing state.App and the new scan-derived workload. The columns
 // RootDir and WorkloadName are NOT NULL DEFAULT ” in the schema
 // so equality is on the empty-string vs populated distinction —
@@ -274,6 +275,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	}
 	if !serviceEnvEqual(a.Manifest.Env, serviceEnvForWorkloadWithAvailable(nil, w, serviceNames)) {
 		changed = append(changed, "service_env")
+	}
+	if !serviceBindingsEqual(a.Manifest.ServiceBindings, serviceBindingsForWorkloadWithAvailable(w, serviceNames)) {
+		changed = append(changed, "service_bindings")
 	}
 	return changed
 }
