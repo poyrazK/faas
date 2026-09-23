@@ -18,16 +18,17 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // DTOs in internal/api should be added here on the next PR.
 type (
 	// App lifecycle.
-	CreateAppRequest       = api.CreateAppRequest
-	UpdateAppRequest       = api.UpdateAppRequest
-	RenameAppRequest       = api.RenameAppRequest
-	AppResponse            = api.AppResponse
-	AppEffectiveLimits     = api.AppEffectiveLimits
-	AppConfiguredResources = api.AppConfiguredResources
-	AppServiceBinding      = api.AppServiceBinding
-	ServiceBindingPolicy   = api.ServiceBindingPolicy
-	DeclaredRoute          = api.DeclaredRoute
-	RetryPolicyDTO         = api.RetryPolicyDTO
+	CreateAppRequest          = api.CreateAppRequest
+	UpdateAppRequest          = api.UpdateAppRequest
+	RenameAppRequest          = api.RenameAppRequest
+	AppResponse               = api.AppResponse
+	AppEffectiveLimits        = api.AppEffectiveLimits
+	AppConfiguredResources    = api.AppConfiguredResources
+	AppServiceBinding         = api.AppServiceBinding
+	ServiceBindingPolicy      = api.ServiceBindingPolicy
+	PreviewServiceCallsPolicy = api.PreviewServiceCallsPolicy
+	DeclaredRoute             = api.DeclaredRoute
+	RetryPolicyDTO            = api.RetryPolicyDTO
 
 	// End-customer consumers and credentials (ADR-120).
 	CreateAPIConsumerRequest                 = api.CreateAPIConsumerRequest
@@ -216,6 +217,8 @@ type (
 const (
 	ServiceBindingPolicyAccount  = api.ServiceBindingPolicyAccount
 	ServiceBindingPolicyDeclared = api.ServiceBindingPolicyDeclared
+	PreviewServiceCallsAllow     = api.PreviewServiceCallsAllow
+	PreviewServiceCallsDeny      = api.PreviewServiceCallsDeny
 )
 
 const (

@@ -43,8 +43,9 @@ func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
 	s := &server{}
 	bindings := []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"}}
 	got := s.appResponse(state.App{Manifest: state.AppManifest{
-		ServiceBindings:      bindings,
-		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+		ServiceBindings:           bindings,
+		ServiceBindingPolicy:      api.ServiceBindingPolicyDeclared,
+		PreviewServiceCallsPolicy: api.PreviewServiceCallsDeny,
 	}}, api.PlanHobby)
 	if !reflect.DeepEqual(got.ServiceBindings, bindings) {
 		t.Fatalf("service bindings = %#v, want %#v", got.ServiceBindings, bindings)
@@ -56,12 +57,18 @@ func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
 	if got.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
 		t.Fatalf("service binding policy = %q, want declared", got.ServiceBindingPolicy)
 	}
+	if got.PreviewServiceCallsPolicy != api.PreviewServiceCallsDeny {
+		t.Fatalf("preview service calls policy = %q, want deny", got.PreviewServiceCallsPolicy)
+	}
 }
 
 func TestAppResponseDefaultsServiceBindingPolicyToAccount(t *testing.T) {
 	got := (&server{}).appResponse(state.App{}, api.PlanHobby)
 	if got.ServiceBindingPolicy != api.ServiceBindingPolicyAccount {
 		t.Fatalf("service binding policy = %q, want account", got.ServiceBindingPolicy)
+	}
+	if got.PreviewServiceCallsPolicy != api.PreviewServiceCallsAllow {
+		t.Fatalf("preview service calls policy = %q, want allow", got.PreviewServiceCallsPolicy)
 	}
 }
 

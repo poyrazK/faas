@@ -18,6 +18,7 @@ from ..models.app_response_status import AppResponseStatus, check_app_response_s
 from ..models.app_response_type import AppResponseType, check_app_response_type
 from ..models.app_response_visibility import AppResponseVisibility, check_app_response_visibility
 from ..models.app_response_workload_class import AppResponseWorkloadClass, check_app_response_workload_class
+from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
 from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
 from ..types import UNSET, Unset
@@ -121,6 +122,9 @@ class AppResponse:
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""
+    preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
+    """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
+    `deny` rejects preview callers before waking the target."""
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
@@ -317,6 +321,10 @@ class AppResponse:
         if not isinstance(self.service_binding_policy, Unset):
             service_binding_policy = self.service_binding_policy
 
+        preview_service_calls_policy: str | Unset = UNSET
+        if not isinstance(self.preview_service_calls_policy, Unset):
+            preview_service_calls_policy = self.preview_service_calls_policy
+
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
@@ -489,6 +497,8 @@ class AppResponse:
             field_dict["service_bindings"] = service_bindings
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
+        if preview_service_calls_policy is not UNSET:
+            field_dict["preview_service_calls_policy"] = preview_service_calls_policy
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
         if streaming_enabled is not UNSET:
@@ -713,6 +723,13 @@ class AppResponse:
             service_binding_policy = UNSET
         else:
             service_binding_policy = check_service_binding_policy(_service_binding_policy)
+
+        _preview_service_calls_policy = d.pop("preview_service_calls_policy", UNSET)
+        preview_service_calls_policy: PreviewServiceCallsPolicy | Unset
+        if isinstance(_preview_service_calls_policy, Unset):
+            preview_service_calls_policy = UNSET
+        else:
+            preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
@@ -941,6 +958,7 @@ class AppResponse:
             preview_expires_at=preview_expires_at,
             service_bindings=service_bindings,
             service_binding_policy=service_binding_policy,
+            preview_service_calls_policy=preview_service_calls_policy,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,

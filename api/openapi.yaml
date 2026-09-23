@@ -20309,6 +20309,11 @@ components:
       type: string
       enum: [account, declared]
 
+    PreviewServiceCallsPolicy:
+      description: "Production target policy for internal service calls from preview apps. `allow` preserves existing behavior; `deny` rejects preview callers before waking the target."
+      type: string
+      enum: [allow, deny]
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
@@ -20396,6 +20401,9 @@ components:
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective internal-service authorization policy. Legacy apps without a stored value return `account`."
+        preview_service_calls_policy:
+          $ref: '#/components/schemas/PreviewServiceCallsPolicy'
+          description: "Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`."
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
         # the per-app outbound CIDR allowlist. Each entry is a
         # canonical CIDR string — v4 ("1.2.3.0/24") or v6
@@ -25995,6 +26003,9 @@ components:
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by the Compose `x-gregale-service-policy` extension. Defaults to `account`."
+        preview_service_calls_policy:
+          $ref: '#/components/schemas/PreviewServiceCallsPolicy'
+          description: "Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`."
         class:
           type: string
           enum: [http, graphql, grpc, job, worker, server, unknown]

@@ -978,6 +978,7 @@ from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
+from .preview_service_calls_policy import PreviewServiceCallsPolicy
 from .prewarm_intent_response import PrewarmIntentResponse
 from .prewarm_intent_response_status import PrewarmIntentResponseStatus
 from .prewarm_intent_response_trigger import PrewarmIntentResponseTrigger
@@ -2355,6 +2356,7 @@ __all__ = (
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
     "PreviewCreatedWebhookPayload",
+    "PreviewServiceCallsPolicy",
     "PrewarmIntentResponse",
     "PrewarmIntentResponseStatus",
     "PrewarmIntentResponseTrigger",

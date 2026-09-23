@@ -132,6 +132,29 @@ func TestServiceProxyReportsBindingDenialSeparately(t *testing.T) {
 	}
 }
 
+func TestServiceProxyReportsPreviewDenialSeparately(t *testing.T) {
+	m := NewMetrics()
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{}, ErrServiceProxyPreviewDenied
+		},
+		Metrics: m,
+	})
+	rec := meteredGET(t, proxy)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "does not accept calls from preview apps") {
+		t.Fatalf("response = %d %q, want preview-specific 403", rec.Code, rec.Body.String())
+	}
+	if got := callCount(t, m, ServiceCallPreviewDenied); got != 1 {
+		t.Fatalf("preview_denied = %v, want 1", got)
+	}
+	if got := callCount(t, m, ServiceCallDenied); got != 0 {
+		t.Fatalf("denied = %v, want 0 for preview policy rejection", got)
+	}
+}
+
 // The warm/cold split is the internal cold-start rate — the signal ADR-196
 // defers the depends_on wake-ahead decision on. A wake that succeeds must be
 // counted as "woken", not folded into "forwarded".

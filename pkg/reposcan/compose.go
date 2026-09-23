@@ -38,7 +38,8 @@ type composeCandidate struct {
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
 
-	ServiceBindingPolicy string `yaml:"x-gregale-service-policy"`
+	ServiceBindingPolicy      string `yaml:"x-gregale-service-policy"`
+	PreviewServiceCallsPolicy string `yaml:"x-gregale-preview-calls"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -177,6 +178,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasBuild && serviceBindingPolicy != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-policy requires a build workload", src, name)
 		}
+		previewServiceCallsPolicy, previewPolicyErr := normalizePreviewServiceCallsPolicy(s.PreviewServiceCallsPolicy)
+		if previewPolicyErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, previewPolicyErr)
+		}
+		if !hasBuild && previewServiceCallsPolicy != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-preview-calls requires a build workload", src, name)
+		}
 		command, commandShell := commandSpec(s.Command)
 		if hasBuild {
 			if (ctx != "" && !fs.ValidPath(ctx)) || strings.HasPrefix(ctx, "../") ||
@@ -227,7 +235,8 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			commandShell: commandShell,
 			dependsOn:    dependencyNames(s.DependsOn),
 
-			serviceBindingPolicy: serviceBindingPolicy,
+			serviceBindingPolicy:      serviceBindingPolicy,
+			previewServiceCallsPolicy: previewServiceCallsPolicy,
 
 			ports:   parsePorts(s.Ports),
 			envKeys: envKeys(s.Environment),
@@ -247,6 +256,19 @@ func normalizeServiceBindingPolicy(value string) (ServiceBindingPolicy, error) {
 		return ServiceBindingPolicyDeclared, nil
 	default:
 		return "", fmt.Errorf("x-gregale-service-policy must be account or declared")
+	}
+}
+
+func normalizePreviewServiceCallsPolicy(value string) (PreviewServiceCallsPolicy, error) {
+	switch normalized := strings.ToLower(strings.TrimSpace(value)); normalized {
+	case "":
+		return "", nil
+	case string(PreviewServiceCallsAllow):
+		return PreviewServiceCallsAllow, nil
+	case string(PreviewServiceCallsDeny):
+		return PreviewServiceCallsDeny, nil
+	default:
+		return "", fmt.Errorf("x-gregale-preview-calls must be allow or deny")
 	}
 }
 

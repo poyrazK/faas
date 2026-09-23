@@ -1146,6 +1146,10 @@ type AppResponse struct {
 	// internal service requests. "account" preserves legacy same-account
 	// reachability; "declared" permits only ServiceBindings targets.
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// PreviewServiceCallsPolicy is this app's policy for calls originating
+	// from preview apps. "allow" is the legacy default; "deny" rejects them
+	// when this app is the production target.
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -5635,7 +5639,8 @@ type PlanWorkload struct {
 	Command    []string `json:"command"`
 	DependsOn  []string `json:"depends_on,omitempty"`
 
-	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`

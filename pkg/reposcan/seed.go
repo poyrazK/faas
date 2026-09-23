@@ -109,7 +109,8 @@ type workloadSeed struct {
 	commandShell bool
 	dependsOn    []string
 
-	serviceBindingPolicy ServiceBindingPolicy
+	serviceBindingPolicy      ServiceBindingPolicy
+	previewServiceCallsPolicy PreviewServiceCallsPolicy
 
 	class     Class
 	schedule  string

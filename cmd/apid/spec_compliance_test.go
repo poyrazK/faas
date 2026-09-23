@@ -524,11 +524,12 @@ var schemaSpecOnly = map[string]bool{
 	// Same pattern as TriggerKind above: the DTO scanner walks
 	// struct types only; a `type X string` definition isn't a
 	// struct so it doesn't surface as a scanner name.
-	"FilterCriteriaOp":     true,
-	"KafkaSASLMechanism":   true,
-	"EnvDiffKind":          true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
-	"ResourceProfile":      true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
-	"ServiceBindingPolicy": true, // Typed-string enum in pkg/api/service_bindings.go; the schema is still part of the wire contract.
+	"FilterCriteriaOp":          true,
+	"KafkaSASLMechanism":        true,
+	"EnvDiffKind":               true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
+	"ResourceProfile":           true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
+	"ServiceBindingPolicy":      true, // Typed-string enum in pkg/api/service_bindings.go; the schema is still part of the wire contract.
+	"PreviewServiceCallsPolicy": true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.

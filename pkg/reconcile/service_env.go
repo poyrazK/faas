@@ -83,6 +83,10 @@ func serviceBindingPolicyForWorkload(w reposcan.Workload) api.ServiceBindingPoli
 	return api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
 }
 
+func previewServiceCallsPolicyForWorkload(w reposcan.Workload) api.PreviewServiceCallsPolicy {
+	return api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective()
+}
+
 func serviceEnvKey(name string) string {
 	name = strings.ToUpper(strings.TrimSpace(name))
 	var b strings.Builder

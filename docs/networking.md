@@ -235,8 +235,25 @@ Set `allow_marked` only when the production dependency is designed to receive
 preview traffic. A preview of `public-api` calling `billing` then reaches
 production `billing`, and any side effects are real.
 
-Gregale marks every request from a preview app, whether the selected target is
-another preview or an allowed production dependency:
+In `allow_marked` mode, a production service can independently refuse preview
+calls with `x-gregale-preview-calls: deny` on its Compose service:
+
+```yaml
+services:
+  billing:
+    build: ./billing
+    x-gregale-preview-calls: deny
+```
+
+The gateway checks the target's policy before waking or forwarding it and
+returns 403 to a preview caller. The target policy defaults to `allow`, so it
+preserves existing behavior; the project-level `preview_service_policy` can
+still deny all preview-to-production calls. The app API and scan plan show the
+effective `preview_service_calls_policy`, and target-policy rejections count
+under `gateway_service_call_total{outcome="preview_denied"}`.
+
+Every forwarded request from a preview app carries these markers, whether the
+selected target is another preview or an allowed production dependency:
 
 ```text
 X-Faas-Caller-Env: preview

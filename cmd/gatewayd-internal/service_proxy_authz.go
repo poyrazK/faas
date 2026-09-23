@@ -83,6 +83,9 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 					return gateway.ServiceCaller{}, gateway.ErrServiceProxyPreviewProductionDenied
 				}
 			}
+			if target.Manifest.EffectivePreviewServiceCallsPolicy() == api.PreviewServiceCallsDeny {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyPreviewDenied
+			}
 		}
 		if caller.Manifest.EffectiveServiceBindingPolicy() == api.ServiceBindingPolicyDeclared {
 			bindingTarget := target.Slug
