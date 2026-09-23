@@ -64,6 +64,7 @@ func Run(t *testing.T, open Open) {
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
+		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"usage_rollup_merges_minutes", testUsageRollup},
