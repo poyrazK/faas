@@ -133,6 +133,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		sourceAccepted    bool
 		workflows         []api.WorkflowSpec
 		sidecars          api.Sidecars
+		companionField    string
 		devSource         devSourceMetadata
 		trafficPercent    *int
 		canarySpec        *api.CanaryPresetSpec
@@ -248,14 +249,19 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, prob)
 				return
 			}
-		case "sidecars":
+		case "companions", "sidecars":
+			if companionField != "" && companionField != name {
+				api.WriteProblem(w, api.ErrValidation("set either companions or the deprecated sidecars field, not both"))
+				return
+			}
+			companionField = name
 			b, readErr := io.ReadAll(io.LimitReader(part, 1<<20))
 			if readErr != nil || !json.Valid(b) {
-				api.WriteProblem(w, api.ErrValidation("sidecars must be valid JSON"))
+				api.WriteProblem(w, api.ErrValidation(name+" must be valid JSON"))
 				return
 			}
 			if err := json.Unmarshal(b, &sidecars); err != nil {
-				api.WriteProblem(w, api.ErrValidation("sidecars must be a JSON array of definitions"))
+				api.WriteProblem(w, api.ErrValidation(name+" must be a JSON array of definitions"))
 				return
 			}
 		case "traffic_percent":
@@ -340,7 +346,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateAndPlanSidecars(rolloutReq, acct, limits); prob != nil {
+	if prob := s.validateAndPlanSidecars(rolloutReq, acct, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}

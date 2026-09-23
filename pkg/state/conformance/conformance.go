@@ -64,6 +64,7 @@ func Run(t *testing.T, open Open) {
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
+		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
@@ -2078,6 +2079,93 @@ func testPrepareDeploymentRollback(t *testing.T, fx *Fixture) {
 	}
 	if _, err := fx.Store.PrepareDeploymentRollback(fx.Ctx, fx.App.ID, current.ID); !errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 		t.Fatalf("PrepareDeploymentRollback(live target) = %v, want ErrRollbackTargetAlreadyLive", err)
+	}
+}
+
+func testServiceRolloutAbortHandoff(t *testing.T, fx *Fixture) {
+	started := time.Now().UTC().Add(-time.Minute)
+	candidate, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID:            fx.App.ID,
+		Kind:             state.DeploymentKindImage,
+		ImageDigest:      "sha256:conformance-service-next",
+		Status:           state.DeployPending,
+		Scope:            state.DefaultEnvScope,
+		TrafficPercent:   0,
+		RolloutState:     "rolling_out",
+		RolloutStartedAt: &started,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(service rollout): %v", err)
+	}
+	if err := fx.Store.MarkDeploymentLive(fx.Ctx, candidate.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(service rollout): %v", err)
+	}
+
+	handoff := state.ServiceRolloutHandoff{
+		Action:                  state.ServiceRolloutActionAbort,
+		Phase:                   state.ServiceRolloutPhasePending,
+		PredecessorDeploymentID: fx.Deployment.ID,
+		Generation:              42,
+		ExpectedGateways:        []string{"gateway-a", "gateway-b"},
+		MissingGateways:         []string{"gateway-a", "gateway-b"},
+		Reason:                  "conformance abort",
+		StartedAt:               &started,
+		UpdatedAt:               &started,
+	}
+	requested, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, handoff)
+	if err != nil {
+		t.Fatalf("UpdateServiceRolloutHandoff(pending): %v", err)
+	}
+	if !reflect.DeepEqual(requested.ServiceRolloutHandoff, handoff) {
+		t.Fatalf("pending handoff = %+v, want %+v", requested.ServiceRolloutHandoff, handoff)
+	}
+	if _, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, state.ServiceRolloutHandoff{Action: "invalid", Phase: state.ServiceRolloutPhasePending}); !errors.Is(err, state.ErrServiceRolloutInvalid) {
+		t.Fatalf("UpdateServiceRolloutHandoff(invalid action) = %v, want ErrServiceRolloutInvalid", err)
+	}
+
+	routing, err := fx.Store.BeginServiceRolloutAbort(fx.Ctx, candidate.ID)
+	if err != nil {
+		t.Fatalf("BeginServiceRolloutAbort: %v", err)
+	}
+	if routing.Status != state.DeployLive || routing.TrafficPercent != 0 || routing.RolloutState != "rolling_out" {
+		t.Fatalf("candidate during reverse handoff = %+v, want live/0/rolling_out", routing)
+	}
+	if got := routing.ServiceRolloutHandoff; got.Action != state.ServiceRolloutActionAbort || got.Phase != state.ServiceRolloutPhaseRouting || got.PredecessorDeploymentID != fx.Deployment.ID || got.RetryCount != 1 || got.Generation != 42 {
+		t.Fatalf("routing handoff = %+v, want abort/routing/predecessor/retry=1/generation=42", got)
+	}
+	stalePromotion := routing.ServiceRolloutHandoff
+	stalePromotion.Action = state.ServiceRolloutActionPromote
+	if _, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, stalePromotion); !errors.Is(err, state.ErrServiceRolloutInvalid) {
+		t.Fatalf("stale promotion replaced abort intent: %v", err)
+	}
+	staleGeneration := routing.ServiceRolloutHandoff
+	staleGeneration.Generation--
+	if _, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, staleGeneration); !errors.Is(err, state.ErrServiceRolloutInvalid) {
+		t.Fatalf("stale generation replaced newer routing state: %v", err)
+	}
+	unchanged, err := fx.Store.DeploymentByID(fx.Ctx, candidate.ID)
+	if err != nil || unchanged.ServiceRolloutHandoff.Action != state.ServiceRolloutActionAbort || unchanged.ServiceRolloutHandoff.Generation != 42 {
+		t.Fatalf("abort intent changed after stale updates: handoff=%+v err=%v", unchanged.ServiceRolloutHandoff, err)
+	}
+	predecessor, err := fx.Store.DeploymentByID(fx.Ctx, fx.Deployment.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID(predecessor): %v", err)
+	}
+	if predecessor.Status != state.DeployLive || predecessor.TrafficPercent != 100 {
+		t.Fatalf("predecessor during reverse handoff = %+v, want live/100", predecessor)
+	}
+
+	draining := routing.ServiceRolloutHandoff
+	draining.Phase = state.ServiceRolloutPhaseDraining
+	draining.AcknowledgedGateways = []string{"gateway-a", "gateway-b"}
+	draining.MissingGateways = nil
+	draining.AcknowledgedAt = draining.UpdatedAt
+	updated, err := fx.Store.UpdateServiceRolloutHandoff(fx.Ctx, candidate.ID, draining)
+	if err != nil {
+		t.Fatalf("UpdateServiceRolloutHandoff(draining): %v", err)
+	}
+	if !reflect.DeepEqual(updated.ServiceRolloutHandoff, draining) {
+		t.Fatalf("draining handoff = %+v, want %+v", updated.ServiceRolloutHandoff, draining)
 	}
 }
 

@@ -145,6 +145,19 @@ func cmdRolloutsRecover(args []string) int {
 	if resp.Deployment.CanaryTotalSteps > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  canary_step: %d / %d\n", resp.Deployment.CanaryStep, resp.Deployment.CanaryTotalSteps)
 	}
+	if handoff := resp.Deployment.ServiceRolloutHandoff; handoff != nil {
+		_, _ = fmt.Fprintf(osStdout, "  handoff:     %s / %s\n", handoff.Action, handoff.Phase)
+		_, _ = fmt.Fprintf(osStdout, "  retries:     %d\n", handoff.RetryCount)
+		if handoff.Generation != 0 {
+			_, _ = fmt.Fprintf(osStdout, "  generation:  %d\n", handoff.Generation)
+		}
+		if len(handoff.MissingGateways) > 0 {
+			_, _ = fmt.Fprintf(osStdout, "  missing:     %s\n", strings.Join(handoff.MissingGateways, ", "))
+		}
+		if handoff.LastError != "" {
+			_, _ = fmt.Fprintf(osStdout, "  last_error:  %s\n", handoff.LastError)
+		}
+	}
 	_, _ = fmt.Fprintf(osStdout, "  audit_id:    %s\n", resp.AuditID)
 	return 0
 }

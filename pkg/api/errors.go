@@ -1079,6 +1079,7 @@ const (
 	CodeSidecarInvalidCPUMillicores = "sidecar_invalid_cpu_millicores"
 	CodeSidecarInvalidDiskIOProfile = "sidecar_invalid_disk_io_profile"
 	CodeSidecarNotAllowedOnPlan     = "sidecar_not_allowed_on_plan"
+	CodeCompanionPresetUnavailable  = "companion_preset_unavailable"
 
 	// CodeInitSidecarFailed (issue #463 / ADR-069 / PR-B AC #1) is
 	// the RFC 7807 stable code vmmd stamps onto a deployments row
@@ -5108,6 +5109,17 @@ func ErrSidecarNotAllowedOnPlan(p Plan) *Problem {
 		"Plan doesn't allow sidecars",
 		fmt.Sprintf("the %s plan doesn't allow sidecars (issue #463 / ADR-068).", p)).
 		WithDocs(docsBase + "/plans#sidecars")
+}
+
+// ErrCompanionPresetUnavailable means the declaration is valid, but this
+// installation has no operator-pinned image for the requested managed preset.
+// This is a service configuration failure rather than a customer validation
+// failure, so the deploy can be retried after the catalog is configured.
+func ErrCompanionPresetUnavailable(preset string) *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeCompanionPresetUnavailable,
+		"Companion preset unavailable",
+		fmt.Sprintf("managed companion preset %q is not configured on this installation; provide a digest-pinned image or contact the platform operator.", preset)).
+		WithDocs(docsBase + "/companions#managed-presets")
 }
 
 // ErrPlanMaxInstancesNotAllowed (issue #462 / ADR-058) is the

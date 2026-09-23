@@ -6,6 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
+| [`bindings`](#bindings) | List PostgreSQL, object-storage, and queue bindings for an app |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -53,12 +54,12 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
 | [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
-| [`logs`](#logs) | Read app or deployment logs (gregale logs &lt;slug&gt;; slug defaults to linked context) |
+| [`logs`](#logs) | Query runtime logs and HTTP request events (slug defaults to linked context) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]; slug defaults to linked context) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
 | [`open`](#open) | Open the app&#39;s URL (slug defaults to linked context) |
-| [`orgs`](#orgs) | Manage orgs + members (orgs ls\|create\|info\|rm\|members ...\|keys ...\|transfer-ownership\|seat-usage\|invitations ...\|me) |
+| [`orgs`](#orgs) | Manage orgs, members, and workspace activity |
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
@@ -83,7 +84,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
 | [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only) |
-| [`cache`](#cache) | Manage response cache (cache purge &lt;slug&gt; [--path GLOB]) |
+| [`cache`](#cache) | Declare or purge response caching (cache GET /path/:id for 30s) |
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
 | [`whoami`](#whoami) | Show the authenticated account |
@@ -162,6 +163,13 @@ Provision or attach object storage and inject sealed S3 settings
 | `--label <LABEL>` | bucket-scoped compute credential label |  |
 | `--prefix <PREFIX>` | injected storage secret prefix |  |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
+
+
+## bindings
+
+List PostgreSQL, object-storage, and queue bindings for an app
+
+`gregale bindings <app>`
 
 
 ## capabilities
@@ -1550,17 +1558,24 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 ## logs
 
-Read app or deployment logs (gregale logs &lt;slug&gt;; slug defaults to linked context)
+Query runtime logs and HTTP request events (slug defaults to linked context)
 
-`gregale logs [<slug>] [--follow] [--deployment <ID>] [--grep <SUBSTR>] [--since <RFC3339>] [--level <LEVEL>] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
+`gregale logs [<slug>] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--follow` | stream logs until interrupted |  |
 | `--deployment <ID>` | deployment id or vN revision (default: latest) |  |
+| `--release <ID|vN>` | release id or revision (alias for --deployment) |  |
+| `--source <SOURCE>` | log source | one of `runtime` · `http` |
 | `--grep <SUBSTR>` | only show lines containing this substring |  |
-| `--since <RFC3339>` | only show lines at or after this RFC3339 timestamp |  |
+| `--since <15m|3d|RFC3339>` | lookback duration or RFC3339 timestamp |  |
 | `--level <LEVEL>` | only show lines at this level | one of `info` · `warn` · `error` |
+| `--status <100..599>` | only show HTTP requests with this status |  |
+| `--route <PATH>` | only show HTTP requests for this route |  |
+| `--request <ID>` | show one HTTP request by public request id or row id |  |
+| `--limit <N>` | HTTP request page size (1..200) |  |
+| `--all` | read every retained HTTP request page |  |
 | `--explain` | summarize the last failure and common error patterns |  |
 | `--archive` | read durable logs for one instance and UTC day |  |
 | `--instance <ID>` | instance id for --archive |  |
@@ -1632,7 +1647,7 @@ Open a CLI docs page (open docs [&lt;slug&gt;])
 
 ## orgs
 
-Manage orgs + members (orgs ls|create|info|rm|members ...|keys ...|transfer-ownership|seat-usage|invitations ...|me)
+Manage orgs, members, and workspace activity
 
 `gregale orgs [<subcommand>]`
 
@@ -1647,6 +1662,19 @@ Create an org
 ### orgs info
 
 Show one org
+
+### orgs activity
+
+Show the global infrastructure timeline
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--before <CURSOR>` | pagination cursor |  |
+| `--kind-prefix <PREFIX>` | filter by activity kind prefix |  |
+| `--actor-type <TYPE>` | filter by actor category | one of `user` · `api_key` · `github` · `system` · `operator` |
+| `--app-id <UUID>` | filter by application UUID |  |
+| `--limit <N>` | page size (1..100) |  |
 
 ### orgs rm
 
@@ -2200,6 +2228,15 @@ Set the traffic split for a deployment
 | `--deployment <ID>` | deployment id or vN revision to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
 
+### traffic promote
+
+Promote a live deployment to 100% production traffic
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+| `--deployment <ID>` | deployment id or vN revision to promote | required |
+
 ### traffic status
 
 Show live deployment traffic weights for an app
@@ -2290,13 +2327,39 @@ Replay a sanitized historical request corpus
 
 ## cache
 
-Manage response cache (cache purge &lt;slug&gt; [--path GLOB])
+Declare or purge response caching (cache GET /path/:id for 30s)
 
-`gregale cache [<subcommand>] <slug>`
+`gregale cache [<subcommand>]`
+
+### cache GET
+
+Cache GET responses for a route
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (defaults to linked project context) |  |
+| `--host <HOST>` | hostname override |  |
+| `--stale-while-revalidate <DURATION>` | serve stale while refreshing |  |
+| `--stale-if-error <DURATION>` | serve stale when the origin fails |  |
+| `--vary-on <HEADER>` | header included in the cache key | one of `Accept-Language` · `Accept-Encoding` |
+| `--priority <N>` | match priority (lower wins) |  |
+
+### cache HEAD
+
+Cache HEAD responses for a route
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (defaults to linked project context) |  |
+| `--host <HOST>` | hostname override |  |
+| `--stale-while-revalidate <DURATION>` | serve stale while refreshing |  |
+| `--stale-if-error <DURATION>` | serve stale when the origin fails |  |
+| `--vary-on <HEADER>` | header included in the cache key | one of `Accept-Language` · `Accept-Encoding` |
+| `--priority <N>` | match priority (lower wins) |  |
 
 ### cache purge
 
-Purge cached responses for an app
+Purge cached responses: cache purge &lt;slug&gt; [--path GLOB]
 
 | Flag | Meaning | |
 |---|---|---|

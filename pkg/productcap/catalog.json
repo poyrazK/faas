@@ -13,6 +13,21 @@
       "acceptance_test": "pkg/gateway/service_proxy_circuit_test.go::TestServiceProxyBreakerReadmitsRecoveredEndpoint"
     },
     {
+      "id": "companions",
+      "name": "Application companions",
+      "category": "runtime",
+      "description": "Attach a bounded helper such as an OpenTelemetry collector, database proxy, or custom reverse proxy to an application instance.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/companions",
+      "acceptance_test": "pkg/fcvm/sidecar_metal_test.go::TestMetalTwoSidecarsColdBoot"
+    },
+    {
       "id": "container-deployments",
       "name": "Container deployments",
       "category": "delivery",

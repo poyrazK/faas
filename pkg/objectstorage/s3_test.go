@@ -134,6 +134,14 @@ func TestS3Presign(t *testing.T) {
 	if u.Query().Get("response-content-disposition") != "attachment" || u.Query().Get("X-Amz-Expires") != "60" {
 		t.Fatal("unsafe download")
 	}
+	proxied, err := p.(ObjectReadPresigner).PresignObjectRead(context.Background(), "gregale-test", http.MethodGet, "index.html", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxiedURL, _ := url.Parse(proxied.URL)
+	if proxiedURL.Query().Has("response-content-disposition") || proxiedURL.Query().Has("response-content-type") {
+		t.Fatalf("proxied read overrides stored metadata: %s", proxied.URL)
+	}
 	head, err := p.Presign(context.Background(), "gregale-test", SignRequest{Method: http.MethodHead, Key: "index.html", ExpiresIn: 60})
 	if err != nil {
 		t.Fatal(err)

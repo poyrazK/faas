@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -19,6 +20,34 @@ import (
 )
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func TestGatewayCompanionRoutesRequireIngressConsensus(t *testing.T) {
+	const roster = `[{"name":"proxy","type":"sidecar","port":8081,"primary_ingress":true},{"name":"metrics","type":"sidecar","port":9090}]`
+	routes, ingress, err := gatewayCompanionRoutes([]state.Deployment{
+		{ID: "a", TrafficPercent: 50, Sidecars: json.RawMessage(roster)},
+		{ID: "b", TrafficPercent: 50, Sidecars: json.RawMessage(roster)},
+	})
+	if err != nil || ingress != 8081 || len(routes) != 2 {
+		t.Fatalf("routes=%+v ingress=%d err=%v", routes, ingress, err)
+	}
+	_, _, err = gatewayCompanionRoutes([]state.Deployment{
+		{ID: "a", TrafficPercent: 50, Sidecars: json.RawMessage(roster)},
+		{ID: "b", TrafficPercent: 50, Sidecars: json.RawMessage(`[{"name":"proxy","type":"sidecar","port":8082,"primary_ingress":true}]`)},
+	})
+	if err == nil {
+		t.Fatal("mixed primary ingress rollout was accepted")
+	}
+}
+
+func TestGatewayCompanionRoutesIgnoreZeroTrafficRevision(t *testing.T) {
+	routes, ingress, err := gatewayCompanionRoutes([]state.Deployment{
+		{ID: "live", TrafficPercent: 100, Sidecars: json.RawMessage(`[{"name":"proxy","type":"sidecar","port":8081,"primary_ingress":true}]`)},
+		{ID: "parked", TrafficPercent: 0, Sidecars: json.RawMessage(`[]`)},
+	})
+	if err != nil || ingress != 8081 || len(routes) != 1 || routes[0].Name != "proxy" {
+		t.Fatalf("routes=%+v ingress=%d err=%v", routes, ingress, err)
+	}
+}
 
 // seedApp creates an account + app in the store and returns the app.
 func seedApp(t *testing.T, store state.Store, slug string, plan api.Plan) state.App {
@@ -363,6 +392,9 @@ func TestHandleInvalidation_DeploymentChangedRefreshesWeights(t *testing.T) {
 	}
 	if len(f.responseCacheByApp) != 1 || f.responseCacheByApp[0] != "app-7" {
 		t.Errorf("responseCacheByApp = %v, want [app-7]", f.responseCacheByApp)
+	}
+	if len(f.resetApps) != 1 || f.resetApps[0] != "app-7" {
+		t.Errorf("resetApps = %v, want [app-7] for deployment companion-route refresh", f.resetApps)
 	}
 }
 

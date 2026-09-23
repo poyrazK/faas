@@ -558,6 +558,10 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		if !drifted {
 			if err := s.store.UpdateCustomDomainCertStatus(ctx, domain, status, obs.CertNotAfter, obs.LastError, dnsCheckedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
 				log.Warn("dns_poller: update custom-domain cert status failed", "domain", domain, "err", err)
+			} else if status == state.CustomDomainCertIssued {
+				if legacyLoaded && legacy.CertStatus != state.CustomDomainCertIssued {
+					s.recordDomainTLSIssuedActivity(ctx, legacy, obs.CertNotAfter)
+				}
 			} else if status == state.CustomDomainCertFailed {
 				if legacyErr == nil && legacy.CertStatus != state.CustomDomainCertFailed && s.ops != nil {
 					if counter := s.ops.CertIssuanceFailedTotal(); counter != nil {
