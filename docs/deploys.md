@@ -124,6 +124,33 @@ action is firing, the ladder holds at its current stage rather than advancing.
 when the new revision returns 5xx responses in its first window. If a rollout
 wedges, `gregale rollouts recover my-api` is the manual escape hatch.
 
+### Keep one user on one revision
+
+Send a stable, opaque user or tenant identifier in `Gregale-Version-Key` when
+the same caller must stay in one rollout cohort across requests:
+
+```bash
+curl -H 'Gregale-Version-Key: customer-42' https://my-api.gregale.dev/account
+```
+
+Gregale hashes the app, the active rollout revisions, and the key, then applies
+the current traffic weights. The same key therefore selects the same revision
+across gateway replicas. When a two-revision canary grows from 1% to 10% to
+50%, callers already in the candidate cohort remain there and the cohort only
+expands. Session affinity still prefers the same VM, but only inside the
+revision selected by the version key.
+
+The key is forwarded to the app and honored by managed service-to-service
+calls, so propagate it when one request chain must see a consistent revision.
+Response-cache entries are partitioned by the selected revision as well. The
+value is trimmed, must be a single non-empty header no longer than 256 bytes,
+and cannot contain control characters; it is otherwise opaque. Missing or
+invalid values retain the normal weighted request distribution.
+
+This is cohort affinity, not a revision override or an authorization boundary:
+clients cannot name a deployment with it, and changing weights still controls
+the size of each cohort.
+
 Traffic splitting and canary rollouts are available on every plan. During a
 rollout an app runs one instance above its plan's concurrency limit so both
 revisions can serve at once; that extra instance lasts only as long as the

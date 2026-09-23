@@ -48,6 +48,10 @@ const (
 	// admitted request. It is customer-facing diagnostic metadata; Server-
 	// Timing carries the same value for browser tooling.
 	QueueWaitHeader = "X-Gregale-Queue-Wait-Ms"
+	// VersionKeyHeader carries a customer-provided rollout cohort key. The
+	// gateway hashes it to a weighted deployment bucket; it is not a direct
+	// deployment selector and grants no access to otherwise unroutable code.
+	VersionKeyHeader = "Gregale-Version-Key"
 )
 
 // PlatformIdentity is the immutable identity of the workload that is about

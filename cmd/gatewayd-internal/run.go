@@ -3212,7 +3212,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// forces customers to pin min_instances on every dependency and
 			// gives up the platform's central economic claim for precisely
 			// the workloads that are idle most of the time.
-			Wake: newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			Wake:           newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			WakeDeployment: newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.

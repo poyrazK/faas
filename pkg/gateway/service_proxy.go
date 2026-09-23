@@ -175,6 +175,10 @@ const servicecallerEnvPreview = "preview"
 // wiring that has no scheduler seam (tests, single-box dev without schedd).
 type ServiceProxyWaker func(ctx context.Context, appID string) error
 
+// ServiceProxyDeploymentWaker restores one rollout bucket when a keyed
+// service call selects a cold revision while a sibling revision is warm.
+type ServiceProxyDeploymentWaker func(ctx context.Context, appID, deploymentID string) error
+
 // ServiceProxyConfig wires the narrow seams around ServiceProxy. Forward is
 // normally gateway.ForwardingReverseProxyWithEvents(...); tests inject a
 // small handler factory so selection and retry behavior can be exercised
@@ -192,6 +196,10 @@ type ServiceProxyConfig struct {
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
+	// WakeDeployment is the optional deployment-scoped wake seam used by
+	// version-affinity calls. It prevents a warm sibling from suppressing the
+	// selected cohort's restore.
+	WakeDeployment ServiceProxyDeploymentWaker
 	// Metrics observes internal call outcomes, cold-path wake latency, and
 	// ADR-201 §2 breaker transitions. nil is allowed and every observation
 	// is a no-op — the breaker keeps working and simply publishes nothing.
@@ -226,19 +234,20 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
-	mintAssertion ServiceCallerMinter
-	localNodeID   string
-	provider      ServiceEndpointProvider
-	resolve       ServiceProxyResolver
-	authorize     ServiceProxyAuthorizer
-	resolveCaller ServiceProxyCallerResolver
-	forward       func(Target) http.Handler
-	rawForward    func(Target) http.Handler
-	wake          ServiceProxyWaker
-	metrics       *Metrics
-	endpointTTL   time.Duration
-	now           func() time.Time
-	log           *slog.Logger
+	mintAssertion  ServiceCallerMinter
+	localNodeID    string
+	provider       ServiceEndpointProvider
+	resolve        ServiceProxyResolver
+	authorize      ServiceProxyAuthorizer
+	resolveCaller  ServiceProxyCallerResolver
+	forward        func(Target) http.Handler
+	rawForward     func(Target) http.Handler
+	wake           ServiceProxyWaker
+	wakeDeployment ServiceProxyDeploymentWaker
+	metrics        *Metrics
+	endpointTTL    time.Duration
+	now            func() time.Time
+	log            *slog.Logger
 
 	breaker     *circuit.Group
 	retryPolicy RetryPolicy
@@ -315,24 +324,25 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
-		mintAssertion: cfg.MintCallerAssertion,
-		localNodeID:   strings.TrimSpace(cfg.LocalNodeID),
-		provider:      cfg.Provider,
-		resolve:       cfg.Resolve,
-		authorize:     cfg.Authorize,
-		resolveCaller: cfg.ResolveCaller,
-		forward:       cfg.Forward,
-		rawForward:    cfg.RawForward,
-		wake:          cfg.Wake,
-		metrics:       cfg.Metrics,
-		endpointTTL:   ttl,
-		now:           now,
-		log:           log,
-		breaker:       breaker,
-		retryPolicy:   retryPolicy,
-		retryBudget:   retryBudget,
-		snapshots:     make(map[string]serviceProxySnapshot),
-		next:          make(map[string]uint64),
+		mintAssertion:  cfg.MintCallerAssertion,
+		localNodeID:    strings.TrimSpace(cfg.LocalNodeID),
+		provider:       cfg.Provider,
+		resolve:        cfg.Resolve,
+		authorize:      cfg.Authorize,
+		resolveCaller:  cfg.ResolveCaller,
+		forward:        cfg.Forward,
+		rawForward:     cfg.RawForward,
+		wake:           cfg.Wake,
+		wakeDeployment: cfg.WakeDeployment,
+		metrics:        cfg.Metrics,
+		endpointTTL:    ttl,
+		now:            now,
+		log:            log,
+		breaker:        breaker,
+		retryPolicy:    retryPolicy,
+		retryBudget:    retryBudget,
+		snapshots:      make(map[string]serviceProxySnapshot),
+		next:           make(map[string]uint64),
 	}
 }
 
@@ -463,7 +473,15 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy transport is not wired")
 		return
 	}
-	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID)
+	versionKey, versionKeyOutcome := versionAffinityKeyFromRequest(r)
+	p.metrics.ObserveVersionAffinityKey(versionAffinitySurfaceService, versionKeyOutcome)
+	versionDeploymentID := ""
+	if versionKey != "" {
+		if resolver, ok := p.provider.(versionAffinityResolver); ok {
+			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
+		}
+	}
+	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
 	if !served {
 		return
 	}
@@ -659,17 +677,18 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 // waking a parked target on the way (ADR-196). It writes the error response
 // itself and reports served=false when nothing is routable, so ServeHTTP
 // stays within the handler-length convention.
-func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID string) (_ []ServiceEndpoint, woken, served bool) {
+func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID, deploymentID string) (_ []ServiceEndpoint, woken, served bool) {
 	endpoints, err := p.endpoints(r.Context(), appID)
 	if err != nil {
 		p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 		return nil, false, false
 	}
+	endpoints = serviceEndpointsForDeployment(endpoints, deploymentID)
 	if len(endpoints) > 0 {
 		return endpoints, false, true
 	}
-	endpoints, err = p.wakeAndRefresh(r.Context(), appID)
+	endpoints, err = p.wakeAndRefresh(r.Context(), appID, deploymentID)
 	if err != nil {
 		p.writeWakeFailure(w, appID, err)
 		return nil, false, false
@@ -711,7 +730,17 @@ func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err
 //
 // A nil waker returns no endpoints and no error, so the caller falls through
 // to the pre-ADR-196 "no healthy replicas" response.
-func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID string) ([]ServiceEndpoint, error) {
+func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID, deploymentID string) ([]ServiceEndpoint, error) {
+	if deploymentID != "" && p.wakeDeployment != nil {
+		start := p.now()
+		if err := p.wakeDeployment(ctx, appID, deploymentID); err != nil {
+			return nil, err
+		}
+		p.metrics.ObserveServiceWakeLatency(p.now().Sub(start))
+		p.invalidateEndpoints(appID)
+		endpoints, err := p.endpoints(ctx, appID)
+		return serviceEndpointsForDeployment(endpoints, deploymentID), err
+	}
 	if p.wake == nil {
 		return nil, nil
 	}
@@ -721,7 +750,21 @@ func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID string) ([]Serv
 	}
 	p.metrics.ObserveServiceWakeLatency(p.now().Sub(start))
 	p.invalidateEndpoints(appID)
-	return p.endpoints(ctx, appID)
+	endpoints, err := p.endpoints(ctx, appID)
+	return serviceEndpointsForDeployment(endpoints, deploymentID), err
+}
+
+func serviceEndpointsForDeployment(endpoints []ServiceEndpoint, deploymentID string) []ServiceEndpoint {
+	if deploymentID == "" {
+		return endpoints
+	}
+	filtered := make([]ServiceEndpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint.DeploymentID == deploymentID {
+			filtered = append(filtered, endpoint)
+		}
+	}
+	return filtered
 }
 
 // invalidateEndpoints drops the cached registry lease for appID so the next

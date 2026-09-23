@@ -5347,7 +5347,12 @@ func (h *Handler) writeWebSocketNotAllowed(w http.ResponseWriter, appID string, 
 // pickForRequest applies the optional session-affinity hint before the normal
 // warm-path picker. A stale cookie falls through to the ordinary picker in the
 // same request, preserving availability during scale-in and restarts.
-func (h *Handler) pickForRequest(app App, preferredInstanceID string) PickResult {
+func (h *Handler) pickForRequest(app App, preferredInstanceID, versionKey string) PickResult {
+	if versionKey != "" {
+		if picker, ok := h.backend.(versionAffinityPicker); ok {
+			return picker.PickForVersionKey(app.ID, versionKey, preferredInstanceID)
+		}
+	}
 	if preferredInstanceID != "" {
 		if picker, ok := h.backend.(affinityPicker); ok {
 			pick := picker.PickForInstance(app.ID, preferredInstanceID)
@@ -5362,7 +5367,12 @@ func (h *Handler) pickForRequest(app App, preferredInstanceID string) PickResult
 	return PickResult{}
 }
 
-func (h *Handler) pickAfterCapacity(app App, preferredInstanceID string) PickResult {
+func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey string) PickResult {
+	if versionKey != "" {
+		if picker, ok := h.backend.(versionAffinityPicker); ok {
+			return picker.PickForVersionKey(app.ID, versionKey, preferredInstanceID)
+		}
+	}
 	if preferredInstanceID != "" {
 		if picker, ok := h.backend.(affinityPicker); ok {
 			if pick := picker.PickForInstance(app.ID, preferredInstanceID); pick.OK {
@@ -5545,6 +5555,21 @@ haveApp:
 	)
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
+	versionKey, versionKeyOutcome := versionAffinityKeyFromRequest(r)
+	if h.metrics != nil {
+		h.metrics.ObserveVersionAffinityKey(versionAffinitySurfacePublic, versionKeyOutcome)
+	}
+	versionDeploymentID := ""
+	if !deploymentSmoke {
+		versionDeploymentID = versionAffinityDeploymentForRequest(h.backend, app.ID, r)
+		if versionDeploymentID != "" {
+			r = r.WithContext(withVersionAffinityDeployment(r.Context(), versionDeploymentID))
+		}
+	} else {
+		// Authenticated smoke traffic is explicitly pinned by deployment id;
+		// a customer rollout key must not participate in its picker retries.
+		versionKey = ""
+	}
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -5868,7 +5893,7 @@ haveApp:
 		// store-skipped capture. The wake leader continues to the origin;
 		// its normal cache writer refreshes this entry after the instance is
 		// ready.
-		r = r.WithContext(withCacheRuleContext(r.Context(), rule, app.ID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
+		r = r.WithContext(withCacheRuleContextForDeployment(r.Context(), rule, app.ID, versionDeploymentID, r.Method, r.URL.Path, sortQuery(r.URL.RawQuery), computeVaryHash(r, rule.VaryOn)))
 		wakeInFlight := h.gate != nil && h.gate.Inflight(app.ID)
 		if wakeInFlight {
 			if served, _ := h.tryServeStaleWhileWaking(w, r, app, rec); served {
@@ -5894,7 +5919,7 @@ haveApp:
 			if cw.shouldStore() {
 				key := CacheKey{
 					AppID:          app.ID,
-					DeploymentID:   "",
+					DeploymentID:   versionDeploymentID,
 					RuleID:         rule.ID,
 					Method:         r.Method,
 					NormalizedPath: r.URL.Path,
@@ -6128,7 +6153,7 @@ haveApp:
 			}
 		}
 	} else {
-		pick = h.pickForRequest(app, preferredInstanceID)
+		pick = h.pickForRequest(app, preferredInstanceID, versionKey)
 	}
 	if pick.OK && h.warmTargetNeedsValidation(app, pick.Target, time.Now()) {
 		if validator, ok := h.backend.(liveTargetValidator); ok {
@@ -6270,7 +6295,7 @@ haveApp:
 	// for siblings. Keep the single PickWarm call on ordinary warm traffic
 	// so round-robin cursors advance only once per request.
 	if !exactDeployment && (!pick.OK || waitedForBurst) {
-		pick = h.pickAfterCapacity(app, preferredInstanceID)
+		pick = h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 	}
 
 	// Wake-fan-out (issue #556 / PR-C): when Pick landed on a
@@ -6308,7 +6333,7 @@ haveApp:
 		} else if bucketWakeID != "" {
 			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}
-		pick = h.pickAfterCapacity(app, preferredInstanceID)
+		pick = h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 	}
 	if !pick.OK {
 		// Race: every cached instance was evicted between
@@ -6339,7 +6364,7 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),
@@ -7879,6 +7904,29 @@ func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
 	}
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerServiceMesh, concurrencyConfigForApp(app))
+	return err
+}
+
+// EnsureServiceDeploymentCapacity restores the exact rollout cohort selected
+// for a keyed service call. A warm stable revision must not make ensureCapacity
+// short-circuit while the selected candidate remains parked.
+func (h *Handler) EnsureServiceDeploymentCapacity(ctx context.Context, app App, deploymentID string) error {
+	if deploymentID == "" {
+		return h.EnsureServiceCapacity(ctx, app)
+	}
+	if picker, ok := h.backend.(deploymentTargetPicker); ok {
+		if pick := picker.PickForDeployment(app.ID, deploymentID); pick.OK {
+			return nil
+		}
+	}
+	limits, ok := api.LimitsFor(app.Plan)
+	if !ok {
+		limits = api.Limits{}
+	}
+	// Match the public cold-bucket fan-out allowance: rollout capacity is
+	// governed by the plan ceiling here, while schedd remains authoritative
+	// for the temporary rollout-instance exception.
+	_, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
 	return err
 }
 

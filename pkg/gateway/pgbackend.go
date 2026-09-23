@@ -779,10 +779,13 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 // targetSet instances live inside sets and are protected by their own
 // mu (b.tgtMu).
 type appPicker struct {
-	weights []deploymentWeight
-	cum     []int                 // cum[i] = Σ_{j≤i} weights[j].Percent; cum[len-1] = 100
-	cursor  atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
-	sets    map[string]*targetSet // deploymentID → targetSet
+	weights           []deploymentWeight
+	cum               []int // cum[i] = Σ_{j≤i} weights[j].Percent; cum[len-1] = 100
+	affinityWeights   []deploymentWeight
+	affinityCum       []int
+	affinityNamespace string
+	cursor            atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
+	sets              map[string]*targetSet // deploymentID → targetSet
 }
 
 // deploymentWeight is the per-deployment row of the picker's
@@ -965,25 +968,15 @@ func (b *PGBackend) Pick(appID string) PickResult {
 		}
 	}
 	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
 	picker := b.appsPicker[appID]
 	if picker == nil || len(picker.weights) == 0 {
-		b.tgtMu.RUnlock()
 		return PickResult{}
 	}
 	// Single-deployment fast path: byte-identical to pre-PR-B.
 	if len(picker.weights) == 1 {
 		deploymentID := picker.weights[0].DeploymentID
-		set := picker.sets[deploymentID]
-		if set == nil {
-			b.tgtMu.RUnlock()
-			return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
-		}
-		t, ok := set.pick(warmHint)
-		b.tgtMu.RUnlock()
-		if !ok {
-			return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
-		}
-		return PickResult{Target: t, OK: true, Picked: deploymentID}
+		return pickDeploymentLocked(picker, deploymentID, warmHint, "")
 	}
 	// Multi-deployment weighted stride.
 	slot := int(picker.cursor.Add(1)-1) % 100
@@ -999,6 +992,56 @@ func (b *PGBackend) Pick(appID string) PickResult {
 			lo = mid + 1
 		}
 	}
+	return pickDeploymentLocked(picker, chosen, warmHint, "")
+}
+
+// AffinityDeployment resolves a stable customer key to the rollout bucket
+// without requiring that bucket to be warm. The service proxy and response
+// cache use this before endpoint selection so they share the public picker's
+// exact cohort boundary.
+func (b *PGBackend) AffinityDeployment(appID, key string) (string, bool) {
+	if b == nil || appID == "" {
+		return "", false
+	}
+	key, ok := normalizeVersionAffinityKey(key)
+	if !ok {
+		return "", false
+	}
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	return affinityDeployment(appID, key, b.appsPicker[appID])
+}
+
+// PickForVersionKey deterministically selects a rollout deployment, then
+// rotates within that deployment's routable instances. A session-affinity
+// instance is preferred only when it belongs to the selected deployment.
+func (b *PGBackend) PickForVersionKey(appID, key, preferredInstanceID string) PickResult {
+	if b == nil || appID == "" {
+		return PickResult{}
+	}
+	key, ok := normalizeVersionAffinityKey(key)
+	if !ok {
+		return b.Pick(appID)
+	}
+	var warmHint string
+	if b.warmHint != nil {
+		if nodeID, found := b.warmHint(appID); found {
+			warmHint = nodeID
+		}
+	}
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	chosen, ok := affinityDeployment(appID, key, picker)
+	if !ok {
+		return PickResult{}
+	}
+	return pickDeploymentLocked(picker, chosen, warmHint, preferredInstanceID)
+}
+
+// pickDeploymentLocked selects inside chosen and preserves the existing cold
+// bucket fallback. Callers must hold b.tgtMu.RLock.
+func pickDeploymentLocked(picker *appPicker, chosen, warmHint, preferredInstanceID string) PickResult {
 	set := picker.sets[chosen]
 	if set == nil || len(set.entries) == 0 {
 		// Cold deployment — fall through to the largest-weight
@@ -1026,19 +1069,24 @@ func (b *PGBackend) Pick(appID string) PickResult {
 			}
 		}
 		if fallbackSet == nil {
-			b.tgtMu.RUnlock()
 			return PickResult{Picked: chosen, ColdBucket: chosen}
 		}
 		t, ok := fallbackSet.pick(warmHint)
-		b.tgtMu.RUnlock()
 		if !ok {
 			return PickResult{Picked: chosen, ColdBucket: chosen}
 		}
 		t.DeploymentID = fallbackID
 		return PickResult{Target: t, OK: true, Picked: chosen, ColdBucket: chosen}
 	}
+	if preferredInstanceID != "" {
+		for _, target := range set.entries {
+			if target.InstanceID == preferredInstanceID {
+				target.DeploymentID = chosen
+				return PickResult{Target: target, OK: true, Picked: chosen}
+			}
+		}
+	}
 	t, ok := set.pick(warmHint)
-	b.tgtMu.RUnlock()
 	if !ok {
 		return PickResult{Picked: chosen, ColdBucket: chosen}
 	}
@@ -1183,8 +1231,7 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 		picker.sets[bucket] = set
 	}
 	if len(picker.weights) == 0 {
-		picker.weights = []deploymentWeight{{DeploymentID: bucket, Percent: 100}}
-		picker.cum = []int{100}
+		setPickerWeights(picker, []deploymentWeight{{DeploymentID: bucket, Percent: 100}})
 	}
 	set.add(target)
 }
@@ -1418,8 +1465,7 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 	// app is a wake-fan-out signal (handled in PickResult.
 	// ColdBucket), not an implicit-100 override.
 	if len(picker.weights) == 0 {
-		picker.weights = []deploymentWeight{{DeploymentID: bucket, Percent: 100}}
-		picker.cum = []int{100}
+		setPickerWeights(picker, []deploymentWeight{{DeploymentID: bucket, Percent: 100}})
 	}
 	set.add(Target{
 		AppID:               appID,
@@ -1576,8 +1622,7 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 		picker = &appPicker{sets: map[string]*targetSet{}}
 		b.appsPicker[appID] = picker
 	}
-	picker.weights = next
-	picker.cum = buildCumulativeWeights(next)
+	setPickerWeights(picker, next)
 	// Existing per-deployment targetSets in picker.sets are
 	// preserved — instances stay routable through the picker.
 	//
