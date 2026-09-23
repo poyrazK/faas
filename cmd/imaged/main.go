@@ -505,7 +505,9 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	h.WithHostingSmokeRequired(smokeRequired)
 	if smokeURL != "" || smokeRequired {
 		verifier := apihostingreceipt.Verifier{
-			BaseURL: smokeURL, AppsDomain: appsDomain, Timeout: 10 * time.Second, Required: smokeRequired,
+			BaseURL: smokeURL, AppsDomain: appsDomain,
+			Timeout: 60 * time.Second, RequestTimeout: 12 * time.Second,
+			RetryInterval: time.Second, Required: smokeRequired,
 			Authorize: func(ctx context.Context, deploymentID, token string, expiresAt time.Time) error {
 				dep, err := store.DeploymentByID(ctx, deploymentID)
 				if err != nil {

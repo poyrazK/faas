@@ -1361,6 +1361,34 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return targets, nil
 		}).
+		WithDeploymentSmokeTargetLoader(func(ctx context.Context, appID, deploymentID string) (gateway.Target, bool, error) {
+			dep, err := pgStore.DeploymentByID(ctx, deploymentID)
+			if errors.Is(err, state.ErrNotFound) {
+				return gateway.Target{}, false, nil
+			}
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			if dep.AppID != appID || (dep.Status != state.DeploySnapshotting && dep.Status != state.DeployLive) {
+				return gateway.Target{}, false, nil
+			}
+			instances, err := pgStore.ListInstancesForApp(ctx, appID)
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			for _, instance := range instances {
+				if instance.DeploymentID != deploymentID || instance.State != string(state.StateRunning) ||
+					instance.ID == "" || instance.NodeID == "" {
+					continue
+				}
+				return gateway.Target{
+					AppID: appID, InstanceID: instance.ID, NodeID: instance.NodeID,
+					WakeID: instance.WakeID, DeploymentID: deploymentID,
+					Port: schedpkg.DeploymentRuntimePort(dep), AddedAt: time.Now(),
+				}, true, nil
+			}
+			return gateway.Target{}, false, nil
+		}).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
 			if err != nil {
