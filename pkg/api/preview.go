@@ -14,6 +14,15 @@ type PreviewStatusResponse struct {
 	LatestDeployment *DeploymentResponse `json:"latest_deployment,omitempty"`
 }
 
+// GetPreviewEnvironmentStatus reads the recorded set by its root preview slug.
+func (c *Client) GetPreviewEnvironmentStatus(ctx context.Context, slug string) (PreviewEnvironmentStatusResponse, error) {
+	var out PreviewEnvironmentStatusResponse
+	if err := c.do(ctx, "GET", "/v1/preview/"+slug+"/environment", nil, &out); err != nil {
+		return PreviewEnvironmentStatusResponse{}, err
+	}
+	return out, nil
+}
+
 // GetPreviewStatus returns preview metadata and its newest deployment in one
 // typed helper. A missing latest deployment is a valid empty state, while a
 // non-preview app remains an error so callers cannot accidentally wait on

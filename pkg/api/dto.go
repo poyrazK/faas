@@ -303,6 +303,33 @@ type CreatePreviewRequest struct {
 	TTLHours int `json:"ttl_hours,omitempty"`
 }
 
+// PreviewEnvironmentStatusResponse reports the complete current-head workload
+// set for a GitHub-managed PR preview. Developer previews have no recorded set.
+type PreviewEnvironmentStatusResponse struct {
+	RootSlug       string                             `json:"root_slug"`
+	RepoFullName   string                             `json:"repo_full_name"`
+	PRNumber       int                                `json:"pr_number"`
+	CommitSHA      string                             `json:"commit_sha"`
+	Phase          string                             `json:"phase"`
+	Ready          bool                               `json:"ready"`
+	Summary        string                             `json:"summary"`
+	LiveWorkloads  int                                `json:"live_workloads"`
+	TotalWorkloads int                                `json:"total_workloads"`
+	Members        []PreviewEnvironmentMemberResponse `json:"members"`
+}
+
+// PreviewEnvironmentMemberResponse identifies one expected workload and its
+// newest preview deployment at the recorded PR head.
+type PreviewEnvironmentMemberResponse struct {
+	AppID            string `json:"app_id"`
+	Slug             string `json:"slug"`
+	WorkloadName     string `json:"workload_name"`
+	AppStatus        string `json:"app_status"`
+	PreviewState     string `json:"preview_state"`
+	DeploymentID     string `json:"deployment_id"`
+	DeploymentStatus string `json:"deployment_status"`
+}
+
 // UpsertDevSessionRequest describes the application shape for an expiring,
 // CLI-managed developer preview. The project identity lives in the URL path;
 // WorkspaceID separates developers and local source trees within that project.
