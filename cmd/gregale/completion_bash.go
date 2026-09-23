@@ -136,6 +136,34 @@ func renderBashCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintln(w, "      return 0")
 		_, _ = fmt.Fprintln(w, "    fi")
 	}
+	for _, parent := range c.Subcommands {
+		if len(parent.Subcommands) == 0 {
+			continue
+		}
+		childWords := make([]string, 0, len(parent.Subcommands))
+		for _, child := range parent.Subcommands {
+			childWords = append(childWords, child.Name)
+		}
+		_, _ = fmt.Fprintf(w, "    if [ $cword -eq %d ] && [ \"$sub\" = %q ]; then\n", subcommandWord+1, parent.Name)
+		_, _ = fmt.Fprintf(w, "      COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", strings.Join(childWords, " "))
+		_, _ = fmt.Fprintln(w, "      return 0")
+		_, _ = fmt.Fprintln(w, "    fi")
+		_, _ = fmt.Fprintf(w, "    if [ $cword -ge %d ] && [ \"$sub\" = %q ] && [[ \"$cur\" == -* ]]; then\n", subcommandWord+2, parent.Name)
+		_, _ = fmt.Fprintf(w, "      case \"${words[%d]}\" in\n", subcommandWord+1)
+		for _, child := range parent.Subcommands {
+			if len(child.Flags) == 0 {
+				continue
+			}
+			flags := make([]string, 0, len(child.Flags))
+			for _, f := range child.Flags {
+				flags = append(flags, "--"+f.Name)
+			}
+			_, _ = fmt.Fprintf(w, "        %q) COMPREPLY=( $(compgen -W %q -- \"$cur\") ) ;;\n", child.Name, strings.Join(flags, " "))
+		}
+		_, _ = fmt.Fprintln(w, "      esac")
+		_, _ = fmt.Fprintln(w, "      return 0")
+		_, _ = fmt.Fprintln(w, "    fi")
+	}
 	// Closed-set positional completion (today: `plan`).
 	// The ClosedSet IS the positional — `plan` has no Positionals
 	// field because its allowed values ARE the closed set, not a

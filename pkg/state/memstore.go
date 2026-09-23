@@ -216,6 +216,7 @@ type MemStore struct {
 	// the in-memory implementation of the I1 cooldown gate.
 	deployFailedEmailAt map[string]time.Time
 	deployments         map[string]Deployment
+	deploymentAliases   map[string]DeploymentAlias
 	devSyncHistory      map[string]DevSyncHistory
 	// statusIncidents (issue #599 / ADR-130) is the in-memory
 	// mirror of the status_incidents table (migrations/00412).
@@ -941,6 +942,7 @@ func NewMemStore() *MemStore {
 		mailSuppressions:    map[string]mailSuppressionRow{},
 		deployFailedEmailAt: map[string]time.Time{},
 		deployments:         map[string]Deployment{},
+		deploymentAliases:   map[string]DeploymentAlias{},
 		devSyncHistory:      map[string]DevSyncHistory{},
 		statusCreateKeys:    map[string]string{},
 		statusUpdateKeys:    map[string]string{},

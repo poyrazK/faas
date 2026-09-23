@@ -190,6 +190,7 @@ type Querier interface {
 	// the GDPR path (delete-account cascades through
 	// apps → data_upstreams).
 	DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) error
+	DeleteDeploymentAlias(ctx context.Context, db DBTX, arg DeleteDeploymentAliasParams) (int64, error)
 	DeleteEventSubscription(ctx context.Context, db DBTX, arg DeleteEventSubscriptionParams) error
 	// Operator-driven revoke path (PR-C). Returns 0 rows on miss;
 	// the caller maps that to ErrNotFound. The 5-min TTL is the
@@ -197,6 +198,10 @@ type Querier interface {
 	// credential now" lever.
 	DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerParams) error
+	// The hostname label uses the app's immutable UUID so aliases remain stable
+	// across app slug renames. Keep the deployment join app-scoped and hide
+	// soft-deleted owners/targets.
+	DeploymentAliasByHostLabel(ctx context.Context, db DBTX, hostLabel string) ([]DeploymentAliasByHostLabelRow, error)
 	DeploymentByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentByIDRow, error)
 	// Called by the recovery arbiter after a successful migrate-or-
 	// recreate sweep has restored the destination's snapshot set, OR by
@@ -611,6 +616,10 @@ type Querier interface {
 	// fence sqlc.arg-disambiguates-cursor memory; the same
 	// pattern pins ListAppErrorGroups.
 	ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListDataUpstreamsByAppParams) ([]ListDataUpstreamsByAppRow, error)
+	// Stable per-app revision names. Join deployments for the human-readable
+	// revision while retaining aliases whose targets later become superseded;
+	// the alias continues to identify the same immutable row.
+	ListDeploymentAliases(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDeploymentAliasesRow, error)
 	ListDeploymentsForApp(ctx context.Context, db DBTX, arg ListDeploymentsForAppParams) ([]ListDeploymentsForAppRow, error)
 	// Backs the dashboard compare panel's two `<select>` dropdowns: "pick
 	// source deployment" and "pick mirror deployment". GROUP BY on
@@ -1225,6 +1234,9 @@ type Querier interface {
 	// ListEnabledTriggers uses (filter_criteria is part of the
 	// Trigger struct since commit 6 of issue #757 mega-PR).
 	UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerParams) (UpdateTriggerRow, error)
+	// Accept only a routable target on this app. Using INSERT .. SELECT makes the
+	// ownership/status check atomic with writing the alias.
+	UpsertDeploymentAlias(ctx context.Context, db DBTX, arg UpsertDeploymentAliasParams) (UpsertDeploymentAliasRow, error)
 	// (xmax = 0) distinguishes a declaration first installed by this deploy from
 	// an idempotent replay of the same manifest row.
 	UpsertEventSubscription(ctx context.Context, db DBTX, arg UpsertEventSubscriptionParams) (UpsertEventSubscriptionRow, error)

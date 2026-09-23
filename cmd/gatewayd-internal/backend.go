@@ -45,6 +45,11 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 	if revision, slug, matched := gateway.DeploymentScopeFromHost(r.deploySuffix, host); matched {
 		return r.deploymentPreview(ctx, slug, revision)
 	}
+	if label, ok := r.deploymentAliasLabelForHost(host); ok {
+		if app, found, err := r.deploymentAliasByHostLabel(ctx, label); err != nil || found {
+			return app, found, err
+		}
+	}
 	if slug, ok := r.slugFor(host); ok {
 		return r.appBySlug(ctx, slug)
 	}
@@ -67,6 +72,60 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 		}
 	}
 	return r.customDomain(ctx, host)
+}
+
+func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
+	if r.appsSuffix == "" {
+		return "", false
+	}
+	label, ok := strings.CutSuffix(host, r.appsSuffix)
+	if !ok || !strings.HasPrefix(label, "tag-") || strings.Contains(label, ".") {
+		return "", false
+	}
+	return label, true
+}
+
+func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel string) (gateway.App, bool, error) {
+	lookup, ok := r.store.(state.DeploymentAliasRoutingStore)
+	if !ok {
+		return gateway.App{}, false, nil
+	}
+	alias, err := lookup.DeploymentAliasByHostLabel(ctx, hostLabel)
+	if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrConflict) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	app, err := r.store.AppByID(ctx, alias.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
+	}
+	deployment, err := r.store.DeploymentByID(ctx, alias.DeploymentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
+		return gateway.App{}, false, nil
+	}
+	resolved, found, err := r.toApp(ctx, app)
+	if err != nil || !found {
+		return resolved, found, err
+	}
+	resolved.PinnedDeploymentID = deployment.ID
+	if deployment.Scope != "default" {
+		resolved.PinnedDeploymentScope = deployment.Scope
+	}
+	return resolved, true, nil
 }
 
 // deploymentPreview resolves a deployment-preview hostname to its parent app
@@ -839,6 +898,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				primer.PreInstantiateAppMetrics(appID)
 			}
 			inv.ResetApp(appID)
+			inv.InvalidateRoutesForApp(appID)
 			inv.InvalidateResponseCacheByApp(appID)
 		} else {
 			if observer, ok := inv.(interface{ ObserveNotificationPayloadRejected() }); ok {
