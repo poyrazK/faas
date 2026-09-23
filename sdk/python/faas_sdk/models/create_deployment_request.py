@@ -50,8 +50,8 @@ class CreateDeploymentRequest:
     policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid
     when apps.require_signed is on or security_policy=enforce (operator policy wins)."""
     companions: list[Sidecar] | Unset = UNSET
-    """Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with
-    sidecars."""
+    """Preferred field. Up to 5 stateless helpers total (one init helper and up to four long-running companions);
+    managed presets may omit image. Do not set together with sidecars."""
     sidecars: list[Sidecar] | Unset = UNSET
     """Deprecated spelling of companions. Do not set both fields."""
     workflows: list[WorkflowSpec] | Unset = UNSET

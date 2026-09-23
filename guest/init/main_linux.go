@@ -314,6 +314,14 @@ func boot() error {
 	// sequentially, then main + type="sidecar" workloads in
 	// parallel under per-workload Supervisors.
 	roster, rosterErr := discoverRoster(os.DirFS("/"))
+	if manifest.SecretReloadSignal != "" {
+		if rosterErr != nil && !isNotExist(rosterErr) {
+			return fmt.Errorf("secret reload requires a readable workload roster: %w", rosterErr)
+		}
+		if len(roster.Sidecars) > 0 {
+			return fmt.Errorf("secret reload is not supported with sidecars; use restart-based secret rotation")
+		}
+	}
 	if rosterErr == nil && len(roster.Sidecars) > 0 {
 		return runWorkloads(manifest, roster, secrets, apiEnv, slog.Default(), sidecarProxy)
 	}
@@ -333,7 +341,20 @@ func boot() error {
 	// assignment. The wiring below is the canonical fix.
 	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
 	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
-	supRef.Start = func() error { return runAppWithEnv(manifest, secrets, apiEnv, supRef) }
+	var rotatingSecrets *runtimeSecretsState
+	if manifest.SecretReloadSignal != "" {
+		rotatingSecrets = newRuntimeSecretsState(secrets)
+		if err := writeRuntimeSecretsProjection(secretReloadFilePath, lookupUID(manifest.EffectiveUser()), secrets); err != nil {
+			return fmt.Errorf("prepare runtime secret file: %w", err)
+		}
+	}
+	supRef.Start = func() error {
+		currentSecrets := secrets
+		if rotatingSecrets != nil {
+			currentSecrets = rotatingSecrets.snapshot()
+		}
+		return runAppWithEnv(manifest, currentSecrets, apiEnv, supRef)
+	}
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: app restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
@@ -359,6 +380,9 @@ func boot() error {
 	// graceful stop), both subsystems unwind together.
 	bootCtx, bootCancel := context.WithCancel(context.Background())
 	defer bootCancel()
+	if rotatingSecrets != nil {
+		startRuntimeSecretReloader(bootCtx, manifest, rotatingSecrets, supRef, slog.Default())
+	}
 	// M-2 / ADR-139 §Decision 1: HEALTHCHECK poll goroutine.
 	// Soft-fail on bind (e.g. guest kernel without AF_VSOCK) —
 	// the engine's existing :8080 TCP-accept probe continues to
@@ -421,6 +445,7 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
+	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env as the
 	// boot/wake trace seed. The W3C trace context was shipped from the
@@ -2141,8 +2166,8 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 	if len(roster.Sidecars) == 0 {
 		return nil, nil // present but empty — legacy supervisor shape
 	}
-	if len(roster.Sidecars) > api.SidecarCapMax {
-		return nil, fmt.Errorf("roster has %d sidecars; cap is %d", len(roster.Sidecars), api.SidecarCapMax)
+	if err := validateWorkloadCardinality(roster); err != nil {
+		return nil, err
 	}
 	out := make([]sidecarDevice, 0, len(roster.Sidecars))
 	seenNames := make(map[string]struct{}, len(roster.Sidecars))
@@ -2157,8 +2182,8 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 		seenNames[workloadName] = struct{}{}
 		// Device naming: /dev/vda = drive0 (base), /dev/vdb =
 		// drive1 (main, the per-app rw upper). Sidecar 0 starts
-		// at /dev/vdc (drive2) and increments. The cap of 2
-		// sidecars per deployment (ADR-068) caps this at vdd.
+		// at /dev/vdc (drive2) and increments. SidecarCapMax
+		// bounds this to five helper drives per deployment.
 		out = append(out, sidecarDevice{
 			name:         fmt.Sprintf("sidecar-%d", i),
 			device:       fmt.Sprintf("/dev/vd%c", 'c'+i),

@@ -206,7 +206,7 @@ const (
 	// previous_exit_code}.
 	WakeSidecarRestart = "wake.sidecar_restart"
 	// WakeSidecarHealth — guest-init's long-running sidecar lifecycle
-	// transition (starting, healthy, unhealthy, restarting, or failed).
+	// transition (starting, healthy, unhealthy, restarting, failed, ready, or unready).
 	// Payload: {wake_id, app_id, instance_id, sidecar_name, status, reason}.
 	WakeSidecarHealth = "wake.sidecar_health"
 )

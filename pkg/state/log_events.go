@@ -72,9 +72,12 @@ type LogEventFilter struct {
 	Source       LogEventSource
 	DeploymentID string
 	RequestID    string
-	Route        string
-	Status       int
-	Limit        int
+	// TraceID is an exact W3C trace-id filter, separate from RequestID's
+	// backwards-compatible request_id-or-trace_id matching behavior.
+	TraceID string
+	Route   string
+	Status  int
+	Limit   int
 }
 
 // LogEventStore is the ADR-213 durable projection boundary. apid is the only
@@ -190,6 +193,7 @@ func normalizeLogEventFilter(filter LogEventFilter) (LogEventFilter, error) {
 	filter.AppID = strings.TrimSpace(filter.AppID)
 	filter.DeploymentID = strings.TrimSpace(filter.DeploymentID)
 	filter.RequestID = strings.TrimSpace(filter.RequestID)
+	filter.TraceID = strings.TrimSpace(filter.TraceID)
 	filter.Route = strings.TrimSpace(filter.Route)
 	filter.BeforeID = strings.TrimSpace(filter.BeforeID)
 	if _, err := uuid.Parse(filter.AccountID); err != nil {
@@ -202,6 +206,9 @@ func normalizeLogEventFilter(filter LogEventFilter) (LogEventFilter, error) {
 		if _, err := uuid.Parse(filter.DeploymentID); err != nil {
 			return LogEventFilter{}, errors.New("state: log query deployment id must be a UUID")
 		}
+	}
+	if len(filter.TraceID) > 128 {
+		return LogEventFilter{}, errors.New("state: log query trace id exceeds 128 characters")
 	}
 	if filter.Source != "" && !validLogEventSource(filter.Source) {
 		return LogEventFilter{}, fmt.Errorf("state: invalid log query source %q", filter.Source)

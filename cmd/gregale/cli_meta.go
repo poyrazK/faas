@@ -187,6 +187,9 @@ type cliSub struct {
 	// (plan names, metric enums, etc.) — completion backends
 	// expand these inline.
 	Flags []cliFlag
+	// Subcommands contains one additional command level for verbs such
+	// as `deployments alias list`. Most command families remain flat.
+	Subcommands []cliSub
 }
 
 // cliFlag is one CLI flag.
@@ -751,7 +754,25 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployments,
 		DocSlug: "deployments",
-		Short:   "List deployments (--app SLUG or linked context | --limit N | --before C | --all | --wide)",
+		Short:   "List deployments or manage stable named URLs for immutable revisions",
+		Subcommands: []cliSub{{
+			Name:  "alias",
+			Short: "Manage stable named URLs for immutable deployments",
+			Subcommands: []cliSub{
+				{Name: "list", Short: "List deployment aliases for an app", Flags: []cliFlag{
+					{Name: "app", Short: "app slug; defaults to the linked project", Value: "SLUG"},
+				}},
+				{Name: "set", Short: "Point an alias at an exact deployment revision", Flags: []cliFlag{
+					{Name: "app", Short: "app slug; defaults to the linked project", Value: "SLUG"},
+					{Name: "name", Short: "lowercase DNS-label alias name", Req: true, Value: "NAME"},
+					{Name: "deployment", Short: "deployment ID or app revision (vN)", Req: true, Value: "ID|vN"},
+				}},
+				{Name: "delete", Short: "Remove an alias without deleting its deployment", Flags: []cliFlag{
+					{Name: "app", Short: "app slug; defaults to the linked project", Value: "SLUG"},
+					{Name: "name", Short: "lowercase DNS-label alias name", Req: true, Value: "NAME"},
+				}},
+			},
+		}},
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug (app-scoped deployment history)", Value: "slug"},
 			{Name: "limit", Short: "page size (1-200)", Value: "N"},
@@ -962,6 +983,15 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:        "diff",
+		DocSlug:     "diff",
+		Short:       "Compare two named environments in the linked project",
+		Positionals: []string{"<from-environment>", "<to-environment>"},
+		Flags: []cliFlag{
+			{Name: "project", Short: "project slug (defaults to linked project)", Value: "SLUG"},
+		},
+	},
+	{
 		Name:    "preview",
 		DocSlug: "preview",
 		Short:   "Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)",
@@ -1013,11 +1043,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "edge-rules",
 		DocSlug: "edge-rules",
-		Short:   "Per-app edge rules (edge-rules list|create|get|update|rm --app <slug>)",
+		Short:   "Per-app edge rules (edge-rules list|trace|create|get|update|rm --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List edge rules", Flags: []cliFlag{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
 				{Name: "kind", Short: "filter to a single kind", ClosedSet: edgeRuleKindVocab},
+			}},
+			{Name: "trace", Short: "Preview which edge rules match a proposed request (no actions executed)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "url", Short: "absolute HTTP(S) request URL", Req: true, Value: "URL"},
+				{Name: "method", Short: "request method (default GET)", Value: "method"},
 			}},
 			{Name: subCreate, Short: "Add an edge rule"},
 			{Name: subGet, Short: "Show one edge rule"},
@@ -1060,9 +1095,15 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "env",
 		DocSlug: "env",
-		Short:   "Pull/push .env <-> sealed secrets (--app <slug> or linked context)",
+		Short:   "Clone project environments or manage app runtime env/secrets",
 		Flags:   []cliFlag{{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"}},
 		Subcommands: []cliSub{
+			{Name: "create", Short: "Clone a project environment with isolated managed data by default", Flags: []cliFlag{
+				{Name: "from", Short: "source environment", Value: "ENV", Req: true},
+				{Name: "project", Short: "project slug (defaults to linked project)", Value: "SLUG"},
+				{Name: "protected", Short: "protect the new environment"},
+				{Name: "share-resources", Short: "use source managed data with fresh target credentials instead of isolating it"},
+			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Flags: []cliFlag{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 			}},
@@ -1271,6 +1312,7 @@ var cliCommands = []cliCommand{
 			{Name: "status", Short: "only show HTTP requests with this status", Value: "100..599"},
 			{Name: "route", Short: "only show HTTP requests for this route", Value: "PATH"},
 			{Name: "request", Short: "show one HTTP request by public request id or row id", Value: "ID"},
+			{Name: "trace", Short: "show HTTP access logs correlated with a W3C trace id", Value: "TRACE_ID"},
 			{Name: "limit", Short: "HTTP request page size (1..200)", Value: "N"},
 			{Name: "all", Short: "read every retained HTTP request page"},
 			{Name: "explain", Short: "summarize the last failure and common error patterns"},
@@ -1817,8 +1859,9 @@ var cliCommands = []cliCommand{
 				{Name: "vary-on", Short: "header included in the cache key", Value: "HEADER", ClosedSet: []string{"Accept-Language", "Accept-Encoding"}},
 				{Name: "priority", Short: "match priority (lower wins)", Value: "N"},
 			}},
-			{Name: "purge", Short: "Purge cached responses: cache purge <slug> [--path GLOB]", Flags: []cliFlag{
+			{Name: "purge", Short: "Purge cached responses: cache purge <slug> [--path GLOB | --tag TAG]", Flags: []cliFlag{
 				{Name: "path", Short: "optional normalized request path glob", Value: "GLOB"},
+				{Name: "tag", Short: "optional cache tag", Value: "TAG"},
 			}},
 		},
 	},

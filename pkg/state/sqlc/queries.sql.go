@@ -1739,6 +1739,24 @@ func (q *Queries) DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype
 	return err
 }
 
+const deleteDeploymentAlias = `-- name: DeleteDeploymentAlias :execrows
+DELETE FROM deployment_aliases
+ WHERE app_id = $1 AND name = $2
+`
+
+type DeleteDeploymentAliasParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) DeleteDeploymentAlias(ctx context.Context, db DBTX, arg DeleteDeploymentAliasParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteDeploymentAlias, arg.AppID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteEventSubscription = `-- name: DeleteEventSubscription :exec
 delete from event_subscriptions
 where id = $1 and account_id = $2 and app_id = $3
@@ -1780,6 +1798,59 @@ type DeleteTriggerParams struct {
 func (q *Queries) DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerParams) error {
 	_, err := db.Exec(ctx, deleteTrigger, arg.ID, arg.AppID)
 	return err
+}
+
+const deploymentAliasByHostLabel = `-- name: DeploymentAliasByHostLabel :many
+SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
+  FROM deployment_aliases a
+  JOIN apps p ON p.id = a.app_id
+             AND p.status <> 'deleted'
+             AND p.deleted_at IS NULL
+  JOIN deployments d ON d.id = a.deployment_id
+                    AND d.app_id = a.app_id
+                    AND d.deleted_at IS NULL
+ WHERE ('tag-' || a.name || '-' || replace(a.app_id::text, '-', ''))
+       = $1
+ ORDER BY a.app_id, a.name
+`
+
+type DeploymentAliasByHostLabelRow struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	Revision     int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// The hostname label uses the app's immutable UUID so aliases remain stable
+// across app slug renames. Keep the deployment join app-scoped and hide
+// soft-deleted owners/targets.
+func (q *Queries) DeploymentAliasByHostLabel(ctx context.Context, db DBTX, hostLabel string) ([]DeploymentAliasByHostLabelRow, error) {
+	rows, err := db.Query(ctx, deploymentAliasByHostLabel, hostLabel)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeploymentAliasByHostLabelRow{}
+	for rows.Next() {
+		var i DeploymentAliasByHostLabelRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.DeploymentID,
+			&i.Revision,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deploymentByID = `-- name: DeploymentByID :one
@@ -4599,6 +4670,53 @@ func (q *Queries) LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UU
 	return i, err
 }
 
+const latestInstanceReadiness = `-- name: LatestInstanceReadiness :many
+SELECT DISTINCT ON (CAST(data->>'instance_id' AS text))
+       CAST(data->>'instance_id' AS text) AS instance_id,
+       CAST(data->>'status' AS text) AS status,
+       at,
+       id
+FROM events
+WHERE kind = 'wake.sidecar_health'
+  AND data->>'status' IN ('ready', 'unready')
+  AND data->>'instance_id' = ANY($1::text[])
+ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC
+`
+
+type LatestInstanceReadinessRow struct {
+	InstanceID string
+	Status     string
+	At         pgtype.Timestamptz
+	ID         int64
+}
+
+// Gateway restart hydration: readiness is independent of the instance's
+// RUNNING state, so replay only the latest reversible ready/unready event.
+func (q *Queries) LatestInstanceReadiness(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessRow, error) {
+	rows, err := db.Query(ctx, latestInstanceReadiness, instanceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LatestInstanceReadinessRow{}
+	for rows.Next() {
+		var i LatestInstanceReadinessRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.Status,
+			&i.At,
+			&i.ID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const latestSupersededDeployment = `-- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -5459,6 +5577,53 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 			&i.LastProbedAt,
 			&i.LastSeenAt,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDeploymentAliases = `-- name: ListDeploymentAliases :many
+SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
+  FROM deployment_aliases a
+  JOIN deployments d ON d.id = a.deployment_id AND d.app_id = a.app_id
+ WHERE a.app_id = $1
+ ORDER BY a.name
+`
+
+type ListDeploymentAliasesRow struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	Revision     int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// Stable per-app revision names. Join deployments for the human-readable
+// revision while retaining aliases whose targets later become superseded;
+// the alias continues to identify the same immutable row.
+func (q *Queries) ListDeploymentAliases(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDeploymentAliasesRow, error) {
+	rows, err := db.Query(ctx, listDeploymentAliases, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDeploymentAliasesRow{}
+	for rows.Next() {
+		var i ListDeploymentAliasesRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.DeploymentID,
+			&i.Revision,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -8040,7 +8205,7 @@ func (q *Queries) ObjectBucketAccessGrantUpsert(ctx context.Context, db DBTX, ar
 }
 
 const objectBucketByName = `-- name: ObjectBucketByName :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
 `
 
 type ObjectBucketByNameParams struct {
@@ -8078,6 +8243,7 @@ func (q *Queries) ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.LastErrorCode,
 		&i.PublicRead,
 		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
 	)
 	return i, err
 }
@@ -8094,7 +8260,7 @@ AND ($1 <> 'deleting' OR NOT EXISTS (
   AND m.state IN ('initiating','active','completing','aborting')
 ))
 AND (NOT $7::boolean OR object_buckets.state = $1)
-AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at
+AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id
 `
 
 type ObjectBucketClaimParams struct {
@@ -8138,6 +8304,7 @@ func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBuck
 		&i.LastErrorCode,
 		&i.PublicRead,
 		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
 	)
 	return i, err
 }
@@ -8184,7 +8351,7 @@ func (q *Queries) ObjectBucketFinish(ctx context.Context, db DBTX, arg ObjectBuc
 }
 
 const objectBucketGet = `-- name: ObjectBucketGet :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
 `
 
 type ObjectBucketGetParams struct {
@@ -8216,27 +8383,29 @@ func (q *Queries) ObjectBucketGet(ctx context.Context, db DBTX, arg ObjectBucket
 		&i.LastErrorCode,
 		&i.PublicRead,
 		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
 	)
 	return i, err
 }
 
 const objectBucketInsert = `-- name: ObjectBucketInsert :one
-INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id
 `
 
 type ObjectBucketInsertParams struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	Name               string
-	Scope              string
-	Region             string
-	BackendID          string
-	BackendFingerprint string
-	PhysicalName       string
-	PublicRead         bool
-	ServeAt            pgtype.Text
+	ID                             pgtype.UUID
+	AccountID                      pgtype.UUID
+	AppID                          pgtype.UUID
+	Name                           string
+	Scope                          string
+	Region                         string
+	BackendID                      string
+	BackendFingerprint             string
+	PhysicalName                   string
+	PublicRead                     bool
+	ServeAt                        pgtype.Text
+	EnvironmentCloneSourceBucketID pgtype.UUID
 }
 
 func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBucketInsertParams) (ObjectBucket, error) {
@@ -8252,6 +8421,7 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		arg.PhysicalName,
 		arg.PublicRead,
 		arg.ServeAt,
+		arg.EnvironmentCloneSourceBucketID,
 	)
 	var i ObjectBucket
 	err := row.Scan(
@@ -8274,12 +8444,13 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.LastErrorCode,
 		&i.PublicRead,
 		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
 	)
 	return i, err
 }
 
 const objectBucketList = `-- name: ObjectBucketList :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
 `
 
 type ObjectBucketListParams struct {
@@ -8316,6 +8487,7 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.LastErrorCode,
 			&i.PublicRead,
 			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
 		); err != nil {
 			return nil, err
 		}
@@ -8328,7 +8500,7 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 }
 
 const objectBucketListForKey = `-- name: ObjectBucketListForKey :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id
 FROM object_buckets b
 JOIN object_storage_access_grants g
   ON g.bucket_id = b.id AND g.account_id = b.account_id
@@ -8373,6 +8545,7 @@ func (q *Queries) ObjectBucketListForKey(ctx context.Context, db DBTX, arg Objec
 			&i.LastErrorCode,
 			&i.PublicRead,
 			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
 		); err != nil {
 			return nil, err
 		}
@@ -8436,7 +8609,7 @@ func (q *Queries) ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBuck
 }
 
 const objectBucketsDue = `-- name: ObjectBucketsDue :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets
 WHERE (state = 'deleting' OR ($1::boolean AND state = 'provisioning'))
 AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
 ORDER BY retry_at, id LIMIT $2::int
@@ -8476,6 +8649,7 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.LastErrorCode,
 			&i.PublicRead,
 			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
 		); err != nil {
 			return nil, err
 		}
@@ -8488,7 +8662,7 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 }
 
 const objectInventoriesDue = `-- name: ObjectInventoriesDue :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
 WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
 AND (u.lease_until IS NULL OR u.lease_until < now())
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1
@@ -8523,6 +8697,7 @@ func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32
 			&i.LastErrorCode,
 			&i.PublicRead,
 			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
 		); err != nil {
 			return nil, err
 		}
@@ -9448,7 +9623,7 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectStorageProviderBuckets = `-- name: ObjectStorageProviderBuckets :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at FROM object_buckets
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets
 WHERE backend_id = $1 AND backend_fingerprint = $2
 ORDER BY physical_name, id
 `
@@ -9487,6 +9662,7 @@ func (q *Queries) ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg
 			&i.LastErrorCode,
 			&i.PublicRead,
 			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
 		); err != nil {
 			return nil, err
 		}
@@ -9633,42 +9809,43 @@ func (q *Queries) ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgty
 }
 
 const objectUsageBuckets = `-- name: ObjectUsageBuckets :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 WHERE b.account_id = $1
 `
 
 type ObjectUsageBucketsRow struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	Name                string
-	Scope               string
-	Region              string
-	BackendID           string
-	BackendFingerprint  string
-	PhysicalName        string
-	State               string
-	LeaseToken          pgtype.Text
-	LeaseUntil          pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	AttemptCount        int32
-	RetryAt             pgtype.Timestamptz
-	LastErrorCode       string
-	PublicRead          bool
-	ServeAt             pgtype.Text
-	BaselineBytes       pgtype.Int8
-	BaselineKeys        pgtype.Int8
-	GrantedBytes        pgtype.Int8
-	GrantedKeys         pgtype.Int8
-	ObservedBytes       pgtype.Int8
-	ObservedKeys        pgtype.Int8
-	ObservedAt          pgtype.Timestamptz
-	AttemptAt           pgtype.Timestamptz
-	InventoryLeaseUntil pgtype.Timestamptz
-	Token               pgtype.Text
+	ID                             pgtype.UUID
+	AccountID                      pgtype.UUID
+	AppID                          pgtype.UUID
+	Name                           string
+	Scope                          string
+	Region                         string
+	BackendID                      string
+	BackendFingerprint             string
+	PhysicalName                   string
+	State                          string
+	LeaseToken                     pgtype.Text
+	LeaseUntil                     pgtype.Timestamptz
+	CreatedAt                      pgtype.Timestamptz
+	UpdatedAt                      pgtype.Timestamptz
+	AttemptCount                   int32
+	RetryAt                        pgtype.Timestamptz
+	LastErrorCode                  string
+	PublicRead                     bool
+	ServeAt                        pgtype.Text
+	EnvironmentCloneSourceBucketID pgtype.UUID
+	BaselineBytes                  pgtype.Int8
+	BaselineKeys                   pgtype.Int8
+	GrantedBytes                   pgtype.Int8
+	GrantedKeys                    pgtype.Int8
+	ObservedBytes                  pgtype.Int8
+	ObservedKeys                   pgtype.Int8
+	ObservedAt                     pgtype.Timestamptz
+	AttemptAt                      pgtype.Timestamptz
+	InventoryLeaseUntil            pgtype.Timestamptz
+	Token                          pgtype.Text
 }
 
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ObjectUsageBucketsRow, error) {
@@ -9700,6 +9877,7 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgt
 			&i.LastErrorCode,
 			&i.PublicRead,
 			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
 			&i.BaselineBytes,
 			&i.BaselineKeys,
 			&i.GrantedBytes,
@@ -12777,6 +12955,59 @@ func (q *Queries) UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerP
 		&i.PayloadMaxBytes,
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertDeploymentAlias = `-- name: UpsertDeploymentAlias :one
+WITH upserted AS (
+    INSERT INTO deployment_aliases (app_id, name, deployment_id)
+    SELECT d.app_id, $1, d.id
+      FROM deployments d
+      JOIN apps a ON a.id = d.app_id
+     WHERE d.app_id = $2
+       AND d.id = $3
+       AND a.deleted_at IS NULL
+       AND a.status <> 'deleted'
+       AND d.deleted_at IS NULL
+       AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live')
+    ON CONFLICT (app_id, name) DO UPDATE
+       SET deployment_id = EXCLUDED.deployment_id,
+           updated_at = now()
+    RETURNING app_id, name, deployment_id, created_at, updated_at
+)
+SELECT u.app_id, u.name, u.deployment_id, d.revision, u.created_at, u.updated_at
+  FROM upserted u
+  JOIN deployments d ON d.id = u.deployment_id
+`
+
+type UpsertDeploymentAliasParams struct {
+	Name         string
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type UpsertDeploymentAliasRow struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	Revision     int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// Accept only a routable target on this app. Using INSERT .. SELECT makes the
+// ownership/status check atomic with writing the alias.
+func (q *Queries) UpsertDeploymentAlias(ctx context.Context, db DBTX, arg UpsertDeploymentAliasParams) (UpsertDeploymentAliasRow, error) {
+	row := db.QueryRow(ctx, upsertDeploymentAlias, arg.Name, arg.AppID, arg.DeploymentID)
+	var i UpsertDeploymentAliasRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Name,
+		&i.DeploymentID,
+		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

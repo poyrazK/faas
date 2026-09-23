@@ -1303,11 +1303,15 @@ func TestOpsMetrics_ObserveSidecarHealth(t *testing.T) {
 	m.ObserveSidecarHealth("app-1", "metrics", "starting")
 	m.ObserveSidecarHealth("app-1", "metrics", "healthy")
 	m.ObserveSidecarHealth("app-1", "metrics", "unhealthy")
+	m.ObserveSidecarHealth("app-1", "edge-proxy", "ready")
+	m.ObserveSidecarHealth("app-1", "edge-proxy", "unready")
 
 	body := render(t, m)
 	for _, want := range []string{
 		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="metrics",status="starting"} 1`,
 		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="metrics",status="healthy"} 1`,
+		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="edge-proxy",status="ready"} 1`,
+		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="edge-proxy",status="unready"} 1`,
 		`vmmd_sidecar_health_transition_total{app="",sidecar="",status="failed"} 0`,
 	} {
 		if !strings.Contains(body, want) {

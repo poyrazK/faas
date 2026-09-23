@@ -13,7 +13,7 @@ export type AppWebhookResponse = {
   account_id: string;
   target_url: string;
   webhook_secret_sealed_masked: '***';
-  event_filter: Array<'app.parked' | 'app.woken' | 'usage_statement.finalized'>;
+  event_filter: Array<'app.parked' | 'app.woken' | 'deployment.live' | 'deployment.failed' | 'rollout.completed' | 'rollout.aborted' | 'job.finished' | 'usage_statement.finalized'>;
   retry_policy: 'default' | 'aggressive' | 'none';
   delivery_format: 'json' | 'cloudevents';
   enabled: boolean;

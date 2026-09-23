@@ -489,10 +489,17 @@ var codeExclude = map[string]bool{
 	"CodeCliAuthUnavailable": true, // /v1/cli-auth/* (anonymous)
 }
 
-// schemaSpecOnly lists schemas that exist in the spec but have no Go DTO.
-// Either inline anonymous structs in handlers, or pure-documentation shapes
-// (error envelopes that don't directly mirror a Go type).
+// schemaSpecOnly lists schemas that the struct-only DTO scanner cannot map
+// to a standalone Go struct: aliases, inline anonymous structs, or pure-
+// documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// Migration preflight verdict level is a typed string, not a struct, so
+	// the DTO scanner does not surface it. Same pattern as TriggerKind and
+	// ResourceProfile below.
+	"PreflightLevel": true,
+	// SidecarProbe is a source-compatible Go alias for AppManifestHealthcheck;
+	// the underlying fields are checked against the shared schema above.
+	"SidecarProbe": true,
 	// Status create is decoded into the shared Go request DTO, while the
 	// OpenAPI discriminator exposes stricter kind-specific SDK request shapes.
 	"AdminStatusIncidentCreateRequest":    true,
@@ -967,6 +974,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
+		filepath.Join(root, "pkg", "api", "preflight.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

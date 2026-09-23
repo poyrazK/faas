@@ -76,6 +76,11 @@ func TestLoadPRPreviewSetCheck_CurrentHeadAndFullClosure(t *testing.T) {
 	if err != nil || check.Phase != githubdgrpc.CheckPhaseLive {
 		t.Fatalf("all-live set check = (%+v, %v)", check, err)
 	}
+	environment, err := sets.PRPreviewEnvironmentByRoot(ctx, rootID)
+	if err != nil || environment.Set.CommitSHA != shaA || len(environment.Members) != 2 ||
+		environment.Members[0].DeploymentStatus != "live" || environment.Members[0].DeploymentID == "" {
+		t.Fatalf("customer environment projection = (%+v, %v)", environment, err)
+	}
 	// GitHub keys the static check by repository and commit, not PR. A second
 	// PR pointing at the same SHA must hold the shared check until it is live.
 	otherRootID := uuid.NewString()
@@ -111,6 +116,10 @@ func TestLoadPRPreviewSetCheck_CurrentHeadAndFullClosure(t *testing.T) {
 	check, err = loadPRPreviewSetCheck(ctx, pool, 77, set.RepoFullName, 42, shaB)
 	if err != nil || !check.CurrentHead || check.Phase != githubdgrpc.CheckPhaseBuilding {
 		t.Fatalf("new head with no deployment = (%+v, %v)", check, err)
+	}
+	environment, err = sets.PRPreviewEnvironmentByRoot(ctx, rootID)
+	if err != nil || environment.Set.CommitSHA != shaB || len(environment.Members) != 1 || environment.Members[0].DeploymentStatus != "missing" {
+		t.Fatalf("new head inherited old deployment: (%+v, %v)", environment, err)
 	}
 	if err := sets.ClosePRPreviewSet(ctx, 77, set.RepoFullName, 42); err != nil {
 		t.Fatal(err)

@@ -721,6 +721,24 @@ func TestGetAccountTraceUsesDurableEndpoint(t *testing.T) {
 	}
 }
 
+func TestGetAccountTraceWithLimitEncodesLimit(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","logs":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.GetAccountTraceWithLimit(context.Background(), "4bf92f3577b34da6a3ce929d0e0e4736", 25); err != nil {
+		t.Fatalf("GetAccountTraceWithLimit: %v", err)
+	}
+	if gotQuery != "limit=25" {
+		t.Fatalf("query = %q, want limit=25", gotQuery)
+	}
+}
+
 func TestListAppDebugRequestsAll_WalksCursor(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

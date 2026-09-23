@@ -1,6 +1,9 @@
 package api
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 var appSlugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 
@@ -15,7 +18,7 @@ var reservedAppSlugs = map[string]struct{}{
 // ValidAppSlug is the canonical public app-name contract shared by direct
 // app creation and project workload admission.
 func ValidAppSlug(slug string) bool {
-	return appSlugRE.MatchString(slug)
+	return appSlugRE.MatchString(slug) && !strings.HasPrefix(slug, "tag-")
 }
 
 // IsReservedAppSlug reports names held for Gregale-owned services. Existing

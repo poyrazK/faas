@@ -3328,6 +3328,20 @@ const (
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // €0.01 per GB-RAM-hour
 
+	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
+	// client IP. The check is unauthenticated, so the ceiling exists to protect
+	// the upstream GitHub budget (60 anonymous API calls per hour) and to keep a
+	// public endpoint from becoming a fetch amplifier.
+	PreflightRateLimitPerHour = 20
+
+	// PreflightCacheTTL is how long a verdict stays cached. A verdict is a pure
+	// function of the commit it was computed from, so the TTL bounds memory rather
+	// than staleness.
+	PreflightCacheTTL = 6 * time.Hour
+
+	// PreflightCacheMaxEntries bounds the in-process verdict cache.
+	PreflightCacheMaxEntries = 2_048
+
 	// Builder VM (spec §4.5, §1). Builds live in the control-plane slice, never
 	// tenant RAM.
 	BuildVMRAMMB = 2_048
@@ -3767,21 +3781,17 @@ const (
 	// "atomic revocation" (no grace).
 	DefaultAPIKeyGraceWindowDays = 7
 
-	// Sidecar containers (issue #463 / ADR-070). The 2-sidecar
-	// hard cap is a GLOBAL constant, not a per-plan matrix field.
-	// Every plan inherits the same `SidecarCapMax = 2` (Free
-	// included). The cap is structurally tight: 1 init + 1
-	// sidecar is the smallest useful surface for a stateless
-	// workload, and the schema CHECK on `deployments.sidecars`
-	// (migration 00118) pins the cap at the second-line defence
-	// layer (migrations/00118_deployments_sidecars.sql). A future
-	// PR can grow this to a per-plan matrix if telemetry shows
-	// demand — the constant is the single source of truth.
-	SidecarCapMax = 2
+	// SidecarCapMax bounds all helper workloads in one deployment, including
+	// the optional one-shot init helper. The global cap keeps roster, mount,
+	// and admission work bounded across every plan.
+	SidecarCapMax = 5
+	// SidecarLongRunningCapMax bounds concurrently running companions. At most
+	// one additional init helper may be declared under SidecarCapMax.
+	SidecarLongRunningCapMax = 4
 	// WorkloadDependencyCapMax bounds the dependency list for one workload.
-	// With one main workload and at most two sidecars, three unique targets
-	// are the complete set; keeping the cap explicit limits malformed roster
-	// growth before graph validation.
+	// The graph has at most one main workload plus SidecarCapMax helpers;
+	// keeping the cap explicit limits malformed roster growth before graph
+	// validation.
 	WorkloadDependencyCapMax = SidecarCapMax + 1
 
 	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps

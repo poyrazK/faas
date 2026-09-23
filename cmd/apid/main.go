@@ -701,6 +701,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
+		go srv.runProjectEnvironmentCleanupReconciler(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedRealtimeEndpointReconciler(ctx)
 		go srv.runManagedRealtimeOwnerReaper(ctx)
@@ -921,6 +922,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			go func() {
 				if err := runAuditOutbox(ctx, srv.store, log, srv.eventsPlatform); err != nil && ctx.Err() == nil {
 					log.Error("audit: durable outbox exited", "err", err)
+				}
+			}()
+		}
+		if _, ok := srv.store.(state.OrgActivityOutboxStore); ok {
+			go func() {
+				if err := runOrgActivityOutbox(ctx, srv.store, log); err != nil && ctx.Err() == nil {
+					log.Error("activity: durable outbox exited", "err", err)
 				}
 			}()
 		}

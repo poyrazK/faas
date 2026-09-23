@@ -801,12 +801,13 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		ConfiguredResources: api.AppConfiguredResources{
 			MemoryMB: app.RAMMB, CPUMillicores: effectiveAppCPUMillicores(app, acct.Plan),
 		},
-		Deployments:     deps,
-		Crons:           cronItems,
-		Workflows:       workflowItems,
-		Previews:        previews,
-		Domains:         domainItems,
-		RecentInstances: recentItems,
+		Deployments:        deps,
+		Crons:              cronItems,
+		Workflows:          workflowItems,
+		Previews:           previews,
+		PreviewEnvironment: s.dashboardPreviewEnvironment(ctx, log, app),
+		Domains:            domainItems,
+		RecentInstances:    recentItems,
 		// Issue #791 PR-E / ADR-090 closure — cron fire-now
 		// post-redirect banner. Reads ?fired=1 / ?fired=error and
 		// forwards through to the template's flash block.

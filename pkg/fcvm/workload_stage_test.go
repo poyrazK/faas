@@ -106,35 +106,36 @@ func TestWake_OneSidecar_StagesMainAndSidecar(t *testing.T) {
 	}
 }
 
-// TestWake_TwoSidecars_StagesInStabilityOrder pins the
-// 2-sidecar case (the maximum per ADR-068). Drive indices
-// are 0 and 1, and the staged spec preserves the order
-// schedd sent on the wire (the wire shape is the source
-// of truth — vmmd doesn't reorder).
-func TestWake_TwoSidecars_StagesInStabilityOrder(t *testing.T) {
+// TestWake_FiveHelpers_StagesInStabilityOrder pins that the maximum
+// declared helper set is staged in the order schedd sent on the wire
+// (the wire shape is the source of truth — vmmd doesn't reorder).
+func TestWake_FiveHelpers_StagesInStabilityOrder(t *testing.T) {
 	run, vmm := &fakeRunner{}, &fakeVMM{}
 	m := newTestManager(run, vmm)
 
-	r := req("app-with-two-sidecars")
+	r := req("app-with-five-helpers")
 	r.Sidecars = []WorkloadSpec{
-		{Name: "metrics", Type: "sidecar", StorageKey: "k1", DriveID: "layer-sidecar-0", RamMB: 64, Port: 9090, Essential: true},
-		{Name: "logger", Type: "sidecar", StorageKey: "k2", DriveID: "layer-sidecar-1", RamMB: 32, Port: 9100, Essential: false},
+		{Name: "init", Type: "init", StorageKey: "k0", DriveID: "layer-sidecar-0", RamMB: 32, Essential: true},
+		{Name: "metrics", Type: "sidecar", StorageKey: "k1", DriveID: "layer-sidecar-1", RamMB: 64, Port: 9090, Essential: true},
+		{Name: "logger", Type: "sidecar", StorageKey: "k2", DriveID: "layer-sidecar-2", RamMB: 32, Port: 9100, Essential: false},
+		{Name: "proxy", Type: "sidecar", StorageKey: "k3", DriveID: "layer-sidecar-3", RamMB: 32, Port: 9101, Essential: true},
+		{Name: "tracer", Type: "sidecar", StorageKey: "k4", DriveID: "layer-sidecar-4", RamMB: 32, Port: 9102, Essential: true},
 	}
 
 	if _, err := m.ColdBoot(context.Background(), r); err != nil {
 		t.Fatalf("cold boot: %v", err)
 	}
-	if got := len(vmm.stagedWorkloads); got != 3 {
-		t.Fatalf("StageWorkloadManifest called %d times, want 3 (main + 2 sidecars)", got)
+	if got := len(vmm.stagedWorkloads); got != 6 {
+		t.Fatalf("StageWorkloadManifest called %d times, want 6 (main + 5 helpers)", got)
 	}
 	if vmm.stagedWorkloads[0].spec.Name != "main" {
 		t.Errorf("staged[0].name = %q, want main", vmm.stagedWorkloads[0].spec.Name)
 	}
-	if vmm.stagedWorkloads[1].spec.Name != "metrics" || vmm.stagedWorkloads[1].driveIdx != 0 {
-		t.Errorf("staged[1] = %+v, want name=metrics driveIdx=0", vmm.stagedWorkloads[1])
-	}
-	if vmm.stagedWorkloads[2].spec.Name != "logger" || vmm.stagedWorkloads[2].driveIdx != 1 {
-		t.Errorf("staged[2] = %+v, want name=logger driveIdx=1", vmm.stagedWorkloads[2])
+	for i, name := range []string{"init", "metrics", "logger", "proxy", "tracer"} {
+		staged := vmm.stagedWorkloads[i+1]
+		if staged.spec.Name != name || staged.driveIdx != i {
+			t.Errorf("staged[%d] = %+v, want name=%s driveIdx=%d", i+1, staged, name, i)
+		}
 	}
 }
 

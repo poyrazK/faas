@@ -1538,7 +1538,7 @@ type InstanceStatsRow struct {
 	// the meterd sampler collapses to the no-sidecar admission
 	// shutter via api.BillableRAMMBWithSidecars. Wire discipline
 	// ADR-016 additive — new field at the end. Card ceiling:
-	// len(sidecar_ram_mbs) ≤ api.SidecarCapMax = 2.
+	// len(sidecar_ram_mbs) ≤ api.SidecarCapMax = 5.
 	SidecarRamMbs []int32 `protobuf:"varint,8,rep,packed,name=sidecar_ram_mbs,json=sidecarRamMbs,proto3" json:"sidecar_ram_mbs,omitempty"`
 	// Cumulative root-side vethHost.tx_bytes (root → guest ingress).
 	// rx_valid follows the same Validity convention as tx_valid.
