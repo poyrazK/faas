@@ -1922,6 +1922,32 @@ func readConnectAck(conn net.Conn) (string, error) {
 // write failure, nack) returns wrapped. A restored VM with snapshot-
 // shared entropy is exactly the failure mode V6 rejects, so we refuse
 // to declare it ready.
+// resumeCapUserspaceReseed is the capability bit a guest-init running the
+// ADR-222 userspace reseed barrier sends right after its OK ack.
+const (
+	resumeCapUserspaceReseed = byte(0x01)
+	resumeCapabilityWait     = 100 * time.Millisecond
+)
+
+// ErrGuestLacksRestoreReseed means the restored guest-init did not advertise
+// the userspace reseed barrier (ADR-222): it predates the barrier, or its
+// barrier never started. Its Node and Python processes may replay the
+// snapshot's random state, so the restore is refused. The manager cold-boots
+// and schedd marks the snapshot stale, so the next park captures a snapshot
+// from the current guest-init. It deliberately does not wrap io.EOF: an old
+// guest closes right after its ack, and a transport retry would resend the
+// resume request.
+var ErrGuestLacksRestoreReseed = errors.New("vmm: restored guest-init lacks the userspace RNG reseed barrier (ADR-222)")
+
+func readResumeCapabilities(conn net.Conn) error {
+	_ = conn.SetReadDeadline(time.Now().Add(resumeCapabilityWait))
+	caps := make([]byte, 1)
+	if _, err := io.ReadFull(conn, caps); err != nil || caps[0]&resumeCapUserspaceReseed == 0 {
+		return ErrGuestLacksRestoreReseed
+	}
+	return nil
+}
+
 func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
 	return retryResumeTransport(ctx, func(callCtx context.Context) error {
 		return v.triggerResumeHookOnce(callCtx, l, hostTimeUnixNano)
@@ -2055,6 +2081,9 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	}
 	if ack[0] != 0 {
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
+	}
+	if err := readResumeCapabilities(conn); err != nil {
+		return err
 	}
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.
