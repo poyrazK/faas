@@ -34044,13 +34044,27 @@ components:
         relevant_logs: { type: array, items: { type: string } }
       additionalProperties: true
 
+    RolloutCompletedWebhookPayload:
+      type: object
+      description: The configured rollout completed. Explicit traffic splits may complete below 100%; inspect traffic_percent.
+      required: [app_id, deployment_id, rollout_state, traffic_percent, completed_at]
+      properties:
+        app_id: { type: string }
+        deployment_id: { type: string }
+        rollout_state: { type: string, enum: [complete] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        completed_at: { type: string, format: date-time }
+      additionalProperties: true
+
     RolloutAbortedWebhookPayload:
       type: object
-      description: Rollout abort details delivered with rollout.aborted.
-      required: [app_id, deployment_id, reason]
+      description: A live rollout was aborted. Pre-live build failures emit deployment.failed instead.
+      required: [app_id, deployment_id, rollout_state, traffic_percent, reason, aborted_at]
       properties:
-        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        app_id: { type: string }
         deployment_id: { type: string }
+        rollout_state: { type: string, enum: [aborted] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         reason: { type: string }
         aborted_at: { type: string, format: date-time }
       additionalProperties: true
@@ -34208,7 +34222,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -34622,7 +34636,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -34679,7 +34693,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

@@ -467,11 +467,15 @@ var validAppWebhookEvents = map[string]struct{}{
 	"app.woken":                 {},
 	"deployment.live":           {},
 	"deployment.failed":         {},
+	"rollout.completed":         {},
+	"rollout.aborted":           {},
+	"job.finished":              {},
 	"usage_statement.finalized": {},
 }
 
 var webhookEventVocab = []string{
-	"app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized",
+	"app.parked", "app.woken", "deployment.live", "deployment.failed",
+	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",
 }
 
 func validAppWebhookEvent(s string) bool {

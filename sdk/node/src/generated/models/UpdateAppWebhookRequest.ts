@@ -11,7 +11,7 @@
 export type UpdateAppWebhookRequest = {
   target_url?: string;
   webhook_secret?: string;
-  event_filter?: Array<'app.parked' | 'app.woken' | 'deployment.live' | 'deployment.failed' | 'usage_statement.finalized'>;
+  event_filter?: Array<'app.parked' | 'app.woken' | 'deployment.live' | 'deployment.failed' | 'rollout.completed' | 'rollout.aborted' | 'job.finished' | 'usage_statement.finalized'>;
   retry_policy?: 'default' | 'aggressive' | 'none';
   /**
    * Wire envelope for future deliveries; existing delivery rows are unchanged.

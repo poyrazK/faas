@@ -620,6 +620,7 @@ export type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 export type { RollbackOperatorRuntimeConfigRequest } from './RollbackOperatorRuntimeConfigRequest.js';
 export type { RollbackRequest } from './RollbackRequest.js';
 export type { RolloutAbortedWebhookPayload } from './RolloutAbortedWebhookPayload.js';
+export type { RolloutCompletedWebhookPayload } from './RolloutCompletedWebhookPayload.js';
 export type { RolloutTransitionResponse } from './RolloutTransitionResponse.js';
 export type { RotateAlertRuleSecretRequest } from './RotateAlertRuleSecretRequest.js';
 export type { RotateAlertRuleSecretResponse } from './RotateAlertRuleSecretResponse.js';
