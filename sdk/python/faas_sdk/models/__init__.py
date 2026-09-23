@@ -121,6 +121,9 @@ from .app_manifest_healthcheck import AppManifestHealthcheck
 from .app_manifest_restart_policy_type_1 import AppManifestRestartPolicyType1
 from .app_manifest_restart_policy_type_2_type_1 import AppManifestRestartPolicyType2Type1
 from .app_manifest_restart_policy_type_3_type_1 import AppManifestRestartPolicyType3Type1
+from .app_manifest_secret_reload_signal_type_1 import AppManifestSecretReloadSignalType1
+from .app_manifest_secret_reload_signal_type_2_type_1 import AppManifestSecretReloadSignalType2Type1
+from .app_manifest_secret_reload_signal_type_3_type_1 import AppManifestSecretReloadSignalType3Type1
 from .app_metrics_response import AppMetricsResponse
 from .app_metrics_response_range import AppMetricsResponseRange
 from .app_open_api_import_dry_run_response import AppOpenAPIImportDryRunResponse
@@ -983,7 +986,14 @@ from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
+from .preview_production_changes_response import PreviewProductionChangesResponse
+from .preview_production_changes_response_configuration_changed_groups_item import (
+    PreviewProductionChangesResponseConfigurationChangedGroupsItem,
+)
+from .preview_resource_links_response import PreviewResourceLinksResponse
+from .preview_resource_response import PreviewResourceResponse
 from .preview_service_calls_policy import PreviewServiceCallsPolicy
 from .prewarm_intent_response import PrewarmIntentResponse
 from .prewarm_intent_response_status import PrewarmIntentResponseStatus
@@ -1014,11 +1024,19 @@ from .project_environment_approval_response_token_kind import ProjectEnvironment
 from .project_environment_approval_status_response import ProjectEnvironmentApprovalStatusResponse
 from .project_environment_approval_status_response_status import ProjectEnvironmentApprovalStatusResponseStatus
 from .project_environment_approval_status_response_token_kind import ProjectEnvironmentApprovalStatusResponseTokenKind
+from .project_environment_binding_change_response import ProjectEnvironmentBindingChangeResponse
+from .project_environment_binding_change_response_change import ProjectEnvironmentBindingChangeResponseChange
+from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
+from .project_environment_binding_response import ProjectEnvironmentBindingResponse
+from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_clone_response import ProjectEnvironmentCloneResponse
+from .project_environment_clone_response_shared_resources_item import ProjectEnvironmentCloneResponseSharedResourcesItem
 from .project_environment_config_change import ProjectEnvironmentConfigChange
 from .project_environment_config_change_kind import ProjectEnvironmentConfigChangeKind
 from .project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
 from .project_environment_config_response import ProjectEnvironmentConfigResponse
 from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
+from .project_environment_diff_response import ProjectEnvironmentDiffResponse
 from .project_environment_promotion_change import ProjectEnvironmentPromotionChange
 from .project_environment_promotion_change_kind import ProjectEnvironmentPromotionChangeKind
 from .project_environment_promotion_change_source_revision_kind import (
@@ -1058,10 +1076,27 @@ from .project_environment_promotion_summary_response_verification_status import 
 )
 from .project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
 from .project_environment_promotion_workload_response_status import ProjectEnvironmentPromotionWorkloadResponseStatus
+from .project_environment_release_diff_response import ProjectEnvironmentReleaseDiffResponse
+from .project_environment_release_diff_response_kind import ProjectEnvironmentReleaseDiffResponseKind
 from .project_environment_release_list_response import ProjectEnvironmentReleaseListResponse
 from .project_environment_release_workload_response import ProjectEnvironmentReleaseWorkloadResponse
 from .project_environment_release_workload_response_status import ProjectEnvironmentReleaseWorkloadResponseStatus
 from .project_environment_response import ProjectEnvironmentResponse
+from .project_environment_secret_cell_response import ProjectEnvironmentSecretCellResponse
+from .project_environment_secret_cell_response_managed_by import ProjectEnvironmentSecretCellResponseManagedBy
+from .project_environment_secret_change_response import ProjectEnvironmentSecretChangeResponse
+from .project_environment_secret_change_response_kind import ProjectEnvironmentSecretChangeResponseKind
+from .project_environment_secret_response import ProjectEnvironmentSecretResponse
+from .project_environment_secret_response_managed_by import ProjectEnvironmentSecretResponseManagedBy
+from .project_environment_shared_resource_response import ProjectEnvironmentSharedResourceResponse
+from .project_environment_shared_resource_response_kind import ProjectEnvironmentSharedResourceResponseKind
+from .project_environment_shared_resource_response_ownership import ProjectEnvironmentSharedResourceResponseOwnership
+from .project_environment_state_response import ProjectEnvironmentStateResponse
+from .project_environment_state_workload_response import ProjectEnvironmentStateWorkloadResponse
+from .project_environment_variable_change_response import ProjectEnvironmentVariableChangeResponse
+from .project_environment_variable_change_response_kind import ProjectEnvironmentVariableChangeResponseKind
+from .project_environment_variable_response import ProjectEnvironmentVariableResponse
+from .project_environment_workload_diff_response import ProjectEnvironmentWorkloadDiffResponse
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
@@ -1529,6 +1564,9 @@ __all__ = (
     "AppManifestRestartPolicyType1",
     "AppManifestRestartPolicyType2Type1",
     "AppManifestRestartPolicyType3Type1",
+    "AppManifestSecretReloadSignalType1",
+    "AppManifestSecretReloadSignalType2Type1",
+    "AppManifestSecretReloadSignalType3Type1",
     "AppMetricsResponse",
     "AppMetricsResponseRange",
     "AppOpenAPIImportDryRunResponse",
@@ -2375,7 +2413,12 @@ __all__ = (
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
+    "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
+    "PreviewProductionChangesResponse",
+    "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
+    "PreviewResourceLinksResponse",
+    "PreviewResourceResponse",
     "PreviewServiceCallsPolicy",
     "PrewarmIntentResponse",
     "PrewarmIntentResponseStatus",
@@ -2406,11 +2449,19 @@ __all__ = (
     "ProjectEnvironmentApprovalStatusResponse",
     "ProjectEnvironmentApprovalStatusResponseStatus",
     "ProjectEnvironmentApprovalStatusResponseTokenKind",
+    "ProjectEnvironmentBindingChangeResponse",
+    "ProjectEnvironmentBindingChangeResponseChange",
+    "ProjectEnvironmentBindingChangeResponseKind",
+    "ProjectEnvironmentBindingResponse",
+    "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentCloneResponse",
+    "ProjectEnvironmentCloneResponseSharedResourcesItem",
     "ProjectEnvironmentConfigChange",
     "ProjectEnvironmentConfigChangeKind",
     "ProjectEnvironmentConfigDiffResponse",
     "ProjectEnvironmentConfigResponse",
     "ProjectEnvironmentConfigResponseValues",
+    "ProjectEnvironmentDiffResponse",
     "ProjectEnvironmentPromotionChange",
     "ProjectEnvironmentPromotionChangeKind",
     "ProjectEnvironmentPromotionChangeSourceRevisionKind",
@@ -2432,10 +2483,27 @@ __all__ = (
     "ProjectEnvironmentPromotionSummaryResponseVerificationStatus",
     "ProjectEnvironmentPromotionWorkloadResponse",
     "ProjectEnvironmentPromotionWorkloadResponseStatus",
+    "ProjectEnvironmentReleaseDiffResponse",
+    "ProjectEnvironmentReleaseDiffResponseKind",
     "ProjectEnvironmentReleaseListResponse",
     "ProjectEnvironmentReleaseWorkloadResponse",
     "ProjectEnvironmentReleaseWorkloadResponseStatus",
     "ProjectEnvironmentResponse",
+    "ProjectEnvironmentSecretCellResponse",
+    "ProjectEnvironmentSecretCellResponseManagedBy",
+    "ProjectEnvironmentSecretChangeResponse",
+    "ProjectEnvironmentSecretChangeResponseKind",
+    "ProjectEnvironmentSecretResponse",
+    "ProjectEnvironmentSecretResponseManagedBy",
+    "ProjectEnvironmentSharedResourceResponse",
+    "ProjectEnvironmentSharedResourceResponseKind",
+    "ProjectEnvironmentSharedResourceResponseOwnership",
+    "ProjectEnvironmentStateResponse",
+    "ProjectEnvironmentStateWorkloadResponse",
+    "ProjectEnvironmentVariableChangeResponse",
+    "ProjectEnvironmentVariableChangeResponseKind",
+    "ProjectEnvironmentVariableResponse",
+    "ProjectEnvironmentWorkloadDiffResponse",
     "ProjectResponse",
     "ProjectScanRequest",
     "ProjectSourceRefScanRequest",

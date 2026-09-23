@@ -23,6 +23,10 @@ func TestAccountTraceLookupIncludesDurableInvocationRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}
+	claimed, err := e.store.ClaimInvocation(context.Background(), inv.ID, "trace-test-instance", 30)
+	if err != nil {
+		t.Fatalf("ClaimInvocation: %v", err)
+	}
 	asyncInv, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{
 		AppID: appID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke,
 		Headers: json.RawMessage(`{"X-Gregale-Trace-Id":"4bf92f3577b34da6a3ce929d0e0e4736","traceparent":"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}`),
@@ -41,11 +45,19 @@ func TestAccountTraceLookupIncludesDurableInvocationRows(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	seen := map[string]bool{}
+	byID := make(map[string]api.AccountTraceInvocation, len(out.Invocations))
 	for _, item := range out.Invocations {
 		seen[item.ID] = true
+		byID[item.ID] = item
 	}
 	if len(out.Invocations) != 2 || !seen[inv.ID] || !seen[asyncInv.ID] {
 		t.Fatalf("invocations = %+v, want %s and %s", out.Invocations, inv.ID, asyncInv.ID)
+	}
+	if got, want := byID[inv.ID].StartedAt, claimed.ReceivedAt.UTC().Format(time.RFC3339Nano); got != want {
+		t.Fatalf("queue invocation started_at = %q, want latest claim time %q", got, want)
+	}
+	if got := byID[asyncInv.ID].StartedAt; got != "" {
+		t.Fatalf("unclaimed async invocation started_at = %q, want omitted", got)
 	}
 	if out.Invocations[0].Traceparent == "" || out.Invocations[1].Traceparent == "" || !out.Partial {
 		t.Fatalf("invocation projection = %+v, partial=%v; MemStore telemetry should be enrichment-only", out.Invocations, out.Partial)

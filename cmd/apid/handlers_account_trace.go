@@ -89,6 +89,9 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 		if inv.CompletedAt != nil {
 			item.CompletedAt = inv.CompletedAt.UTC().Format(time.RFC3339Nano)
 		}
+		if inv.ReceivedAt != nil {
+			item.StartedAt = inv.ReceivedAt.UTC().Format(time.RFC3339Nano)
+		}
 		if headers != nil {
 			item.Traceparent = headers["traceparent"]
 		}

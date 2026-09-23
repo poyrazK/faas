@@ -92,9 +92,18 @@ def sync_detailed(
 ) -> Response[Problem | ProjectEnvironmentResponse]:
     """Create a durable project environment.
 
+     When from_environment is supplied, the create is atomic and copies the
+    latest non-secret configuration, runtime variables, and already-sealed
+    customer secrets. Managed PostgreSQL and object-storage bindings receive
+    fresh target-scoped credentials and isolated data by default. Set
+    share_resources to attach fresh credentials to the source resources
+    instead. Provider-issued credential bytes are never copied. Domains,
+    routes, and policies remain application-scoped and are shared.
+
     Args:
         slug (str):
-        body (CreateProjectEnvironmentRequest): Request to register a named project environment.
+        body (CreateProjectEnvironmentRequest): Request to register or clone a named project
+            environment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -124,9 +133,18 @@ def sync(
 ) -> Problem | ProjectEnvironmentResponse | None:
     """Create a durable project environment.
 
+     When from_environment is supplied, the create is atomic and copies the
+    latest non-secret configuration, runtime variables, and already-sealed
+    customer secrets. Managed PostgreSQL and object-storage bindings receive
+    fresh target-scoped credentials and isolated data by default. Set
+    share_resources to attach fresh credentials to the source resources
+    instead. Provider-issued credential bytes are never copied. Domains,
+    routes, and policies remain application-scoped and are shared.
+
     Args:
         slug (str):
-        body (CreateProjectEnvironmentRequest): Request to register a named project environment.
+        body (CreateProjectEnvironmentRequest): Request to register or clone a named project
+            environment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,9 +169,18 @@ async def asyncio_detailed(
 ) -> Response[Problem | ProjectEnvironmentResponse]:
     """Create a durable project environment.
 
+     When from_environment is supplied, the create is atomic and copies the
+    latest non-secret configuration, runtime variables, and already-sealed
+    customer secrets. Managed PostgreSQL and object-storage bindings receive
+    fresh target-scoped credentials and isolated data by default. Set
+    share_resources to attach fresh credentials to the source resources
+    instead. Provider-issued credential bytes are never copied. Domains,
+    routes, and policies remain application-scoped and are shared.
+
     Args:
         slug (str):
-        body (CreateProjectEnvironmentRequest): Request to register a named project environment.
+        body (CreateProjectEnvironmentRequest): Request to register or clone a named project
+            environment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -181,9 +208,18 @@ async def asyncio(
 ) -> Problem | ProjectEnvironmentResponse | None:
     """Create a durable project environment.
 
+     When from_environment is supplied, the create is atomic and copies the
+    latest non-secret configuration, runtime variables, and already-sealed
+    customer secrets. Managed PostgreSQL and object-storage bindings receive
+    fresh target-scoped credentials and isolated data by default. Set
+    share_resources to attach fresh credentials to the source resources
+    instead. Provider-issued credential bytes are never copied. Domains,
+    routes, and policies remain application-scoped and are shared.
+
     Args:
         slug (str):
-        body (CreateProjectEnvironmentRequest): Request to register a named project environment.
+        body (CreateProjectEnvironmentRequest): Request to register or clone a named project
+            environment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

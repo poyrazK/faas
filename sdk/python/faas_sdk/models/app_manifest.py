@@ -31,6 +31,18 @@ from ..models.app_manifest_restart_policy_type_3_type_1 import (
     AppManifestRestartPolicyType3Type1,
     check_app_manifest_restart_policy_type_3_type_1,
 )
+from ..models.app_manifest_secret_reload_signal_type_1 import (
+    AppManifestSecretReloadSignalType1,
+    check_app_manifest_secret_reload_signal_type_1,
+)
+from ..models.app_manifest_secret_reload_signal_type_2_type_1 import (
+    AppManifestSecretReloadSignalType2Type1,
+    check_app_manifest_secret_reload_signal_type_2_type_1,
+)
+from ..models.app_manifest_secret_reload_signal_type_3_type_1 import (
+    AppManifestSecretReloadSignalType3Type1,
+    check_app_manifest_secret_reload_signal_type_3_type_1,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -77,6 +89,16 @@ class AppManifest:
     are integer seconds at the JSON boundary to match OCI/Docker conventions."""
     stop_signal: None | str | Unset = UNSET
     """OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2."""
+    secret_reload_signal: (
+        AppManifestSecretReloadSignalType1
+        | AppManifestSecretReloadSignalType2Type1
+        | AppManifestSecretReloadSignalType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Opt the main workload into live secret-file refresh by selecting the signal guest-init sends after replacing
+    FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Must differ from stop_signal (ADR-222).
+   """
     stop_grace_period: None | str | Unset = UNSET
     """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
     enforced by Validate() — ADR-138 §Decision 4."""
@@ -180,6 +202,18 @@ class AppManifest:
             stop_signal = UNSET
         else:
             stop_signal = self.stop_signal
+
+        secret_reload_signal: None | str | Unset
+        if isinstance(self.secret_reload_signal, Unset):
+            secret_reload_signal = UNSET
+        elif isinstance(self.secret_reload_signal, str):
+            secret_reload_signal = self.secret_reload_signal
+        elif isinstance(self.secret_reload_signal, str):
+            secret_reload_signal = self.secret_reload_signal
+        elif isinstance(self.secret_reload_signal, str):
+            secret_reload_signal = self.secret_reload_signal
+        else:
+            secret_reload_signal = self.secret_reload_signal
 
         stop_grace_period: None | str | Unset
         if isinstance(self.stop_grace_period, Unset):
@@ -286,6 +320,8 @@ class AppManifest:
             field_dict["healthcheck"] = healthcheck
         if stop_signal is not UNSET:
             field_dict["stop_signal"] = stop_signal
+        if secret_reload_signal is not UNSET:
+            field_dict["secret_reload_signal"] = secret_reload_signal
         if stop_grace_period is not UNSET:
             field_dict["stop_grace_period"] = stop_grace_period
         if execution_mode is not UNSET:
@@ -405,6 +441,54 @@ class AppManifest:
             return cast(None | str | Unset, data)
 
         stop_signal = _parse_stop_signal(d.pop("stop_signal", UNSET))
+
+        def _parse_secret_reload_signal(
+            data: object,
+        ) -> (
+            AppManifestSecretReloadSignalType1
+            | AppManifestSecretReloadSignalType2Type1
+            | AppManifestSecretReloadSignalType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                secret_reload_signal_type_1 = check_app_manifest_secret_reload_signal_type_1(data)
+
+                return secret_reload_signal_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                secret_reload_signal_type_2_type_1 = check_app_manifest_secret_reload_signal_type_2_type_1(data)
+
+                return secret_reload_signal_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                secret_reload_signal_type_3_type_1 = check_app_manifest_secret_reload_signal_type_3_type_1(data)
+
+                return secret_reload_signal_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                AppManifestSecretReloadSignalType1
+                | AppManifestSecretReloadSignalType2Type1
+                | AppManifestSecretReloadSignalType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        secret_reload_signal = _parse_secret_reload_signal(d.pop("secret_reload_signal", UNSET))
 
         def _parse_stop_grace_period(data: object) -> None | str | Unset:
             if data is None:
@@ -596,6 +680,7 @@ class AppManifest:
             user=user,
             healthcheck=healthcheck,
             stop_signal=stop_signal,
+            secret_reload_signal=secret_reload_signal,
             stop_grace_period=stop_grace_period,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
