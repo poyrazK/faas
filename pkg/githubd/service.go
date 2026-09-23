@@ -1424,7 +1424,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		if err != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: scan PR source: %w", err)
 		}
-		dependencies, err = s.previewDependencyParents(ctx, parentApp, scan)
+		dependencies, err = s.previewDependencyParents(ctx, parentApp, scan, ev.Number)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
