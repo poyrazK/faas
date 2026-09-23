@@ -23278,6 +23278,7 @@ components:
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
 
     SendAppMessageResponse:
+      description: Durable receipt for a queued app-to-app message.
       type: object
       additionalProperties: false
       required: [id, event_id, target_app, status, status_url]
@@ -33551,6 +33552,7 @@ components:
         enabled: true
 
     DeliverAppEventRequest:
+      description: Request to enqueue a signed webhook delivery owned by the source app.
       type: object
       additionalProperties: false
       required: [destination, type, data]
@@ -33564,6 +33566,7 @@ components:
         data: { description: Any valid JSON value placed in the signed webhook envelope. }
 
     DeliverAppEventResponse:
+      description: Durable receipt for an accepted outbound webhook delivery.
       type: object
       additionalProperties: false
       required: [id, webhook_id, destination, event, status, status_url]
