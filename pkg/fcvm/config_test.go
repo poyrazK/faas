@@ -209,17 +209,24 @@ func TestColdBootBootArgsDisableConsole(t *testing.T) {
 }
 
 // adr: 005 — cold boot is the always-available wake path, so its kernel line
-// must stay quiet: every routine boot message is a serial-port VM exit, and a
-// verbose boot measured ~0.6 s slower on the nested-virtualization compute
-// nodes. The console itself must stay attached for guest-init's reports.
+// must stay quiet (every routine boot message is a serial-port VM exit, ~0.6 s
+// on the nested-virtualization compute nodes) and must not probe the PS/2
+// keyboard Firecracker does not emulate (~775 ms of probe timeouts). The
+// console stays attached for guest-init's reports and reboot=k keeps the reset
+// path Firecracker observes.
 func TestBootArgsKeepConsoleButSuppressRoutineKernelLog(t *testing.T) {
 	for name, spec := range map[string]ColdBootSpec{
 		"cold boot": validColdSpec(),
 		"execution": func() ColdBootSpec { s := validColdSpec(); s.Networkless = true; return s }(),
 	} {
 		args := strings.Fields(BuildColdBootConfig(spec, 0).BootSource.BootArgs)
-		if !slices.Contains(args, "quiet") {
-			t.Errorf("%s boot args missing quiet: %q", name, args)
+		for _, want := range []string{"quiet", "i8042.nokbd", "i8042.noaux"} {
+			if !slices.Contains(args, want) {
+				t.Errorf("%s boot args missing %s: %q", name, want, args)
+			}
+		}
+		if !slices.Contains(args, "reboot=k") {
+			t.Errorf("%s boot args must keep reboot=k (Firecracker observes the i8042 reset): %q", name, args)
 		}
 		if !slices.Contains(args, "console=ttyS0,115200n8") {
 			t.Errorf("%s boot args must keep the serial console: %q", name, args)
