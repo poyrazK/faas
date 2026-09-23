@@ -106,6 +106,11 @@ type Workload struct {
 	// plan wire keeps Command as an array, while reconciliation uses this bit
 	// to preserve argument boundaries when persisting start_command.
 	CommandShell bool
+	// ReleaseCommand is the app-wide pre-activation command declared by a
+	// Procfile. It is attached to exactly one deterministic workload so a
+	// multi-process project does not run the same migration more than once.
+	ReleaseCommand      []string
+	ReleaseCommandShell bool
 	// SourceSHA256 identifies the selected workload subtree. It is internal
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
@@ -357,6 +362,9 @@ func Scan(fsys fs.FS) (Result, error) {
 	}
 
 	workloads := mergeByKey(seeds)
+	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
+		return Result{}, err
+	}
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
 	sortDetectionWarnings(detectionWarnings)
 	for i := range workloads {
@@ -378,6 +386,33 @@ func Scan(fsys fs.FS) (Result, error) {
 	}, nil
 }
 
+func attachProcfileReleaseCommand(fsys fs.FS, workloads []Workload) error {
+	body, src, err := readFirstValidFile(fsys, []string{nameProcfile})
+	if err != nil || body == nil {
+		return err
+	}
+	command, found, err := ParseProcfileReleaseCommand(body)
+	if err != nil {
+		return fmt.Errorf("reposcan: %s: release: %w", src, err)
+	}
+	if !found || len(workloads) == 0 {
+		return nil
+	}
+	owner := 0
+	for i := 1; i < len(workloads); i++ {
+		if strings.EqualFold(workloads[i].Name, keyWeb) {
+			owner = i
+			break
+		}
+		if !strings.EqualFold(workloads[owner].Name, keyWeb) && strings.ToLower(workloads[i].Name) < strings.ToLower(workloads[owner].Name) {
+			owner = i
+		}
+	}
+	workloads[owner].ReleaseCommand = []string{command}
+	workloads[owner].ReleaseCommandShell = true
+	return nil
+}
+
 func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
 	root := workload.RootDir
 	cleanRoot := path.Clean(root)
@@ -397,9 +432,12 @@ func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
 	// project metadata. Include argument boundaries and the selected root and
 	// Dockerfile so a failed enqueue remains retryable even when the source
 	// bytes themselves did not move.
-	_, _ = fmt.Fprintf(h, "root=%s\x00dockerfile=%s\x00shell=%t\x00", workload.RootDir, workload.Dockerfile, workload.CommandShell)
+	_, _ = fmt.Fprintf(h, "root=%s\x00dockerfile=%s\x00shell=%t\x00release_shell=%t\x00", workload.RootDir, workload.Dockerfile, workload.CommandShell, workload.ReleaseCommandShell)
 	for _, arg := range workload.Command {
 		_, _ = fmt.Fprintf(h, "arg=%d:%s\x00", len(arg), arg)
+	}
+	for _, arg := range workload.ReleaseCommand {
+		_, _ = fmt.Fprintf(h, "release_arg=%d:%s\x00", len(arg), arg)
 	}
 	err := fs.WalkDir(fsys, walkRoot, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

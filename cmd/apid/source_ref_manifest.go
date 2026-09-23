@@ -23,11 +23,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
 const sourceRefManifestMaxBytes = 1 << 20
+
+type deploymentReleaseCommand struct {
+	command []string
+	shell   bool
+}
 
 type sourceRefManifestStaged struct {
 	accountID             string
@@ -79,20 +85,66 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	return m, nil
 }
 
+// resolveSourceReleaseCommand applies the declaration precedence for source
+// deployments: an explicit gregale.yaml release.command wins, otherwise the
+// selected source root's Procfile release: process is used. Both forms are
+// stored as a single shell command, matching Heroku's Procfile semantics.
+func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
+	if manifest != nil && manifest.Release != nil {
+		return validateDeploymentReleaseCommand(manifest.Release.Command)
+	}
+	body, found, err := readSourceRefProcfileBytes(sourcePath, app.RootDir)
+	if err != nil {
+		return deploymentReleaseCommand{}, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
+	}
+	if !found {
+		return deploymentReleaseCommand{}, nil
+	}
+	command, ok, err := reposcan.ParseProcfileReleaseCommand(body)
+	if err != nil {
+		return deploymentReleaseCommand{}, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid Procfile", "release: "+err.Error())
+	}
+	if !ok {
+		return deploymentReleaseCommand{}, nil
+	}
+	return validateDeploymentReleaseCommand(command)
+}
+
+func validateDeploymentReleaseCommand(command string) (deploymentReleaseCommand, *api.Problem) {
+	resolved, problem := (api.CreateAppTaskRequest{
+		Command:      []string{command},
+		CommandShell: true,
+	}).Resolve()
+	if problem != nil {
+		return deploymentReleaseCommand{}, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid release command", problem.Detail)
+	}
+	return deploymentReleaseCommand{command: resolved.Command, shell: resolved.CommandShell}, nil
+}
+
+func readSourceRefProcfileBytes(sourcePath, sourceRoot string) ([]byte, bool, error) {
+	b, _, found, err := readSourceRefArchiveFileBytes(sourcePath, sourceRoot, []string{"Procfile"}, sourceRefManifestMaxBytes, "Procfile")
+	return b, found, err
+}
+
 func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, string, bool, error) {
+	return readSourceRefArchiveFileBytes(sourcePath, sourceRoot,
+		[]string{"gregale.yaml", "gregale.yml", "gregale.toml"}, sourceRefManifestMaxBytes, "manifest")
+}
+
+func readSourceRefArchiveFileBytes(sourcePath, sourceRoot string, names []string, maxBytes int64, label string) ([]byte, string, bool, error) {
 	candidates, err := sourceRefManifestCandidates(sourcePath, sourceRoot)
 	if err != nil {
 		return nil, "", false, err
 	}
-	wanted := make(map[string]int, len(candidates))
+	wanted := make(map[string]int, len(candidates)*len(names))
 	for i, candidate := range candidates {
 		prefix := ""
 		if candidate != "" {
 			prefix = candidate + "/"
 		}
-		wanted[prefix+"gregale.yaml"] = i*3 + 1
-		wanted[prefix+"gregale.yml"] = i*3 + 2
-		wanted[prefix+"gregale.toml"] = i*3 + 3
+		for j, name := range names {
+			wanted[prefix+name] = i*len(names) + j + 1
+		}
 	}
 	f, err := openSpoolFile(sourcePath)
 	if err != nil {
@@ -121,15 +173,15 @@ func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, string, 
 		if !ok || hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		if hdr.Size > sourceRefManifestMaxBytes {
-			return nil, "", false, fmt.Errorf("manifest %q exceeds %d bytes", name, sourceRefManifestMaxBytes)
+		if hdr.Size > maxBytes {
+			return nil, "", false, fmt.Errorf("%s %q exceeds %d bytes", label, name, maxBytes)
 		}
-		contents, readErr := io.ReadAll(io.LimitReader(tr, sourceRefManifestMaxBytes+1))
+		contents, readErr := io.ReadAll(io.LimitReader(tr, maxBytes+1))
 		if readErr != nil {
-			return nil, "", false, fmt.Errorf("read manifest %q: %w", name, readErr)
+			return nil, "", false, fmt.Errorf("read %s %q: %w", label, name, readErr)
 		}
-		if len(contents) > sourceRefManifestMaxBytes {
-			return nil, "", false, fmt.Errorf("manifest %q exceeds %d bytes", name, sourceRefManifestMaxBytes)
+		if int64(len(contents)) > maxBytes {
+			return nil, "", false, fmt.Errorf("%s %q exceeds %d bytes", label, name, maxBytes)
 		}
 		if best == nil || rank < bestRank {
 			best, bestName, bestRank = contents, name, rank

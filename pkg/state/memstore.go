@@ -6177,6 +6177,9 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
+	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
+		return Deployment{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[d.AppID]
@@ -6264,6 +6267,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.Kind = DeploymentKindImage
 	}
 	d.Workflows = cloneWorkflowJSON(d.Workflows)
+	d.ReleaseCommand = append([]string{}, d.ReleaseCommand...)
 	// Issue #556 PR-A: default traffic_percent to 100 for a stable
 	// deployment when the caller supplies zero. A canary's zero is
 	// meaningful (a valid custom first stage), and the APID handler

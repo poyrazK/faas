@@ -204,6 +204,22 @@ func validateAppTaskCommand(command []string) error {
 	return nil
 }
 
+func validateDeploymentReleaseCommand(command []string, shell bool) error {
+	if len(command) == 0 {
+		if shell {
+			return fmt.Errorf("%w: release command shell form requires a command", ErrInvalidArgument)
+		}
+		return nil
+	}
+	if err := validateAppTaskCommand(command); err != nil {
+		return fmt.Errorf("%w: release command: %w", ErrInvalidArgument, err)
+	}
+	if shell && len(command) != 1 {
+		return fmt.Errorf("%w: release shell command must contain exactly one string", ErrInvalidArgument)
+	}
+	return nil
+}
+
 func validateCompleteAppTask(params CompleteAppTaskParams, maxOutputBytes int) error {
 	if params.ID == "" || params.LeaseToken == "" || !params.Status.Terminal() {
 		return fmt.Errorf("%w: id, lease token, and terminal status are required", ErrAppTaskInvalid)

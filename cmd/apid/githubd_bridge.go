@@ -270,6 +270,14 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
 	}
+	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
+	if manifestProblem != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
+	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest)
+	if releaseProblem != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
+	}
 	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), timeNow().UTC())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: deploy admission: %v", err)
@@ -367,11 +375,13 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		// IP); ActorPusherLogin is the raw GH login from
 		// req.Pusher, suitable for downstream GitHub-API
 		// correlation.
-		ActorUserID:      req.AccountId,
-		ActorVia:         "github",
-		ActorFromIP:      "127.0.0.1",
-		ActorPusherLogin: req.Pusher,
-		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
+		ActorUserID:         req.AccountId,
+		ActorVia:            "github",
+		ActorFromIP:         "127.0.0.1",
+		ActorPusherLogin:    req.Pusher,
+		ReleaseCommand:      releaseCommand.command,
+		ReleaseCommandShell: releaseCommand.shell,
+		ServiceRollout:      app.Manifest.ExecutionMode == api.ExecutionModeService,
 		// Issue #977 / ADR-116: annotation surface forwarded onto
 		// the deployment row. DeployedBy prefers SenderLogin (the
 		// actor who triggered the webhook — for pull_request events,
