@@ -1,5 +1,7 @@
 package gateway
 
+// adr: 168 — exact deployment smoke requests retain the service-proxy trust boundary.
+
 import (
 	"context"
 	"errors"
