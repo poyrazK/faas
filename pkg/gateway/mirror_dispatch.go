@@ -597,13 +597,14 @@ func snapshotSourceBodyWithTruncation(r *http.Request) (body []byte, truncated b
 	original := r.Body
 	cap := int64(api.MirrorBodySnapshotCap)
 	buf, err := io.ReadAll(io.LimitReader(original, cap+1))
+	replayPrefix := buf
 	restore = func() {
 		// Replay the captured prefix and then continue from the original
 		// admitted body. Keeping the unread tail is load-bearing for bodies
 		// larger than MirrorBodySnapshotCap; replacing the body with buf alone
 		// would silently truncate the customer request.
 		r.Body = &prefixReplayReadCloser{
-			Reader: io.MultiReader(bytes.NewReader(buf), original),
+			Reader: io.MultiReader(bytes.NewReader(replayPrefix), original),
 			Closer: original,
 		}
 	}

@@ -135,8 +135,8 @@ func CompareMirrorResponses(srcStatus int, srcBody []byte, srcTruncated bool, mi
 	if result.Incomplete {
 		return result
 	}
-	source := fingerprintResponse(srcBody)
-	mirror := fingerprintResponse(mirrorBody)
+	source := fingerprintResponse(srcBody, includeBody)
+	mirror := fingerprintResponse(mirrorBody, includeBody)
 	if source.isJSON && mirror.isJSON {
 		result.SourceSchemaHash = source.schemaHash
 		result.MirrorSchemaHash = mirror.schemaHash
@@ -158,37 +158,48 @@ type responseFingerprint struct {
 	bodyHash   []byte
 }
 
-func fingerprintResponse(body []byte) responseFingerprint {
+func fingerprintResponse(body []byte, includeBody bool) responseFingerprint {
 	fingerprint := responseFingerprint{}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		fingerprint.bodyHash = hashBytes(body)
+		if includeBody {
+			fingerprint.bodyHash = hashBytes(body)
+		}
 		return fingerprint
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		fingerprint.bodyHash = hashBytes(body)
+		if includeBody {
+			fingerprint.bodyHash = hashBytes(body)
+		}
 		return fingerprint
 	}
 	canonical, err := json.Marshal(value)
 	if err != nil {
-		fingerprint.bodyHash = hashBytes(body)
+		if includeBody {
+			fingerprint.bodyHash = hashBytes(body)
+		}
 		return fingerprint
 	}
 	shape, err := json.Marshal(jsonSchemaShape(value))
 	if err != nil {
-		fingerprint.bodyHash = hashBytes(body)
+		if includeBody {
+			fingerprint.bodyHash = hashBytes(body)
+		}
 		return fingerprint
 	}
 	fingerprint.isJSON = true
 	fingerprint.schemaHash = hashBytes(shape)
-	fingerprint.bodyHash = hashBytes(canonical)
+	if includeBody {
+		fingerprint.bodyHash = hashBytes(canonical)
+	}
 	return fingerprint
 }
 
 func hashBytes(body []byte) []byte {
+	// codeql[go/weak-sensitive-hashing] These are comparison fingerprints only, never password or credential verifiers; body-value fingerprints are opt-in and raw response bytes are not persisted.
 	hash := sha256.Sum256(body)
 	return append([]byte(nil), hash[:]...)
 }

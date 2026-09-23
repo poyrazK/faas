@@ -1,4 +1,5 @@
 // mirror_redact_test.go — issue #72 / ADR-124 / ADR-125 PR-A3
+// adr: 124
 //
 // Trait tests for the mirror goroutine's redaction + classification
 // surface. The handler-side fan-out wiring is exercised by
