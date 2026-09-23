@@ -127,10 +127,11 @@ func TestPreviewShowUsesCurrentHeadEnvironment(t *testing.T) {
 	jsonOutput = true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/apps/pr-42-web":
-			writeJSONTest(w, api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active"})
-		case "/v1/apps/pr-42-web/deployments/latest":
-			writeJSONTest(w, api.DeploymentResponse{ID: "old-root", AppID: "preview-web", Status: statusLive})
+		case "/v1/preview/pr-42-web":
+			writeJSONTest(w, api.PreviewResourceResponse{
+				App:              api.AppResponse{ID: "preview-web", Slug: "pr-42-web", PreviewOfSlug: "web", PreviewPRNumber: 42, PreviewPRState: "open", Status: "active"},
+				LatestDeployment: &api.DeploymentResponse{ID: "old-root", AppID: "preview-web", Status: statusLive},
+			})
 		case "/v1/preview/pr-42-web/environment":
 			writeJSONTest(w, previewEnvironmentFixture("building", false, "building"))
 		default:

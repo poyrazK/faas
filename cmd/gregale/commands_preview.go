@@ -181,7 +181,8 @@ func cmdPreviewShow(args []string) int {
 	}
 	latest := preview.LatestDeployment
 	if environment != nil {
-		latest = previewEnvironmentRootDeployment(preview, *environment)
+		status := api.PreviewStatusResponse{App: preview.App, LatestDeployment: preview.LatestDeployment}
+		latest = previewEnvironmentRootDeployment(status, *environment)
 	}
 	item := previewSummaryFromResource(preview)
 	if environment != nil {

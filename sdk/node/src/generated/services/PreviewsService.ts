@@ -4,8 +4,8 @@
 /* eslint-disable */
 import type { AppResponse } from '../models/AppResponse.js';
 import type { CreatePreviewRequest } from '../models/CreatePreviewRequest.js';
-import type { PreviewResourceResponse } from '../models/PreviewResourceResponse.js';
 import type { PreviewEnvironmentStatusResponse } from '../models/PreviewEnvironmentStatusResponse.js';
+import type { PreviewResourceResponse } from '../models/PreviewResourceResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
