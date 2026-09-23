@@ -331,7 +331,7 @@ type server struct {
 	// default until the operator has enabled the scheduler/VM isolation path.
 	executionAPIEnabled bool
 	// appTaskAPIEnabled is the fail-closed public admission gate for commands
-	// attached to an app deployment (ADR-222). It remains separate from
+	// attached to an app deployment (ADR-230). It remains separate from
 	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
 	appTaskAPIEnabled bool
 	// runtimeConfig is the durable operator configuration snapshot. It is
@@ -1230,7 +1230,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getExecution))))
 	mux.HandleFunc("GET /v1/executions/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.streamExecutionEvents))))
 	mux.HandleFunc("DELETE /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelExecution)))))
-	// Deployment-attached one-off commands (ADR-222). The gate is checked
+	// Deployment-attached one-off commands (ADR-230). The gate is checked
 	// before app lookup so a disabled host reveals no app existence. Public
 	// admission is manual-only; release tasks remain an internal consumer.
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTasks))))
