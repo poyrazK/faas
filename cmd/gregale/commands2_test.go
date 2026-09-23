@@ -37,6 +37,7 @@ func TestTemplateFunctionConfig(t *testing.T) {
 		{"function-python313", runtimePython313, defaultTemplateHandler, true},
 		{"function-go", runtimeGo124, "handler.go", true},
 		{"cron-worker", runtimeNode22, defaultTemplateHandler, true},
+		{"event-worker", runtimeNode22, defaultTemplateHandler, true},
 		{"hello-node", "", "", false},
 	}
 	for _, tc := range cases {
