@@ -187,6 +187,7 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 		 where id = $1
 		   and status = 'restoring'
 		   and lease_token = $2
+		   and cancel_requested_at is null
 		   and lease_expires_at > $3
 		returning `+appTaskSelectColumns, taskID, leaseToken, startedAt))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -196,6 +197,29 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 		return AppTask{}, mapErr(err)
 	}
 	return task, nil
+}
+
+func (s *PgStore) RenewAppTaskLease(ctx context.Context, taskID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error {
+	if taskID == "" || leaseToken == "" || renewedAt.IsZero() || leaseDuration <= 0 {
+		return ErrAppTaskInvalid
+	}
+	renewedAt = renewedAt.UTC()
+	commandTag, err := s.pool.Exec(ctx, `
+		update app_tasks
+		   set lease_expires_at = $4, updated_at = $3
+		 where id = $1
+		   and lease_token = $2
+		   and status in ('restoring', 'running')
+		   and cancel_requested_at is null
+		   and lease_expires_at > $3`,
+		taskID, leaseToken, renewedAt, renewedAt.Add(leaseDuration))
+	if err != nil {
+		return mapErr(err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		return ErrAppTaskLeaseLost
+	}
+	return nil
 }
 
 func (s *PgStore) RequestAppTaskCancellation(ctx context.Context, accountID, appID, taskID string, requestedAt time.Time) (AppTask, error) {
@@ -256,6 +280,9 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 	}
 	if err := validateCompleteAppTask(params, current.MaxOutputBytes); err != nil {
 		return AppTask{}, err
+	}
+	if current.CancelRequested != nil && params.Status != AppTaskCancelled {
+		return AppTask{}, ErrAppTaskCancellationPending
 	}
 	if params.Status == AppTaskSucceeded && current.Status != AppTaskRunning {
 		return AppTask{}, fmt.Errorf("%w: a task must be running before it can succeed", ErrAppTaskInvalid)
