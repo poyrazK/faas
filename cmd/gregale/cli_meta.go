@@ -1035,11 +1035,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "edge-rules",
 		DocSlug: "edge-rules",
-		Short:   "Per-app edge rules (edge-rules list|create|get|update|rm --app <slug>)",
+		Short:   "Per-app edge rules (edge-rules list|trace|create|get|update|rm --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List edge rules", Flags: []cliFlag{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
 				{Name: "kind", Short: "filter to a single kind", ClosedSet: edgeRuleKindVocab},
+			}},
+			{Name: "trace", Short: "Preview which edge rules match a proposed request (no actions executed)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "url", Short: "absolute HTTP(S) request URL", Req: true, Value: "URL"},
+				{Name: "method", Short: "request method (default GET)", Value: "method"},
 			}},
 			{Name: subCreate, Short: "Add an edge rule"},
 			{Name: subGet, Short: "Show one edge rule"},
