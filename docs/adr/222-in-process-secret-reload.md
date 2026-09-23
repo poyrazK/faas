@@ -15,7 +15,10 @@
 - **Consequences:** The application must handle the selected signal, reread
   `FAAS_SECRETS_FILE`, and apply the values itself. Refresh is polled every 10
   seconds and does not provide an application-level reload acknowledgement.
-  `secrets list` continues to report wake-time delivery. The feature is
+  `secrets list` reports the guest's latest projection/signal outcome separately
+  from wake-time delivery; it does not claim the app applied the new values.
+  Reports are fenced to the exact secret versions and rejected if a rotation
+  wins the race. The feature is
   restricted to single-workload deployments: guest-init rejects an opted-in
   deployment with sidecars, and vmmd independently denies secret refresh for
   deployments that declare sidecars. No cross-app secret sharing is added.

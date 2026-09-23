@@ -15,6 +15,18 @@ from ..models.scoped_app_secret_response_last_delivery_error_code import (
     ScopedAppSecretResponseLastDeliveryErrorCode,
     check_scoped_app_secret_response_last_delivery_error_code,
 )
+from ..models.scoped_app_secret_response_last_runtime_reload_error_code import (
+    ScopedAppSecretResponseLastRuntimeReloadErrorCode,
+    check_scoped_app_secret_response_last_runtime_reload_error_code,
+)
+from ..models.scoped_app_secret_response_last_runtime_reload_projection import (
+    ScopedAppSecretResponseLastRuntimeReloadProjection,
+    check_scoped_app_secret_response_last_runtime_reload_projection,
+)
+from ..models.scoped_app_secret_response_last_runtime_reload_signal import (
+    ScopedAppSecretResponseLastRuntimeReloadSignal,
+    check_scoped_app_secret_response_last_runtime_reload_signal,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ScopedAppSecretResponse")
@@ -52,6 +64,15 @@ class ScopedAppSecretResponse:
     last_delivery_error_code: ScopedAppSecretResponseLastDeliveryErrorCode | Unset = UNSET
     last_delivered_wake_id: str | Unset = UNSET
     last_delivered_instance_id: str | Unset = UNSET
+    last_runtime_reload_version: int | Unset = UNSET
+    """Secret version associated with the latest guest-init projection/signal observation; compare with
+    delivery_version to detect stale status. Not an application acknowledgement."""
+    last_runtime_reload_projection: ScopedAppSecretResponseLastRuntimeReloadProjection | Unset = UNSET
+    last_runtime_reload_signal: ScopedAppSecretResponseLastRuntimeReloadSignal | Unset = UNSET
+    """Guest-init sent/queued signal outcome; does not mean the application applied the new credentials."""
+    last_runtime_reload_at: datetime.datetime | Unset = UNSET
+    last_runtime_reload_error_code: ScopedAppSecretResponseLastRuntimeReloadErrorCode | Unset = UNSET
+    last_runtime_reload_instance_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -89,6 +110,26 @@ class ScopedAppSecretResponse:
 
         last_delivered_instance_id = self.last_delivered_instance_id
 
+        last_runtime_reload_version = self.last_runtime_reload_version
+
+        last_runtime_reload_projection: str | Unset = UNSET
+        if not isinstance(self.last_runtime_reload_projection, Unset):
+            last_runtime_reload_projection = self.last_runtime_reload_projection
+
+        last_runtime_reload_signal: str | Unset = UNSET
+        if not isinstance(self.last_runtime_reload_signal, Unset):
+            last_runtime_reload_signal = self.last_runtime_reload_signal
+
+        last_runtime_reload_at: str | Unset = UNSET
+        if not isinstance(self.last_runtime_reload_at, Unset):
+            last_runtime_reload_at = self.last_runtime_reload_at.isoformat()
+
+        last_runtime_reload_error_code: str | Unset = UNSET
+        if not isinstance(self.last_runtime_reload_error_code, Unset):
+            last_runtime_reload_error_code = self.last_runtime_reload_error_code
+
+        last_runtime_reload_instance_id = self.last_runtime_reload_instance_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -117,6 +158,18 @@ class ScopedAppSecretResponse:
             field_dict["last_delivered_wake_id"] = last_delivered_wake_id
         if last_delivered_instance_id is not UNSET:
             field_dict["last_delivered_instance_id"] = last_delivered_instance_id
+        if last_runtime_reload_version is not UNSET:
+            field_dict["last_runtime_reload_version"] = last_runtime_reload_version
+        if last_runtime_reload_projection is not UNSET:
+            field_dict["last_runtime_reload_projection"] = last_runtime_reload_projection
+        if last_runtime_reload_signal is not UNSET:
+            field_dict["last_runtime_reload_signal"] = last_runtime_reload_signal
+        if last_runtime_reload_at is not UNSET:
+            field_dict["last_runtime_reload_at"] = last_runtime_reload_at
+        if last_runtime_reload_error_code is not UNSET:
+            field_dict["last_runtime_reload_error_code"] = last_runtime_reload_error_code
+        if last_runtime_reload_instance_id is not UNSET:
+            field_dict["last_runtime_reload_instance_id"] = last_runtime_reload_instance_id
 
         return field_dict
 
@@ -168,6 +221,44 @@ class ScopedAppSecretResponse:
 
         last_delivered_instance_id = d.pop("last_delivered_instance_id", UNSET)
 
+        last_runtime_reload_version = d.pop("last_runtime_reload_version", UNSET)
+
+        _last_runtime_reload_projection = d.pop("last_runtime_reload_projection", UNSET)
+        last_runtime_reload_projection: ScopedAppSecretResponseLastRuntimeReloadProjection | Unset
+        if isinstance(_last_runtime_reload_projection, Unset):
+            last_runtime_reload_projection = UNSET
+        else:
+            last_runtime_reload_projection = check_scoped_app_secret_response_last_runtime_reload_projection(
+                _last_runtime_reload_projection
+            )
+
+        _last_runtime_reload_signal = d.pop("last_runtime_reload_signal", UNSET)
+        last_runtime_reload_signal: ScopedAppSecretResponseLastRuntimeReloadSignal | Unset
+        if isinstance(_last_runtime_reload_signal, Unset):
+            last_runtime_reload_signal = UNSET
+        else:
+            last_runtime_reload_signal = check_scoped_app_secret_response_last_runtime_reload_signal(
+                _last_runtime_reload_signal
+            )
+
+        _last_runtime_reload_at = d.pop("last_runtime_reload_at", UNSET)
+        last_runtime_reload_at: datetime.datetime | Unset
+        if isinstance(_last_runtime_reload_at, Unset):
+            last_runtime_reload_at = UNSET
+        else:
+            last_runtime_reload_at = datetime.datetime.fromisoformat(_last_runtime_reload_at)
+
+        _last_runtime_reload_error_code = d.pop("last_runtime_reload_error_code", UNSET)
+        last_runtime_reload_error_code: ScopedAppSecretResponseLastRuntimeReloadErrorCode | Unset
+        if isinstance(_last_runtime_reload_error_code, Unset):
+            last_runtime_reload_error_code = UNSET
+        else:
+            last_runtime_reload_error_code = check_scoped_app_secret_response_last_runtime_reload_error_code(
+                _last_runtime_reload_error_code
+            )
+
+        last_runtime_reload_instance_id = d.pop("last_runtime_reload_instance_id", UNSET)
+
         scoped_app_secret_response = cls(
             scope=scope,
             key=key,
@@ -183,6 +274,12 @@ class ScopedAppSecretResponse:
             last_delivery_error_code=last_delivery_error_code,
             last_delivered_wake_id=last_delivered_wake_id,
             last_delivered_instance_id=last_delivered_instance_id,
+            last_runtime_reload_version=last_runtime_reload_version,
+            last_runtime_reload_projection=last_runtime_reload_projection,
+            last_runtime_reload_signal=last_runtime_reload_signal,
+            last_runtime_reload_at=last_runtime_reload_at,
+            last_runtime_reload_error_code=last_runtime_reload_error_code,
+            last_runtime_reload_instance_id=last_runtime_reload_instance_id,
         )
 
         scoped_app_secret_response.additional_properties = d

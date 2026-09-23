@@ -168,6 +168,21 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	if got := listResp.Secrets[0]; got.DeliveryStatus != string(state.SecretDeliveryDelivered) || got.DeliveredVersion != 1 || got.LastDeliveredWakeID != "wake-delivered" {
 		t.Errorf("delivered metadata = %+v", got)
 	}
+	if _, err := e.store.RecordAppSecretRuntimeReload(context.Background(), state.AppSecretRuntimeReloadResult{
+		AccountID: e.acct.ID, AppID: app.ID, InstanceID: "instance-reloaded", Revision: strings.Repeat("a", 64),
+		Projection: state.SecretReloadProjectionUpdated, Signal: state.SecretReloadSignalSent, AttemptedAt: time.Now().UTC(),
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: api.DefaultEnvScope, Key: "STRIPE_KEY", Version: 1}},
+	}); err != nil {
+		t.Fatalf("record runtime reload: %v", err)
+	}
+	listRec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/secrets", nil, nil)
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode runtime reload list: %v", err)
+	}
+	if got := listResp.Secrets[0]; got.LastRuntimeReloadVersion != 1 || got.LastRuntimeReloadProjection != string(state.SecretReloadProjectionUpdated) ||
+		got.LastRuntimeReloadSignal != string(state.SecretReloadSignalSent) || got.LastRuntimeReloadInstanceID != "instance-reloaded" {
+		t.Errorf("runtime reload metadata = %+v", got)
+	}
 
 	// DELETE.
 	delRec := e.do(t, "DELETE", "/v1/apps/"+app.Slug+"/secrets/STRIPE_KEY", nil, nil)

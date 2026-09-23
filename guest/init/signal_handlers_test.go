@@ -117,8 +117,12 @@ func TestSupervisor_ForwardSignalOnStartQueuesUntilChildStarts(t *testing.T) {
 		t.Skipf("python3 not available: %v", err)
 	}
 	sup := &Supervisor{Max: MaxRestarts}
-	if err := sup.ForwardSignalOnStart(syscall.SIGUSR1); err != nil {
+	queued, err := sup.ForwardSignalOnStartWithStatus(syscall.SIGUSR1)
+	if err != nil {
 		t.Fatalf("queue SIGUSR1: %v", err)
+	}
+	if !queued {
+		t.Fatal("signal status was not queued before a workload process started")
 	}
 	cmd := exec.Command("python3", "-c", `import os, signal, time
 signal.signal(signal.SIGUSR1, lambda *_: os._exit(0))

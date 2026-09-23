@@ -167,6 +167,9 @@ from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecr
 from .app_secret_response import AppSecretResponse
 from .app_secret_response_delivery_status import AppSecretResponseDeliveryStatus
 from .app_secret_response_last_delivery_error_code import AppSecretResponseLastDeliveryErrorCode
+from .app_secret_response_last_runtime_reload_error_code import AppSecretResponseLastRuntimeReloadErrorCode
+from .app_secret_response_last_runtime_reload_projection import AppSecretResponseLastRuntimeReloadProjection
+from .app_secret_response_last_runtime_reload_signal import AppSecretResponseLastRuntimeReloadSignal
 from .app_security_finding import AppSecurityFinding
 from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
@@ -490,6 +493,8 @@ from .deploy_dev_source_body_runtime import DeployDevSourceBodyRuntime
 from .deploy_token_response import DeployTokenResponse
 from .deploy_token_response_scopes_item import DeployTokenResponseScopesItem
 from .deploy_token_response_status import DeployTokenResponseStatus
+from .deployment_alias_list_response import DeploymentAliasListResponse
+from .deployment_alias_response import DeploymentAliasResponse
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
 from .deployment_change import DeploymentChange
@@ -1234,6 +1239,11 @@ from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
 from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
 from .scoped_app_secret_response_last_delivery_error_code import ScopedAppSecretResponseLastDeliveryErrorCode
+from .scoped_app_secret_response_last_runtime_reload_error_code import ScopedAppSecretResponseLastRuntimeReloadErrorCode
+from .scoped_app_secret_response_last_runtime_reload_projection import (
+    ScopedAppSecretResponseLastRuntimeReloadProjection,
+)
+from .scoped_app_secret_response_last_runtime_reload_signal import ScopedAppSecretResponseLastRuntimeReloadSignal
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -1256,6 +1266,7 @@ from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
+from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
@@ -1617,6 +1628,9 @@ __all__ = (
     "AppSecretResponse",
     "AppSecretResponseDeliveryStatus",
     "AppSecretResponseLastDeliveryErrorCode",
+    "AppSecretResponseLastRuntimeReloadErrorCode",
+    "AppSecretResponseLastRuntimeReloadProjection",
+    "AppSecretResponseLastRuntimeReloadSignal",
     "AppSecurityFinding",
     "AppSecurityFindingSeverity",
     "AppSecurityPostureResponse",
@@ -1925,6 +1939,8 @@ __all__ = (
     "DeliverAppEventResponseStatus",
     "DeployDevSourceBody",
     "DeployDevSourceBodyRuntime",
+    "DeploymentAliasListResponse",
+    "DeploymentAliasResponse",
     "DeploymentAuditResponse",
     "DeploymentAuditResponseKind",
     "DeploymentChange",
@@ -2646,6 +2662,9 @@ __all__ = (
     "ScopedAppSecretResponse",
     "ScopedAppSecretResponseDeliveryStatus",
     "ScopedAppSecretResponseLastDeliveryErrorCode",
+    "ScopedAppSecretResponseLastRuntimeReloadErrorCode",
+    "ScopedAppSecretResponseLastRuntimeReloadProjection",
+    "ScopedAppSecretResponseLastRuntimeReloadSignal",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",
@@ -2668,6 +2687,7 @@ __all__ = (
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
+    "SetDeploymentAliasRequest",
     "SetGraceWindowRequest",
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",

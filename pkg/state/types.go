@@ -5811,8 +5811,18 @@ type AppSecret struct {
 	LastDeliveryErrorCode   string
 	LastDeliveredWakeID     string
 	LastDeliveredInstanceID string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
+	// Runtime reload observations are reported by guest-init after the
+	// projection write and signal attempt. They are version-fenced and do not
+	// represent an application-level acknowledgement.
+	LastRuntimeReloadVersion    int64
+	LastRuntimeReloadRevision   string
+	LastRuntimeReloadProjection SecretReloadProjectionStatus
+	LastRuntimeReloadSignal     SecretReloadSignalStatus
+	LastRuntimeReloadAt         *time.Time
+	LastRuntimeReloadErrorCode  string
+	LastRuntimeReloadInstanceID string
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 type SecretDeliveryStatus string
@@ -5841,6 +5851,38 @@ type AppSecretDeliveryResult struct {
 	WakeID      string
 	InstanceID  string
 	Status      SecretDeliveryStatus
+	ErrorCode   string
+	AttemptedAt time.Time
+	Candidates  []AppSecretDeliveryCandidate
+}
+
+type SecretReloadProjectionStatus string
+
+const (
+	SecretReloadProjectionUpdated   SecretReloadProjectionStatus = "updated"
+	SecretReloadProjectionUnchanged SecretReloadProjectionStatus = "unchanged"
+	SecretReloadProjectionFailed    SecretReloadProjectionStatus = "failed"
+)
+
+type SecretReloadSignalStatus string
+
+const (
+	SecretReloadSignalSent         SecretReloadSignalStatus = "sent"
+	SecretReloadSignalQueued       SecretReloadSignalStatus = "queued"
+	SecretReloadSignalFailed       SecretReloadSignalStatus = "failed"
+	SecretReloadSignalNotAttempted SecretReloadSignalStatus = "not_attempted"
+)
+
+// AppSecretRuntimeReloadResult records guest-init's local projection and
+// signal outcome for an exact set of secret versions. It is deliberately not
+// an application acknowledgement: the process may still fail to apply them.
+type AppSecretRuntimeReloadResult struct {
+	AccountID   string
+	AppID       string
+	InstanceID  string
+	Revision    string
+	Projection  SecretReloadProjectionStatus
+	Signal      SecretReloadSignalStatus
 	ErrorCode   string
 	AttemptedAt time.Time
 	Candidates  []AppSecretDeliveryCandidate

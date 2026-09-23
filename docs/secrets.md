@@ -55,8 +55,9 @@ the existing boundary that sidecars do not receive the main workload's
 secrets. Secret reload requests are resolved against the live deployment's
 scope and `env_secrets` allowlist (legacy deployments without an allowlist keep
 their existing all-secrets-in-scope behavior). The application is responsible
-for confirming to itself that it successfully reloaded; `secrets list`
-continues to report wake-time delivery, not an application-level reload ack.
+for confirming to itself that it successfully reloaded. `secrets list` reports
+both wake-time delivery and guest-init's latest live-refresh observation, but
+does not claim that the application applied the new credentials.
 
 `gregale secrets list` reports delivery for each key:
 
@@ -67,7 +68,14 @@ continues to report wake-time delivery, not an application-level reload ack.
 - `failed` means a runtime start attempted that version and failed. A later
   successful wake changes it to `delivered`.
 
-Delivery is version-fenced. If a rotation races with a wake, completion of the
-older wake cannot mark the newer value delivered. The API exposes only the
-opaque version, status, timestamps, and runtime correlation IDs; it never
-places plaintext or ciphertext in delivery metadata or audit events.
+Delivery and live-refresh observations are version-fenced. If a rotation
+races with a wake or refresh report, the older result cannot mark the newer
+value delivered or reloaded. The CLI labels live-refresh outcomes as runtime
+file updated/unchanged/failed and whether the signal was sent, queued, or
+failed; a reported version different from the current version is shown as
+stale. A successful signal means only that guest-init's signal operation
+succeeded, not that the app handled it. These are latest-per-secret
+observations from one reporting runtime, not a fleet-wide health guarantee;
+the API includes that runtime's ID. The API exposes only opaque versions,
+status, timestamps, and runtime correlation IDs; it never places plaintext or
+ciphertext in delivery metadata or audit events.

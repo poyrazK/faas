@@ -1,6 +1,8 @@
 package state_test
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +71,39 @@ func TestMemStoreAppSecretResealPreservesDeliveryVersion(t *testing.T) {
 	got := mustAppSecret(t, store, account.ID, app.ID, "prod", "TOKEN")
 	if got.DeliveryVersion != 1 {
 		t.Fatalf("reseal advanced delivery version to %d, want 1", got.DeliveryVersion)
+	}
+}
+
+func TestMemStoreAppSecretRuntimeReloadVersionFence(t *testing.T) {
+	store, ctx, account, app := memValueHashFixture(t)
+	const scope, key = "prod", "DATABASE_URL"
+	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, app.ID, scope, key, "kid-1", "1111111111111111", []byte("cipher-1")); err != nil {
+		t.Fatalf("seed secret: %v", err)
+	}
+	result := state.AppSecretRuntimeReloadResult{
+		AccountID: account.ID, AppID: app.ID, InstanceID: "instance-1", Revision: strings.Repeat("a", 64),
+		Projection: state.SecretReloadProjectionUpdated, Signal: state.SecretReloadSignalSent,
+		AttemptedAt: time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC),
+		Candidates:  []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 1}},
+	}
+	if updated, err := store.RecordAppSecretRuntimeReload(ctx, result); err != nil || updated != 1 {
+		t.Fatalf("record live reload v1: updated=%d err=%v", updated, err)
+	}
+	got := mustAppSecret(t, store, account.ID, app.ID, scope, key)
+	if got.LastRuntimeReloadVersion != 1 || got.LastRuntimeReloadProjection != state.SecretReloadProjectionUpdated ||
+		got.LastRuntimeReloadSignal != state.SecretReloadSignalSent || got.LastRuntimeReloadAt == nil {
+		t.Fatalf("runtime reload metadata = %+v", got)
+	}
+
+	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, app.ID, scope, key, "kid-1", "2222222222222222", []byte("cipher-2")); err != nil {
+		t.Fatalf("rotate secret: %v", err)
+	}
+	if updated, err := store.RecordAppSecretRuntimeReload(ctx, result); !errors.Is(err, state.ErrConflict) || updated != 0 {
+		t.Fatalf("stale runtime reload v1: updated=%d err=%v, want conflict", updated, err)
+	}
+	got = mustAppSecret(t, store, account.ID, app.ID, scope, key)
+	if got.DeliveryVersion != 2 || got.LastRuntimeReloadVersion != 1 {
+		t.Fatalf("stale reload status was attributed to v2: current=%d observed=%d", got.DeliveryVersion, got.LastRuntimeReloadVersion)
 	}
 }
 

@@ -36,9 +36,12 @@ const runtimeConfigCacheTTL = 5 * time.Second
 const VsockRuntimeConfigHostPort uint32 = fcvm.VsockRuntimeConfigHostPort
 
 type runtimeConfigRequest struct {
-	Kind     string `json:"kind,omitempty"`
-	Scope    string `json:"scope"`
-	Revision string `json:"revision,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	Scope      string `json:"scope"`
+	Revision   string `json:"revision,omitempty"`
+	Projection string `json:"projection,omitempty"`
+	Signal     string `json:"signal,omitempty"`
+	ErrorCode  string `json:"error_code,omitempty"`
 }
 
 type runtimeConfigResponse struct {
@@ -46,6 +49,7 @@ type runtimeConfigResponse struct {
 	Secrets   *map[string]string `json:"secrets,omitempty"`
 	Revision  string             `json:"revision,omitempty"`
 	Unchanged bool               `json:"unchanged,omitempty"`
+	Accepted  bool               `json:"accepted,omitempty"`
 	Error     string             `json:"error,omitempty"`
 }
 
@@ -56,6 +60,10 @@ type runtimeConfigStore interface {
 type runtimeSecretsStore interface {
 	DeploymentByID(context.Context, string) (state.Deployment, error)
 	ListAppSecretsInScope(context.Context, string, string, string) ([]state.AppSecret, error)
+}
+
+type runtimeSecretReloadStore interface {
+	RecordAppSecretRuntimeReload(context.Context, state.AppSecretRuntimeReloadResult) (int, error)
 }
 
 type runtimeConfigReceiver struct {
@@ -135,6 +143,7 @@ func cloneRuntimeConfigResponse(response runtimeConfigResponse) runtimeConfigRes
 	clone := runtimeConfigResponse{
 		Revision:  response.Revision,
 		Unchanged: response.Unchanged,
+		Accepted:  response.Accepted,
 		Error:     response.Error,
 	}
 	if response.Env != nil {
@@ -222,12 +231,18 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 		if req.Scope != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "unsupported_scope"})
 		}
-		if !validRuntimeSecretRevision(req.Revision) {
+		if !validRuntimeSecretRevision(req.Revision) || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
 		return r.handleRuntimeSecrets(instance, req.Revision, conn)
 	}
-	if (req.Kind != "" && req.Kind != "env") || req.Revision != "" {
+	if req.Kind == "secret_reload_status" {
+		if req.Scope != "" || !validRuntimeSecretRevision(req.Revision) || req.Revision == "" || !validRuntimeSecretReloadRequest(req) {
+			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
+		}
+		return r.handleRuntimeSecretReloadStatus(instance, req, conn)
+	}
+	if (req.Kind != "" && req.Kind != "env") || req.Revision != "" || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" {
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 	}
 	if r.store == nil || r.mgr == nil {
@@ -275,6 +290,52 @@ func (r *runtimeConfigReceiver) handleRuntimeSecrets(instance, knownRevision str
 	return responseRuntimeConfig(r.log, conn, response)
 }
 
+func validRuntimeSecretReloadRequest(req runtimeConfigRequest) bool {
+	return state.ValidSecretReloadOutcome(req.Revision,
+		state.SecretReloadProjectionStatus(req.Projection),
+		state.SecretReloadSignalStatus(req.Signal), req.ErrorCode)
+}
+
+func (r *runtimeConfigReceiver) handleRuntimeSecretReloadStatus(instance string, req runtimeConfigRequest, conn net.Conn) (string, error) {
+	store, ok := r.store.(runtimeSecretsStore)
+	reloadStore, reloadOK := r.store.(runtimeSecretReloadStore)
+	if !ok || !reloadOK || r.mgr == nil {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+	}
+	deploymentID, appID, accountID, err := r.mgr.InstanceRuntimeSecretIdentity(instance)
+	if err != nil || deploymentID == "" || appID == "" || accountID == "" {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+	}
+	requestCtx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
+	defer cancel()
+	selection, err := selectRuntimeSecretRows(requestCtx, store, deploymentID, appID, accountID)
+	if err != nil {
+		r.log.Debug("runtime secret reload status unavailable", "instance", instance, "err_kind", runtimeSecretErrorKind(err))
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+	}
+	if selection.Revision != req.Revision {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secret_reload_stale"})
+	}
+	candidates := make([]state.AppSecretDeliveryCandidate, 0, len(selection.Rows))
+	for _, row := range selection.Rows {
+		candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
+	}
+	_, err = reloadStore.RecordAppSecretRuntimeReload(requestCtx, state.AppSecretRuntimeReloadResult{
+		AccountID: accountID, AppID: appID, InstanceID: instance, Revision: req.Revision,
+		Projection: state.SecretReloadProjectionStatus(req.Projection),
+		Signal:     state.SecretReloadSignalStatus(req.Signal), ErrorCode: req.ErrorCode,
+		AttemptedAt: time.Now().UTC(), Candidates: candidates,
+	})
+	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secret_reload_stale"})
+		}
+		r.log.Debug("runtime secret reload status write failed", "instance", instance, "err_kind", "state_write_failed")
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+	}
+	return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Accepted: true, Revision: req.Revision})
+}
+
 var errRuntimeSecretSidecarsUnsupported = errors.New("runtime secret reload is unsupported for sidecar deployments")
 
 func runtimeSecretErrorKind(err error) string {
@@ -292,42 +353,66 @@ func loadRuntimeSecretsIfChanged(ctx context.Context, store runtimeSecretsStore,
 	if ctx == nil || store == nil || mgr == nil || deploymentID == "" || appID == "" || accountID == "" {
 		return runtimeConfigResponse{}, errors.New("runtime secrets dependencies are not configured")
 	}
+	selection, err := selectRuntimeSecretRows(ctx, store, deploymentID, appID, accountID)
+	if err != nil {
+		return runtimeConfigResponse{}, err
+	}
+	if knownRevision != "" && knownRevision == selection.Revision {
+		return runtimeConfigResponse{Revision: selection.Revision, Unchanged: true}, nil
+	}
+	secrets, err := mgr.UnsealRuntimeSecrets(selection.Entries)
+	if err != nil {
+		return runtimeConfigResponse{}, fmt.Errorf("unseal runtime secrets: %w", err)
+	}
+	return runtimeConfigResponse{Secrets: &secrets, Revision: selection.Revision}, nil
+}
+
+type runtimeSecretSelection struct {
+	Rows     []state.AppSecret
+	Entries  []fcvm.SealedEnvEntry
+	Revision string
+}
+
+func selectRuntimeSecretRows(ctx context.Context, store runtimeSecretsStore, deploymentID, appID, accountID string) (runtimeSecretSelection, error) {
+	if ctx == nil || store == nil || deploymentID == "" || appID == "" || accountID == "" {
+		return runtimeSecretSelection{}, errors.New("runtime secret selection dependencies are not configured")
+	}
 	deployment, err := store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
-		return runtimeConfigResponse{}, fmt.Errorf("load deployment: %w", err)
+		return runtimeSecretSelection{}, fmt.Errorf("load deployment: %w", err)
 	}
 	if deployment.ID != deploymentID || deployment.AppID != appID {
-		return runtimeConfigResponse{}, errors.New("live instance and deployment identity mismatch")
+		return runtimeSecretSelection{}, errors.New("live instance and deployment identity mismatch")
 	}
 	if hasSidecars, err := runtimeDeploymentHasSidecars(deployment.Sidecars); err != nil {
-		return runtimeConfigResponse{}, fmt.Errorf("decode deployment sidecars: %w", err)
+		return runtimeSecretSelection{}, fmt.Errorf("decode deployment sidecars: %w", err)
 	} else if hasSidecars {
-		return runtimeConfigResponse{}, errRuntimeSecretSidecarsUnsupported
+		return runtimeSecretSelection{}, errRuntimeSecretSidecarsUnsupported
 	}
 	scope := deployment.Scope
 	if scope == "" {
 		scope = api.DefaultEnvScope
 	}
 	if api.ValidateScope(scope) != nil {
-		return runtimeConfigResponse{}, errors.New("deployment has invalid secret scope")
+		return runtimeSecretSelection{}, errors.New("deployment has invalid secret scope")
 	}
 	rows, err := store.ListAppSecretsInScope(ctx, accountID, appID, scope)
 	if err != nil {
-		return runtimeConfigResponse{}, fmt.Errorf("list app secrets: %w", err)
+		return runtimeSecretSelection{}, fmt.Errorf("list app secrets: %w", err)
 	}
 	allowedKeys, err := runtimeSecretAllowlist(deployment.OverrideEnvSecrets)
 	if err != nil {
-		return runtimeConfigResponse{}, fmt.Errorf("decode deployment secret allowlist: %w", err)
+		return runtimeSecretSelection{}, fmt.Errorf("decode deployment secret allowlist: %w", err)
 	}
 	selected := make([]state.AppSecret, 0, len(rows))
 	entries := make([]fcvm.SealedEnvEntry, 0, len(rows))
 	foundKeys := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
 		if row.AccountID != accountID || row.AppID != appID || row.Scope != scope {
-			return runtimeConfigResponse{}, errors.New("secret store returned a mismatched identity")
+			return runtimeSecretSelection{}, errors.New("secret store returned a mismatched identity")
 		}
 		if api.ValidateEnvKey(row.Key) != nil {
-			return runtimeConfigResponse{}, errors.New("secret store returned an invalid key")
+			return runtimeSecretSelection{}, errors.New("secret store returned an invalid key")
 		}
 		if allowedKeys != nil {
 			if _, ok := allowedKeys[row.Key]; !ok {
@@ -347,18 +432,11 @@ func loadRuntimeSecretsIfChanged(ctx context.Context, store runtimeSecretsStore,
 		}
 		if len(missing) > 0 {
 			sort.Strings(missing)
-			return runtimeConfigResponse{}, fmt.Errorf("deployment references missing secrets: %s", strings.Join(missing, ", "))
+			return runtimeSecretSelection{}, fmt.Errorf("deployment references missing secrets: %s", strings.Join(missing, ", "))
 		}
 	}
 	revision := runtimeSecretRevision(scope, selected)
-	if knownRevision != "" && knownRevision == revision {
-		return runtimeConfigResponse{Revision: revision, Unchanged: true}, nil
-	}
-	secrets, err := mgr.UnsealRuntimeSecrets(entries)
-	if err != nil {
-		return runtimeConfigResponse{}, fmt.Errorf("unseal runtime secrets: %w", err)
-	}
-	return runtimeConfigResponse{Secrets: &secrets, Revision: revision}, nil
+	return runtimeSecretSelection{Rows: selected, Entries: entries, Revision: revision}, nil
 }
 
 func validRuntimeSecretRevision(revision string) bool {
