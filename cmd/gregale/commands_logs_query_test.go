@@ -141,6 +141,37 @@ func TestCmdLogsRequestLookupEmitsCanonicalJSON(t *testing.T) {
 	}
 }
 
+func TestCmdLogsTraceFiltersCorrelatedHTTPEvents(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/account/traces/"+traceID {
+			t.Errorf("path = %q, want account trace endpoint", r.URL.Path)
+		}
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"trace_id":%q,"logs":[{"id":"log-1","app":"myapp","timestamp":"2026-09-23T12:00:00Z","source":"http","trace_id":%q,"method":"GET","route":"/checkout","status":503,"latency_ms":42},{"id":"log-2","app":"other","timestamp":"2026-09-23T12:00:00Z","source":"http","trace_id":%q,"method":"GET","route":"/checkout","status":503,"latency_ms":42},{"id":"log-3","app":"myapp","timestamp":"2026-09-23T12:00:00Z","source":"http","trace_id":%q,"method":"GET","route":"/checkout","status":200,"latency_ms":10}]}`, traceID, traceID, traceID, traceID)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	t.Cleanup(func() { osStdout = oldOut })
+
+	if code := cmdLogs([]string{"myapp", "--trace", traceID, "--status", "503", "--limit", "1"}); code != 0 {
+		t.Fatalf("cmdLogs exit = %d", code)
+	}
+	if got := gotQuery.Get("limit"); got != "200" {
+		t.Errorf("trace log lookup limit = %q, want 200 to filter app-local results safely", got)
+	}
+	if got := stdout.String(); !strings.Contains(got, "status=503") || strings.Contains(got, "log-2") || strings.Contains(got, "status=200") {
+		t.Fatalf("trace-filtered output = %q", got)
+	}
+}
+
 func TestCmdLogsReleaseRevisionFiltersHTTPLogs(t *testing.T) {
 	const deploymentID = "11111111-1111-4111-8111-111111111111"
 	var telemetryQuery url.Values
@@ -260,6 +291,8 @@ func TestCmdLogsRejectsInvalidHTTPFiltersBeforeNetwork(t *testing.T) {
 		{"myapp", "--source", "runtime", "--route", "/checkout"},
 		{"myapp", "--source", "http", "--follow"},
 		{"myapp", "--request", "req_1", "--all"},
+		{"myapp", "--trace", "not-a-trace-id"},
+		{"myapp", "--request", "req_1", "--trace", "4bf92f3577b34da6a3ce929d0e0e4736"},
 		{"myapp", "--source", "database"},
 	} {
 		if code := cmdLogs(args); code != 2 {

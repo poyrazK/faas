@@ -64,6 +64,7 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 		Limit:       limit,
 		Matches:     make([]api.AccountTraceMatch, 0),
 		Invocations: make([]api.AccountTraceInvocation, 0, len(invocationRows)),
+		Logs:        make([]api.LogQueryEvent, 0),
 		Spans:       make([]api.DebugTelemetrySpan, 0),
 		Errors:      make([]api.AccountTraceLookupError, 0),
 	}
@@ -96,8 +97,31 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 
 	now := result.GeneratedAt
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
+	logLimit := limit
+	if logLimit > state.MaxLogEventPage {
+		logLimit = state.MaxLogEventPage
+	}
 	seenSpans := make(map[string]struct{})
 	for _, app := range apps {
+		logEvents, hasMoreLogs, logErr := s.store.ListLogEvents(r.Context(), state.LogEventFilter{
+			AccountID: acct.ID,
+			AppID:     app.ID,
+			Since:     now.Add(-retention),
+			Until:     now,
+			Source:    state.LogEventSourceHTTP,
+			TraceID:   traceID,
+			Limit:     logLimit,
+		})
+		if logErr != nil {
+			result.Partial = true
+			result.Errors = append(result.Errors, api.AccountTraceLookupError{App: app.Slug, Detail: "HTTP log events unavailable"})
+		} else {
+			result.LogsTruncated = result.LogsTruncated || hasMoreLogs
+			for _, event := range logEvents {
+				result.Logs = append(result.Logs, accountTraceLogQueryEvent(app.Slug, event))
+			}
+		}
+
 		row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
 			AppID:         stringToPgUUID(app.ID),
 			Identifier:    traceID,
@@ -125,6 +149,18 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 			result.Spans = append(result.Spans, span)
 		}
 	}
+	sort.SliceStable(result.Logs, func(i, j int) bool {
+		left, leftErr := time.Parse(time.RFC3339Nano, result.Logs[i].Timestamp)
+		right, rightErr := time.Parse(time.RFC3339Nano, result.Logs[j].Timestamp)
+		if leftErr == nil && rightErr == nil && !left.Equal(right) {
+			return left.After(right)
+		}
+		return result.Logs[i].ID > result.Logs[j].ID
+	})
+	if len(result.Logs) > logLimit {
+		result.LogsTruncated = true
+		result.Logs = result.Logs[:logLimit]
+	}
 	sort.Slice(result.Matches, func(i, j int) bool { return result.Matches[i].App < result.Matches[j].App })
 	sort.SliceStable(result.Spans, func(i, j int) bool {
 		if result.Spans[i].DurationNanos != result.Spans[j].DurationNanos {
@@ -133,9 +169,35 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 		return result.Spans[i].SpanID < result.Spans[j].SpanID
 	})
 
-	if len(result.Matches) == 0 && len(result.Invocations) == 0 {
+	if len(result.Matches) == 0 && len(result.Invocations) == 0 && len(result.Logs) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "trace not found"))
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func accountTraceLogQueryEvent(app string, event state.LogEvent) api.LogQueryEvent {
+	latencyMS := 0
+	if event.LatencyMS != nil {
+		latencyMS = *event.LatencyMS
+	}
+	return api.LogQueryEvent{
+		ID:           event.ID,
+		App:          app,
+		Timestamp:    event.OccurredAt.UTC().Format(time.RFC3339Nano),
+		Source:       api.LogSource(event.Source),
+		DeploymentID: event.DeploymentID,
+		InstanceID:   event.InstanceID,
+		RequestID:    event.RequestID,
+		TraceID:      event.TraceID,
+		Route:        event.Route,
+		Method:       event.Method,
+		Status:       event.Status,
+		Level:        event.Level,
+		Stream:       event.Stream,
+		Message:      event.Message,
+		LatencyMS:    latencyMS,
+		Count:        event.Occurrences,
+		ColdBoot:     event.ColdBoot,
+	}
 }

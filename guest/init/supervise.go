@@ -98,18 +98,67 @@ type Supervisor struct {
 	// supervisor checks it after Start returns so an intentional SIGTERM does
 	// not get mistaken for a crash and restarted under an `always` policy.
 	stopRequested atomic.Bool
-	startedOnce   sync.Once //nolint:unused // guards Linux lifecycle callbacks.
-	healthyOnce   sync.Once //nolint:unused // guards Linux lifecycle callbacks.
+	// startSignalMu and pendingStartSignals close the fork window for the
+	// opt-in runtime secret reload signal. A secret rotation can race with
+	// command construction; when no signalable process is published yet, the
+	// signal is delivered immediately after the next successful cmd.Start.
+	startSignalMu       sync.Mutex
+	pendingStartSignals []syscall.Signal
+	startedOnce         sync.Once //nolint:unused // guards Linux lifecycle callbacks.
+	healthyOnce         sync.Once //nolint:unused // guards Linux lifecycle callbacks.
 }
 
 func (s *Supervisor) markStarted() { //nolint:unused // called by Linux workload supervision.
 	if s != nil {
+		s.flushPendingStartSignals()
 		s.startedOnce.Do(func() {
 			if s.onStart != nil {
 				s.onStart()
 			}
 		})
 	}
+}
+
+func (s *Supervisor) flushPendingStartSignals() {
+	s.startSignalMu.Lock()
+	defer s.startSignalMu.Unlock()
+	cmd := s.lastCmd.Load()
+	if cmd == nil || cmd.Process == nil || len(s.pendingStartSignals) == 0 {
+		return
+	}
+	pending := s.pendingStartSignals
+	s.pendingStartSignals = nil
+	for _, sig := range pending {
+		if err := cmd.Process.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+			// A failure to deliver a best-effort application reload signal must
+			// not fail process startup. A later secret change can signal again.
+			continue
+		}
+	}
+}
+
+// ForwardSignalOnStart forwards a signal to the current workload. If command
+// construction/startup has not reached a signalable process yet, it queues the
+// signal and markStarted delivers it once the child is running.
+func (s *Supervisor) ForwardSignalOnStart(sig syscall.Signal) error {
+	if s == nil {
+		return nil
+	}
+	s.startSignalMu.Lock()
+	defer s.startSignalMu.Unlock()
+	cmd := s.lastCmd.Load()
+	if cmd == nil || cmd.Process == nil {
+		s.pendingStartSignals = append(s.pendingStartSignals, sig)
+		return nil
+	}
+	if err := cmd.Process.Signal(sig); err != nil {
+		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+			s.pendingStartSignals = append(s.pendingStartSignals, sig)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Supervisor) markHealthy() { //nolint:unused // called by Linux workload supervision.

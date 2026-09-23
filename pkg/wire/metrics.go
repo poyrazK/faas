@@ -1340,8 +1340,8 @@ type OpsMetrics struct {
 	// whenever an essential sidecar crash restarts; the host
 	// (cmd/vmmd::dispatchSidecarRestart) increments the
 	// CounterVec via ObserveSidecarRestart. Cardinality is
-	// bounded by apps × SidecarCapMax (max 2) so a worst-case
-	// Scale plan with 100 apps × 2 sidecars = 200 series, well
+	// bounded by apps × SidecarCapMax (max 5) so a worst-case
+	// Scale plan with 100 apps × 5 helpers = 500 series, well
 	// under Prometheus' "tens of thousands of series per
 	// metric" guideline. The counter is pre-instantiated with
 	// the empty (app, sidecar) tuple so /metrics surfaces zero
@@ -3310,10 +3310,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// the dashboard sums the two via `sum(rate(...))` so the
 	// daemon-owned increment is invisible to operators. See
 	// ADR-071 for the cardinality bound (apps × SidecarCapMax
-	// ≤ 200 worst-case).
+	// ≤ 500 worst-case).
 	sidecarRestartTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_sidecar_restart_total",
-		Help: "Count of sidecar restart cycles, per (app, sidecar) — incremented by vmmd's dispatchSidecarRestart (PR-C §4) on every guest-init Supervisor.OnCrash event for an essential sidecar. Bounded by apps × SidecarCapMax (issue #463 / ADR-069 cap = 2).",
+		Help: "Count of sidecar restart cycles, per (app, sidecar) — incremented by vmmd's dispatchSidecarRestart (PR-C §4) on every guest-init Supervisor.OnCrash event for an essential sidecar. Bounded by apps × SidecarCapMax (maximum 5 helpers per app).",
 	}, []string{"app", "sidecar"})
 	sidecarHealthTransitionsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_sidecar_health_transition_total",
@@ -5038,7 +5038,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// leaks through (should never happen — guest-init always
 	// stamps the sidecar's name).
 	sidecarRestartTotal.WithLabelValues("", "")
-	for _, status := range []string{"starting", "healthy", "unhealthy", "restarting", "failed"} {
+	for _, status := range []string{"starting", "healthy", "unhealthy", "restarting", "failed", "ready", "unready"} {
 		sidecarHealthTransitionsTotal.WithLabelValues("", "", status)
 	}
 	// issue #301 (ADR-043, per-plan CPU fairness observability):
@@ -8775,7 +8775,7 @@ func (m *OpsMetrics) IncFloorInstanceAdmitted() {
 // dispatchSidecarRestart calls this on every guest-init
 // Supervisor.OnCrash event for an essential sidecar; the
 // counter lands in <daemon>_sidecar_restart_total. Bounded
-// cardinality (apps × SidecarCapMax ≤ 200 worst-case, see
+// cardinality (apps × SidecarCapMax ≤ 500 worst-case, see
 // ADR-071). Safe on a nil receiver so a vmmd run without
 // metrics keeps working (default-local path).
 func (m *OpsMetrics) ObserveSidecarRestart(app, sidecar string) {

@@ -317,6 +317,9 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/deployments":                              "Deploy",
 	"GET /v1/apps/{slug}/deployments":                               "ListAppDeployments",
 	"GET /v1/apps/{slug}/deployments/latest":                        "GetLatestAppDeployment",
+	"GET /v1/apps/{slug}/deployment-aliases":                        "ListDeploymentAliases",
+	"PUT /v1/apps/{slug}/deployment-aliases/{name}":                 "SetDeploymentAlias",
+	"DELETE /v1/apps/{slug}/deployment-aliases/{name}":              "DeleteDeploymentAlias",
 	"GET /v1/apps/{slug}/deployments/{id}/summary":                  "GetAppDeploymentSummary",
 	"POST /v1/apps/{slug}/deployments/dev-source":                   "DeployDevSource",
 	"POST /v1/apps/{slug}/deployments/source-ref":                   "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
@@ -328,6 +331,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}":            "GetProjectEnvironment",
 	"PATCH /v1/projects/{slug}/environments/{environment}":          "UpdateProjectEnvironment",
 	"GET /v1/projects/{slug}/environments/{environment}/releases":   "GetProjectEnvironmentReleases",
+	"GET /v1/projects/{slug}/environments/{environment}/state":      "GetProjectEnvironmentState",
+	"GET /v1/projects/{slug}/environments/{environment}/diff":       "GetProjectEnvironmentDiff",
 	"GET /v1/projects/{slug}/environments/{environment}/promotions": "ListProjectEnvironmentPromotions",
 	"GET /v1/projects/{slug}/delete-preview":                        "PreviewDeleteProject",
 	"DELETE /v1/projects/{slug}":                                    "DeleteProject",
@@ -398,6 +403,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/openapi/apply":                      "ApplyAppOpenAPIPolicy",          // explicit plan/confirm policy apply
 	"GET /v1/apps/{slug}/openapi/diff":                        "DiffAppOpenAPIContract",         // ADR-121 production contract gate preview
 	"GET /v1/apps/{slug}/github":                              "GetGitHubConnection",
+	"GET /v1/preview/{slug}/environment":                      "GetPreviewEnvironmentStatus", // full recorded PR workload set, not one app's latest deployment
 	"GET /v1/apps/{slug}/github/deployment-policy":            "GetGitHubDeploymentPolicy",
 	"PATCH /v1/apps/{slug}/github/deployment-policy":          "PatchGitHubDeploymentPolicy",
 	"POST /v1/apps/{slug}/github/bind":                        "BindGitHubConnection",

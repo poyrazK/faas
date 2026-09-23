@@ -2,7 +2,7 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.4.0
+  version: 1.6.0
   description: |
     Gregale delivers selected app lifecycle and billing events to an app's
     configured webhook subscriptions, accepts tenant-scoped events for the
@@ -49,6 +49,38 @@ channels:
     messages:
       appWoken:
         $ref: '#/components/messages/AppWoken'
+  deploymentLive:
+    address: deployment.live
+    description: Emitted when a deployment enters the live state.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      deploymentLive:
+        $ref: '#/components/messages/DeploymentLive'
+  deploymentFailed:
+    address: deployment.failed
+    description: Emitted when a deployment enters the failed state.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      deploymentFailed:
+        $ref: '#/components/messages/DeploymentFailed'
+  rolloutCompleted:
+    address: rollout.completed
+    description: Emitted when a live deployment's configured rollout enters the complete state.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      rolloutCompleted:
+        $ref: '#/components/messages/RolloutCompleted'
+  rolloutAborted:
+    address: rollout.aborted
+    description: Emitted when a live rollout enters the aborted state; pre-live build failures use deployment.failed.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      rolloutAborted:
+        $ref: '#/components/messages/RolloutAborted'
   usageStatementFinalized:
     address: usage_statement.finalized
     description: Emitted when an API consumer usage statement becomes payable.
@@ -166,6 +198,50 @@ operations:
     summary: Deliver an app.woken event to a subscribed webhook.
     messages:
       - $ref: '#/channels/appWoken/messages/appWoken'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverDeploymentLive:
+    action: send
+    channel:
+      $ref: '#/channels/deploymentLive'
+    summary: Deliver a deployment.live event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/deploymentLive/messages/deploymentLive'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverDeploymentFailed:
+    action: send
+    channel:
+      $ref: '#/channels/deploymentFailed'
+    summary: Deliver a deployment.failed event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/deploymentFailed/messages/deploymentFailed'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverRolloutCompleted:
+    action: send
+    channel:
+      $ref: '#/channels/rolloutCompleted'
+    summary: Deliver a rollout.completed event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/rolloutCompleted/messages/rolloutCompleted'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverRolloutAborted:
+    action: send
+    channel:
+      $ref: '#/channels/rolloutAborted'
+    summary: Deliver a rollout.aborted event to a subscribed webhook.
+    messages:
+      - $ref: '#/channels/rolloutAborted/messages/rolloutAborted'
     bindings:
       http:
         method: POST
@@ -316,6 +392,54 @@ components:
       contentType: application/cloudevents+json
       payload:
         $ref: '#/components/schemas/AppWokenEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    DeploymentLive:
+      name: deployment.live
+      title: Deployment live
+      summary: A deployment has entered the live state.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/DeploymentLiveEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    DeploymentFailed:
+      name: deployment.failed
+      title: Deployment failed
+      summary: A deployment has entered the failed state.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/DeploymentFailedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    RolloutCompleted:
+      name: rollout.completed
+      title: Rollout completed
+      summary: A live deployment's configured rollout completed.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/RolloutCompletedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    RolloutAborted:
+      name: rollout.aborted
+      title: Rollout aborted
+      summary: A live rollout was aborted.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/RolloutAbortedEvent'
       bindings:
         http:
           headers:
@@ -630,6 +754,42 @@ components:
               enum: ['app.woken']
             data:
               $ref: '#/components/schemas/AppWokenData'
+    DeploymentLiveEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['deployment.live']
+            data:
+              $ref: '#/components/schemas/DeploymentLiveData'
+    DeploymentFailedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['deployment.failed']
+            data:
+              $ref: '#/components/schemas/DeploymentFailedData'
+    RolloutCompletedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['rollout.completed']
+            data:
+              $ref: '#/components/schemas/RolloutCompletedData'
+    RolloutAbortedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['rollout.aborted']
+            data:
+              $ref: '#/components/schemas/RolloutAbortedData'
     UsageStatementFinalizedEvent:
       allOf:
         - $ref: '#/components/schemas/CloudEventBase'
@@ -682,6 +842,55 @@ components:
         occurred_at:
           type: string
           format: date-time
+      additionalProperties: false
+    DeploymentLiveData:
+      type: object
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id:
+          type: string
+        deployment_id:
+          type: string
+        status:
+          type: string
+          enum: [live]
+      additionalProperties: false
+    DeploymentFailedData:
+      type: object
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id:
+          type: string
+        deployment_id:
+          type: string
+        status:
+          type: string
+          enum: [failed]
+        error_code: { type: string }
+        error_hint: { type: string }
+        error_why: { type: string }
+        error_fix: { type: string }
+      additionalProperties: false
+    RolloutCompletedData:
+      type: object
+      required: [app_id, deployment_id, rollout_state, traffic_percent, completed_at]
+      properties:
+        app_id: { type: string }
+        deployment_id: { type: string }
+        rollout_state: { type: string, enum: [complete] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        completed_at: { type: string, format: date-time }
+      additionalProperties: false
+    RolloutAbortedData:
+      type: object
+      required: [app_id, deployment_id, rollout_state, traffic_percent, reason, aborted_at]
+      properties:
+        app_id: { type: string }
+        deployment_id: { type: string }
+        rollout_state: { type: string, enum: [aborted] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        reason: { type: string }
+        aborted_at: { type: string, format: date-time }
       additionalProperties: false
     UsageStatementFinalizedData:
       type: object

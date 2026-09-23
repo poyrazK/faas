@@ -37,7 +37,8 @@ class UploadDeployOptions:
     pr_number: int | Unset = UNSET
     workflows: list[WorkflowSpec] | Unset = UNSET
     companions: list[Sidecar] | Unset = UNSET
-    """Preferred field for companions carried across the resumable upload session."""
+    """Preferred field for up to five helpers carried across the resumable upload session (one init helper and up
+    to four long-running companions)."""
     sidecars: list[Sidecar] | Unset = UNSET
     """Deprecated spelling of companions."""
     rollback_on_5xx: bool | None | Unset = UNSET

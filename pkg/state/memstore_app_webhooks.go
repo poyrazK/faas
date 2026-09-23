@@ -14,11 +14,127 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// enqueueDeploymentLifecycleWebhooksLocked mirrors the database status
+// trigger. Callers hold m.mu and invoke it only on a changed terminal status.
+func (m *MemStore) enqueueDeploymentLifecycleWebhooksLocked(dep Deployment) {
+	app, ok := m.apps[dep.AppID]
+	if !ok {
+		return
+	}
+	var event AppWebhookEvent
+	var payload any
+	switch dep.Status {
+	case DeployLive:
+		event = AppWebhookEventDeploymentLive
+		payload = api.DeploymentLiveWebhookPayload{
+			AppID: dep.AppID, DeploymentID: dep.ID, Status: string(DeployLive),
+		}
+	case DeployFailed:
+		event = AppWebhookEventDeploymentFailed
+		payload = api.DeploymentFailedWebhookPayload{
+			AppID: dep.AppID, DeploymentID: dep.ID, Status: string(DeployFailed),
+			ErrorCode: dep.ErrorCode, ErrorHint: dep.ErrorHint,
+			ErrorWhy: dep.ErrorWhy, ErrorFix: dep.ErrorFix,
+		}
+	default:
+		return
+	}
+	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
+	now := time.Now().UTC()
+	for _, hook := range m.appWebhooks {
+		if !hook.Enabled || hook.AppID != dep.AppID || hook.AccountID != app.AccountID || !appWebhookMatches(hook.EventFilter, event) {
+			continue
+		}
+		id := newID()
+		m.appWebhookDeliveries[id] = AppWebhookDelivery{
+			ID: id, WebhookID: hook.ID, AppID: dep.AppID, AccountID: app.AccountID,
+			Event: event, Payload: json.RawMessage(body), Status: AppWebhookDeliveryPending,
+			NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+	}
+}
+
+// enqueueRolloutOutcomeWebhooksLocked mirrors the database rollout_state
+// trigger. Call it while holding m.mu, after a successful state mutation.
+func (m *MemStore) enqueueRolloutOutcomeWebhooksLocked(before, after Deployment) {
+	previousState := NormalizeRolloutState(before.RolloutState)
+	if previousState == NormalizeRolloutState(after.RolloutState) ||
+		(previousState != "pending" && previousState != "rolling_out") {
+		return
+	}
+	app, ok := m.apps[after.AppID]
+	if !ok {
+		return
+	}
+	var event AppWebhookEvent
+	var payload any
+	now := time.Now().UTC()
+	switch after.RolloutState {
+	case "complete":
+		if after.Status != DeployLive {
+			return
+		}
+		at := now
+		if after.RolloutCompletedAt != nil {
+			at = *after.RolloutCompletedAt
+		}
+		event = AppWebhookEventRolloutCompleted
+		payload = api.RolloutCompletedWebhookPayload{
+			AppID: after.AppID, DeploymentID: after.ID, RolloutState: "complete",
+			TrafficPercent: after.TrafficPercent, CompletedAt: at.UTC().Format(time.RFC3339Nano),
+		}
+	case "aborted":
+		if before.Status != DeployLive || (after.Status != DeployLive && after.Status != DeploySuperseded) {
+			return // build/runtime failures emit deployment.failed instead
+		}
+		at := now
+		if after.RolloutAbortedAt != nil {
+			at = *after.RolloutAbortedAt
+		}
+		reason := after.RolloutAbortedReason
+		if reason == "" {
+			reason = "rollout aborted"
+		}
+		event = AppWebhookEventRolloutAborted
+		payload = api.RolloutAbortedWebhookPayload{
+			AppID: after.AppID, DeploymentID: after.ID, RolloutState: "aborted",
+			TrafficPercent: after.TrafficPercent, Reason: reason, AbortedAt: at.UTC().Format(time.RFC3339Nano),
+		}
+	default:
+		return
+	}
+	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
+	for _, hook := range m.appWebhooks {
+		if !hook.Enabled || hook.AppID != after.AppID || hook.AccountID != app.AccountID || !appWebhookMatches(hook.EventFilter, event) {
+			continue
+		}
+		id := newID()
+		m.appWebhookDeliveries[id] = AppWebhookDelivery{
+			ID: id, WebhookID: hook.ID, AppID: after.AppID, AccountID: app.AccountID,
+			Event: event, Payload: json.RawMessage(body), Status: AppWebhookDeliveryPending,
+			NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+	}
+}
+
+func appWebhookMatches(filter []string, event AppWebhookEvent) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, candidate := range filter {
+		if candidate == string(event) {
+			return true
+		}
+	}
+	return false
+}
 
 // CreateAppWebhook rejects on duplicate (app_id, target_url) before
 // insert — same invariant the Postgres unique index holds.

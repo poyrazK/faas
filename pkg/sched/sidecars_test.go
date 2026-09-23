@@ -22,6 +22,9 @@ func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 	raw, err := json.Marshal(api.Sidecars{
 		{Name: "metrics", Image: "ghcr.io/org/metrics@sha256:01", Type: api.SidecarTypeSidecar, Port: 9090, CPUMillicores: 500, ScratchMB: 192, DiskIOProfile: string(api.SidecarDiskIOProfileHigh), StartupProbe: &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, TimeoutS: 2}, DependsOn: []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}}},
 		{Name: "migrate", Type: api.SidecarTypeInit, Essential: &falseValue, RamMB: 64},
+		{Name: "logger", Image: "ghcr.io/org/logger@sha256:02", Type: api.SidecarTypeSidecar, Port: 9091, RamMB: 32, DependsOn: []api.WorkloadDependency{{Name: "metrics", Condition: api.WorkloadDependencyHealthy}}},
+		{Name: "proxy", Image: "ghcr.io/org/proxy@sha256:03", Type: api.SidecarTypeSidecar, Port: 9092, RamMB: 48, DependsOn: []api.WorkloadDependency{{Name: "logger", Condition: api.WorkloadDependencyStarted}}},
+		{Name: "tracer", Image: "ghcr.io/org/tracer@sha256:04", Type: api.SidecarTypeSidecar, Port: 9093, RamMB: 16, DependsOn: []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -32,6 +35,9 @@ func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 	layers := []state.DeploymentSidecarLayer{
 		{SidecarName: "migrate", StorageKey: "apps/a/d-migrate.ext4"},
 		{SidecarName: "metrics", StorageKey: "apps/a/d-metrics.ext4"},
+		{SidecarName: "logger", StorageKey: "apps/a/d-logger.ext4"},
+		{SidecarName: "proxy", StorageKey: "apps/a/d-proxy.ext4"},
+		{SidecarName: "tracer", StorageKey: "apps/a/d-tracer.ext4"},
 	}
 	got, err := sidecarSpecsFromDeployment(raw, layers)
 	if err != nil {
@@ -47,6 +53,21 @@ func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 		{
 			Name: "migrate", Type: "init", StorageKey: "apps/a/d-migrate.ext4",
 			DriveID: fcvm.DriveSidecarPrefix + "1", RamMB: 64, Essential: false,
+		},
+		{
+			Name: "logger", Type: "sidecar", Image: "ghcr.io/org/logger@sha256:02", StorageKey: "apps/a/d-logger.ext4",
+			DriveID: fcvm.DriveSidecarPrefix + "2", Port: 9091, RamMB: 32, Essential: true,
+			DependsOn: []api.WorkloadDependency{{Name: "metrics", Condition: api.WorkloadDependencyHealthy}},
+		},
+		{
+			Name: "proxy", Type: "sidecar", Image: "ghcr.io/org/proxy@sha256:03", StorageKey: "apps/a/d-proxy.ext4",
+			DriveID: fcvm.DriveSidecarPrefix + "3", Port: 9092, RamMB: 48, Essential: true,
+			DependsOn: []api.WorkloadDependency{{Name: "logger", Condition: api.WorkloadDependencyStarted}},
+		},
+		{
+			Name: "tracer", Type: "sidecar", Image: "ghcr.io/org/tracer@sha256:04", StorageKey: "apps/a/d-tracer.ext4",
+			DriveID: fcvm.DriveSidecarPrefix + "4", Port: 9093, RamMB: 16, Essential: true,
+			DependsOn: []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -103,6 +124,13 @@ func TestSidecarSpecsFromDeployment_PreservesSealedEnv(t *testing.T) {
 func TestSidecarSpecsFromDeployment_RejectsUnsafeOrDuplicateDeclarations(t *testing.T) {
 	layers := []state.DeploymentSidecarLayer{
 		{SidecarName: "metrics", StorageKey: "apps/a/metrics.ext4"},
+		{SidecarName: "migrate-a", StorageKey: "apps/a/migrate-a.ext4"},
+		{SidecarName: "migrate-b", StorageKey: "apps/a/migrate-b.ext4"},
+		{SidecarName: "one", StorageKey: "apps/a/one.ext4"},
+		{SidecarName: "two", StorageKey: "apps/a/two.ext4"},
+		{SidecarName: "three", StorageKey: "apps/a/three.ext4"},
+		{SidecarName: "four", StorageKey: "apps/a/four.ext4"},
+		{SidecarName: "five", StorageKey: "apps/a/five.ext4"},
 	}
 	tests := []struct {
 		name string
@@ -111,7 +139,8 @@ func TestSidecarSpecsFromDeployment_RejectsUnsafeOrDuplicateDeclarations(t *test
 	}{
 		{name: "unsafe name", raw: `[{"name":"../metrics","type":"sidecar"}]`, want: "invalid sidecar name"},
 		{name: "duplicate name", raw: `[{"name":"metrics","type":"sidecar"},{"name":"metrics","type":"init"}]`, want: "duplicate sidecar name"},
-		{name: "duplicate type", raw: `[{"name":"metrics","type":"sidecar"},{"name":"logs","type":"sidecar"}]`, want: "duplicate sidecar type"},
+		{name: "second init", raw: `[{"name":"migrate-a","type":"init"},{"name":"migrate-b","type":"init"}]`, want: "more than one init sidecar"},
+		{name: "fifth long-running companion", raw: `[{"name":"one","type":"sidecar"},{"name":"two","type":"sidecar"},{"name":"three","type":"sidecar"},{"name":"four","type":"sidecar"},{"name":"five","type":"sidecar"}]`, want: "long-running sidecars; cap is 4"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

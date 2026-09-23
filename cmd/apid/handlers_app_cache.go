@@ -19,7 +19,27 @@ func (s *server) purgeAppCache(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	pathGlob := r.URL.Query().Get("path")
+	query := r.URL.Query()
+	pathGlob := query.Get("path")
+	tagValues, hasTag := query["tag"]
+	_, hasPath := query["path"]
+	if hasPath && hasTag {
+		api.WriteProblem(w, api.ErrValidation("cache purge accepts either path or tag, not both"))
+		return
+	}
+	tag := ""
+	if hasTag {
+		if len(tagValues) != 1 {
+			api.WriteProblem(w, api.ErrValidation("cache purge accepts one tag"))
+			return
+		}
+		var err error
+		tag, err = api.NormalizeCacheTag(tagValues[0])
+		if err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	}
 	// The glob is customer-supplied and lands in a pg_notify payload, which
 	// PostgreSQL caps at 8000 bytes. path.Match validates syntax but accepts
 	// an arbitrarily long pattern, so without a length bound an oversized
@@ -38,7 +58,8 @@ func (s *server) purgeAppCache(w http.ResponseWriter, r *http.Request, acct stat
 	payload, err := json.Marshal(struct {
 		AppID    string `json:"app_id"`
 		PathGlob string `json:"path_glob"`
-	}{AppID: app.ID, PathGlob: pathGlob})
+		Tag      string `json:"tag,omitempty"`
+	}{AppID: app.ID, PathGlob: pathGlob, Tag: tag})
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not encode cache purge request"))
 		return

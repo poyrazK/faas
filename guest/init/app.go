@@ -16,6 +16,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+const (
+	SecretsFileEnv       = "FAAS_SECRETS_FILE"
+	secretReloadFilePath = "/tmp/gregale-secret-reload/secrets.json"
+)
+
 // MaxRestarts is the legacy/default supervisor crash-loop budget. New
 // manifests may override it with AppManifest.MaxRetries; zero means inherit
 // this compatibility default because the guest does not carry plan context.
@@ -101,6 +106,22 @@ func BuildEnvWithSecrets(base []string, m api.AppManifest, secrets, apiEnv map[s
 		out = append(out, k+"="+merged[k])
 	}
 	return out
+}
+
+// StampSecretsFileEnv publishes the platform-owned projection path only for
+// opted-in workloads. The platform value replaces any image/customer value
+// so an application cannot be pointed at a different file by env precedence.
+func StampSecretsFileEnv(env []string, enabled bool) []string {
+	if !enabled {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if key, _, ok := cut(entry); !ok || key != SecretsFileEnv {
+			out = append(out, entry)
+		}
+	}
+	return append(out, SecretsFileEnv+"="+secretReloadFilePath)
 }
 
 // validEnvKey enforces the same ^[A-Z][A-Z0-9_]* shape the SQL CHECK and

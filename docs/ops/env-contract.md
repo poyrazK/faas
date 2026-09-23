@@ -286,6 +286,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_POLAR_USAGE_EVENT_NAME` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_WEBHOOK_SECRET` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS` | shared | `default` |  |  | `` |  |
+| `FAAS_PREFLIGHT_GITHUB_TOKEN` | apid | `secrets-env` |  |  | `` | optional read-only GitHub token for the public migration preflight; without it upstream commit lookups use the anonymous budget of 60 calls per hour per source IP. Delivered by /etc/faas/sealed.env (apid) |
 | `FAAS_PREPARED_NETWORKS` | vmmd | `default` |  |  | `` | opt-in unused-network cache size (0–16), disabled by default; ADR-149 |
 | `FAAS_PRESSURE_MIGRATION_POLICY` | schedd | `default` |  |  | `` |  |
 | `FAAS_PRESSURE_REASSESSMENT_SECONDS` | schedd | `default` |  |  | `` |  |
@@ -351,6 +352,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
+| `FAAS_SECRETS_FILE` | guest | `guest` |  |  | `` | guest-init stamps the tmpfs path only for apps opted into secret reload |
 | `FAAS_SERVICE_CALLER_ASSERTIONS` | gatewayd-internal | `default` |  |  | `` | ADR-206 opt-in: mint a signed caller assertion on every internal service call. Off is production-correct today because nothing verifies one yet (guest JWKS, runtime helper, and allow_callers policy are follow-ups), so no deploy path sets it and an operator without a verifier loads no key and computes no signature |
 | `FAAS_SERVICE_CALLER_KEY_PATH` | gatewayd-internal | `default` |  |  | `` | ADR-206 per-host Ed25519 signing key path; code default /etc/faas/secrets/service-caller/gatewayd.ed25519 is production-correct and the key is generated there on first boot. Only read when FAAS_SERVICE_CALLER_ASSERTIONS is on |
 | `FAAS_SESSION_KEY` | apid, gatewayd-internal, shared | `unit` |  |  | `` | LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service |

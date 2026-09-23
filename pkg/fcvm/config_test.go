@@ -104,12 +104,15 @@ func TestColdBootConfig_SidecarTopology(t *testing.T) {
 		Workloads: []WorkloadSpec{
 			{Name: "main", Type: "main", StorageKey: "/tmp/main.ext4", RamMB: 256, Port: 8080},
 			{Name: "migrator", Type: "init", StorageKey: "/tmp/sc0.ext4", RamMB: 64},
-			{Name: "scraper", Type: "sidecar", StorageKey: "/tmp/sc1.ext4", RamMB: 32, Port: 9090},
+			{Name: "metrics", Type: "sidecar", StorageKey: "/tmp/sc1.ext4", RamMB: 32, Port: 9090},
+			{Name: "logger", Type: "sidecar", StorageKey: "/tmp/sc2.ext4", RamMB: 32, Port: 9091},
+			{Name: "proxy", Type: "sidecar", StorageKey: "/tmp/sc3.ext4", RamMB: 48, Port: 9092},
+			{Name: "tracer", Type: "sidecar", StorageKey: "/tmp/sc4.ext4", RamMB: 16, Port: 9093},
 		},
 	}
 	cfg := BuildColdBootConfig(spec, 0)
-	if len(cfg.Drives) != 4 {
-		t.Fatalf("drive count = %d, want 4 (base + main + 2 sidecars)", len(cfg.Drives))
+	if len(cfg.Drives) != 7 {
+		t.Fatalf("drive count = %d, want 7 (base + main + 5 helpers)", len(cfg.Drives))
 	}
 	// drive0: shared read-only base rootfs.
 	if d := cfg.Drives[0]; d.DriveID != DriveBase || !d.IsRootDevice || !d.IsReadOnly || d.PathOnHost != spec.BaseKey {
@@ -127,6 +130,9 @@ func TestColdBootConfig_SidecarTopology(t *testing.T) {
 	}{
 		{"layer-sidecar-0", "/tmp/sc0.ext4"},
 		{"layer-sidecar-1", "/tmp/sc1.ext4"},
+		{"layer-sidecar-2", "/tmp/sc2.ext4"},
+		{"layer-sidecar-3", "/tmp/sc3.ext4"},
+		{"layer-sidecar-4", "/tmp/sc4.ext4"},
 	} {
 		d := cfg.Drives[2+i]
 		if d.IsRootDevice || d.IsReadOnly == false {

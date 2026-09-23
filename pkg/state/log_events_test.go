@@ -106,6 +106,14 @@ func TestMemStoreLogEvents_Filters(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = store.InsertLogEvent(ctx, LogEvent{
+		OccurredAt: now.Add(-30 * time.Second), AccountID: logTestAccountID, AppID: logTestAppID,
+		Source: LogEventSourceRuntime, SourceEventID: "runtime:request-id-is-not-trace", RequestID: "trace_1", TraceID: "other_trace",
+		Stream: "system", Message: "must not match the exact trace filter",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.InsertLogEvent(ctx, LogEvent{
 		OccurredAt: now.Add(-2 * time.Minute), AccountID: logTestAccountID, AppID: logTestAppID,
 		Source: LogEventSourceRuntime, SourceEventID: "runtime:1", Message: "ready",
 	})
@@ -121,7 +129,7 @@ func TestMemStoreLogEvents_Filters(t *testing.T) {
 		withLogSource(base, LogEventSourceHTTP),
 		withLogDeployment(base, logTestDeploymentID),
 		withLogRequest(base, "req_1"),
-		withLogRequest(base, "trace_1"),
+		withLogTrace(base, "trace_1"),
 		withLogRoute(base, "/checkout"),
 		withLogStatus(base, 503),
 	}
@@ -133,6 +141,15 @@ func TestMemStoreLogEvents_Filters(t *testing.T) {
 		if more || len(rows) != 1 || rows[0].Source != LogEventSourceHTTP {
 			t.Fatalf("ListLogEvents(%+v) = %+v, more=%v", filter, rows, more)
 		}
+	}
+	requestIDRows, more, err := store.ListLogEvents(ctx, withLogRequest(base, "trace_1"))
+	if err != nil || more || len(requestIDRows) != 2 {
+		t.Fatalf("legacy request filter = %+v, more=%v, err=%v; want request_id-or-trace_id semantics", requestIDRows, more, err)
+	}
+	tooLongTraceFilter := base
+	tooLongTraceFilter.TraceID = strings.Repeat("a", 129)
+	if _, _, err := store.ListLogEvents(ctx, tooLongTraceFilter); err == nil {
+		t.Fatal("expected overlong trace-id filter to be rejected")
 	}
 }
 
@@ -195,5 +212,10 @@ func withLogRoute(filter LogEventFilter, route string) LogEventFilter {
 
 func withLogStatus(filter LogEventFilter, status int) LogEventFilter {
 	filter.Status = status
+	return filter
+}
+
+func withLogTrace(filter LogEventFilter, traceID string) LogEventFilter {
+	filter.TraceID = traceID
 	return filter
 }

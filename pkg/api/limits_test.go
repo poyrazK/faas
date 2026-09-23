@@ -1066,16 +1066,13 @@ func TestPlanMinInstancesAllowed(t *testing.T) {
 	}
 }
 
-// TestSidecarCapMax pins the global constant (issue #463 / ADR-066
-// §Decision 1). The 2-sidecar hard cap is a GLOBAL const, not a
-// per-plan matrix field — a future PR may grow this to a per-plan
-// matrix if telemetry shows demand, but for PR-A every plan
-// inherits the same 2-cap. The companion schema CHECK on
-// `deployments.sidecars` (migration 00095) is the second-line
-// defence — see migrations/00095_deployments_sidecars_test.go.
+// TestSidecarCapMax pins the global bounded companion cardinality.
 func TestSidecarCapMax(t *testing.T) {
-	if SidecarCapMax != 2 {
-		t.Errorf("SidecarCapMax = %d, want 2 (issue #463 / ADR-066 §Decision 1)", SidecarCapMax)
+	if SidecarCapMax != 5 {
+		t.Errorf("SidecarCapMax = %d, want 5", SidecarCapMax)
+	}
+	if SidecarLongRunningCapMax != 4 {
+		t.Errorf("SidecarLongRunningCapMax = %d, want 4", SidecarLongRunningCapMax)
 	}
 }
 
@@ -1143,9 +1140,8 @@ func TestBillableRAMMBWithSidecars(t *testing.T) {
 		// by the helper (the apid handler normalises ram_mb=0 → absent
 		// at validation time, but the helper is defensive anyway).
 		{"zero-skipped", 256, []int{0, 64}, 256 + 64 + PerVMOverheadMB},
-		// Scale shape: 1024 + 64 + 64 + 8 = 1160 (matches ADR-066
-		// §Financial-model addendum scenario column).
-		{"scale-two-sidecars", 1024, []int{64, 64}, 1024 + 64 + 64 + PerVMOverheadMB},
+		// Five helper workloads are all included in the billed reservation.
+		{"five-sidecars", 1024, []int{64, 32, 48, 16, 64}, 1024 + 64 + 32 + 48 + 16 + 64 + PerVMOverheadMB},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

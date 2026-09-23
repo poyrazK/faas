@@ -1,3 +1,5 @@
+// spec: §11 — G2 sealed secrets are unsealed on the host and staged only into
+// the owning guest at wake time.
 // Tests for the G2 secrets-staging path: cold-wake + restore both unseal
 // the per-app sealed entries, merge them into a single envelope, marshal
 // back to canonical JSON, and pass it to the VMM's StageSecretsEnv method.
@@ -273,6 +275,20 @@ func TestWake_TamperedCiphertext_FailsOpen(t *testing.T) {
 	}
 	if len(vmm.stagedSecrets) != 0 {
 		t.Errorf("StageSecretsEnv called despite failed open")
+	}
+}
+
+func TestUnsealRuntimeSecretsBindsCiphertextToAuthorizedKey(t *testing.T) {
+	id := newIdentity(t)
+	blob := sealEnv(t, id, secretbox.Envelope{"OTHER": "must-not-escape"})
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	m.SetHostIdentity(id)
+	secrets, err := m.UnsealRuntimeSecrets([]SealedEnvEntry{{Key: "DB_URL", Ciphertext: blob}})
+	if err == nil {
+		t.Fatal("runtime unseal accepted ciphertext whose inner key differs from the allowlisted row")
+	}
+	if len(secrets) != 0 {
+		t.Fatalf("runtime unseal returned unauthorized values: %#v", secrets)
 	}
 }
 

@@ -135,6 +135,13 @@ type ObjectCopier interface {
 	CopyObject(context.Context, string, CopyObjectRequest) (CopyObjectResult, error)
 }
 
+// CrossBucketObjectCopier is the optional provider capability used when an
+// environment clone needs an isolated bucket. Providers must copy server-side
+// and preserve the same metadata and tag directives as CopyObject.
+type CrossBucketObjectCopier interface {
+	CopyObjectBetweenBuckets(context.Context, string, string, CopyObjectRequest) (CopyObjectResult, error)
+}
+
 // ObjectSizer lets the gateway reserve the source object's bytes before a
 // server-side copy. Drivers that cannot cheaply inspect an object may omit it;
 // usage reconciliation remains authoritative in that case.

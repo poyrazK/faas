@@ -1,15 +1,25 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// projectEnvironmentCloner is optional on the large state.Store interface so
+// narrow test embedders and external adapters remain source-compatible.
+type projectEnvironmentCloner interface {
+	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
+}
 
 func (s *server) listProjects(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	projects, err := s.store.ListProjectsForAccount(r.Context(), acct.ID)
@@ -298,42 +308,176 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	var req api.CreateProjectEnvironmentRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+	req, problem := decodeCreateProjectEnvironmentRequest(r)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	req.Slug = strings.TrimSpace(req.Slug)
-	if !api.ValidProjectEnvironmentSlug(req.Slug) {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid environment slug", "slug must contain 1-33 lowercase letters, numbers, or internal hyphens"))
-		return
-	}
-	protected := false
-	if req.Protected != nil {
-		protected = *req.Protected
-	}
-	environment, err := s.store.CreateProjectEnvironment(r.Context(), state.ProjectEnvironment{
-		AccountID: acct.ID, ProjectID: project.ID, Slug: req.Slug, Protected: protected,
-	})
+	environment, clone, err := s.persistProjectEnvironment(r, acct, project, req)
 	if err != nil {
-		switch {
-		case errors.Is(err, state.ErrNotFound):
-			api.WriteProblem(w, projectNotFound(project.Slug))
-		case errors.Is(err, state.ErrConflict):
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-				"Environment already exists", "the project already has an environment with this slug"))
-		default:
-			api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
-		}
+		writeCreateProjectEnvironmentError(w, project.Slug, req, acct, err)
 		return
 	}
 	s.audit.Emit(r.Context(), "project.environment.created", &acct.ID, map[string]any{
 		"project_id": project.ID, "project_slug": project.Slug,
 		"environment_id": environment.ID, "environment_slug": environment.Slug,
-		"protected": environment.Protected,
+		"protected": environment.Protected, "cloned_from": req.FromEnvironment,
+		"variables_copied": clone.VariablesCopied, "secrets_copied": clone.SecretsCopied,
+		"bindings_copied": clone.BindingsCopied,
 	})
-	writeJSON(w, http.StatusCreated, projectEnvironmentResponse(environment))
+	response := projectEnvironmentResponse(environment)
+	if req.FromEnvironment != "" {
+		response.ClonedFrom = req.FromEnvironment
+		sharedResources := []string{"domains", "policies", "routes"}
+		sharedResources = append(sharedResources, clone.SharedResources...)
+		response.Clone = &api.ProjectEnvironmentCloneResponse{
+			ConfigurationCopied: clone.ConfigurationCopied, VariablesCopied: clone.VariablesCopied,
+			SecretsCopied: clone.SecretsCopied, WorkloadsCopied: clone.WorkloadsCopied,
+			BindingsCopied: clone.BindingsCopied, SharedResources: sharedResources,
+		}
+	}
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func decodeCreateProjectEnvironmentRequest(r *http.Request) (api.CreateProjectEnvironmentRequest, *api.Problem) {
+	var req api.CreateProjectEnvironmentRequest
+	if err := decodeJSON(r, &req); err != nil {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error())
+	}
+	req.Slug, req.FromEnvironment = strings.TrimSpace(req.Slug), strings.TrimSpace(req.FromEnvironment)
+	if !api.ValidProjectEnvironmentSlug(req.Slug) {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid environment slug", "slug must contain 1-33 lowercase letters, numbers, or internal hyphens")
+	}
+	if req.FromEnvironment != "" && (!api.ValidProjectEnvironmentSlug(req.FromEnvironment) || req.FromEnvironment == req.Slug) {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid source environment", "from_environment must name a different project environment")
+	}
+	if req.ShareResources && req.FromEnvironment == "" {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid resource sharing option", "share_resources is only valid when cloning with from_environment")
+	}
+	return req, nil
+}
+
+func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, project state.Project, req api.CreateProjectEnvironmentRequest) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error) {
+	ctx := r.Context()
+	protected := req.Protected != nil && *req.Protected
+	if req.FromEnvironment == "" {
+		environment, err := s.store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+			AccountID: acct.ID, ProjectID: project.ID, Slug: req.Slug, Protected: protected,
+		})
+		return environment, state.ProjectEnvironmentCloneResult{}, err
+	}
+	cloner, ok := s.store.(projectEnvironmentCloner)
+	if !ok {
+		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, errors.New("project environment cloning is unavailable")
+	}
+	if _, err := s.store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, req.Slug); err == nil {
+		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, state.ErrConflict
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
+	}
+	bindingPlans, err := s.planProjectEnvironmentBindingClones(ctx, acct, project, req.FromEnvironment, req.ShareResources)
+	if err != nil {
+		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
+	}
+	var preparedBindingIDs []string
+	preparedSecretCount := 0
+	var preparedCleanup []func(context.Context) error
+	if !req.ShareResources && len(bindingPlans) > 0 {
+		preparedBindingIDs, preparedSecretCount, preparedCleanup, err = s.prepareIsolatedProjectEnvironmentBindings(r, acct, project, req.Slug, bindingPlans)
+		if err != nil {
+			return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
+		}
+	}
+	clone := state.ProjectEnvironmentClone{
+		AccountID: acct.ID, ProjectID: project.ID, SourceSlug: req.FromEnvironment,
+		TargetSlug: req.Slug, TargetProtected: protected, ShareResources: req.ShareResources,
+		ManagedBindingsPrepared:   len(preparedBindingIDs) > 0,
+		PreparedManagedBindingIDs: preparedBindingIDs, PreparedManagedSecretCount: preparedSecretCount,
+	}
+	environment, result, err := cloner.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(acct.Plan))
+	if err != nil {
+		// A concurrent clone may have committed after our early existence check.
+		// Its environment may now depend on these deterministic resources, so
+		// never compensate them until we know the target was not created.
+		if _, lookupErr := s.store.ProjectEnvironmentBySlug(context.WithoutCancel(ctx), acct.ID, project.ID, req.Slug); lookupErr == nil {
+			return state.ProjectEnvironment{}, result, err
+		} else if !errors.Is(lookupErr, state.ErrNotFound) {
+			return state.ProjectEnvironment{}, result, &projectEnvironmentBindingCloneError{
+				cause: err, cleanup: fmt.Errorf("could not determine whether the target environment committed: %w", lookupErr),
+			}
+		}
+		if cleanupErr := cleanupProjectEnvironmentBindingClone(context.WithoutCancel(ctx), preparedCleanup); cleanupErr != nil {
+			return state.ProjectEnvironment{}, result, &projectEnvironmentBindingCloneError{cause: err, cleanup: cleanupErr}
+		}
+		return state.ProjectEnvironment{}, result, err
+	}
+	if !req.ShareResources {
+		result.BindingsCopied = len(preparedBindingIDs)
+		return environment, result, nil
+	}
+	if len(bindingPlans) == 0 {
+		return environment, result, nil
+	}
+	count, sharedKinds, bindErr := s.cloneProjectEnvironmentBindings(r, acct, req.Slug, bindingPlans)
+	if bindErr != nil {
+		var compensation *projectEnvironmentBindingCloneError
+		if errors.As(bindErr, &compensation) && compensation.cleanup != nil {
+			if s.log != nil {
+				s.log.Error("project environment clone resource compensation incomplete", "project_id", project.ID, "environment", req.Slug, "err", bindErr)
+			}
+			return state.ProjectEnvironment{}, result, bindErr
+		}
+		rollbacker, supported := s.store.(interface {
+			RollbackProjectEnvironmentClone(context.Context, string, string, string) error
+		})
+		if supported {
+			if rollbackErr := rollbacker.RollbackProjectEnvironmentClone(context.WithoutCancel(ctx), acct.ID, project.ID, req.Slug); rollbackErr != nil && !errors.Is(rollbackErr, state.ErrNotFound) {
+				bindErr = errors.Join(errProjectEnvironmentCloneCleanup, bindErr, fmt.Errorf("remove incomplete cloned environment: %w", rollbackErr))
+			}
+		} else {
+			bindErr = errors.Join(errProjectEnvironmentCloneCleanup, bindErr, errors.New("incomplete cloned environment could not be rolled back by this state store"))
+		}
+		return state.ProjectEnvironment{}, result, bindErr
+	}
+	result.BindingsCopied = count
+	result.SharedResources = sharedKinds
+	return environment, result, nil
+}
+
+func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug string, req api.CreateProjectEnvironmentRequest, acct state.Account, err error) {
+	var quota *state.ProjectEnvironmentCloneQuotaError
+	switch {
+	case errors.Is(err, errProjectEnvironmentCloneCleanup):
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Clone cleanup incomplete",
+			"resource cleanup could not be confirmed; the target environment may exist. Inspect it before retrying."))
+	case errors.Is(err, state.ErrProjectEnvironmentCloneManagedBindings):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Managed bindings require recreation",
+			"Gregale could not recreate one or more managed bindings in isolation; retry with --share-resources only if access to the source data is intentional"))
+	case errors.Is(err, errIsolatedObjectStorageCloneUnsupported):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Isolated object-storage clone unavailable",
+			"the selected object-storage provider cannot copy objects between buckets; retry with --share-resources only if access to the source bucket data is intentional"))
+	case errors.Is(err, managedpostgres.ErrUnavailable), errors.Is(err, managedpostgres.ErrNotFound),
+		errors.Is(err, managedpostgres.ErrConflict), errors.Is(err, managedpostgres.ErrInvalid),
+		errors.Is(err, managedpostgres.ErrUnsupported), errors.Is(err, managedpostgres.ErrQuotaExceeded),
+		errors.Is(err, managedpostgres.ErrUsageStale):
+		api.WriteProblem(w, managedPostgresManifestProblem(err, "the managed PostgreSQL environment clone could not be completed"))
+	case errors.As(err, &quota) && quota.Resource == "secrets":
+		api.WriteProblem(w, api.ErrPlanLimitSecrets(api.MustLimitsFor(acct.Plan), quota.Observed))
+	case errors.As(err, &quota):
+		api.WriteProblem(w, api.ErrPlanLimitEnvVars(api.MustLimitsFor(acct.Plan), quota.Observed))
+	case errors.Is(err, state.ErrNotFound) && req.FromEnvironment != "":
+		api.WriteProblem(w, projectEnvironmentNotFound(projectSlug, req.FromEnvironment))
+	case errors.Is(err, state.ErrNotFound):
+		api.WriteProblem(w, projectNotFound(projectSlug))
+	case errors.Is(err, state.ErrConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Environment already exists", "the project already has an environment with this slug"))
+	default:
+		api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
+	}
 }
 
 func (s *server) updateProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -383,7 +527,34 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	if err := s.store.DeleteProjectEnvironment(r.Context(), acct.ID, project.ID, environmentSlug); err != nil {
+	resourceCleanup, err := s.planProjectEnvironmentManagedResourceCleanup(r.Context(), acct, project, environmentSlug)
+	if err != nil {
+		if errors.Is(err, managedpostgres.ErrUnavailable) || errors.Is(err, managedpostgres.ErrConflict) ||
+			errors.Is(err, managedpostgres.ErrNotFound) {
+			api.WriteProblem(w, managedPostgresManifestProblem(err, "managed resources could not be inspected; the environment was not deleted"))
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not inspect environment resources; the environment was not deleted"))
+		}
+		return
+	}
+	cleanupResources := projectEnvironmentCleanupResources(resourceCleanup)
+	var cleanupJob state.ProjectEnvironmentCleanupJob
+	var cleanupStore state.ProjectEnvironmentCleanupStore
+	if !cleanupResources.Empty() {
+		var supported bool
+		cleanupStore, supported = s.store.(state.ProjectEnvironmentCleanupStore)
+		if !supported {
+			api.WriteProblem(w, api.ErrCapacity("durable managed-resource cleanup is unavailable; the environment was not deleted"))
+			return
+		}
+		cleanupJob, err = cleanupStore.DeleteProjectEnvironmentWithCleanup(
+			r.Context(), acct.ID, project.ID, environmentSlug, cleanupResources,
+			uuid.NewString(), projectEnvironmentCleanupLeaseDuration,
+		)
+	} else {
+		err = s.store.DeleteProjectEnvironment(r.Context(), acct.ID, project.ID, environmentSlug)
+	}
+	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environmentSlug))
@@ -400,6 +571,28 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		"project_id": project.ID, "project_slug": project.Slug,
 		"environment_id": environment.ID, "environment_slug": environment.Slug,
 	})
+	if cleanupJob.ID != "" {
+		cleanupErr := s.cleanupProjectEnvironmentManagedResourcePayload(context.WithoutCancel(r.Context()), acct, cleanupJob.Resources)
+		if cleanupErr == nil {
+			cleanupErr = cleanupStore.CompleteProjectEnvironmentCleanup(context.WithoutCancel(r.Context()), cleanupJob.ID, cleanupJob.LeaseToken)
+		} else {
+			retryErr := cleanupStore.RetryProjectEnvironmentCleanup(
+				context.WithoutCancel(r.Context()), cleanupJob.ID, cleanupJob.LeaseToken,
+				time.Now().UTC().Add(projectEnvironmentCleanupRetryDelay(cleanupJob.AttemptCount+1)),
+			)
+			cleanupErr = errors.Join(cleanupErr, retryErr)
+		}
+		if cleanupErr != nil {
+			if s.log != nil {
+				s.log.Error("project environment managed resource cleanup incomplete", "project_id", project.ID, "environment", environmentSlug, "err", cleanupErr)
+			}
+			s.audit.Emit(context.WithoutCancel(r.Context()), "project.environment.resource_cleanup_failed", &acct.ID, map[string]any{
+				"project_id": project.ID, "project_slug": project.Slug, "environment_slug": environmentSlug,
+			})
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

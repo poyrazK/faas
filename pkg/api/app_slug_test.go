@@ -6,6 +6,7 @@ func TestValidAppSlug(t *testing.T) {
 	tests := map[string]bool{
 		"api":            true,
 		"api-service-24": true,
+		"tag-api-canary": false,
 		"API-service":    false,
 		"api_service":    false,
 		"api.service":    false,

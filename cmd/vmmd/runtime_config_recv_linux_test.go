@@ -4,8 +4,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"filippo.io/age"
+
+	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -16,6 +24,23 @@ type runtimeConfigStoreStub struct {
 
 func (s runtimeConfigStoreStub) ListAppEnv(context.Context, string, string) ([]state.AppEnv, error) {
 	return s.rows, nil
+}
+
+type runtimeSecretsStoreStub struct {
+	runtimeConfigStoreStub
+	deployment state.Deployment
+	secretRows []state.AppSecret
+}
+
+func (s runtimeSecretsStoreStub) DeploymentByID(_ context.Context, id string) (state.Deployment, error) {
+	if id != s.deployment.ID {
+		return state.Deployment{}, state.ErrNotFound
+	}
+	return s.deployment, nil
+}
+
+func (s runtimeSecretsStoreStub) ListAppSecretsInScope(context.Context, string, string, string) ([]state.AppSecret, error) {
+	return s.secretRows, nil
 }
 
 func TestLoadRuntimeConfigReturnsDefaultScopeAndRevision(t *testing.T) {
@@ -87,5 +112,113 @@ func TestRuntimeConfigCacheInvalidatesByIdentity(t *testing.T) {
 	}
 	if _, ok := cache.get("acct-1", "app-2", now); !ok {
 		t.Fatal("app-wide invalidation removed another app")
+	}
+}
+
+func TestLoadRuntimeSecretsHonorsDeploymentScopeAndAllowlist(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seal := func(key, value string) []byte {
+		t.Helper()
+		ciphertext, sealErr := secretbox.Seal(identity.Recipient(), secretbox.Envelope{key: value})
+		if sealErr != nil {
+			t.Fatal(sealErr)
+		}
+		return ciphertext
+	}
+	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil)
+	manager.SetHostIdentity(identity)
+	store := runtimeSecretsStoreStub{
+		deployment: state.Deployment{
+			ID: "dep-1", AppID: "app-1", Scope: "prod",
+			OverrideEnvSecrets: json.RawMessage(`{"DB_URL":"secret:DB_URL"}`),
+			Sidecars:           json.RawMessage(`[]`),
+		},
+		secretRows: []state.AppSecret{
+			{AccountID: "acct-1", AppID: "app-1", Scope: "prod", Key: "DB_URL", Ciphertext: seal("DB_URL", "postgres://new"), DeliveryVersion: 5},
+			{AccountID: "acct-1", AppID: "app-1", Scope: "prod", Key: "UNUSED", Ciphertext: seal("UNUSED", "do-not-send"), DeliveryVersion: 12},
+		},
+	}
+	response, err := loadRuntimeSecrets(context.Background(), store, manager, "dep-1", "app-1", "acct-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Secrets == nil || len(*response.Secrets) != 1 || (*response.Secrets)["DB_URL"] != "postgres://new" {
+		t.Fatalf("secrets response = %#v, want only the allowed DB_URL", response.Secrets)
+	}
+	firstRevision := response.Revision
+	unchanged, err := loadRuntimeSecretsIfChanged(context.Background(), store, manager, "dep-1", "app-1", "acct-1", firstRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unchanged.Unchanged || unchanged.Secrets != nil || unchanged.Revision != firstRevision {
+		t.Fatalf("unchanged response = %+v, want revision-only response", unchanged)
+	}
+	store.secretRows[1].DeliveryVersion++
+	response, err = loadRuntimeSecrets(context.Background(), store, manager, "dep-1", "app-1", "acct-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Revision != firstRevision {
+		t.Fatalf("unselected secret changed revision: %q -> %q", firstRevision, response.Revision)
+	}
+	store.secretRows[0].DeliveryVersion++
+	response, err = loadRuntimeSecrets(context.Background(), store, manager, "dep-1", "app-1", "acct-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Revision == firstRevision {
+		t.Fatal("selected secret version did not change revision")
+	}
+}
+
+func TestLoadRuntimeSecretsRejectsSidecarDeployment(t *testing.T) {
+	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil)
+	store := runtimeSecretsStoreStub{deployment: state.Deployment{
+		ID: "dep-1", AppID: "app-1", Scope: "default", Sidecars: json.RawMessage(`[{"name":"metrics"}]`),
+	}}
+	_, err := loadRuntimeSecrets(context.Background(), store, manager, "dep-1", "app-1", "acct-1")
+	if err == nil || !errors.Is(err, errRuntimeSecretSidecarsUnsupported) {
+		t.Fatalf("loadRuntimeSecrets error = %v, want sidecars unsupported", err)
+	}
+}
+
+func TestLoadRuntimeSecretsRepresentsEmptyPayload(t *testing.T) {
+	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil)
+	store := runtimeSecretsStoreStub{deployment: state.Deployment{
+		ID: "dep-1", AppID: "app-1", Scope: "default", Sidecars: json.RawMessage(`[]`),
+	}}
+	response, err := loadRuntimeSecrets(context.Background(), store, manager, "dep-1", "app-1", "acct-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Secrets == nil || len(*response.Secrets) != 0 {
+		t.Fatalf("empty secret response = %#v, want a present empty map", response.Secrets)
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if string(wire["secrets"]) != "{}" {
+		t.Fatalf("empty secrets wire payload = %s, want {}", wire["secrets"])
+	}
+}
+
+func TestLoadRuntimeSecretsFailsLoudForMissingAllowlistedKey(t *testing.T) {
+	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil)
+	store := runtimeSecretsStoreStub{deployment: state.Deployment{
+		ID: "dep-1", AppID: "app-1", Scope: "default",
+		OverrideEnvSecrets: json.RawMessage(`{"DB_URL":"secret:DB_URL"}`),
+		Sidecars:           json.RawMessage(`[]`),
+	}}
+	_, err := loadRuntimeSecrets(context.Background(), store, manager, "dep-1", "app-1", "acct-1")
+	if err == nil || !strings.Contains(err.Error(), "DB_URL") {
+		t.Fatalf("loadRuntimeSecrets error = %v, want missing DB_URL", err)
 	}
 }

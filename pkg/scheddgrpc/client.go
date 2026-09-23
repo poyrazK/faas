@@ -593,7 +593,7 @@ type InstanceStatsRow struct {
 	// deployment has no sidecars — the meterd sampler collapses
 	// to the no-sidecar admission shutter via
 	// api.BillableRAMMBWithSidecars. Length is bounded by
-	// api.SidecarCapMax = 2. Mirrors the scheddpb field via the
+	// api.SidecarCapMax = 5. Mirrors the scheddpb field via the
 	// ListInstanceStats RPC; meterd reads this column from the
 	// Row to compute the per-minute mb_seconds.
 	SidecarMBs []int

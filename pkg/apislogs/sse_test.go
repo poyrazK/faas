@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -49,6 +50,38 @@ func TestLogAppLogFrameStructuredJournalRecord(t *testing.T) {
 	for _, key := range []string{"account_id", "app_id", "instance_id", "deployment_id", "line"} {
 		if strings.ContainsAny(record[key].(string), "\r\n") {
 			t.Errorf("%s contains CR/LF: %q", key, record[key])
+		}
+	}
+}
+
+func TestLogAppLogFrameWithIdentityIncludesDeploymentProvenance(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	LogAppLogFrameWithIdentity(logger, scheddgrpc.LogFrame{
+		InstanceID: "instance-1", Seq: 7, Stream: "stdout", Line: "hello",
+		WrittenAt: time.Date(2026, 9, 23, 10, 11, 12, 0, time.UTC),
+	}, api.PlatformIdentity{
+		AppID: "app-1", TenantID: "acct-1", DeploymentID: "dep-1", InstanceID: "instance-1",
+		NodeID: "node-1", Region: "eu-fsn1", CommitSHA: "abc123", DeploymentTag: "stable",
+		DeploymentCreatedAt: "2026-09-22T08:00:00Z", ImageDigest: "sha256:deadbeef",
+	})
+
+	var record map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatalf("decode structured log: %v; output=%q", err, buf.String())
+	}
+	for key, want := range map[string]string{
+		"tenant_id":             "acct-1",
+		"deployment_id":         "dep-1",
+		"node_id":               "node-1",
+		"region":                "eu-fsn1",
+		"commit_sha":            "abc123",
+		"deployment_tag":        "stable",
+		"deployment_created_at": "2026-09-22T08:00:00Z",
+		"image_digest":          "sha256:deadbeef",
+	} {
+		if got := record[key]; got != want {
+			t.Errorf("%s=%v, want %q", key, got, want)
 		}
 	}
 }

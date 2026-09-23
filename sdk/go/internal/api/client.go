@@ -1408,6 +1408,25 @@ func (c *Client) ListAppDeployments(ctx context.Context, slug, before string, li
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListDeploymentAliases returns the named revision aliases attached to an app.
+func (c *Client) ListDeploymentAliases(ctx context.Context, slug string) (DeploymentAliasListResponse, error) {
+	var out DeploymentAliasListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/deployment-aliases", nil, &out)
+}
+
+// SetDeploymentAlias points name at one exact deployment belonging to slug.
+func (c *Client) SetDeploymentAlias(ctx context.Context, slug, name string, req SetDeploymentAliasRequest) (DeploymentAliasResponse, error) {
+	var out DeploymentAliasResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/deployment-aliases/" + url.PathEscape(name)
+	return out, c.do(ctx, "PUT", path, req, &out)
+}
+
+// DeleteDeploymentAlias removes the named mapping without deleting its target.
+func (c *Client) DeleteDeploymentAlias(ctx context.Context, slug, name string) error {
+	path := "/v1/apps/" + url.PathEscape(slug) + "/deployment-aliases/" + url.PathEscape(name)
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
 // Org surface (issue #190 / IAM-6 / ADR-061, PR 5). The 11 methods
 // below mirror the spec routes documented under api/openapi.yaml
 // paths /v1/orgs*, /v1/invitations/{token}. Each maps 1:1 to a

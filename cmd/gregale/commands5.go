@@ -212,7 +212,7 @@ func cmdStatus(args []string) int {
 
 // --- env -------------------------------------------------------------------
 
-// cmdEnv dispatches `gregale env pull|push --app <slug>`. The pull path
+// cmdEnv dispatches environment and app-runtime environment workflows. The pull path
 // writes a KEY-only .env template (empty values) per the §11/G2
 // sealed-secrets boundary — the server never returns plaintext. The
 // push path re-uses the secrets API PUT with the same rotation-hint
@@ -220,10 +220,12 @@ func cmdStatus(args []string) int {
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <pull|push> --app <slug>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env <create|pull|push|diff>", "env")
 		return 1
 	}
 	switch args[0] {
+	case "create":
+		return envCreate(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":

@@ -17,7 +17,7 @@ func testLogEventInsertAndList(t *testing.T, fx *Fixture) {
 		{
 			OccurredAt: now.Add(-time.Minute), AccountID: fx.Account.ID, AppID: fx.App.ID,
 			DeploymentID: fx.Deployment.ID, Source: state.LogEventSourceHTTP, SourceEventID: "http:checkout:1",
-			RequestID: "req_checkout_1", Route: "/checkout", Method: "POST", Status: 500,
+			RequestID: "req_checkout_1", TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", Route: "/checkout", Method: "POST", Status: 500,
 			Message: "checkout returned 500",
 		},
 		{
@@ -83,6 +83,7 @@ func testLogEventInsertAndList(t *testing.T, fx *Fixture) {
 	filter.Source = state.LogEventSourceHTTP
 	filter.Route = "/checkout"
 	filter.Status = 500
+	filter.TraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	filtered, hasMore, err := fx.Store.ListLogEvents(fx.Ctx, filter)
 	if err != nil {
 		t.Fatalf("ListLogEvents filtered: %v", err)

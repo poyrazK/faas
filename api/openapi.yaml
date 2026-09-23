@@ -340,6 +340,66 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublicStatusOverview' }
 
+  /v1/preflight:
+    get:
+      tags: [status]
+      operationId: getMigrationPreflight
+      summary: Check whether a public GitHub repository would run on Gregale.
+      description: |
+        Unauthenticated static analysis of a public repository. Nothing is
+        built, deployed, or executed: the source is inspected for a detectable
+        framework and for hard disqualifiers from the container compatibility
+        contract.
+
+        The verdict is deliberately conservative. `green` means the source
+        already satisfies the contract, `amber` means it runs once a declared
+        change is supplied, and `red` means a disqualifier applies and the app
+        cannot run as written.
+
+        Only public github.com repositories are accepted. A private or missing
+        repository returns the same `preflight_repo_not_found` response so the
+        endpoint cannot be used to probe for private repositories.
+      security: []
+      parameters:
+        - name: source
+          in: query
+          required: true
+          description: A github.com repository URL, or an `owner/repo` pair.
+          schema: { type: string, maxLength: 512 }
+        - name: ref
+          in: query
+          required: false
+          description: |
+            Branch, tag, or commit SHA. A full commit SHA pins the verdict and
+            makes the result permanently reproducible.
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: The preflight verdict for the resolved commit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreflightReport' }
+        '404':
+          description: Repository not found, or private.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: Not a public github.com repository, or the source is too large.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many checks from this client.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The upstream repository host is rate limiting Gregale.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/status/incidents/{public_id}:
     get:
       tags: [status]
@@ -4106,6 +4166,53 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/preview/{slug}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [previews]
+      operationId: getPreview
+      summary: Get a first-class preview resource.
+      description: |
+        Returns preview identity, public URL, expiration, latest preview and
+        production deployments, safe changes from production, and links to
+        the native streaming logs, time-windowed metrics, and configuration
+        endpoints. Secret values and ciphertext are never included.
+      responses:
+        '200':
+          description: Preview resource and production comparison.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewResourceResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/preview/{slug}/environment:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [previews]
+      operationId: getPreviewEnvironmentStatus
+      summary: Read the current-head workload set for a GitHub PR preview.
+      description: |
+        The slug must be the root preview app of a recorded GitHub PR set.
+        The response evaluates only preview deployments for the recorded
+        commit. It never reports a root as ready while an expected sibling is
+        missing, building, failed, or on an older commit. Closed PRs are not
+        ready. Developer previews and unrecorded legacy PR previews return 404.
+        Requires the deployment read scope and account ownership of the root.
+      responses:
+        '200':
+          description: Current-head preview environment status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewEnvironmentStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/preview/{slug}/destroy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -5615,6 +5722,68 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deployment-aliases:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDeploymentAliases
+      summary: List named deployment aliases for an app.
+      description: Returns customer-managed names that point to exact immutable deployment rows, with their stable routing hosts. Changing an alias does not alter production traffic.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Alias names and their pinned deployment revisions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentAliasListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deployment-aliases/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        description: Lowercase DNS label for this app's stable revision alias.
+    put:
+      tags: [deployments]
+      operationId: setDeploymentAlias
+      summary: Point a named alias at an immutable deployment.
+      description: The target must be a routable deployment that belongs to the app. This updates only the alias mapping; it does not shift production traffic. The alias name and app identifier must fit together in one DNS label.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetDeploymentAliasRequest' }
+            example: { deployment_id: "01234567-89ab-cdef-0123-456789abcdef" }
+      responses:
+        '200':
+          description: Alias mapping after the update.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentAliasResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [deployments]
+      operationId: deleteDeploymentAlias
+      summary: Remove a named deployment alias.
+      description: Removes the mapping only; deployments and production traffic are unchanged.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Alias removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/deployments:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -6855,16 +7024,23 @@ paths:
       description: |
         Requests a response-cache purge on every gateway and on the optional
         distributed cache tier. The optional path glob limits the purge to
-        matching normalized request paths; omit it to purge the complete app
-        cache.
+        matching normalized request paths. The optional tag limits it to
+        responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+        omit both to purge the complete app cache.
       parameters:
         - name: path
           in: query
           required: false
           schema: { type: string }
           description: Optional normalized request path glob (for example `/products/*`).
+        - name: tag
+          in: query
+          required: false
+          schema: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9._:/-]+$' }
+          description: Optional cache tag (for example `product:42`); cannot be combined with path.
       responses:
         '204': { description: Purge requested. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -11744,6 +11920,14 @@ paths:
       tags: [projects]
       operationId: createProjectEnvironment
       summary: Create a durable project environment.
+      description: |
+        When from_environment is supplied, the create is atomic and copies the
+        latest non-secret configuration, runtime variables, and already-sealed
+        customer secrets. Managed PostgreSQL and object-storage bindings receive
+        fresh target-scoped credentials and isolated data by default. Set
+        share_resources to attach fresh credentials to the source resources
+        instead. Provider-issued credential bytes are never copied. Domains,
+        routes, and policies remain application-scoped and are shared.
       requestBody:
         required: true
         content:
@@ -11813,10 +11997,13 @@ paths:
         Deletes only an unprotected, non-production environment that has no
         live releases. Configuration and approval history for the registry
         entry is removed with it. Production, protected environments, and
-        environments still serving a live release return 409.
+        environments still serving a live release return 409. If managed
+        resources cannot be revoked immediately, cleanup is durably queued and
+        retried; the deleted environment returns 202 while cleanup is pending.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '202': { description: Project environment deleted; managed-resource cleanup is queued for retry. }
         '204': { description: Project environment deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -11900,6 +12087,74 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/state:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose environment state is requested.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target environment whose effective state is returned.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentState
+      summary: Get effective state for a project environment.
+      description: |
+        Returns configuration, live releases, non-secret runtime variables,
+        secret fingerprints, and managed binding metadata. Secret plaintext,
+        ciphertext, and sealing-key identifiers are never returned. Resources
+        that remain application-scoped are identified under shared_resources.
+      responses:
+        '200':
+          description: Effective environment state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentStateResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/diff:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environments are compared.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target environment.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: from
+        in: query
+        required: true
+        description: Source environment being compared with the target environment.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentDiff
+      summary: Compare two effective project environments.
+      description: |
+        Compares configuration, releases, runtime variables, secret
+        fingerprints and credential generations, and managed bindings. Secret
+        values are never returned. A secret without a fingerprint is reported
+        as unknown rather than incorrectly reported as equal.
+      responses:
+        '200':
+          description: Unified effective-state diff.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentDiffResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/config/diff:
     parameters:
       - name: slug
@@ -11910,12 +12165,12 @@ paths:
       - name: environment
         in: path
         required: true
-        description: Target environment receiving the configuration comparison.
+        description: Destination environment for the configuration comparison.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
       - name: from
         in: query
         required: true
-        description: Source environment to compare against the target.
+        description: Baseline environment for the configuration snapshot comparison.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
     get:
       tags: [projects]
@@ -16224,7 +16479,7 @@ paths:
         Oldest-first (forward narrative). Returns the sidecar's init-exit,
         restart, and health-transition frames. The `latest` field is the
         most recent `wake.sidecar_health` status (`starting`, `healthy`,
-        `unhealthy`, `restarting`, or `failed`) when one is available.
+        `unhealthy`, `restarting`, `failed`, `ready`, or `unready`) when one is available.
 
         The endpoint is a sub-resource of `/v1/apps/{slug}` and uses the
         same MFA, scope, per-app rate-limit, and Hobby+ observability gates
@@ -18508,6 +18763,93 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    PreflightLevel:
+      type: string
+      enum: [green, amber, red]
+      description: |
+        `green` satisfies the container contract as written, `amber` needs a
+        declared change, `red` cannot run.
+    PreflightSource:
+      type: object
+      description: |
+        A validated public GitHub repository reference. Every field has passed
+        the character and length rules, so it is safe to interpolate upstream.
+      required: [owner, repo]
+      properties:
+        owner: { type: string }
+        repo: { type: string }
+        ref: { type: string, description: Branch or tag parsed from the input; empty means the default branch. }
+    PreflightFinding:
+      type: object
+      description: |
+        One actionable observation about the source. `detail` says what was
+        observed; `remedy` says what to change about it.
+      required: [code, level, title, detail]
+      properties:
+        code: { type: string, description: Stable machine-readable finding code. }
+        level: { $ref: '#/components/schemas/PreflightLevel' }
+        title: { type: string }
+        detail: { type: string, description: What was observed in the source. }
+        remedy: { type: string, description: What to change. Empty for informational findings. }
+        sources:
+          type: array
+          description: Repository-relative paths the finding came from. Never file contents.
+          items: { type: string }
+    PreflightProfile:
+      type: object
+      description: The run contract inferred from the source tree.
+      properties:
+        version: { type: string }
+        framework: { type: string }
+        framework_version: { type: string }
+        package_manager: { type: string }
+        dockerfile_path: { type: string }
+        start_command: { type: string }
+        port: { type: integer }
+        health_path: { type: string }
+        config_file: { type: string }
+        inferred: { type: boolean }
+    PreflightVerdict:
+      type: object
+      description: |
+        The assessed result for one source tree: a headline level, the findings
+        behind it, and the run contract that was inferred.
+      required: [level, profile]
+      properties:
+        level: { $ref: '#/components/schemas/PreflightLevel' }
+        findings:
+          type: array
+          items: { $ref: '#/components/schemas/PreflightFinding' }
+        profile: { $ref: '#/components/schemas/PreflightProfile' }
+    PreflightPlanBudget:
+      type: object
+      description: |
+        What one plan includes, expressed as running time. Preflight does not
+        estimate an app's memory use, so it reports each tier's allowance
+        rather than recommending one.
+      required: [plan, ram_mb, billed_ram_mb, included_running_minutes, included_gb_hours, price_millicents]
+      properties:
+        plan: { type: string }
+        ram_mb: { type: integer }
+        billed_ram_mb: { type: integer, description: Plan RAM plus the fixed per-VM overhead. }
+        included_running_minutes: { type: integer, description: The included allowance as wall-clock running time at this plan's billed RAM. }
+        included_gb_hours: { type: integer }
+        price_millicents: { type: integer, format: int64, description: Monthly subscription price in millicents. }
+        overage_millicents_per_gb_hour: { type: integer, format: int64 }
+    PreflightReport:
+      type: object
+      description: |
+        One complete preflight answer, pinned to the commit it was computed
+        from so a permalink always re-renders the same verdict.
+      required: [source, commit_sha, verdict, plan_budgets, checked_at]
+      properties:
+        source: { $ref: '#/components/schemas/PreflightSource' }
+        commit_sha: { type: string, description: The commit the verdict was computed from. }
+        verdict: { $ref: '#/components/schemas/PreflightVerdict' }
+        plan_budgets:
+          type: array
+          items: { $ref: '#/components/schemas/PreflightPlanBudget' }
+        checked_at: { type: string, format: date-time }
     StatusUptimeBucket:
       description: Daily platform-availability point. Successful and total count available and observed complete five-minute platform intervals; customer workload outcomes are excluded.
       type: object
@@ -20646,6 +20988,14 @@ components:
           description: "Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy instances are bypassed automatically."
           type: boolean
           example: false
+        version_affinity_cookie:
+          description: "Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes the value before forwarding it as a key."
+          type: string
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
+        version_affinity_managed_cookie:
+          description: "Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie."
+          type: boolean
+          default: false
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -21111,7 +21461,14 @@ components:
       type: object
       required: [slug]
       properties:
-        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world" }
+        slug:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          not: { pattern: '^tag-' }
+          minLength: 3
+          maxLength: 40
+          example: "hello-world"
+          description: The tag- prefix is reserved for stable deployment-alias hostnames.
         type: { type: string, enum: [app, function] , example: "app"}
         visibility: { type: string, enum: [public, internal], default: public, description: "Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro and Scale." }
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
@@ -21203,6 +21560,14 @@ components:
           description: "Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."
         session_affinity:
           description: "Enable best-effort cookie-based routing to the same running instance. Omitted uses false."
+          type: boolean
+          default: false
+        version_affinity_cookie:
+          description: "Use a stable, non-secret browser cookie for rollout affinity. Omit to disable."
+          type: string
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
+        version_affinity_managed_cookie:
+          description: "Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with version_affinity_cookie; omitted uses false."
           type: boolean
           default: false
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
@@ -21310,6 +21675,37 @@ components:
           type: boolean
           example: false
 
+    PreviewEnvironmentStatusResponse:
+      description: Aggregate current-head readiness for a recorded GitHub PR preview workload set.
+      type: object
+      required: [root_slug, repo_full_name, pr_number, commit_sha, phase, ready, summary, live_workloads, total_workloads, members]
+      properties:
+        root_slug: { type: string }
+        repo_full_name: { type: string }
+        pr_number: { type: integer, minimum: 1 }
+        commit_sha: { type: string }
+        phase: { type: string, enum: [building, live, failed, closed] }
+        ready: { type: boolean }
+        summary: { type: string }
+        live_workloads: { type: integer, minimum: 0 }
+        total_workloads: { type: integer, minimum: 1 }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/PreviewEnvironmentMemberResponse' }
+
+    PreviewEnvironmentMemberResponse:
+      description: One expected preview workload and its latest deployment for the recorded commit.
+      type: object
+      required: [app_id, slug, workload_name, app_status, preview_state, deployment_id, deployment_status]
+      properties:
+        app_id: { type: string, format: uuid }
+        slug: { type: string, description: Empty if the recorded app is missing. }
+        workload_name: { type: string }
+        app_status: { type: string, description: Includes missing when the recorded app is unavailable. }
+        preview_state: { type: string }
+        deployment_id: { type: string, description: Empty until a deployment for the recorded commit exists. }
+        deployment_status: { type: string, description: Missing until a deployment for the recorded commit exists. }
+
     CreatePreviewRequest:
       description: Pull-request preview provisioning payload. Source is deployed separately after the preview app is created.
       type: object
@@ -21326,6 +21722,52 @@ components:
           maximum: 720
           default: 168
           description: Preview lease duration. The server defaults to 168 hours and caps it at 30 days.
+
+    PreviewResourceResponse:
+      description: A first-class preview with production comparison and observability links.
+      type: object
+      required: [app, changes_from_production, links]
+      properties:
+        app: { $ref: '#/components/schemas/AppResponse' }
+        parent: { $ref: '#/components/schemas/AppResponse' }
+        latest_deployment: { $ref: '#/components/schemas/DeploymentResponse' }
+        production_deployment: { $ref: '#/components/schemas/DeploymentResponse' }
+        changes_from_production: { $ref: '#/components/schemas/PreviewProductionChangesResponse' }
+        links: { $ref: '#/components/schemas/PreviewResourceLinksResponse' }
+
+    PreviewProductionChangesResponse:
+      description: Non-secret preview differences from the production parent.
+      type: object
+      required: [artifact_changed, preview_artifact, production_artifact, configuration_changed_groups]
+      properties:
+        artifact_changed: { type: boolean }
+        preview_artifact: { $ref: '#/components/schemas/PreviewArtifactResponse' }
+        production_artifact: { $ref: '#/components/schemas/PreviewArtifactResponse' }
+        configuration_changed_groups:
+          type: array
+          items: { type: string, enum: [runtime, resources, scaling, routing, policies] }
+
+    PreviewArtifactResponse:
+      description: Strongest available non-secret deployment artifact identity.
+      type: object
+      properties:
+        deployment_id: { type: string }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string }
+        image_digest: { type: string }
+        source_sha256: { type: string }
+        commit_sha: { type: string }
+        build_id: { type: string }
+
+    PreviewResourceLinksResponse:
+      description: Public preview URL and native APIs for its logs, metrics, and effective app configuration.
+      type: object
+      required: [url, logs, metrics, configuration]
+      properties:
+        url: { type: string, format: uri }
+        logs: { type: string }
+        metrics: { type: string }
+        configuration: { type: string }
 
     UpsertDevSessionRequest:
       description: Application shape and opaque local identity for a CLI-managed developer environment.
@@ -21536,6 +21978,12 @@ components:
           description: "Allow health probes to wake the app. Omit for no change; Pro/Scale only when true."
         session_affinity:
           description: "Toggle best-effort cookie-based routing to the same running instance. Omit for no change."
+          type: [boolean, "null"]
+        version_affinity_cookie:
+          description: "Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change."
+          type: [string, "null"]
+        version_affinity_managed_cookie:
+          description: "Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no change."
           type: [boolean, "null"]
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
@@ -21783,7 +22231,14 @@ components:
       type: object
       required: [new_slug]
       properties:
-        new_slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world-v2" }
+        new_slug:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          not: { pattern: '^tag-' }
+          minLength: 3
+          maxLength: 40
+          example: "hello-world-v2"
+          description: App slugs beginning with tag- are reserved for deployment-alias hostnames.
 
     RaiseOverageCapRequest:
       description: |
@@ -22055,6 +22510,10 @@ components:
         stop_signal:
           type: [string, "null"]
           description: "OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2."
+        secret_reload_signal:
+          type: [string, "null"]
+          enum: [SIGHUP, SIGUSR1, SIGUSR2, null]
+          description: "Opt the main workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Must differ from stop_signal (ADR-222)."
         stop_grace_period:
           type: [string, "null"]
           description: "OCI StopGracePeriod as a Go duration string (e.g. \"30s\"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4."
@@ -22141,6 +22600,13 @@ components:
           description: "Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically."
           type: boolean
           default: false
+        version_affinity_cookie:
+          description: "Configured browser cookie name for rollout affinity; omitted when disabled."
+          type: string
+        version_affinity_managed_cookie:
+          description: "Whether the edge issues its own host-only rollout-affinity cookie."
+          type: boolean
+          default: false
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."
@@ -22216,13 +22682,24 @@ components:
         enabled: { type: boolean }
 
     AppManifestHealthcheck:
-      description: "AppManifest-level projection of the OCI HEALTHCHECK shape (ADR-136 §Decision 3-4). Durations are integer seconds at the JSON boundary to match OCI/Docker conventions. Runtime polling lands in M-2 (ADR-X5); M-1 surfaces the field for the registry-pull path."
+      description: "AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations are integer seconds at the JSON boundary to match OCI/Docker conventions."
       type: object
       properties:
         test:
           type: array
           items: { type: string }
           description: "Argv of the check command, prefixed by \"CMD\", \"CMD-SHELL\", or \"NONE\" per Docker semantics."
+        exec:
+          $ref: '#/components/schemas/SidecarExecProbe'
+        http_get:
+          $ref: '#/components/schemas/SidecarHTTPGetProbe'
+        tcp_socket:
+          $ref: '#/components/schemas/SidecarTCPSocketProbe'
+        period_s:
+          type: integer
+          minimum: 0
+          maximum: 300
+          description: "Typed sidecar probe cadence in seconds; defaults to 10, or 30 for legacy OCI checks."
         interval_s:
           type: [integer, "null"]
           description: "Poll cadence after StartPeriodS elapses (Docker default 30s)."
@@ -22232,9 +22709,118 @@ components:
         retries:
           type: [integer, "null"]
           description: "Consecutive failure count to mark unhealthy (Docker default 3)."
+        failure_threshold:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: "Failure count that marks a startup probe failed or restarts a liveness workload; defaults to 3."
+        success_threshold:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: "Consecutive passes required before the probe reports healthy; defaults to 1."
+        initial_delay_s:
+          type: integer
+          minimum: 0
+          maximum: 600
+          description: "Seconds to wait before the first typed sidecar probe."
         start_period_s:
           type: [integer, "null"]
           description: "Startup grace during which failures don't count (Docker 17.05+, default 0s)."
+
+    SidecarExecProbe:
+      description: "Exec probe command passed as argv inside the container; no shell is implied."
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: array
+          minItems: 1
+          items: { type: string, minLength: 1 }
+          description: "Executable and arguments, in order."
+
+    SidecarHTTPGetProbe:
+      description: "HTTP GET probe sent from inside the container."
+      type: object
+      properties:
+        path:
+          type: string
+          pattern: '^/'
+          description: "HTTP path; defaults to /."
+        port:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          description: "HTTP container port; 0/omitted inherits the workload port."
+
+    SidecarTCPSocketProbe:
+      description: "TCP connection probe opened from inside the container."
+      type: object
+      properties:
+        port:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          description: "TCP container port; 0/omitted inherits the workload port."
+
+    SidecarProbe:
+      description: |
+        Container-local startup, liveness, or readiness probe for a companion. Specify
+        exactly one action: exec, http_get, tcp_socket, or the legacy OCI
+        test field. Port 0/omitted uses the workload's declared port, then
+        the image port, then the platform default.
+      type: object
+      properties:
+        test:
+          type: array
+          items: { type: string }
+          description: "Legacy OCI exec form: CMD, CMD-SHELL, or NONE. Retained for startup_probe compatibility."
+        exec:
+          $ref: '#/components/schemas/SidecarExecProbe'
+        http_get:
+          $ref: '#/components/schemas/SidecarHTTPGetProbe'
+        tcp_socket:
+          $ref: '#/components/schemas/SidecarTCPSocketProbe'
+        period_s:
+          type: integer
+          minimum: 0
+          maximum: 300
+          description: "Probe interval in seconds; typed-probe default 10, legacy OCI default 30."
+        interval_s:
+          type: integer
+          minimum: 0
+          maximum: 300
+          description: "Legacy alias for period_s."
+        timeout_s:
+          type: integer
+          minimum: 0
+          maximum: 120
+          description: "Probe timeout in seconds; defaults to 1 for typed probes and 30 for legacy OCI probes."
+        failure_threshold:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: "Consecutive failures before startup fails or liveness restarts the workload; defaults to 3."
+        retries:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: "Legacy alias for failure_threshold."
+        success_threshold:
+          type: integer
+          minimum: 0
+          maximum: 20
+          description: "Consecutive passes required to become healthy; defaults to 1."
+        initial_delay_s:
+          type: integer
+          minimum: 0
+          maximum: 600
+          description: "Delay before the first probe."
+        start_period_s:
+          type: integer
+          minimum: 0
+          maximum: 600
+          description: "Legacy OCI liveness grace period during which failures do not count."
 
     ServiceReplicas:
       description: "Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E). Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land in M-4."
@@ -22348,12 +22934,12 @@ components:
           items: { $ref: '#/components/schemas/WorkflowSpec' }
         companions:
           type: array
-          maxItems: 2
+          maxItems: 5
           items: { $ref: '#/components/schemas/Sidecar' }
-          description: "Preferred field for companions carried across the resumable upload session."
+          description: "Preferred field for up to five helpers carried across the resumable upload session (one init helper and up to four long-running companions)."
         sidecars:
           type: array
-          maxItems: 2
+          maxItems: 5
           items: { $ref: '#/components/schemas/Sidecar' }
           deprecated: true
           description: "Deprecated spelling of companions."
@@ -23722,17 +24308,16 @@ components:
           example: true
         companions:
           type: array
-          maxItems: 2
+          maxItems: 5
           items:
             $ref: '#/components/schemas/Sidecar'
-          description: "Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with sidecars."
+          description: "Preferred field. Up to 5 stateless helpers total (one init helper and up to four long-running companions); managed presets may omit image. Do not set together with sidecars."
         # Issue #463 / ADR-068: backwards-compatible spelling.
-        # (1 init + 1 sidecar). The runtime effect (imaged,
-        # fcvm, guest-init) ships in PR-B; PR-A persists the
-        # shape and the handler envelope-seals env values.
+        # New deployments can declare one init helper and up to
+        # four long-running sidecars.
         sidecars:
           type: array
-          maxItems: 2
+          maxItems: 5
           items:
             $ref: '#/components/schemas/Sidecar'
           deprecated: true
@@ -24215,9 +24800,9 @@ components:
     Sidecar:
       description: |
         One entry in the deploy request's preferred `companions` array
-        (legacy name: `sidecars`). Up to 2 helpers per app (1 init
-        + 1 sidecar; the array is type-uniqueness + 2-capped at
-        the schema layer via migration 00095's CHECK constraint).
+        (legacy name: `sidecars`). Up to 5 helpers per app (1 init
+        + up to 4 long-running sidecars; total cardinality is capped
+        at the API, runtime, and database layers).
         Stateless only — stateful base images (Postgres, Redis,
         MySQL, MongoDB, etc.) are rejected at the API gate
         with 403 `sidecar_stateful_denied` and again at imaged
@@ -24235,8 +24820,8 @@ components:
           `image`; apid resolves an operator-pinned immutable digest.
         - `image` is required for a custom helper and must be a
           digest-pinned OCI reference. Tag references are rejected.
-        - `type` ∈ {`init`, `sidecar`}. At most one of each per
-          deployment.
+        - `type` ∈ {`init`, `sidecar`}. At most one init helper and
+          up to four long-running sidecars per deployment.
         - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
           overridden). Every element non-empty.
         - `env` is plaintext on the wire, sealed at rest. Keys
@@ -24255,10 +24840,13 @@ components:
           (`failure_class=user_error`) and essential long-running
           sidecars restart-loop. If false, the failure is logged
           and the other workloads continue.
-        - `startup_probe` optionally replaces the image's baked OCI
-          `HEALTHCHECK` for this workload. It uses the exec-style
-          `AppManifestHealthcheck` shape; set `test` to [`NONE`] to
-          explicitly disable the image probe.
+        - `startup_probe` gates healthy dependency state and supports exec,
+          HTTP GET, and TCP probes. Omit it to use the image OCI `HEALTHCHECK`.
+        - `liveness_probe` independently monitors a running sidecar; when
+          omitted, the effective startup probe is reused for compatibility.
+        - `readiness_probe` is valid only on the `primary_ingress` sidecar. It
+          gates initial traffic and temporarily withdraws/resumes routing
+          without restarting the companion.
         - `depends_on` optionally gates this workload on `main` or
           another sidecar. Conditions are `started`, `healthy`, and
           `completed_successfully`; omitted condition means `started`.
@@ -24325,7 +24913,11 @@ components:
           type: boolean
           description: "Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."
         startup_probe:
-          $ref: '#/components/schemas/AppManifestHealthcheck'
+          $ref: '#/components/schemas/SidecarProbe'
+        liveness_probe:
+          $ref: '#/components/schemas/SidecarProbe'
+        readiness_probe:
+          $ref: '#/components/schemas/SidecarProbe'
         depends_on:
           type: array
           maxItems: 3
@@ -24366,6 +24958,55 @@ components:
           type: [string, "null"]
           format: date-time
           description: 'When certmagic last validated the cert under host. Null for never-touched hostnames. NOT a latency probe — the cert NotAfter is the load-bearing expiry.'
+
+    SetDeploymentAliasRequest:
+      description: Request to point one named alias at an exact immutable deployment row.
+      type: object
+      required: [deployment_id]
+      additionalProperties: false
+      properties:
+        deployment_id:
+          type: string
+          format: uuid
+          description: Exact immutable deployment row to associate with this alias.
+
+    DeploymentAliasResponse:
+      description: A customer's named pointer to one per-app deployment revision, including its stable host when the platform apps domain is configured.
+      type: object
+      required: [name, deployment_id, revision, created_at, updated_at]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+        deployment_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+          description: Per-app revision number; rendered in CLI output as vN.
+        host:
+          type: string
+          description: Stable one-label hostname for this alias. It is keyed by an immutable app identifier and remains stable if the app slug is renamed.
+        url:
+          type: string
+          format: uri
+          description: HTTPS URL for the alias host; omitted when the platform apps domain is not configured.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DeploymentAliasListResponse:
+      description: The per-app list of named deployment aliases.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentAliasResponse' }
 
     # ─── Instances ────────────────────────────────────────────────────────
 
@@ -25468,10 +26109,30 @@ components:
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$' }
         project_id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        slug: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+        slug:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          not: { const: default }
+          description: Project environment slug; the reserved app scope `default` cannot be used.
         protected: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        cloned_from: { type: string }
+        clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
+
+    ProjectEnvironmentCloneResponse:
+      description: Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only after explicit opt-in.
+      type: object
+      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, bindings_copied, shared_resources]
+      properties:
+        configuration_copied: { type: boolean }
+        variables_copied: { type: integer, minimum: 0 }
+        secrets_copied: { type: integer, minimum: 0 }
+        workloads_copied: { type: integer, minimum: 0 }
+        bindings_copied: { type: integer, minimum: 0 }
+        shared_resources:
+          type: array
+          items: { type: string, enum: [domains, policies, routes, managed_postgres_data, object_storage_bucket_data] }
 
     ProjectEnvironmentReleaseListResponse:
       description: Current non-secret release inventory for a project environment.
@@ -25500,6 +26161,169 @@ components:
         source_sha256: { type: string }
         traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         created_at: { type: string, format: date-time }
+
+    ProjectEnvironmentVariableResponse:
+      description: Non-secret runtime variable attached to an environment workload.
+      type: object
+      required: [key, value]
+      properties:
+        key: { type: string }
+        value: { type: string }
+        updated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentSecretResponse:
+      description: Safe secret metadata. Secret values and ciphertext are never included.
+      type: object
+      required: [key]
+      properties:
+        key: { type: string }
+        value_hash: { type: string, pattern: '^[a-f0-9]{16}$' }
+        managed_by: { type: string, enum: [managed_postgres, object_storage] }
+        binding_id: { type: string }
+        credential_generation: { type: integer, format: int64, minimum: 1 }
+        updated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentBindingResponse:
+      description: Managed resource binding and its target-scoped credential metadata.
+      type: object
+      required: [kind, binding_id, secret_keys]
+      properties:
+        kind: { type: string, enum: [managed_postgres, object_storage] }
+        binding_id: { type: string }
+        credential_generation: { type: integer, format: int64, minimum: 1 }
+        secret_keys:
+          type: array
+          items: { type: string }
+
+    ProjectEnvironmentStateWorkloadResponse:
+      description: Effective configuration and live release state for one workload.
+      type: object
+      required: [workload_slug, workload_name, release, variables, secrets, bindings]
+      properties:
+        workload_slug: { type: string }
+        workload_name: { type: string }
+        release: { $ref: '#/components/schemas/ProjectEnvironmentReleaseWorkloadResponse' }
+        variables:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentVariableResponse' }
+        secrets:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentSecretResponse' }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
+
+    ProjectEnvironmentSharedResourceResponse:
+      description: Application-scoped resource that is shared by all environments.
+      type: object
+      required: [kind, ownership, note]
+      properties:
+        kind: { type: string, enum: [domains, policies, routes] }
+        ownership: { type: string, enum: [application] }
+        note: { type: string }
+
+    ProjectEnvironmentStateResponse:
+      description: Point-in-time effective state snapshot for a project environment.
+      type: object
+      required: [project_slug, environment, protected, configuration, workloads, shared_resources, generated_at]
+      properties:
+        project_slug: { type: string }
+        environment: { type: string }
+        protected: { type: boolean }
+        configuration: { $ref: '#/components/schemas/ProjectEnvironmentConfigResponse' }
+        workloads:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentStateWorkloadResponse' }
+        shared_resources:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentSharedResourceResponse' }
+        generated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentReleaseDiffResponse:
+      description: Before-and-after release state for a workload in an environment diff.
+      type: object
+      required: [kind, before, after]
+      properties:
+        kind: { type: string, enum: [added, removed, changed, unchanged] }
+        before: { $ref: '#/components/schemas/ProjectEnvironmentReleaseWorkloadResponse' }
+        after: { $ref: '#/components/schemas/ProjectEnvironmentReleaseWorkloadResponse' }
+
+    ProjectEnvironmentVariableChangeResponse:
+      description: Non-secret runtime variable change between two environments.
+      type: object
+      required: [key, kind]
+      properties:
+        key: { type: string }
+        kind: { type: string, enum: [added, removed, changed] }
+        before: { type: string }
+        after: { type: string }
+
+    ProjectEnvironmentSecretCellResponse:
+      description: One side of a secret comparison; never contains secret material.
+      type: object
+      required: [present]
+      properties:
+        present: { type: boolean }
+        value_hash: { type: string, pattern: '^[a-f0-9]{16}$' }
+        managed_by: { type: string, enum: [managed_postgres, object_storage] }
+        binding_id: { type: string }
+        credential_generation: { type: integer, format: int64, minimum: 1 }
+
+    ProjectEnvironmentSecretChangeResponse:
+      description: Secret metadata comparison that excludes secret values and ciphertext.
+      type: object
+      required: [key, kind, before, after]
+      properties:
+        key: { type: string }
+        kind: { type: string, enum: [added, removed, changed, unknown] }
+        before: { $ref: '#/components/schemas/ProjectEnvironmentSecretCellResponse' }
+        after: { $ref: '#/components/schemas/ProjectEnvironmentSecretCellResponse' }
+
+    ProjectEnvironmentBindingChangeResponse:
+      description: Managed resource binding change between two environment states.
+      type: object
+      required: [kind, binding_id, change]
+      properties:
+        kind: { type: string, enum: [managed_postgres, object_storage] }
+        binding_id: { type: string }
+        change: { type: string, enum: [added, removed, changed] }
+        before: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
+        after: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
+
+    ProjectEnvironmentWorkloadDiffResponse:
+      description: Release, variable, secret, and binding changes for one workload.
+      type: object
+      required: [workload_slug, workload_name, release, variables, secrets, bindings]
+      properties:
+        workload_slug: { type: string }
+        workload_name: { type: string }
+        release: { $ref: '#/components/schemas/ProjectEnvironmentReleaseDiffResponse' }
+        variables:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentVariableChangeResponse' }
+        secrets:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentSecretChangeResponse' }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBindingChangeResponse' }
+
+    ProjectEnvironmentDiffResponse:
+      description: Effective-state comparison from one project environment to another.
+      type: object
+      required: [project_slug, from_environment, to_environment, configuration, workloads, shared_resources, generated_at]
+      properties:
+        project_slug: { type: string }
+        from_environment: { type: string }
+        to_environment: { type: string }
+        configuration: { $ref: '#/components/schemas/ProjectEnvironmentConfigDiffResponse' }
+        workloads:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentWorkloadDiffResponse' }
+        shared_resources:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentSharedResourceResponse' }
+        generated_at: { type: string, format: date-time }
 
     UpdateProjectEnvironmentConfigRequest:
       description: Non-secret JSON configuration to append as a new environment version.
@@ -25597,12 +26421,25 @@ components:
         promotion_token: { type: string, minLength: 1 }
 
     CreateProjectEnvironmentRequest:
-      description: Request to register a named project environment.
+      description: Request to register or clone a named project environment.
       type: object
       required: [slug]
       properties:
-        slug: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+        slug:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          not: { const: default }
+          description: Canonical slug to assign to the new environment; `default` is reserved for application scope.
         protected: { type: boolean, default: false }
+        from_environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          not: { const: default }
+          description: Source environment whose scoped configuration and values are copied.
+        share_resources:
+          type: boolean
+          default: false
+          description: Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-storage resources; data remains shared.
 
     CreateProjectEnvironmentApprovalRequest:
       description: Request to approve one exact plan for a protected environment. Provide exactly one of plan_token or promotion_token.
@@ -28728,7 +29565,7 @@ components:
           description: "RFC 3339 UTC timestamp of the health transition."
         status:
           type: string
-          enum: [starting, healthy, unhealthy, restarting, failed]
+          enum: [starting, healthy, unhealthy, restarting, failed, ready, unready]
           description: "Closed sidecar health state emitted by guest-init."
         reason:
           type: string
@@ -31148,7 +31985,7 @@ components:
     AccountTraceLookupResponse:
       type: object
       description: "Tenant-scoped distributed-trace correlation envelope."
-      required: [trace_id, generated_at, limit, matches, invocations, spans, spans_truncated]
+      required: [trace_id, generated_at, limit, matches, invocations, logs, logs_truncated, spans, spans_truncated]
       properties:
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         generated_at: { type: string, format: date-time }
@@ -31159,6 +31996,11 @@ components:
         invocations:
           type: array
           items: { $ref: '#/components/schemas/AccountTraceInvocation' }
+        logs:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/LogQueryEvent' }
+        logs_truncated: { type: boolean }
         spans:
           type: array
           maxItems: 100
@@ -31168,6 +32010,29 @@ components:
         errors:
           type: array
           items: { $ref: '#/components/schemas/AccountTraceLookupError' }
+
+    LogQueryEvent:
+      type: object
+      description: "Safe source-neutral log query event; trace lookup returns the HTTP access-log projection."
+      required: [id, timestamp, source, message]
+      properties:
+        id: { type: string, format: uuid }
+        app: { type: string }
+        timestamp: { type: string, format: date-time }
+        source: { type: string, enum: [runtime, http] }
+        deployment_id: { type: string, format: uuid }
+        instance_id: { type: string }
+        request_id: { type: string }
+        trace_id: { type: string }
+        route: { type: string }
+        method: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        level: { type: string, enum: [trace, debug, info, warn, error, fatal] }
+        stream: { type: string, enum: [stdout, stderr, system, access] }
+        message: { type: string, minLength: 1, maxLength: 16384 }
+        latency_ms: { type: integer, minimum: 0 }
+        count: { type: integer, minimum: 1 }
+        cold_boot: { type: boolean }
 
     AccountTraceMatch:
       type: object
@@ -33405,13 +34270,24 @@ components:
           additionalProperties: { type: string }
 
     # ─── Outbound webhooks (issue #476 / ADR-076) ──────────────────────────────
+    DeploymentLiveWebhookPayload:
+      type: object
+      description: Deployment reached the live state. Delivery IDs are stable across retries.
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id: { type: string, description: App that owns this live deployment. }
+        deployment_id: { type: string, description: Deployment that entered the live state. }
+        status: { type: string, enum: [live] }
+      additionalProperties: true
+
     DeploymentFailedWebhookPayload:
       type: object
-      description: Deployment failure details delivered with deployment.failed.
-      required: [app_id, deployment_id]
+      description: Deployment failure details delivered with deployment.failed. Delivery IDs are stable across retries.
+      required: [app_id, deployment_id, status]
       properties:
-        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
-        deployment_id: { type: string }
+        app_id: { type: string, description: App that owns this failed deployment. }
+        deployment_id: { type: string, description: Deployment that entered the failed state. }
+        status: { type: string, enum: [failed] }
         error_code: { type: string }
         error_hint: { type: string }
         error_why: { type: string }
@@ -33419,13 +34295,27 @@ components:
         relevant_logs: { type: array, items: { type: string } }
       additionalProperties: true
 
+    RolloutCompletedWebhookPayload:
+      type: object
+      description: The configured rollout completed. Explicit traffic splits may complete below 100%; inspect traffic_percent.
+      required: [app_id, deployment_id, rollout_state, traffic_percent, completed_at]
+      properties:
+        app_id: { type: string }
+        deployment_id: { type: string }
+        rollout_state: { type: string, enum: [complete] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        completed_at: { type: string, format: date-time }
+      additionalProperties: true
+
     RolloutAbortedWebhookPayload:
       type: object
-      description: Rollout abort details delivered with rollout.aborted.
-      required: [app_id, deployment_id, reason]
+      description: A live rollout was aborted. Pre-live build failures emit deployment.failed instead.
+      required: [app_id, deployment_id, rollout_state, traffic_percent, reason, aborted_at]
       properties:
-        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        app_id: { type: string }
         deployment_id: { type: string }
+        rollout_state: { type: string, enum: [aborted] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         reason: { type: string }
         aborted_at: { type: string, format: date-time }
       additionalProperties: true
@@ -33583,7 +34473,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -33997,7 +34887,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -34054,7 +34944,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

@@ -55,12 +55,25 @@ type ProjectDeletePreviewResponse struct {
 
 // ProjectEnvironmentResponse is one durable environment registry entry.
 type ProjectEnvironmentResponse struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Slug      string `json:"slug"`
-	Protected bool   `json:"protected"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID         string                           `json:"id"`
+	ProjectID  string                           `json:"project_id"`
+	Slug       string                           `json:"slug"`
+	Protected  bool                             `json:"protected"`
+	CreatedAt  string                           `json:"created_at"`
+	UpdatedAt  string                           `json:"updated_at"`
+	ClonedFrom string                           `json:"cloned_from,omitempty"`
+	Clone      *ProjectEnvironmentCloneResponse `json:"clone,omitempty"`
+}
+
+// ProjectEnvironmentCloneResponse reports non-secret counts copied by an
+// environment clone. Shared managed data resources are called out explicitly.
+type ProjectEnvironmentCloneResponse struct {
+	ConfigurationCopied bool     `json:"configuration_copied"`
+	VariablesCopied     int      `json:"variables_copied"`
+	SecretsCopied       int      `json:"secrets_copied"`
+	WorkloadsCopied     int      `json:"workloads_copied"`
+	BindingsCopied      int      `json:"bindings_copied"`
+	SharedResources     []string `json:"shared_resources"`
 }
 
 // ProjectEnvironmentReleaseListResponse is the current non-secret release
@@ -89,10 +102,147 @@ type ProjectEnvironmentReleaseWorkloadResponse struct {
 	CreatedAt      string `json:"created_at,omitempty"`
 }
 
+// ProjectEnvironmentVariableResponse is one non-secret runtime variable in
+// an effective environment snapshot. Unlike the legacy env listing, this
+// project-level operator surface includes the value so environments can be
+// compared and, later, cloned deterministically.
+type ProjectEnvironmentVariableResponse struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// ProjectEnvironmentSecretResponse is safe secret metadata for an effective
+// environment snapshot. Ciphertext, plaintext, and sealing key identifiers
+// are intentionally excluded. ValueHash supports equality checks without
+// unsealing; managed fields preserve resource-binding ownership.
+type ProjectEnvironmentSecretResponse struct {
+	Key                  string `json:"key"`
+	ValueHash            string `json:"value_hash,omitempty"`
+	ManagedBy            string `json:"managed_by,omitempty"`
+	BindingID            string `json:"binding_id,omitempty"`
+	CredentialGeneration int64  `json:"credential_generation,omitempty"`
+	UpdatedAt            string `json:"updated_at,omitempty"`
+}
+
+// ProjectEnvironmentBindingResponse groups managed secret keys by their
+// provider-owned binding. Clone operations must recreate these bindings
+// rather than copying their sealed credential material.
+type ProjectEnvironmentBindingResponse struct {
+	Kind                 string   `json:"kind"`
+	BindingID            string   `json:"binding_id"`
+	CredentialGeneration int64    `json:"credential_generation,omitempty"`
+	SecretKeys           []string `json:"secret_keys"`
+}
+
+// ProjectEnvironmentStateWorkloadResponse is the effective state of one
+// project workload in a named environment.
+type ProjectEnvironmentStateWorkloadResponse struct {
+	WorkloadSlug string                                    `json:"workload_slug"`
+	WorkloadName string                                    `json:"workload_name"`
+	Release      ProjectEnvironmentReleaseWorkloadResponse `json:"release"`
+	Variables    []ProjectEnvironmentVariableResponse      `json:"variables"`
+	Secrets      []ProjectEnvironmentSecretResponse        `json:"secrets"`
+	Bindings     []ProjectEnvironmentBindingResponse       `json:"bindings"`
+}
+
+// ProjectEnvironmentSharedResourceResponse documents resources that still
+// belong to the application rather than to an environment. They are surfaced
+// explicitly so callers do not mistake their absence from a clone or diff for
+// equality.
+type ProjectEnvironmentSharedResourceResponse struct {
+	Kind      string `json:"kind"`
+	Ownership string `json:"ownership"`
+	Note      string `json:"note"`
+}
+
+// ProjectEnvironmentStateResponse is the canonical read model used by future
+// clone operations and by the unified environment diff.
+type ProjectEnvironmentStateResponse struct {
+	ProjectSlug     string                                     `json:"project_slug"`
+	Environment     string                                     `json:"environment"`
+	Protected       bool                                       `json:"protected"`
+	Configuration   ProjectEnvironmentConfigResponse           `json:"configuration"`
+	Workloads       []ProjectEnvironmentStateWorkloadResponse  `json:"workloads"`
+	SharedResources []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
+	GeneratedAt     string                                     `json:"generated_at"`
+}
+
+// ProjectEnvironmentReleaseDiffResponse compares the live artifact selected
+// for one workload in two environments.
+type ProjectEnvironmentReleaseDiffResponse struct {
+	Kind   string                                    `json:"kind"`
+	Before ProjectEnvironmentReleaseWorkloadResponse `json:"before"`
+	After  ProjectEnvironmentReleaseWorkloadResponse `json:"after"`
+}
+
+// ProjectEnvironmentVariableChangeResponse is one plaintext variable change.
+// Pointer values preserve the distinction between a missing variable and an
+// explicitly empty value.
+type ProjectEnvironmentVariableChangeResponse struct {
+	Key    string  `json:"key"`
+	Kind   string  `json:"kind"`
+	Before *string `json:"before,omitempty"`
+	After  *string `json:"after,omitempty"`
+}
+
+// ProjectEnvironmentSecretCellResponse is one side of a secret comparison.
+// It deliberately has no value or ciphertext field.
+type ProjectEnvironmentSecretCellResponse struct {
+	Present              bool   `json:"present"`
+	ValueHash            string `json:"value_hash,omitempty"`
+	ManagedBy            string `json:"managed_by,omitempty"`
+	BindingID            string `json:"binding_id,omitempty"`
+	CredentialGeneration int64  `json:"credential_generation,omitempty"`
+}
+
+// ProjectEnvironmentSecretChangeResponse reports safe secret presence,
+// equality, ownership, and credential-generation changes.
+type ProjectEnvironmentSecretChangeResponse struct {
+	Key    string                               `json:"key"`
+	Kind   string                               `json:"kind"`
+	Before ProjectEnvironmentSecretCellResponse `json:"before"`
+	After  ProjectEnvironmentSecretCellResponse `json:"after"`
+}
+
+// ProjectEnvironmentBindingChangeResponse compares a provider-owned binding.
+type ProjectEnvironmentBindingChangeResponse struct {
+	Kind      string                             `json:"kind"`
+	BindingID string                             `json:"binding_id"`
+	Change    string                             `json:"change"`
+	Before    *ProjectEnvironmentBindingResponse `json:"before,omitempty"`
+	After     *ProjectEnvironmentBindingResponse `json:"after,omitempty"`
+}
+
+// ProjectEnvironmentWorkloadDiffResponse groups all effective-state changes
+// for one project workload.
+type ProjectEnvironmentWorkloadDiffResponse struct {
+	WorkloadSlug string                                     `json:"workload_slug"`
+	WorkloadName string                                     `json:"workload_name"`
+	Release      ProjectEnvironmentReleaseDiffResponse      `json:"release"`
+	Variables    []ProjectEnvironmentVariableChangeResponse `json:"variables"`
+	Secrets      []ProjectEnvironmentSecretChangeResponse   `json:"secrets"`
+	Bindings     []ProjectEnvironmentBindingChangeResponse  `json:"bindings"`
+}
+
+// ProjectEnvironmentDiffResponse is the unified comparison of configuration,
+// releases, variables, secret fingerprints, and managed bindings.
+type ProjectEnvironmentDiffResponse struct {
+	ProjectSlug     string                                     `json:"project_slug"`
+	FromEnvironment string                                     `json:"from_environment"`
+	ToEnvironment   string                                     `json:"to_environment"`
+	Configuration   ProjectEnvironmentConfigDiffResponse       `json:"configuration"`
+	Workloads       []ProjectEnvironmentWorkloadDiffResponse   `json:"workloads"`
+	SharedResources []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
+	GeneratedAt     string                                     `json:"generated_at"`
+}
+
 // CreateProjectEnvironmentRequest registers a named project environment.
 type CreateProjectEnvironmentRequest struct {
-	Slug      string `json:"slug"`
-	Protected *bool  `json:"protected,omitempty"`
+	Slug            string `json:"slug"`
+	Protected       *bool  `json:"protected,omitempty"`
+	FromEnvironment string `json:"from_environment,omitempty"`
+	ShareResources  bool   `json:"share_resources,omitempty"`
 }
 
 // UpdateProjectEnvironmentRequest changes only environment protection.

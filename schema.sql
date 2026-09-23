@@ -490,26 +490,15 @@ CREATE FUNCTION public.deployment_sidecar_layers_cap_check() RETURNS trigger
 DECLARE
     current_count integer;
 BEGIN
-    -- NEW-row predicate on UPDATE; existing-row count on INSERT.
-    -- Same query works for both because NEW carries the row's
-    -- deployment_id whether we're inserting a fresh row or
-    -- rewriting an existing one.
-    -- `current_count` is the number of rows for this deployment_id
-    -- ALREADY in the table at the time of this trigger call. We
-    -- reject the operation when the row count would exceed
-    -- SidecarCapMax (=2). Because the trigger fires BEFORE the
-    -- row is written, the post-insert count is current_count + 1
-    -- (INSERT) or unchanged (UPDATE that doesn't move the row to
-    -- a different deployment). We compare against the post-write
-    -- ceiling: if the existing count is already at or above
-    -- SidecarCapMax, refuse — that is, current_count >= 2 is a
-    -- hard reject, since adding another row would push us to 3.
+    -- Excluding NEW.sidecar_name makes an upsert of an existing layer safe
+    -- even when the deployment already has the maximum number of helpers.
     SELECT count(*) INTO current_count
         FROM deployment_sidecar_layers
-        WHERE deployment_id = NEW.deployment_id;
+        WHERE deployment_id = NEW.deployment_id
+          AND sidecar_name <> NEW.sidecar_name;
 
-    IF current_count >= 2 THEN
-        RAISE EXCEPTION 'deployment_sidecar_layers: deployment % exceeds the 2-row cap (existing=%, new would make 3)',
+    IF current_count >= 5 THEN
+        RAISE EXCEPTION 'deployment_sidecar_layers: deployment % exceeds the 5-row cap (existing other rows=%, new would exceed 5)',
             NEW.deployment_id, current_count
             USING ERRCODE = 'check_violation';
     END IF;
@@ -2531,7 +2520,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 2)),
+    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
     CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
     CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
     CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
@@ -3346,6 +3335,45 @@ COMMENT ON TABLE public.org_activity IS 'Curated organization activity timeline;
 --
 
 COMMENT ON COLUMN public.org_activity.data IS 'Non-secret display metadata. Environment variable values and credentials are forbidden.';
+
+
+--
+-- Name: org_activity_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.org_activity_outbox (
+    id bigint NOT NULL,
+    org_id uuid NOT NULL,
+    source_type text NOT NULL,
+    source_id text NOT NULL,
+    activity jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_by text,
+    claimed_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    delivered_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT org_activity_outbox_activity_check CHECK ((jsonb_typeof(activity) = 'object'::text)),
+    CONSTRAINT org_activity_outbox_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT org_activity_outbox_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'delivered'::text, 'dead_letter'::text])))
+);
+
+
+--
+-- Name: org_activity_outbox_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.org_activity_outbox ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.org_activity_outbox_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 
 
 --
@@ -5228,6 +5256,22 @@ ALTER TABLE ONLY public.org_activity
 
 
 --
+-- Name: org_activity_outbox org_activity_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_activity_outbox
+    ADD CONSTRAINT org_activity_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: org_activity_outbox org_activity_outbox_source_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_activity_outbox
+    ADD CONSTRAINT org_activity_outbox_source_uniq UNIQUE (org_id, source_type, source_id);
+
+
+--
 -- Name: org_invitations org_invitations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7076,6 +7120,13 @@ CREATE INDEX org_activity_app_timeline_idx ON public.org_activity USING btree (o
 --
 
 CREATE INDEX org_activity_timeline_idx ON public.org_activity USING btree (org_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: org_activity_outbox_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX org_activity_outbox_claim_idx ON public.org_activity_outbox USING btree (state, available_at, id) WHERE (state = ANY (ARRAY['pending'::text, 'processing'::text]));
 
 
 --
@@ -9414,6 +9465,7 @@ CREATE TABLE public.object_buckets (
     last_error_code text DEFAULT '' NOT NULL,
     public_read boolean DEFAULT false NOT NULL,
     serve_at text,
+    environment_clone_source_bucket_id uuid,
     CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -10048,6 +10100,56 @@ ALTER TABLE ONLY public.runtime_snapshots
     ADD CONSTRAINT runtime_snapshots_catalog_key_key UNIQUE (catalog_key);
 
 CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USING btree (state, created_at DESC, id DESC);
+
+
+CREATE TABLE public.project_environment_cleanup_jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    resources jsonb NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_cleanup_jobs_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT project_environment_cleanup_jobs_resources_object CHECK ((jsonb_typeof(resources) = 'object'::text))
+);
+
+
+ALTER TABLE ONLY public.project_environment_cleanup_jobs
+    ADD CONSTRAINT project_environment_cleanup_jobs_pkey PRIMARY KEY (id);
+
+CREATE INDEX project_environment_cleanup_jobs_due_idx ON public.project_environment_cleanup_jobs USING btree (next_attempt_at, created_at, id) WHERE (lease_until IS NULL);
+
+CREATE INDEX project_environment_cleanup_jobs_lease_idx ON public.project_environment_cleanup_jobs USING btree (lease_until) WHERE (lease_until IS NOT NULL);
+
+
+--
+-- Name: deployment_aliases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_aliases (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_aliases_name_format_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+);
+
+
+ALTER TABLE ONLY public.deployment_aliases
+    ADD CONSTRAINT deployment_aliases_pkey PRIMARY KEY (app_id, name);
+
+ALTER TABLE ONLY public.deployment_aliases
+    ADD CONSTRAINT deployment_aliases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.deployment_aliases
+    ADD CONSTRAINT deployment_aliases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+CREATE INDEX deployment_aliases_deployment_idx ON public.deployment_aliases USING btree (deployment_id);
 
 
 --
