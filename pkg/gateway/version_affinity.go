@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"net/http"
 	"sort"
 	"strings"
@@ -65,6 +66,46 @@ func versionAffinityKeyFromRequest(r *http.Request) (string, string) {
 	if !ok {
 		return "", versionAffinityKeyInvalid
 	}
+	return key, versionAffinityKeyValid
+}
+
+// versionAffinityKeyFromPublicRequest uses an explicitly supplied header first.
+// When the app opts into a browser cookie source, it hashes that cookie into
+// a non-secret key before forwarding the request to the guest. The derived
+// header lets the existing picker, cache partition, and service propagation
+// all use the same cohort without exposing the cookie value as a new header.
+func versionAffinityKeyFromPublicRequest(r *http.Request, cookieName string) (string, string) {
+	if r == nil || cookieName == "" {
+		return versionAffinityKeyFromRequest(r)
+	}
+	if _, present := r.Header[http.CanonicalHeaderKey(api.VersionKeyHeader)]; present {
+		return versionAffinityKeyFromRequest(r)
+	}
+	var cookieValue string
+	cookieCount := 0
+	for _, cookie := range r.Cookies() {
+		if cookie.Name != cookieName {
+			continue
+		}
+		cookieCount++
+		if cookieCount > 1 {
+			return "", versionAffinityKeyInvalid
+		}
+		cookieValue = cookie.Value
+	}
+	if cookieCount == 0 {
+		return "", versionAffinityKeyMissing
+	}
+	value, ok := normalizeVersionAffinityKey(cookieValue)
+	if !ok {
+		return "", versionAffinityKeyInvalid
+	}
+	digest := sha256.Sum256([]byte("gregale-version-cookie\x00" + cookieName + "\x00" + value))
+	key := hex.EncodeToString(digest[:])
+	if r.Header == nil {
+		r.Header = make(http.Header)
+	}
+	r.Header.Set(api.VersionKeyHeader, key)
 	return key, versionAffinityKeyValid
 }
 

@@ -151,6 +151,18 @@ This is cohort affinity, not a revision override or an authorization boundary:
 clients cannot name a deployment with it, and changing weights still controls
 the size of each cohort.
 
+For browser traffic, configure a cookie source on the app so ordinary page,
+image, and script requests share a cohort without JavaScript setting a custom
+header. For example, `PATCH /v1/apps/my-app` with
+`{"version_affinity_cookie":"visitor_id"}` uses the `visitor_id` cookie when
+`Gregale-Version-Key` is absent. The cookie should contain a stable, opaque,
+non-secret value of at most 256 bytes. Gregale hashes it before exposing the
+derived key to the guest or managed service calls. An explicit version-key
+header takes precedence, including when invalid; duplicate or invalid cookie
+values fall back to normal weighted routing. Set the field to `""` to disable
+cookie sourcing. This setting is distinct from `session_affinity`, which
+targets a running VM rather than a rollout revision.
+
 Traffic splitting and canary rollouts are available on every plan. During a
 rollout an app runs one instance above its plan's concurrency limit so both
 revisions can serve at once; that extra instance lasts only as long as the
