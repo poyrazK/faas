@@ -1448,11 +1448,19 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			}
 			batch = append(batch, preview)
 		}
-		reserver, ok := s.Reconcile.Store.(state.PRPreviewBatchStore)
+		// Reserve and replace the set together: a removed exclusive sibling
+		// frees its quota slot before a new one is counted, and any failure
+		// rolls the old set and app rows back as a unit.
+		reserver, ok := s.Reconcile.Store.(state.PRPreviewSetBatchStore)
 		if !ok {
-			return reconcile.Result{}, fmt.Errorf("githubd: preview store does not support atomic reservation")
+			return reconcile.Result{}, fmt.Errorf("githubd: preview store does not support atomic set replacement")
 		}
-		reserved, reserveErr := reserver.CreatePRPreviewAppsIfUnderQuota(ctx, batch, previewLimits)
+		reserved, reserveErr := reserver.ReservePRPreviewSet(ctx, state.PRPreviewHead{
+			InstallationID: install.InstallationID,
+			RepoFullName:   ev.Repository.FullName,
+			PRNumber:       ev.Number,
+			CommitSHA:      ev.PullRequest.HeadSHA,
+		}, batch, previewLimits)
 		if reserveErr != nil {
 			var quota *state.QuotaError
 			if errors.As(reserveErr, &quota) {
@@ -1650,24 +1658,6 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			result.Added = append(result.Added, preview)
 		}
 		toBuild = append(toBuild, created)
-		sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore)
-		if !ok {
-			return result, fmt.Errorf("githubd: preview store does not support revision sets")
-		}
-		memberIDs := make([]string, 0, len(toBuild))
-		for _, preview := range toBuild {
-			memberIDs = append(memberIDs, preview.ID)
-		}
-		if err := sets.PutPRPreviewSet(ctx, state.PRPreviewSet{
-			InstallationID: install.InstallationID,
-			RepoFullName:   ev.Repository.FullName,
-			PRNumber:       ev.Number,
-			CommitSHA:      ev.PullRequest.HeadSHA,
-			RootAppID:      created.ID,
-			MemberAppIDs:   memberIDs,
-		}); err != nil {
-			return result, fmt.Errorf("githubd: record PR preview set: %w", err)
-		}
 		project := state.Project{
 			AccountID:        binding.AccountID,
 			RepoFullName:     ev.Repository.FullName,
