@@ -471,6 +471,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// dockerfile deploys and produced misleading split-by-source
 		// dashboards.
 		_, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+			Activity:               s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": string(kind), "scope": rollout.Scope}),
 			AppID:                  app.ID,
 			Kind:                   kind,
 			SourcePath:             sourcePath,

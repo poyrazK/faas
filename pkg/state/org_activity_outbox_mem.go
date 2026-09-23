@@ -20,8 +20,9 @@ type orgActivityOutboxRow struct {
 }
 
 var (
-	_ OrgActivityOutboxStore      = (*MemStore)(nil)
-	_ OrgActivityEnvMutationStore = (*MemStore)(nil)
+	_ OrgActivityOutboxStore             = (*MemStore)(nil)
+	_ OrgActivityEnvMutationStore        = (*MemStore)(nil)
+	_ OrgActivityDeploymentMutationStore = (*MemStore)(nil)
 )
 
 func orgActivityOutboxKey(entry OrgActivity) string {

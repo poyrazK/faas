@@ -189,6 +189,10 @@ type EnqueueParams struct {
 	ActorVia         string
 	ActorFromIP      string
 	ActorPusherLogin string
+	// Activity, when set, is committed with the durable build-queue row.
+	// The activity is a prevalidated customer-safe projection; Enqueue fills
+	// its deployment identifiers before crossing the store boundary.
+	Activity *state.OrgActivity
 	// Annotation fields (issue #977 / ADR-116). Optional;
 	// empty/zero values mean "no annotation" and the pgstore
 	// collapses them to NULL on the row. PRNumber=0 → NULL via
@@ -543,7 +547,32 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// Publish the build and building status together. Same kind as the deployment;
 	// builderd's railpack/dockerfile/tarball detector picks the
 	// pipeline at build time.
-	build, err := store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
+	var build state.Build
+	var activityOutboxID int64
+	if p.Activity != nil {
+		activity := *p.Activity
+		deploymentID, parseErr := uuid.Parse(d.ID)
+		if parseErr != nil {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: parse activity deployment id: %w", parseErr)
+		}
+		activity.DeploymentID = &deploymentID
+		activity.SourceType = "deployment"
+		activity.SourceID = d.ID
+		if activity.AppID == nil {
+			appID, parseErr := uuid.Parse(d.AppID)
+			if parseErr != nil {
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: parse activity app id: %w", parseErr)
+			}
+			activity.AppID = &appID
+		}
+		if activityStore, ok := store.(state.OrgActivityDeploymentMutationStore); ok {
+			build, activityOutboxID, err = activityStore.CreateBuildWithIDAndActivity(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"), activity)
+		} else {
+			build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
+		}
+	} else {
+		build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
+	}
 	if err != nil {
 		if p.DeliveryID != "" && errors.Is(err, state.ErrConflict) {
 			if reader, ok := store.(interface {
@@ -565,6 +594,16 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			p.Log.Warn("apidsource.Enqueue: mark source deployment failed", "deployment", d.ID, "err", cleanupErr)
 		}
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: create build: %w", err)
+	}
+	if activityOutboxID > 0 {
+		if outbox, ok := store.(state.OrgActivityOutboxStore); ok {
+			if _, deliverErr := outbox.DeliverOrgActivityOutbox(ctx, activityOutboxID); deliverErr != nil {
+				if failErr := outbox.FailOrgActivityOutbox(ctx, activityOutboxID, deliverErr); failErr != nil && !errors.Is(failErr, state.ErrNotFound) {
+					p.Log.Warn("apidsource.Enqueue: release deployment activity", "deployment", d.ID, "err", failErr)
+				}
+				p.Log.Warn("apidsource.Enqueue: project deployment activity", "deployment", d.ID, "err", deliverErr)
+			}
+		}
 	}
 
 	// Resolve the wire "source" field. Default to Kind so the

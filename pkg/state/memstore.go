@@ -6310,16 +6310,48 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
+	created, _, err := m.createDeployment(d, nil)
+	return created, err
+}
+
+func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	return m.createDeployment(d, &activity)
+}
+
+func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deployment, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
-		return Deployment{}, ErrNotFound
+		return Deployment{}, 0, ErrNotFound
 	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
-			return Deployment{}, ErrConflict
+			return Deployment{}, 0, ErrConflict
 		}
+	}
+	if d.ID == "" {
+		d.ID = newID()
+	}
+	if activity != nil {
+		deploymentID, err := uuid.Parse(d.ID)
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: parse created deployment activity id: %w", err)
+		}
+		activity.SourceID = d.ID
+		activity.DeploymentID = &deploymentID
+		if activity.AppID == nil {
+			appID, parseErr := uuid.Parse(d.AppID)
+			if parseErr != nil {
+				return Deployment{}, 0, fmt.Errorf("state: parse created deployment app id: %w", parseErr)
+			}
+			activity.AppID = &appID
+		}
+		normalized, err := normalizeOrgActivity(*activity, time.Now())
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		activity = &normalized
 	}
 	if d.CanaryPreset == "" {
 		d.CanaryPreset = "none"
@@ -6384,9 +6416,6 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		m.deployments[priorID] = prior
 	}
 
-	if d.ID == "" {
-		d.ID = newID()
-	}
 	if d.CreatedAt.IsZero() {
 		d.CreatedAt = time.Now().UTC()
 	}
@@ -6406,7 +6435,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	}
 	stageState, err := deploymentStageStateForCreate(d.StageState, d.CreatedAt)
 	if err != nil {
-		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
+		return Deployment{}, 0, fmt.Errorf("state: encode deployment stage state: %w", err)
 	}
 	d.StageState = stageState
 	// ADR-198 — mirror PgStore's `max(revision) + 1` per app. PgStore
@@ -6417,7 +6446,11 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
 	m.deployments[d.ID] = d
-	return d, nil
+	var outboxID int64
+	if activity != nil {
+		outboxID = m.enqueueOrgActivityOutboxLocked(*activity)
+	}
+	return d, outboxID, nil
 }
 
 // nextDeploymentRevisionLocked returns the next per-app revision. Caller
@@ -9337,24 +9370,45 @@ func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind Depl
 }
 
 func (m *MemStore) CreateBuildWithID(_ context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
+	build, _, err := m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, nil)
+	return build, err
+}
+
+func (m *MemStore) CreateBuildWithIDAndActivity(_ context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity OrgActivity) (Build, int64, error) {
+	return m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, &activity)
+}
+
+func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity) (Build, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.deployments[deploymentID]; !ok {
-		return Build{}, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
+		return Build{}, 0, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
 	}
 	dep := m.deployments[deploymentID]
 	if dep.Status != DeployPending && dep.Status != DeployBuilding {
-		return Build{}, ErrNotFound
+		return Build{}, 0, ErrNotFound
 	}
 	if _, exists := m.builds[id]; exists {
-		return Build{}, ErrConflict
+		return Build{}, 0, ErrConflict
+	}
+	var normalized OrgActivity
+	if activity != nil {
+		var err error
+		normalized, err = normalizeOrgActivity(*activity, time.Now())
+		if err != nil {
+			return Build{}, 0, err
+		}
 	}
 	b := Build{ID: id, DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath, EnqueuedAt: time.Now()}
 	dep.Status = DeployBuilding
 	dep.BuildID = id
 	m.deployments[deploymentID] = dep
 	m.builds[b.ID] = b
-	return b, nil
+	var outboxID int64
+	if activity != nil {
+		outboxID = m.enqueueOrgActivityOutboxLocked(normalized)
+	}
+	return b, outboxID, nil
 }
 
 func (m *MemStore) FailSourceDeployment(_ context.Context, id, message string) error {

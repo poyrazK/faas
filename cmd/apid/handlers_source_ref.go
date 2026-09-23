@@ -247,6 +247,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+		Activity:        s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
 		AppID:           app.ID,
 		Kind:            state.DeploymentKindGitHub,
 		SourcePath:      spoolPath,

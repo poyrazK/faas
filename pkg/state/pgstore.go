@@ -6379,10 +6379,19 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // to supply a deterministic UUID; all other callers keep the database-generated
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	created, _, err := s.createDeployment(ctx, d, nil)
+	return created, err
+}
+
+func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	return s.createDeployment(ctx, d, &activity)
+}
+
+func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity) (Deployment, int64, error) {
 	d.Scope = normalizedDeploymentScope(d.Scope)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return Deployment{}, fmt.Errorf("state: begin tx: %w", err)
+		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 	if d.RolloutState == "" {
@@ -6403,9 +6412,9 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		`select 1 from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
 		d.AppID).Scan(&locked); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, ErrNotFound
+			return Deployment{}, 0, ErrNotFound
 		}
-		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+		return Deployment{}, 0, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
 	// 2. Supersede an older pending row, if any. A live deployment remains
 	//    routable until MarkDeploymentLive atomically promotes its healthy
@@ -6448,14 +6457,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		  for update`,
 			d.AppID, normalizedDeploymentScope(d.Scope)).Scan(&priorID); err != nil {
 			if !errors.Is(err, pgx.ErrNoRows) {
-				return Deployment{}, fmt.Errorf("state: lock prior pending deployment: %w", err)
+				return Deployment{}, 0, fmt.Errorf("state: lock prior pending deployment: %w", err)
 			}
 		} else {
 			if _, err := tx.Exec(ctx,
 				`update deployments
 				    set status = 'superseded', traffic_percent = 0
 				  where id = $1`, priorID); err != nil {
-				return Deployment{}, fmt.Errorf("state: supersede prior pending %s: %w", priorID, err)
+				return Deployment{}, 0, fmt.Errorf("state: supersede prior pending %s: %w", priorID, err)
 			}
 		}
 	}
@@ -6509,7 +6518,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	}
 	stageState, err := deploymentStageStateForCreate(d.StageState, stageStartedAt)
 	if err != nil {
-		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
+		return Deployment{}, 0, fmt.Errorf("state: encode deployment stage state: %w", err)
 	}
 	row := tx.QueryRow(ctx,
 		`insert into deployments (id, app_id, image_digest, kind, source_path, source_root, source_bytes, source_sha256, handler, log_path, source_url, commit_sha,
@@ -6586,12 +6595,36 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx)
 	created, err := scanDeployment(row)
 	if err != nil {
-		return Deployment{}, err
+		return Deployment{}, 0, err
+	}
+	var outboxID int64
+	if activity != nil {
+		deploymentID, err := uuid.Parse(created.ID)
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: parse created deployment activity id: %w", err)
+		}
+		activity.SourceID = created.ID
+		activity.DeploymentID = &deploymentID
+		if activity.AppID == nil {
+			appID, parseErr := uuid.Parse(created.AppID)
+			if parseErr != nil {
+				return Deployment{}, 0, fmt.Errorf("state: parse created deployment app id: %w", parseErr)
+			}
+			activity.AppID = &appID
+		}
+		normalized, normalizeErr := normalizeOrgActivity(*activity, time.Now())
+		if normalizeErr != nil {
+			return Deployment{}, 0, normalizeErr
+		}
+		outboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, normalized)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Deployment{}, fmt.Errorf("state: commit create deployment: %w", err)
+		return Deployment{}, 0, fmt.Errorf("state: commit create deployment: %w", err)
 	}
-	return created, nil
+	return created, outboxID, nil
 }
 
 func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, error) {
@@ -10727,31 +10760,51 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 // CreateBuildWithID publishes a pre-uploaded source into the queue and
 // advances its deployment under the same lock used by cancellation.
 func (s *PgStore) CreateBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
+	build, _, err := s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, nil)
+	return build, err
+}
+
+func (s *PgStore) CreateBuildWithIDAndActivity(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity OrgActivity) (Build, int64, error) {
+	return s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, &activity)
+}
+
+func (s *PgStore) createBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity) (Build, int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return Build{}, err
+		return Build{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `update deployments set status='building' where id=$1 and status in ('pending','building')`, deploymentID)
 	if err != nil {
-		return Build{}, err
+		return Build{}, 0, err
 	}
 	if tag.RowsAffected() != 1 {
-		return Build{}, ErrNotFound
+		return Build{}, 0, ErrNotFound
 	}
 	build, err := scanBuild(tx.QueryRow(ctx, `insert into builds(id,deployment_id,kind,source_bytes,status,log_path)
 	values($1,$2,$3,$4,'queued',$5)
 	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade,coalesce(cache_status,''),coalesce(cache_key_sha256,'')`, id, deploymentID, kind, sourceBytes, nullString(logPath)))
 	if err != nil {
-		return Build{}, err
+		return Build{}, 0, err
 	}
 	if _, err := tx.Exec(ctx, `update deployments set build_id=$2 where id=$1`, deploymentID, id); err != nil {
-		return Build{}, err
+		return Build{}, 0, err
+	}
+	var outboxID int64
+	if activity != nil {
+		normalized, normalizeErr := normalizeOrgActivity(*activity, time.Now())
+		if normalizeErr != nil {
+			return Build{}, 0, normalizeErr
+		}
+		outboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, normalized)
+		if err != nil {
+			return Build{}, 0, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Build{}, err
+		return Build{}, 0, err
 	}
-	return build, nil
+	return build, outboxID, nil
 }
 
 func (s *PgStore) FailSourceDeployment(ctx context.Context, id, message string) error {
