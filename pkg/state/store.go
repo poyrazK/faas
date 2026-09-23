@@ -6074,9 +6074,11 @@ type Store interface {
 	// request; no ON CONFLICT — every request gets its own row.
 	// The recorder's in-process LRU dedupe at minute granularity
 	// is the upstream tripwire; the unique-index absence here is
-	// intentional (request_id is the natural dedupe, but the
-	// recorder doesn't carry it).
+	// intentional for direct callers. The receiver uses
+	// RequestTelemetryLogStore below, which gates retries on the stable
+	// publisher event ID before calling this query in a transaction.
 	InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertRequestTelemetryParams) error
+	RequestTelemetryLogStore
 
 	// UpdateSpansSummary is the per-trace UPDATE called by the
 	// apid gRPC WriteSpansSummary handler (ADR-127 PR-D). It

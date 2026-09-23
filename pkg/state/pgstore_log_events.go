@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -13,6 +14,10 @@ var _ LogEventStore = (*PgStore)(nil)
 
 type logEventScanner interface {
 	Scan(dest ...any) error
+}
+
+type logEventQueryRower interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
 func scanLogEvent(row logEventScanner) (LogEvent, error) {
@@ -97,11 +102,17 @@ func (s *PgStore) InsertLogEvent(ctx context.Context, event LogEvent) (LogEvent,
 	if err != nil {
 		return LogEvent{}, err
 	}
+	return insertLogEventRow(ctx, s.pool, normalized)
+}
+
+// insertLogEventRow also accepts a pgx transaction, so a source projection
+// and its authoritative row can commit or roll back together.
+func insertLogEventRow(ctx context.Context, db logEventQueryRower, normalized LogEvent) (LogEvent, error) {
 	var latency any
 	if normalized.LatencyMS != nil {
 		latency = *normalized.LatencyMS
 	}
-	row := s.pool.QueryRow(ctx, `
+	row := db.QueryRow(ctx, `
 		insert into log_events (
 			id, occurred_at, account_id, app_id, deployment_id, instance_id,
 			source, source_event_id, request_id, trace_id, route, method,

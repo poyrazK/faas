@@ -41,6 +41,13 @@ source timestamp and a stable source event ID so retries converge on the same
 ledger row. Source adapters roll out independently and may dual-write while
 their existing customer surfaces remain available.
 
+The first adapter projects accepted gateway HTTP telemetry aggregates inside
+`apid`. The existing plan and rate gates still decide which aggregates are
+accepted. The gateway's stable `event_id` and the original telemetry timestamp
+identify a replay; one transaction commits the telemetry row and its redacted
+log projection, and a replay commits neither again. Historical telemetry rows
+are not backfilled by this adapter.
+
 The public read path is app-scoped and always predicates both `account_id` and
 `app_id`. A cursor contains the fixed query window plus the last
 `(occurred_at,id)` tuple. Adding a new source is an additive vocabulary change
