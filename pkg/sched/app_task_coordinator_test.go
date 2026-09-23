@@ -1,6 +1,6 @@
 package sched
 
-// adr: 222 — scheduler task claims, dispatch fencing, cancellation, and
+// adr: 230 — scheduler task claims, dispatch fencing, cancellation, and
 // teardown-before-acknowledgement follow the deployment-attached task contract.
 
 import (
