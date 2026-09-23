@@ -710,6 +710,22 @@ func (e *Engine) waitForServiceRouteConvergenceForRollout(ctx context.Context, a
 			return time.Time{}, true, false
 		case event, open := <-events:
 			if !open {
+				// SubscribeWithReconnect closes its output when waitCtx expires.
+				// Both this case and waitCtx.Done are then ready, so select may
+				// choose the channel first; preserve the actual timeout outcome.
+				if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+					missing := make([]string, 0, len(expected)-len(seen))
+					for node := range expected {
+						if _, found := seen[node]; !found {
+							missing = append(missing, node)
+						}
+					}
+					sort.Strings(missing)
+					e.log.Warn("sched: deployment route convergence incomplete", "app", appID, "deployment", deploymentID, "generation", generation, "missing", strings.Join(missing, ","))
+					e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_convergence_timeout", missing)
+					e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "timeout", time.Since(started).Seconds())
+					return time.Time{}, true, false
+				}
 				e.failServiceRolloutHandoff(ctx, rolloutID, state.ServiceRolloutPhaseRouting, "route_ack_stream_closed", expectedNames)
 				e.ops.ObserveServiceRolloutHandoffPhase(action, state.ServiceRolloutPhaseRouting, "error", time.Since(started).Seconds())
 				return time.Time{}, true, false
