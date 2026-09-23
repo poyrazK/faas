@@ -3,6 +3,7 @@ package imaged
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -188,7 +189,7 @@ func TestReleaseGateDisabledKeepsExistingPrimePath(t *testing.T) {
 	if findNotify(fx.notifier, db.NotifySnapshotPrime) == nil {
 		t.Fatal("disabled release gate did not preserve snapshot_prime")
 	}
-	if _, err := fx.store.ReleaseAppTaskByDeployment(context.Background(), fx.candidate.ID); err != state.ErrNotFound {
+	if _, err := fx.store.ReleaseAppTaskByDeployment(context.Background(), fx.candidate.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("disabled release gate task lookup = %v, want ErrNotFound", err)
 	}
 }
