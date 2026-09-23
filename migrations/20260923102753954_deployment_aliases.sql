@@ -6,7 +6,7 @@
 -- They do not participate in the app's production traffic weights. The
 -- deployment target must belong to app_id; the write query enforces that
 -- relation atomically while the FKs preserve both rows' lifetimes.
-CREATE TABLE deployment_aliases (
+CREATE TABLE IF NOT EXISTS deployment_aliases (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     name text NOT NULL,
     deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
@@ -17,7 +17,7 @@ CREATE TABLE deployment_aliases (
         CHECK (name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
 );
 
-CREATE INDEX deployment_aliases_deployment_idx
+CREATE INDEX IF NOT EXISTS deployment_aliases_deployment_idx
     ON deployment_aliases (deployment_id);
 -- +goose StatementEnd
 
