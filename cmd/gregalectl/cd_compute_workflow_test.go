@@ -52,6 +52,28 @@ func TestCDComputeWorkflowSupportsPrepareThenActivate(t *testing.T) {
 	}
 }
 
+func TestCDComputeWorkflowSharesSSHKeyWithFleetPreflight(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatalf("read cd-compute workflow: %v", err)
+	}
+	workflow := string(body)
+	start := strings.Index(workflow, "- name: Verify runner prerequisites and adopt the compute host")
+	if start < 0 {
+		t.Fatal("missing compute adoption step")
+	}
+	end := strings.Index(workflow[start:], "\n      - name:")
+	if end < 0 {
+		t.Fatal("cannot isolate compute adoption step")
+	}
+	step := workflow[start : start+end]
+	key := strings.Index(step, `export ANSIBLE_PRIVATE_KEY_FILE="$ARTIFACT_DIR/compute-ssh-key"`)
+	fleet := strings.Index(step, `if [[ -n "$COMPUTE_TARGETS" ]]; then`)
+	if key < 0 || fleet < 0 || key > fleet {
+		t.Fatal("the fleet preflight must inherit the operator SSH key before the batch branch")
+	}
+}
+
 func TestCDComputeWorkflowPinsDynamicHostForPostJoinProbes(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {

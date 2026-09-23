@@ -931,6 +931,10 @@ jobs:
           SKIP_FLEET_PREFLIGHT: ${{ inputs.skip_fleet_preflight }}
         run: |
           set -euo pipefail
+          # join-fleet's shared Ansible preflight also visits manifest peers
+          # outside COMPUTE_TARGETS. Give those peers the same operator key
+          # that join-node already uses; target host_vars alone are not enough.
+          export ANSIBLE_PRIVATE_KEY_FILE="$ARTIFACT_DIR/compute-ssh-key"
           if [[ -n "$COMPUTE_TARGETS" ]]; then
             nodes_file="$ARTIFACT_DIR/compute-targets.json"
             jq -ce '{nodes: map({
@@ -970,7 +974,6 @@ jobs:
           # defaults so preflight and the control-plane convergence can reach
           # every existing peer; the generated target host vars still retain
           # the provider-specific SSH override and strict host-key policy.
-          export ANSIBLE_PRIVATE_KEY_FILE="$ARTIFACT_DIR/compute-ssh-key"
           export ANSIBLE_REMOTE_USER="$SSH_USER"
           export ANSIBLE_REMOTE_PORT="$SSH_PORT"
           JOIN_ARGS=(
