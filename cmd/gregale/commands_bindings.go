@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"sort"
@@ -24,6 +25,18 @@ const (
 type appBindingInventory struct {
 	App      string                    `json:"app"`
 	Bindings []appBindingInventoryItem `json:"bindings"`
+	Warnings []string                  `json:"warnings,omitempty"`
+}
+
+const managedPostgresBindingsWarning = "Managed PostgreSQL is unavailable; PostgreSQL bindings could not be fully listed."
+
+func managedPostgresUnavailable(err error) bool {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Problem.Code == "managed_postgres_unavailable"
+	}
+	problem := api.AsProblem(err)
+	return problem != nil && problem.Code == "managed_postgres_unavailable"
 }
 
 type appBindingInventoryItem struct {
@@ -95,12 +108,19 @@ func collectAppBindingInventory(ctx context.Context, client appBindingInventoryC
 
 	databases, err := client.ListManagedPostgresDatabases(ctx)
 	if err != nil {
-		return appBindingInventory{}, fmt.Errorf("list managed PostgreSQL databases: %w", err)
+		if !managedPostgresUnavailable(err) {
+			return appBindingInventory{}, fmt.Errorf("list managed PostgreSQL databases: %w", err)
+		}
+		inventory.Warnings = append(inventory.Warnings, managedPostgresBindingsWarning)
 	}
 	for _, database := range databases.Items {
 		bindings, err := client.ListManagedPostgresBindings(ctx, database.ID)
 		if err != nil {
-			return appBindingInventory{}, fmt.Errorf("list bindings for PostgreSQL database %q: %w", database.Name, err)
+			if !managedPostgresUnavailable(err) {
+				return appBindingInventory{}, fmt.Errorf("list bindings for PostgreSQL database %q: %w", database.Name, err)
+			}
+			inventory.Warnings = append(inventory.Warnings, managedPostgresBindingsWarning)
+			break
 		}
 		for _, binding := range bindings.Items {
 			if binding.AppID != app.ID {
@@ -180,6 +200,9 @@ func collectAppBindingInventory(ctx context.Context, client appBindingInventoryC
 func renderAppBindingInventory(inventory appBindingInventory) {
 	if len(inventory.Bindings) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No bindings for %s.\n", inventory.App)
+		for _, warning := range inventory.Warnings {
+			_, _ = fmt.Fprintf(osStdout, "Warning: %s\n", warning)
+		}
 		return
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
@@ -195,6 +218,9 @@ func renderAppBindingInventory(inventory appBindingInventory) {
 		)
 	}
 	_ = tw.Flush()
+	for _, warning := range inventory.Warnings {
+		_, _ = fmt.Fprintf(osStdout, "Warning: %s\n", warning)
+	}
 }
 
 func humanBindingValue(value string) string {
