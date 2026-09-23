@@ -315,6 +315,7 @@ from .create_deployment_request_tag_type_2_type_1 import CreateDeploymentRequest
 from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequestTagType3Type1
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
+from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
 from .create_inbound_webhook_endpoint_request_provider import CreateInboundWebhookEndpointRequestProvider
@@ -586,6 +587,7 @@ from .edge_rule_redirect_action_status_code import EdgeRuleRedirectActionStatusC
 from .edge_rule_respond_action import EdgeRuleRespondAction
 from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
+from .edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
 from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
 from .edge_rule_retry_action import EdgeRuleRetryAction
 from .edge_rule_rewrite_action import EdgeRuleRewriteAction
@@ -1387,6 +1389,7 @@ from .update_deployment_open_api_doc_response_200_source import UpdateDeployment
 from .update_deployment_request import UpdateDeploymentRequest
 from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
+from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
 from .update_job_request import UpdateJobRequest
@@ -1778,6 +1781,7 @@ __all__ = (
     "CreateDeployTokenRequest",
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
+    "CreateEdgeRuleRequestMatchHeaders",
     "CreateEdgeRuleRequestValidateMode",
     "CreateInboundWebhookEndpointRequest",
     "CreateInboundWebhookEndpointRequestProvider",
@@ -2041,6 +2045,7 @@ __all__ = (
     "EdgeRuleRespondAction",
     "EdgeRuleResponse",
     "EdgeRuleResponseKind",
+    "EdgeRuleResponseMatchHeaders",
     "EdgeRuleResponseValidateMode",
     "EdgeRuleRetryAction",
     "EdgeRuleRewriteAction",
@@ -2816,6 +2821,7 @@ __all__ = (
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
     "UpdateEdgeRuleRequest",
+    "UpdateEdgeRuleRequestMatchHeaders",
     "UpdateEdgeRuleRequestValidateMode",
     "UpdateInboundWebhookEndpointRequest",
     "UpdateJobRequest",

@@ -43,10 +43,13 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"path"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // pathMatch is the stdlib path.Match wrapper — aliased here so the
@@ -54,6 +57,33 @@ import (
 // future without changing the production call site. Today it is a
 // straight passthrough; the indirection documents the seam.
 var pathMatch = path.Match
+
+type edgeRuleRequestHeadersContextKey struct{}
+
+// WithEdgeRuleRequestHeaders snapshots the inbound request headers for
+// edge-rule selector evaluation. Later header-rewrite actions cannot change
+// which rules matched the original request.
+func WithEdgeRuleRequestHeaders(ctx context.Context, headers http.Header) context.Context {
+	return context.WithValue(ctx, edgeRuleRequestHeadersContextKey{}, headers.Clone())
+}
+
+// EdgeRuleRequestHeaders returns the immutable inbound-header snapshot put in
+// the request context by the gateway handler.
+func EdgeRuleRequestHeaders(ctx context.Context) http.Header {
+	if ctx == nil {
+		return nil
+	}
+	headers, _ := ctx.Value(edgeRuleRequestHeadersContextKey{}).(http.Header)
+	return headers
+}
+
+// RequestHeaderConditionsMatch applies exact-value header selectors. Names
+// are case-insensitive; when the request contains multiple values for a name,
+// any one exact value satisfies that selector. Every configured name must
+// match.
+func RequestHeaderConditionsMatch(expected map[string]string, actual http.Header) bool {
+	return api.EdgeRuleRequestHeadersMatch(expected, actual)
+}
 
 // pathGlobError is the parse-failure tuple the loader threads back
 // to the gateway hot path so an operator can diagnose a malformed
@@ -126,7 +156,8 @@ type EdgeRuleResolved struct {
 	Priority      int
 	PathGlob      string          // compiled via path.Match; "" = any path
 	Methods       map[string]bool // empty = any method
-	TargetAppSlug string          // kind=route only; ignored by PR 4-7
+	MatchHeaders  map[string]string
+	TargetAppSlug string // kind=route only; ignored by PR 4-7
 }
 
 // EdgeRuleRewriteResolved is the kind=rewrite subset. PR 4 mutates
@@ -135,14 +166,15 @@ type EdgeRuleResolved struct {
 // for trailing-`*` From patterns — applied via stdlib path.Match
 // + string replace at filter time).
 type EdgeRuleRewriteResolved struct {
-	ID        string
-	AccountID string
-	AppID     string
-	Priority  int
-	PathGlob  string          // "" = any path
-	Methods   map[string]bool // nil = any method
-	From      string          // literal prefix to strip; "" = match-any
-	To        string          // replacement prefix; required when rule fires
+	ID           string
+	AccountID    string
+	AppID        string
+	Priority     int
+	PathGlob     string          // "" = any path
+	Methods      map[string]bool // nil = any method
+	MatchHeaders map[string]string
+	From         string // literal prefix to strip; "" = match-any
+	To           string // replacement prefix; required when rule fires
 }
 
 // EdgeRuleRedirectResolved is the kind=redirect subset. PR 4 emits
@@ -150,15 +182,16 @@ type EdgeRuleRewriteResolved struct {
 // ∈ {301,302,307,308}; the loader defaults to 302 when 0. Headers
 // are stamped on the response via w.Header().Set before the redirect.
 type EdgeRuleRedirectResolved struct {
-	ID         string
-	AccountID  string
-	AppID      string
-	Priority   int
-	PathGlob   string
-	Methods    map[string]bool
-	StatusCode int
-	To         string
-	Headers    map[string]string
+	ID           string
+	AccountID    string
+	AppID        string
+	Priority     int
+	PathGlob     string
+	Methods      map[string]bool
+	MatchHeaders map[string]string
+	StatusCode   int
+	To           string
+	Headers      map[string]string
 }
 
 // EdgeRuleHeaderOp is one mutation a kind=headers rule carries.
@@ -183,6 +216,7 @@ type EdgeRuleHeadersResolved struct {
 	Priority        int
 	PathGlob        string
 	Methods         map[string]bool
+	MatchHeaders    map[string]string
 	RequestHeaders  []EdgeRuleHeaderOp
 	ResponseHeaders []EdgeRuleHeaderOp
 }
@@ -208,6 +242,7 @@ type EdgeRuleCORSResolved struct {
 	Priority         int
 	PathGlob         string
 	Methods          map[string]bool
+	MatchHeaders     map[string]string
 	AllowOrigins     []string
 	AllowMethods     []string
 	AllowHeaders     []string
@@ -239,6 +274,7 @@ type EdgeRuleJWTResolved struct {
 	Priority       int
 	PathGlob       string
 	Methods        map[string]bool
+	MatchHeaders   map[string]string
 	Issuer         string
 	Audience       []string          // empty = skip aud check
 	JWKSURL        string            // already https:// + not private
@@ -261,14 +297,15 @@ type EdgeRuleJWTResolved struct {
 // parse error — apid-Validate already calls net.ParseCIDR once,
 // but the SQL hotfix path means we can't trust the validator.
 type EdgeRuleIPResolved struct {
-	ID        string
-	AccountID string
-	AppID     string
-	Priority  int
-	PathGlob  string
-	Methods   map[string]bool
-	Allow     []*net.IPNet // nil = no allowlist
-	Deny      []*net.IPNet // nil = no denylist
+	ID           string
+	AccountID    string
+	AppID        string
+	Priority     int
+	PathGlob     string
+	Methods      map[string]bool
+	MatchHeaders map[string]string
+	Allow        []*net.IPNet // nil = no allowlist
+	Deny         []*net.IPNet // nil = no denylist
 }
 
 // EdgeRuleValidateResolved is the kind=validate subset (PR-B).
@@ -297,6 +334,7 @@ type EdgeRuleValidateResolved struct {
 	Priority            int
 	PathGlob            string
 	Methods             map[string]bool
+	MatchHeaders        map[string]string
 	SchemaDigest        [32]byte // SHA-256 of the raw schema body
 	ContentTypes        []string // nil/empty = any Content-Type
 	ApplyWhileStreaming bool     // default false
@@ -325,14 +363,15 @@ type EdgeRuleValidateResolved struct {
 // for defense-in-depth (the §11 spirit — abuse gates must not
 // hinge on a single validator's correctness).
 type EdgeRuleGeoResolved struct {
-	ID        string
-	AccountID string
-	AppID     string
-	Priority  int
-	PathGlob  string
-	Methods   map[string]bool
-	Allow     map[string]struct{} // ISO 3166-1 alpha-2 country codes; nil = no allowlist
-	Deny      map[string]struct{} // ISO 3166-1 alpha-2 country codes; nil = no denylist
+	ID           string
+	AccountID    string
+	AppID        string
+	Priority     int
+	PathGlob     string
+	Methods      map[string]bool
+	MatchHeaders map[string]string
+	Allow        map[string]struct{} // ISO 3166-1 alpha-2 country codes; nil = no allowlist
+	Deny         map[string]struct{} // ISO 3166-1 alpha-2 country codes; nil = no denylist
 }
 
 // EdgeRuleCache is the in-memory per-host LRU (PR 3 shape; PR 4
@@ -1279,8 +1318,8 @@ type ResolveTargetApp func(ctx context.Context, slug string) (App, bool)
 // path glob: passed through stdlib path.Match; "" = match all;
 // "*" = match all; "/api/*" = prefix-wildcard on the second
 // segment.
-func PickFirstRouteMatch(rules []EdgeRuleResolved, path, method string) *EdgeRuleResolved {
-	return pickFirstMatch(rules, path, method)
+func PickFirstRouteMatch(rules []EdgeRuleResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleResolved {
+	return pickFirstMatch(rules, path, method, requestHeaders...)
 }
 
 // PickFirstRewriteMatch / PickFirstRedirectMatch / PickFirstHeadersMatch
@@ -1294,9 +1333,12 @@ func PickFirstRouteMatch(rules []EdgeRuleResolved, path, method string) *EdgeRul
 //
 // Exported so the cmd-side loader (cmd/gatewayd-internal/edge_rules.go)
 // can call them without poking at unexported helpers.
-func PickFirstRewriteMatch(rules []EdgeRuleRewriteResolved, path, method string) *EdgeRuleRewriteResolved {
+func PickFirstRewriteMatch(rules []EdgeRuleRewriteResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleRewriteResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}
@@ -1311,9 +1353,12 @@ func PickFirstRewriteMatch(rules []EdgeRuleRewriteResolved, path, method string)
 	return nil
 }
 
-func PickFirstRedirectMatch(rules []EdgeRuleRedirectResolved, path, method string) *EdgeRuleRedirectResolved {
+func PickFirstRedirectMatch(rules []EdgeRuleRedirectResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleRedirectResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}
@@ -1328,9 +1373,12 @@ func PickFirstRedirectMatch(rules []EdgeRuleRedirectResolved, path, method strin
 	return nil
 }
 
-func PickFirstHeadersMatch(rules []EdgeRuleHeadersResolved, path, method string) *EdgeRuleHeadersResolved {
+func PickFirstHeadersMatch(rules []EdgeRuleHeadersResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleHeadersResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}
@@ -1352,9 +1400,12 @@ func PickFirstHeadersMatch(rules []EdgeRuleHeadersResolved, path, method string)
 // Match* method after the cache returns the priority-ordered slice.
 // Three small copies keep the per-kind return types precise without
 // paying for a runtime-type assertion on every request.
-func PickFirstCORSMatch(rules []EdgeRuleCORSResolved, path, method string) *EdgeRuleCORSResolved {
+func PickFirstCORSMatch(rules []EdgeRuleCORSResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleCORSResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}
@@ -1369,9 +1420,12 @@ func PickFirstCORSMatch(rules []EdgeRuleCORSResolved, path, method string) *Edge
 	return nil
 }
 
-func PickFirstJWTMatch(rules []EdgeRuleJWTResolved, path, method string) *EdgeRuleJWTResolved {
+func PickFirstJWTMatch(rules []EdgeRuleJWTResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleJWTResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}
@@ -1386,9 +1440,12 @@ func PickFirstJWTMatch(rules []EdgeRuleJWTResolved, path, method string) *EdgeRu
 	return nil
 }
 
-func PickFirstIPMatch(rules []EdgeRuleIPResolved, path, method string) *EdgeRuleIPResolved {
+func PickFirstIPMatch(rules []EdgeRuleIPResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleIPResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}
@@ -1407,9 +1464,12 @@ func PickFirstIPMatch(rules []EdgeRuleIPResolved, path, method string) *EdgeRule
 // Same priority-ASC + methods + path-glob filter shape; returns
 // the highest-priority matching validate rule, or nil on miss.
 // The body read + schema lookup happens in handler.go.
-func PickFirstValidateMatch(rules []EdgeRuleValidateResolved, path, method string) *EdgeRuleValidateResolved {
+func PickFirstValidateMatch(rules []EdgeRuleValidateResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleValidateResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}
@@ -1431,9 +1491,12 @@ func PickFirstValidateMatch(rules []EdgeRuleValidateResolved, path, method strin
 // AFTER path/methods match — the lookup is the gate's expensive
 // step, so we short-circuit on a non-matching path-glob before
 // paying it.
-func PickFirstGeoMatch(rules []EdgeRuleGeoResolved, path, method string) *EdgeRuleGeoResolved {
+func PickFirstGeoMatch(rules []EdgeRuleGeoResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleGeoResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}
@@ -1457,9 +1520,12 @@ func PickFirstGeoMatch(rules []EdgeRuleGeoResolved, path, method string) *EdgeRu
 // share the same filter semantics — methods map, path glob, first hit.
 // Splitting them keeps the per-kind return types precise without
 // paying for a runtime-type assertion on every request.
-func pickFirstMatch(rules []EdgeRuleResolved, path, method string) *EdgeRuleResolved {
+func pickFirstMatch(rules []EdgeRuleResolved, path, method string, requestHeaders ...http.Header) *EdgeRuleResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}

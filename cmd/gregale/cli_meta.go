@@ -1048,12 +1048,13 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
 				{Name: "kind", Short: "filter to a single kind", ClosedSet: edgeRuleKindVocab},
 			}},
-			{Name: "trace", Short: "Preview matching edge rules and simulate IP/geo decisions", Flags: []cliFlag{
+			{Name: "trace", Short: "Preview matching edge rules and simulate request headers and IP/geo decisions", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "url", Short: "absolute HTTP(S) request URL", Req: true, Value: "URL"},
 				{Name: "method", Short: "request method (default GET)", Value: "method"},
 				{Name: "client-ip", Short: "simulated client IP for kind=ip rules", Value: "IP"},
 				{Name: "country", Short: "simulated ISO alpha-2 country for kind=geo rules", Value: "CC"},
+				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
 			}},
 			{Name: subCreate, Short: "Add an edge rule"},
 			{Name: subGet, Short: "Show one edge rule"},

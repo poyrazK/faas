@@ -12580,7 +12580,7 @@ func (s *PgStore) NextDeploymentRouteGeneration(ctx context.Context) (int64, err
 
 const edgeRuleSelectCols = `id, account_id, app_id, match_host, match_path,
        match_methods, priority, enabled, kind, action,
-       cors_preset_id, validate_mode, created_at, updated_at`
+       cors_preset_id, validate_mode, created_at, updated_at, match_headers`
 
 // scanEdgeRule reads a single row. ErrNotFound on no-rows; raw error
 // otherwise. The kind column comes back as text; Action comes back
@@ -12620,21 +12620,27 @@ func scanEdgeRules(rows pgx.Rows) ([]EdgeRule, error) {
 // commit, so a SELECT-write drift cannot silently swallow a column.
 func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 	var (
-		r            EdgeRule
-		kind         string
-		matchMethods []string
-		actionBytes  []byte
-		corsPresetID *string
+		r                 EdgeRule
+		kind              string
+		matchMethods      []string
+		actionBytes       []byte
+		matchHeadersBytes []byte
+		corsPresetID      *string
 	)
 	if err := scan(
 		&r.ID, &r.AccountID, &r.AppID, &r.MatchHost, &r.MatchPath,
 		&matchMethods, &r.Priority, &r.Enabled, &kind, &actionBytes,
-		&corsPresetID, &r.ValidateMode, &r.CreatedAt, &r.UpdatedAt,
+		&corsPresetID, &r.ValidateMode, &r.CreatedAt, &r.UpdatedAt, &matchHeadersBytes,
 	); err != nil {
 		return EdgeRule{}, err
 	}
 	r.Kind = EdgeRuleKind(kind)
 	r.MatchMethods = matchMethods
+	if len(matchHeadersBytes) > 0 {
+		if err := json.Unmarshal(matchHeadersBytes, &r.MatchHeaders); err != nil {
+			return EdgeRule{}, fmt.Errorf("state: decode edge_rules.match_headers for %s: %w", r.ID, err)
+		}
+	}
 	if corsPresetID != nil {
 		r.CorsPresetID = corsPresetID
 	}
@@ -12664,6 +12670,13 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 	if methods == nil {
 		methods = []string{}
 	}
+	matchHeadersBytes, err := json.Marshal(in.MatchHeaders)
+	if err != nil {
+		return EdgeRule{}, fmt.Errorf("state: marshal edge_rule.match_headers: %w", err)
+	}
+	if in.MatchHeaders == nil {
+		matchHeadersBytes = []byte(`{}`)
+	}
 	var corsPresetIDArg any
 	if in.CorsPresetID != nil {
 		corsPresetIDArg = *in.CorsPresetID
@@ -12672,11 +12685,11 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			cors_preset_id, validate_mode
+			cors_preset_id, validate_mode, match_headers
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			$10::uuid, coalesce(nullif($11, ''), 'block')
+			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -12692,6 +12705,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		// coalesce keeps the wire surface consistent with the
 		// empty-handler default at pkg/gateway/handler.go:2694.
 		in.ValidateMode,
+		matchHeadersBytes,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -12812,15 +12826,22 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 	if methods == nil {
 		methods = []string{}
 	}
+	matchHeadersBytes, err := json.Marshal(in.MatchHeaders)
+	if err != nil {
+		return EdgeRule{}, fmt.Errorf("state: marshal edge_rule.match_headers: %w", err)
+	}
+	if in.MatchHeaders == nil {
+		matchHeadersBytes = []byte(`{}`)
+	}
 	row := tx.QueryRow(ctx, `
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			validate_mode
+			validate_mode, match_headers
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			coalesce(nullif($10, ''), 'block')
+			coalesce(nullif($10, ''), 'block'), $11::jsonb
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -12828,6 +12849,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		// $10: same empty-string→'block' coalesce as the un-capped
 		// CreateEdgeRule path (ADR-128).
 		in.ValidateMode,
+		matchHeadersBytes,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -13576,9 +13598,12 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		hostArg, pathArg any
 		methodsArg       any
 		actionArg        any
+		matchHeadersArg  any
 		validateModeArg  any
+		err              error
 		corsPresetSet    bool
 		corsPresetValue  any
+		matchHeadersSet  bool
 	)
 	if p.MatchHost != nil {
 		hostArg = *p.MatchHost
@@ -13588,6 +13613,16 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 	}
 	if p.MatchMethods != nil {
 		methodsArg = *p.MatchMethods
+	}
+	if p.MatchHeaders != nil {
+		matchHeadersSet = true
+		matchHeadersArg, err = json.Marshal(*p.MatchHeaders)
+		if err != nil {
+			return EdgeRule{}, fmt.Errorf("state: marshal edge_rule.match_headers: %w", err)
+		}
+		if *p.MatchHeaders == nil {
+			matchHeadersArg = []byte(`{}`)
+		}
 	}
 	if p.Action != nil {
 		bytes, err := json.Marshal(*p.Action)
@@ -13630,7 +13665,8 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 			enabled       = coalesce($6, enabled),
 			action        = case when $7 then $8::jsonb else action end,
 			cors_preset_id = case when $10 then $11::uuid else cors_preset_id end,
-			validate_mode = coalesce(nullif($9, ''), validate_mode)
+			validate_mode = coalesce(nullif($9, ''), validate_mode),
+			match_headers = case when $12 then $13::jsonb else match_headers end
 		where id = $1
 		returning `+edgeRuleSelectCols,
 		id, hostArg, pathArg, methodsArg, p.Priority, p.Enabled,
@@ -13648,7 +13684,7 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		// is set to $11, which is nil → SQL NULL for
 		// the "customer cleared the preset" signal or
 		// a UUID for the "set preset" signal.
-		corsPresetSet, corsPresetValue,
+		corsPresetSet, corsPresetValue, matchHeadersSet, matchHeadersArg,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {

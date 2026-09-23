@@ -172,6 +172,8 @@ func cmdEdgeRulesCreate(args []string) int {
 	matchPath := fs.String("match-path", "/", "path to match")
 	var matchMethods multiFlag
 	fs.Var(&matchMethods, "match-method", "HTTP method (repeat for multiple)")
+	var matchHeaders multiFlag
+	fs.Var(&matchHeaders, "match-header", "exact request header selector (Name=Value; repeat)")
 	priority := fs.Int("priority", 100, "match priority (lower wins; default 100)")
 	enabled := fs.Bool("enabled", true, "whether the rule is enabled (default true)")
 
@@ -312,11 +314,15 @@ func cmdEdgeRulesCreate(args []string) int {
 		return 1
 	}
 	if *slug == "" || *kind == "" || *matchHost == "" {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules create --app <slug> --kind <K> --match-host <H> [--match-path <P>] [--match-method M]... [--priority N] [--enabled] <kind-specific flags>", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules create --app <slug> --kind <K> --match-host <H> [--match-path <P>] [--match-method M]... [--match-header Name=Value]... [--priority N] [--enabled] <kind-specific flags>", "edge-rules")
 		return 1
 	}
 	if !isEdgeRuleKind(*kind) {
 		return printErr("Invalid --kind", fmt.Errorf("must be one of %s; got %q", strings.Join(edgeRuleKindVocab, ", "), *kind))
+	}
+	matchHeaderMap, err := parseEdgeRuleMatchHeaders(matchHeaders)
+	if err != nil {
+		return printErr("Invalid --match-header", err)
 	}
 	actionBytes, err := buildEdgeRuleAction(*kind, edgeRuleActionInputs{
 		RouteTarget:                      *routeTarget,
@@ -384,6 +390,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		MatchHost:    *matchHost,
 		MatchPath:    *matchPath,
 		MatchMethods: matchMethods,
+		MatchHeaders: matchHeaderMap,
 		Priority:     priority,
 		Enabled:      enabled,
 		Kind:         *kind,
@@ -434,6 +441,10 @@ func cmdEdgeRulesGet(args []string) int {
 	if len(out.MatchMethods) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Methods:     %s\n", strings.Join(out.MatchMethods, ", "))
 	}
+	if len(out.MatchHeaders) > 0 {
+		matchHeaders, _ := json.Marshal(out.MatchHeaders)
+		_, _ = fmt.Fprintf(osStdout, "Headers:     %s\n", matchHeaders)
+	}
 	_, _ = fmt.Fprintf(osStdout, "Priority:    %d\n", out.Priority)
 	_, _ = fmt.Fprintf(osStdout, "Enabled:     %t\n", out.Enabled)
 	_, _ = fmt.Fprintf(osStdout, "Kind:        %s\n", out.Kind)
@@ -448,13 +459,16 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "cors-allow-credentials")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
 	matchPath := fs.String("match-path", "", "new path to match")
 	var matchMethods multiFlag
 	fs.Var(&matchMethods, "match-method", "new method set (repeat)")
+	var matchHeaders multiFlag
+	fs.Var(&matchHeaders, "match-header", "exact request header selector (Name=Value; repeat; replaces the set)")
+	clearMatchHeaders := fs.Bool("clear-match-headers", false, "remove all request header selectors")
 	priority := fs.Int("priority", 0, "new priority (0 = unset)")
 	enable := fs.Bool("enable", false, "enable the rule")
 	disable := fs.Bool("disable", false, "disable the rule")
@@ -560,11 +574,14 @@ func cmdEdgeRulesUpdate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules update <id> [--match-host H] [--match-path P] [--match-method M]... [--priority N] [--enable|--disable] [kind-specific flags]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules update <id> [--match-host H] [--match-path P] [--match-method M]... [--match-header Name=Value]... [--clear-match-headers] [--priority N] [--enable|--disable] [kind-specific flags]", "edge-rules")
 		return 1
 	}
 	if *enable && *disable {
 		return printErr("Invalid flags", fmt.Errorf("--enable and --disable are mutually exclusive"))
+	}
+	if *clearMatchHeaders && len(matchHeaders) > 0 {
+		return printErr("Invalid flags", fmt.Errorf("--clear-match-headers and --match-header are mutually exclusive"))
 	}
 
 	id := fs.Arg(0)
@@ -583,6 +600,20 @@ func cmdEdgeRulesUpdate(args []string) int {
 	if visited["match-method"] {
 		m := []string(matchMethods)
 		req.MatchMethods = &m
+	}
+	if visited["match-header"] || *clearMatchHeaders {
+		var values map[string]string
+		if !*clearMatchHeaders {
+			var err error
+			values, err = parseEdgeRuleMatchHeaders(matchHeaders)
+			if err != nil {
+				return printErr("Invalid --match-header", err)
+			}
+		}
+		if values == nil {
+			values = map[string]string{}
+		}
+		req.MatchHeaders = &values
 	}
 	if visited["priority"] {
 		// Send even when the user passed --priority 0; 0 is a legal
@@ -1241,6 +1272,23 @@ func parseKVList(items []string, flagName string) (map[string]string, error) {
 		out[name] = value
 	}
 	return out, nil
+}
+
+func parseEdgeRuleMatchHeaders(items []string) (map[string]string, error) {
+	values := make(map[string]string, len(items))
+	for _, raw := range items {
+		index := strings.IndexByte(raw, '=')
+		if index < 1 {
+			return nil, fmt.Errorf("%q: expected Name=Value", raw)
+		}
+		name, value := raw[:index], raw[index+1:]
+		canonical := strings.ToLower(name)
+		if _, exists := values[canonical]; exists {
+			return nil, fmt.Errorf("duplicate header name %q (header names are case-insensitive)", name)
+		}
+		values[name] = value
+	}
+	return api.NormalizeEdgeRuleMatchHeaders(values)
 }
 
 // parseHeaderOps converts the three flag sets (add H:V, set H:V,

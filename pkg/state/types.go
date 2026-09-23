@@ -7034,6 +7034,7 @@ type EdgeRule struct {
 	MatchHost    string
 	MatchPath    string
 	MatchMethods []string
+	MatchHeaders map[string]string
 	Priority     int
 	Enabled      bool
 	Kind         EdgeRuleKind
@@ -7184,6 +7185,7 @@ type CreateEdgeRuleParams struct {
 	MatchHost    string
 	MatchPath    string
 	MatchMethods []string
+	MatchHeaders map[string]string
 	Priority     int
 	Enabled      bool
 	Kind         EdgeRuleKind
@@ -7213,6 +7215,7 @@ type UpdateEdgeRuleParams struct {
 	MatchHost    *string
 	MatchPath    *string
 	MatchMethods *[]string
+	MatchHeaders *map[string]string
 	Priority     *int
 	Enabled      *bool
 	Action       *EdgeRuleAction
