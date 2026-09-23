@@ -26,13 +26,13 @@ export type SidecarProbe = {
      */
     path?: string;
     /**
-     * Container port; 0/omitted inherits the workload port.
+     * HTTP container port; 0/omitted inherits the workload port.
      */
     port?: number;
   };
   tcp_socket?: {
     /**
-     * Container port; 0/omitted inherits the workload port.
+     * TCP container port; 0/omitted inherits the workload port.
      */
     port?: number;
   };
