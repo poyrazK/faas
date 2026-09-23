@@ -24,6 +24,14 @@
 # Default: 3
 # restore_concurrency = 3
 
+# disable_restore_prefetch: turn off the restore working-set prefetch
+# (ADR-224). After each restore vmmd records which snapshot memory pages the
+# guest touched and, on the next wake of the same deployment, reads them into
+# the page cache while the wake is being prepared. Advisory only; disabling it
+# changes latency, never behaviour. FAAS_RESTORE_PREFETCH=0 overrides.
+# Default: false
+# disable_restore_prefetch = false
+
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file does not exist. Default: /srv/fc/base/vmlinux-6.1
 # kernel_path = "/srv/fc/base/vmlinux-6.1"

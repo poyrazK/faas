@@ -879,6 +879,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWakePhaseMetrics(wpm).
 		WithStorage(storageBackend).
 		WithRestoreConcurrency(cfg.RestoreConcurrency).
+		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		// Issue #309 / tier-2 DX: install the per-VMM
 		// slow-subscriber callback that every ring
 		// registerRing creates will fire on a full
@@ -896,7 +897,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithSlowSubscriberCallback(func() {
 			ops.IncLogDropped("slow_subscriber")
 		})
-	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency)
+	log.Info("vmmd: snapshot restore concurrency configured", "limit", cfg.RestoreConcurrency,
+		"working_set_prefetch", !cfg.DisableRestorePrefetch)
 	if deps.prepareJailHelper != nil {
 		if err := deps.prepareJailHelper(jailer); err != nil {
 			return fmt.Errorf("vmmd: prepare jail helper: %w", err)
