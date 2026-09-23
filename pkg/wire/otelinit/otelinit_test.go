@@ -144,7 +144,9 @@ func TestInit_WithEndpoint_WiresProvider(t *testing.T) {
 	// Set the env to point at the test server's /v1/traces.
 	var gotBody []byte
 	var gotAuthorization string
+	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
 		if strings.HasSuffix(r.URL.Path, "/v1/traces") {
 			b, _ := io.ReadAll(r.Body)
 			gotBody = b
@@ -155,7 +157,7 @@ func TestInit_WithEndpoint_WiresProvider(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	// Strip "http://" off the front so the SDK parses it as host:port.
+	// Exercise Gregale's legacy bare host:port endpoint compatibility.
 	endpoint := strings.TrimPrefix(srv.URL, "http://")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "Authorization=Bearer%20trace-test")
@@ -183,6 +185,9 @@ func TestInit_WithEndpoint_WiresProvider(t *testing.T) {
 
 	if len(gotBody) == 0 {
 		t.Error("expected OTLP export to land at test server")
+	}
+	if gotPath != "/v1/traces" {
+		t.Errorf("OTLP export path = %q, want /v1/traces for a bare host:port endpoint", gotPath)
 	}
 	if gotAuthorization != "Bearer trace-test" {
 		t.Errorf("Authorization = %q, want decoded bearer header", gotAuthorization)
