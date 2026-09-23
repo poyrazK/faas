@@ -11663,10 +11663,11 @@ paths:
       description: |
         When from_environment is supplied, the create is atomic and copies the
         latest non-secret configuration, runtime variables, and already-sealed
-        customer secrets. Application-scoped domains, routes, and policies are
-        shared. A source with provider-managed credentials returns 409 because
-        those bindings must issue fresh target credentials; credential bytes
-        are never copied.
+        customer secrets. Managed PostgreSQL and object-storage bindings receive
+        fresh target-scoped credentials and isolated data by default. Set
+        share_resources to attach fresh credentials to the source resources
+        instead. Provider-issued credential bytes are never copied. Domains,
+        routes, and policies remain application-scoped and are shared.
       requestBody:
         required: true
         content:

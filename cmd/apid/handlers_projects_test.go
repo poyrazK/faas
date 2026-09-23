@@ -212,7 +212,7 @@ func TestProjectEnvironmentCloneCopiesScopedStateAtomically(t *testing.T) {
 	}
 }
 
-func TestProjectEnvironmentCloneBlocksManagedCredentialCopy(t *testing.T) {
+func TestProjectEnvironmentCloneFailsClosedWhenManagedResourceIsolationUnavailable(t *testing.T) {
 	srv, store, acct, project, app := newProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{
@@ -224,8 +224,8 @@ func TestProjectEnvironmentCloneBlocksManagedCredentialCopy(t *testing.T) {
 	}
 	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
 	srv.createProjectEnvironment(rec, req, acct)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("clone status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("clone status=%d body=%s, want managed-resource isolation unavailable", rec.Code, rec.Body.String())
 	}
 	if _, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("blocked clone created target: %v", err)

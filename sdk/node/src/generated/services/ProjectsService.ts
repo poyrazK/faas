@@ -12,12 +12,14 @@ import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnviro
 import type { ProjectEnvironmentApprovalStatusResponse } from '../models/ProjectEnvironmentApprovalStatusResponse.js';
 import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
+import type { ProjectEnvironmentDiffResponse } from '../models/ProjectEnvironmentDiffResponse.js';
 import type { ProjectEnvironmentPromotionListResponse } from '../models/ProjectEnvironmentPromotionListResponse.js';
 import type { ProjectEnvironmentPromotionPreviewResponse } from '../models/ProjectEnvironmentPromotionPreviewResponse.js';
 import type { ProjectEnvironmentPromotionResponse } from '../models/ProjectEnvironmentPromotionResponse.js';
 import type { ProjectEnvironmentPromotionStatusResponse } from '../models/ProjectEnvironmentPromotionStatusResponse.js';
 import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnvironmentReleaseListResponse.js';
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
+import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
@@ -307,6 +309,14 @@ export class ProjectsService {
   }
   /**
    * Create a durable project environment.
+   * When from_environment is supplied, the create is atomic and copies the
+   * latest non-secret configuration, runtime variables, and already-sealed
+   * customer secrets. Managed PostgreSQL and object-storage bindings receive
+   * fresh target-scoped credentials and isolated data by default. Set
+   * share_resources to attach fresh credentials to the source resources
+   * instead. Provider-issued credential bytes are never copied. Domains,
+   * routes, and policies remain application-scoped and are shared.
+   *
    * @returns ProjectEnvironmentResponse Project environment created.
    * @throws ApiError
    */
@@ -420,9 +430,11 @@ export class ProjectsService {
    * Deletes only an unprotected, non-production environment that has no
    * live releases. Configuration and approval history for the registry
    * entry is removed with it. Production, protected environments, and
-   * environments still serving a live release return 409.
+   * environments still serving a live release return 409. If managed
+   * resources cannot be revoked immediately, cleanup is durably queued and
+   * retried; the deleted environment returns 202 while cleanup is pending.
    *
-   * @returns void
+   * @returns any Project environment deleted; managed-resource cleanup is queued for retry.
    * @throws ApiError
    */
   public static deleteProjectEnvironment({
@@ -444,7 +456,7 @@ export class ProjectsService {
      *
      */
     idempotencyKey?: string,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<any> {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/projects/{slug}/environments/{environment}',
@@ -573,6 +585,95 @@ export class ProjectsService {
         'environment': environment,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get effective state for a project environment.
+   * Returns configuration, live releases, non-secret runtime variables,
+   * secret fingerprints, and managed binding metadata. Secret plaintext,
+   * ciphertext, and sealing-key identifiers are never returned. Resources
+   * that remain application-scoped are identified under shared_resources.
+   *
+   * @returns ProjectEnvironmentStateResponse Effective environment state.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentState({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project slug owning the environment.
+     */
+    slug: string,
+    /**
+     * Environment whose effective state is requested.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentStateResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/state',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare two effective project environments.
+   * Compares configuration, releases, runtime variables, secret
+   * fingerprints and credential generations, and managed bindings. Secret
+   * values are never returned. A secret without a fingerprint is reported
+   * as unknown rather than incorrectly reported as equal.
+   *
+   * @returns ProjectEnvironmentDiffResponse Unified effective-state diff.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentDiff({
+    slug,
+    environment,
+    from,
+  }: {
+    /**
+     * Project slug whose environments are compared.
+     */
+    slug: string,
+    /**
+     * Target environment.
+     */
+    environment: string,
+    /**
+     * Source environment to compare against the target.
+     */
+    from: string,
+  }): CancelablePromise<ProjectEnvironmentDiffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/diff',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'from': from,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses

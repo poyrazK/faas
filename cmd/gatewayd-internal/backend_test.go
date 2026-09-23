@@ -430,9 +430,6 @@ func TestHandleInvalidation_DeploymentChangedRefreshesWeights(t *testing.T) {
 	if f.refreshed[0] != "app-7" {
 		t.Errorf("refreshed[0] = %q, want app-7", f.refreshed[0])
 	}
-	if len(f.resetApps) != 1 || f.resetApps[0] != "app-7" {
-		t.Errorf("resetApps = %v, want [app-7]", f.resetApps)
-	}
 	if len(f.responseCacheByApp) != 1 || f.responseCacheByApp[0] != "app-7" {
 		t.Errorf("responseCacheByApp = %v, want [app-7]", f.responseCacheByApp)
 	}

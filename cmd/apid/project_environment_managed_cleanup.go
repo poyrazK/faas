@@ -149,17 +149,6 @@ func (s *server) planProjectEnvironmentManagedResourceCleanup(
 	return plan, nil
 }
 
-// cleanupProjectEnvironmentManagedResources revokes only credentials scoped
-// to the deleted environment. Restored databases are removed only when their
-// deterministic Gregale clone name matches and no other bindings remain.
-func (s *server) cleanupProjectEnvironmentManagedResources(
-	ctx context.Context,
-	acct state.Account,
-	plan projectEnvironmentManagedResourceCleanup,
-) error {
-	return s.cleanupProjectEnvironmentManagedResourcePayload(ctx, acct, projectEnvironmentCleanupResources(plan))
-}
-
 func projectEnvironmentCleanupResources(plan projectEnvironmentManagedResourceCleanup) state.ProjectEnvironmentCleanupResources {
 	resources := state.ProjectEnvironmentCleanupResources{}
 	for _, item := range plan.postgres {

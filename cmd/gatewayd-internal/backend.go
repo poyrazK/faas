@@ -931,17 +931,13 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		default:
 			// Companion routes and primary ingress are hydrated from the live
 			// deployment set. The app cache has no TTL, so evict this app before
-			// refreshing weights; otherwise a new proxy route could remain stale
-			// for the lifetime of the gateway process.
+			// refreshing weights; otherwise a new proxy route, including an
+			// exact deployment-preview pin, could remain stale for the lifetime
+			// of the gateway process.
 			inv.ResetApp(p.AppID)
 			// v1 cache lookup happens before target selection, so the
 			// deployment dimension is currently empty. Fence rollout and
 			// traffic changes with an app-wide cache purge.
-			//
-			// Deployment-preview routes also cache a revision→deployment pin.
-			// Drop the app entry so the next lookup revalidates that the pinned
-			// deployment is still preview-active before serving a stale URL.
-			inv.ResetApp(p.AppID)
 			inv.InvalidateResponseCacheByApp(p.AppID)
 			if err := inv.RefreshDeploymentWeights(ctx, p.AppID); err != nil {
 				log.Warn("gatewayd: refresh deployment weights failed", "app", p.AppID, "err", err)

@@ -39,7 +39,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
-| [`env`](#env) | Create project environments or manage app runtime env/secrets |
+| [`env`](#env) | Clone project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
@@ -1311,7 +1311,7 @@ Remove the imported app OpenAPI document
 
 ## env
 
-Create project environments or manage app runtime env/secrets
+Clone project environments or manage app runtime env/secrets
 
 `gregale env [<subcommand>] [--app <slug>]`
 
@@ -1321,28 +1321,14 @@ Create project environments or manage app runtime env/secrets
 
 ### env create
 
-Clone a named project environment
+Clone a project environment with isolated managed data by default
 
 | Flag | Meaning | |
 |---|---|---|
 | `--from <ENV>` | source environment | required |
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
 | `--protected` | protect the new environment |  |
-| `--share-resources` | create fresh scoped credentials that access the source's same managed database/bucket data | opt-in |
-
-Managed PostgreSQL bindings are isolated by default: Gregale restores a separate
-database at the source's latest available point in time and creates fresh
-target-scoped credentials. This requires provider PITR support and consumes a
-managed database from the account's quota. Object-storage bindings are also
-isolated by default: Gregale creates a private target bucket, copies the source
-objects server-side, and creates fresh sealed credentials. This duplicates
-stored data and is not an atomic snapshot while the source is being written.
-Isolated object-storage cloning requires a provider with cross-bucket copy
-support.
-
-With `--share-resources`, Gregale creates fresh target-scoped credentials for
-managed databases and object-storage buckets, but the underlying data remains
-shared with the source. Use this only when that sharing is intentional.
+| `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
 
 ### env pull
 

@@ -16,10 +16,12 @@
   keyed value fingerprint. Managed credentials additionally compare binding
   ownership and credential generation. A row without a fingerprint is
   reported as `unknown`, never equal. An environment clone copies a sealed
-  customer envelope only inside the control-plane transaction. A source with
-  provider-managed credentials blocks the entire clone until the binding can
-  be recreated with freshly issued credentials; provider-issued credential
-  bytes are never copied.
+  customer envelope only inside the control-plane transaction. Provider-issued
+  credentials are never copied: cloned managed bindings receive fresh,
+  environment-scoped credentials. By default, managed PostgreSQL is restored
+  into a separate database and object storage is copied into a separate bucket.
+  `share_resources` opts into fresh credentials over the source database or
+  bucket, so the data remains shared.
 - **Ownership:** Domains, declared route structure, and edge policies are
   currently application-scoped. The read model reports them as shared instead
   of pretending they are environment-owned or silently declaring them equal.
@@ -37,7 +39,12 @@
   variable values are visible on this MFA-gated operator surface, matching the
   existing app env-diff contract. The clone checks the existing cross-scope
   per-app secret and variable quotas before writing and rolls back every target
-  row on any failure. Secret versions for customer-managed secrets remain a
+  row on any failure. PostgreSQL isolation requires provider point-in-time
+  restore support and consumes a database from the account quota. Object-storage
+  isolation requires cross-bucket copy support and is not an atomic snapshot
+  while the source is being written. Deleted environments durably queue managed
+  resource cleanup and retry it after transient provider failures. Secret
+  versions for customer-managed secrets remain a
   follow-up because the current schema stores fingerprints and update timestamps
   but no monotonic version. This ADR adds no database migration.
 - **Rejected alternatives:** Joining the existing config and per-app diff calls

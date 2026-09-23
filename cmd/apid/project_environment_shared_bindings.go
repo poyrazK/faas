@@ -181,8 +181,8 @@ func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct s
 func (s *server) cloneProjectEnvironmentBindings(r *http.Request, acct state.Account, target string, plans []projectEnvironmentBindingClone) (int, []string, error) {
 	cleanup := make([]func(context.Context) error, 0, len(plans))
 	shared := map[string]bool{}
-	rollback := func(cause error) (int, []string, error) {
-		cleanupCtx := context.WithoutCancel(r.Context())
+	rollback := func(ctx context.Context, cause error) (int, []string, error) {
+		cleanupCtx := context.WithoutCancel(ctx)
 		cleanupErr := cleanupProjectEnvironmentBindingClone(cleanupCtx, cleanup)
 		if cleanupErr != nil {
 			return 0, nil, &projectEnvironmentBindingCloneError{cause: cause, cleanup: cleanupErr}
@@ -204,19 +204,19 @@ func (s *server) cloneProjectEnvironmentBindings(r *http.Request, acct state.Acc
 				})
 			}
 			if err != nil {
-				return rollback(fmt.Errorf("recreate managed PostgreSQL binding for workload %q: %w", plan.app.Slug, err))
+				return rollback(r.Context(), fmt.Errorf("recreate managed PostgreSQL binding for workload %q: %w", plan.app.Slug, err))
 			}
 			if binding.State != managedpostgres.BindingStateReady {
-				return rollback(fmt.Errorf("managed PostgreSQL binding for workload %q is still provisioning", plan.app.Slug))
+				return rollback(r.Context(), fmt.Errorf("managed PostgreSQL binding for workload %q is still provisioning", plan.app.Slug))
 			}
 			shared["managed_postgres_data"] = true
 		case "object_storage":
 			if err := s.cloneSharedObjectStorageBinding(r, acct, target, plan, &cleanup); err != nil {
-				return rollback(err)
+				return rollback(r.Context(), err)
 			}
 			shared["object_storage_bucket_data"] = true
 		default:
-			return rollback(fmt.Errorf("unsupported managed binding kind %q", plan.kind))
+			return rollback(r.Context(), fmt.Errorf("unsupported managed binding kind %q", plan.kind))
 		}
 	}
 
@@ -293,8 +293,8 @@ func (s *server) ensureProjectEnvironmentDatabaseClone(ctx context.Context, acct
 
 func (s *server) prepareIsolatedProjectEnvironmentBindings(r *http.Request, acct state.Account, project state.Project, target string, plans []projectEnvironmentBindingClone) ([]string, int, []func(context.Context) error, error) {
 	cleanup := make([]func(context.Context) error, 0, len(plans)*2)
-	rollback := func(cause error) error {
-		cleanupCtx := context.WithoutCancel(r.Context())
+	rollback := func(ctx context.Context, cause error) error {
+		cleanupCtx := context.WithoutCancel(ctx)
 		cleanupErr := cleanupProjectEnvironmentBindingClone(cleanupCtx, cleanup)
 		if cleanupErr != nil {
 			return &projectEnvironmentBindingCloneError{cause: cause, cleanup: cleanupErr}
@@ -308,7 +308,7 @@ func (s *server) prepareIsolatedProjectEnvironmentBindings(r *http.Request, acct
 		case "managed_postgres":
 			database, err := s.ensureProjectEnvironmentDatabaseClone(r.Context(), acct, project, target, plan, &cleanup)
 			if err != nil {
-				return nil, 0, nil, rollback(fmt.Errorf("create isolated PostgreSQL database for workload %q: %w", plan.app.Slug, err))
+				return nil, 0, nil, rollback(r.Context(), fmt.Errorf("create isolated PostgreSQL database for workload %q: %w", plan.app.Slug, err))
 			}
 			binding, created, err := s.managedPostgresBindings.CreateWithResult(r.Context(), managedpostgres.CreateBindingRequest{
 				AccountID: acct.ID, DatabaseID: database.ID, AppID: plan.app.ID,
@@ -322,22 +322,22 @@ func (s *server) prepareIsolatedProjectEnvironmentBindings(r *http.Request, acct
 				})
 			}
 			if err != nil {
-				return nil, 0, nil, rollback(fmt.Errorf("create isolated PostgreSQL binding for workload %q: %w", plan.app.Slug, err))
+				return nil, 0, nil, rollback(r.Context(), fmt.Errorf("create isolated PostgreSQL binding for workload %q: %w", plan.app.Slug, err))
 			}
 			if binding.State != managedpostgres.BindingStateReady || binding.DatabaseID != database.ID {
-				return nil, 0, nil, rollback(fmt.Errorf("isolated PostgreSQL binding for workload %q is not ready", plan.app.Slug))
+				return nil, 0, nil, rollback(r.Context(), fmt.Errorf("isolated PostgreSQL binding for workload %q is not ready", plan.app.Slug))
 			}
 			preparedIDs = append(preparedIDs, binding.ID)
 			preparedSecretCount++
 		case "object_storage":
 			bindingID, secretCount, err := s.prepareIsolatedProjectEnvironmentObjectStorageBinding(r, acct, target, plan, &cleanup)
 			if err != nil {
-				return nil, 0, nil, rollback(fmt.Errorf("create isolated object-storage binding for workload %q: %w", plan.app.Slug, err))
+				return nil, 0, nil, rollback(r.Context(), fmt.Errorf("create isolated object-storage binding for workload %q: %w", plan.app.Slug, err))
 			}
 			preparedIDs = append(preparedIDs, bindingID)
 			preparedSecretCount += secretCount
 		default:
-			return nil, 0, nil, rollback(fmt.Errorf("unsupported managed binding kind %q", plan.kind))
+			return nil, 0, nil, rollback(r.Context(), fmt.Errorf("unsupported managed binding kind %q", plan.kind))
 		}
 	}
 	return preparedIDs, preparedSecretCount, cleanup, nil
