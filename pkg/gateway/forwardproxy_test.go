@@ -769,6 +769,51 @@ func (l lease) Close() error {
 	return nil
 }
 
+func TestForwardingReverseProxy_InvocationSourceOnlyForSyntheticWork(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		synthetic bool
+		want      string
+	}{
+		{name: "customer_header_is_stripped"},
+		{name: "scheduler_header_reaches_guest", synthetic: true, want: "webhook"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+				{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{
+					Init: &vmmdpb.ForwardHTTPResponseInit{Status: http.StatusOK},
+				}},
+			}}
+			lookup := &fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}
+			proxy := gateway.ForwardingReverseProxy(lookup, nil)
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			req.Header.Set(api.InvocationSourceHeader, "webhook")
+			req.Header.Set("X-Faas-Other-Internal", "never-forward")
+			if tc.synthetic {
+				req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
+			}
+			rec := httptest.NewRecorder()
+			proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if len(stream.Sends) == 0 || stream.Sends[0].GetInit() == nil {
+				t.Fatal("forwarder did not send an init frame")
+			}
+			got := make(http.Header)
+			for _, h := range stream.Sends[0].GetInit().GetHeaders() {
+				got.Add(h.GetName(), h.GetValue())
+			}
+			if value := got.Get(api.InvocationSourceHeader); value != tc.want {
+				t.Errorf("invocation source = %q, want %q", value, tc.want)
+			}
+			if value := got.Get("X-Faas-Other-Internal"); value != "" {
+				t.Errorf("unrelated internal header leaked: %q", value)
+			}
+		})
+	}
+}
+
 // TestForwardingReverseProxy_HappyPath pins the streaming-only path
 // (issue #471 PR-D / ADR-047). The forwarder must:
 //

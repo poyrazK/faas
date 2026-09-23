@@ -40,6 +40,9 @@ const (
 	// InvocationIDHeader carries the durable invocation id for synthetic work
 	// and the public request id for direct HTTP function calls.
 	InvocationIDHeader = "X-Faas-Invocation-Id"
+	// InvocationSourceHeader identifies the platform-authored source of a
+	// synthetic invocation; it must not be forwarded from customer requests.
+	InvocationSourceHeader = "X-Faas-Invocation-Source"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
 	// response body. Edge adapters use it to distinguish a Gregale timeout
 	// from a genuine CDN/origin failure.
