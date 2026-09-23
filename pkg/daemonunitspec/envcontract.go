@@ -363,6 +363,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_POLAR_USAGE_EVENT_NAME", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_POLAR_WEBHOOK_SECRET", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_PREFLIGHT_GITHUB_TOKEN", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "optional read-only GitHub token for the public migration preflight; without it upstream commit lookups use the anonymous budget of 60 calls per hour per source IP. Delivered by /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_PREPARED_NETWORKS", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "opt-in unused-network cache size (0–16), disabled by default; ADR-149"},
 	{Name: "FAAS_PRESSURE_MIGRATION_POLICY", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PRESSURE_REASSESSMENT_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},

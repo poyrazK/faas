@@ -3328,6 +3328,20 @@ const (
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // €0.01 per GB-RAM-hour
 
+	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
+	// client IP. The check is unauthenticated, so the ceiling exists to protect
+	// the upstream GitHub budget (60 anonymous API calls per hour) and to keep a
+	// public endpoint from becoming a fetch amplifier.
+	PreflightRateLimitPerHour = 20
+
+	// PreflightCacheTTL is how long a verdict stays cached. A verdict is a pure
+	// function of the commit it was computed from, so the TTL bounds memory rather
+	// than staleness.
+	PreflightCacheTTL = 6 * time.Hour
+
+	// PreflightCacheMaxEntries bounds the in-process verdict cache.
+	PreflightCacheMaxEntries = 2_048
+
 	// Builder VM (spec §4.5, §1). Builds live in the control-plane slice, never
 	// tenant RAM.
 	BuildVMRAMMB = 2_048

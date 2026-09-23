@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/preflight"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reconcile"
@@ -225,8 +226,15 @@ type server struct {
 	// statusCache backs GET /status/slo.json (spec §12 public status
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
-	statusCache   *statusCache
-	statusMetrics *statusMetrics
+	statusCache *statusCache
+
+	// preflightOnce guards lazy construction of the public migration
+	// preflight handler (GET /v1/preflight). It is built on first use so the
+	// egress-guarded HTTP client and verdict cache are not allocated on
+	// deployments that never receive a check.
+	preflightOnce    sync.Once
+	preflightHandler *preflight.Handler
+	statusMetrics    *statusMetrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
 	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
@@ -3151,6 +3159,13 @@ func (s *server) handler() http.Handler {
 	// on the public mux so the operator's HTTPS path serves it.
 	mux.HandleFunc("GET /status", s.statusHandler)
 	mux.HandleFunc("GET /status/slo.json", s.statusJSONHandler)
+
+	// Public migration preflight (GET /v1/preflight?source=owner/repo).
+	// Unauthenticated by design: it answers "would my app run here" for
+	// someone who has not signed up and is deciding whether to. Carries no
+	// tenant data, reads only public repositories, and is rate limited per
+	// client IP (api.PreflightRateLimitPerHour).
+	mux.HandleFunc("GET /v1/preflight", s.servePreflight)
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
 	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
 	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
