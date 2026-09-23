@@ -6,9 +6,9 @@ import type { SidecarProbe } from './SidecarProbe.js';
 import type { WorkloadDependency } from './WorkloadDependency.js';
 /**
  * One entry in the deploy request's preferred `companions` array
- * (legacy name: `sidecars`). Up to 2 helpers per app (1 init
- * + 1 sidecar; the array is type-uniqueness + 2-capped at
- * the schema layer via migration 00095's CHECK constraint).
+ * (legacy name: `sidecars`). Up to 5 helpers per app (1 init
+ * + up to 4 long-running sidecars; total cardinality is capped
+ * at the API, runtime, and database layers).
  * Stateless only — stateful base images (Postgres, Redis,
  * MySQL, MongoDB, etc.) are rejected at the API gate
  * with 403 `sidecar_stateful_denied` and again at imaged
@@ -26,8 +26,8 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * `image`; apid resolves an operator-pinned immutable digest.
  * - `image` is required for a custom helper and must be a
  * digest-pinned OCI reference. Tag references are rejected.
- * - `type` ∈ {`init`, `sidecar`}. At most one of each per
- * deployment.
+ * - `type` ∈ {`init`, `sidecar`}. At most one init helper and
+ * up to four long-running sidecars per deployment.
  * - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
  * overridden). Every element non-empty.
  * - `env` is plaintext on the wire, sealed at rest. Keys

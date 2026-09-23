@@ -2029,8 +2029,8 @@ type Deployment struct {
 	// 3 / 60s) are applied on the apid read path when this
 	// column is empty.
 	OverrideLivenessProbe json.RawMessage `json:"override_liveness_probe,omitempty"`
-	// Sidecars (issue #463 / ADR-068). Up to 2 stateless sidecars
-	// (1 init + 1 sidecar) per app. Persisted as jsonb on the
+	// Sidecars (issue #463 / ADR-068). Up to 5 stateless helpers
+	// (1 init + 4 long-running companions) per app. Persisted as jsonb on the
 	// `deployments.sidecars` column (migration 00095). Field is
 	// json.RawMessage (NOT []api.Sidecar) so the state package
 	// does NOT import pkg/api — see pkg/api ↔ pkg/state cycle
@@ -2522,8 +2522,9 @@ type StageStateItem struct {
 // handle (issue #463 / ADR-069 / PR-B). imaged writes one row per
 // sidecar during the buildImageLayer pass; vmmd reads it at wake
 // time to resolve the StorageBackend key into a tmp path. The
-// 2-row cap is mirrored at the schema layer via the
-// `deployments.sidecars` jsonb CHECK constraint (migration 00118);
+// five-row cap is mirrored at the schema layer via the
+// `deployments.sidecars` jsonb CHECK constraint and this table's
+// trigger (migration 20260923163517663);
 // this table's own constraint is just the PK uniqueness
 // (deployment_id, sidecar_name). The FK CASCADE means deleting
 // the deployment carries the rows with it (defence-in-depth —

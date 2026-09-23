@@ -22759,12 +22759,12 @@ components:
           items: { $ref: '#/components/schemas/WorkflowSpec' }
         companions:
           type: array
-          maxItems: 2
+          maxItems: 5
           items: { $ref: '#/components/schemas/Sidecar' }
-          description: "Preferred field for companions carried across the resumable upload session."
+          description: "Preferred field for up to five helpers carried across the resumable upload session (one init helper and up to four long-running companions)."
         sidecars:
           type: array
-          maxItems: 2
+          maxItems: 5
           items: { $ref: '#/components/schemas/Sidecar' }
           deprecated: true
           description: "Deprecated spelling of companions."
@@ -24133,17 +24133,16 @@ components:
           example: true
         companions:
           type: array
-          maxItems: 2
+          maxItems: 5
           items:
             $ref: '#/components/schemas/Sidecar'
-          description: "Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with sidecars."
+          description: "Preferred field. Up to 5 stateless helpers total (one init helper and up to four long-running companions); managed presets may omit image. Do not set together with sidecars."
         # Issue #463 / ADR-068: backwards-compatible spelling.
-        # (1 init + 1 sidecar). The runtime effect (imaged,
-        # fcvm, guest-init) ships in PR-B; PR-A persists the
-        # shape and the handler envelope-seals env values.
+        # New deployments can declare one init helper and up to
+        # four long-running sidecars.
         sidecars:
           type: array
-          maxItems: 2
+          maxItems: 5
           items:
             $ref: '#/components/schemas/Sidecar'
           deprecated: true
@@ -24626,9 +24625,9 @@ components:
     Sidecar:
       description: |
         One entry in the deploy request's preferred `companions` array
-        (legacy name: `sidecars`). Up to 2 helpers per app (1 init
-        + 1 sidecar; the array is type-uniqueness + 2-capped at
-        the schema layer via migration 00095's CHECK constraint).
+        (legacy name: `sidecars`). Up to 5 helpers per app (1 init
+        + up to 4 long-running sidecars; total cardinality is capped
+        at the API, runtime, and database layers).
         Stateless only — stateful base images (Postgres, Redis,
         MySQL, MongoDB, etc.) are rejected at the API gate
         with 403 `sidecar_stateful_denied` and again at imaged
@@ -24646,8 +24645,8 @@ components:
           `image`; apid resolves an operator-pinned immutable digest.
         - `image` is required for a custom helper and must be a
           digest-pinned OCI reference. Tag references are rejected.
-        - `type` ∈ {`init`, `sidecar`}. At most one of each per
-          deployment.
+        - `type` ∈ {`init`, `sidecar`}. At most one init helper and
+          up to four long-running sidecars per deployment.
         - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
           overridden). Every element non-empty.
         - `env` is plaintext on the wire, sealed at rest. Keys

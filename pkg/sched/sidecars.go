@@ -55,7 +55,7 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 
 	out := make([]fcvm.WorkloadSpec, 0, len(sidecars))
 	seenNames := make(map[string]struct{}, len(sidecars))
-	seenTypes := make(map[api.SidecarType]struct{}, len(sidecars))
+	seenTypes := make(map[api.SidecarType]int, len(sidecars))
 	for i, sc := range sidecars {
 		if err := validatePersistedSidecar(sc, seenNames, seenTypes); err != nil {
 			return nil, err
@@ -149,7 +149,7 @@ func sealedSidecarEnv(sc api.Sidecar) ([]fcvm.SealedEnvEntry, error) {
 	return out, nil
 }
 
-func validatePersistedSidecar(sc api.Sidecar, seenNames map[string]struct{}, seenTypes map[api.SidecarType]struct{}) error {
+func validatePersistedSidecar(sc api.Sidecar, seenNames map[string]struct{}, seenTypes map[api.SidecarType]int) error {
 	if !validPersistedSidecarName(sc.Name) {
 		return fmt.Errorf("invalid sidecar name %q", sc.Name)
 	}
@@ -166,10 +166,13 @@ func validatePersistedSidecar(sc api.Sidecar, seenNames map[string]struct{}, see
 		return fmt.Errorf("duplicate sidecar name %q", sc.Name)
 	}
 	seenNames[sc.Name] = struct{}{}
-	if _, exists := seenTypes[sc.Type]; exists {
-		return fmt.Errorf("duplicate sidecar type %q", sc.Type)
+	seenTypes[sc.Type]++
+	if sc.Type == api.SidecarTypeInit && seenTypes[sc.Type] > 1 {
+		return fmt.Errorf("deployment has more than one init sidecar")
 	}
-	seenTypes[sc.Type] = struct{}{}
+	if sc.Type == api.SidecarTypeSidecar && seenTypes[sc.Type] > api.SidecarLongRunningCapMax {
+		return fmt.Errorf("deployment has %d long-running sidecars; cap is %d", seenTypes[sc.Type], api.SidecarLongRunningCapMax)
+	}
 	return nil
 }
 

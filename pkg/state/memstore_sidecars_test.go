@@ -35,9 +35,9 @@ func memSidecarsFixture(t *testing.T) (*MemStore, context.Context, App) {
 // encoding (whitespace, key ordering, type coercion) is a regression
 // the moment PR-B lands.
 //
-// 2-sidecar payload mirrors the schema in ADR-068 §Decision 1 — the
-// 2-cap is the load-bearing gate. The test pins 1 init + 1 sidecar
-// (the canonical customer shape from issue #463).
+// Two-sidecar payload preserves the canonical customer shape from issue
+// #463. Cardinality validation belongs to the API and database layers;
+// MemStore preserves valid JSON bytes without imposing a second policy.
 func TestMemStore_Deployment_Sidecars_RoundTrip(t *testing.T) {
 	m, ctx, app := memSidecarsFixture(t)
 	raw := json.RawMessage(`[
@@ -104,7 +104,7 @@ func TestMemStore_Deployment_Sidecars_VariousJSONPayloads(t *testing.T) {
 	}{
 		{"empty-array", `[]`},
 		{"one-init", `[{"name":"only","image":"x@sha256:01","type":"init"}]`},
-		{"two-sidecars", `[{"name":"a","image":"x@sha256:01","type":"init"},{"name":"b","image":"x@sha256:02","type":"sidecar"}]`},
+		{"max-five-helpers", `[{"name":"init","image":"x@sha256:01","type":"init"},{"name":"a","image":"x@sha256:02","type":"sidecar"},{"name":"b","image":"x@sha256:03","type":"sidecar"},{"name":"c","image":"x@sha256:04","type":"sidecar"},{"name":"d","image":"x@sha256:05","type":"sidecar"}]`},
 		{"whitespace-but-valid", `  [{"name":"ws","image":"x@sha256:01","type":"init"}]  `},
 	}
 	for _, tc := range cases {

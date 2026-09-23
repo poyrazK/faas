@@ -53,9 +53,9 @@ func TestBuildWorkloadsForColdBoot_RejectsSidecarNamedMain(t *testing.T) {
 // TestBuildWorkloadsForColdBoot_LegacySingleWorkload pins the
 // no-sidecar fallback: an empty Sidecars slice must return nil
 // so BootColdBoot's "Workloads empty → resolve LayerKey" branch
-// runs unchanged. The 2-row cap and the main-name rejection are
-// only exercised on the new path; a regression that drops them
-// on the new path while keeping the legacy path unchanged must
+// runs unchanged. Roster validation and the main-name rejection
+// are only exercised on the new path; a regression that drops
+// them on the new path while keeping the legacy path unchanged must
 // not affect this test.
 func TestBuildWorkloadsForColdBoot_LegacySingleWorkload(t *testing.T) {
 	req := WakeRequest{
