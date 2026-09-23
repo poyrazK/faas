@@ -1542,11 +1542,6 @@ Look up a W3C trace through the account trace index
 | `--interval <DURATION>` | poll interval (default 1s) |  |
 | `--timeout <DURATION>` | maximum watch duration (default 5m) |  |
 
-Queue invocations show an `enqueued → latest claim` segment and, when complete,
-a `latest attempt → completion` segment. The claim timestamp is updated on
-retry, so earlier attempt timings are not inferred; total invocation lifetime
-is also shown separately.
-
 
 ## invitations
 
