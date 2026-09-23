@@ -684,8 +684,9 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	fs := newFlagSet("projects-environments-create", flag.ContinueOnError)
 	protected := fs.Bool("protected", false, "protect the environment from promotion")
 	from := fs.String("from", "", "source environment to clone")
+	shareResources := fs.Bool("share-resources", false, "explicitly share managed database and object-storage data")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--from <environment>] [--protected]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--from <environment>] [--protected] [--share-resources]", "projects environments")
 		return 1
 	}
 	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
@@ -694,12 +695,15 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	if *from != "" && (!api.ValidProjectEnvironmentSlug(*from) || *from == positional[1]) {
 		return printErr("Invalid source environment", fmt.Errorf("--from must name a different project environment"))
 	}
+	if *shareResources && *from == "" {
+		return printErr("Invalid resource sharing option", fmt.Errorf("--share-resources requires --from"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	environment, err := client.CreateProjectEnvironment(context.Background(), positional[0], api.CreateProjectEnvironmentRequest{
-		Slug: positional[1], Protected: protected, FromEnvironment: *from,
+		Slug: positional[1], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources,
 	})
 	if err != nil {
 		return printErr("Create failed", err)
@@ -733,9 +737,14 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  protected: %t\n  updated: %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
 	if environment.Clone != nil {
-		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d\n  shared: %s\n",
+		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d\n  shared: %s\n",
 			environment.ClonedFrom, environment.Clone.ConfigurationCopied, environment.Clone.VariablesCopied,
-			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, strings.Join(environment.Clone.SharedResources, ", "))
+			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, environment.Clone.BindingsCopied,
+			strings.Join(environment.Clone.SharedResources, ", "))
+		if strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "managed_postgres_data") ||
+			strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "object_storage_bucket_data") {
+			_, _ = fmt.Fprintln(osStdout, "  warning: managed data is shared with the source; credentials are new and environment-scoped")
+		}
 	}
 	return 0
 }

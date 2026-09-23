@@ -4846,9 +4846,33 @@ func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accoun
 }
 
 func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {
+	_, err := s.deleteProjectEnvironmentWithCleanup(ctx, accountID, projectID, slug, ProjectEnvironmentCleanupResources{}, "", 0)
+	return err
+}
+
+func (s *PgStore) DeleteProjectEnvironmentWithCleanup(
+	ctx context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
+	if !resources.Empty() && (leaseToken == "" || leaseDuration <= 0 || resources.ValidateForEnvironment(slug) != nil) {
+		return ProjectEnvironmentCleanupJob{}, ErrInvalidArgument
+	}
+	return s.deleteProjectEnvironmentWithCleanup(ctx, accountID, projectID, slug, resources, leaseToken, leaseDuration)
+}
+
+func (s *PgStore) deleteProjectEnvironmentWithCleanup(
+	ctx context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("state: begin project environment delete: %w", err)
+		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: begin project environment delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -4863,12 +4887,12 @@ func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, proje
 	`, accountID, projectID, slug).Scan(&projectSlug, &protected)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
+			return ProjectEnvironmentCleanupJob{}, ErrNotFound
 		}
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
-	if slug == "production" || protected {
-		return ErrConflict
+	if slug == "production" || slug == DefaultEnvScope || protected {
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 
 	var hasLiveRelease bool
@@ -4880,38 +4904,73 @@ func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, proje
 			 where a.project_id = $1 and d.scope = $2 and d.status = 'live'
 		)
 	`, projectID, slug).Scan(&hasLiveRelease); err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	if hasLiveRelease {
-		return ErrConflict
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	var job ProjectEnvironmentCleanupJob
+	if !resources.Empty() {
+		payload, err := json.Marshal(resources)
+		if err != nil {
+			return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: encode project environment cleanup resources: %w", err)
+		}
+		createdAt := time.Now().UTC()
+		job = ProjectEnvironmentCleanupJob{
+			ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: slug,
+			Resources: cloneProjectEnvironmentCleanupResources(resources), NextAttemptAt: createdAt,
+			LeaseToken: leaseToken, CreatedAt: createdAt,
+		}
+		job.LeaseUntil = job.CreatedAt.Add(leaseDuration)
+		if _, err := tx.Exec(ctx, `
+			insert into project_environment_cleanup_jobs
+			    (id, account_id, project_id, environment_slug, resources, next_attempt_at, lease_token, lease_until)
+			values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+		`, job.ID, accountID, projectID, slug, string(payload), job.NextAttemptAt, leaseToken, job.LeaseUntil); err != nil {
+			return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from app_envs e using apps a
+		 where e.app_id = a.id and a.account_id = $1 and a.project_id = $2 and e.scope = $3
+	`, accountID, projectID, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from app_secrets s using apps a
+		 where s.app_id = a.id and a.account_id = $1 and a.project_id = $2 and s.scope = $3
+		   and s.managed_postgres_binding_id is null
+		   and s.managed_object_storage_credential_id is null
+	`, accountID, projectID, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_config_versions
 		 where project_id = $1 and environment_slug = $2
 	`, projectID, slug); err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_approvals
 		 where account_id = $1 and project_slug = $2 and environment_slug = $3
 	`, accountID, projectSlug, slug); err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	tag, err := tx.Exec(ctx, `
 		delete from project_environments
 		 where project_id = $1 and slug = $2
 	`, projectID, slug)
 	if err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: commit project environment delete: %w", err)
+		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: commit project environment delete: %w", err)
 	}
-	return nil
+	return job, nil
 }
 
 // ApplyProjectPlan persists a project + its member apps + crons in

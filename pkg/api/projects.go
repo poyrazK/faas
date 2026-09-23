@@ -66,13 +66,13 @@ type ProjectEnvironmentResponse struct {
 }
 
 // ProjectEnvironmentCloneResponse reports non-secret counts copied by an
-// atomic environment clone. Application-scoped resources are shared, not
-// duplicated.
+// environment clone. Shared managed data resources are called out explicitly.
 type ProjectEnvironmentCloneResponse struct {
 	ConfigurationCopied bool     `json:"configuration_copied"`
 	VariablesCopied     int      `json:"variables_copied"`
 	SecretsCopied       int      `json:"secrets_copied"`
 	WorkloadsCopied     int      `json:"workloads_copied"`
+	BindingsCopied      int      `json:"bindings_copied"`
 	SharedResources     []string `json:"shared_resources"`
 }
 
@@ -242,6 +242,7 @@ type CreateProjectEnvironmentRequest struct {
 	Slug            string `json:"slug"`
 	Protected       *bool  `json:"protected,omitempty"`
 	FromEnvironment string `json:"from_environment,omitempty"`
+	ShareResources  bool   `json:"share_resources,omitempty"`
 }
 
 // UpdateProjectEnvironmentRequest changes only environment protection.

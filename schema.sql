@@ -9414,6 +9414,7 @@ CREATE TABLE public.object_buckets (
     last_error_code text DEFAULT '' NOT NULL,
     public_read boolean DEFAULT false NOT NULL,
     serve_at text,
+    environment_clone_source_bucket_id uuid,
     CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -10048,6 +10049,30 @@ ALTER TABLE ONLY public.runtime_snapshots
     ADD CONSTRAINT runtime_snapshots_catalog_key_key UNIQUE (catalog_key);
 
 CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USING btree (state, created_at DESC, id DESC);
+
+
+CREATE TABLE public.project_environment_cleanup_jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    resources jsonb NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_cleanup_jobs_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT project_environment_cleanup_jobs_resources_object CHECK ((jsonb_typeof(resources) = 'object'::text))
+);
+
+
+ALTER TABLE ONLY public.project_environment_cleanup_jobs
+    ADD CONSTRAINT project_environment_cleanup_jobs_pkey PRIMARY KEY (id);
+
+CREATE INDEX project_environment_cleanup_jobs_due_idx ON public.project_environment_cleanup_jobs USING btree (next_attempt_at, created_at, id) WHERE (lease_until IS NULL);
+
+CREATE INDEX project_environment_cleanup_jobs_lease_idx ON public.project_environment_cleanup_jobs USING btree (lease_until) WHERE (lease_until IS NOT NULL);
 
 
 --

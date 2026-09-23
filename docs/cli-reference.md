@@ -1328,6 +1328,21 @@ Clone a named project environment
 | `--from <ENV>` | source environment | required |
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
 | `--protected` | protect the new environment |  |
+| `--share-resources` | create fresh scoped credentials that access the source's same managed database/bucket data | opt-in |
+
+Managed PostgreSQL bindings are isolated by default: Gregale restores a separate
+database at the source's latest available point in time and creates fresh
+target-scoped credentials. This requires provider PITR support and consumes a
+managed database from the account's quota. Object-storage bindings are also
+isolated by default: Gregale creates a private target bucket, copies the source
+objects server-side, and creates fresh sealed credentials. This duplicates
+stored data and is not an atomic snapshot while the source is being written.
+Isolated object-storage cloning requires a provider with cross-bucket copy
+support.
+
+With `--share-resources`, Gregale creates fresh target-scoped credentials for
+managed databases and object-storage buckets, but the underlying data remains
+shared with the source. Use this only when that sharing is intentional.
 
 ### env pull
 

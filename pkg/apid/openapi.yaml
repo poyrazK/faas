@@ -11736,10 +11736,13 @@ paths:
         Deletes only an unprotected, non-production environment that has no
         live releases. Configuration and approval history for the registry
         entry is removed with it. Production, protected environments, and
-        environments still serving a live release return 409.
+        environments still serving a live release return 409. If managed
+        resources cannot be revoked immediately, cleanup is durably queued and
+        retried; the deleted environment returns 202 while cleanup is pending.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '202': { description: Project environment deleted; managed-resource cleanup is queued for retry. }
         '204': { description: Project environment deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -25499,7 +25502,11 @@ components:
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$' }
         project_id: { type: string, pattern: '^[a-f0-9]{32}$' }
-        slug: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+        slug:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          not: { const: default }
+          description: Project environment slug; the reserved app scope `default` cannot be used.
         protected: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -25507,17 +25514,18 @@ components:
         clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
 
     ProjectEnvironmentCloneResponse:
-      description: Non-secret copy counts for an atomic environment clone.
+      description: Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only after explicit opt-in.
       type: object
-      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, shared_resources]
+      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, bindings_copied, shared_resources]
       properties:
         configuration_copied: { type: boolean }
         variables_copied: { type: integer, minimum: 0 }
         secrets_copied: { type: integer, minimum: 0 }
         workloads_copied: { type: integer, minimum: 0 }
+        bindings_copied: { type: integer, minimum: 0 }
         shared_resources:
           type: array
-          items: { type: string, enum: [domains, policies, routes] }
+          items: { type: string, enum: [domains, policies, routes, managed_postgres_data, object_storage_bucket_data] }
 
     ProjectEnvironmentReleaseListResponse:
       description: Current non-secret release inventory for a project environment.
@@ -25795,16 +25803,25 @@ components:
         promotion_token: { type: string, minLength: 1 }
 
     CreateProjectEnvironmentRequest:
-      description: Request to register or atomically clone a named project environment.
+      description: Request to register or clone a named project environment.
       type: object
       required: [slug]
       properties:
-        slug: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+        slug:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          not: { const: default }
+          description: Project environment slug; the reserved app scope `default` cannot be used.
         protected: { type: boolean, default: false }
         from_environment:
           type: string
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
-          description: Source environment whose scoped state is copied atomically.
+          not: { const: default }
+          description: Source environment whose scoped configuration and values are copied.
+        share_resources:
+          type: boolean
+          default: false
+          description: Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-storage resources; data remains shared.
 
     CreateProjectEnvironmentApprovalRequest:
       description: Request to approve one exact plan for a protected environment. Provide exactly one of plan_token or promotion_token.

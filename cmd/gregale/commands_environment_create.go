@@ -18,8 +18,9 @@ func envCreate(args []string) int {
 	from := fs.String("from", "", "source environment to clone")
 	project := fs.String("project", "", "project slug (defaults to linked project)")
 	protected := fs.Bool("protected", false, "protect the new environment")
+	shareResources := fs.Bool("share-resources", false, "explicitly share managed database and object-storage data with the source environment")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected]", "env")
+		PrintUsage(os.Stderr, "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected] [--share-resources]", "env")
 		return 1
 	}
 	if !api.ValidProjectEnvironmentSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || positional[0] == *from {
@@ -34,7 +35,7 @@ func envCreate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	environment, err := client.CreateProjectEnvironment(context.Background(), projectSlug, api.CreateProjectEnvironmentRequest{
-		Slug: positional[0], Protected: protected, FromEnvironment: *from,
+		Slug: positional[0], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources,
 	})
 	if err != nil {
 		return printErr("Create failed", err)

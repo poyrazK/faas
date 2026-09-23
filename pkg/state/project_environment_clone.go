@@ -14,13 +14,18 @@ var (
 	ErrProjectEnvironmentCloneQuota           = errors.New("state: project environment clone exceeds scoped configuration quota")
 )
 
-// ProjectEnvironmentClone describes one atomic source-to-target clone.
+// ProjectEnvironmentClone describes one source-to-target environment clone.
+// The scoped state rows are committed atomically by each state store.
 type ProjectEnvironmentClone struct {
-	AccountID       string
-	ProjectID       string
-	SourceSlug      string
-	TargetSlug      string
-	TargetProtected bool
+	AccountID                  string
+	ProjectID                  string
+	SourceSlug                 string
+	TargetSlug                 string
+	TargetProtected            bool
+	ShareResources             bool
+	ManagedBindingsPrepared    bool
+	PreparedManagedBindingIDs  []string
+	PreparedManagedSecretCount int
 }
 
 // ProjectEnvironmentCloneResult contains non-secret copy counts.
@@ -29,6 +34,8 @@ type ProjectEnvironmentCloneResult struct {
 	VariablesCopied     int
 	SecretsCopied       int
 	WorkloadsCopied     int
+	BindingsCopied      int
+	SharedResources     []string
 }
 
 // ProjectEnvironmentCloneManagedBindingsError prevents provider credentials
@@ -76,10 +83,64 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
 	}
 	apps := m.projectCloneAppsLocked(clone.ProjectID)
-	if managed := m.projectCloneManagedSecretCountLocked(apps, clone.SourceSlug); managed > 0 {
+	for _, env := range m.envs {
+		if _, ok := apps[env.AppID]; ok && env.Scope == clone.TargetSlug {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+	}
+	preparedBindings := make(map[string]struct{}, len(clone.PreparedManagedBindingIDs))
+	for _, id := range clone.PreparedManagedBindingIDs {
+		preparedBindings[id] = struct{}{}
+	}
+	if clone.ManagedBindingsPrepared && len(preparedBindings) != len(clone.PreparedManagedBindingIDs) {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+	}
+	if clone.ManagedBindingsPrepared {
+		sourceBindings := map[string]struct{}{}
+		for _, secret := range m.secrets {
+			if _, ok := apps[secret.AppID]; !ok || secret.Scope != clone.SourceSlug {
+				continue
+			}
+			if secret.ManagedPostgresBindingID != "" {
+				sourceBindings[secret.ManagedPostgresBindingID] = struct{}{}
+			}
+			if secret.ManagedObjectStorageCredentialID != "" {
+				sourceBindings[secret.ManagedObjectStorageCredentialID] = struct{}{}
+			}
+		}
+		if len(sourceBindings) != len(preparedBindings) {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+	}
+	preparedSecrets := 0
+	preparedSecretBindings := map[string]struct{}{}
+	for _, secret := range m.secrets {
+		if _, ok := apps[secret.AppID]; !ok || secret.Scope != clone.TargetSlug {
+			continue
+		}
+		if !clone.ManagedBindingsPrepared || (secret.ManagedPostgresBindingID == "") == (secret.ManagedObjectStorageCredentialID == "") {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+		preparedID := secret.ManagedPostgresBindingID
+		if preparedID == "" {
+			preparedID = secret.ManagedObjectStorageCredentialID
+		}
+		if _, ok := preparedBindings[preparedID]; !ok {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+		preparedSecretBindings[preparedID] = struct{}{}
+		preparedSecrets++
+	}
+	if preparedSecrets != clone.PreparedManagedSecretCount || len(preparedSecretBindings) != len(preparedBindings) {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+	}
+	if clone.ManagedBindingsPrepared && len(preparedBindings) == 0 {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+	}
+	if managed := m.projectCloneManagedSecretCountLocked(apps, clone.SourceSlug); managed > 0 && !clone.ShareResources && !clone.ManagedBindingsPrepared {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, &ProjectEnvironmentCloneManagedBindingsError{ManagedSecretCount: managed}
 	}
-	if err := m.checkProjectCloneQuotaLocked(apps, clone.SourceSlug, limits); err != nil {
+	if err := m.checkProjectCloneQuotaLocked(apps, clone.SourceSlug, clone.ManagedBindingsPrepared, limits); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	now := time.Now().UTC()
@@ -117,7 +178,7 @@ func (m *MemStore) projectCloneManagedSecretCountLocked(apps map[string]string, 
 	return count
 }
 
-func (m *MemStore) checkProjectCloneQuotaLocked(apps map[string]string, source string, limits api.Limits) error {
+func (m *MemStore) checkProjectCloneQuotaLocked(apps map[string]string, source string, managedBindingsPrepared bool, limits api.Limits) error {
 	for appID, slug := range apps {
 		secretCount, sourceSecrets, envCount, sourceEnv := 0, 0, 0, 0
 		for _, secret := range m.secrets {
@@ -136,8 +197,16 @@ func (m *MemStore) checkProjectCloneQuotaLocked(apps map[string]string, source s
 				}
 			}
 		}
-		if limits.SecretCountMax > 0 && secretCount+sourceSecrets > limits.SecretCountMax {
-			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "secrets", Limit: limits.SecretCountMax, Observed: secretCount + sourceSecrets}
+		observedSecrets := secretCount + sourceSecrets
+		if managedBindingsPrepared {
+			for _, secret := range m.secrets {
+				if secret.AppID == appID && secret.Scope == source && (secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "") {
+					observedSecrets--
+				}
+			}
+		}
+		if limits.SecretCountMax > 0 && observedSecrets > limits.SecretCountMax {
+			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "secrets", Limit: limits.SecretCountMax, Observed: observedSecrets}
 		}
 		if limits.EnvVarsMax > 0 && envCount+sourceEnv > limits.EnvVarsMax {
 			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "variables", Limit: limits.EnvVarsMax, Observed: envCount + sourceEnv}
@@ -174,7 +243,8 @@ func (m *MemStore) copyProjectEnvironmentVariablesLocked(apps map[string]string,
 func (m *MemStore) copyProjectEnvironmentSecretsLocked(apps map[string]string, source, target string, now time.Time) int {
 	rows := make([]AppSecret, 0)
 	for _, secret := range m.secrets {
-		if _, ok := apps[secret.AppID]; ok && secret.Scope == source {
+		if _, ok := apps[secret.AppID]; ok && secret.Scope == source &&
+			secret.ManagedPostgresBindingID == "" && secret.ManagedObjectStorageCredentialID == "" {
 			rows = append(rows, secret)
 		}
 	}

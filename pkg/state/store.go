@@ -2243,10 +2243,11 @@ type Store interface {
 	CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error)
 	UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error)
 	// DeleteProjectEnvironment removes an unprotected, non-production
-	// environment when it has no live releases. Related configuration and
-	// approval rows are removed with the registry entry. ErrConflict protects
-	// production, protected environments, and environments still serving a
-	// live release.
+	// environment when it has no live releases. Scoped app variables and
+	// ordinary secrets plus related configuration/approval rows are removed;
+	// managed credential rows remain for the API layer to revoke safely.
+	// ErrConflict protects production, the reserved default app scope, protected
+	// environments, and environments still serving a live release.
 	DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error
 	CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error)
 	ProjectEnvironmentApprovalByID(ctx context.Context, accountID, projectSlug, environmentSlug, id string) (ProjectEnvironmentApproval, error)

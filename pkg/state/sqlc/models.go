@@ -1443,25 +1443,26 @@ type OauthLink struct {
 }
 
 type ObjectBucket struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	Name               string
-	Scope              string
-	Region             string
-	BackendID          string
-	BackendFingerprint string
-	PhysicalName       string
-	State              string
-	LeaseToken         pgtype.Text
-	LeaseUntil         pgtype.Timestamptz
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	AttemptCount       int32
-	RetryAt            pgtype.Timestamptz
-	LastErrorCode      string
-	PublicRead         bool
-	ServeAt            pgtype.Text
+	ID                             pgtype.UUID
+	AccountID                      pgtype.UUID
+	AppID                          pgtype.UUID
+	Name                           string
+	Scope                          string
+	Region                         string
+	BackendID                      string
+	BackendFingerprint             string
+	PhysicalName                   string
+	State                          string
+	LeaseToken                     pgtype.Text
+	LeaseUntil                     pgtype.Timestamptz
+	CreatedAt                      pgtype.Timestamptz
+	UpdatedAt                      pgtype.Timestamptz
+	AttemptCount                   int32
+	RetryAt                        pgtype.Timestamptz
+	LastErrorCode                  string
+	PublicRead                     bool
+	ServeAt                        pgtype.Text
+	EnvironmentCloneSourceBucketID pgtype.UUID
 }
 
 type ObjectStorageAccessGrant struct {
@@ -1738,6 +1739,19 @@ type Project struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	OrgID            pgtype.UUID
+}
+
+type ProjectEnvironmentCleanupJob struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Resources       []byte
+	AttemptCount    int32
+	NextAttemptAt   pgtype.Timestamptz
+	LeaseToken      string
+	LeaseUntil      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
 }
 
 type ProvisionedStaticEgressIp struct {

@@ -18,8 +18,18 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 	if err := lockProjectEnvironmentCloneSource(ctx, tx, clone); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
-	if err := checkProjectEnvironmentCloneManagedBindings(ctx, tx, clone); err != nil {
+	if clone.ManagedBindingsPrepared {
+		if err := checkPreparedProjectEnvironmentBindings(ctx, tx, clone); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
+	if err := checkProjectEnvironmentCloneTargetScope(ctx, tx, clone); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	if !clone.ShareResources && !clone.ManagedBindingsPrepared {
+		if err := checkProjectEnvironmentCloneManagedBindings(ctx, tx, clone); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
 	}
 	if err := checkProjectEnvironmentCloneQuota(ctx, tx, clone, limits); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
@@ -36,6 +46,86 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: commit project environment clone: %w", err)
 	}
 	return created, result, nil
+}
+
+func checkPreparedProjectEnvironmentBindings(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) error {
+	unique := make(map[string]struct{}, len(clone.PreparedManagedBindingIDs))
+	for _, id := range clone.PreparedManagedBindingIDs {
+		unique[id] = struct{}{}
+	}
+	if len(unique) == 0 || len(unique) != len(clone.PreparedManagedBindingIDs) || clone.PreparedManagedSecretCount < len(unique) {
+		return ErrConflict
+	}
+	var bindingCount int
+	if err := tx.QueryRow(ctx, `
+		select count(distinct coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id))
+		  from apps a join app_secrets s on s.app_id = a.id
+		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+		   and (s.managed_postgres_binding_id is not null or s.managed_object_storage_credential_id is not null)
+	`, clone.AccountID, clone.ProjectID, clone.SourceSlug).Scan(&bindingCount); err != nil {
+		return mapErr(err)
+	}
+	if bindingCount != len(unique) {
+		return ErrConflict
+	}
+	return nil
+}
+
+func checkProjectEnvironmentCloneTargetScope(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) error {
+	if clone.ManagedBindingsPrepared {
+		unique := make(map[string]struct{}, len(clone.PreparedManagedBindingIDs))
+		for _, id := range clone.PreparedManagedBindingIDs {
+			unique[id] = struct{}{}
+		}
+		if len(unique) == 0 || len(unique) != len(clone.PreparedManagedBindingIDs) || clone.PreparedManagedSecretCount < len(unique) {
+			return ErrConflict
+		}
+		var hasUnmanagedScopeState bool
+		var preparedSecretCount, preparedBindingCount int
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from apps a join app_envs e on e.app_id = a.id
+				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and e.scope = $3
+			) or exists (
+				select 1 from apps a join app_secrets s on s.app_id = a.id
+				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+				   and ((s.managed_postgres_binding_id is null and s.managed_object_storage_credential_id is null)
+				        or (s.managed_postgres_binding_id is not null and s.managed_object_storage_credential_id is not null)
+				        or coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id)::text <> all($4::text[]))
+			), (
+				select count(*) from apps a join app_secrets s on s.app_id = a.id
+				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+				   and coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id)::text = any($4::text[])
+			), (
+				select count(distinct coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id))
+				  from apps a join app_secrets s on s.app_id = a.id
+				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+				   and coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id)::text = any($4::text[])
+			)
+		`, clone.AccountID, clone.ProjectID, clone.TargetSlug, clone.PreparedManagedBindingIDs).Scan(&hasUnmanagedScopeState, &preparedSecretCount, &preparedBindingCount); err != nil {
+			return mapErr(err)
+		}
+		if hasUnmanagedScopeState || preparedSecretCount != clone.PreparedManagedSecretCount || preparedBindingCount != len(unique) {
+			return ErrConflict
+		}
+		return nil
+	}
+	var hasScopedState bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1 from apps a join app_envs e on e.app_id = a.id
+			 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and e.scope = $3
+		) or exists (
+			select 1 from apps a join app_secrets s on s.app_id = a.id
+			 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+		)
+	`, clone.AccountID, clone.ProjectID, clone.TargetSlug).Scan(&hasScopedState); err != nil {
+		return mapErr(err)
+	}
+	if hasScopedState {
+		return ErrConflict
+	}
+	return nil
 }
 
 func lockProjectEnvironmentCloneSource(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) error {
@@ -78,6 +168,7 @@ func checkProjectEnvironmentCloneQuota(ctx context.Context, tx pgx.Tx, clone Pro
 		select a.slug,
 		       (select count(*) from app_secrets s where s.app_id = a.id),
 		       (select count(*) from app_secrets s where s.app_id = a.id and s.scope = $3),
+		       (select count(*) from app_secrets s where s.app_id = a.id and s.scope = $3 and (s.managed_postgres_binding_id is not null or s.managed_object_storage_credential_id is not null)),
 		       (select count(*) from app_envs e where e.app_id = a.id),
 		       (select count(*) from app_envs e where e.app_id = a.id and e.scope = $3)
 		  from apps a
@@ -90,12 +181,16 @@ func checkProjectEnvironmentCloneQuota(ctx context.Context, tx pgx.Tx, clone Pro
 	defer rows.Close()
 	for rows.Next() {
 		var slug string
-		var secretCount, sourceSecrets, envCount, sourceEnv int
-		if err := rows.Scan(&slug, &secretCount, &sourceSecrets, &envCount, &sourceEnv); err != nil {
+		var secretCount, sourceSecrets, sourceManaged, envCount, sourceEnv int
+		if err := rows.Scan(&slug, &secretCount, &sourceSecrets, &sourceManaged, &envCount, &sourceEnv); err != nil {
 			return mapErr(err)
 		}
-		if limits.SecretCountMax > 0 && secretCount+sourceSecrets > limits.SecretCountMax {
-			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "secrets", Limit: limits.SecretCountMax, Observed: secretCount + sourceSecrets}
+		observedSecrets := secretCount + sourceSecrets
+		if clone.ManagedBindingsPrepared {
+			observedSecrets -= sourceManaged
+		}
+		if limits.SecretCountMax > 0 && observedSecrets > limits.SecretCountMax {
+			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "secrets", Limit: limits.SecretCountMax, Observed: observedSecrets}
 		}
 		if limits.EnvVarsMax > 0 && envCount+sourceEnv > limits.EnvVarsMax {
 			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "variables", Limit: limits.EnvVarsMax, Observed: envCount + sourceEnv}

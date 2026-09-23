@@ -716,6 +716,7 @@ type MemStore struct {
 	projectsByAccountSlug                map[string]map[string]string // account_id → slug → id
 	projectsByInstallRepo                map[installRepoKey]string    // install_id, repo_full_name → id
 	projectEnvironments                  map[string]ProjectEnvironment
+	projectEnvironmentCleanupJobs        map[string]ProjectEnvironmentCleanupJob
 	projectEnvironmentApprovals          map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
 	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
@@ -1143,6 +1144,7 @@ func NewMemStore() *MemStore {
 		projectsByAccountSlug:                map[string]map[string]string{},
 		projectsByInstallRepo:                map[installRepoKey]string{},
 		projectEnvironments:                  map[string]ProjectEnvironment{},
+		projectEnvironmentCleanupJobs:        map[string]ProjectEnvironmentCleanupJob{},
 		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
 		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
@@ -2929,13 +2931,27 @@ func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, account
 	return ProjectEnvironment{}, ErrNotFound
 }
 
-func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projectID, slug string) error {
+func (m *MemStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {
+	_, err := m.DeleteProjectEnvironmentWithCleanup(ctx, accountID, projectID, slug, ProjectEnvironmentCleanupResources{}, "", 0)
+	return err
+}
+
+func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
+	_ context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
+	if !resources.Empty() && (leaseToken == "" || leaseDuration <= 0 || resources.ValidateForEnvironment(slug) != nil) {
+		return ProjectEnvironmentCleanupJob{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	project, ok := m.projects[projectID]
 	if !ok || project.AccountID != accountID {
-		return ErrNotFound
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
 	}
 
 	var environmentID string
@@ -2948,10 +2964,10 @@ func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projec
 		}
 	}
 	if environmentID == "" {
-		return ErrNotFound
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
 	}
-	if slug == "production" || environment.Protected {
-		return ErrConflict
+	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 
 	for _, app := range m.apps {
@@ -2961,11 +2977,37 @@ func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projec
 		for _, deployment := range m.deployments {
 			if deployment.AppID == app.ID && deployment.Status == DeployLive &&
 				normalizedDeploymentScope(deployment.Scope) == slug {
-				return ErrConflict
+				return ProjectEnvironmentCleanupJob{}, ErrConflict
 			}
 		}
 	}
 
+	var job ProjectEnvironmentCleanupJob
+	if !resources.Empty() {
+		now := time.Now().UTC()
+		job = ProjectEnvironmentCleanupJob{
+			ID: newID(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: slug,
+			Resources: cloneProjectEnvironmentCleanupResources(resources), NextAttemptAt: now,
+			LeaseToken: leaseToken, LeaseUntil: now.Add(leaseDuration), CreatedAt: now,
+		}
+	}
+
+	for key, env := range m.envs {
+		if env.Scope != slug {
+			continue
+		}
+		if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
+			delete(m.envs, key)
+		}
+	}
+	for key, secret := range m.secrets {
+		if secret.Scope != slug || secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" {
+			continue
+		}
+		if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
+			delete(m.secrets, key)
+		}
+	}
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
 	for id, approval := range m.projectEnvironmentApprovals {
@@ -2973,7 +3015,79 @@ func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projec
 			delete(m.projectEnvironmentApprovals, id)
 		}
 	}
+	if job.ID != "" {
+		m.projectEnvironmentCleanupJobs[job.ID] = cloneProjectEnvironmentCleanupJob(job)
+	}
+	return job, nil
+}
+
+func (m *MemStore) ClaimNextProjectEnvironmentCleanup(_ context.Context, leaseToken string, now time.Time, leaseDuration time.Duration) (ProjectEnvironmentCleanupJob, error) {
+	if leaseToken == "" || leaseDuration <= 0 {
+		return ProjectEnvironmentCleanupJob{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var selected ProjectEnvironmentCleanupJob
+	for _, job := range m.projectEnvironmentCleanupJobs {
+		if job.NextAttemptAt.After(now) || job.LeaseUntil.After(now) {
+			continue
+		}
+		if selected.ID == "" || job.NextAttemptAt.Before(selected.NextAttemptAt) ||
+			(job.NextAttemptAt.Equal(selected.NextAttemptAt) && job.ID < selected.ID) {
+			selected = job
+		}
+	}
+	if selected.ID == "" {
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
+	}
+	selected.LeaseToken = leaseToken
+	selected.LeaseUntil = now.Add(leaseDuration)
+	selected.AttemptCount++
+	m.projectEnvironmentCleanupJobs[selected.ID] = cloneProjectEnvironmentCleanupJob(selected)
+	return cloneProjectEnvironmentCleanupJob(selected), nil
+}
+
+func (m *MemStore) RetryProjectEnvironmentCleanup(_ context.Context, id, leaseToken string, nextAttemptAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job, ok := m.projectEnvironmentCleanupJobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if leaseToken == "" || job.LeaseToken != leaseToken {
+		return ErrConflict
+	}
+	job.NextAttemptAt = nextAttemptAt.UTC()
+	job.LeaseToken = ""
+	job.LeaseUntil = time.Time{}
+	m.projectEnvironmentCleanupJobs[id] = job
 	return nil
+}
+
+func (m *MemStore) CompleteProjectEnvironmentCleanup(_ context.Context, id, leaseToken string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job, ok := m.projectEnvironmentCleanupJobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if leaseToken == "" || job.LeaseToken != leaseToken {
+		return ErrConflict
+	}
+	delete(m.projectEnvironmentCleanupJobs, id)
+	return nil
+}
+
+func cloneProjectEnvironmentCleanupResources(resources ProjectEnvironmentCleanupResources) ProjectEnvironmentCleanupResources {
+	resources.Postgres = append([]ProjectEnvironmentPostgresCleanupResource(nil), resources.Postgres...)
+	resources.ObjectStorage = append([]ProjectEnvironmentObjectStorageCleanupResource(nil), resources.ObjectStorage...)
+	return resources
+}
+
+func cloneProjectEnvironmentCleanupJob(job ProjectEnvironmentCleanupJob) ProjectEnvironmentCleanupJob {
+	job.Resources = cloneProjectEnvironmentCleanupResources(job.Resources)
+	return job
 }
 
 func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
