@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	logsSourceRuntime = "runtime"
-	logsSourceHTTP    = "http"
+	logsSourceRuntime    = "runtime"
+	logsSourceHTTP       = "http"
+	traceLogsLookupLimit = 200
 )
 
 func logsFlagWasSet(fs *flag.FlagSet, name string) bool {
@@ -85,10 +86,42 @@ func parsePositiveLogsDuration(raw string) (time.Duration, error) {
 	return 0, fmt.Errorf("duration must be positive")
 }
 
-func runHTTPLogsQuery(ctx context.Context, slug, deploymentID, requestID, route, since string, status, limit int, all bool, now time.Time) int {
+func runHTTPLogsQuery(ctx context.Context, slug, deploymentID, requestID, traceID, route, since string, status, limit int, all bool, now time.Time) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if traceID != "" {
+		// The endpoint is account-wide, so fetch its maximum bounded page before
+		// applying this app's filter locally.
+		result, traceErr := client.GetAccountTraceWithLimit(ctx, traceID, traceLogsLookupLimit)
+		if traceErr != nil {
+			return printErr("Could not query HTTP logs by trace", traceErr)
+		}
+		events := make([]api.LogQueryEvent, 0)
+		for _, event := range result.Logs {
+			if event.App != slug || event.Source != api.LogSourceHTTP ||
+				!httpLogEventMatches(event, deploymentID, route, since, status, now) {
+				continue
+			}
+			events = append(events, event)
+		}
+		if len(events) > limit {
+			events = events[:limit]
+		}
+		if code := emitHTTPLogQueryEvents(events); code != 0 {
+			return code
+		}
+		if result.LogsTruncated {
+			PrintWarn(osStderr, "Trace results contain more than the bounded HTTP log page; this app's output may be incomplete.")
+		}
+		if result.Partial {
+			for _, item := range result.Errors {
+				_, _ = fmt.Fprintf(osStderr, "trace %s: %s\n", item.App, item.Detail)
+			}
+			return 3
+		}
+		return 0
 	}
 
 	var rows []api.DebugTelemetryRequestItem
@@ -162,17 +195,45 @@ func streamAllHTTPLogsQuery(ctx context.Context, client *api.Client, slug string
 }
 
 func emitHTTPLogQueryRows(rows []api.DebugTelemetryRequestItem) int {
-	if jsonOutput {
-		enc := make([]api.LogQueryEvent, 0, len(rows))
-		for _, row := range rows {
-			enc = append(enc, httpLogQueryEvent(row))
-		}
-		return jsonOut(writeNDJSON(enc))
-	}
+	events := make([]api.LogQueryEvent, 0, len(rows))
 	for _, row := range rows {
-		renderHTTPLogQueryEvent(osStdout, httpLogQueryEvent(row))
+		events = append(events, httpLogQueryEvent(row))
+	}
+	return emitHTTPLogQueryEvents(events)
+}
+
+func emitHTTPLogQueryEvents(events []api.LogQueryEvent) int {
+	if jsonOutput {
+		return jsonOut(writeNDJSON(events))
+	}
+	for _, event := range events {
+		renderHTTPLogQueryEvent(osStdout, event)
 	}
 	return 0
+}
+
+func httpLogEventMatches(event api.LogQueryEvent, deploymentID, route, since string, status int, now time.Time) bool {
+	if deploymentID != "" && event.DeploymentID != deploymentID {
+		return false
+	}
+	if route != "" && event.Route != route {
+		return false
+	}
+	if status != 0 && event.Status != status {
+		return false
+	}
+	if since == "" {
+		return true
+	}
+	lookback, err := parsePositiveLogsDuration(since)
+	if err != nil {
+		return false
+	}
+	receivedAt, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+	if err != nil {
+		return false
+	}
+	return !receivedAt.Before(now.Add(-lookback))
 }
 
 func renderHTTPLogQueryPageWarnings(w io.Writer, page api.DebugTelemetryListResponse) {
@@ -238,6 +299,9 @@ func renderHTTPLogQueryEvent(w io.Writer, event api.LogQueryEvent) {
 	}
 	_, _ = fmt.Fprintf(w, "%s http status=%d method=%s route=%q latency=%dms request=%s deployment=%s",
 		event.Timestamp, event.Status, event.Method, event.Route, event.LatencyMS, requestID, event.DeploymentID)
+	if event.TraceID != "" {
+		_, _ = fmt.Fprintf(w, " trace=%s", event.TraceID)
+	}
 	if event.Count > 1 {
 		_, _ = fmt.Fprintf(w, " count=%d", event.Count)
 	}

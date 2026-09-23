@@ -786,6 +786,10 @@ from .list_workflow_steps_response import ListWorkflowStepsResponse
 from .log_excerpt import LogExcerpt
 from .log_excerpt_level import LogExcerptLevel
 from .log_excerpt_source import LogExcerptSource
+from .log_query_event import LogQueryEvent
+from .log_query_event_level import LogQueryEventLevel
+from .log_query_event_source import LogQueryEventSource
+from .log_query_event_stream import LogQueryEventStream
 from .magic_link_signup_request import MagicLinkSignupRequest
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
@@ -2178,6 +2182,10 @@ __all__ = (
     "LogExcerpt",
     "LogExcerptLevel",
     "LogExcerptSource",
+    "LogQueryEvent",
+    "LogQueryEventLevel",
+    "LogQueryEventSource",
+    "LogQueryEventStream",
     "MagicLinkSignupRequest",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",

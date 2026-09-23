@@ -394,6 +394,7 @@ export type { ListTriggerRecordsResponse } from './ListTriggerRecordsResponse.js
 export type { ListWorkflowRunsResponse } from './ListWorkflowRunsResponse.js';
 export type { ListWorkflowStepsResponse } from './ListWorkflowStepsResponse.js';
 export type { LogExcerpt } from './LogExcerpt.js';
+export type { LogQueryEvent } from './LogQueryEvent.js';
 export type { MFAConfirmRequest } from './MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './MFAConfirmResponse.js';
 export type { MFADisableEmailConfirmRequest } from './MFADisableEmailConfirmRequest.js';

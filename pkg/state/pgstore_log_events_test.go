@@ -79,7 +79,7 @@ func TestPgStoreLogEvents_RoundTripIdempotencyAndCursor(t *testing.T) {
 	filter.BeforeAt = time.Time{}
 	filter.BeforeID = ""
 	filter.Limit = 20
-	filter.RequestID = "trace_1"
+	filter.TraceID = "trace_1"
 	filter.Status = 503
 	filter.Route = "/checkout"
 	filtered, hasMore, err := store.ListLogEvents(ctx, filter)
