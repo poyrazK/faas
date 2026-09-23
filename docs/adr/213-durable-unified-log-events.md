@@ -50,6 +50,9 @@ are not backfilled by this adapter.
 
 `meterd` reconciles the current and next two UTC month partitions on startup
 and hourly, relocating overlapping default-partition rows before attachment.
+The exclusive-lock reconciliation has a five-second deadline; a larger backlog
+remains in the default partition and raises a failure metric rather than
+blocking log ingestion indefinitely.
 It deletes expired events in bounded batches using each account's log archive
 cap (Free 1 day, Hobby 7, Pro 30, Scale 90), then drops whole partitions only
 after the 90-day maximum has passed. Missing accounts use the one-day floor.

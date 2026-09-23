@@ -16,6 +16,13 @@ const MaxLogEventRetentionDays = 90
 
 const LogEventMaintenanceInterval = time.Hour
 
+// Partition attachment holds an ACCESS EXCLUSIVE lock while relocating rows
+// from the default partition. The lock timeout bounds acquisition only; this
+// deadline also bounds the work after the lock has been acquired. On timeout,
+// PostgreSQL rolls back the move and the default partition keeps accepting
+// events until the next pass or an operator drains a large backlog.
+const LogEventPartitionReconcileTimeout = 5 * time.Second
+
 // A coarse one-day bound lets log_events_retention_time_idx find the oldest
 // candidates before the account-plan predicate is evaluated. The primary-key
 // tuple identifies a row across partitions; ctid alone is not unique there.
@@ -136,7 +143,9 @@ SELECT count(attached.relname),
 // Replays or forward-dated events that landed in the default partition are
 // moved before an overlapping explicit partition is attached.
 func EnsureLogEventPartitions(ctx context.Context, db logEventMaintenanceDB) (LogEventPartitionCoverage, error) {
-	if _, err := db.Exec(ctx, ensureLogEventPartitionsSQL); err != nil {
+	reconcileCtx, cancel := context.WithTimeout(ctx, LogEventPartitionReconcileTimeout)
+	defer cancel()
+	if _, err := db.Exec(reconcileCtx, ensureLogEventPartitionsSQL); err != nil {
 		return LogEventPartitionCoverage{}, fmt.Errorf("ensure log event partitions: %w", err)
 	}
 	var coverage LogEventPartitionCoverage
