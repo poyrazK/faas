@@ -1,6 +1,6 @@
 package main
 
-// Deployment-attached one-off commands (ADR-222).
+// Deployment-attached one-off commands (ADR-230).
 //
 // `gregale app <slug> exec -- <command> [args...]` selects the app's live
 // deployment on the server, runs the command in a fresh task VM, and waits for
