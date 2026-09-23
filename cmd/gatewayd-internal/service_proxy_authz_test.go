@@ -299,3 +299,45 @@ func TestServiceProxyAuthorizerEnforcesPreviewEnvironmentBoundary(t *testing.T) 
 		}
 	}
 }
+
+func TestServiceProxyAuthorizerDeclaredBindingUsesLogicalPreviewService(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "declared-preview-authz@local", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "declared-preview-authz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := state.AppManifest{
+		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+		ServiceBindings: []api.AppServiceBinding{{
+			Binding: "GREGALE_SERVICE_DB_URL", Service: "db",
+		}},
+	}
+	create := func(slug, previewOf string, prNumber int, appManifest state.AppManifest) state.App {
+		t.Helper()
+		app, createErr := store.CreateApp(ctx, state.App{
+			AccountID: account.ID, ProjectID: project.ID, Slug: slug,
+			Type: state.AppTypeApp, RAMMB: 128, Status: state.AppActive,
+			PreviewOfSlug: previewOf, PreviewPrNumber: prNumber, Manifest: appManifest,
+		})
+		if createErr != nil {
+			t.Fatalf("CreateApp(%s): %v", slug, createErr)
+		}
+		return app
+	}
+	previewCaller := create("pr-42-api", "api", 42, manifest)
+	previewTarget := create("pr-42-db", "db", 42, state.AppManifest{})
+	productionCaller := create("api", "", 0, manifest)
+	authorize := newServiceProxyAuthorizer(store)
+
+	if _, err := authorize(ctx, previewCaller.ID, previewTarget.ID); err != nil {
+		t.Fatalf("declared same-PR preview service denied: %v", err)
+	}
+	if _, err := authorize(ctx, productionCaller.ID, previewTarget.ID); !errors.Is(err, gateway.ErrServiceProxyBindingDenied) {
+		t.Fatalf("production caller to generated preview slug = %v, want binding denial", err)
+	}
+}

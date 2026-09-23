@@ -55,7 +55,8 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 		// lookup; repeat the invariant here so alternate/out-of-tree resolver
 		// wiring cannot turn a generated preview slug into a cross-environment
 		// escape hatch.
-		if caller.PreviewOfSlug != "" && caller.ProjectID != "" && caller.PreviewPrNumber > 0 && target.PreviewOfSlug != "" {
+		projectPreviewToPreview := caller.PreviewOfSlug != "" && caller.ProjectID != "" && caller.PreviewPrNumber > 0 && target.PreviewOfSlug != ""
+		if projectPreviewToPreview {
 			if target.ProjectID != caller.ProjectID || target.PreviewPrNumber != caller.PreviewPrNumber {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 			}
@@ -84,9 +85,15 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			}
 		}
 		if caller.Manifest.EffectiveServiceBindingPolicy() == api.ServiceBindingPolicyDeclared {
+			bindingTarget := target.Slug
+			if projectPreviewToPreview {
+				// Compose binds the logical workload name, not the generated
+				// pr-N slug. The environment check above makes this alias safe.
+				bindingTarget = target.PreviewOfSlug
+			}
 			declared := false
 			for _, binding := range caller.Manifest.ServiceBindings {
-				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(target.Slug)) {
+				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(bindingTarget)) {
 					declared = true
 					break
 				}
