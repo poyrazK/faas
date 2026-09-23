@@ -117,7 +117,7 @@ func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymen
 	if _, err := conn.Exec(ctx, lockSQL, deploymentID); err != nil {
 		// Cancellation can race a server-side lock grant. Closing the
 		// session is the only safe way to rule out an orphaned lock.
-		closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		_ = conn.Hijack().Close(closeCtx)
 		cancel()
 		return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
@@ -133,7 +133,7 @@ func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymen
 			if unlockErr != nil || !unlocked {
 				// Never return a connection carrying an uncertain session lock
 				// to the pool: a later activation could block behind itself.
-				closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 				_ = conn.Hijack().Close(closeCtx)
 				closeCancel()
 				return
