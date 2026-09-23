@@ -29,10 +29,13 @@ func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
 					preview, lookupErr := store.PreviewAppByProjectWorkload(
 						ctx, caller.AccountID, caller.ProjectID, caller.PreviewPrNumber, service,
 					)
-					if lookupErr == nil {
+					// Set replacement marks obsolete siblings stale before it
+					// commits. Never route to one while janitor cleanup waits.
+					if lookupErr == nil && preview.PreviewPrState != state.PreviewPrStateStale &&
+						preview.PreviewPrState != state.PreviewPrStateTornDown {
 						return serviceTargetFromApp(preview, true), preview.ID != "", nil
 					}
-					if !errors.Is(lookupErr, state.ErrNotFound) {
+					if lookupErr != nil && !errors.Is(lookupErr, state.ErrNotFound) {
 						return gateway.ServiceTarget{}, false, fmt.Errorf("resolve preview service %q: %w", service, lookupErr)
 					}
 				}

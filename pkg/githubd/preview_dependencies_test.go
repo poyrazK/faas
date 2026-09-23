@@ -227,6 +227,63 @@ func TestHandlePullRequest_ProvisionsNewDependencyWithoutProduction(t *testing.T
 	}
 }
 
+func TestHandlePullRequest_RemovedDependencyWaitsForJanitor(t *testing.T) {
+	ctx := context.Background()
+	rig := newPreviewRig(t)
+	if err := rig.mem.UpdateAccountPlan(ctx, rig.acct, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	svc, _ := newPreviewService(t, rig)
+	svc.Source = &stubSource{fsys: fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte("services: {}\n")},
+	}}
+	svc.WorkDir = t.TempDir()
+	svc.Enqueuer = &previewDependencyEnqueuer{}
+	dependencies := []string{"worker"}
+	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+		return reposcan.Result{Workloads: []reposcan.Workload{
+			{Name: "api", DependsOn: dependencies}, {Name: "worker"},
+		}}, nil
+	}
+	first, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, strings.Repeat("a", 40)))
+	if err != nil || len(first.Added) != 2 {
+		t.Fatalf("open PR = (%+v, %v), want root and worker", first, err)
+	}
+	worker, err := rig.mem.AppBySlug(ctx, "pr-42-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependencies = []string{"missing"}
+	if _, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40))); err == nil {
+		t.Fatal("invalid new head unexpectedly replaced the preview set")
+	}
+	set, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("a", 40) || len(set.MemberAppIDs) != 2 {
+		t.Fatalf("failed replacement changed set = (%+v, %v)", set, err)
+	}
+	if got, _ := rig.mem.AppByID(ctx, worker.ID); got.PreviewPrState != state.PreviewPrStateOpen {
+		t.Fatalf("failed replacement retired worker: %+v", got)
+	}
+	dependencies = nil
+	second, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("c", 40)))
+	if err != nil || len(second.BuildIDs) != 1 {
+		t.Fatalf("remove worker = (%+v, %v), want root-only build", second, err)
+	}
+	set, err = rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
+	if err != nil || set.CommitSHA != strings.Repeat("c", 40) || len(set.MemberAppIDs) != 1 || set.MemberAppIDs[0] != first.Added[0].ID {
+		t.Fatalf("replacement set = (%+v, %v), want only root", set, err)
+	}
+	if got, _ := rig.mem.AppByID(ctx, worker.ID); got.PreviewPrState != state.PreviewPrStateStale {
+		t.Fatalf("removed worker state = %q, want stale", got.PreviewPrState)
+	}
+	if _, err := svc.handlePullRequest(ctx, pullRequestClosedBody(42, strings.Repeat("c", 40))); err != nil {
+		t.Fatalf("close PR: %v", err)
+	}
+	if got, _ := rig.mem.AppByID(ctx, worker.ID); got.PreviewPrState != state.PreviewPrStateStale {
+		t.Fatalf("closing PR delayed retired worker: %+v", got)
+	}
+}
+
 func TestPreviewDependencyParents_DoesNotReplaceInactiveProduction(t *testing.T) {
 	ctx := context.Background()
 	rig := newPreviewRig(t)
