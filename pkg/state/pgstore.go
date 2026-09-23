@@ -100,7 +100,10 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 // the public smoke request and the eventual live/failed transition. The
 // notification outbox broadcasts snapshot_written to every imaged process;
 // the loser reloads the deployment after this lock and observes the winner's
-// terminal state instead of running a second verification wake.
+// terminal state instead of running a second verification wake. Contenders
+// must not hold a pool connection while waiting: imaged's three-connection
+// pool can otherwise be exhausted by its LISTEN connection and two activation
+// handlers, leaving the lock holder unable to load the deployment.
 func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (func(context.Context), error) {
 	deploymentID = strings.TrimSpace(deploymentID)
 	if deploymentID == "" {
@@ -109,18 +112,36 @@ func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymen
 	if s == nil || s.pool == nil {
 		return nil, errors.New("state: pgstore has nil pool")
 	}
-	conn, err := db.DirectPool(s.pool).Acquire(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
-	}
-	const lockSQL = `select pg_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`
-	if _, err := conn.Exec(ctx, lockSQL, deploymentID); err != nil {
-		// Cancellation can race a server-side lock grant. Closing the
-		// session is the only safe way to rule out an orphaned lock.
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		_ = conn.Hijack().Close(closeCtx)
-		cancel()
-		return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+	var conn *pgxpool.Conn
+	for {
+		var err error
+		conn, err = db.DirectPool(s.pool).Acquire(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
+		}
+		var locked bool
+		err = conn.QueryRow(ctx,
+			`select pg_try_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&locked)
+		if err != nil {
+			// Cancellation can race a server-side lock grant. Closing the
+			// session is the only safe way to rule out an orphaned lock.
+			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			_ = conn.Hijack().Close(closeCtx)
+			cancel()
+			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+		}
+		if locked {
+			break
+		}
+		conn.Release()
+		// A second subscriber may contend for the same deployment while the
+		// winner still needs this pool for ordinary reads and stage writes.
+		// Give the connection back before retrying or waiting for cancellation.
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 	var once sync.Once
 	return func(ctx context.Context) {
