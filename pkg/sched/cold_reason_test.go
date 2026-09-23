@@ -178,3 +178,34 @@ func TestEngineWake_AllSnapshotsStaleReason(t *testing.T) {
 	}
 	t.Fatal("no wake.boot_started row")
 }
+
+// adr: 005 — a drive-less legacy row is retired when a wake refuses it, so
+// the next park's capture takes the (deployment, tier) slot and the wake
+// after that restores. Before, the legacy row kept the slot forever.
+func TestChooseWakeSnapshotRetiresDrivelessRow(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, _, dep := seedApp(t, store, api.PlanFree, 256, 5)
+	if _, err := store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 256 << 20,
+		StorageKey: "snap/" + dep.ID + "/captures/old/mem", Tier: state.SnapshotTierInit,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if got := e.chooseWakeSnapshot(ctx, dep.ID, string(api.PlanFree), 256, api.AppProtocolHTTP1); got.coldReason != ColdReasonNoDrive {
+		t.Fatalf("first wake reason = %q, want %q", got.coldReason, ColdReasonNoDrive)
+	}
+	fresh, err := store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 256 << 20,
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "new1"),
+		Tier:       state.SnapshotTierInit,
+	})
+	if err != nil {
+		t.Fatalf("the next capture still conflicts with the retired row: %v", err)
+	}
+	got := e.chooseWakeSnapshot(ctx, dep.ID, string(api.PlanFree), 256, api.AppProtocolHTTP1)
+	if !got.ok || got.snap.ID != fresh.ID {
+		t.Fatalf("second wake = ok %v snap %q reason %q, want a restore of %q", got.ok, got.snap.ID, got.coldReason, fresh.ID)
+	}
+}
