@@ -27,11 +27,22 @@ begin
     return new;
 end;
 $$;
-create trigger prune_pr_preview_set_on_root_delete
-    after update of status on apps
-    for each row
-    when (old.status is distinct from 'deleted' and new.status = 'deleted')
-    execute function prune_pr_preview_set_on_root_delete();
+do $$
+begin
+    if not exists (
+        select 1 from pg_trigger
+        where tgrelid = 'apps'::regclass
+          and tgname = 'prune_pr_preview_set_on_root_delete'
+          and not tgisinternal
+    ) then
+        create trigger prune_pr_preview_set_on_root_delete
+            after update of status on apps
+            for each row
+            when (old.status is distinct from 'deleted' and new.status = 'deleted')
+            execute function prune_pr_preview_set_on_root_delete();
+    end if;
+end;
+$$;
 -- +goose StatementEnd
 
 -- +goose Down

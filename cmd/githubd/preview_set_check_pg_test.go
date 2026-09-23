@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +122,7 @@ func TestLoadPRPreviewSetCheck_CurrentHeadAndFullClosure(t *testing.T) {
 	if _, err := pool.Exec(ctx, `update apps set status = 'deleted' where id = $1`, rootID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sets.GetPRPreviewSet(ctx, 77, set.RepoFullName, 42); err != state.ErrNotFound {
+	if _, err := sets.GetPRPreviewSet(ctx, 77, set.RepoFullName, 42); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("tombstoned root retained preview set: %v", err)
 	}
 }
