@@ -36,15 +36,25 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	}
 	workflow := string(body)
 	observer := strings.Index(workflow, "scripts/ci/observe_rollout_availability.sh")
-	publicPath := -1
+	readinessPath := -1
 	if observer >= 0 {
-		if offset := strings.Index(workflow[observer:], "https://api.gregale.dev/v1/status"); offset >= 0 {
-			publicPath = observer + offset
+		if offset := strings.Index(workflow[observer:], "https://api.gregale.dev/readyz"); offset >= 0 {
+			readinessPath = observer + offset
 		}
 	}
 	activate := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
-	if observer < 0 || publicPath < 0 || activate < 0 || !(observer <= publicPath && publicPath < activate) {
-		t.Fatalf("customer-path observer must wrap activation: observer=%d public=%d activate=%d", observer, publicPath, activate)
+	if observer < 0 || readinessPath < 0 || activate < 0 || !(observer <= readinessPath && readinessPath < activate) {
+		t.Fatalf("API-readiness observer must wrap activation: observer=%d readiness=%d activate=%d", observer, readinessPath, activate)
+	}
+	for _, required := range []string{
+		`ROLLOUT_APP_PROBE_URL="https://gregale-api-demo.gregale.dev/"`,
+		`ROLLOUT_STATUS_PROBE_URL="https://api.gregale.dev/v1/status"`,
+		"Upload control-plane rollout probe evidence",
+		"gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("control-plane rollout is missing independent probe evidence %q", required)
+		}
 	}
 	scriptBody, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "observe_rollout_availability.sh"))
 	if err != nil {
@@ -54,9 +64,10 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	for _, required := range []string{
 		"ROLLOUT_BASELINE_SAMPLE_COUNT",
 		"sample baseline",
-		"Baseline: **",
-		"Rollout attribution is **inconclusive**",
+		"rollout attribution is **inconclusive**",
 		"HTTP status counts:",
+		"curl exit counts:",
+		`target != "status" and baseline_ready and failed`,
 		"customer path lost after a healthy pre-rollout baseline",
 		"ROLLOUT_PROBE_PROXY",
 		`--proxy "$probe_proxy"`,
@@ -122,7 +133,8 @@ func TestCDControlPlanePlannedMaintenanceKeepsDeploymentFailureGate(t *testing.T
 	for _, required := range []string{
 		"if (( command_status != 0 )); then",
 		"exit \"$command_status\"",
-		"baseline_total > 0 && baseline_success == baseline_total && rollout_failed > 0",
+		"if (( gate_status != 0 )); then",
+		`baseline_ready = bool(baseline) and len(baseline_successful) == len(baseline)`,
 	} {
 		if !strings.Contains(observer, required) {
 			t.Errorf("maintenance observer must preserve wrapped-command failure: missing %q", required)
