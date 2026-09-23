@@ -20782,6 +20782,10 @@ components:
           description: "Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy instances are bypassed automatically."
           type: boolean
           example: false
+        version_affinity_cookie:
+          description: "Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes the value before forwarding it as a key."
+          type: string
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -21341,6 +21345,10 @@ components:
           description: "Enable best-effort cookie-based routing to the same running instance. Omitted uses false."
           type: boolean
           default: false
+        version_affinity_cookie:
+          description: "Use a stable, non-secret browser cookie for rollout affinity. Omit to disable."
+          type: string
+          pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -21719,6 +21727,9 @@ components:
         session_affinity:
           description: "Toggle best-effort cookie-based routing to the same running instance. Omit for no change."
           type: [boolean, "null"]
+        version_affinity_cookie:
+          description: "Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change."
+          type: [string, "null"]
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -22327,6 +22338,9 @@ components:
           description: "Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically."
           type: boolean
           default: false
+        version_affinity_cookie:
+          description: "Configured browser cookie name for rollout affinity; omitted when disabled."
+          type: string
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."

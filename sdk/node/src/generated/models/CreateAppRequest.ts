@@ -100,6 +100,10 @@ export type CreateAppRequest = {
    */
   session_affinity?: boolean;
   /**
+   * Use a stable, non-secret browser cookie for rollout affinity. Omit to disable.
+   */
+  version_affinity_cookie?: string;
+  /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */
   streaming_enabled?: boolean;
