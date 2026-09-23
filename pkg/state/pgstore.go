@@ -8838,6 +8838,24 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: update deployment: %w", err)
 	}
+	// Release tasks are part of the deployment pipeline, not independent
+	// operator work. A queued command must never start after its candidate is
+	// cancelled; a leased command receives the same cooperative cancellation
+	// fence used by the public app-task endpoint.
+	if _, err := tx.Exec(ctx, `
+		UPDATE app_tasks
+		   SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+		       cancel_requested_at = CASE
+		           WHEN status IN ('restoring', 'running') THEN coalesce(cancel_requested_at, $2)
+		           ELSE cancel_requested_at
+		       END,
+		       finished_at = CASE WHEN status = 'queued' THEN $2 ELSE finished_at END,
+		       updated_at = $2
+		 WHERE deployment_id = $1
+		   AND kind = 'release'
+		   AND status IN ('queued', 'restoring', 'running')`, id, now); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: cancel release task: %w", err)
+	}
 
 	// Cascade-cancel every non-terminal build row attached to
 	// this deployment. Running rows also get a durable VM cleanup

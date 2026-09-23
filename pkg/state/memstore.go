@@ -7809,6 +7809,19 @@ func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string,
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: %w", err)
 	}
 	m.deployments[id] = d
+	for taskID, task := range m.appTasks {
+		if task.DeploymentID != d.ID || task.Kind != AppTaskKindRelease || task.Status.Terminal() {
+			continue
+		}
+		if task.Status == AppTaskQueued {
+			task.Status = AppTaskCancelled
+			task.FinishedAt = appTaskTimePtr(now)
+		} else if task.CancelRequested == nil {
+			task.CancelRequested = appTaskTimePtr(now)
+		}
+		task.UpdatedAt = now
+		m.appTasks[taskID] = task
+	}
 	// Cascade-cancel any non-terminal build rows attached to
 	// this deployment. Mirrors pgstore.CancelDeploymentTx.
 	// We collect the IDs of flipped rows so the apid handler
