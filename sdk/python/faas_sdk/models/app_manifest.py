@@ -149,6 +149,8 @@ class AppManifest:
     session_affinity: bool | Unset = False
     """Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are
     bypassed automatically."""
+    version_affinity_cookie: str | Unset = UNSET
+    """Configured browser cookie name for rollout affinity; omitted when disabled."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -295,6 +297,8 @@ class AppManifest:
 
         session_affinity = self.session_affinity
 
+        version_affinity_cookie = self.version_affinity_cookie
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -352,6 +356,8 @@ class AppManifest:
             field_dict["health_path_wakes"] = health_path_wakes
         if session_affinity is not UNSET:
             field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
 
         return field_dict
 
@@ -669,6 +675,8 @@ class AppManifest:
 
         session_affinity = d.pop("session_affinity", UNSET)
 
+        version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
+
         app_manifest = cls(
             entrypoint=entrypoint,
             env=env,
@@ -696,6 +704,7 @@ class AppManifest:
             health_path=health_path,
             health_path_wakes=health_path_wakes,
             session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
         )
 
         app_manifest.additional_properties = d

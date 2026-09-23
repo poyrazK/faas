@@ -87,5 +87,9 @@ export type AppManifest = {
    * Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically.
    */
   session_affinity?: boolean;
+  /**
+   * Configured browser cookie name for rollout affinity; omitted when disabled.
+   */
+  version_affinity_cookie?: string;
 };
 

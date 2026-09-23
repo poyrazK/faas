@@ -208,6 +208,28 @@ identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the
 same account. Cross-account calls are refused.
 
+### Smoke-test a downstream deployment
+
+To test a live deployment of a bound service before giving it traffic, send
+its deployment ID on that managed service request:
+
+```bash
+curl -H 'Gregale-Target-Deployment: DEPLOYMENT_ID' \
+  http://billing.svc.gregale:10080/health
+```
+
+Find the ID with `gregale traffic status billing`. This works for a live
+deployment at 0% traffic: the service proxy wakes that exact deployment if
+needed. The override wins over `Gregale-Version-Key` for this one service hop,
+but the version key remains available to the target app. The override header
+is removed before forwarding, so it cannot accidentally pin a later call to
+another service. Only deployments belonging to the authorized target app are
+accepted; malformed IDs return 400 and non-live or wrong-app IDs return 422
+instead of silently falling back to weighted routing. Direct public smoke
+tests should use the deployment's preview URL instead. Gregale strips this
+header from public requests before they reach your app; attach it explicitly
+to the service call rather than forwarding it from an end-user request.
+
 ### Preview-to-production service policy
 
 A pull-request preview first resolves a service to a preview workload in the

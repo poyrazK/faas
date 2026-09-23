@@ -491,6 +491,10 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// Migration preflight verdict level is a typed string, not a struct, so
+	// the DTO scanner does not surface it. Same pattern as TriggerKind and
+	// ResourceProfile below.
+	"PreflightLevel": true,
 	// SidecarProbe is a source-compatible Go alias for AppManifestHealthcheck;
 	// the underlying fields are checked against the shared schema above.
 	"SidecarProbe": true,
@@ -967,6 +971,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
+		filepath.Join(root, "pkg", "api", "preflight.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

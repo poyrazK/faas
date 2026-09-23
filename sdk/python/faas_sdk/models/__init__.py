@@ -986,6 +986,13 @@ from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .preflight_finding import PreflightFinding
+from .preflight_level import PreflightLevel
+from .preflight_plan_budget import PreflightPlanBudget
+from .preflight_profile import PreflightProfile
+from .preflight_report import PreflightReport
+from .preflight_source import PreflightSource
+from .preflight_verdict import PreflightVerdict
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
 from .preview_production_changes_response import PreviewProductionChangesResponse
@@ -2413,6 +2420,13 @@ __all__ = (
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
+    "PreflightFinding",
+    "PreflightLevel",
+    "PreflightPlanBudget",
+    "PreflightProfile",
+    "PreflightReport",
+    "PreflightSource",
+    "PreflightVerdict",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
     "PreviewProductionChangesResponse",

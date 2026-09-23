@@ -284,6 +284,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_POLAR_USAGE_EVENT_NAME` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_WEBHOOK_SECRET` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS` | shared | `default` |  |  | `` |  |
+| `FAAS_PREFLIGHT_GITHUB_TOKEN` | apid | `secrets-env` |  |  | `` | optional read-only GitHub token for the public migration preflight; without it upstream commit lookups use the anonymous budget of 60 calls per hour per source IP. Delivered by /etc/faas/sealed.env (apid) |
 | `FAAS_PREPARED_NETWORKS` | vmmd | `default` |  |  | `` | opt-in unused-network cache size (0–16), disabled by default; ADR-149 |
 | `FAAS_PRESSURE_MIGRATION_POLICY` | schedd | `default` |  |  | `` |  |
 | `FAAS_PRESSURE_REASSESSMENT_SECONDS` | schedd | `default` |  |  | `` |  |

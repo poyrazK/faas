@@ -132,6 +132,9 @@ type Metrics struct {
 	// never arrived — which is exactly the state cd-platform sat in.
 	smokeChallenge  *prometheus.CounterVec
 	smokeValidation *prometheus.CounterVec
+	// versionAffinityKeys counts bounded parsing outcomes for the public
+	// rollout-cohort header without recording the customer-controlled value.
+	versionAffinityKeys *prometheus.CounterVec
 	// routeLookupStaleServed (ADR-190) counts requests answered from
 	// the last-known-good route tier because the Router errored. A
 	// non-zero rate means Postgres is unreachable from this gateway
@@ -804,6 +807,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_smoke_validation_total",
 			Help: "Deployment-smoke bypass authorizations, labelled by outcome (match, missing_token, no_challenge, expired, token_mismatch). Anything but match means the health path is edge-answered and the smoke sees an empty X-Faas-Deployment-Id.",
 		}, []string{"outcome"}),
+		versionAffinityKeys: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_version_affinity_key_total",
+			Help: "Rollout version-affinity headers observed by the gateway, labelled by request surface and bounded parse outcome (missing, valid, invalid).",
+		}, []string{"surface", "outcome"}),
 		notificationPayloadRejected: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_notification_payload_rejected_total",
 			Help: "Count of malformed cross-process notification payloads rejected by the gateway cache invalidator.",
@@ -1782,7 +1789,12 @@ func NewMetrics() *Metrics {
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
-	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceWakeLatency)
+	for _, surface := range []string{versionAffinitySurfacePublic, versionAffinitySurfaceService} {
+		for _, outcome := range []string{versionAffinityKeyMissing, versionAffinityKeyValid, versionAffinityKeyInvalid} {
+			m.versionAffinityKeys.WithLabelValues(surface, outcome)
+		}
+	}
+	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceWakeLatency)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -1839,6 +1851,21 @@ func (m *Metrics) ObserveSmokeValidation(outcome string) {
 		return
 	}
 	m.smokeValidation.WithLabelValues(outcome).Inc()
+}
+
+// ObserveVersionAffinityKey records only the closed parser outcome; the key
+// itself is never used as a metric label. Nil-safe.
+func (m *Metrics) ObserveVersionAffinityKey(surface, outcome string) {
+	if m == nil || m.versionAffinityKeys == nil {
+		return
+	}
+	if surface != versionAffinitySurfacePublic && surface != versionAffinitySurfaceService {
+		return
+	}
+	switch outcome {
+	case versionAffinityKeyMissing, versionAffinityKeyValid, versionAffinityKeyInvalid:
+		m.versionAffinityKeys.WithLabelValues(surface, outcome).Inc()
+	}
 }
 
 // ObserveRouteLookupStaleServed (ADR-190) increments
@@ -3258,6 +3285,10 @@ const (
 	// ServiceCallPreviewDenied — a project policy or production target rejects
 	// a preview caller before the request is forwarded or the target is woken.
 	ServiceCallPreviewDenied ServiceCallOutcome = "preview_denied"
+	// ServiceCallOverrideRejected — malformed or non-live explicit deployment.
+	ServiceCallOverrideRejected ServiceCallOutcome = "override_rejected"
+	// ServiceCallOverrideUnavailable — no validator or a failed live-set read.
+	ServiceCallOverrideUnavailable ServiceCallOutcome = "override_unavailable"
 )
 
 // ServiceCallOutcomes is the full closed set, used to pre-instantiate every
@@ -3267,6 +3298,7 @@ var ServiceCallOutcomes = []ServiceCallOutcome{
 	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
 	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallBindingDenied,
 	ServiceCallNotFound, ServiceCallUpgradeRejected, ServiceCallPreviewDenied,
+	ServiceCallOverrideRejected, ServiceCallOverrideUnavailable,
 }
 
 // IncServiceCall bumps gateway_service_call_total for one outcome.
