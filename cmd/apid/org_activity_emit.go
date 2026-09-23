@@ -58,10 +58,14 @@ func (s *server) recordAppActivity(ctx context.Context, r *http.Request, acct st
 	}
 }
 
-// Apps are currently owned by an account, not an organization. A caller's
-// active org or org-bound API key cannot determine where app details belong:
-// the same account may be a member of an unrelated shared organization.
+// App ownership is persisted on the resource row. A caller's active org or
+// org-bound API key cannot determine where app details belong: the same
+// account may be a member of an unrelated shared organization. The personal
+// org lookup is retained only for legacy rows written before org_id existed.
 func (s *server) resolveActivityOrg(ctx context.Context, app state.App) (uuid.UUID, error) {
+	if app.OrgID != "" {
+		return uuid.Parse(app.OrgID)
+	}
 	org, err := s.store.OrgByPersonalAccount(ctx, app.AccountID)
 	if err != nil {
 		return uuid.Nil, err

@@ -3133,6 +3133,7 @@ func (m *MemStore) ApplyProjectPlan(
 		}
 		a.AccountID = project.AccountID
 		a.ProjectID = project.ID
+		m.ensureAppOrgLocked(&a)
 		if a.Status == "" {
 			a.Status = AppActive
 		}
@@ -3324,6 +3325,7 @@ func (m *MemStore) ApplyProjectReconcile(
 				}
 			}
 			if tombstone.ID != "" {
+				m.ensureAppOrgLocked(&tombstone)
 				tombstone.RootDir = app.RootDir
 				tombstone.WorkloadName = app.WorkloadName
 				tombstone.WorkloadClass = app.WorkloadClass
@@ -3341,6 +3343,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			}
 			app.AccountID = project.AccountID
 			app.ProjectID = project.ID
+			m.ensureAppOrgLocked(&app)
 			if app.Status == "" {
 				app.Status = AppActive
 			}
@@ -3456,6 +3459,22 @@ func (m *MemStore) ApplyProjectReconcile(
 
 // --- Apps -------------------------------------------------------------------
 
+// ensureAppOrgLocked fills the account-owned legacy default when a caller
+// hasn't explicitly attached an app to an organization. The caller holds
+// m.mu; the owner snapshot is stored on the app rather than re-inferred from
+// request credentials when activity is later emitted.
+func (m *MemStore) ensureAppOrgLocked(app *App) {
+	if app.OrgID != "" {
+		return
+	}
+	for _, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == app.AccountID {
+			app.OrgID = org.ID
+			return
+		}
+	}
+}
+
 func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -3512,6 +3531,7 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.WorkloadClass == "" {
 		app.WorkloadClass = WorkloadClassHTTP
 	}
+	m.ensureAppOrgLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -3648,6 +3668,7 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	if app.WorkloadClass == "" {
 		app.WorkloadClass = WorkloadClassHTTP
 	}
+	m.ensureAppOrgLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
 }
