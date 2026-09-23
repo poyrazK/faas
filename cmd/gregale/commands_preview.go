@@ -17,16 +17,17 @@ import (
 // this shape keeps `--json` useful for scripts without exposing every app
 // setting in a discovery command.
 type previewSummary struct {
-	ID               string                   `json:"id"`
-	Slug             string                   `json:"slug"`
-	ParentSlug       string                   `json:"parent_slug"`
-	PRNumber         int                      `json:"pr_number"`
-	Kind             string                   `json:"kind"`
-	PRState          string                   `json:"pr_state,omitempty"`
-	AppStatus        string                   `json:"app_status"`
-	URL              string                   `json:"url"`
-	ExpiresAt        *time.Time               `json:"expires_at,omitempty"`
-	LatestDeployment *previewDeploymentStatus `json:"latest_deployment,omitempty"`
+	ID               string                                `json:"id"`
+	Slug             string                                `json:"slug"`
+	ParentSlug       string                                `json:"parent_slug"`
+	PRNumber         int                                   `json:"pr_number"`
+	Kind             string                                `json:"kind"`
+	PRState          string                                `json:"pr_state,omitempty"`
+	AppStatus        string                                `json:"app_status"`
+	URL              string                                `json:"url"`
+	ExpiresAt        *time.Time                            `json:"expires_at,omitempty"`
+	LatestDeployment *previewDeploymentStatus              `json:"latest_deployment,omitempty"`
+	Environment      *api.PreviewEnvironmentStatusResponse `json:"environment,omitempty"`
 }
 
 type previewDeploymentStatus struct {
@@ -159,11 +160,23 @@ func cmdPreviewShow(args []string) int {
 	if err != nil {
 		return printErr("Could not load preview", err)
 	}
-	item := previewSummaryFromApp(preview.App, preview.LatestDeployment)
+	environment, err := previewEnvironmentForApp(ctx, client, preview.App)
+	if err != nil {
+		return printErr("Could not load preview environment", err)
+	}
+	latest := preview.LatestDeployment
+	if environment != nil {
+		latest = previewEnvironmentRootDeployment(preview, *environment)
+	}
+	item := previewSummaryFromApp(preview.App, latest)
+	item.Environment = environment
 	if jsonOutput {
 		return jsonOut(writeJSON(item))
 	}
 	renderPreviewDetails(item)
+	if environment != nil {
+		renderPreviewEnvironmentDetails(*environment)
+	}
 	return 0
 }
 
