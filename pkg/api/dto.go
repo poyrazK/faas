@@ -38,6 +38,45 @@ type PublishEventResponse struct {
 	AccountID  string    `json:"account_id"`
 }
 
+// PreviewEventRequest asks the router to evaluate an event without persisting
+// or delivering it. ID and Time are optional and receive the same defaults as
+// publish when omitted.
+type PreviewEventRequest struct {
+	ID              string          `json:"id,omitempty"`
+	Source          string          `json:"source"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"data_content_type,omitempty"`
+	Data            json.RawMessage `json:"data"`
+}
+
+// EventPreviewSubscription describes an enabled subscription considered by a
+// read-only routing preview. Filter is the normalized manifest predicate.
+type EventPreviewSubscription struct {
+	AppSlug        string          `json:"app_slug"`
+	SubscriptionID string          `json:"subscription_id"`
+	Source         string          `json:"source"`
+	Type           string          `json:"type"`
+	Filter         json.RawMessage `json:"filter"`
+	Reason         string          `json:"reason"`
+}
+
+// PreviewEventResponse summarizes the same account-scoped matching decision
+// used by the asynchronous fanout worker. Subscription slices are bounded
+// samples; the counts cover every candidate.
+type PreviewEventResponse struct {
+	EventID             string                     `json:"event_id"`
+	Source              string                     `json:"source"`
+	Type                string                     `json:"type"`
+	CandidateCount      int                        `json:"candidate_count"`
+	MatchedCount        int                        `json:"matched_count"`
+	FilterMismatchCount int                        `json:"filter_mismatch_count"`
+	OtherMismatchCount  int                        `json:"other_mismatch_count"`
+	Matches             []EventPreviewSubscription `json:"matches"`
+	NonMatches          []EventPreviewSubscription `json:"non_matches"`
+	Truncated           bool                       `json:"truncated"`
+}
+
 // SendAppMessageRequest is the application-inbox contract. Gregale wraps the
 // caller's data in a CloudEvents 1.0 envelope and places it on the target
 // application's durable invocation queue. Source defaults to "gregale.send";

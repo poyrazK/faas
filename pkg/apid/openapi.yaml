@@ -1617,6 +1617,39 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/events:preview:
+    post:
+      tags: [events]
+      operationId: previewEvent
+      summary: Preview event routing without publishing.
+      description: |
+        Evaluates an event against the authenticated account's enabled
+        subscriptions using the same matcher as asynchronous fanout. The
+        preview is read-only: it does not persist the event or enqueue work.
+        Counts cover every source/type candidate; response lists are bounded
+        samples and `truncated` is true when either sample omits candidates.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreviewEventRequest' }
+      responses:
+        '200':
+          description: Routing preview completed without publishing the event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500':
+          description: The router could not read the current subscription set.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/events:publish:
     post:
       tags: [events]
@@ -23641,6 +23674,77 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/WorkflowStepSpec'
+
+    PreviewEventRequest:
+      description: Event fields to evaluate without persisting or delivering the event.
+      type: object
+      additionalProperties: false
+      required: [source, type, data]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional event id used when filters inspect the CloudEvents id.
+        source:
+          type: string
+          minLength: 1
+          maxLength: 256
+        type:
+          type: string
+          minLength: 1
+          maxLength: 256
+        time:
+          type: string
+          format: date-time
+          description: Event occurrence time; omitted values use the current time.
+        data_content_type:
+          type: string
+          enum: [application/json]
+          default: application/json
+        data:
+          description: JSON event payload evaluated by subscription filters.
+
+    EventPreviewSubscription:
+      description: A bounded sample of an enabled subscription considered by the event router.
+      type: object
+      additionalProperties: false
+      required: [app_slug, subscription_id, source, type, filter, reason]
+      properties:
+        app_slug: { type: string }
+        subscription_id: { type: string, format: uuid }
+        source: { type: string }
+        type: { type: string }
+        filter:
+          type: object
+          additionalProperties: true
+          description: Normalized content filter declared by this subscription.
+        reason:
+          type: string
+          description: would_deliver, content_filter_mismatch, pattern_mismatch, tenant_mismatch, or an invalid_subscription explanation.
+
+    PreviewEventResponse:
+      description: Read-only event-routing preview; counts cover all candidates while lists are bounded samples.
+      type: object
+      additionalProperties: false
+      required: [event_id, source, type, candidate_count, matched_count, filter_mismatch_count, other_mismatch_count, matches, non_matches, truncated]
+      properties:
+        event_id: { type: string }
+        source: { type: string }
+        type: { type: string }
+        candidate_count: { type: integer, minimum: 0, description: Enabled source/type candidates considered. }
+        matched_count: { type: integer, minimum: 0, description: Subscriptions that would receive the event. }
+        filter_mismatch_count: { type: integer, minimum: 0, description: Candidates excluded by their content filters. }
+        other_mismatch_count: { type: integer, minimum: 0, description: "Candidates rejected for another reason, including invalid stored subscription data." }
+        matches:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventPreviewSubscription' }
+        non_matches:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventPreviewSubscription' }
+        truncated: { type: boolean, description: True when either sample omits additional candidates. }
 
     PublishEventRequest:
       description: Caller-authored envelope for the tenant-scoped internal event router.

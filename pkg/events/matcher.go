@@ -27,6 +27,16 @@ type Subscription struct {
 	Filter    json.RawMessage
 }
 
+// MatchReason explains the first routing rule an event does or does not satisfy.
+type MatchReason string
+
+const (
+	MatchReasonWouldDeliver    MatchReason = "would_deliver"
+	MatchReasonTenantMismatch  MatchReason = "tenant_mismatch"
+	MatchReasonPatternMismatch MatchReason = "pattern_mismatch"
+	MatchReasonFilterMismatch  MatchReason = "content_filter_mismatch"
+)
+
 // ValidatePattern validates an event source or type pattern without needing
 // an envelope. Manifest loaders use it to reject malformed declarations before
 // they reach a router worker.
@@ -106,6 +116,34 @@ func (s Subscription) Match(e Envelope) (bool, error) {
 		return false, fmt.Errorf("event: evaluate subscription filter: %w", err)
 	}
 	return matched, nil
+}
+
+// ExplainMatch uses Match as the source of truth for delivery, then describes
+// why a valid non-match was rejected. Preview callers can share the router's
+// decision without maintaining a second filter evaluator.
+func (s Subscription) ExplainMatch(e Envelope) (MatchReason, error) {
+	matched, err := s.Match(e)
+	if err != nil {
+		return "", err
+	}
+	if matched {
+		return MatchReasonWouldDeliver, nil
+	}
+	if s.AccountID != e.AccountID {
+		return MatchReasonTenantMismatch, nil
+	}
+	sourceMatch, err := matchPattern(s.Source, e.Source)
+	if err != nil {
+		return "", err
+	}
+	typeMatch, err := matchPattern(s.Type, e.Type)
+	if err != nil {
+		return "", err
+	}
+	if !sourceMatch || !typeMatch {
+		return MatchReasonPatternMismatch, nil
+	}
+	return MatchReasonFilterMismatch, nil
 }
 
 // Validate checks the fields that are needed before a subscription can be

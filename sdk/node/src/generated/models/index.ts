@@ -309,6 +309,7 @@ export type { EnvScope } from './EnvScope.js';
 export type { ErrorNewWebhookPayload } from './ErrorNewWebhookPayload.js';
 export type { EventDeliveryListResponse } from './EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './EventDeliveryResponse.js';
+export type { EventPreviewSubscription } from './EventPreviewSubscription.js';
 export type { EventSubscriptionListResponse } from './EventSubscriptionListResponse.js';
 export type { EventSubscriptionResponse } from './EventSubscriptionResponse.js';
 export type { ExecutionFailure } from './ExecutionFailure.js';
@@ -507,6 +508,8 @@ export type { PreviewCreatedWebhookPayload } from './PreviewCreatedWebhookPayloa
 export type { PreviewProductionChangesResponse } from './PreviewProductionChangesResponse.js';
 export type { PreviewResourceLinksResponse } from './PreviewResourceLinksResponse.js';
 export type { PreviewResourceResponse } from './PreviewResourceResponse.js';
+export type { PreviewEventRequest } from './PreviewEventRequest.js';
+export type { PreviewEventResponse } from './PreviewEventResponse.js';
 export type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
 export type { PrewarmIntentResponse } from './PrewarmIntentResponse.js';
 export type { PrewarmRequest } from './PrewarmRequest.js';
