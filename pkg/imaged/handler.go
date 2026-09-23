@@ -578,7 +578,7 @@ func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
 	return h
 }
 
-// WithReleasePhaseEnabled enables the ADR-222 pre-boot release gate. Operators
+// WithReleasePhaseEnabled enables the ADR-230 pre-boot release gate. Operators
 // must enable FAAS_APP_TASK_DISPATCH on schedd at the same time; keeping this
 // opt-in prevents a partially rolled-out fleet from queueing tasks forever.
 func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
