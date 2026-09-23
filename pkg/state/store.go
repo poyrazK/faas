@@ -1846,7 +1846,7 @@ type Store interface {
 	ListDeploymentsByNodeID(ctx context.Context, nodeID string) ([]Deployment, error)
 	// ConcurrencyForDeployment returns the live-instance count for a
 	// (app, deployment) pair — the sum of state IN ('waking',
-	// 'cold_booting', 'running'). Backed by the partial index added
+	// 'cold_booting', 'running', 'draining'). Backed by the partial index added
 	// in migration 00132.
 	ConcurrencyForDeployment(ctx context.Context, appID, deploymentID string) (int, error)
 	// UpdateDeploymentMinInstances stamps the per-deployment cold-wake
@@ -2538,7 +2538,7 @@ type Store interface {
 	// the env overlay only contains that scope's rows.
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (Deployment, error)
 	// CountLiveInstancesByDeployment returns the number of instances
-	// currently in {WAKING, COLD_BOOTING, RUNNING} for the given
+	// currently in {WAKING, COLD_BOOTING, RUNNING, DRAINING} for the given
 	// deployment_id (issue #555 PR-6). The DeploymentCounterWatcher
 	// (pkg/sched/deployment_counter_watcher.go) consults this query
 	// to detect the "last live instance parked" transition that
@@ -4537,7 +4537,7 @@ type Store interface {
 	// ComputeNodeUsedMB returns the Σ(ram_mb + PerVMOverheadMB) for
 	// live instances on the given node. Single SQL aggregate, no
 	// client loop. Live = state IN ('waking','cold_booting',
-	// 'running') per spec §6.2-2 re-stated per-node. Atomic with
+	// 'running','draining') per spec §6.2-2 re-stated per-node. Atomic with
 	// the ledger; the ledger is the cache, this is the source of
 	// truth after a schedd restart. PerVMOverheadMB is the 8 MB
 	// fixed cost (spec §4.7 / billing model) added per live instance.

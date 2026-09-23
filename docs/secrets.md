@@ -21,10 +21,17 @@ from being captured into a replacement snapshot.
 
 By default, a running process keeps its current environment and the new value
 arrives on the next cold wake. Add `--restart` to `secrets set` or `secrets
-rotate` to apply immediately. Gregale durably queues a configuration restart,
-destroys live VMs without snapshotting their old environment, and cold-boots a
-replacement with the current secret set. This restarts the app; in-process
-reload without restart is not yet supported.
+rotate` to apply immediately. Gregale durably queues a rolling configuration
+refresh: it cold-boots replacements with the current environment, routes new
+requests to them, waits for route convergence and in-flight requests to drain,
+then destroys the old processes without snapshotting their old environment.
+The scheduler keeps app concurrency at or below its configured ceiling plus
+one temporary slot; node RAM and CPU limits still apply, so a refresh can
+remain pending until capacity is available. In a multi-node fleet, the drain
+waits for registered gateways to acknowledge the route update
+and fresh VM telemetry; legacy single-box
+installs use their existing local notification path. In-process reload without
+restart is not yet supported.
 
 `gregale secrets list` reports delivery for each key:
 

@@ -2885,8 +2885,8 @@ func (s *PgStore) ListInstancesForLifecycleReconciliation(ctx context.Context, n
 		   join apps a on a.id = i.app_id
 		   join accounts ac on ac.id = a.account_id
 		  where (
-		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','snapshotting','migrating','warm'))
-		     or (ac.status = 'deleted_pending' and i.state in ('waking','cold_booting','running','snapshotting','migrating','evicting_account_deleting'))
+		        (a.status = 'deleted' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))
+		     or (ac.status = 'deleted_pending' and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','evicting_account_deleting'))
 		  )%s
 		  order by i.started_at asc, i.id asc
 		  limit $%d`, nodeClause, limitArg)
@@ -6720,7 +6720,7 @@ func (s *PgStore) SafedeployStampRollout(ctx context.Context, id string, rollout
 }
 
 // CountLiveInstancesByDeployment returns the number of instances in
-// {WAKING, COLD_BOOTING, RUNNING} for the given deployment_id (issue
+// {WAKING, COLD_BOOTING, RUNNING, DRAINING} for the given deployment_id (issue
 // #555 PR-6). The DeploymentCounterWatcher
 // (pkg/sched/deployment_counter_watcher.go) uses this to detect the
 // "last live instance parked" transition. The SQL is a single
@@ -6735,7 +6735,7 @@ func (s *PgStore) CountLiveInstancesByDeployment(ctx context.Context, deployment
 	err := s.pool.QueryRow(ctx, `
 		select count(*) from instances
 		where deployment_id = $1
-		  and state in ('waking', 'cold_booting', 'running')
+		  and state in ('waking', 'cold_booting', 'running', 'draining')
 	`, deploymentID).Scan(&n)
 	return n, err
 }
@@ -6928,13 +6928,13 @@ func (s *PgStore) ListDeploymentsByNodeID(ctx context.Context, nodeID string) ([
 // ConcurrencyForDeployment returns the live-instance count for a
 // (app, deployment) pair. Used by the floor trigger's per-deployment
 // floor arithmetic and the reaper's per-deployment idle floor
-// check. The three live states (waking, cold_booting, running) match
-// pkg/state/machine.go CountsForConcurrency. PARKING / PARKED /
+// check. The four concurrency states (waking, cold_booting, running,
+// draining) match pkg/state/machine.go CountsForConcurrency. PARKING / PARKED /
 // STOPPED do not count (they're shutting down or idle).
 //
 // Backed by the partial index `instances_app_deployment_idx`
-// (migration 00132) which restricts the index to the three live
-// states. A pre-00132 deploy has the index in place but the
+// (migration 00132, extended by the draining-state migration) which restricts
+// the index to those states. A pre-00132 deploy has the index in place but the
 // instances.deployment_id column may be NULL on legacy rows — the
 // predicate `deployment_id = $2` excludes those rows from the
 // match, which under-counts but is safe (the trigger floors on
@@ -6946,7 +6946,7 @@ func (s *PgStore) ConcurrencyForDeployment(ctx context.Context, appID, deploymen
 		select count(*) from instances
 		 where app_id = $1
 		   and deployment_id = $2
-		   and state in ('waking', 'cold_booting', 'running')
+		   and state in ('waking', 'cold_booting', 'running', 'draining')
 	`, appID, deploymentID).Scan(&n)
 	if err != nil {
 		return 0, err
@@ -15336,7 +15336,7 @@ func (s *PgStore) ListActiveInstancesForApp(ctx context.Context, appID string, l
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where app_id = $1 and state in ('waking','cold_booting','running','snapshotting','migrating','warm')
+		 where app_id = $1 and state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
 		 order by started_at desc limit $2`, appID, limit)
 	if err != nil {
 		return nil, err
@@ -15380,7 +15380,7 @@ func (s *PgStore) ListAllInstances(ctx context.Context) ([]Instance, error) {
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
-		 where state in ('running','waking','cold_booting','snapshotting','warm')
+		 where state in ('running','waking','cold_booting','draining','snapshotting','warm')
 		 order by started_at desc`)
 	if err != nil {
 		return nil, err
@@ -15460,7 +15460,7 @@ func (s *PgStore) ListInstancesForAccountPaged(ctx context.Context, accountID st
 		 from instances i
 		 join apps a on a.id = i.app_id
 		 where a.account_id = $1
-		   and i.state in ('waking', 'cold_booting', 'running', 'snapshotting', 'warm')
+		   and i.state in ('waking', 'cold_booting', 'running', 'draining', 'snapshotting', 'warm')
 		   and ($2 = '' or i.id::text < $2)
 		 order by i.id::text desc
 		 limit $3`, accountID, before, limit)
@@ -16670,7 +16670,7 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 // ComputeNodeUsedMB returns the Σ(ram_mb + api.PerVMOverheadMB) for live
 // instances on the given node. Mirrors the §6.2-2 invariant re-stated
 // per-node: Σ ≤ admission_ceiling_mb per active node. Live = state ∈
-// ('waking','cold_booting','running'); SNAPSHOTTING is excluded because
+// ('waking','cold_booting','running','draining'); SNAPSHOTTING is excluded because
 // the watchdog considers a snapshotting instance parked-from-RAM (its
 // resident memory is being flushed to disk, not held for requests).
 // The 8 MB per-vm constant lives in pkg/api (pkg/api.PerVMOverheadMB)
@@ -16684,7 +16684,7 @@ func (s *PgStore) ComputeNodeUsedMB(ctx context.Context, nodeID string) (int64, 
 		select coalesce(sum(ram_mb + $2), 0)::bigint
 		  from instances
 		 where node_id = $1
-		   and state in ('waking','cold_booting','running','warm')
+		   and state in ('waking','cold_booting','running','draining','warm')
 	`, nodeID, api.PerVMOverheadMB).Scan(&used)
 	if err != nil {
 		return 0, fmt.Errorf("state: compute_node %s used_mb: %w", nodeID, err)
@@ -16712,7 +16712,7 @@ func (s *PgStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string)
 		select node_id::text, coalesce(sum(ram_mb + $2), 0)::bigint
 		  from instances
 		 where node_id = any($1::uuid[])
-		   and state in ('waking','cold_booting','running','warm')
+		   and state in ('waking','cold_booting','running','draining','warm')
 		 group by node_id
 	`, parsedIDs, api.PerVMOverheadMB)
 	if err != nil {
@@ -16756,7 +16756,7 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 		  from instances i
 		  join apps a on a.id = i.app_id
 		 where i.node_id = any($1::uuid[])
-		   and i.state in ('waking','cold_booting','running','warm')
+		   and i.state in ('waking','cold_booting','running','draining','warm')
 		 group by i.node_id
 	`, parsedIDs, api.DefaultAppCPUMillicores)
 	if err != nil {
@@ -17078,7 +17078,7 @@ func (s *PgStore) PerNodeLiveStats(ctx context.Context) ([]PerNodeStats, error) 
 		       coalesce(sum(i.ram_mb + 8), 0)                    as ram_used_mb
 		from instances i
 		join compute_nodes n on n.id = i.node_id
-		where i.state in ('waking', 'cold_booting', 'running', 'warm')
+		where i.state in ('waking', 'cold_booting', 'running', 'draining', 'warm')
 		group by n.name
 		order by n.name
 	`)
@@ -17124,7 +17124,7 @@ func (s *PgStore) OperatorCapacity(ctx context.Context) (OperatorCapacitySnapsho
 			       count(*) filter (where i.state = 'cold_booting') as instances_cold_booting,
 			       coalesce(sum(i.ram_mb + 8), 0)::bigint as ram_used_mb
 			  from instances i
-			 where i.state in ('waking', 'cold_booting', 'running', 'warm')
+			 where i.state in ('waking', 'cold_booting', 'running', 'draining', 'warm')
 			 group by i.node_id
 		), placed as (
 			select a.node_id,

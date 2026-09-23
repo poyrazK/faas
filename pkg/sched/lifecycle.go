@@ -112,7 +112,7 @@ func classifyServiceReplicas(replicas []state.Instance) serviceReplicaStatus {
 			status.ready++
 		case state.StateWaking, state.StateColdBooting:
 			status.starting++
-		case state.StateSnapshotting, state.StateMigrating:
+		case state.StateDraining, state.StateSnapshotting, state.StateMigrating:
 			status.draining++
 		default:
 			status.unavailable++
@@ -157,7 +157,7 @@ func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App,
 			status.ready++
 		case state.StateWaking, state.StateColdBooting:
 			status.starting++
-		case state.StateSnapshotting, state.StateMigrating:
+		case state.StateDraining, state.StateSnapshotting, state.StateMigrating:
 			status.draining++
 		}
 	}
@@ -464,6 +464,9 @@ func (e *Engine) drainServiceDeploymentInstances(ctx context.Context, deployment
 			}
 			e.ledger.Release(fresh.ID)
 			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+		case state.StateDraining:
+			// Runtime-config refresh owns this non-routable row and its
+			// route/request drain barriers. Leave it to that durable handoff.
 		}
 	}
 }
@@ -516,6 +519,8 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 		case state.StateSnapshotting:
 			// An in-flight snapshot is already releasing the serving slot;
 			// let it finish so the rollback cache remains valid.
+		case state.StateDraining:
+			// Runtime-config refresh owns this withdrawn row through teardown.
 		}
 	}
 }
@@ -1557,6 +1562,10 @@ func (e *Engine) stopManagedWorker(ctx context.Context, instanceID string, opts 
 			}
 			_, err = e.StopInstance(ctx, instanceID, stopOpts)
 			return err
+		}
+		if state.State(ins.State) == state.StateDraining {
+			// Runtime-config refresh owns this withdrawn row through teardown.
+			return nil
 		}
 		if !state.State(ins.State).CountsForRAM() {
 			return nil

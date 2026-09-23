@@ -48,13 +48,17 @@ const (
 	// warm pool. It consumes RAM but not serving concurrency; the next
 	// request resumes it in place instead of restoring a snapshot.
 	StateWarm State = "warm"
+	// StateDraining is a still-resident VM removed from gateway selection.
+	// It continues consuming app concurrency and node capacity until its
+	// in-flight requests drain and schedd destroys it.
+	StateDraining State = "draining"
 )
 
 // States lists every state (deterministic order for tests + CHECK generation).
 var States = []State{
 	StateParked, StateWaking, StateColdBooting, StateRunning,
 	StateSnapshotting, StateStopped, StateFailed,
-	StateEvictingAccountDeleting, StateMigrating, StateWarm,
+	StateEvictingAccountDeleting, StateMigrating, StateWarm, StateDraining,
 }
 
 // validateInstanceState mirrors the instances.state CHECK constraint. The
@@ -77,7 +81,7 @@ func validateMemStoreCreateInstanceState(raw string) error {
 		return nil
 	} else {
 		switch raw {
-		case "PARKED", "WAKING", "COLD_BOOTING", "RUNNING", "SNAPSHOTTING", "STOPPED", "FAILED", "EVICTING_ACCOUNT_DELETING", "MIGRATING", "WARM", "snapshotted":
+		case "PARKED", "WAKING", "COLD_BOOTING", "RUNNING", "SNAPSHOTTING", "STOPPED", "FAILED", "EVICTING_ACCOUNT_DELETING", "MIGRATING", "WARM", "DRAINING", "snapshotted":
 			return nil
 		}
 		return err
@@ -104,7 +108,7 @@ var transitions = map[State][]State{
 	StateParked:       {StateWaking, StateColdBooting},
 	StateWaking:       {StateRunning, StateWarm, StateColdBooting, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
 	StateColdBooting:  {StateRunning, StateWarm, StateFailed, StateStopped, StateEvictingAccountDeleting, StateParked},
-	StateRunning:      {StateSnapshotting, StateStopped, StateFailed, StateEvictingAccountDeleting, StateMigrating, StateParked},
+	StateRunning:      {StateSnapshotting, StateStopped, StateFailed, StateEvictingAccountDeleting, StateMigrating, StateParked, StateDraining},
 	StateSnapshotting: {StateParked, StateStopped, StateEvictingAccountDeleting},
 	StateStopped:      {StateColdBooting},
 	StateFailed:       {StateParked, StateColdBooting, StateStopped}, // manual recovery / lazy cold-boot
@@ -123,6 +127,9 @@ var transitions = map[State][]State{
 	// A warm VM may be resumed for a request, or destroyed/parked by the
 	// pool reconciler when desired capacity decreases or the VM is stale.
 	StateWarm: {StateRunning, StateParked, StateStopped, StateFailed, StateEvictingAccountDeleting},
+	// Draining instances retain their serving/concurrency and RAM reservation
+	// until schedd has confirmed route convergence and request quiescence.
+	StateDraining: {StateStopped, StateFailed, StateEvictingAccountDeleting},
 }
 
 // Valid reports whether s is a known state.
@@ -143,10 +150,11 @@ func CanTransition(from, to State) bool {
 }
 
 // CountsForConcurrency reports whether s counts toward an app's max_concurrency
-// (invariant §6.2-1: ≤ max_concurrency in {WAKING, COLD_BOOTING, RUNNING}).
+// (invariant §6.2-1: ≤ max_concurrency in {WAKING, COLD_BOOTING, RUNNING,
+// DRAINING}). Draining retains the slot until the resident VM is destroyed.
 func (s State) CountsForConcurrency() bool {
 	switch s {
-	case StateWaking, StateColdBooting, StateRunning:
+	case StateWaking, StateColdBooting, StateRunning, StateDraining:
 		return true
 	default:
 		return false
@@ -155,7 +163,7 @@ func (s State) CountsForConcurrency() bool {
 
 // CountsForRAM reports whether s holds resident RAM and so counts against the
 // admission ceiling (invariant §6.2-2: Σ(ram+8) over {WAKING, COLD_BOOTING,
-// RUNNING, SNAPSHOTTING, MIGRATING, WARM} ≤ 47,600 MB).
+// RUNNING, DRAINING, SNAPSHOTTING, MIGRATING, WARM} ≤ 47,600 MB).
 //
 // StateMigrating holds the paused-VM snapshot resident on the dying
 // node during the four-phase handoff (ADR-066). It counts as live

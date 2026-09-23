@@ -577,7 +577,7 @@ func projectObsDrainStatus(rows []state.Instance) api.ObsNodeDrainStatus {
 		case state.StateColdBooting:
 			status.LiveInstances++
 			status.ColdBooting++
-		case state.StateSnapshotting, state.StateMigrating:
+		case state.StateDraining, state.StateSnapshotting, state.StateMigrating:
 			status.LiveInstances++
 		}
 	}

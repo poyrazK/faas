@@ -660,7 +660,7 @@ func TestHandleInvalidation_TenantSurfaceChanged(t *testing.T) {
 // node whose VM is mid-Park-then-destroy — the next request must
 // re-admit which lands on the destination's wake path.
 func TestHandleInvalidation_TerminalStatesEvict(t *testing.T) {
-	for _, state := range []string{"stopped", "failed", "parked", "snapshotting", "migrating"} {
+	for _, state := range []string{"stopped", "failed", "parked", "snapshotting", "migrating", "draining"} {
 		f := &fakeInvalidator{}
 		log := testLogger()
 		payload := `{"instance_id":"i-term","app_id":"app-9","state":"` + state + `"}`

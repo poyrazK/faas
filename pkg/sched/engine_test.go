@@ -46,6 +46,7 @@ type fakeVMM struct {
 	cancels             int  // Tier A5: counts CancelLiveMigration calls
 	forceColdFallback   bool // CreateFromSnapshot reports a cold-boot fallback (ADR-005)
 	wakeErr             error
+	coldBootHook        func()
 	snapErr             error
 	snapErrSequence     []error
 	// snapDeadline / snapHasDeadline capture the ctx deadline seen by
@@ -126,6 +127,9 @@ func (f *fakeVMM) outcome(instance string, method vmmdpb.WakeMethod, requested v
 }
 
 func (f *fakeVMM) CreateColdBoot(ctx context.Context, _, instance string, app AppSpec) (*WakeOutcome, error) {
+	if f.coldBootHook != nil {
+		f.coldBootHook()
+	}
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):
@@ -572,6 +576,15 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 	if first.Instance == nil || vmm.restores != 1 {
 		t.Fatalf("initial wake = %+v, restores = %d; want snapshot restore", first.Instance, vmm.restores)
 	}
+	oldInstanceID := first.Instance.InstanceID
+	vmm.coldBootHook = func() {
+		old, readErr := store.InstanceByID(context.Background(), oldInstanceID)
+		if readErr != nil {
+			t.Errorf("old instance during replacement boot: %v", readErr)
+		} else if old.State != string(state.StateRunning) {
+			t.Errorf("old instance state during replacement boot = %q, want running", old.State)
+		}
+	}
 	wakeID := uuid.NewString()
 	refreshed, err := engine.RefreshRuntimeConfig(context.Background(), app.ID, wakeID)
 	if err != nil {
@@ -598,6 +611,32 @@ func TestRefreshRuntimeConfigDestroysWithoutSnapshotAndColdBoots(t *testing.T) {
 	}
 	if old.State != string(state.StateStopped) {
 		t.Fatalf("old instance state = %q, want stopped", old.State)
+	}
+}
+
+func TestRefreshRuntimeConfigReplacementFailureKeepsOldInstanceServing(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 256, 1)
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	first, err := engine.EnsureWake(context.Background(), app.ID, TriggerAppWake)
+	if err != nil || first.Instance == nil {
+		t.Fatalf("initial wake = %+v, %v", first.Instance, err)
+	}
+	vmm.wakeErr = errors.New("replacement boot failed")
+
+	if _, err := engine.RefreshRuntimeConfig(context.Background(), app.ID, uuid.NewString()); err == nil {
+		t.Fatal("RefreshRuntimeConfig succeeded after replacement boot failure")
+	}
+	old, err := store.InstanceByID(context.Background(), first.Instance.InstanceID)
+	if err != nil {
+		t.Fatalf("old InstanceByID: %v", err)
+	}
+	if old.State != string(state.StateRunning) {
+		t.Fatalf("old instance state = %q, want running", old.State)
+	}
+	if vmm.destroys != 0 {
+		t.Fatalf("destroy calls = %d, want no old VM destruction", vmm.destroys)
 	}
 }
 

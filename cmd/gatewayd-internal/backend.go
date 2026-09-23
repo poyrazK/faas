@@ -782,7 +782,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 					log.Warn("gatewayd: reconcile running instance", "app_id", p.AppID, "instance_id", p.InstanceID, "err", err)
 				}
 			}
-		case "stopped", "failed", "parked", "snapshotting", "migrating":
+		case "stopped", "failed", "parked", "snapshotting", "migrating", "draining":
 			inv.EvictInstance(p.AppID, p.InstanceID)
 		}
 	case db.NotifyAppChanged:
