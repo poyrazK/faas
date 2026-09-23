@@ -6327,6 +6327,9 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
+	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
+		return Deployment{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[d.AppID]
@@ -6414,6 +6417,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.Kind = DeploymentKindImage
 	}
 	d.Workflows = cloneWorkflowJSON(d.Workflows)
+	d.ReleaseCommand = append([]string{}, d.ReleaseCommand...)
 	// Issue #556 PR-A: default traffic_percent to 100 for a stable
 	// deployment when the caller supplies zero. A canary's zero is
 	// meaningful (a valid custom first stage), and the APID handler
@@ -7805,6 +7809,19 @@ func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string,
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: %w", err)
 	}
 	m.deployments[id] = d
+	for taskID, task := range m.appTasks {
+		if task.DeploymentID != d.ID || task.Kind != AppTaskKindRelease || task.Status.Terminal() {
+			continue
+		}
+		if task.Status == AppTaskQueued {
+			task.Status = AppTaskCancelled
+			task.FinishedAt = appTaskTimePtr(now)
+		} else if task.CancelRequested == nil {
+			task.CancelRequested = appTaskTimePtr(now)
+		}
+		task.UpdatedAt = now
+		m.appTasks[taskID] = task
+	}
 	// Cascade-cancel any non-terminal build rows attached to
 	// this deployment. Mirrors pgstore.CancelDeploymentTx.
 	// We collect the IDs of flipped rows so the apid handler

@@ -74,6 +74,17 @@ func (m *MemStore) AppTaskByID(_ context.Context, accountID, appID, taskID strin
 	return cloneAppTask(task), nil
 }
 
+func (m *MemStore) ReleaseAppTaskByDeployment(_ context.Context, deploymentID string) (AppTask, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, task := range m.appTasks {
+		if task.DeploymentID == deploymentID && task.Kind == AppTaskKindRelease {
+			return cloneAppTask(task), nil
+		}
+	}
+	return AppTask{}, ErrNotFound
+}
+
 func (m *MemStore) ListAppTasks(_ context.Context, accountID, appID string, limit, offset int) ([]AppTask, error) {
 	limit, offset = normalizeAppTaskPage(limit, offset)
 	m.mu.Lock()

@@ -138,6 +138,10 @@ var (
 type AppTaskStore interface {
 	CreateAppTask(ctx context.Context, params CreateAppTaskParams) (AppTask, error)
 	AppTaskByID(ctx context.Context, accountID, appID, taskID string) (AppTask, error)
+	// ReleaseAppTaskByDeployment returns the unique internal release task for
+	// a deployment. It is the idempotency read used by imaged when a durable
+	// build or task notification is replayed.
+	ReleaseAppTaskByDeployment(ctx context.Context, deploymentID string) (AppTask, error)
 	ListAppTasks(ctx context.Context, accountID, appID string, limit, offset int) ([]AppTask, error)
 	ClaimNextAppTask(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error)
 	RenewAppTaskLease(ctx context.Context, taskID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error
@@ -200,6 +204,22 @@ func validateAppTaskCommand(command []string) error {
 	}
 	if total > AppTaskMaxCommandBytes {
 		return fmt.Errorf("%w: command exceeds %d bytes", ErrAppTaskInvalid, AppTaskMaxCommandBytes)
+	}
+	return nil
+}
+
+func validateDeploymentReleaseCommand(command []string, shell bool) error {
+	if len(command) == 0 {
+		if shell {
+			return fmt.Errorf("%w: release command shell form requires a command", ErrInvalidArgument)
+		}
+		return nil
+	}
+	if err := validateAppTaskCommand(command); err != nil {
+		return fmt.Errorf("%w: release command: %w", ErrInvalidArgument, err)
+	}
+	if shell && len(command) != 1 {
+		return fmt.Errorf("%w: release shell command must contain exactly one string", ErrInvalidArgument)
 	}
 	return nil
 }

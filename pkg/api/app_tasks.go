@@ -30,6 +30,16 @@ const (
 	AppTaskStatusCancelled AppTaskStatus = "cancelled"
 )
 
+// Terminal reports whether the task can no longer change lifecycle state.
+func (s AppTaskStatus) Terminal() bool {
+	switch s {
+	case AppTaskStatusSucceeded, AppTaskStatusFailed, AppTaskStatusTimedOut, AppTaskStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
 const (
 	AppTaskDefaultTimeoutSeconds = 600
 	AppTaskDefaultMaxOutputBytes = 1024 * 1024
