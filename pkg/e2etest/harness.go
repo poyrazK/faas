@@ -1545,6 +1545,17 @@ func (h *Harness) RestartSchedd() error {
 	if err := h.KillSchedd(); err != nil {
 		return err
 	}
+	// KillSchedd has reaped the prior process. It is no longer owned by
+	// Stop and must not be treated as a failed daemon when checking the
+	// replacement's startup health.
+	procs := h.procs[:0]
+	for _, candidate := range h.procs {
+		if candidate != nil && filepath.Base(candidate.Path) == "schedd" && candidate.ProcessState != nil {
+			continue
+		}
+		procs = append(procs, candidate)
+	}
+	h.procs = procs
 	_ = os.Remove(h.ScheddSock)
 	proc := startProc(h.T, h.BinDir, "schedd", append([]string(nil), h.scheddEnv...))
 	h.procs = append(h.procs, proc)
