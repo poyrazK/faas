@@ -105,6 +105,10 @@ export type { AppSLOResponse } from './models/AppSLOResponse.js';
 export type { AppsMetricsResponse } from './models/AppsMetricsResponse.js';
 export type { AppStaticEgressIPResponse } from './models/AppStaticEgressIPResponse.js';
 export type { AppStreamingStatus } from './models/AppStreamingStatus.js';
+export type { AppTaskFailure } from './models/AppTaskFailure.js';
+export type { AppTaskID } from './models/AppTaskID.js';
+export type { AppTaskListResponse } from './models/AppTaskListResponse.js';
+export type { AppTaskResponse } from './models/AppTaskResponse.js';
 export type { AppTrustedSignerListResponse } from './models/AppTrustedSignerListResponse.js';
 export type { AppUsageSummaryResponse } from './models/AppUsageSummaryResponse.js';
 export type { AppWakeResponse } from './models/AppWakeResponse.js';
@@ -155,6 +159,7 @@ export type { CreateAPIConsumerRequest } from './models/CreateAPIConsumerRequest
 export type { CreateAPIConsumerUsageStatementRequest } from './models/CreateAPIConsumerUsageStatementRequest.js';
 export type { CreateAppLogDrainRequest } from './models/CreateAppLogDrainRequest.js';
 export type { CreateAppRequest } from './models/CreateAppRequest.js';
+export type { CreateAppTaskRequest } from './models/CreateAppTaskRequest.js';
 export type { CreateAppWebhookRequest } from './models/CreateAppWebhookRequest.js';
 export type { CreateConsumerKeyRequest } from './models/CreateConsumerKeyRequest.js';
 export type { CreateCorsPresetRequest } from './models/CreateCorsPresetRequest.js';

@@ -218,6 +218,12 @@ func executionAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_EXECUTION_API_ENABLED")) == "1"
 }
 
+// appTaskAPIEnabledFromEnv is the independent fail-closed public admission
+// gate. schedd's FAAS_APP_TASK_DISPATCH remains a second required opt-in.
+func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
+}
+
 func githubDeploysAvailabilityProbe(getenv func(string) string) func(context.Context) bool {
 	base := strings.TrimRight(strings.TrimSpace(getenv("FAAS_GITHUBD_LOOPBACK")), "/")
 	if base == "" {
@@ -1379,6 +1385,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCompanionImages(cfg.CompanionImages).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
+		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {

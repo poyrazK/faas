@@ -421,6 +421,15 @@ func (f *fakeVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.Execute
 func (f *fakeVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed")
 }
+func (f *fakeVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskRequest, ...grpc.CallOption) (*vmmdpb.RestoreAppTaskResponse, error) {
+	panic("RestoreAppTask: not stubbed")
+}
+func (f *fakeVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	panic("ExecuteAppTask: not stubbed")
+}
+func (f *fakeVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
+	panic("ExecuteAppTaskStream: not stubbed")
+}
 func (f *fakeVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed")
 }

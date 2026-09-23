@@ -52,6 +52,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APPS_ROOT` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_APP_ERRORS_ENABLED` | apid, gatewayd-internal | `runtime-config` |  |  | `` |  |
 | `FAAS_APP_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
+| `FAAS_APP_TASK_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until deployment-attached task admission and the ADR-230 metal isolation path are qualified together |
+| `FAAS_APP_TASK_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for deployment-attached one-off command dispatch; default off provides a production-safe rollout gate |
 | `FAAS_ARTIFACT_REPLICATOR` | imaged | `envfile` |  |  | `` |  |
 | `FAAS_ARTIFACT_SYNC_TARGET` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
 | `FAAS_ARTIFACT_SYNC_USER` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
@@ -329,7 +331,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REQUIRE_SHARED_ARTIFACTS` | shared | `envfile` |  |  | `` |  |
 | `FAAS_RESIDENCY_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RESTORE_CONCURRENCY` | vmmd | `default` |  |  | `` | optional snapshot-restore concurrency override (1–64); production default is 3 |
-| `FAAS_RESTORE_PREFETCH` | vmmd | `default` |  |  | `` | optional boolean kill switch for the ADR-224 restore working-set prefetch; production default is enabled |
+| `FAAS_RESTORE_PREFETCH` | vmmd | `default` |  |  | `` | optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled |
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
@@ -343,6 +345,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SBOM_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCAN_SPOOL_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_ADDR` | meterd | `default` |  |  | `` |  |
+| `FAAS_SCHEDD_APP_TASK_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded app-task worker pool; 1 by default and at most 32; only consulted when FAAS_APP_TASK_DISPATCH=1 |
 | `FAAS_SCHEDD_CONFIG` | schedd | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_SCHEDD_FC_VERSION` | schedd | `dev-only` |  |  | `` | pins the Firecracker version instead of detecting it, so KVM-free acceptance can reach the snapshot-restore path and the ADR-005 staleness contract; must never be set on a production host, where the running binary is the only truthful source |

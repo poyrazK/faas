@@ -1,4 +1,4 @@
-# ADR-224 · Restore working-set prefetch
+# ADR-225 · Restore working-set prefetch
 
 - **Status:** accepted
 - **Date:** 2026-09-23
