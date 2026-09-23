@@ -503,6 +503,8 @@ export type { PlanManaged } from './PlanManaged.js';
 export type { PlanResponse } from './PlanResponse.js';
 export type { PlanWorkload } from './PlanWorkload.js';
 export type { PreviewCreatedWebhookPayload } from './PreviewCreatedWebhookPayload.js';
+export type { PreviewEnvironmentMemberResponse } from './PreviewEnvironmentMemberResponse.js';
+export type { PreviewEnvironmentStatusResponse } from './PreviewEnvironmentStatusResponse.js';
 export type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
 export type { PrewarmIntentResponse } from './PrewarmIntentResponse.js';
 export type { PrewarmRequest } from './PrewarmRequest.js';

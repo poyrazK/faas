@@ -509,6 +509,8 @@ export type { PlanManaged } from './models/PlanManaged.js';
 export type { PlanResponse } from './models/PlanResponse.js';
 export type { PlanWorkload } from './models/PlanWorkload.js';
 export type { PreviewCreatedWebhookPayload } from './models/PreviewCreatedWebhookPayload.js';
+export type { PreviewEnvironmentMemberResponse } from './models/PreviewEnvironmentMemberResponse.js';
+export type { PreviewEnvironmentStatusResponse } from './models/PreviewEnvironmentStatusResponse.js';
 export type { PreviewServiceCallsPolicy } from './models/PreviewServiceCallsPolicy.js';
 export type { PrewarmIntentResponse } from './models/PrewarmIntentResponse.js';
 export type { PrewarmRequest } from './models/PrewarmRequest.js';

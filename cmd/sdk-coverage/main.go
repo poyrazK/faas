@@ -394,6 +394,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/openapi/apply":                      "ApplyAppOpenAPIPolicy",          // explicit plan/confirm policy apply
 	"GET /v1/apps/{slug}/openapi/diff":                        "DiffAppOpenAPIContract",         // ADR-121 production contract gate preview
 	"GET /v1/apps/{slug}/github":                              "GetGitHubConnection",
+	"GET /v1/preview/{slug}/environment":                      "GetPreviewEnvironmentStatus", // full recorded PR workload set, not one app's latest deployment
 	"GET /v1/apps/{slug}/github/deployment-policy":            "GetGitHubDeploymentPolicy",
 	"PATCH /v1/apps/{slug}/github/deployment-policy":          "PatchGitHubDeploymentPolicy",
 	"POST /v1/apps/{slug}/github/bind":                        "BindGitHubConnection",

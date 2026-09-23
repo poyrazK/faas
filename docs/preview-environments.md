@@ -225,6 +225,16 @@ so applications should tolerate a brief unavailable dependency during boot.
 If two PRs share the same commit, the fixed-name GitHub check stays in progress
 until both PR environments are ready; each PR comment shows its own status.
 
+Automation can read the same per-PR result with
+`GET /v1/preview/{root-preview-slug}/environment` using a deployment-read
+credential. The response includes the recorded head SHA, aggregate phase and
+readiness, plus each expected workload's latest preview deployment for that
+SHA. A missing or failed sibling cannot produce `ready: true`; a closed PR
+reports `phase: closed` and `ready: false`. The endpoint returns 404 for
+developer previews and legacy PR previews with no recorded set. The CLI's
+`preview show` and `preview wait` still use app-level status until their
+follow-up change.
+
 For new projects, Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before endpoint discovery or wake-up,
