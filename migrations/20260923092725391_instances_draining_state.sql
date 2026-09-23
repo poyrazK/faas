@@ -1,6 +1,7 @@
+-- filename: 20260923092725391_instances_draining_state.sql
+
 -- +goose Up
 -- +goose StatementBegin
-
 -- A draining runtime-config predecessor is no longer routable, but its VM
 -- remains resident and may still serve requests selected before the route
 -- handoff. Keep it in all app/node/billing live sets until destruction.
@@ -68,11 +69,10 @@ BEGIN
   RETURN NEW;
 END
 $function$;
-
 -- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
-
 -- Drain all instances before rolling back the state constraint.
 ALTER TABLE instances DROP CONSTRAINT IF EXISTS instances_state_check;
 ALTER TABLE instances
@@ -135,5 +135,4 @@ BEGIN
   RETURN NEW;
 END
 $function$;
-
 -- +goose StatementEnd
