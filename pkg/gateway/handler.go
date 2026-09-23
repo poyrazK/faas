@@ -347,6 +347,9 @@ type App struct {
 	// VersionAffinityCookie is an optional stable browser cookie used when
 	// the explicit Gregale-Version-Key header is absent.
 	VersionAffinityCookie string
+	// VersionAffinityManagedCookie lets the edge issue an opaque, host-only
+	// rollout cookie. It is mutually exclusive with VersionAffinityCookie.
+	VersionAffinityManagedCookie bool
 }
 
 type concurrencyAdmissionConfig struct {
@@ -610,7 +613,16 @@ type Target struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
+	// RequiresReadiness marks a primary-ingress companion whose readiness
+	// probe controls whether this instance may receive traffic. Unready targets
+	// remain in the cache so they still consume capacity.
+	RequiresReadiness  bool
+	Ready              bool
+	ReadinessUpdatedAt time.Time
+	ReadinessEventID   int64
 }
+
+func (t Target) routeReady() bool { return !t.RequiresReadiness || t.Ready }
 
 // PlatformIdentity returns the canonical request identity for this target.
 // Keeping construction here means normal, synthetic, streaming, and upgrade
@@ -638,14 +650,15 @@ func (t Target) PlatformIdentity(tenantID, requestID string) api.PlatformIdentit
 // Issue #168 widened this interface to support per-app fan-out:
 //   - Pick returns one routable instance for the app (round-robin across
 //     max_concurrency), used on every request (cold or warm).
-//   - HealthyCount returns the number of routable instances currently cached
-//     for the app. Drives the WakeGate's shouldWake predicate: stop admitting
-//     once we're at the plan's effective max_concurrency.
+//   - HealthyCount returns the number of currently routable instances. A
+//     readiness-withdrawn target is omitted here, but still consumes instance
+//     capacity and must remain in the admission ledger.
 //   - Admit asks schedd to admit ONE additional instance for the app, gated
 //     by maxConcurrency so concurrent callers cannot collectively over-admit
-//     past the cap (issue #168 trust model). Returns the new Target's
-//     WakeID on the admitted path, atCapacity=true when the cache is
-//     already at maxConcurrency (the gateway treats this as a benign
+//     past the cap, including targets withdrawn by readiness (issue #168).
+//     Returns the new Target's WakeID on the admitted path, atCapacity=true
+//     when the scheduler's live-instance count is already at maxConcurrency
+//     (the gateway treats this as a benign
 //     no-op when it has ≥1 cached target), or an *api.Problem on real
 //     failure (RAM headroom, chooser, store).
 type Backend interface {
@@ -662,26 +675,18 @@ type Backend interface {
 	// OK=false when the cache is empty (caller should ensure
 	// capacity first).
 	Pick(appID string) PickResult
-	// HealthyCount returns the number of routable Targets currently cached
-	// for appID. Drives the WakeGate's shouldWake predicate.
+	// HealthyCount returns routable Targets only; a readiness-withdrawn target
+	// remains cached and consumes capacity, but must not be selected.
 	HealthyCount(appID string) int
-	// Admit asks schedd to admit ONE additional instance for appID, only
-	// when HealthyCount(appID) < maxConcurrency at the moment the call
-	// commits. Implementations MUST serialize the HealthyCount check and
-	// the cache update so a burst of concurrent Admit calls can never
-	// collectively exceed maxConcurrency (issue #168 fan-out invariant).
+	// Admit asks schedd to admit ONE additional instance for appID, only when
+	// the authoritative live-instance count (including readiness-withdrawn
+	// targets) is below maxConcurrency. Implementations MUST serialize the
+	// capacity check and cache update so concurrent calls cannot over-admit.
 	// On the admitted path wakeID is non-empty, the new Target is cached,
 	// and method reflects what schedd actually did (restore or cold boot).
 	// On the at-capacity path wakeID is empty, method is
 	// WakeMethodUnspecified, and err is nil. On real failure err is a
 	// non-nil *api.Problem and method is WakeMethodUnspecified.
-	// Admit asks schedd to admit ONE additional instance for
-	// appID, only when HealthyCount(appID) < maxConcurrency at
-	// the moment the call commits. Implementations MUST
-	// serialize the HealthyCount check and the cache update so
-	// a burst of concurrent Admit calls can never collectively
-	// exceed maxConcurrency (issue #168 fan-out invariant).
-	//
 	// deploymentID (issue #556 / PR-C): the live deployment
 	// the new instance should be admitted for. Empty falls
 	// through to schedd's default (newest live deployment) —
@@ -738,6 +743,13 @@ type Backend interface {
 	// *api.Problem-shaped errors — the dispatch goroutine logs +
 	// drops those without writing a misleading ledger row.
 	ScheduleMirror(ctx context.Context, appID, mirrorDeploymentID, mirrorRuleID string) (instanceID, wakeID string, err error)
+}
+
+func backendCapacityCount(backend Backend, appID string) int {
+	if counter, ok := backend.(interface{ CapacityCount(string) int }); ok {
+		return counter.CapacityCount(appID)
+	}
+	return backend.HealthyCount(appID)
 }
 
 // liveTargetReconciler is an optional capability implemented by the
@@ -5690,6 +5702,11 @@ haveApp:
 	// forwarded header all use the same key. A configured browser cookie is
 	// only used when no explicit (or rule-authored) version header is present.
 	versionKey, versionKeyOutcome := versionAffinityKeyFromPublicRequest(r, app.VersionAffinityCookie)
+	managedVersionToken := ""
+	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
+		versionKey, versionKeyOutcome, managedVersionToken = versionAffinityKeyFromManagedRequest(r)
+		r = withManagedVersionCookieProtection(r)
+	}
 	if h.metrics != nil {
 		h.metrics.ObserveVersionAffinityKey(versionAffinitySurfacePublic, versionKeyOutcome)
 	}
@@ -5871,6 +5888,19 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	managedVersionSetCookie := ""
+	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
+		stripManagedVersionAffinityCookie(r)
+		if managedVersionToken != "" {
+			cookie := &http.Cookie{
+				Name: api.ManagedVersionAffinityCookieName, Value: managedVersionToken,
+				Path: "/", MaxAge: 7 * 24 * 60 * 60, Secure: true,
+				HttpOnly: true, SameSite: http.SameSiteLaxMode,
+			}
+			http.SetCookie(w, cookie)
+			managedVersionSetCookie = cookie.String()
+		}
+	}
 
 	// ADR-122 §Decision: kind=cache serve path. Consulted AFTER
 	// enforcePublicAuth (so a cache hit cannot bypass the auth
@@ -5933,6 +5963,7 @@ haveApp:
 		// cannot reach the tee even if applyEdgeRuleCache
 		// itself short-circuited to a miss.
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes)
+		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		w = cw
 		defer func() {
 			if cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
@@ -6170,7 +6201,7 @@ haveApp:
 			)
 			if admitErr != nil || atCapacity {
 				if admitErr == nil {
-					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, h.backend.HealthyCount(app.ID))
+					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
 				}
 				writeWakeError(w, admitErr)
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -6373,7 +6404,7 @@ haveApp:
 		// ensureCapacity returning and our Pick. Surface the observed
 		// (current) HealthyCount so the operator's metrics panel
 		// shows 0 vs the cap (was 1+ microseconds ago).
-		wakeErr := api.ErrAppConcurrencyReachedAt(limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), h.backend.HealthyCount(app.ID))
+		wakeErr := api.ErrAppConcurrencyReachedAt(limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), backendCapacityCount(h.backend, app.ID))
 		h.markHealthFailure(app.ID, wakeErr)
 		writeWakeError(w, wakeErr)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -6532,7 +6563,7 @@ haveApp:
 	//   - r.Body is restored to a fresh bytes.Reader so the proxy
 	//     downstream sees the full body unchanged.
 	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok { //nolint:contextcheck // request ctx at handler boundary.
-		requestBody, restoreBody := snapshotSourceBody(r)
+		requestBody, requestBodyTruncated, restoreBody := snapshotSourceBodyWithTruncation(r)
 		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
 		// it before the source proxy runs; deferring this until ServeHTTP exits
 		// leaves Content-Length non-zero with an empty body and turns mirrored
@@ -6544,7 +6575,19 @@ haveApp:
 		requestID := requestIDFrom(r)
 		for _, rule := range rules {
 			rule := rule
+			if !rule.AllowUnsafeMethods && !safeMirrorMethod(r.Method) {
+				if h.metrics != nil {
+					h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "unsafe_method_skipped")
+				}
+				continue
+			}
 			if !shouldMirrorRequest(rule.Percent, pick.Picked) {
+				continue
+			}
+			if requestBodyTruncated {
+				if h.metrics != nil {
+					h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "request_body_too_large")
+				}
 				continue
 			}
 			go h.dispatchMirror(r.Context(), target.InstanceID, &target, rule, snapshotRequestForMirror(r), requestBody, requestID, sourceCapture)
@@ -8316,6 +8359,7 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
+		stripGuestManagedVersionCookieResponseHeader(resp)
 		return nil
 	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the

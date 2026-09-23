@@ -444,16 +444,18 @@ type AppTrustedSigner struct {
 }
 
 type AppWebhook struct {
-	ID           pgtype.UUID
-	AppID        pgtype.UUID
-	AccountID    pgtype.UUID
-	TargetUrl    string
-	SecretSealed []byte
-	EventFilter  []string
-	RetryPolicy  string
-	Enabled      bool
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	TargetUrl      string
+	SecretSealed   []byte
+	EventFilter    []string
+	RetryPolicy    string
+	Enabled        bool
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	DeliveryFormat string
+	Scope          string
 }
 
 type AppWebhookDelivery struct {
@@ -886,6 +888,14 @@ type Deployment struct {
 	ApiHostingReceipt        []byte
 	InferredProfile          []byte
 	Revision                 int32
+}
+
+type DeploymentAlias struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type DeploymentAudit struct {
@@ -1363,29 +1373,30 @@ type MfaDisableRequest struct {
 }
 
 type MirrorInvocationResult struct {
-	ID                 pgtype.UUID
-	MirrorRuleID       pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	SourceDeploymentID pgtype.UUID
-	MirrorDeploymentID pgtype.UUID
-	InstanceID         pgtype.Text
-	SourceInstanceID   pgtype.Text
-	StatusCode         pgtype.Int4
-	SourceStatusCode   pgtype.Int4
-	LatencyMs          pgtype.Int4
-	SourceLatencyMs    pgtype.Int4
-	BodyHash           []byte
-	SourceBodyHash     []byte
-	SchemaHash         []byte
-	SourceSchemaHash   []byte
-	StatusDiff         bool
-	SchemaDiff         bool
-	BodyDiff           bool
-	Crashed            bool
-	RequestID          string
-	CompletedAt        pgtype.Timestamptz
-	RollupCounted      bool
+	ID                   pgtype.UUID
+	MirrorRuleID         pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	SourceDeploymentID   pgtype.UUID
+	MirrorDeploymentID   pgtype.UUID
+	InstanceID           pgtype.Text
+	SourceInstanceID     pgtype.Text
+	StatusCode           pgtype.Int4
+	SourceStatusCode     pgtype.Int4
+	LatencyMs            pgtype.Int4
+	SourceLatencyMs      pgtype.Int4
+	BodyHash             []byte
+	SourceBodyHash       []byte
+	SchemaHash           []byte
+	SourceSchemaHash     []byte
+	StatusDiff           bool
+	SchemaDiff           bool
+	BodyDiff             bool
+	Crashed              bool
+	RequestID            string
+	CompletedAt          pgtype.Timestamptz
+	RollupCounted        bool
+	ComparisonIncomplete bool
 }
 
 type MirrorInvocationSummary struct {
@@ -1414,6 +1425,7 @@ type MirrorRule struct {
 	RedactHeaders      []string
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	AllowUnsafeMethods bool
 }
 
 type NodeJoinJob struct {

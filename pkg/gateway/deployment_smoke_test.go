@@ -201,6 +201,70 @@ func TestDeploymentSmokeTargetResolutionDoesNotPublishCustomerRoute(t *testing.T
 	}
 }
 
+func TestDeploymentPreviewHostUsesPinnedRevision(t *testing.T) {
+	stable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("stable"))
+	}))
+	t.Cleanup(stable.Close)
+	candidate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("candidate"))
+	}))
+	t.Cleanup(candidate.Close)
+
+	fake := &fakeBackend{
+		app: App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanFree,
+			MaxConcurrency: 1, PinnedDeploymentID: "dep-candidate",
+		},
+		host:     "deploy-7-demo.gregale.dev",
+		upstream: stable.Listener.Addr().String(),
+	}
+	fake.AddTarget(Target{NodeID: stable.Listener.Addr().String(), InstanceID: "stable-1", DeploymentID: "dep-stable"})
+	fake.AddTarget(Target{NodeID: candidate.Listener.Addr().String(), InstanceID: "candidate-1", DeploymentID: "dep-candidate"})
+	h := NewHandlerWith(fake, NewMetrics(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "http://deploy-7-demo.gregale.dev/", nil)
+	req.Host = "deploy-7-demo.gregale.dev"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || rec.Body.String() != "candidate" {
+		t.Fatalf("preview response = (%d, %q), want (200, candidate)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestColdDeploymentPreviewAdmitsOnlyPinnedRevision(t *testing.T) {
+	candidate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("candidate"))
+	}))
+	t.Cleanup(candidate.Close)
+	fake := &fakeBackend{
+		app: App{
+			ID: "app-1", AccountID: "acct-1", Plan: api.PlanFree,
+			MaxConcurrency: 1, PinnedDeploymentID: "dep-candidate",
+		},
+		host:     "deploy-7-demo.gregale.dev",
+		upstream: candidate.Listener.Addr().String(),
+	}
+	h := NewHandlerWith(fake, NewMetrics(), nil)
+	req := httptest.NewRequest(http.MethodGet, "http://deploy-7-demo.gregale.dev/", nil)
+	req.Host = "deploy-7-demo.gregale.dev"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || rec.Body.String() != "candidate" {
+		t.Fatalf("preview response = (%d, %q), want (200, candidate)", rec.Code, rec.Body.String())
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.lastAdmitDeployment != "dep-candidate" || fake.lastAdmitTrigger != sched.TriggerGateway {
+		t.Fatalf("admit target = (%q, %q), want (dep-candidate, %q)", fake.lastAdmitDeployment, fake.lastAdmitTrigger, sched.TriggerGateway)
+	}
+	if fake.lastAdmitMax != 1+api.RolloutConcurrencyGrant {
+		t.Fatalf("admit ceiling = %d, want app limit plus rollout grant (%d)", fake.lastAdmitMax, 1+api.RolloutConcurrencyGrant)
+	}
+}
+
 func TestDeploymentSmokeCandidatePickerDoesNotUseStableSibling(t *testing.T) {
 	fake := &fakeBackend{app: App{ID: "app-1"}}
 	fake.AddTarget(Target{InstanceID: "stable-1", DeploymentID: "dep-stable"})

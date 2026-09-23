@@ -76,6 +76,7 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 	if err != nil {
 		return Deployment{}, err
 	}
+	before := target
 	if target.ServiceRolloutHandoff.ActiveAbort() {
 		return target, ErrServiceRolloutInvalid
 	}
@@ -102,6 +103,7 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 	handoff.CompletedAt = &now
 	target.ServiceRolloutHandoff = handoff
 	m.deployments[id] = target
+	m.enqueueRolloutOutcomeWebhooksLocked(before, target)
 	return target, nil
 }
 
@@ -214,6 +216,7 @@ func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (De
 	if err != nil {
 		return Deployment{}, err
 	}
+	before := target
 	previous, _ := previousMemServiceRolloutRow(target, rows)
 	previousID := previous.id
 	for _, row := range rows {
@@ -246,5 +249,6 @@ func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (De
 	handoff.CompletedAt = &now
 	target.ServiceRolloutHandoff = handoff
 	m.deployments[id] = target
+	m.enqueueRolloutOutcomeWebhooksLocked(before, target)
 	return target, nil
 }

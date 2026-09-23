@@ -696,6 +696,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
 	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !opts.NoTriggers)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -720,34 +725,36 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		sourceURL = "local-tar://upload-session/" + uploadID
 	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		Activity:         s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "upload_session", "scope": rolloutReq.Scope}),
-		AppID:            app.ID,
-		Kind:             kind,
-		SourcePath:       row.PartPath,
-		SourceBytes:      row.ReceivedBytes,
-		SourceRoot:       opts.SourceRoot,
-		Handler:          opts.Handler,
-		FunctionRuntime:  functionRuntimeForApp(app),
-		SourceURL:        sourceURL,
-		CommitSHA:        opts.CommitSHA,
-		Source:           "upload-session:" + uploadID,
-		LogSpool:         spoolRoot(),
-		Log:              s.log,
-		ActorUserID:      acct.ID,
-		ActorVia:         routeKindForRequest(r),
-		ActorFromIP:      middleware.ClientIP(r),
-		ActorPusherLogin: "",
-		Reason:           opts.Reason,
-		Tag:              opts.Tag,
-		DeployedBy:       opts.DeployedBy,
-		PRNumber:         opts.PRNumber,
-		RollbackOn5xx:    opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
-		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
-		Sidecars:         append(json.RawMessage(nil), rollout.Sidecars...),
-		Scope:            rolloutReq.Scope,
-		HostingObserver:  s.ops,
-		HostingFlow:      "first_deploy",
-		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
+		Activity:            s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "upload_session", "scope": rolloutReq.Scope}),
+		AppID:               app.ID,
+		Kind:                kind,
+		SourcePath:          row.PartPath,
+		SourceBytes:         row.ReceivedBytes,
+		SourceRoot:          opts.SourceRoot,
+		Handler:             opts.Handler,
+		FunctionRuntime:     functionRuntimeForApp(app),
+		SourceURL:           sourceURL,
+		CommitSHA:           opts.CommitSHA,
+		Source:              "upload-session:" + uploadID,
+		LogSpool:            spoolRoot(),
+		Log:                 s.log,
+		ActorUserID:         acct.ID,
+		ActorVia:            routeKindForRequest(r),
+		ActorFromIP:         middleware.ClientIP(r),
+		ActorPusherLogin:    "",
+		Reason:              opts.Reason,
+		Tag:                 opts.Tag,
+		DeployedBy:          opts.DeployedBy,
+		PRNumber:            opts.PRNumber,
+		RollbackOn5xx:       opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
+		Workflows:           marshalWorkflowDefinitions(opts.Workflows),
+		Sidecars:            append(json.RawMessage(nil), rollout.Sidecars...),
+		ReleaseCommand:      releaseCommand.command,
+		ReleaseCommandShell: releaseCommand.shell,
+		Scope:               rolloutReq.Scope,
+		HostingObserver:     s.ops,
+		HostingFlow:         "first_deploy",
+		ServiceRollout:      app.Manifest.ExecutionMode == api.ExecutionModeService,
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)

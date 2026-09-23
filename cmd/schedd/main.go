@@ -328,6 +328,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return err
 		}
 	}
+	appTaskEnabled := appTaskDispatchEnabled(os.Getenv("FAAS_APP_TASK_DISPATCH"))
+	appTaskDispatchConcurrency := sched.DefaultAppTaskDispatchConcurrency
+	if appTaskEnabled {
+		appTaskDispatchConcurrency, err = appTaskDispatchConcurrencyFromEnv(os.Getenv(appTaskDispatchConcurrencyEnv))
+		if err != nil {
+			return err
+		}
+	}
 	var executionHostAgeIdentities []*age.X25519Identity
 	if executionEnabled {
 		if deps.executionArtifacts == nil {
@@ -2089,6 +2097,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}, log).WithClaimResolver(resolver)
 		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
 	}
+	var appTaskCoordinator *sched.AppTaskCoordinator
+	if appTaskEnabled {
+		owner := strings.TrimSpace(ownerNodeID)
+		if owner == "" {
+			owner = "schedd"
+		}
+		backend := sched.NewRoutedVmmdAppTaskBackend(vmmRouter, engine.ResolveAppTaskRuntime)
+		appTaskCoordinator = sched.NewAppTaskCoordinator(store, backend, sched.AppTaskCoordinatorConfig{
+			Enabled: true, Owner: owner, MaxConcurrent: appTaskDispatchConcurrency,
+		}, log)
+		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
+	}
 	loopErr := make(chan error, 1)
 	go func() { loopErr <- loop.Run(ctx) }()
 	// Durable deploy handoffs recover the snapshot_prime edge when a LISTEN
@@ -2118,6 +2138,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		go func() {
 			if err := executionCoordinator.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("schedd: execution coordinator exited", "err", err)
+			}
+		}()
+	}
+	if appTaskCoordinator != nil {
+		go func() {
+			if err := appTaskCoordinator.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("schedd: app task coordinator exited", "err", err)
 			}
 		}()
 	}

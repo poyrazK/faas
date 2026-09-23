@@ -341,12 +341,18 @@ func renderContextSuffix(ev api.WakeTimelineEvent) string {
 	if c, ok := ev.Data["concurrency_at_admit"].(float64); ok {
 		conc = int(c)
 	}
-	if trigger == "" && queued == 0 && conc == 0 {
+	// cold_reason explains a cold boot that did not restore (pkg/sched
+	// ColdReason* closed set); absent on restores and older events.
+	coldReason, _ := ev.Data["cold_reason"].(string)
+	if trigger == "" && queued == 0 && conc == 0 && coldReason == "" {
 		return ""
 	}
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 4)
 	if trigger != "" {
 		parts = append(parts, "trigger="+trigger)
+	}
+	if coldReason != "" {
+		parts = append(parts, "cold_reason="+coldReason)
 	}
 	if queued != 0 {
 		parts = append(parts, fmt.Sprintf("q=%d", queued))

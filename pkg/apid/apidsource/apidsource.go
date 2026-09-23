@@ -47,6 +47,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
@@ -216,6 +217,11 @@ type EnqueueParams struct {
 	CanaryTotalSteps       int
 	CanaryStepStartedAt    *time.Time
 	CanaryStages           json.RawMessage
+	// ReleaseCommand is immutable source intent. The deployment orchestrator
+	// consumes it after the build has produced an artifact; Enqueue only pins
+	// the validated declaration to this exact deployment row.
+	ReleaseCommand      []string
+	ReleaseCommandShell bool
 	// HostingObserver and HostingFlow are optional. They let HTTP source paths
 	// report privacy-safe source-detection timing without adding customer,
 	// repository, path, URL, or environment labels.
@@ -323,6 +329,17 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	}
 	if p.SourcePath == "" {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: SourcePath is required")
+	}
+	if len(p.ReleaseCommand) > 0 || p.ReleaseCommandShell {
+		resolved, problem := (api.CreateAppTaskRequest{
+			Command:      p.ReleaseCommand,
+			CommandShell: p.ReleaseCommandShell,
+		}).Resolve()
+		if problem != nil {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: invalid release command: %s", problem.Detail)
+		}
+		p.ReleaseCommand = resolved.Command
+		p.ReleaseCommandShell = resolved.CommandShell
 	}
 	sourceStorage, err := sourceBackendFromEnv(ctx)
 	if err != nil {
@@ -471,6 +488,8 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		CanaryTotalSteps:       p.CanaryTotalSteps,
 		CanaryStepStartedAt:    p.CanaryStepStartedAt,
 		CanaryStages:           append(json.RawMessage(nil), p.CanaryStages...),
+		ReleaseCommand:         append([]string(nil), p.ReleaseCommand...),
+		ReleaseCommandShell:    p.ReleaseCommandShell,
 	}
 	if p.ServiceRollout {
 		// Keep the predecessor live until schedd observes the new service

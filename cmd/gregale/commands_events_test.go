@@ -15,6 +15,49 @@ func TestCmdEvents_NoArgs(t *testing.T) {
 	}
 }
 
+func TestCmdEventsPreviewUsesReadOnlyPreviewAPI(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"event_id":"preview-1","source":"billing.stripe","type":"invoice.paid","candidate_count":2,"matched_count":1,"filter_mismatch_count":1,"other_mismatch_count":0,"matches":[{"app_slug":"invoice-worker","subscription_id":"sub-1","source":"billing.*","type":"invoice.paid","filter":{},"reason":"would_deliver"}],"non_matches":[{"app_slug":"audit-worker","subscription_id":"sub-2","source":"billing.*","type":"invoice.paid","filter":{"data":{"amount":{"$gt":200}}},"reason":"content_filter_mismatch"}],"truncated":false}`, http.StatusOK)
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsPreview([]string{
+		"billing.stripe", "invoice.paid", "--id", "preview-1", "--data", `{"amount":150}`,
+	}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/events:preview" {
+		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	}
+	var got struct {
+		ID     string          `json:"id"`
+		Source string          `json:"source"`
+		Type   string          `json:"type"`
+		Data   json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if got.ID != "preview-1" || got.Source != "billing.stripe" || got.Type != "invoice.paid" || string(got.Data) != `{"amount":150}` {
+		t.Fatalf("request body=%s", f.sawBody)
+	}
+	for _, want := range []string{"Would deliver: 1", "Filtered: 1", "invoice-worker", "audit-worker", "content_filter_mismatch"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("output missing %q: %s", want, stdout.String())
+		}
+	}
+}
+
+func TestCmdEventsPreviewRejectsInvalidDataBeforeRequest(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{}`, http.StatusOK)
+	code, captured := runWithStderr(t, func() int {
+		return cmdEventsPreview([]string{"billing", "invoice.paid", "--data", "{bad"})
+	})
+	if code != 1 || !strings.Contains(captured, "Invalid --data") {
+		t.Fatalf("exit=%d stderr=%q", code, captured)
+	}
+}
+
 func TestCmdEventsPublish_ValidatesDataBeforeRequest(t *testing.T) {
 	resetJSONOut(t)
 	authedFakeAPI(t, `{"id":"evt-1"}`, http.StatusAccepted)

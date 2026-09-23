@@ -262,6 +262,28 @@ func TestCompletion_DeploymentSurfaceManifestMatchesDispatchers(t *testing.T) {
 			t.Errorf("deployments manifest omits --%s", name)
 		}
 	}
+	alias, ok := findCliSubcommand(deployments.Subcommands, "alias")
+	if !ok {
+		t.Fatal("deployments manifest omits alias")
+	}
+	for _, name := range []string{"list", "set", "delete"} {
+		if _, ok := findCliSubcommand(alias.Subcommands, name); !ok {
+			t.Errorf("deployments alias manifest omits %q", name)
+		}
+	}
+}
+
+func TestNestedDeploymentAliasHelpIsLocal(t *testing.T) {
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	t.Cleanup(func() { osStdout = oldOut })
+	if code := run([]string{"deployments", "alias", "set", "--help"}); code != 0 {
+		t.Fatalf("nested help = %d", code)
+	}
+	if got := stdout.String(); !strings.Contains(got, "gregale deployments alias set") || !strings.Contains(got, "--deployment") {
+		t.Fatalf("nested help = %q", got)
+	}
 }
 
 func extractFunctionCaseArms(filename, functionName string, caseConsts map[string]string) (map[string]struct{}, error) {

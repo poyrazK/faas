@@ -2128,6 +2128,13 @@ func (c *Client) PurgeAppCache(ctx context.Context, slug, pathGlob string) error
 	return c.do(ctx, "DELETE", endpoint, nil, nil)
 }
 
+// PurgeAppCacheTag asks gateways to evict responses carrying one cache tag.
+func (c *Client) PurgeAppCacheTag(ctx context.Context, slug, tag string) error {
+	q := url.Values{}
+	q.Set("tag", tag)
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/cache?"+q.Encode(), nil, nil)
+}
+
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
 	return c.ListInstancesWithHistory(ctx, slug, false)
 }
@@ -6264,6 +6271,14 @@ func (c *Client) SendWorkflowEvent(ctx context.Context, runID, eventName string,
 func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (PublishEventResponse, error) {
 	var resp PublishEventResponse
 	err := c.do(ctx, "POST", "/v1/events:publish", req, &resp)
+	return resp, err
+}
+
+// PreviewEvent evaluates one tenant-scoped event against enabled subscriptions
+// without persisting it or waking asynchronous fanout.
+func (c *Client) PreviewEvent(ctx context.Context, req PreviewEventRequest) (PreviewEventResponse, error) {
+	var resp PreviewEventResponse
+	err := c.do(ctx, "POST", "/v1/events:preview", req, &resp)
 	return resp, err
 }
 

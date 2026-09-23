@@ -24,7 +24,7 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 		t.Fatal(err)
 	}
 	force := true
-	original, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindDockerfile, SourcePath: "/var/spool/faas/retained.tar.gz", SourceRoot: "service", SourceBytes: 1024, FullRootfsAllowAuto: true, FullRootfsOverride: &force, Workflows: json.RawMessage(`[{"name":"retained"}]`)})
+	original, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindDockerfile, SourcePath: "/var/spool/faas/retained.tar.gz", SourceRoot: "service", SourceBytes: 1024, FullRootfsAllowAuto: true, FullRootfsOverride: &force, Workflows: json.RawMessage(`[{"name":"retained"}]`), ReleaseCommand: []string{"bundle exec rails db:migrate"}, ReleaseCommandShell: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +69,9 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 	}
 	if retry.SourcePath != original.SourcePath || retry.SourceRoot != original.SourceRoot || !retry.FullRootfsAllowAuto || retry.FullRootfsOverride == nil || !*retry.FullRootfsOverride || !jsonEqual(retry.Workflows, original.Workflows) {
 		t.Fatalf("retry lost input settings: %+v", retry)
+	}
+	if !reflect.DeepEqual(retry.ReleaseCommand, original.ReleaseCommand) || retry.ReleaseCommandShell != original.ReleaseCommandShell {
+		t.Fatalf("retry lost release command: %+v", retry)
 	}
 	if !retry.RollbackOn5xx || retry.Reason != original.Reason || retry.Tag != original.Tag || retry.DeployedBy != original.DeployedBy || retry.PRNumber != original.PRNumber || retry.Priority != original.Priority {
 		t.Fatalf("retry lost policy or annotation metadata: %+v", retry)

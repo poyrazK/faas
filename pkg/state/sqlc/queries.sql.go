@@ -1739,6 +1739,24 @@ func (q *Queries) DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype
 	return err
 }
 
+const deleteDeploymentAlias = `-- name: DeleteDeploymentAlias :execrows
+DELETE FROM deployment_aliases
+ WHERE app_id = $1 AND name = $2
+`
+
+type DeleteDeploymentAliasParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) DeleteDeploymentAlias(ctx context.Context, db DBTX, arg DeleteDeploymentAliasParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteDeploymentAlias, arg.AppID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteEventSubscription = `-- name: DeleteEventSubscription :exec
 delete from event_subscriptions
 where id = $1 and account_id = $2 and app_id = $3
@@ -1780,6 +1798,59 @@ type DeleteTriggerParams struct {
 func (q *Queries) DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerParams) error {
 	_, err := db.Exec(ctx, deleteTrigger, arg.ID, arg.AppID)
 	return err
+}
+
+const deploymentAliasByHostLabel = `-- name: DeploymentAliasByHostLabel :many
+SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
+  FROM deployment_aliases a
+  JOIN apps p ON p.id = a.app_id
+             AND p.status <> 'deleted'
+             AND p.deleted_at IS NULL
+  JOIN deployments d ON d.id = a.deployment_id
+                    AND d.app_id = a.app_id
+                    AND d.deleted_at IS NULL
+ WHERE ('tag-' || a.name || '-' || replace(a.app_id::text, '-', ''))
+       = $1
+ ORDER BY a.app_id, a.name
+`
+
+type DeploymentAliasByHostLabelRow struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	Revision     int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// The hostname label uses the app's immutable UUID so aliases remain stable
+// across app slug renames. Keep the deployment join app-scoped and hide
+// soft-deleted owners/targets.
+func (q *Queries) DeploymentAliasByHostLabel(ctx context.Context, db DBTX, hostLabel string) ([]DeploymentAliasByHostLabelRow, error) {
+	rows, err := db.Query(ctx, deploymentAliasByHostLabel, hostLabel)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeploymentAliasByHostLabelRow{}
+	for rows.Next() {
+		var i DeploymentAliasByHostLabelRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.DeploymentID,
+			&i.Revision,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deploymentByID = `-- name: DeploymentByID :one
@@ -4599,6 +4670,53 @@ func (q *Queries) LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UU
 	return i, err
 }
 
+const latestInstanceReadiness = `-- name: LatestInstanceReadiness :many
+SELECT DISTINCT ON (CAST(data->>'instance_id' AS text))
+       CAST(data->>'instance_id' AS text) AS instance_id,
+       CAST(data->>'status' AS text) AS status,
+       at,
+       id
+FROM events
+WHERE kind = 'wake.sidecar_health'
+  AND data->>'status' IN ('ready', 'unready')
+  AND data->>'instance_id' = ANY($1::text[])
+ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC
+`
+
+type LatestInstanceReadinessRow struct {
+	InstanceID string
+	Status     string
+	At         pgtype.Timestamptz
+	ID         int64
+}
+
+// Gateway restart hydration: readiness is independent of the instance's
+// RUNNING state, so replay only the latest reversible ready/unready event.
+func (q *Queries) LatestInstanceReadiness(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessRow, error) {
+	rows, err := db.Query(ctx, latestInstanceReadiness, instanceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LatestInstanceReadinessRow{}
+	for rows.Next() {
+		var i LatestInstanceReadinessRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.Status,
+			&i.At,
+			&i.ID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const latestSupersededDeployment = `-- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -5459,6 +5577,53 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 			&i.LastProbedAt,
 			&i.LastSeenAt,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDeploymentAliases = `-- name: ListDeploymentAliases :many
+SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
+  FROM deployment_aliases a
+  JOIN deployments d ON d.id = a.deployment_id AND d.app_id = a.app_id
+ WHERE a.app_id = $1
+ ORDER BY a.name
+`
+
+type ListDeploymentAliasesRow struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	Revision     int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// Stable per-app revision names. Join deployments for the human-readable
+// revision while retaining aliases whose targets later become superseded;
+// the alias continues to identify the same immutable row.
+func (q *Queries) ListDeploymentAliases(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDeploymentAliasesRow, error) {
+	rows, err := db.Query(ctx, listDeploymentAliases, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDeploymentAliasesRow{}
+	for rows.Next() {
+		var i ListDeploymentAliasesRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.DeploymentID,
+			&i.Revision,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -11589,7 +11754,7 @@ WITH pending AS MATERIALIZED (
     SET rollup_counted = true
     FROM pending
     WHERE result.id = pending.id
-    RETURNING result.id, result.mirror_rule_id, result.account_id, result.app_id, result.source_deployment_id, result.mirror_deployment_id, result.instance_id, result.source_instance_id, result.status_code, result.source_status_code, result.latency_ms, result.source_latency_ms, result.body_hash, result.source_body_hash, result.schema_hash, result.source_schema_hash, result.status_diff, result.schema_diff, result.body_diff, result.crashed, result.request_id, result.completed_at, result.rollup_counted
+    RETURNING result.id, result.mirror_rule_id, result.account_id, result.app_id, result.source_deployment_id, result.mirror_deployment_id, result.instance_id, result.source_instance_id, result.status_code, result.source_status_code, result.latency_ms, result.source_latency_ms, result.body_hash, result.source_body_hash, result.schema_hash, result.source_schema_hash, result.status_diff, result.schema_diff, result.body_diff, result.crashed, result.request_id, result.completed_at, result.rollup_counted, result.comparison_incomplete
 )
 INSERT INTO mirror_invocation_summary (
     rule_id, app_id, hour_bucket, total_invocations,
@@ -12790,6 +12955,59 @@ func (q *Queries) UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerP
 		&i.PayloadMaxBytes,
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertDeploymentAlias = `-- name: UpsertDeploymentAlias :one
+WITH upserted AS (
+    INSERT INTO deployment_aliases (app_id, name, deployment_id)
+    SELECT d.app_id, $1, d.id
+      FROM deployments d
+      JOIN apps a ON a.id = d.app_id
+     WHERE d.app_id = $2
+       AND d.id = $3
+       AND a.deleted_at IS NULL
+       AND a.status <> 'deleted'
+       AND d.deleted_at IS NULL
+       AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live')
+    ON CONFLICT (app_id, name) DO UPDATE
+       SET deployment_id = EXCLUDED.deployment_id,
+           updated_at = now()
+    RETURNING app_id, name, deployment_id, created_at, updated_at
+)
+SELECT u.app_id, u.name, u.deployment_id, d.revision, u.created_at, u.updated_at
+  FROM upserted u
+  JOIN deployments d ON d.id = u.deployment_id
+`
+
+type UpsertDeploymentAliasParams struct {
+	Name         string
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type UpsertDeploymentAliasRow struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	Revision     int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// Accept only a routable target on this app. Using INSERT .. SELECT makes the
+// ownership/status check atomic with writing the alias.
+func (q *Queries) UpsertDeploymentAlias(ctx context.Context, db DBTX, arg UpsertDeploymentAliasParams) (UpsertDeploymentAliasRow, error) {
+	row := db.QueryRow(ctx, upsertDeploymentAlias, arg.Name, arg.AppID, arg.DeploymentID)
+	var i UpsertDeploymentAliasRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Name,
+		&i.DeploymentID,
+		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

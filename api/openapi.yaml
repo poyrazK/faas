@@ -1677,6 +1677,39 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/events:preview:
+    post:
+      tags: [events]
+      operationId: previewEvent
+      summary: Preview event routing without publishing.
+      description: |
+        Evaluates an event against the authenticated account's enabled
+        subscriptions using the same matcher as asynchronous fanout. The
+        preview is read-only: it does not persist the event or enqueue work.
+        Counts cover every source/type candidate; response lists are bounded
+        samples and `truncated` is true when either sample omits candidates.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreviewEventRequest' }
+      responses:
+        '200':
+          description: Routing preview completed without publishing the event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500':
+          description: The router could not read the current subscription set.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/events:publish:
     post:
       tags: [events]
@@ -1805,7 +1838,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Cancellation accepted or already applied.
+          description: Execution cancellation requested, or its existing terminal receipt returned.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ExecutionResponse' }
@@ -1853,6 +1886,112 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [runs]
+      operationId: listAppTasks
+      summary: List deployment-attached tasks for an app.
+      description: |
+        Returns newest-first one-off command receipts for the app. Task rows
+        remain pinned to the immutable deployment selected at admission.
+        Scheduler leases and artifact storage identifiers are never returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum number of task receipts to return.
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of task receipts to skip.
+      responses:
+        '200':
+          description: App-scoped task page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [runs]
+      operationId: createAppTask
+      summary: Run a one-off command against an app deployment.
+      description: |
+        Queues one manual command in a fresh task VM using the app's current
+        live deployment, scoped configuration, bindings, and network policy.
+        The selected deployment is pinned at admission and the VM is destroyed
+        before terminal completion. Release tasks cannot be created here.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppTaskRequest' }
+      responses:
+        '202':
+          description: Manual app task admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      tags: [runs]
+      operationId: getAppTask
+      summary: Get one deployment-attached app task.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current or terminal app-task receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [runs]
+      operationId: cancelAppTask
+      summary: Cancel one deployment-attached app task.
+      description: Cancellation is idempotent; claimed work is torn down before terminal acknowledgement.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: App-task cancellation recorded, or its existing terminal receipt returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/account:
@@ -4082,6 +4221,31 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/preview/{slug}/environment:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [previews]
+      operationId: getPreviewEnvironmentStatus
+      summary: Read the current-head workload set for a GitHub PR preview.
+      description: |
+        The slug must be the root preview app of a recorded GitHub PR set.
+        The response evaluates only preview deployments for the recorded
+        commit. It never reports a root as ready while an expected sibling is
+        missing, building, failed, or on an older commit. Closed PRs are not
+        ready. Developer previews and unrecorded legacy PR previews return 404.
+        Requires the deployment read scope and account ownership of the root.
+      responses:
+        '200':
+          description: Current-head preview environment status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewEnvironmentStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/preview/{slug}/destroy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -5591,6 +5755,68 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deployment-aliases:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDeploymentAliases
+      summary: List named deployment aliases for an app.
+      description: Returns customer-managed names that point to exact immutable deployment rows, with their stable routing hosts. Changing an alias does not alter production traffic.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Alias names and their pinned deployment revisions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentAliasListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deployment-aliases/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        description: Lowercase DNS label for this app's stable revision alias.
+    put:
+      tags: [deployments]
+      operationId: setDeploymentAlias
+      summary: Point a named alias at an immutable deployment.
+      description: The target must be a routable deployment that belongs to the app. This updates only the alias mapping; it does not shift production traffic. The alias name and app identifier must fit together in one DNS label.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetDeploymentAliasRequest' }
+            example: { deployment_id: "01234567-89ab-cdef-0123-456789abcdef" }
+      responses:
+        '200':
+          description: Alias mapping after the update.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentAliasResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [deployments]
+      operationId: deleteDeploymentAlias
+      summary: Remove a named deployment alias.
+      description: Removes the mapping only; deployments and production traffic are unchanged.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Alias removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/deployments:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -6831,16 +7057,23 @@ paths:
       description: |
         Requests a response-cache purge on every gateway and on the optional
         distributed cache tier. The optional path glob limits the purge to
-        matching normalized request paths; omit it to purge the complete app
-        cache.
+        matching normalized request paths. The optional tag limits it to
+        responses carrying that Cache-Tag. Path and tag are mutually exclusive;
+        omit both to purge the complete app cache.
       parameters:
         - name: path
           in: query
           required: false
           schema: { type: string }
           description: Optional normalized request path glob (for example `/products/*`).
+        - name: tag
+          in: query
+          required: false
+          schema: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9._:/-]+$' }
+          description: Optional cache tag (for example `product:42`); cannot be combined with path.
       responses:
         '204': { description: Purge requested. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -13235,10 +13468,8 @@ paths:
         mirror VM per request, billed per running second, capped at
         `MirrorMaxLifetimeSeconds=5`). Per-app quota returns 422
         `mirror_rule_quota_exceeded` once `Limits.MirrorTargetsPerApp`
-        is reached. The runtime dispatch (gateway goroutine, redaction,
-        schedd stamping) lands in PR-A3 — A2 stores the rule + emits
-        `mirror_rule.created` audit + pg_notify `kind="mirror"` so PR-A3
-        picks up the change within ~1s.
+        is reached. Sampling defaults to 5%; only GET, HEAD, and OPTIONS
+        are mirrored unless `allow_unsafe_methods` is explicitly enabled.
       requestBody:
         required: true
         content:
@@ -13247,8 +13478,9 @@ paths:
             example:
               source_deployment_id: "0123456789abcdef0123456789abcdef"
               mirror_deployment_id: "0123456789abcdef0123456789abcdf0"
-              percent: 100
+              percent: 5
               include_body: false
+              allow_unsafe_methods: false
               redact_headers: [X-Tenant-Id]
       responses:
         '201':
@@ -13376,10 +13608,10 @@ paths:
       description: |
         Read-only aggregate. Source: `mirror_invocation_results` rows
         whose `completed_at >= now - window_seconds`. Returns:
-        total invocations, status diff count, schema diff count, body
-        diff count, mean/p99 latency delta, crash count. PR-A2 returns
-        zeros (PR-A1's ledger has no writers until A3 ships the
-        runtime); post-A3 this is the dashboard widget's data source.
+        total invocations, complete changed-response count and percent,
+        status/schema/body diff counts, incomplete comparisons, mean/p99
+        latency delta, and mirror crash count. Incomplete rows are excluded
+        from the changed-response percentage denominator.
       responses:
         '200':
           description: Aggregated drift counts.
@@ -16279,7 +16511,7 @@ paths:
         Oldest-first (forward narrative). Returns the sidecar's init-exit,
         restart, and health-transition frames. The `latest` field is the
         most recent `wake.sidecar_health` status (`starting`, `healthy`,
-        `unhealthy`, `restarting`, or `failed`) when one is available.
+        `unhealthy`, `restarting`, `failed`, `ready`, or `unready`) when one is available.
 
         The endpoint is a sub-resource of `/v1/apps/{slug}` and uses the
         same MFA, scope, per-app rate-limit, and Hobby+ observability gates
@@ -18474,6 +18706,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Canonical UUID for a disposable execution.
+    AppTaskID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a deployment-attached app task.
     ManagedPostgresID:
       name: id
       in: path
@@ -20786,6 +21024,10 @@ components:
           description: "Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes the value before forwarding it as a key."
           type: string
           pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
+        version_affinity_managed_cookie:
+          description: "Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie."
+          type: boolean
+          default: false
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -21251,7 +21493,14 @@ components:
       type: object
       required: [slug]
       properties:
-        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world" }
+        slug:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          not: { pattern: '^tag-' }
+          minLength: 3
+          maxLength: 40
+          example: "hello-world"
+          description: The tag- prefix is reserved for stable deployment-alias hostnames.
         type: { type: string, enum: [app, function] , example: "app"}
         visibility: { type: string, enum: [public, internal], default: public, description: "Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro and Scale." }
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
@@ -21349,6 +21598,10 @@ components:
           description: "Use a stable, non-secret browser cookie for rollout affinity. Omit to disable."
           type: string
           pattern: '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$'
+        version_affinity_managed_cookie:
+          description: "Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with version_affinity_cookie; omitted uses false."
+          type: boolean
+          default: false
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -21453,6 +21706,37 @@ components:
           description: "Per-deployment token-gate flag (issue #560). Omitted at create-time → apid applies the plan default (false). Pro/Scale only."
           type: boolean
           example: false
+
+    PreviewEnvironmentStatusResponse:
+      description: Aggregate current-head readiness for a recorded GitHub PR preview workload set.
+      type: object
+      required: [root_slug, repo_full_name, pr_number, commit_sha, phase, ready, summary, live_workloads, total_workloads, members]
+      properties:
+        root_slug: { type: string }
+        repo_full_name: { type: string }
+        pr_number: { type: integer, minimum: 1 }
+        commit_sha: { type: string }
+        phase: { type: string, enum: [building, live, failed, closed] }
+        ready: { type: boolean }
+        summary: { type: string }
+        live_workloads: { type: integer, minimum: 0 }
+        total_workloads: { type: integer, minimum: 1 }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/PreviewEnvironmentMemberResponse' }
+
+    PreviewEnvironmentMemberResponse:
+      description: One expected preview workload and its latest deployment for the recorded commit.
+      type: object
+      required: [app_id, slug, workload_name, app_status, preview_state, deployment_id, deployment_status]
+      properties:
+        app_id: { type: string, format: uuid }
+        slug: { type: string, description: Empty if the recorded app is missing. }
+        workload_name: { type: string }
+        app_status: { type: string, description: Includes missing when the recorded app is unavailable. }
+        preview_state: { type: string }
+        deployment_id: { type: string, description: Empty until a deployment for the recorded commit exists. }
+        deployment_status: { type: string, description: Missing until a deployment for the recorded commit exists. }
 
     CreatePreviewRequest:
       description: Pull-request preview provisioning payload. Source is deployed separately after the preview app is created.
@@ -21730,6 +22014,9 @@ components:
         version_affinity_cookie:
           description: "Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change."
           type: [string, "null"]
+        version_affinity_managed_cookie:
+          description: "Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no change."
+          type: [boolean, "null"]
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -21976,7 +22263,14 @@ components:
       type: object
       required: [new_slug]
       properties:
-        new_slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40, example: "hello-world-v2" }
+        new_slug:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          not: { pattern: '^tag-' }
+          minLength: 3
+          maxLength: 40
+          example: "hello-world-v2"
+          description: App slugs beginning with tag- are reserved for deployment-alias hostnames.
 
     RaiseOverageCapRequest:
       description: |
@@ -22341,6 +22635,10 @@ components:
         version_affinity_cookie:
           description: "Configured browser cookie name for rollout affinity; omitted when disabled."
           type: string
+        version_affinity_managed_cookie:
+          description: "Whether the edge issues its own host-only rollout-affinity cookie."
+          type: boolean
+          default: false
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."
@@ -22499,7 +22797,7 @@ components:
 
     SidecarProbe:
       description: |
-        Container-local startup or liveness probe for a companion. Specify
+        Container-local startup, liveness, or readiness probe for a companion. Specify
         exactly one action: exec, http_get, tcp_socket, or the legacy OCI
         test field. Port 0/omitted uses the workload's declared port, then
         the image port, then the platform default.
@@ -22668,12 +22966,12 @@ components:
           items: { $ref: '#/components/schemas/WorkflowSpec' }
         companions:
           type: array
-          maxItems: 2
+          maxItems: 5
           items: { $ref: '#/components/schemas/Sidecar' }
-          description: "Preferred field for companions carried across the resumable upload session."
+          description: "Preferred field for up to five helpers carried across the resumable upload session (one init helper and up to four long-running companions)."
         sidecars:
           type: array
-          maxItems: 2
+          maxItems: 5
           items: { $ref: '#/components/schemas/Sidecar' }
           deprecated: true
           description: "Deprecated spelling of companions."
@@ -23807,6 +24105,77 @@ components:
           items:
             $ref: '#/components/schemas/WorkflowStepSpec'
 
+    PreviewEventRequest:
+      description: Event fields to evaluate without persisting or delivering the event.
+      type: object
+      additionalProperties: false
+      required: [source, type, data]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional event id used when filters inspect the CloudEvents id.
+        source:
+          type: string
+          minLength: 1
+          maxLength: 256
+        type:
+          type: string
+          minLength: 1
+          maxLength: 256
+        time:
+          type: string
+          format: date-time
+          description: Event occurrence time; omitted values use the current time.
+        data_content_type:
+          type: string
+          enum: [application/json]
+          default: application/json
+        data:
+          description: JSON event payload evaluated by subscription filters.
+
+    EventPreviewSubscription:
+      description: A bounded sample of an enabled subscription considered by the event router.
+      type: object
+      additionalProperties: false
+      required: [app_slug, subscription_id, source, type, filter, reason]
+      properties:
+        app_slug: { type: string }
+        subscription_id: { type: string, format: uuid }
+        source: { type: string }
+        type: { type: string }
+        filter:
+          type: object
+          additionalProperties: true
+          description: Normalized content filter declared by this subscription.
+        reason:
+          type: string
+          description: would_deliver, content_filter_mismatch, pattern_mismatch, tenant_mismatch, or an invalid_subscription explanation.
+
+    PreviewEventResponse:
+      description: Read-only event-routing preview; counts cover all candidates while lists are bounded samples.
+      type: object
+      additionalProperties: false
+      required: [event_id, source, type, candidate_count, matched_count, filter_mismatch_count, other_mismatch_count, matches, non_matches, truncated]
+      properties:
+        event_id: { type: string }
+        source: { type: string }
+        type: { type: string }
+        candidate_count: { type: integer, minimum: 0, description: Enabled source/type candidates considered. }
+        matched_count: { type: integer, minimum: 0, description: Subscriptions that would receive the event. }
+        filter_mismatch_count: { type: integer, minimum: 0, description: Candidates excluded by their content filters. }
+        other_mismatch_count: { type: integer, minimum: 0, description: "Candidates rejected for another reason, including invalid stored subscription data." }
+        matches:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventPreviewSubscription' }
+        non_matches:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventPreviewSubscription' }
+        truncated: { type: boolean, description: True when either sample omits additional candidates. }
+
     PublishEventRequest:
       description: Caller-authored envelope for the tenant-scoped internal event router.
       type: object
@@ -24042,17 +24411,16 @@ components:
           example: true
         companions:
           type: array
-          maxItems: 2
+          maxItems: 5
           items:
             $ref: '#/components/schemas/Sidecar'
-          description: "Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with sidecars."
+          description: "Preferred field. Up to 5 stateless helpers total (one init helper and up to four long-running companions); managed presets may omit image. Do not set together with sidecars."
         # Issue #463 / ADR-068: backwards-compatible spelling.
-        # (1 init + 1 sidecar). The runtime effect (imaged,
-        # fcvm, guest-init) ships in PR-B; PR-A persists the
-        # shape and the handler envelope-seals env values.
+        # New deployments can declare one init helper and up to
+        # four long-running sidecars.
         sidecars:
           type: array
-          maxItems: 2
+          maxItems: 5
           items:
             $ref: '#/components/schemas/Sidecar'
           deprecated: true
@@ -24535,9 +24903,9 @@ components:
     Sidecar:
       description: |
         One entry in the deploy request's preferred `companions` array
-        (legacy name: `sidecars`). Up to 2 helpers per app (1 init
-        + 1 sidecar; the array is type-uniqueness + 2-capped at
-        the schema layer via migration 00095's CHECK constraint).
+        (legacy name: `sidecars`). Up to 5 helpers per app (1 init
+        + up to 4 long-running sidecars; total cardinality is capped
+        at the API, runtime, and database layers).
         Stateless only — stateful base images (Postgres, Redis,
         MySQL, MongoDB, etc.) are rejected at the API gate
         with 403 `sidecar_stateful_denied` and again at imaged
@@ -24555,8 +24923,8 @@ components:
           `image`; apid resolves an operator-pinned immutable digest.
         - `image` is required for a custom helper and must be a
           digest-pinned OCI reference. Tag references are rejected.
-        - `type` ∈ {`init`, `sidecar`}. At most one of each per
-          deployment.
+        - `type` ∈ {`init`, `sidecar`}. At most one init helper and
+          up to four long-running sidecars per deployment.
         - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
           overridden). Every element non-empty.
         - `env` is plaintext on the wire, sealed at rest. Keys
@@ -24579,6 +24947,9 @@ components:
           HTTP GET, and TCP probes. Omit it to use the image OCI `HEALTHCHECK`.
         - `liveness_probe` independently monitors a running sidecar; when
           omitted, the effective startup probe is reused for compatibility.
+        - `readiness_probe` is valid only on the `primary_ingress` sidecar. It
+          gates initial traffic and temporarily withdraws/resumes routing
+          without restarting the companion.
         - `depends_on` optionally gates this workload on `main` or
           another sidecar. Conditions are `started`, `healthy`, and
           `completed_successfully`; omitted condition means `started`.
@@ -24648,6 +25019,8 @@ components:
           $ref: '#/components/schemas/SidecarProbe'
         liveness_probe:
           $ref: '#/components/schemas/SidecarProbe'
+        readiness_probe:
+          $ref: '#/components/schemas/SidecarProbe'
         depends_on:
           type: array
           maxItems: 3
@@ -24688,6 +25061,55 @@ components:
           type: [string, "null"]
           format: date-time
           description: 'When certmagic last validated the cert under host. Null for never-touched hostnames. NOT a latency probe — the cert NotAfter is the load-bearing expiry.'
+
+    SetDeploymentAliasRequest:
+      description: Request to point one named alias at an exact immutable deployment row.
+      type: object
+      required: [deployment_id]
+      additionalProperties: false
+      properties:
+        deployment_id:
+          type: string
+          format: uuid
+          description: Exact immutable deployment row to associate with this alias.
+
+    DeploymentAliasResponse:
+      description: A customer's named pointer to one per-app deployment revision, including its stable host when the platform apps domain is configured.
+      type: object
+      required: [name, deployment_id, revision, created_at, updated_at]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+        deployment_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+          description: Per-app revision number; rendered in CLI output as vN.
+        host:
+          type: string
+          description: Stable one-label hostname for this alias. It is keyed by an immutable app identifier and remains stable if the app slug is renamed.
+        url:
+          type: string
+          format: uri
+          description: HTTPS URL for the alias host; omitted when the platform apps domain is not configured.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DeploymentAliasListResponse:
+      description: The per-app list of named deployment aliases.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentAliasResponse' }
 
     # ─── Instances ────────────────────────────────────────────────────────
 
@@ -28578,14 +29000,18 @@ components:
     CreateMirrorRuleRequest:
       description: |
         Body for POST /v1/apps/{slug}/mirrors. Both deployments must
-        be `live` and belong to the same app. `include_body` defaults
-        to `false`; enabling it stores only request/response SHA-256
-        hashes for body-difference classification, never raw bodies.
+        be `live` and belong to the same app. `percent` defaults to
+        a 5% sample. `include_body` defaults to `false`; when enabled,
+        only response SHA-256 hashes are retained. Raw bodies are never
+        stored. POST, PUT, PATCH, and DELETE are skipped unless
+        `allow_unsafe_methods` is explicitly enabled.
         `redact_headers` is the
         customer's additive list on top of the always-stripped list
         (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
         WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
-        A2's storage layer).
+        A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
+        snapshot cap are safely skipped rather than sending a partial request
+        to the mirror deployment.
       type: object
       required: [source_deployment_id, mirror_deployment_id]
       properties:
@@ -28603,13 +29029,17 @@ components:
           type: integer
           minimum: 0
           maximum: 100
-          default: 100
-          description: "Fan-out percent. 100 = mirror every customer request; lower = sampled shadow."
-          example: 100
+          default: 5
+          description: "Fan-out percent. Defaults to a 5% sample; 100 mirrors every eligible request."
+          example: 5
         include_body:
           type: boolean
           default: false
-          description: "If true, the comparison ledger captures request/response SHA-256 hashes for body-difference classification. Raw bodies are never stored. Off by default."
+          description: "If true, compare response values using hashes. Raw response bodies are never stored. Off by default."
+        allow_unsafe_methods:
+          type: boolean
+          default: false
+          description: "If true, also mirror POST, PUT, PATCH, and DELETE. These methods may cause side effects in the mirror deployment."
         redact_headers:
           type: array
           description: "Customer-supplied additional header names to redact on top of the always-stripped list (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization, WWW-Authenticate)."
@@ -28635,7 +29065,10 @@ components:
           description: "Set false to pause the rule without removing it."
         include_body:
           type: boolean
-          description: "Toggle request/response body-hash comparison in the ledger. Raw bodies are never stored."
+          description: "Toggle response-value comparison using hashes. Raw bodies are never stored."
+        allow_unsafe_methods:
+          type: boolean
+          description: "Also mirror POST, PUT, PATCH, and DELETE; these can cause side effects in the mirror deployment."
         redact_headers:
           type: array
           description: "Replace the customer's redact list. Empty array clears it."
@@ -28657,6 +29090,7 @@ components:
         - percent
         - enabled
         - include_body
+        - allow_unsafe_methods
         - redact_headers
         - always_stripped_headers
         - created_at
@@ -28677,6 +29111,7 @@ components:
           maximum: 100
         enabled: { type: boolean }
         include_body: { type: boolean }
+        allow_unsafe_methods: { type: boolean }
         redact_headers:
           type: array
           items: { type: string }
@@ -28703,10 +29138,9 @@ components:
 
     MirrorSummaryResponse:
       description: |
-        Aggregated mirror drift counts over a trailing window. PR-A2
-        returns zeros (PR-A1's ledger has no writers until A3 ships
-        the runtime dispatch); post-A3 this is the dashboard widget's
-        data source.
+        Aggregated mirror drift counts over a trailing window. The changed
+        response percentage uses only complete comparisons; `incomplete_comparison_count`
+        separately reports missing or truncated response snapshots.
       type: object
       required:
         - total_invocations
@@ -28718,6 +29152,7 @@ components:
         - mean_latency_diff_ms
         - p99_latency_diff_ms
         - crash_count
+        - incomplete_comparison_count
         - window_seconds
       properties:
         total_invocations:
@@ -28726,13 +29161,13 @@ components:
         changed_response_count:
           type: integer
           format: int64
-          description: "Requests with any status, schema, or body difference; each request is counted once."
+          description: "Complete comparisons with any status, schema, or body difference; each request is counted once."
         changed_response_percent:
           type: number
           format: double
           minimum: 0
           maximum: 100
-          description: "100 × changed_response_count / total_invocations; zero when the window is empty."
+          description: "100 × changed_response_count / complete comparisons; zero when none are complete."
         status_diff_count:
           type: integer
           format: int64
@@ -28752,6 +29187,10 @@ components:
         crash_count:
           type: integer
           format: int64
+        incomplete_comparison_count:
+          type: integer
+          format: int64
+          description: "Comparisons skipped because a response was missing or exceeded the capture limit."
         window_seconds:
           type: integer
           minimum: 1
@@ -29246,7 +29685,7 @@ components:
           description: "RFC 3339 UTC timestamp of the health transition."
         status:
           type: string
-          enum: [starting, healthy, unhealthy, restarting, failed]
+          enum: [starting, healthy, unhealthy, restarting, failed, ready, unready]
           description: "Closed sidecar health state emitted by guest-init."
         reason:
           type: string
@@ -31735,6 +32174,7 @@ components:
         state: { type: string }
         attempts: { type: integer, minimum: 0 }
         created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, description: "Most recent claim/delivery time; updated on retry and omitted before the first claim." }
         completed_at: { type: string, format: date-time }
         traceparent: { type: string }
 
@@ -32045,6 +32485,78 @@ components:
         limit: { type: integer, minimum: 1, maximum: 200 }
         offset: { type: integer, minimum: 0 }
         next_offset: { type: integer, description: "Next offset, or -1 at the end of the result set." }
+
+    CreateAppTaskRequest:
+      description: |
+        One manual command to execute against the app's live deployment.
+        `command_shell=false` executes argv directly. Shell mode requires one
+        command string and is explicit so clients preserve quoting semantics.
+      type: object
+      required: [command]
+      additionalProperties: false
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+        command_shell: { type: boolean, default: false }
+        timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Zero uses the 600-second default." }
+        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024." }
+
+    AppTaskFailure:
+      description: Bounded customer-visible failure details for an app task.
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, maxLength: 64 }
+        message: { type: string, maxLength: 4096 }
+
+    AppTaskResponse:
+      description: |
+        App-scoped receipt for a deployment-attached command. Scheduler lease
+        data, rootfs storage keys, and image digests are intentionally omitted.
+      type: object
+      required: [id, app_id, deployment_id, deployment_scope, kind, command, command_shell, status, timeout_seconds, max_output_bytes, output_truncated, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_scope: { type: string }
+        kind: { type: string, enum: [manual, release] }
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+        command_shell: { type: boolean }
+        status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, cancelled] }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        max_output_bytes: { type: integer, minimum: 1024, maximum: 16777216 }
+        stdout_tail: { type: string }
+        stderr_tail: { type: string }
+        output_truncated: { type: boolean }
+        exit_code: { type: [integer, "null"], minimum: 0, maximum: 255 }
+        failure: { anyOf: [{ $ref: '#/components/schemas/AppTaskFailure' }, { type: "null" }] }
+        cancel_requested_at: { type: [string, "null"], format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AppTaskListResponse:
+      description: |
+        App-scoped page of task receipts. `next_offset` is -1 when there is no
+        following page; otherwise pass it as `offset`.
+      type: object
+      required: [tasks, limit, offset, next_offset]
+      properties:
+        tasks:
+          type: array
+          items: { $ref: '#/components/schemas/AppTaskResponse' }
+        limit: { type: integer, minimum: 1, maximum: 200 }
+        offset: { type: integer, minimum: 0 }
+        next_offset: { type: integer, description: "Offset for the following app-task page, or -1 when this page is final." }
 
     Invocation:
       description: "A single invocations row. Account-scoped; cross-account reads return 404."
@@ -33879,13 +34391,24 @@ components:
           additionalProperties: { type: string }
 
     # ─── Outbound webhooks (issue #476 / ADR-076) ──────────────────────────────
+    DeploymentLiveWebhookPayload:
+      type: object
+      description: Deployment reached the live state. Delivery IDs are stable across retries.
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id: { type: string, description: App that owns this live deployment. }
+        deployment_id: { type: string, description: Deployment that entered the live state. }
+        status: { type: string, enum: [live] }
+      additionalProperties: true
+
     DeploymentFailedWebhookPayload:
       type: object
-      description: Deployment failure details delivered with deployment.failed.
-      required: [app_id, deployment_id]
+      description: Deployment failure details delivered with deployment.failed. Delivery IDs are stable across retries.
+      required: [app_id, deployment_id, status]
       properties:
-        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
-        deployment_id: { type: string }
+        app_id: { type: string, description: App that owns this failed deployment. }
+        deployment_id: { type: string, description: Deployment that entered the failed state. }
+        status: { type: string, enum: [failed] }
         error_code: { type: string }
         error_hint: { type: string }
         error_why: { type: string }
@@ -33893,13 +34416,27 @@ components:
         relevant_logs: { type: array, items: { type: string } }
       additionalProperties: true
 
+    RolloutCompletedWebhookPayload:
+      type: object
+      description: The configured rollout completed. Explicit traffic splits may complete below 100%; inspect traffic_percent.
+      required: [app_id, deployment_id, rollout_state, traffic_percent, completed_at]
+      properties:
+        app_id: { type: string }
+        deployment_id: { type: string }
+        rollout_state: { type: string, enum: [complete] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        completed_at: { type: string, format: date-time }
+      additionalProperties: true
+
     RolloutAbortedWebhookPayload:
       type: object
-      description: Rollout abort details delivered with rollout.aborted.
-      required: [app_id, deployment_id, reason]
+      description: A live rollout was aborted. Pre-live build failures emit deployment.failed instead.
+      required: [app_id, deployment_id, rollout_state, traffic_percent, reason, aborted_at]
       properties:
-        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        app_id: { type: string }
         deployment_id: { type: string }
+        rollout_state: { type: string, enum: [aborted] }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         reason: { type: string }
         aborted_at: { type: string, format: date-time }
       additionalProperties: true
@@ -34057,7 +34594,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -34471,7 +35008,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -34528,7 +35065,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -35333,6 +35870,9 @@ components:
         status_diff: { type: boolean }
         body_diff: { type: boolean }
         crashed: { type: boolean }
+        comparison_incomplete:
+          type: boolean
+          description: "True when neither source status nor source body hash was supplied, or the mirror produced no response."
 
 
   responses:

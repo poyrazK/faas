@@ -54,8 +54,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 224 | [Account-scoped release webhooks](224-account-scoped-release-webhooks.md) | accepted | Account-owned release receiver over the existing signed delivery ledger; bounded event filter and tenant isolation |
+| 223 | [Multiple long-running application companions](223-multiple-long-running-companions.md) | proposed | Bounded helper cardinality with up to four long-running companions, existing dependency/probe gates, and additive resource accounting |
 | 221 | [Replay-safe mirror rollups](221-replay-safe-mirror-rollups.md) | proposed | Atomic contribution receipts, UTC hourly buckets, retention safety, and coordinated legacy-writer cutover |
 | 222 | [Opt-in in-process secret reload](222-in-process-secret-reload.md) | accepted | App-owned signal handling over an atomic guest-local secret-file projection, limited to single-workload deployments |
+| 225 | [Restore working-set prefetch](225-restore-working-set-prefetch.md) | accepted | Record each restore's touched snapshot pages from Firecracker's page table and readahead them at the start of the family's next wake |
 | 220 | [Provider-scoped credit receipts](220-provider-scoped-credit-receipts.md) | proposed | Match invoice identity, isolate credit replay and compensation, fail closed on unresolved legacy provider evidence |
 | 219 | [Preview-scoped internal service resolution](219-preview-scoped-internal-service-resolution.md) | accepted | Same-account/project/PR workload lookup before the policy-controlled production fallback |
 | 218 | [Curated global organization activity timeline](218-global-organization-activity-timeline.md) | accepted | Organization-scoped safe activity projection, stable keyset API, and explicit producer mappings |
@@ -67,7 +70,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 208 | [Acknowledged routing handoff for zero-downtime service rollouts](208-zero-downtime-service-rollout-handoff.md) | accepted | Two-phase route publication, serving-gateway acknowledgements, and post-ack per-instance request draining before predecessor retirement |
 | 212 | [Durable inbound webhook ingress](212-durable-inbound-webhook-ingress.md) | accepted | Provider-signed Stripe callbacks persist a deduplicated invocation before `202`, then reuse the scheduler wake, retry, and DLQ path |
 | 207 | [Bounded builder cache affinity](207-bounded-builder-cache-affinity.md) | accepted | Prefer the latest successful builder briefly so production rebuilds reuse node-local caches without sacrificing availability |
-| 216 | [Application companions without exposing an orchestration API](216-application-companions.md) | accepted | Preferred companion API, managed presets, task-local shared memory, and rollout-safe primary ingress |
+| 216 | [Application companions without exposing an orchestration API](216-application-companions.md) | accepted; cardinality partially superseded by ADR-223 | Preferred companion API, managed presets, task-local shared memory, and rollout-safe primary ingress |
 | 200 | [First-wake 5xx auto-rollback on every plan](200-auto-rollback-on-every-plan.md) | accepted | Health-driven rollback for the first wake of a new deployment, on every plan |
 | 201 | [Traffic resilience as a platform primitive](201-traffic-as-a-platform-primitive.md) | accepted | `kind=retry` + `kind=circuit_breaker` over instance health, and an nftables egress breaker driven by ADR-098 probe outcomes |
 | 215 | [Durable async routes](215-durable-async-routes.md) | accepted | `kind=async` turns a matched public request into the existing durable invocation lifecycle and returns `202` without waking the app |

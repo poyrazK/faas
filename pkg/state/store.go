@@ -1739,7 +1739,7 @@ type Store interface {
 	// ListPreviewsForTeardown (ADR-095 PR-C / issue #272) returns
 	// preview rows the teardown janitor should consider this tick:
 	// every non-torn_down preview that is either in a terminal-ish
-	// PR state (closed / stale) or past its preview_expires_at TTL.
+	// PR state (closed / stale / tearing_down) or past its preview_expires_at TTL.
 	//
 	// Deliberately NOT filtered on status <> 'deleted': the janitor
 	// is the component that sets status='deleted', and it must be
@@ -1755,6 +1755,10 @@ type Store interface {
 	// than a full-table scan. Ordered by preview_expires_at ASC
 	// (nulls last) so the most overdue rows are reaped first.
 	ListPreviewsForTeardown(ctx context.Context, now time.Time, maxPerTick int) ([]App, error)
+	// ClaimPreviewTeardown atomically fences a janitor candidate only when its
+	// state and lease still match the sweep snapshot. A reopened preview returns
+	// ErrNotFound. A claimed row remains claimable for crash recovery.
+	ClaimPreviewTeardown(ctx context.Context, observed App, now time.Time) (App, error)
 	// SetPreviewPrState (ADR-095 PR-C / issue #272) advances one
 	// preview row's lifecycle label. Returns the updated row, or
 	// ErrNotFound when no row matches the id.
@@ -3042,13 +3046,9 @@ type Store interface {
 	// ADR-069 / PR-B). The PR-A surface (Deployment.Sidecars
 	// jsonb) stays the contract layer; this is the per-sidecar
 	// storage-key handle imaged writes and vmmd reads at wake
-	// time. The 2-row cap is enforced upstream by the
-	// `deployments.sidecars` CHECK constraint — this interface
-	// does not duplicate it (its row count could exceed
-	// SidecarCapMax via a hand-INSERT and that would only
-	// surface when vmmd reads a row that no jsonb entry
-	// references, which is a defence-in-depth concern, not a
-	// correctness gate).
+	// time. The five-row cap is enforced by the deployment JSONB
+	// CHECK and a per-deployment trigger on the layer table; this
+	// interface does not duplicate the database guard.
 	//
 	// SetDeploymentSidecarLayer upserts one sidecar's layer
 	// handle. Imaged calls it once per sidecar in
@@ -3352,6 +3352,11 @@ type Store interface {
 	// both apid admission and schedd lifecycle ownership meet at this narrow
 	// durable boundary.
 	ExecutionStore
+
+	// Commands attached to one immutable application deployment (ADR-230).
+	// This stays separate from ExecutionStore because app tasks inherit the
+	// app's artifact, scoped configuration, bindings, and network policy.
+	AppTaskStore
 
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and

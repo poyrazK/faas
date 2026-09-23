@@ -274,7 +274,7 @@ func TestHandler_MirrorFanout_PreservesSourceRequestBody(t *testing.T) {
 		host:         "jane-api.apps.dom",
 		upstreamAddr: upstream.Listener.Addr().String(),
 		mirrorRules: []MirrorRuleRow{
-			{ID: "rule-1", AppID: "app-1", MirrorDeploymentID: "dep-B", Percent: 100},
+			{ID: "rule-1", AppID: "app-1", MirrorDeploymentID: "dep-B", Percent: 100, AllowUnsafeMethods: true},
 		},
 	}
 	rt := &stubMirrorRoundTripper{
@@ -330,6 +330,7 @@ func TestHandler_MirrorFanout_ComparesSourceResponseAndPersistsResult(t *testing
 			SourceDeploymentID: "dep-A",
 			MirrorDeploymentID: "dep-B",
 			Percent:            100,
+			AllowUnsafeMethods: true,
 		}},
 	}
 	rt := &stubMirrorRoundTripper{cannedResponse: &http.Response{

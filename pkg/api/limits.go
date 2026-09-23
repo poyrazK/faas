@@ -3526,17 +3526,17 @@ const (
 	MirrorMaxLifetimeSeconds = 5
 
 	// MirrorBodySnapshotCap (issue #72 / ADR-133 / ADR-125 PR-A3
-	// code-review fix) is the maximum number of source-request body
-	// bytes the gateway captures at the fanout boundary for the
-	// mirror goroutine's ClassifyResult comparison. The handler
-	// reads up to MirrorBodySnapshotCap bytes from r.Body, then
-	// restores r.Body to a fresh reader over the SAME bytes so the
-	// downstream ReverseProxy reads the full body unchanged.
+	// code-review fix) bounds request forwarding and each response
+	// snapshot retained for mirror comparison. The handler reads up
+	// to MirrorBodySnapshotCap+1 bytes from r.Body to detect oversize
+	// inputs, then restores r.Body so the source proxy sees the full
+	// body unchanged.
 	//
 	// 64 KiB is enough for status_diff / body_diff detection on a
 	// typical JSON / form-urlencoded response — the comparison is
-	// SHA-256 over the captured bytes (A3 ships byte-equal; JCS
-	// semantic diff is an ADR-124 §Follow-on). Larger values
+	// SHA-256 over the bounded response snapshot. JSON whitespace and object-key
+	// order are normalized before the value hash, and JSON shape has its own
+	// fingerprint. Larger values
 	// (1 MiB+) start eating gateway RAM on burst traffic; smaller
 	// values lose body-diff signal on responses with a long tail.
 	// Bumping this is a PR-grade change.
@@ -3781,21 +3781,17 @@ const (
 	// "atomic revocation" (no grace).
 	DefaultAPIKeyGraceWindowDays = 7
 
-	// Sidecar containers (issue #463 / ADR-070). The 2-sidecar
-	// hard cap is a GLOBAL constant, not a per-plan matrix field.
-	// Every plan inherits the same `SidecarCapMax = 2` (Free
-	// included). The cap is structurally tight: 1 init + 1
-	// sidecar is the smallest useful surface for a stateless
-	// workload, and the schema CHECK on `deployments.sidecars`
-	// (migration 00118) pins the cap at the second-line defence
-	// layer (migrations/00118_deployments_sidecars.sql). A future
-	// PR can grow this to a per-plan matrix if telemetry shows
-	// demand — the constant is the single source of truth.
-	SidecarCapMax = 2
+	// SidecarCapMax bounds all helper workloads in one deployment, including
+	// the optional one-shot init helper. The global cap keeps roster, mount,
+	// and admission work bounded across every plan.
+	SidecarCapMax = 5
+	// SidecarLongRunningCapMax bounds concurrently running companions. At most
+	// one additional init helper may be declared under SidecarCapMax.
+	SidecarLongRunningCapMax = 4
 	// WorkloadDependencyCapMax bounds the dependency list for one workload.
-	// With one main workload and at most two sidecars, three unique targets
-	// are the complete set; keeping the cap explicit limits malformed roster
-	// growth before graph validation.
+	// The graph has at most one main workload plus SidecarCapMax helpers;
+	// keeping the cap explicit limits malformed roster growth before graph
+	// validation.
 	WorkloadDependencyCapMax = SidecarCapMax + 1
 
 	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps

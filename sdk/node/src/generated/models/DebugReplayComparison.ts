@@ -15,5 +15,9 @@ export type DebugReplayComparison = {
   status_diff?: boolean;
   body_diff?: boolean;
   crashed?: boolean;
+  /**
+   * True when neither source status nor source body hash was supplied, or the mirror produced no response.
+   */
+  comparison_incomplete?: boolean;
 };
 

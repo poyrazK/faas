@@ -403,6 +403,10 @@ type Instance struct {
 	// this prevents a caller from turning a networked long-lived app VM into a
 	// one-shot guest by guessing its instance id.
 	ExecutionOnly bool
+	// AppTaskOnly marks a fresh deployment-attached VM that waits for exactly
+	// one command. It retains normal app networking but cannot be used as an
+	// ordinary routed app instance or by the source-execution API.
+	AppTaskOnly bool
 	// Paused marks a resident warm-pool restore. Paused instances are kept in
 	// vmmd's live map but do not start liveness/framework monitors until the
 	// scheduler explicitly resumes them.
@@ -2957,8 +2961,12 @@ type WakeRequest struct {
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
 	ExecutionOnly bool
-	AppID         string // apps.id UUID; PR-B UpdateEgressAllowlist walks live by AppID
-	DeploymentID  string // deployments.id UUID; PR-B AC #1 stamps onto Instance so the vsock DGRAM sidecar-init-failed path can flip the deploy row (issue #463 / ADR-069)
+	// AppTaskOnly is the internal lifecycle fence set only by WakeAppTask.
+	// The guest receives scoped app runtime files and normal networking, but
+	// skips HTTP readiness, characterization, and background app monitors.
+	AppTaskOnly  bool
+	AppID        string // apps.id UUID; PR-B UpdateEgressAllowlist walks live by AppID
+	DeploymentID string // deployments.id UUID; PR-B AC #1 stamps onto Instance so the vsock DGRAM sidecar-init-failed path can flip the deploy row (issue #463 / ADR-069)
 	// AccountID is the apps row's owning account id (issue #301,
 	// ADR-044). Threads onto the wire so vmmd can label the
 	// vmmd_cpu_throttle_seconds_total{account_id, app_id} counter
@@ -3166,6 +3174,39 @@ func (m *Manager) WakeExecution(ctx context.Context, req ExecutionWakeRequest) (
 		MemSizeMiB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores,
 		Snapshot: req.Snapshot, Plan: req.Plan, Runtime: req.Runtime,
 	})
+}
+
+// AppTaskWakeRequest carries the ordinary app wake envelope resolved for the
+// task's pinned deployment. Command data is deliberately absent; it crosses
+// the guest boundary later through ExecuteAppTask, after the scheduler has
+// committed its durable running fence.
+type AppTaskWakeRequest struct {
+	WakeRequest
+}
+
+// WakeAppTask cold-boots one deployment-attached, networked task guest. App
+// snapshots cannot be repurposed for this mode because their captured PID 1
+// has already selected the ordinary app branch; the platform-owned marker
+// must be present before a fresh guest-init starts.
+func (m *Manager) WakeAppTask(ctx context.Context, req AppTaskWakeRequest) (*Instance, error) {
+	wake := req.WakeRequest
+	if m == nil || m.vmm == nil {
+		return nil, errors.New("fcvm: app task wake is not configured")
+	}
+	if wake.Instance == "" || wake.AccountID == "" || wake.AppID == "" || wake.DeploymentID == "" ||
+		!wake.Plan.Valid() || wake.BaseKey == "" || wake.LayerKey == "" ||
+		wake.VcpuCount <= 0 || wake.MemSizeMiB <= 0 || wake.CPUMillicores <= 0 {
+		return nil, errors.New("fcvm: incomplete app task wake envelope")
+	}
+	if wake.ExecutionOnly || wake.AppTaskOnly || wake.Snapshot != nil || wake.KeepPaused || wake.ExportDir != "" {
+		return nil, errors.New("fcvm: app task wake requires a fresh dedicated app VM")
+	}
+	wake.AppTaskOnly = true
+	// Formation sidecars are long-lived app companions, not part of a one-off
+	// command dyno. The task receives the pinned main image and its scoped
+	// environment without starting or staging deployment sidecars.
+	wake.Sidecars = nil
+	return m.Wake(ctx, wake)
 }
 
 // WakeNetworkReady describes the network namespace that has been prepared for
@@ -3539,6 +3580,14 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// successes slower than SlowWakeLogThreshold. The named `err`
 	// return is what lets this defer distinguish the two.
 	phases := newWakePhases()
+	// ADR-225: start warming the snapshot's recorded working set before the
+	// lease, network and restore gate so the reads overlap that work.
+	var restorePrefetchBytes int64
+	if req.Snapshot != nil {
+		if p, ok := m.vmm.(restorePrefetcher); ok {
+			restorePrefetchBytes = p.PrefetchRestore(req.Snapshot.StorageKey)
+		}
+	}
 	defer func() {
 		switch {
 		case err != nil:
@@ -3626,6 +3675,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// review finding #1 (correctness / ship-blocker).
 	if !req.Plan.Valid() {
 		err = fmt.Errorf("wake %s: invalid plan %q (issue #301 / ADR-043)", req.Instance, req.Plan)
+		return nil, err
+	}
+	if req.ExecutionOnly && req.AppTaskOnly {
+		err = fmt.Errorf("wake %s: execution-only and app-task-only modes are mutually exclusive", req.Instance)
 		return nil, err
 	}
 	if req.KeepPaused && req.Snapshot == nil {
@@ -4068,7 +4121,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	var guestReadyMs int64
 	// Builder VMs do not emit the app readiness/characterization signals;
 	// builderd owns completion by waiting for Destroy instead.
-	if method == WakeColdBoot && req.ExportDir == "" && !req.ExecutionOnly {
+	if method == WakeColdBoot && req.ExportDir == "" && !req.ExecutionOnly && !req.AppTaskOnly {
 		readyStart := time.Now()
 		report, _ = m.vmm.WaitCharacterizationReport(ctx, lease, m.characterizationWait)
 		guestReadyMs = time.Since(readyStart).Milliseconds()
@@ -4077,7 +4130,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			"observed_port", report.ObservedPort, "exit", report.ExitCode,
 			"port_norm_mode", report.PortNormalizationMode)
 	}
-	inst := &Instance{Lease: lease, Net: nc, Method: method, ExecutionOnly: req.ExecutionOnly, Paused: req.KeepPaused, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
+	inst := &Instance{Lease: lease, Net: nc, Method: method, ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
 	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
@@ -4185,6 +4238,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		"uid", lease.UID, "host_ip", lease.HostIP.String(),
 		"setup_network_ms", timings.netnsTapMs, "scan_check_ms", timings.scanCheckMs,
 		"restore_ms", timings.restoreMs, "cold_boot_ms", timings.coldBootMs,
+		"restore_prefetch_bytes", restorePrefetchBytes,
 	}
 	// Include every outer phase measurement on successes too. A
 	// fallback can spend most of its wall time before Firecracker Boot (for
@@ -4199,7 +4253,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// The Manager selects its daemon lifecycle context so the loop
 	// survives the short-lived Wake RPC and exits with vmmd shutdown
 	// or explicit instance teardown.
-	if !req.ExecutionOnly && !lease.IsBuilder && !req.KeepPaused {
+	if !req.ExecutionOnly && !req.AppTaskOnly && !lease.IsBuilder && !req.KeepPaused {
 		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
 		m.startFrameworkReadyLoop(ctx, req.Instance)
 	}
@@ -4272,10 +4326,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// <HostIP>:8080 and accepts 2xx as ready.
 			HealthcheckPath:  req.HealthcheckPath,
 			StartupDeadlineS: req.StartupDeadlineS,
-			// Execution guests have no tenant network or HTTP listener. Their
-			// readiness fence is the execution vsock protocol, so probing the
-			// ordinary app port would wait until the full startup timeout.
-			SkipReady:         req.ExportDir != "" || req.ExecutionOnly,
+			// One-shot guests use a vsock dispatch protocol rather than the app
+			// HTTP listener. App tasks remain networked; executions do not.
+			SkipReady:         req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,
 			EphemeralWritable: req.ExportDir != "",
 			// Issue #463 / ADR-069 / PR-B: per-workload drives
 			// (main + sidecars). Empty = legacy single-workload
@@ -4378,10 +4431,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		HealthcheckPath:  req.HealthcheckPath,
 		StartupDeadlineS: req.StartupDeadlineS,
 		ExecutionMode:    req.ExecutionMode,
-		// Execution guests have no tenant network or HTTP listener. Their
-		// readiness fence is the execution vsock protocol, so probing the
-		// ordinary app port would wait until the full startup timeout.
-		SkipReady: req.ExportDir != "" || req.ExecutionOnly,
+		// One-shot guests use a vsock dispatch protocol rather than the app
+		// HTTP listener. App tasks remain networked; executions do not.
+		SkipReady: req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,
 		// Issue #463 / ADR-069 / PR-B: per-workload drives
 		// (main + sidecars). buildWorkloadsForColdBoot emits an
 		// empty slice on the legacy single-workload path so
@@ -4391,6 +4443,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		APIEnvJSON:         req.preparedAPIEnvJSON,
 		ServiceDiscoveryIP: serviceDiscoveryIP,
 		Networkless:        req.ExecutionOnly,
+		AppTask:            req.AppTaskOnly,
 	}
 	coldBootStartedAt := time.Now()
 	coldBootErr := m.vmm.BootColdBoot(ctx, lease, spec)
@@ -4613,6 +4666,9 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	if !ok {
 		return SnapshotInfo{}, fmt.Errorf("park %s: not live", instance)
 	}
+	if inst.AppTaskOnly {
+		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
+	}
 	// Stop liveness before pausing/snapshotting. A parked VM is expected to
 	// stop answering probes; leaving the loop active through Snapshot lets it
 	// race this teardown and report a second failure for the same instance.
@@ -4675,6 +4731,9 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	m.mu.Unlock()
 	if !ok {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: not live", instance)
+	}
+	if inst.AppTaskOnly {
+		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
 	}
 	spec.ResumeBeforePublish = true
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
@@ -4743,6 +4802,9 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if !ok {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: not live", instance)
 	}
+	if inst.AppTaskOnly {
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
+	}
 	if m.vmm == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil vmm", instance)
 	}
@@ -4799,6 +4861,9 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	m.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("resume_vm %s: not live", instance)
+	}
+	if inst.AppTaskOnly {
+		return fmt.Errorf("resume_vm %s: app task instances are never resumable", instance)
 	}
 	if m.vmm == nil {
 		return fmt.Errorf("resume_vm %s: nil vmm", instance)
@@ -6752,6 +6817,7 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 			Essential:       sc.Essential,
 			StartupProbe:    cloneWorkloadProbe(sc.StartupProbe),
 			LivenessProbe:   cloneWorkloadProbe(sc.LivenessProbe),
+			ReadinessProbe:  cloneWorkloadProbe(sc.ReadinessProbe),
 			Cmd:             append([]string(nil), sc.Cmd...),
 			Entrypoint:      append([]string(nil), sc.Entrypoint...),
 			DependsOn:       append([]api.WorkloadDependency(nil), sc.DependsOn...),

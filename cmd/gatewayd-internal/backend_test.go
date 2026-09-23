@@ -105,6 +105,12 @@ func TestPgRouter_ResolveDeploymentPreviewPinsRevision(t *testing.T) {
 	if resolved.ID != app.ID || resolved.PinnedDeploymentID != deployment.ID || resolved.PinnedDeploymentScope != "staging" {
 		t.Fatalf("resolved = %+v, want app=%q deployment=%q scope=staging", resolved, app.ID, deployment.ID)
 	}
+	if err := store.MarkDeploymentSuperseded(context.Background(), deployment.ID); err != nil {
+		t.Fatalf("MarkDeploymentSuperseded: %v", err)
+	}
+	if _, ok, err := router.ResolveHost(context.Background(), host); err != nil || ok {
+		t.Fatalf("superseded deployment preview ok=%v err=%v, want false/nil", ok, err)
+	}
 }
 
 func TestPgRouter_DeploymentPreviewRejectsInactiveRevision(t *testing.T) {
@@ -121,6 +127,53 @@ func TestPgRouter_DeploymentPreviewRejectsInactiveRevision(t *testing.T) {
 
 	if _, ok, err := router.ResolveHost(context.Background(), host); err != nil || ok {
 		t.Fatalf("inactive deployment route ok=%v err=%v, want false/nil", ok, err)
+	}
+}
+
+func TestPgRouter_ResolveDeploymentAliasPinsRevision(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	app := seedApp(t, store, "orders-api", api.PlanPro)
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetDeploymentAlias(ctx, app.ID, "canary", first.ID); err != nil {
+		t.Fatalf("SetDeploymentAlias: %v", err)
+	}
+	label, ok := api.DeploymentAliasHostLabel(app.ID, "canary")
+	if !ok {
+		t.Fatal("DeploymentAliasHostLabel rejected valid alias")
+	}
+	router := pgRouter{store: store, appsSuffix: ".apps.gregale.dev"}
+	got, ok, err := router.ResolveHost(ctx, label+".apps.gregale.dev")
+	if err != nil || !ok {
+		t.Fatalf("ResolveHost ok=%v err=%v", ok, err)
+	}
+	if got.ID != app.ID || got.PinnedDeploymentID != first.ID {
+		t.Fatalf("alias route = app %q deployment %q, want app %q deployment %q", got.ID, got.PinnedDeploymentID, app.ID, first.ID)
+	}
+	if _, err := store.RenameApp(ctx, app.AccountID, app.Slug, "orders-renamed"); err != nil {
+		t.Fatalf("RenameApp: %v", err)
+	}
+	got, ok, err = router.ResolveHost(ctx, label+".apps.gregale.dev")
+	if err != nil || !ok || got.PinnedDeploymentID != first.ID {
+		t.Fatalf("renamed app alias route = %+v, ok=%v err=%v; want stable host and pinned target", got, ok, err)
+	}
+
+	if err := store.UpdateDeploymentStatus(ctx, first.ID, state.DeploySuperseded, ""); err != nil {
+		t.Fatalf("supersede target: %v", err)
+	}
+	got, ok, err = router.ResolveHost(ctx, label+".apps.gregale.dev")
+	if err != nil || !ok || got.PinnedDeploymentID != first.ID {
+		t.Fatalf("superseded alias route = %+v, ok=%v err=%v; want pinned superseded target", got, ok, err)
+	}
+
+	if err := store.ClearDeployment(ctx, first.ID, "test"); err != nil {
+		t.Fatalf("clear target: %v", err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, label+".apps.gregale.dev"); err != nil || ok {
+		t.Fatalf("deleted alias target resolved: ok=%v err=%v", ok, err)
 	}
 }
 
@@ -239,14 +292,15 @@ func TestAppsSuffix(t *testing.T) {
 // the per-app cache delete semantics (those live in
 // pkg/gateway's pgbackend_test.go).
 type fakeInvalidator struct {
-	mu            sync.Mutex
-	evicted       map[string]string // instance_id -> app_id
-	flushCnt      int
-	publicAuthCnt int
-	refreshed     []string // app_ids that received RefreshDeploymentWeights
-	refreshOrder  []string // route refresh ordering: targets must precede weights
-	resetCnt      int      // ResetEdgeRules call count (ADR-089 PR 3)
-	resetApps     []string // app_ids that received ResetApp (ADR-091 amendment)
+	mu                 sync.Mutex
+	evicted            map[string]string // instance_id -> app_id
+	flushCnt           int
+	publicAuthCnt      int
+	refreshed          []string // app_ids that received RefreshDeploymentWeights
+	refreshOrder       []string // route refresh ordering: targets must precede weights
+	resetCnt           int      // ResetEdgeRules call count (ADR-089 PR 3)
+	resetApps          []string // app_ids that received ResetApp (ADR-091 amendment)
+	routeInvalidations []string
 	// responseCacheByApp (ADR-122 §Decision) records app_ids
 	// that received InvalidateResponseCacheByApp — paired
 	// 1:1 with resetApps in the NotifyAppChanged handler arm
@@ -256,6 +310,7 @@ type fakeInvalidator struct {
 		appID    string
 		pathGlob string
 	}
+	responseCacheByTag []struct{ appID, tag string }
 	// responseCacheAll counts InvalidateResponseCacheAll calls
 	// (the NotifyEdgeRuleChanged handler arm fires wholesale).
 	responseCacheAll int
@@ -307,6 +362,11 @@ func (f *fakeInvalidator) ResetEdgeRules() {
 	f.resetCnt++
 	f.mu.Unlock()
 }
+func (f *fakeInvalidator) InvalidateRoutesForApp(appID string) {
+	f.mu.Lock()
+	f.routeInvalidations = append(f.routeInvalidations, appID)
+	f.mu.Unlock()
+}
 func (f *fakeInvalidator) ResetApp(appID string) {
 	f.mu.Lock()
 	f.resetApps = append(f.resetApps, appID)
@@ -323,6 +383,12 @@ func (f *fakeInvalidator) InvalidateResponseCacheByPath(appID, pathGlob string) 
 		appID    string
 		pathGlob string
 	}{appID: appID, pathGlob: pathGlob})
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeInvalidator) InvalidateResponseCacheByTag(appID, tag string) error {
+	f.mu.Lock()
+	f.responseCacheByTag = append(f.responseCacheByTag, struct{ appID, tag string }{appID, tag})
 	f.mu.Unlock()
 	return nil
 }
@@ -391,15 +457,41 @@ func TestHandleInvalidation(t *testing.T) {
 	if len(f.evicted) != 1 {
 		t.Errorf("evicted map = %v, want 1 entry", f.evicted)
 	}
-	// FlushRoutes fires only for NotifyDomainChanged (1x) — the
-	// ADR-091 amendment moved the NotifyAppChanged arm off the
-	// wholesale path so a maintenance_mode flip on a single app
-	// doesn't evict every other app's cache entry.
+	// FlushRoutes fires only for NotifyDomainChanged (1x). NotifyAppChanged
+	// invalidates only that app's hostname routes, preserving other apps.
 	if f.flushCnt != 1 {
 		t.Errorf("flush count = %d, want 1 (domain only; NotifyAppChanged uses ResetApp)", f.flushCnt)
 	}
 	if len(f.resetApps) != 1 || f.resetApps[0] != appID {
 		t.Errorf("resetApps = %v, want [%s]", f.resetApps, appID)
+	}
+	if len(f.routeInvalidations) != 1 || f.routeInvalidations[0] != appID {
+		t.Errorf("route invalidations = %v, want [%s]", f.routeInvalidations, appID)
+	}
+}
+
+func TestHandleInvalidation_InstanceReadiness(t *testing.T) {
+	backend := gateway.NewPGBackend(nil, nil, testLogger())
+	backend.RecordTarget("app-7", gateway.Target{
+		AppID: "app-7", NodeID: "node-1", InstanceID: "instance-1", RequiresReadiness: true,
+	})
+	readyAt := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+
+	handleInvalidation(context.Background(), backend, db.Notification{
+		Channel: db.NotifyInstanceReadinessChanged,
+		Payload: `{"app_id":"app-7","instance_id":"instance-1","status":"ready","at":"2026-09-23T12:00:00Z","event_id":8}`,
+	}, testLogger())
+	if got := backend.HealthyCount("app-7"); got != 1 {
+		t.Fatalf("HealthyCount after ready notification = %d, want 1", got)
+	}
+
+	unreadyAt := readyAt.Add(time.Second).Format(time.RFC3339Nano)
+	handleInvalidation(context.Background(), backend, db.Notification{
+		Channel: db.NotifyInstanceReadinessChanged,
+		Payload: `{"app_id":"app-7","instance_id":"instance-1","status":"unready","at":"` + unreadyAt + `","event_id":9}`,
+	}, testLogger())
+	if got := backend.HealthyCount("app-7"); got != 0 || backend.CapacityCount("app-7") != 1 {
+		t.Fatalf("counts after unready notification = healthy %d, capacity %d; want 0,1", got, backend.CapacityCount("app-7"))
 	}
 }
 
@@ -436,6 +528,9 @@ func TestHandleInvalidation_DeploymentChangedRefreshesWeights(t *testing.T) {
 	}
 	if len(f.resetApps) != 1 || f.resetApps[0] != "app-7" {
 		t.Errorf("resetApps = %v, want [app-7] for deployment companion-route refresh", f.resetApps)
+	}
+	if len(f.routeInvalidations) != 1 || f.routeInvalidations[0] != "app-7" {
+		t.Errorf("routeInvalidations = %v, want [app-7]", f.routeInvalidations)
 	}
 }
 
@@ -506,6 +601,14 @@ func TestHandleInvalidation_CachePurge(t *testing.T) {
 		Channel: db.NotifyCachePurge,
 		Payload: `not json`,
 	}, log)
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyCachePurge,
+		Payload: `{"app_id":"app-7","tag":"product:42"}`,
+	}, log)
+	handleInvalidation(context.Background(), f, db.Notification{
+		Channel: db.NotifyCachePurge,
+		Payload: `{"app_id":"app-7","path_glob":"*","tag":"product:42"}`,
+	}, log)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -514,6 +617,9 @@ func TestHandleInvalidation_CachePurge(t *testing.T) {
 	}
 	if got := f.responseCacheByPath[0]; got.appID != "app-7" || got.pathGlob != "/products/*" {
 		t.Errorf("cache purge = %+v, want app-7 /products/*", got)
+	}
+	if len(f.responseCacheByTag) != 1 || f.responseCacheByTag[0].appID != "app-7" || f.responseCacheByTag[0].tag != "product:42" {
+		t.Errorf("tag purge = %+v, want app-7 product:42", f.responseCacheByTag)
 	}
 }
 

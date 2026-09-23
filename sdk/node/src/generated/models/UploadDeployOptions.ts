@@ -34,7 +34,7 @@ export type UploadDeployOptions = {
   pr_number?: number;
   workflows?: Array<WorkflowSpec>;
   /**
-   * Preferred field for companions carried across the resumable upload session.
+   * Preferred field for up to five helpers carried across the resumable upload session (one init helper and up to four long-running companions).
    */
   companions?: Array<Sidecar>;
   /**

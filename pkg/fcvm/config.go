@@ -132,7 +132,13 @@ const (
 // world (ADR-009) is configured by the kernel's ip= autoconfig so guest-init
 // carries no networking code: guest 10.0.0.2, gateway 10.0.0.1, /30 mask. Every
 // VM boots with the same line — uniqueness lives entirely on the host side.
-const coldBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
+//
+// quiet drops the kernel's routine boot log from the console. Each byte on the
+// emulated 8250 is a VM exit, and on nested-virtualization compute nodes the
+// ~30k exits of a verbose boot cost ~0.6 s per cold boot. guest-init writes to
+// /dev/console directly and kernel errors are still printed, so the early
+// failure reports above are unaffected.
+const coldBootArgs = "console=ttyS0,115200n8 quiet reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
@@ -145,7 +151,7 @@ const coldBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
 // executionBootArgs intentionally omits kernel ip= autoconfiguration. The
 // dedicated execution VM has no Firecracker network interface, so even the
 // guest kernel receives no tenant route or DNS/gateway hint.
-const executionBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
+const executionBootArgs = "console=ttyS0,115200n8 quiet reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
@@ -211,6 +217,10 @@ type ColdBootSpec struct {
 	// only by the dedicated disposable-execution path; ordinary app and job
 	// boots retain the identical inner network contract.
 	Networkless bool
+	// AppTask stages the platform-owned marker that makes guest-init wait for
+	// one command on the app-task vsock channel instead of starting the app.
+	// Unlike Networkless, it retains the deployment's normal network policy.
+	AppTask bool
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -390,6 +400,10 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: mem_size_mib %d < 1", s.MemSizeMiB)
 	case s.Tap == "" && !s.Networkless:
 		return fmt.Errorf("fcvm: cold boot: empty tap device")
+	case s.AppTask && s.Networkless:
+		return fmt.Errorf("fcvm: cold boot: app task cannot be networkless")
+	case s.AppTask && !s.SkipReady:
+		return fmt.Errorf("fcvm: cold boot: app task must skip app readiness")
 	case s.StartupDeadlineS < 0:
 		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
 	case !validCharacterizationExecutionMode(s.ExecutionMode):
@@ -659,21 +673,22 @@ func JailerCommand(s JailerSpec) []string {
 // single canonical way to override the entrypoint without stamping
 // a new base layer.
 type WorkloadSpec struct {
-	Name          string            // "main" for the main workload; sidecar name for the rest
-	Type          string            // "main", "init", "sidecar"
-	Image         string            // digest-pinned sidecar image, retained for wire/audit parity
-	StorageKey    string            // StorageBackend key (apps/<slug>/<depID>[-<name>].ext4)
-	DriveID       string            // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
-	RamMB         int               // 0 = inherit plan RAM
-	CPUMillicores int               // 0 = inherit app CPU quota
-	ScratchMB     int               // 0 = platform default; sidecars only
-	DiskIOProfile string            // "low", "standard", "high"; sidecars only
-	Port          int               // 0 = inherit main port (8080)
-	Essential     bool              // type=="init" + essential=true → fail deploy on non-zero exit
-	StartupProbe  *api.SidecarProbe // startup gate; nil falls back to image OCI healthcheck
-	LivenessProbe *api.SidecarProbe // optional steady-state probe for long-running sidecars
-	Cmd           []string
-	Entrypoint    []string
+	Name           string            // "main" for the main workload; sidecar name for the rest
+	Type           string            // "main", "init", "sidecar"
+	Image          string            // digest-pinned sidecar image, retained for wire/audit parity
+	StorageKey     string            // StorageBackend key (apps/<slug>/<depID>[-<name>].ext4)
+	DriveID        string            // FC Drive.DriveID (DriveLayerMain / DriveSidecarPrefix+idx)
+	RamMB          int               // 0 = inherit plan RAM
+	CPUMillicores  int               // 0 = inherit app CPU quota
+	ScratchMB      int               // 0 = platform default; sidecars only
+	DiskIOProfile  string            // "low", "standard", "high"; sidecars only
+	Port           int               // 0 = inherit main port (8080)
+	Essential      bool              // type=="init" + essential=true → fail deploy on non-zero exit
+	StartupProbe   *api.SidecarProbe // startup gate; nil falls back to image OCI healthcheck
+	LivenessProbe  *api.SidecarProbe // optional steady-state probe for long-running sidecars
+	ReadinessProbe *api.SidecarProbe // optional reversible ingress gate for primary-ingress sidecars
+	Cmd            []string
+	Entrypoint     []string
 	// DependsOn is the guest-init startup gate list. Conditions are
 	// started, healthy, or completed_successfully; an empty condition
 	// defaults to started.

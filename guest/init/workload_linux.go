@@ -95,20 +95,21 @@ import (
 // pkg/fcvm/vmm.go::workloadManifest for the rationale and the
 // round-trip test that pins the parsed-equivalence contract.
 type workloadSpec struct {
-	Cmd           []string                 `json:"cmd,omitempty"`
-	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
-	DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
-	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
-	Entrypoint    []string                 `json:"entrypoint,omitempty"`
-	Essential     bool                     `json:"essential"`
-	LivenessProbe *api.SidecarProbe        `json:"liveness_probe,omitempty"`
-	Name          string                   `json:"name"`
-	Port          int                      `json:"port"`
-	Ports         []api.WorkloadPort       `json:"ports,omitempty"`
-	RamMB         int                      `json:"ram_mb"`
-	ScratchMB     int                      `json:"scratch_mb,omitempty"`
-	StartupProbe  *api.SidecarProbe        `json:"startup_probe,omitempty"`
-	Type          string                   `json:"type"` // "main" | "init" | "sidecar"
+	Cmd            []string                 `json:"cmd,omitempty"`
+	CPUMillicores  int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile  string                   `json:"disk_io_profile,omitempty"`
+	DependsOn      []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint     []string                 `json:"entrypoint,omitempty"`
+	Essential      bool                     `json:"essential"`
+	LivenessProbe  *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+	Name           string                   `json:"name"`
+	Port           int                      `json:"port"`
+	Ports          []api.WorkloadPort       `json:"ports,omitempty"`
+	RamMB          int                      `json:"ram_mb"`
+	ScratchMB      int                      `json:"scratch_mb,omitempty"`
+	StartupProbe   *api.SidecarProbe        `json:"startup_probe,omitempty"`
+	ReadinessProbe *api.SidecarProbe        `json:"readiness_probe,omitempty"`
+	Type           string                   `json:"type"` // "main" | "init" | "sidecar"
 }
 
 // workloadRosterPath is the deployment-level roster location
@@ -308,8 +309,8 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	if log == nil {
 		log = slog.Default()
 	}
-	if len(roster.Sidecars) > 2 {
-		return fmt.Errorf("workload roster: deployment has %d sidecars; cap is 2 (ADR-069 §Decision 1)", len(roster.Sidecars))
+	if err := validateWorkloadCardinality(roster); err != nil {
+		return err
 	}
 	if err := hydrateSidecarPortMetadata(&roster); err != nil {
 		return err
@@ -641,6 +642,9 @@ func newSupervisorFor(spec workloadSpec, secrets, apiEnv map[string]string, log 
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: sidecar %s crashed (restart %d/%d): %v\n",
 			spec.Name, attempt, maxRestarts, err)
+		if !sidecarProbeDisabled(spec.ReadinessProbe) {
+			supRef.reportHealth("unready", "sidecar_restarting")
+		}
 		supRef.reportHealth("restarting", fmt.Sprintf("restart_%d", attempt))
 		// PR-C §4: ship the sidecar_restart envelope so vmmd
 		// can increment <daemon>_sidecar_restart_total AND
@@ -727,6 +731,7 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	if startupProbe == nil && manifestErr == nil {
 		startupProbe = sidecarProbeFromHealthcheck(baked.Healthcheck)
 	}
+	readinessProbe := spec.ReadinessProbe
 	livenessProbe := spec.LivenessProbe
 	if livenessProbe == nil {
 		livenessProbe = startupProbe
@@ -843,10 +848,47 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 				return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 			}
 		}
+		if !sidecarProbeDisabled(readinessProbe) {
+			uid := lookupUID(baked.EffectiveUser())
+			if directRoot != "" {
+				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+			}
+			if err := runStartupProbe(readinessProbe, probePort, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, slog.Default()); err != nil {
+				sup.reportHealth("unready", "readiness_probe_failed")
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return fmt.Errorf("run sidecar %s readiness: %w", spec.Name, err)
+			}
+			sup.reportHealth("ready", "readiness_probe_passed")
+		}
 		sup.markHealthy()
 		if spec.Type == "sidecar" {
 			sup.reportHealth("healthy", "startup_probe_passed")
 		}
+	}
+	var readinessCancel context.CancelFunc
+	var readinessDone <-chan struct{}
+	if spec.Type == "sidecar" && !sidecarProbeDisabled(readinessProbe) {
+		readinessCtx, cancelReadiness := context.WithCancel(context.Background())
+		readinessCancel = cancelReadiness
+		done := make(chan struct{})
+		readinessDone = done
+		go func() {
+			defer close(done)
+			uid := lookupUID(baked.EffectiveUser())
+			if directRoot != "" {
+				uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+			}
+			monitorSidecarReadiness(readinessCtx, readinessProbe, probePort, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, func(ready bool, reason string) {
+				status := "unready"
+				if ready {
+					status = "ready"
+				}
+				if sup != nil {
+					sup.reportHealth(status, reason)
+				}
+			}, slog.Default())
+		}()
 	}
 	var healthCancel context.CancelFunc
 	var healthDone <-chan struct{}
@@ -864,6 +906,9 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 			}
 			monitorSidecarProbe(healthCtx, livenessProbe, probePort, env, cmd.Dir, directRoot, uid, cmd.SysProcAttr, func(err error) {
 				if sup != nil {
+					if !sidecarProbeDisabled(readinessProbe) {
+						sup.reportHealth("unready", "liveness_probe_failed")
+					}
 					sup.reportHealth("unhealthy", err.Error())
 				}
 				select {
@@ -885,6 +930,10 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 		placeIntoLeaf(leaf, cmd.Process.Pid, slog.Default())
 	}
 	runErr := cmd.Wait()
+	if readinessCancel != nil {
+		readinessCancel()
+		<-readinessDone
+	}
 	if healthCancel != nil {
 		healthCancel()
 		<-healthDone
@@ -896,6 +945,9 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	}
 	if runErr != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, runErr)
+	}
+	if sup != nil && !sidecarProbeDisabled(readinessProbe) {
+		sup.reportHealth("unready", "process_exited")
 	}
 	return nil
 }

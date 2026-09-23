@@ -10,11 +10,11 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
-| [`events`](#events) | Publish events and inspect subscriptions and deliveries |
+| [`events`](#events) | Preview routing, publish events and inspect subscriptions and deliveries |
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
-| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|restart\|--profile NAME\|--ram N\|…]) |
+| [`app`](#app) | Get/update one app or run a deployment-attached command |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
 | [`build`](#build) | Inspect builds (build status\|list\|provenance\|sbom) |
@@ -29,7 +29,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
-| [`deployments`](#deployments) | List deployments (--app SLUG or linked context \| --limit N \| --before C \| --all \| --wide) |
+| [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
@@ -37,7 +37,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment (name defaults to linked context) |
 | [`diff`](#diff) | Compare two named environments in the linked project |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
-| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
+| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
@@ -86,7 +86,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
-| [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only) |
+| [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained. |
 | [`cache`](#cache) | Declare or purge response caching (cache GET /path/:id for 30s) |
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
@@ -257,9 +257,21 @@ Show one audit event
 
 ## events
 
-Publish events and inspect subscriptions and deliveries
+Preview routing, publish events and inspect subscriptions and deliveries
 
 `gregale events [<subcommand>]`
+
+### events preview
+
+Preview account-wide event routing without publishing
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | event id to use when filters inspect the CloudEvents id |  |
+| `--source <SOURCE>` | event source (or first positional argument) |  |
+| `--type <TYPE>` | event type (or second positional argument) |  |
+| `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
+| `--time <RFC3339>` | event time (RFC3339; defaults to server time) |  |
 
 ### events publish
 
@@ -360,7 +372,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 ## app
 
-Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
+Get/update one app or run a deployment-attached command
 
 `gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
@@ -392,6 +404,19 @@ Rename an app
 ### app restart
 
 Park and wake from a fresh snapshot
+
+### app exec
+
+Run a one-off command against the live deployment
+
+| Flag | Meaning | |
+|---|---|---|
+| `--shell` | interpret one command string through the app shell |  |
+| `--detach` | return after the task is queued |  |
+| `--timeout-seconds <N>` | server-side command timeout |  |
+| `--max-output-bytes <N>` | combined stdout/stderr tail cap |  |
+| `--poll-interval <D>` | status polling interval while attached |  |
+| `--wait-timeout <D>` | maximum attached wait |  |
 
 ### app security
 
@@ -921,9 +946,9 @@ Cancel a delayed task
 
 ## deployments
 
-List deployments (--app SLUG or linked context | --limit N | --before C | --all | --wide)
+List deployments or manage stable named URLs for immutable revisions
 
-`gregale deployments [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
+`gregale deployments [<subcommand>] [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -932,6 +957,43 @@ List deployments (--app SLUG or linked context | --limit N | --before C | --all 
 | `--before <cursor>` | pagination cursor (RFC3339Nano) |  |
 | `--all` | walk every page |  |
 | `--wide` | include annotation columns (by / pr / tag / reason) |  |
+
+### deployments alias
+
+Manage stable named URLs for immutable deployments
+
+#### deployments alias list
+
+List deployment aliases for an app
+
+`gregale deployments alias list [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+
+#### deployments alias set
+
+Point an alias at an exact deployment revision
+
+`gregale deployments alias set [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+| `--name <NAME>` | lowercase DNS-label alias name | required |
+| `--deployment <ID|vN>` | deployment ID or app revision (vN) | required |
+
+#### deployments alias delete
+
+Remove an alias without deleting its deployment
+
+`gregale deployments alias delete [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; defaults to the linked project |  |
+| `--name <NAME>` | lowercase DNS-label alias name | required |
 
 
 ## deployment
@@ -1224,7 +1286,7 @@ Tear down a preview app (POST /v1/preview/{slug}/destroy)
 
 ## edge-rules
 
-Per-app edge rules (edge-rules list|create|get|update|rm --app &lt;slug&gt;)
+Per-app edge rules (edge-rules list|trace|create|get|update|rm --app &lt;slug&gt;)
 
 `gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
 
@@ -1241,6 +1303,18 @@ List edge rules
 |---|---|---|
 | `--app <slug>` | filter to a single app slug |  |
 | `--kind <value>` | filter to a single kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
+
+### edge-rules trace
+
+Preview matching edge rules and simulate IP/geo decisions
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--url <URL>` | absolute HTTP(S) request URL | required |
+| `--method <method>` | request method (default GET) |  |
+| `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
+| `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 
 ### edge-rules create
 
@@ -2302,7 +2376,7 @@ Show live deployment traffic weights for an app
 
 ## mirror
 
-Manage traffic mirroring and sanitized replay (Pro/Scale only)
+Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained.
 
 `gregale mirror [<subcommand>]`
 
@@ -2323,8 +2397,9 @@ Create a mirror rule
 | `--app <slug>` | app slug | required |
 | `--source <ID>` | source deployment id or vN revision (live) | required |
 | `--mirror <ID>` | mirror deployment id or vN revision (live; same app) | required |
-| `--percent <N>` | fan-out percent in [0, 100]; 100 = every request |  |
-| `--include-body` | include request/response body hashes in the comparison ledger |  |
+| `--percent <N>` | fan-out percent in [0, 100]; defaults to a 5% sample |  |
+| `--include-body` | compare response values using hashes; raw response bodies are never retained |  |
+| `--allow-unsafe-methods` | also mirror POST, PUT, PATCH, and DELETE; these can cause side effects |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 
 ### mirror info
@@ -2349,6 +2424,8 @@ Patch a mirror rule (patch semantics)
 | `--disable` | disable the rule (mutually exclusive with --enable) |  |
 | `--include-body` | enable body-hash comparison (mutually exclusive with --no-include-body) |  |
 | `--no-include-body` | disable body-hash comparison |  |
+| `--allow-unsafe-methods` | also mirror POST, PUT, PATCH, and DELETE |  |
+| `--safe-methods-only` | skip POST, PUT, PATCH, and DELETE |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 | `--clear-redact` | clear the customer&#39;s redact_headers list (drop to always-stripped only) |  |
 
@@ -2417,11 +2494,12 @@ Cache HEAD responses for a route
 
 ### cache purge
 
-Purge cached responses: cache purge &lt;slug&gt; [--path GLOB]
+Purge cached responses: cache purge &lt;slug&gt; [--path GLOB | --tag TAG]
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <GLOB>` | optional normalized request path glob |  |
+| `--tag <TAG>` | optional cache tag |  |
 
 
 ## upload-cache

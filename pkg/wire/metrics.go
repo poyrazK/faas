@@ -291,6 +291,10 @@ type OpsMetrics struct {
 	// Pre-instantiated at boot so the wake-tier-mix panel has zero
 	// rows from idle fleet, non-zero as soon as production wakes happen.
 	wakeSnapshotTier *prometheus.CounterVec
+	// wakeColdReason counts why a wake cold-booted instead of restoring,
+	// one increment per cold wake. Labels are the closed WakeColdReasons set
+	// plus "unknown"; pre-instantiated so an idle fleet exports zero rows.
+	wakeColdReason *prometheus.CounterVec
 	// executionActive, executionTotal, executionPhaseDuration, and
 	// executionFailures are the scheduler-owned disposable-run signals.
 	// Labels are deliberately closed and payload-free: runtime is the four
@@ -1340,8 +1344,8 @@ type OpsMetrics struct {
 	// whenever an essential sidecar crash restarts; the host
 	// (cmd/vmmd::dispatchSidecarRestart) increments the
 	// CounterVec via ObserveSidecarRestart. Cardinality is
-	// bounded by apps × SidecarCapMax (max 2) so a worst-case
-	// Scale plan with 100 apps × 2 sidecars = 200 series, well
+	// bounded by apps × SidecarCapMax (max 5) so a worst-case
+	// Scale plan with 100 apps × 5 helpers = 500 series, well
 	// under Prometheus' "tens of thousands of series per
 	// metric" guideline. The counter is pre-instantiated with
 	// the empty (app, sidecar) tuple so /metrics surfaces zero
@@ -2324,6 +2328,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	wakeSnapshotTier.WithLabelValues("warm")
 	wakeSnapshotTier.WithLabelValues("init")
 	wakeSnapshotTier.WithLabelValues("cold_boot_fallback")
+	wakeColdReason := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_wake_cold_reason_total",
+		Help: "Count of wakes that cold-booted instead of restoring a snapshot, labelled by reason (the pkg/sched ColdReason closed set: no_snapshot, snapshots_stale, snapshot_lookup_failed, fc_version_mismatch, snapshot_without_drive, ram_mismatch, base_image_mismatch, snapshot_stale, instance_mode; unknown for anything else). Sums to the cold_boot_fallback row of _wake_snapshot_tier_total minus snapshot-miss backoff gates.",
+	}, []string{"reason"})
+	for _, reason := range append(append([]string(nil), WakeColdReasons...), "unknown") {
+		wakeColdReason.WithLabelValues(reason)
+	}
 	// Disposable execution observability (ADR-171). Keep every label drawn
 	// from a closed set so untrusted runtime values and backend errors cannot
 	// create unbounded Prometheus series. The unknown rows are intentional
@@ -3310,10 +3321,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// the dashboard sums the two via `sum(rate(...))` so the
 	// daemon-owned increment is invisible to operators. See
 	// ADR-071 for the cardinality bound (apps × SidecarCapMax
-	// ≤ 200 worst-case).
+	// ≤ 500 worst-case).
 	sidecarRestartTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_sidecar_restart_total",
-		Help: "Count of sidecar restart cycles, per (app, sidecar) — incremented by vmmd's dispatchSidecarRestart (PR-C §4) on every guest-init Supervisor.OnCrash event for an essential sidecar. Bounded by apps × SidecarCapMax (issue #463 / ADR-069 cap = 2).",
+		Help: "Count of sidecar restart cycles, per (app, sidecar) — incremented by vmmd's dispatchSidecarRestart (PR-C §4) on every guest-init Supervisor.OnCrash event for an essential sidecar. Bounded by apps × SidecarCapMax (maximum 5 helpers per app).",
 	}, []string{"app", "sidecar"})
 	sidecarHealthTransitionsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_sidecar_health_transition_total",
@@ -3678,7 +3689,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -5038,7 +5049,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// leaks through (should never happen — guest-init always
 	// stamps the sidecar's name).
 	sidecarRestartTotal.WithLabelValues("", "")
-	for _, status := range []string{"starting", "healthy", "unhealthy", "restarting", "failed"} {
+	for _, status := range []string{"starting", "healthy", "unhealthy", "restarting", "failed", "ready", "unready"} {
 		sidecarHealthTransitionsTotal.WithLabelValues("", "", status)
 	}
 	// issue #301 (ADR-043, per-plan CPU fairness observability):
@@ -5079,6 +5090,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		gatewayInflightRequests:                    gatewayInflightRequests,
 		egressCircuitState:                         egressCircuitState,
 		wakeSnapshotTier:                           wakeSnapshotTier,
+		wakeColdReason:                             wakeColdReason,
 		executionActive:                            executionActive,
 		executionTotal:                             executionTotal,
 		executionPhaseDuration:                     executionPhaseDuration,
@@ -5973,6 +5985,28 @@ func (m *OpsMetrics) WakeSnapshotTier(tier string) prometheus.Counter {
 		return nil
 	}
 	return m.wakeSnapshotTier.WithLabelValues(tier)
+}
+
+// WakeColdReasons mirrors pkg/sched's ColdReasons closed set (pkg/wire cannot
+// import pkg/sched); a pkg/sched test pins the two lists equal.
+var WakeColdReasons = []string{
+	"no_snapshot", "snapshots_stale", "snapshot_lookup_failed",
+	"fc_version_mismatch", "snapshot_without_drive", "ram_mismatch",
+	"base_image_mismatch", "snapshot_stale", "instance_mode",
+}
+
+// WakeColdReason returns the counter for one cold-boot reason. Values outside
+// the closed set land in "unknown" so the label space stays bounded.
+func (m *OpsMetrics) WakeColdReason(reason string) prometheus.Counter {
+	if m == nil || m.wakeColdReason == nil {
+		return nil
+	}
+	for _, known := range WakeColdReasons {
+		if reason == known {
+			return m.wakeColdReason.WithLabelValues(reason)
+		}
+	}
+	return m.wakeColdReason.WithLabelValues("unknown")
 }
 
 // RecordExecutionStarted increments the active disposable-execution gauge.
@@ -8775,7 +8809,7 @@ func (m *OpsMetrics) IncFloorInstanceAdmitted() {
 // dispatchSidecarRestart calls this on every guest-init
 // Supervisor.OnCrash event for an essential sidecar; the
 // counter lands in <daemon>_sidecar_restart_total. Bounded
-// cardinality (apps × SidecarCapMax ≤ 200 worst-case, see
+// cardinality (apps × SidecarCapMax ≤ 500 worst-case, see
 // ADR-071). Safe on a nil receiver so a vmmd run without
 // metrics keeps working (default-local path).
 func (m *OpsMetrics) ObserveSidecarRestart(app, sidecar string) {

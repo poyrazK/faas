@@ -141,10 +141,10 @@ func TestValidateDeploymentRollbackOptionsPlanGate(t *testing.T) {
 	}
 }
 
-// TestValidateAndPlanSidecars_ThreeSidecarsRejected pins
+// TestValidateAndPlanSidecars_SixHelpersRejected pins
 // AC #3 of issue #463 / ADR-069 / PR-B at the apid
 // handler level: a CreateDeploymentRequest carrying a
-// 3-element sidecars array MUST surface the literal
+// 6-element companions array MUST surface the literal
 // api.CodeSidecarCapExceeded via the handler's
 // validateAndPlanSidecars gate. The earlier pkg/api DTO
 // test pins the same wire code; this test confirms the
@@ -155,25 +155,28 @@ func TestValidateDeploymentRollbackOptionsPlanGate(t *testing.T) {
 // cap check, or changes the wire code to a near-synonym)
 // fails this test in the same commit.
 //
-// Hobby is used because Hobby inherits the global 2-cap
+// Hobby is used because Hobby inherits the global five-helper cap
 // (PR-A's accessor returns true for every plan; the
 // load-bearing gate is the GLOBAL SidecarCapMax constant,
 // not a per-plan matrix). The per-sidecar RamMB is set to
 // 32 MB — well above the 16 MB floor — so the cap check
 // fires first, not the ram_mb gate.
-func TestValidateAndPlanSidecars_ThreeSidecarsRejected(t *testing.T) {
+func TestValidateAndPlanSidecars_SixHelpersRejected(t *testing.T) {
 	acct := state.Account{Plan: api.PlanHobby}
 	limits := testSidecarLimits()
 	req := &api.CreateDeploymentRequest{
 		Sidecars: api.Sidecars{
 			{Name: "a", Image: goodSidecarImage, Type: api.SidecarTypeInit, RamMB: 32},
 			{Name: "b", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
-			{Name: "c", Image: goodSidecarImage, Type: api.SidecarTypeInit, RamMB: 32},
+			{Name: "c", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "d", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "e", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "f", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
 		},
 	}
 	p := validateAndPlanSidecars(req, acct, limits)
 	if p == nil {
-		t.Fatal("validateAndPlanSidecars: expected Problem on 3-sidecar request, got nil")
+		t.Fatal("validateAndPlanSidecars: expected Problem on 6-helper request, got nil")
 	}
 	if p.Code != api.CodeSidecarCapExceeded {
 		t.Errorf("problem.Code = %q, want %q (RFC 7807 stable code, closed enum)",
@@ -191,22 +194,22 @@ func TestValidateAndPlanSidecars_ThreeSidecarsRejected(t *testing.T) {
 	}
 }
 
-// TestValidateAndPlanSidecars_TwoSidecarsAccepted pins the
-// happy-path inverse: a 2-sidecar array (the cap) MUST NOT
-// trip the gate. A regression that flips the comparison
-// (< vs <=) would reject legitimate 2-sidecar deploys and
-// fail this test.
-func TestValidateAndPlanSidecars_TwoSidecarsAccepted(t *testing.T) {
+// TestValidateAndPlanSidecars_FiveHelpersAccepted pins the
+// maximum valid shape: one init plus four running companions.
+func TestValidateAndPlanSidecars_FiveHelpersAccepted(t *testing.T) {
 	acct := state.Account{Plan: api.PlanHobby}
 	limits := testSidecarLimits()
 	req := &api.CreateDeploymentRequest{
 		Sidecars: api.Sidecars{
-			{Name: "a", Image: goodSidecarImage, Type: api.SidecarTypeInit, RamMB: 32},
-			{Name: "b", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "init", Image: goodSidecarImage, Type: api.SidecarTypeInit, RamMB: 32},
+			{Name: "metrics", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "logs", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
+			{Name: "tracing", Image: goodSidecarImage, Type: api.SidecarTypeSidecar, RamMB: 32},
 		},
 	}
 	if p := validateAndPlanSidecars(req, acct, limits); p != nil {
-		t.Errorf("validateAndPlanSidecars: expected nil on 2-sidecar request, got %+v", p)
+		t.Errorf("validateAndPlanSidecars: expected nil on maximum five-helper request, got %+v", p)
 	}
 }
 

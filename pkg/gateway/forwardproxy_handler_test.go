@@ -122,6 +122,15 @@ func (s *stubVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.Execute
 func (s *stubVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed in handler integration test")
 }
+func (s *stubVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskRequest, ...grpc.CallOption) (*vmmdpb.RestoreAppTaskResponse, error) {
+	panic("RestoreAppTask: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (*vmmdpb.ExecuteAppTaskResponse, error) {
+	panic("ExecuteAppTask: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
+	panic("ExecuteAppTaskStream: not stubbed in handler integration test")
+}
 func (s *stubVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed in handler integration test")
 }

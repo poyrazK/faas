@@ -1303,11 +1303,15 @@ func TestOpsMetrics_ObserveSidecarHealth(t *testing.T) {
 	m.ObserveSidecarHealth("app-1", "metrics", "starting")
 	m.ObserveSidecarHealth("app-1", "metrics", "healthy")
 	m.ObserveSidecarHealth("app-1", "metrics", "unhealthy")
+	m.ObserveSidecarHealth("app-1", "edge-proxy", "ready")
+	m.ObserveSidecarHealth("app-1", "edge-proxy", "unready")
 
 	body := render(t, m)
 	for _, want := range []string{
 		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="metrics",status="starting"} 1`,
 		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="metrics",status="healthy"} 1`,
+		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="edge-proxy",status="ready"} 1`,
+		`vmmd_sidecar_health_transition_total{app="app-1",sidecar="edge-proxy",status="unready"} 1`,
 		`vmmd_sidecar_health_transition_total{app="",sidecar="",status="failed"} 0`,
 	} {
 		if !strings.Contains(body, want) {
@@ -1885,6 +1889,33 @@ func TestOpsMetrics_GuestInitDurationNilSafe(t *testing.T) {
 	var m *wire.OpsMetrics
 	if got := m.GuestInitDuration("app", "runner"); got != nil {
 		t.Errorf("nil.GuestInitDuration = %v, want nil", got)
+	}
+}
+
+// TestOpsMetrics_WakeColdReason pins the closed reason label set: every
+// reason plus "unknown" is pre-instantiated, and an out-of-set value is
+// folded into "unknown" so the series count stays bounded.
+func TestOpsMetrics_WakeColdReason(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.WakeColdReason("snapshots_stale").Inc()
+	m.WakeColdReason("snapshots_stale").Inc()
+	m.WakeColdReason("made-up reason").Inc()
+	body := render(t, m)
+	for _, want := range []string{
+		`schedd_wake_cold_reason_total{reason="snapshots_stale"} 2`,
+		`schedd_wake_cold_reason_total{reason="unknown"} 1`,
+		`schedd_wake_cold_reason_total{reason="fc_version_mismatch"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q", want)
+		}
+	}
+	if strings.Contains(body, "made-up reason") {
+		t.Error("out-of-set reason leaked into a label value")
+	}
+	var nilMetrics *wire.OpsMetrics
+	if nilMetrics.WakeColdReason("no_snapshot") != nil {
+		t.Error("nil OpsMetrics must return a nil counter")
 	}
 }
 

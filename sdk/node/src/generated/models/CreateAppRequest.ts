@@ -11,6 +11,9 @@ import type { WorkloadPort } from './WorkloadPort.js';
  * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
 export type CreateAppRequest = {
+  /**
+   * The tag- prefix is reserved for stable deployment-alias hostnames.
+   */
   slug: string;
   type?: 'app' | 'function';
   /**
@@ -103,6 +106,10 @@ export type CreateAppRequest = {
    * Use a stable, non-secret browser cookie for rollout affinity. Omit to disable.
    */
   version_affinity_cookie?: string;
+  /**
+   * Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with version_affinity_cookie; omitted uses false.
+   */
+  version_affinity_managed_cookie?: boolean;
   /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */

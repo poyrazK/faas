@@ -1432,29 +1432,31 @@ func EvictionPriorityOrBestEffort(p string) string {
 	return p
 }
 
-// PreviewPrStateOpen / Closed / Stale / TornDown are the four
+// PreviewPrStateOpen / Closed / Stale / TearingDown / TornDown are the
 // closed-set values for state.App.PreviewPrState. Mirrors the
 // apps_preview_pr_state_chk CHECK constraint introduced by
-// migration 00218 (issue #272 / ADR-094). Empty string means
+// migration 00220 (issue #272 / ADR-094), extended by the teardown-claim
+// migration. Empty string means
 // "production app, no preview state" — the SQL CHECK allows
-// NULL or one of the four values; the Go side represents NULL
+// NULL or one of these values; the Go side represents NULL
 // as "" (same convention as EvictionPriorityOrBestEffort).
 const (
-	PreviewPrStateOpen     = "open"
-	PreviewPrStateClosed   = "closed"
-	PreviewPrStateStale    = "stale"
-	PreviewPrStateTornDown = "torn_down"
+	PreviewPrStateOpen        = "open"
+	PreviewPrStateClosed      = "closed"
+	PreviewPrStateStale       = "stale"
+	PreviewPrStateTearingDown = "tearing_down"
+	PreviewPrStateTornDown    = "torn_down"
 )
 
 // PreviewPrStateIsValid reports whether the value is one of
-// the four legal preview_pr_state values. Empty string is the
+// the legal preview_pr_state values. Empty string is the
 // "production app" shape (preview_pr_state IS NULL) — the SQL
 // CHECK allows NULL; the Go side uses "" for that. Callers
 // building a new preview App MUST set a non-empty value from
 // the closed set above.
 func PreviewPrStateIsValid(s string) bool {
 	switch s {
-	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTornDown:
+	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown:
 		return true
 	default:
 		return false
@@ -1525,8 +1527,9 @@ type AppManifest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is persisted in the manifest; legacy rows remain
 	// disabled when the field is absent.
-	SessionAffinity       bool   `json:"session_affinity,omitempty"`
-	VersionAffinityCookie string `json:"version_affinity_cookie,omitempty"`
+	SessionAffinity              bool   `json:"session_affinity,omitempty"`
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1565,7 +1568,7 @@ func (m AppManifest) IsZero() bool {
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
-		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == ""
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -2028,8 +2031,8 @@ type Deployment struct {
 	// 3 / 60s) are applied on the apid read path when this
 	// column is empty.
 	OverrideLivenessProbe json.RawMessage `json:"override_liveness_probe,omitempty"`
-	// Sidecars (issue #463 / ADR-068). Up to 2 stateless sidecars
-	// (1 init + 1 sidecar) per app. Persisted as jsonb on the
+	// Sidecars (issue #463 / ADR-068). Up to 5 stateless helpers
+	// (1 init + 4 long-running companions) per app. Persisted as jsonb on the
 	// `deployments.sidecars` column (migration 00095). Field is
 	// json.RawMessage (NOT []api.Sidecar) so the state package
 	// does NOT import pkg/api — see pkg/api ↔ pkg/state cycle
@@ -2365,6 +2368,12 @@ type Deployment struct {
 	// the exact archive accepted for this deployment. It is kept as raw JSON so
 	// state does not depend on the framework-profile package's API shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
+	// ReleaseCommand is immutable pre-activation intent captured from the
+	// exact source version (gregale.yaml release.command or Procfile release:).
+	// The orchestrator converts it into the deployment's unique release task;
+	// an empty slice means the deployment has no release phase.
+	ReleaseCommand      []string `json:"release_command,omitempty"`
+	ReleaseCommandShell bool     `json:"release_command_shell,omitempty"`
 }
 
 // OperatorDeploymentFilter bounds the provider-side deployment incident
@@ -2450,6 +2459,21 @@ func (d Deployment) DeploymentPreviewActive() bool {
 	}
 }
 
+// DeploymentAliasActive reports whether a named alias may keep routing to its
+// pinned revision. Unlike a deployment-preview URL, an alias deliberately
+// remains valid after a newer revision supersedes its target. Failed or
+// cancelled targets are never routable, and soft-deletion is checked by the
+// caller because it is stored separately from status.
+func (d Deployment) DeploymentAliasActive() bool {
+	switch d.Status {
+	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting,
+		DeployLive, DeploySuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 // StageState is the typed view of the
 // `deployments.stage_state` jsonb column (ADR-117,
 // migration 00302). Shape:
@@ -2506,8 +2530,9 @@ type StageStateItem struct {
 // handle (issue #463 / ADR-069 / PR-B). imaged writes one row per
 // sidecar during the buildImageLayer pass; vmmd reads it at wake
 // time to resolve the StorageBackend key into a tmp path. The
-// 2-row cap is mirrored at the schema layer via the
-// `deployments.sidecars` jsonb CHECK constraint (migration 00118);
+// five-row cap is mirrored at the schema layer via the
+// `deployments.sidecars` jsonb CHECK constraint and this table's
+// trigger (migration 20260923163517663);
 // this table's own constraint is just the PK uniqueness
 // (deployment_id, sidecar_name). The FK CASCADE means deleting
 // the deployment carries the rows with it (defence-in-depth —
@@ -3144,7 +3169,9 @@ const (
 	AppWebhookEventAppWoken                AppWebhookEvent = "app.woken"
 	AppWebhookEventBuildSucceeded          AppWebhookEvent = "build.succeeded"
 	AppWebhookEventBuildFailed             AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentLive          AppWebhookEvent = "deployment.live"
 	AppWebhookEventDeploymentFailed        AppWebhookEvent = "deployment.failed"
+	AppWebhookEventRolloutCompleted        AppWebhookEvent = "rollout.completed"
 	AppWebhookEventRolloutAborted          AppWebhookEvent = "rollout.aborted"
 	AppWebhookEventErrorNew                AppWebhookEvent = "error.new"
 	AppWebhookEventJobFinished             AppWebhookEvent = "job.finished"
@@ -3167,7 +3194,9 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventAppWoken,
 	AppWebhookEventBuildSucceeded,
 	AppWebhookEventBuildFailed,
+	AppWebhookEventDeploymentLive,
 	AppWebhookEventDeploymentFailed,
+	AppWebhookEventRolloutCompleted,
 	AppWebhookEventRolloutAborted,
 	AppWebhookEventErrorNew,
 	AppWebhookEventJobFinished,
@@ -3247,12 +3276,24 @@ type UpdateAppWebhookParams struct {
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 }
 
-// AppWebhook is one per-app subscription row (issue #476 /
-// ADR-076). The webhook secret is at-rest sealed
-// (SecretSealed, age/X25519 via pkg/secretbox) and is never surfaced
-// on a read — the apid response carries a masked constant.
+// AppWebhookScope is the closed storage vocabulary for ADR-224. Existing
+// subscriptions are app-scoped; account scope is not yet publicly creatable.
+type AppWebhookScope string
+
+const (
+	AppWebhookScopeApp     AppWebhookScope = "app"
+	AppWebhookScopeAccount AppWebhookScope = "account"
+)
+
+// ErrInvalidAppWebhookScope prevents the app-only creation path from silently
+// creating an app subscription when passed an account-scoped request.
+var ErrInvalidAppWebhookScope = errors.New("state: invalid app webhook scope")
+
+// AppWebhook is a subscription row (ADR-076, ADR-224). Its sealed secret is
+// never surfaced on a read; the apid response carries a masked constant.
 type AppWebhook struct {
 	ID             string
+	Scope          AppWebhookScope
 	AppID          string
 	AccountID      string
 	TargetURL      string
@@ -4152,6 +4193,7 @@ type MirrorRule struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -4163,10 +4205,11 @@ type MirrorRule struct {
 // zero value" — the latter is rare but legal (e.g. Percent=0
 // disables the rule without removing it).
 type MirrorRulePatch struct {
-	Percent       *int
-	Enabled       *bool
-	IncludeBody   *bool
-	RedactHeaders *[]string
+	Percent            *int
+	Enabled            *bool
+	IncludeBody        *bool
+	AllowUnsafeMethods *bool
+	RedactHeaders      *[]string
 }
 
 // CreateMirrorRuleParams (issue #72 / ADR-125) is the parameter
@@ -4184,6 +4227,7 @@ type CreateMirrorRuleParams struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 }
 
@@ -4196,33 +4240,34 @@ type CreateMirrorRuleParams struct {
 // endpoint SUM these columns instead of comparing values client
 // side — the customer's read path stays O(1) per row.
 //
-// All *bytea fields are 32 bytes (SHA-256). Go-side: `[]byte`
-// with len==32, OR nil when the rule has include_body=false (the
-// `body_hash` columns are the only ones that can be nil — the
-// schema_hash columns are always populated for JSON responses).
+// Hash fields are 32-byte SHA-256 fingerprints. Body hashes are nil when
+// `include_body=false`; schema fingerprints are present only for complete JSON
+// responses. Any hash can be nil when its source/mirror snapshot is missing or
+// truncated.
 type MirrorInvocationResult struct {
-	ID                 string
-	MirrorRuleID       string
-	AccountID          string
-	AppID              string
-	SourceDeploymentID string
-	MirrorDeploymentID string
-	InstanceID         string
-	SourceInstanceID   string
-	StatusCode         int
-	SourceStatusCode   int
-	LatencyMs          int
-	SourceLatencyMs    int
-	BodyHash           []byte
-	SourceBodyHash     []byte
-	SchemaHash         []byte
-	SourceSchemaHash   []byte
-	StatusDiff         bool
-	SchemaDiff         bool
-	BodyDiff           bool
-	Crashed            bool
-	RequestID          string
-	CompletedAt        time.Time
+	ID                   string
+	MirrorRuleID         string
+	AccountID            string
+	AppID                string
+	SourceDeploymentID   string
+	MirrorDeploymentID   string
+	InstanceID           string
+	SourceInstanceID     string
+	StatusCode           int
+	SourceStatusCode     int
+	LatencyMs            int
+	SourceLatencyMs      int
+	BodyHash             []byte
+	SourceBodyHash       []byte
+	SchemaHash           []byte
+	SourceSchemaHash     []byte
+	StatusDiff           bool
+	SchemaDiff           bool
+	BodyDiff             bool
+	Crashed              bool
+	ComparisonIncomplete bool
+	RequestID            string
+	CompletedAt          time.Time
 }
 
 // MirrorSummary (issue #72 / ADR-125) is the aggregate the
@@ -4233,15 +4278,16 @@ type MirrorInvocationResult struct {
 // = mirror is slower). `P99LatencyDiffMs` is signed and is the
 // operator's drift signal.
 type MirrorSummary struct {
-	TotalInvocations     int
-	ChangedResponseCount int
-	StatusDiffCount      int
-	SchemaDiffCount      int
-	BodyDiffCount        int
-	MeanLatencyDiffMs    int
-	P99LatencyDiffMs     int
-	CrashCount           int
-	WindowSeconds        int
+	TotalInvocations          int
+	ChangedResponseCount      int
+	StatusDiffCount           int
+	SchemaDiffCount           int
+	BodyDiffCount             int
+	MeanLatencyDiffMs         int
+	P99LatencyDiffMs          int
+	CrashCount                int
+	IncompleteComparisonCount int
+	WindowSeconds             int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis

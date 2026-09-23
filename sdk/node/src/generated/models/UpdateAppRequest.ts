@@ -104,6 +104,10 @@ export type UpdateAppRequest = {
    * Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change.
    */
   version_affinity_cookie?: string | null;
+  /**
+   * Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no change.
+   */
+  version_affinity_managed_cookie?: boolean | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

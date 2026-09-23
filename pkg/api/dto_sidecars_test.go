@@ -88,6 +88,14 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 				StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/usr/local/bin/ready"}, IntervalS: 5, TimeoutS: 2, Retries: 3},
 			},
 		},
+		{
+			name: "primary-ingress-readiness-probe",
+			s: Sidecar{
+				Name: "proxy", Image: "r/x@sha256:" + strings.Repeat("d", 64), Type: SidecarTypeSidecar,
+				Port: 8081, PrimaryIngress: true,
+				ReadinessProbe: &AppManifestHealthcheck{HTTPGet: &SidecarHTTPGetProbe{Path: "/readyz"}},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -128,7 +136,7 @@ func TestSidecars_Validate_Dependencies(t *testing.T) {
 		{
 			name: "dependency-cap",
 			ss: Sidecars{{Name: "metrics", Image: image, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{
-				{Name: "main"}, {Name: "a"}, {Name: "b"}, {Name: "c"},
+				{Name: "main"}, {Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}, {Name: "e"}, {Name: "f"},
 			}}},
 			want: "max is",
 		},
@@ -238,6 +246,16 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			name:    "startup-probe-legacy-interval-over-max",
 			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 301}},
 			wantSub: "outside their supported ranges",
+		},
+		{
+			name:    "readiness-probe-not-primary-ingress",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, ReadinessProbe: &AppManifestHealthcheck{Exec: &SidecarExecProbe{Command: []string{"/ready"}}}},
+			wantSub: "only valid for a primary_ingress sidecar",
+		},
+		{
+			name:    "readiness-probe-cannot-be-disabled",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, Port: 8081, PrimaryIngress: true, ReadinessProbe: &AppManifestHealthcheck{Test: []string{"NONE"}}},
+			wantSub: "cannot be disabled",
 		},
 		{
 			name: "env-value-too-long",
@@ -358,6 +376,13 @@ func TestSidecars_Validate_Accepts(t *testing.T) {
 			{Name: "migrator", Image: goodImage, Type: SidecarTypeInit},
 			{Name: "scraper", Image: goodImage2, Type: SidecarTypeSidecar},
 		}},
+		{"one-init-four-sidecars", Sidecars{
+			{Name: "migrator", Image: goodImage, Type: SidecarTypeInit},
+			{Name: "metrics", Image: goodImage2, Type: SidecarTypeSidecar},
+			{Name: "logger", Image: goodImage, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "metrics", Condition: WorkloadDependencyHealthy}}},
+			{Name: "proxy", Image: goodImage, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "logger", Condition: WorkloadDependencyHealthy}}},
+			{Name: "tracer", Image: goodImage2, Type: SidecarTypeSidecar, DependsOn: []WorkloadDependency{{Name: "proxy", Condition: WorkloadDependencyHealthy}}},
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -380,19 +405,14 @@ func TestSidecars_Validate_Rejects(t *testing.T) {
 		wantCode string // RFC 7807 stable code; "" = don't assert (substring-only rows)
 	}{
 		{
-			// AC #3 (issue #463 / ADR-069 / PR-B): a
-			// 3-element sidecars array exceeds the
-			// SidecarCapMax=2 cap and the DTO gate MUST
-			// surface the literal CodeSidecarCapExceeded
-			// so the SDK can branch on the wire code
-			// (not on prose). The closed enum is
-			// pinned here so a reword in pkg/api/errors.go
-			// fails this test in the same commit.
-			name: "three-sidecars-over-cap",
+			name: "six-helpers-over-total-cap",
 			ss: Sidecars{
-				{Name: "a", Image: goodImage, Type: SidecarTypeInit},
+				{Name: "a", Image: goodImage, Type: SidecarTypeSidecar},
 				{Name: "b", Image: goodImage2, Type: SidecarTypeSidecar},
-				{Name: "c", Image: goodImage3, Type: SidecarTypeInit},
+				{Name: "c", Image: goodImage3, Type: SidecarTypeSidecar},
+				{Name: "d", Image: goodImage, Type: SidecarTypeSidecar},
+				{Name: "e", Image: goodImage2, Type: SidecarTypeSidecar},
+				{Name: "f", Image: goodImage3, Type: SidecarTypeSidecar},
 			},
 			wantSub:  "Too many sidecars",
 			wantCode: CodeSidecarCapExceeded,
@@ -406,12 +426,16 @@ func TestSidecars_Validate_Rejects(t *testing.T) {
 			wantSub: "at most one sidecar of type",
 		},
 		{
-			name: "two-sidecar-duplicate-type",
+			name: "five-long-running-over-type-cap",
 			ss: Sidecars{
 				{Name: "a", Image: goodImage, Type: SidecarTypeSidecar},
 				{Name: "b", Image: goodImage2, Type: SidecarTypeSidecar},
+				{Name: "c", Image: goodImage3, Type: SidecarTypeSidecar},
+				{Name: "d", Image: goodImage, Type: SidecarTypeSidecar},
+				{Name: "e", Image: goodImage2, Type: SidecarTypeSidecar},
 			},
-			wantSub: "at most one sidecar of type",
+			wantSub:  "Too many sidecars",
+			wantCode: CodeSidecarCapExceeded,
 		},
 		{
 			name: "duplicate-name",

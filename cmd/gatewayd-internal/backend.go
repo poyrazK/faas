@@ -45,6 +45,11 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 	if revision, slug, matched := gateway.DeploymentScopeFromHost(r.deploySuffix, host); matched {
 		return r.deploymentPreview(ctx, slug, revision)
 	}
+	if label, ok := r.deploymentAliasLabelForHost(host); ok {
+		if app, found, err := r.deploymentAliasByHostLabel(ctx, label); err != nil || found {
+			return app, found, err
+		}
+	}
 	if slug, ok := r.slugFor(host); ok {
 		return r.appBySlug(ctx, slug)
 	}
@@ -67,6 +72,60 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 		}
 	}
 	return r.customDomain(ctx, host)
+}
+
+func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
+	if r.appsSuffix == "" {
+		return "", false
+	}
+	label, ok := strings.CutSuffix(host, r.appsSuffix)
+	if !ok || !strings.HasPrefix(label, "tag-") || strings.Contains(label, ".") {
+		return "", false
+	}
+	return label, true
+}
+
+func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel string) (gateway.App, bool, error) {
+	lookup, ok := r.store.(state.DeploymentAliasRoutingStore)
+	if !ok {
+		return gateway.App{}, false, nil
+	}
+	alias, err := lookup.DeploymentAliasByHostLabel(ctx, hostLabel)
+	if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrConflict) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	app, err := r.store.AppByID(ctx, alias.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
+	}
+	deployment, err := r.store.DeploymentByID(ctx, alias.DeploymentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
+		return gateway.App{}, false, nil
+	}
+	resolved, found, err := r.toApp(ctx, app)
+	if err != nil || !found {
+		return resolved, found, err
+	}
+	resolved.PinnedDeploymentID = deployment.ID
+	if deployment.Scope != "default" {
+		resolved.PinnedDeploymentScope = deployment.Scope
+	}
+	return resolved, true, nil
 }
 
 // deploymentPreview resolves a deployment-preview hostname to its parent app
@@ -303,32 +362,33 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 	}
 	return gateway.App{
-		ID:                        app.ID,
-		AccountID:                 acct.ID,
-		SecurityQuarantined:       securityQuarantined,
-		Visibility:                api.NormalizeAppVisibility(app.Visibility),
-		AccountStatus:             string(acct.Status),
-		Type:                      gateway.AppType(app.Type),
-		Plan:                      acct.Plan,
-		RequestInvocationsEnabled: app.AcceptsRequestInvocations(),
-		MaxConcurrency:            app.MaxConcurrency,
-		ConcurrencyOverflow:       concurrencyOverflow,
-		MaxQueueWaitMS:            maxQueueWaitMS,
-		MaxQueueDepth:             maxQueueDepth,
-		WakeMaxQueueDepth:         wakeMaxQueueDepth,
-		WakeMaxQueueWaitSeconds:   wakeMaxQueueWaitSeconds,
-		AutoscaleTargetRPS:        app.AutoscaleTargetRPS,
-		IdleTimeoutS:              app.IdleTimeoutS,
-		RequestTimeoutS:           app.Manifest.RequestTimeoutS,
-		Slug:                      app.Slug,
-		IsPreview:                 app.PreviewOfSlug != "",
-		StreamingEnabled:          app.StreamingEnabled,
-		SessionAffinity:           app.Manifest.SessionAffinity,
-		VersionAffinityCookie:     app.Manifest.VersionAffinityCookie,
-		NodeID:                    app.NodeID,
-		Ports:                     gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
-		Sidecars:                  companionRoutes,
-		PrimaryIngressPort:        primaryIngressPort,
+		ID:                           app.ID,
+		AccountID:                    acct.ID,
+		SecurityQuarantined:          securityQuarantined,
+		Visibility:                   api.NormalizeAppVisibility(app.Visibility),
+		AccountStatus:                string(acct.Status),
+		Type:                         gateway.AppType(app.Type),
+		Plan:                         acct.Plan,
+		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),
+		MaxConcurrency:               app.MaxConcurrency,
+		ConcurrencyOverflow:          concurrencyOverflow,
+		MaxQueueWaitMS:               maxQueueWaitMS,
+		MaxQueueDepth:                maxQueueDepth,
+		WakeMaxQueueDepth:            wakeMaxQueueDepth,
+		WakeMaxQueueWaitSeconds:      wakeMaxQueueWaitSeconds,
+		AutoscaleTargetRPS:           app.AutoscaleTargetRPS,
+		IdleTimeoutS:                 app.IdleTimeoutS,
+		RequestTimeoutS:              app.Manifest.RequestTimeoutS,
+		Slug:                         app.Slug,
+		IsPreview:                    app.PreviewOfSlug != "",
+		StreamingEnabled:             app.StreamingEnabled,
+		SessionAffinity:              app.Manifest.SessionAffinity,
+		VersionAffinityCookie:        app.Manifest.VersionAffinityCookie,
+		VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie,
+		NodeID:                       app.NodeID,
+		Ports:                        gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
+		Sidecars:                     companionRoutes,
+		PrimaryIngressPort:           primaryIngressPort,
 		// Issue #676 / ADR-080: per-app raw-bytes Upgrade
 		// bridge flag. Plumbed from apps.websocket_enabled
 		// through pgRouter.toApp so Handler.ServeHTTP's
@@ -405,10 +465,11 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 }
 
 type deploymentCompanionRoute struct {
-	Name           string          `json:"name"`
-	Type           api.SidecarType `json:"type"`
-	Port           int             `json:"port"`
-	PrimaryIngress bool            `json:"primary_ingress,omitempty"`
+	Name           string            `json:"name"`
+	Type           api.SidecarType   `json:"type"`
+	Port           int               `json:"port"`
+	PrimaryIngress bool              `json:"primary_ingress,omitempty"`
+	ReadinessProbe *api.SidecarProbe `json:"readiness_probe,omitempty"`
 }
 
 // gatewayCompanionRoutes projects deployment-local companion specs into a
@@ -556,6 +617,9 @@ type invalidator interface {
 	// key, which it doesn't. The cache is advisory so a
 	// brief staleness window is fine.
 	ResetEdgeRules()
+	// InvalidateRoutesForApp removes cached host routes and last-known-good
+	// entries for an app when its deployment state changes.
+	InvalidateRoutesForApp(appID string)
 	// ResetApp (ADR-091 amendment / §4.1.2.0) drops a single app
 	// from the apps LRU when its apps.maintenance_mode (or any
 	// other customer-visible column) flips. The companion trigger
@@ -580,6 +644,7 @@ type invalidator interface {
 	// InvalidateResponseCacheByPath drops only the requested path subset
 	// for one app. Malformed globs are logged and ignored by the consumer.
 	InvalidateResponseCacheByPath(appID, pathGlob string) error
+	InvalidateResponseCacheByTag(appID, tag string) error
 	// RequestCertForSurface (ADR-100 / issue #879) is the
 	// cert-remint goroutine's entry point. A
 	// tenant_surface_changed notification (any insert / update /
@@ -630,6 +695,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 	// RefreshDeploymentWeights on the per-app picker.
 	channels := []string{
 		db.NotifyInstanceChanged,
+		db.NotifyInstanceReadinessChanged,
 		db.NotifyAppChanged,
 		db.NotifyDomainChanged,
 		db.NotifyDomainVerify,
@@ -763,6 +829,23 @@ func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node 
 // require both app_id and instance_id and malformed payloads are logged.
 func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
+	case db.NotifyInstanceReadinessChanged:
+		var p struct {
+			AppID      string    `json:"app_id"`
+			InstanceID string    `json:"instance_id"`
+			Status     string    `json:"status"`
+			At         time.Time `json:"at"`
+			EventID    int64     `json:"event_id"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.InstanceID == "" || p.At.IsZero() {
+			log.Warn("gatewayd: bad instance_readiness_changed payload", "payload", n.Payload)
+			return
+		}
+		if setter, ok := inv.(interface {
+			SetInstanceReadiness(appID, instanceID, status string, at time.Time, eventID int64)
+		}); ok {
+			setter.SetInstanceReadiness(p.AppID, p.InstanceID, p.Status, p.At, p.EventID)
+		}
 	case db.NotifyInstanceChanged:
 		var p struct {
 			AppID      string `json:"app_id"`
@@ -836,6 +919,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				primer.PreInstantiateAppMetrics(appID)
 			}
 			inv.ResetApp(appID)
+			inv.InvalidateRoutesForApp(appID)
 			inv.InvalidateResponseCacheByApp(appID)
 		} else {
 			if observer, ok := inv.(interface{ ObserveNotificationPayloadRejected() }); ok {
@@ -935,6 +1019,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			// refreshing weights; otherwise a new proxy route, including an
 			// exact deployment-preview pin, could remain stale for the lifetime
 			// of the gateway process.
+			inv.InvalidateRoutesForApp(p.AppID)
 			inv.ResetApp(p.AppID)
 			// v1 cache lookup happens before target selection, so the
 			// deployment dimension is currently empty. Fence rollout and
@@ -964,13 +1049,24 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		var p struct {
 			AppID    string `json:"app_id"`
 			PathGlob string `json:"path_glob"`
+			Tag      string `json:"tag"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" {
 			log.Warn("gatewayd: bad cache purge payload", "payload", n.Payload)
 			return
 		}
-		if err := inv.InvalidateResponseCacheByPath(p.AppID, p.PathGlob); err != nil {
-			log.Warn("gatewayd: cache purge failed", "app", p.AppID, "path", p.PathGlob, "err", err)
+		if p.Tag != "" && p.PathGlob != "" {
+			log.Warn("gatewayd: cache purge has both path and tag", "app", p.AppID)
+			return
+		}
+		var err error
+		if p.Tag != "" {
+			err = inv.InvalidateResponseCacheByTag(p.AppID, p.Tag)
+		} else {
+			err = inv.InvalidateResponseCacheByPath(p.AppID, p.PathGlob)
+		}
+		if err != nil {
+			log.Warn("gatewayd: cache purge failed", "app", p.AppID, "path", p.PathGlob, "tag", p.Tag, "err", err)
 		}
 	case db.NotifyEdgeRuleChanged:
 		// Issue #561 / ADR-089 PR 3. A create / update /

@@ -177,6 +177,29 @@ type PreviewListItem struct {
 	DestroyAction string
 }
 
+// PRPreviewEnvironmentView is the current-head, whole-PR status shown on the
+// root preview's app-detail page. Members are projected from the recorded set,
+// not from every preview app that happens to share the PR number.
+type PRPreviewEnvironmentView struct {
+	RepoFullName string
+	PRNumber     int
+	PRURL        string
+	CommitSHA    string
+	Phase        string
+	Summary      string
+	LiveCount    int
+	TotalCount   int
+	Members      []PRPreviewMemberView
+}
+
+type PRPreviewMemberView struct {
+	WorkloadName     string
+	Slug             string
+	AppStatus        string
+	PreviewState     string
+	DeploymentStatus string
+}
+
 // DeveloperEnvironmentsData backs /dashboard/developers. It gives the
 // remote `gregale dev` loop a browser-visible home without introducing a
 // second control-plane model: the handler projects the existing developer
@@ -735,6 +758,7 @@ type MirrorPageItem struct {
 	Percent               int
 	Enabled               bool
 	IncludeBody           bool
+	AllowUnsafeMethods    bool
 	RedactHeaders         []string
 	AlwaysStrippedHeaders []string
 	CreatedAt             string
@@ -745,16 +769,17 @@ type MirrorPageItem struct {
 // MirrorSummaryPageItem mirrors api.MirrorSummaryResponse without exposing
 // API package types to dashboard templates.
 type MirrorSummaryPageItem struct {
-	TotalInvocations     int64
-	ChangedResponseCount int64
-	ChangedResponsePct   float64
-	StatusDiffCount      int64
-	SchemaDiffCount      int64
-	BodyDiffCount        int64
-	MeanLatencyDiffMs    int64
-	P99LatencyDiffMs     int64
-	CrashCount           int64
-	WindowLabel          string
+	TotalInvocations          int64
+	ChangedResponseCount      int64
+	ChangedResponsePct        float64
+	StatusDiffCount           int64
+	SchemaDiffCount           int64
+	BodyDiffCount             int64
+	MeanLatencyDiffMs         int64
+	P99LatencyDiffMs          int64
+	CrashCount                int64
+	IncompleteComparisonCount int64
+	WindowLabel               string
 }
 
 // StorageData is the customer-facing projection for the per-app object
@@ -1072,6 +1097,9 @@ type AppDetailData struct {
 	// surfaces its previews) so a preview-of-preview loop can't
 	// occur.
 	Previews []PreviewItem
+	// PreviewEnvironment is present only for the root of a recorded GitHub
+	// PR preview. Legacy, developer, and sibling previews omit the panel.
+	PreviewEnvironment *PRPreviewEnvironmentView
 	// Domains carries the app's legacy custom-domain bindings and their
 	// durable certificate lifecycle (issue #1397 / F1).
 	Domains []DomainItem

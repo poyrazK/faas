@@ -14,15 +14,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// cmdEvents exposes the customer-facing internal event fabric. Publishing is
-// the producer path; subscriptions reads back the declarations reconciled
-// from the deployment manifest.
+// cmdEvents exposes the customer-facing internal event fabric. Preview
+// simulates account-wide routing; publishing is the producer path, while
+// subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <publish|subscriptions|deliveries>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <preview|publish|subscriptions|deliveries>", "events")
 		return 1
 	}
 	switch args[0] {
+	case "preview":
+		return cmdEventsPreview(args[1:])
 	case "publish":
 		return cmdEventsPublish(args[1:])
 	case "subscriptions", "list":
@@ -33,6 +35,101 @@ func cmdEvents(args []string) int {
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown events subcommand: %s", args[0]), "events")
 		return 1
 	}
+}
+
+// cmdEventsPreview evaluates an event against enabled account subscriptions
+// without creating an event row or enqueueing any invocations.
+func cmdEventsPreview(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("events preview", flag.ContinueOnError)
+	id := fs.String("id", "", "event id to use when filters inspect the CloudEvents id")
+	source := fs.String("source", "", "event source (or the first positional argument)")
+	typ := fs.String("type", "", "event type (or the second positional argument)")
+	data := fs.String("data", "", "JSON event data (inline | @file | - for stdin; required)")
+	occurredAt := fs.String("time", "", "event time (RFC3339; defaults to server time)")
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) > 2 {
+		PrintUsage(os.Stderr, "usage: gregale events preview [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
+		return 1
+	}
+	if len(positional) >= 1 {
+		if *source != "" {
+			return printErr("Invalid arguments", fmt.Errorf("source provided both positionally and with --source"))
+		}
+		*source = positional[0]
+	}
+	if len(positional) == 2 {
+		if *typ != "" {
+			return printErr("Invalid arguments", fmt.Errorf("type provided both positionally and with --type"))
+		}
+		*typ = positional[1]
+	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
+	if strings.TrimSpace(*source) == "" || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
+		PrintUsage(os.Stderr, "usage: gregale events preview [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
+		return 1
+	}
+	body, err := resolvePayload(*data)
+	if err != nil {
+		return printErr("Invalid --data", err)
+	}
+	if len(body) == 0 || !json.Valid(body) {
+		return printErr("Invalid --data", fmt.Errorf("must be a non-empty JSON value"))
+	}
+	var eventTime *time.Time
+	if strings.TrimSpace(*occurredAt) != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, *occurredAt)
+		if parseErr != nil {
+			return printErr("Invalid --time", fmt.Errorf("must be RFC3339: %w", parseErr))
+		}
+		eventTime = &parsed
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.PreviewEvent(context.Background(), api.PreviewEventRequest{
+		ID:     strings.TrimSpace(*id),
+		Source: strings.TrimSpace(*source),
+		Type:   strings.TrimSpace(*typ),
+		Time:   eventTime,
+		Data:   json.RawMessage(body),
+	})
+	if err != nil {
+		return printErr("Event preview failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Event preview %s %s (id %s)\n", resp.Source, resp.Type, resp.EventID)
+	_, _ = fmt.Fprintf(osStdout, "Would deliver: %d  |  Filtered: %d  |  Other mismatches: %d\n", resp.MatchedCount, resp.FilterMismatchCount, resp.OtherMismatchCount)
+	if resp.CandidateCount == 0 {
+		_, _ = fmt.Fprintln(osStdout, "(no enabled subscriptions match this source and type)")
+		return 0
+	}
+	_, _ = fmt.Fprintln(osStdout, "APP\tSUBSCRIPTION\tRESULT\tFILTER")
+	for _, subscription := range resp.Matches {
+		writeEventPreviewSubscription(subscription)
+	}
+	for _, subscription := range resp.NonMatches {
+		writeEventPreviewSubscription(subscription)
+	}
+	if resp.Truncated {
+		_, _ = fmt.Fprintln(osStdout, "... showing a bounded sample; use --json for counts and sample details")
+	}
+	return 0
+}
+
+func writeEventPreviewSubscription(subscription api.EventPreviewSubscription) {
+	filter := string(subscription.Filter)
+	if filter == "" {
+		filter = "{}"
+	}
+	_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", subscription.AppSlug, subscription.SubscriptionID, subscription.Reason, filter)
 }
 
 // cmdEventsDeliveries implements `gregale events deliveries <app>`. It is a

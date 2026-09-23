@@ -19,11 +19,14 @@ gregale preview create --app checkout --repo acme/checkout \
 gregale preview wait pr-42-checkout --open
 ```
 
-`preview wait` follows the newest deployment for the preview, so a new push
-does not leave the command watching an obsolete deployment. Use `--progress`
-for lifecycle transitions or `--json` for a stable receipt containing the
-preview URL, expiry, deployment status, readiness, timeout resume command,
-and the next diagnostic action.
+For a GitHub-managed PR, `preview show` displays every recorded workload at
+the current PR head. `preview wait` succeeds only when the whole set is live;
+a live root app alone is not enough. A new push moves the command to the new
+head rather than leaving it watching obsolete deployments. Use `--progress`
+for per-workload transitions or `--json` for a receipt containing aggregate
+readiness, member statuses, the preview URL, expiry, timeout resume command,
+and the next diagnostic action. Developer and older PR previews without a
+recorded workload set retain app-level behavior.
 
 ## URL shape
 
@@ -210,10 +213,13 @@ workload's transitive `depends_on` app closure, in dependency order. Enqueue
 order does not itself guarantee that a dependency is live before its caller
 starts. Unrelated project workloads are not copied. Retries reuse the same
 preview rows; closing the PR closes the sibling rows together. Managed services
-are external to this app fan-out, and a newly declared workload that has no
-active production app cannot yet be provisioned as a preview. When a dependency
-preview is absent, the gateway considers the **production** service and its
-side effects are real if policy permits it.
+are external to this app fan-out. A newly declared dependency with no
+production app gets a preview-only sibling from the PR source, with no
+environment or credentials copied from the bound workload. If a production
+app for that workload appears later, subsequent pushes reuse that sibling. An
+existing non-deleted but inactive production dependency is still rejected.
+When a dependency preview is absent, the gateway considers the **production**
+service and its side effects are real if policy permits it.
 
 The `gregale-preview` GitHub check reports the **whole selected workload set**
 for the current PR head. It stays in progress until every member has a live
@@ -224,6 +230,16 @@ report, not a startup-order guarantee: a caller can start before a dependency,
 so applications should tolerate a brief unavailable dependency during boot.
 If two PRs share the same commit, the fixed-name GitHub check stays in progress
 until both PR environments are ready; each PR comment shows its own status.
+
+Automation can read the same per-PR result with
+`GET /v1/preview/{root-preview-slug}/environment` using a deployment-read
+credential. The response includes the recorded head SHA, aggregate phase and
+readiness, plus each expected workload's latest preview deployment for that
+SHA. A missing or failed sibling cannot produce `ready: true`; a closed PR
+reports `phase: closed` and `ready: false`. The endpoint returns 404 for
+developer previews and legacy PR previews with no recorded set. The CLI's
+`preview show` and `preview wait` use the recorded set when available and
+fall back to app-level status for those older previews.
 
 For new projects, Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code

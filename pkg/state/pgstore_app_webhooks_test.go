@@ -68,6 +68,9 @@ func TestPgStore_AppWebhook_RoundTrip(t *testing.T) {
 	if created.RetryPolicy != state.AppWebhookRetryDefault {
 		t.Errorf("default retry_policy = %q, want %q", created.RetryPolicy, state.AppWebhookRetryDefault)
 	}
+	if created.Scope != state.AppWebhookScopeApp {
+		t.Errorf("default webhook scope = %q, want app", created.Scope)
+	}
 
 	got, err := s.AppWebhookByID(ctx, created.ID)
 	if err != nil {
@@ -193,6 +196,49 @@ func TestPgStore_CreateAppWebhookIfUnderQuota_PerAccountCap(t *testing.T) {
 	var qerr *state.AppWebhookQuotaError
 	if !errors.As(err, &qerr) || qerr.Scope != state.AppWebhookQuotaScopeAccount {
 		t.Errorf("expected AppWebhookQuotaError(Scope=Account); got %v", err)
+	}
+}
+
+// ADR-224: two apps in one account must serialize at the account lock so
+// concurrent creates cannot each claim the final shared webhook slot.
+func TestPgStore_CreateAppWebhookIfUnderQuota_ConcurrentApps(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, appA, _ := seedLiveDeploy(t, s, ctx, "shared-hook-cap")
+	appB, err := s.CreateApp(ctx, state.App{
+		AccountID: accountID, Slug: "shared-hook-cap-" + uuid.NewString(),
+		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 1, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, appID := range []string{appA, appB.ID} {
+		go func(id string) {
+			<-start
+			_, createErr := s.CreateAppWebhookIfUnderQuota(ctx, pgSampleWebhook(accountID, id), api.Limits{
+				WebhookPerApp: 2, WebhookPerAccount: 1,
+			})
+			results <- createErr
+		}(appID)
+	}
+	close(start)
+	successes, quotas := 0, 0
+	for range 2 {
+		result := <-results
+		if result == nil {
+			successes++
+			continue
+		}
+		var quota *state.AppWebhookQuotaError
+		if errors.As(result, &quota) && quota.Scope == state.AppWebhookQuotaScopeAccount {
+			quotas++
+			continue
+		}
+		t.Fatalf("unexpected concurrent creation result: %v", result)
+	}
+	if successes != 1 || quotas != 1 {
+		t.Errorf("successes=%d quotas=%d, want 1/1", successes, quotas)
 	}
 }
 

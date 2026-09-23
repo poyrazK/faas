@@ -224,6 +224,11 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
 	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !sidecar.NoTriggers)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -269,6 +274,8 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		CanaryTotalSteps:       rollout.CanaryTotalSteps,
 		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 		CanaryStages:           rollout.CanaryStages,
+		ReleaseCommand:         releaseCommand.command,
+		ReleaseCommandShell:    releaseCommand.shell,
 		HostingObserver:        s.ops,
 		HostingFlow:            "first_deploy",
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && sidecar.TrafficPercent == nil && sidecar.Canary == nil,

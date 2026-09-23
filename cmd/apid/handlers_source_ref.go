@@ -193,6 +193,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
 	var workflowDefs []api.WorkflowSpec
 	if manifest != nil {
 		workflowDefs = manifest.Workflows
@@ -286,6 +291,8 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		CanaryTotalSteps:       rollout.CanaryTotalSteps,
 		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 		CanaryStages:           rollout.CanaryStages,
+		ReleaseCommand:         releaseCommand.command,
+		ReleaseCommandShell:    releaseCommand.shell,
 		Workflows:              marshalWorkflowDefinitions(workflowDefs),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,

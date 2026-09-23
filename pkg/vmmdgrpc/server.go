@@ -24,6 +24,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -186,6 +187,24 @@ type ExecutionOutputVMMAPI interface {
 // it has returned a fresh execution-only VM.
 type ExecutionRestoreVMMAPI interface {
 	WakeExecution(context.Context, fcvm.ExecutionWakeRequest) (*fcvm.Instance, error)
+}
+
+// AppTaskVMMAPI is the one-shot deployment command capability. It remains
+// optional so an older compute node fails closed before receiving a command.
+type AppTaskVMMAPI interface {
+	ExecuteAppTask(context.Context, string, apptaskproto.Request) (apptaskproto.Result, error)
+}
+
+// AppTaskOutputVMMAPI adds bounded live output without widening the unary
+// capability required by mixed-version nodes and lightweight test fakes.
+type AppTaskOutputVMMAPI interface {
+	ExecuteAppTaskWithOutput(context.Context, string, apptaskproto.Request, apptaskproto.OutputReceiver) (apptaskproto.Result, error)
+}
+
+// AppTaskRestoreVMMAPI is deliberately command-free. A successful return is
+// the scheduler's proof that a fresh app-task-only guest exists.
+type AppTaskRestoreVMMAPI interface {
+	WakeAppTask(context.Context, fcvm.AppTaskWakeRequest) (*fcvm.Instance, error)
 }
 
 // extensionHookVMM is the optional host→guest lifecycle notification seam.

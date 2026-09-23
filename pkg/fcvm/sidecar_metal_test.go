@@ -17,7 +17,7 @@
 //     inside the netns via the host IP. AC #2 contract: a sidecar
 //     runs alongside the main workload, reachable on a per-app
 //     port inside the netns.
-//  3. TestMetalTwoSidecarsColdBoot — two sidecars in the same
+//  3. TestMetalTwoSidecarsColdBoot — multiple sidecars in the same
 //     deployment cold-boot successfully (PR-B review finding #6
 //     renamed it from 'TestMetalTwoSidecarsDistinctUUID' because
 //     the prior name implied a UUID assertion the body never
@@ -334,9 +334,9 @@ func TestMetalSidecarPortReachable(t *testing.T) {
 	leakcheck.AssertZero(t)
 }
 
-// TestMetalTwoSidecarsColdBoot pins the 2-sidecar cap seam
+// TestMetalTwoSidecarsColdBoot pins multi-sidecar cold boot
 // (PR-B review finding #6). It boots a guest with TWO sidecars
-// on the same deployment (well within the cap of 2) and asserts
+// on the same deployment (below the expanded cap of 5) and asserts
 // the cold-boot path doesn't panic — that's the load-bearing
 // surface for the per-workload cgroup scopes and the N+1 drive
 // topology. The previous name 'TestMetalTwoSidecarsDistinctUUID'
