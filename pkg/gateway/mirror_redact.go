@@ -19,6 +19,8 @@ package gateway
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"io"
@@ -106,7 +108,8 @@ func safeMirrorMethod(method string) bool {
 // mirror snapshots. Schema drift is based on JSON structure; body drift is
 // based on canonical JSON values (or exact bytes for non-JSON) and only runs
 // when enabled. Missing or truncated snapshots are marked incomplete. Hashes
-// are fingerprints only; raw bodies are never returned or persisted.
+// are per-comparison HMAC fingerprints; raw bodies are never returned or
+// persisted, and fingerprints cannot be correlated across requests.
 type MirrorComparison struct {
 	StatusDiff       bool
 	SchemaDiff       bool
@@ -135,8 +138,16 @@ func CompareMirrorResponses(srcStatus int, srcBody []byte, srcTruncated bool, mi
 	if result.Incomplete {
 		return result
 	}
-	source := fingerprintResponse(srcBody, includeBody)
-	mirror := fingerprintResponse(mirrorBody, includeBody)
+	var fingerprintKey [sha256.Size]byte
+	if _, err := rand.Read(fingerprintKey[:]); err != nil {
+		// Never fall back to an unkeyed digest if secure randomness is
+		// unavailable. Keep the status/crash signals, but mark response
+		// comparison as inconclusive.
+		result.Incomplete = true
+		return result
+	}
+	source := fingerprintResponse(srcBody, includeBody, fingerprintKey[:])
+	mirror := fingerprintResponse(mirrorBody, includeBody, fingerprintKey[:])
 	if source.isJSON && mirror.isJSON {
 		result.SourceSchemaHash = source.schemaHash
 		result.MirrorSchemaHash = mirror.schemaHash
@@ -158,50 +169,50 @@ type responseFingerprint struct {
 	bodyHash   []byte
 }
 
-func fingerprintResponse(body []byte, includeBody bool) responseFingerprint {
+func fingerprintResponse(body []byte, includeBody bool, key []byte) responseFingerprint {
 	fingerprint := responseFingerprint{}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
 		if includeBody {
-			fingerprint.bodyHash = hashBytes(body)
+			fingerprint.bodyHash = hashBytes(key, body)
 		}
 		return fingerprint
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if includeBody {
-			fingerprint.bodyHash = hashBytes(body)
+			fingerprint.bodyHash = hashBytes(key, body)
 		}
 		return fingerprint
 	}
 	canonical, err := json.Marshal(value)
 	if err != nil {
 		if includeBody {
-			fingerprint.bodyHash = hashBytes(body)
+			fingerprint.bodyHash = hashBytes(key, body)
 		}
 		return fingerprint
 	}
 	shape, err := json.Marshal(jsonSchemaShape(value))
 	if err != nil {
 		if includeBody {
-			fingerprint.bodyHash = hashBytes(body)
+			fingerprint.bodyHash = hashBytes(key, body)
 		}
 		return fingerprint
 	}
 	fingerprint.isJSON = true
-	fingerprint.schemaHash = hashBytes(shape)
+	fingerprint.schemaHash = hashBytes(key, shape)
 	if includeBody {
-		fingerprint.bodyHash = hashBytes(canonical)
+		fingerprint.bodyHash = hashBytes(key, canonical)
 	}
 	return fingerprint
 }
 
-func hashBytes(body []byte) []byte {
-	// codeql[go/weak-sensitive-hashing] These are comparison fingerprints only, never password or credential verifiers; body-value fingerprints are opt-in and raw response bytes are not persisted.
-	hash := sha256.Sum256(body)
-	return append([]byte(nil), hash[:]...)
+func hashBytes(key, body []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(body)
+	return mac.Sum(nil)
 }
 
 func jsonSchemaShape(value any) any {

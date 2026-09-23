@@ -11,6 +11,8 @@
 package gateway
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"net/http"
 	"testing"
 
@@ -123,6 +125,29 @@ func TestClassifyResult_BodyDiff(t *testing.T) {
 	}
 	if schemaDiff || !bodyDiff {
 		t.Error("same-shaped JSON with changed values should report bodyDiff only")
+	}
+}
+
+func TestCompareMirrorResponses_UsesPerComparisonKeyedHashes(t *testing.T) {
+	const body = `{"user":"alice"}`
+	comparison := CompareMirrorResponses(200, []byte(body), false, 200, []byte(body), false, true)
+	if comparison.Incomplete || comparison.BodyDiff || comparison.SchemaDiff {
+		t.Fatalf("identical responses should compare equal: %+v", comparison)
+	}
+	if len(comparison.SourceBodyHash) != sha256.Size || len(comparison.MirrorBodyHash) != sha256.Size {
+		t.Fatalf("body fingerprint lengths = %d/%d, want %d/%d", len(comparison.SourceBodyHash), len(comparison.MirrorBodyHash), sha256.Size, sha256.Size)
+	}
+	if !bytes.Equal(comparison.SourceBodyHash, comparison.MirrorBodyHash) {
+		t.Fatal("matching source and mirror bodies must have equal fingerprints within a comparison")
+	}
+	plainHash := sha256.Sum256([]byte(body))
+	if bytes.Equal(comparison.SourceBodyHash, plainHash[:]) {
+		t.Fatal("stored body fingerprint must not be an unkeyed SHA-256 digest")
+	}
+
+	second := CompareMirrorResponses(200, []byte(body), false, 200, []byte(body), false, true)
+	if bytes.Equal(comparison.SourceBodyHash, second.SourceBodyHash) {
+		t.Fatal("fingerprints must not be correlatable across comparisons")
 	}
 }
 
