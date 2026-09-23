@@ -3042,13 +3042,9 @@ type Store interface {
 	// ADR-069 / PR-B). The PR-A surface (Deployment.Sidecars
 	// jsonb) stays the contract layer; this is the per-sidecar
 	// storage-key handle imaged writes and vmmd reads at wake
-	// time. The 2-row cap is enforced upstream by the
-	// `deployments.sidecars` CHECK constraint — this interface
-	// does not duplicate it (its row count could exceed
-	// SidecarCapMax via a hand-INSERT and that would only
-	// surface when vmmd reads a row that no jsonb entry
-	// references, which is a defence-in-depth concern, not a
-	// correctness gate).
+	// time. The five-row cap is enforced by the deployment JSONB
+	// CHECK and a per-deployment trigger on the layer table; this
+	// interface does not duplicate the database guard.
 	//
 	// SetDeploymentSidecarLayer upserts one sidecar's layer
 	// handle. Imaged calls it once per sidecar in

@@ -168,7 +168,7 @@ type sidecarHealthEnvelope struct {
 }
 
 // sidecarMaxDatagram caps the JSON envelope. sidecar names are
-// bounded by api.SidecarCapMax=2 + a reasonable length bound
+// bounded by api.SidecarCapMax=5 + a reasonable length bound
 // (~32 chars); the JSON envelope settles well under 256 bytes
 // for any realistic payload. 512 is a generous future-proof
 // margin below the host receiver's 1024-byte frame cap.

@@ -3781,21 +3781,17 @@ const (
 	// "atomic revocation" (no grace).
 	DefaultAPIKeyGraceWindowDays = 7
 
-	// Sidecar containers (issue #463 / ADR-070). The 2-sidecar
-	// hard cap is a GLOBAL constant, not a per-plan matrix field.
-	// Every plan inherits the same `SidecarCapMax = 2` (Free
-	// included). The cap is structurally tight: 1 init + 1
-	// sidecar is the smallest useful surface for a stateless
-	// workload, and the schema CHECK on `deployments.sidecars`
-	// (migration 00118) pins the cap at the second-line defence
-	// layer (migrations/00118_deployments_sidecars.sql). A future
-	// PR can grow this to a per-plan matrix if telemetry shows
-	// demand — the constant is the single source of truth.
-	SidecarCapMax = 2
+	// SidecarCapMax bounds all helper workloads in one deployment, including
+	// the optional one-shot init helper. The global cap keeps roster, mount,
+	// and admission work bounded across every plan.
+	SidecarCapMax = 5
+	// SidecarLongRunningCapMax bounds concurrently running companions. At most
+	// one additional init helper may be declared under SidecarCapMax.
+	SidecarLongRunningCapMax = 4
 	// WorkloadDependencyCapMax bounds the dependency list for one workload.
-	// With one main workload and at most two sidecars, three unique targets
-	// are the complete set; keeping the cap explicit limits malformed roster
-	// growth before graph validation.
+	// The graph has at most one main workload plus SidecarCapMax helpers;
+	// keeping the cap explicit limits malformed roster growth before graph
+	// validation.
 	WorkloadDependencyCapMax = SidecarCapMax + 1
 
 	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps

@@ -147,9 +147,9 @@ type Request struct {
 	// per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Admit time. Each entry adds to the
 	// billable shutter via `api.BillableRAMMBWithSidecars`; the cap
-	// enforcement (SidecarCapMax = 2) happens upstream in apid's
+	// enforcement (SidecarCapMax = 5) happens upstream in apid's
 	// Sidecar.Validate and the schema CHECK on migration 00118, so
-	// the ledger trusts len(SidecarMBs) ≤ 2 and never re-checks it.
+	// the ledger trusts len(SidecarMBs) ≤ SidecarCapMax and never re-checks it.
 	// Nil or empty = legacy no-sidecar shape; BillableRAMMB
 	// (single-arg form) collapses to the same math in that case.
 	SidecarMBs []int

@@ -2151,8 +2151,8 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 	if len(roster.Sidecars) == 0 {
 		return nil, nil // present but empty — legacy supervisor shape
 	}
-	if len(roster.Sidecars) > api.SidecarCapMax {
-		return nil, fmt.Errorf("roster has %d sidecars; cap is %d", len(roster.Sidecars), api.SidecarCapMax)
+	if err := validateWorkloadCardinality(roster); err != nil {
+		return nil, err
 	}
 	out := make([]sidecarDevice, 0, len(roster.Sidecars))
 	seenNames := make(map[string]struct{}, len(roster.Sidecars))
@@ -2167,8 +2167,8 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 		seenNames[workloadName] = struct{}{}
 		// Device naming: /dev/vda = drive0 (base), /dev/vdb =
 		// drive1 (main, the per-app rw upper). Sidecar 0 starts
-		// at /dev/vdc (drive2) and increments. The cap of 2
-		// sidecars per deployment (ADR-068) caps this at vdd.
+		// at /dev/vdc (drive2) and increments. SidecarCapMax
+		// bounds this to five helper drives per deployment.
 		out = append(out, sidecarDevice{
 			name:         fmt.Sprintf("sidecar-%d", i),
 			device:       fmt.Sprintf("/dev/vd%c", 'c'+i),
