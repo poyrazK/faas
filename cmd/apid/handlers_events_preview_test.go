@@ -68,8 +68,9 @@ func TestPreviewEventUsesRouterMatcherWithoutPublishing(t *testing.T) {
 func TestPreviewEventRejectsInvalidEnvelope(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	rec := e.do(t, http.MethodPost, "/v1/events:preview", api.PreviewEventRequest{
-		Source: "billing",
+		Source: "",
 		Type:   "invoice.paid",
+		Data:   json.RawMessage(`{}`),
 	}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
