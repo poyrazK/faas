@@ -185,6 +185,9 @@ type AppManifest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. The gateway fails open when that instance is gone.
 	SessionAffinity bool `json:"session_affinity,omitempty"`
+	// VersionAffinityCookie names a stable, non-secret browser cookie used as
+	// the rollout key when Gregale-Version-Key is absent.
+	VersionAffinityCookie string `json:"version_affinity_cookie,omitempty"`
 }
 
 const (
@@ -208,6 +211,20 @@ func (m AppManifest) ValidateCrawlerPolicy() error {
 		return nil
 	}
 	return fmt.Errorf("crawler_policy must be one of wake, cached, block")
+}
+
+var versionAffinityCookieNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
+
+// ValidateVersionAffinityCookieName keeps the configured lookup unambiguous
+// and bounded. The empty name disables cookie-derived affinity.
+func ValidateVersionAffinityCookieName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if !versionAffinityCookieNameRe.MatchString(name) || name == "gregale_affinity" {
+		return fmt.Errorf("version_affinity_cookie must be a 1-64 character cookie name (letters, digits, _, ., -) other than gregale_affinity")
+	}
+	return nil
 }
 
 // WorkloadPortProtocol is the transport protocol for a workload listener.
@@ -415,6 +432,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		return fmt.Errorf("app manifest: empty entrypoint[0]")
 	}
 	if err := m.ValidateCrawlerPolicy(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if err := ValidateVersionAffinityCookieName(m.VersionAffinityCookie); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
 	if m.Port < 0 || m.Port > 65535 {

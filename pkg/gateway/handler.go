@@ -344,6 +344,9 @@ type App struct {
 	// running instance. The picker fails open when the instance is gone or
 	// cannot accept work, so scale-out and health recovery remain intact.
 	SessionAffinity bool
+	// VersionAffinityCookie is an optional stable browser cookie used when
+	// the explicit Gregale-Version-Key header is absent.
+	VersionAffinityCookie string
 }
 
 type concurrencyAdmissionConfig struct {
@@ -5555,21 +5558,6 @@ haveApp:
 	)
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
-	versionKey, versionKeyOutcome := versionAffinityKeyFromRequest(r)
-	if h.metrics != nil {
-		h.metrics.ObserveVersionAffinityKey(versionAffinitySurfacePublic, versionKeyOutcome)
-	}
-	versionDeploymentID := ""
-	if !deploymentSmoke {
-		versionDeploymentID = versionAffinityDeploymentForRequest(h.backend, app.ID, r)
-		if versionDeploymentID != "" {
-			r = r.WithContext(withVersionAffinityDeployment(r.Context(), versionDeploymentID))
-		}
-	} else {
-		// Authenticated smoke traffic is explicitly pinned by deployment id;
-		// a customer rollout key must not participate in its picker retries.
-		versionKey = ""
-	}
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -5690,6 +5678,24 @@ haveApp:
 	}
 	h.matchAndApplyRewrite(r, app)
 	h.applyEdgeRuleHeaders(w, r, app, rec)
+	// Resolve affinity after request-header rules so the picker, cache and
+	// forwarded header all use the same key. A configured browser cookie is
+	// only used when no explicit (or rule-authored) version header is present.
+	versionKey, versionKeyOutcome := versionAffinityKeyFromPublicRequest(r, app.VersionAffinityCookie)
+	if h.metrics != nil {
+		h.metrics.ObserveVersionAffinityKey(versionAffinitySurfacePublic, versionKeyOutcome)
+	}
+	versionDeploymentID := ""
+	if !deploymentSmoke {
+		versionDeploymentID = versionAffinityDeploymentForRequest(h.backend, app.ID, r)
+		if versionDeploymentID != "" {
+			r = r.WithContext(withVersionAffinityDeployment(r.Context(), versionDeploymentID))
+		}
+	} else {
+		// Authenticated smoke traffic is explicitly pinned by deployment id;
+		// a customer rollout key must not participate in its picker retries.
+		versionKey = ""
+	}
 	// Issue #561 / ADR-091 PR 5 — apply kind=cors preflight AFTER
 	// rewrite (so a rewritten path is matched against CORS rules)
 	// and AFTER headers (so request-side header ops don't shadow

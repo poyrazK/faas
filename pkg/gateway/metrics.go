@@ -3285,6 +3285,10 @@ const (
 	// ServiceCallPreviewDenied — a project policy or production target rejects
 	// a preview caller before the request is forwarded or the target is woken.
 	ServiceCallPreviewDenied ServiceCallOutcome = "preview_denied"
+	// ServiceCallOverrideRejected — malformed or non-live explicit deployment.
+	ServiceCallOverrideRejected ServiceCallOutcome = "override_rejected"
+	// ServiceCallOverrideUnavailable — no validator or a failed live-set read.
+	ServiceCallOverrideUnavailable ServiceCallOutcome = "override_unavailable"
 )
 
 // ServiceCallOutcomes is the full closed set, used to pre-instantiate every
@@ -3294,6 +3298,7 @@ var ServiceCallOutcomes = []ServiceCallOutcome{
 	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
 	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallBindingDenied,
 	ServiceCallNotFound, ServiceCallUpgradeRejected, ServiceCallPreviewDenied,
+	ServiceCallOverrideRejected, ServiceCallOverrideUnavailable,
 }
 
 // IncServiceCall bumps gateway_service_call_total for one outcome.
