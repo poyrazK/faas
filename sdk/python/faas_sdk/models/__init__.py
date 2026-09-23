@@ -162,6 +162,8 @@ from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
 from .app_secret_response import AppSecretResponse
+from .app_secret_response_delivery_status import AppSecretResponseDeliveryStatus
+from .app_secret_response_last_delivery_error_code import AppSecretResponseLastDeliveryErrorCode
 from .app_security_finding import AppSecurityFinding
 from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
@@ -173,6 +175,7 @@ from .app_security_request import AppSecurityRequest
 from .app_security_request_security_policy import AppSecurityRequestSecurityPolicy
 from .app_security_response import AppSecurityResponse
 from .app_security_response_security_policy import AppSecurityResponseSecurityPolicy
+from .app_service_binding import AppServiceBinding
 from .app_slo_response import AppSLOResponse
 from .app_slo_response_wake_queue_sample_status import AppSLOResponseWakeQueueSampleStatus
 from .app_slo_response_window import AppSLOResponseWindow
@@ -466,6 +469,12 @@ from .debug_timeline_event import DebugTimelineEvent
 from .debug_timeline_event_phase import DebugTimelineEventPhase
 from .declared_route import DeclaredRoute
 from .declared_route_methods_item import DeclaredRouteMethodsItem
+from .delayed_task_after_request import DelayedTaskAfterRequest
+from .delayed_task_after_request_headers import DelayedTaskAfterRequestHeaders
+from .delayed_task_after_request_payload import DelayedTaskAfterRequestPayload
+from .delayed_task_at_request import DelayedTaskAtRequest
+from .delayed_task_at_request_headers import DelayedTaskAtRequestHeaders
+from .delayed_task_at_request_payload import DelayedTaskAtRequestPayload
 from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
@@ -654,6 +663,8 @@ from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
+from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
+from .git_hub_deployment_policy_preview_service_policy import GitHubDeploymentPolicyPreviewServicePolicy
 from .git_hub_install_activity import GitHubInstallActivity
 from .git_hub_install_mutation_request import GitHubInstallMutationRequest
 from .git_hub_install_status import GitHubInstallStatus
@@ -1174,6 +1185,8 @@ from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
 from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
+from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
+from .scoped_app_secret_response_last_delivery_error_code import ScopedAppSecretResponseLastDeliveryErrorCode
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -1547,6 +1560,8 @@ __all__ = (
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
     "AppSecretResponse",
+    "AppSecretResponseDeliveryStatus",
+    "AppSecretResponseLastDeliveryErrorCode",
     "AppSecurityFinding",
     "AppSecurityFindingSeverity",
     "AppSecurityPostureResponse",
@@ -1558,6 +1573,7 @@ __all__ = (
     "AppSecurityRequestSecurityPolicy",
     "AppSecurityResponse",
     "AppSecurityResponseSecurityPolicy",
+    "AppServiceBinding",
     "AppSLOResponse",
     "AppSLOResponseWakeQueueSampleStatus",
     "AppSLOResponseWindow",
@@ -1839,6 +1855,12 @@ __all__ = (
     "DebugTimelineEventPhase",
     "DeclaredRoute",
     "DeclaredRouteMethodsItem",
+    "DelayedTaskAfterRequest",
+    "DelayedTaskAfterRequestHeaders",
+    "DelayedTaskAfterRequestPayload",
+    "DelayedTaskAtRequest",
+    "DelayedTaskAtRequestHeaders",
+    "DelayedTaskAtRequestPayload",
     "DelayedTaskResponse",
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
@@ -2029,6 +2051,8 @@ __all__ = (
     "GithubCheckUpdateRecordStatus",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
+    "GitHubDeploymentPolicyPatchPreviewServicePolicy",
+    "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubInstallActivity",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
@@ -2523,6 +2547,8 @@ __all__ = (
     "ScanResultStatus",
     "ScopedAppEnvResponse",
     "ScopedAppSecretResponse",
+    "ScopedAppSecretResponseDeliveryStatus",
+    "ScopedAppSecretResponseLastDeliveryErrorCode",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",

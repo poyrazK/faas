@@ -47,6 +47,7 @@ func Run(t *testing.T, open Open) {
 		fn   func(*testing.T, *Fixture)
 	}{
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
+		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
@@ -103,6 +104,7 @@ func Run(t *testing.T, open Open) {
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
+		{"log_event_insert_is_idempotent_and_queries_are_tenant_scoped", testLogEventInsertAndList},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
@@ -1975,6 +1977,54 @@ func testAppLimits(t *testing.T, fx *Fixture) {
 		if app.RAMMB != limits.RAMMB || app.MaxConcurrency != limits.MaxConcurrency {
 			t.Errorf("%s limits = (ram=%d, concurrency=%d), want (%d, %d)", plan, app.RAMMB, app.MaxConcurrency, limits.RAMMB, limits.MaxConcurrency)
 		}
+	}
+}
+
+func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
+	const key = "DATABASE_URL"
+	scope := api.DefaultEnvScope
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v1")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v1): %v", err)
+	}
+	first, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope(v1): %v", err)
+	}
+	if first.DeliveryVersion != 1 || first.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("initial delivery metadata = version %d status %q, want 1/pending", first.DeliveryVersion, first.DeliveryStatus)
+	}
+
+	result := state.AppSecretDeliveryResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, WakeID: "wake-conformance",
+		InstanceID: "instance-conformance", Status: state.SecretDeliveryDelivered,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: first.DeliveryVersion}},
+	}
+	updated, err := fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
+	if err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretDelivery(v1): updated=%d err=%v, want 1/nil", updated, err)
+	}
+
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v2")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v2): %v", err)
+	}
+	rotated, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope(v2): %v", err)
+	}
+	if rotated.DeliveryVersion != 2 || rotated.DeliveredVersion != 1 || rotated.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("rotated delivery metadata = current %d delivered %d status %q, want 2/1/pending", rotated.DeliveryVersion, rotated.DeliveredVersion, rotated.DeliveryStatus)
+	}
+
+	updated, err = fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
+	if err != nil || updated != 0 {
+		t.Fatalf("stale RecordAppSecretDelivery(v1): updated=%d err=%v, want 0/nil", updated, err)
+	}
+	current, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope(after stale delivery): %v", err)
+	}
+	if current.DeliveryVersion != 2 || current.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("stale delivery changed current metadata = version %d status %q, want 2/pending", current.DeliveryVersion, current.DeliveryStatus)
 	}
 }
 

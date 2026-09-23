@@ -543,6 +543,7 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--preview` | enable pull-request previews |  |
 | `--no-preview` | disable pull-request previews |  |
 | `--preview-ttl-hours <HOURS>` | preview lease in hours (1-720) |  |
+| `--preview-service-policy <POLICY>` | preview-to-production service calls: deny\|allow_marked | one of `deny` · `allow_marked` |
 | `--root-dir <DIR>` | repository-relative source root for the root workload |  |
 | `--ignore <PATHS>` | comma-separated ignored change paths |  |
 | `--rollout <MODE>` | production rollout mode: standard\|safe (safe requires Pro/Scale) | one of `standard` · `safe` |
@@ -884,6 +885,14 @@ Schedule a deferred invocation
 | `--payload <JSON|@FILE|->` | JSON request payload |  |
 | `--method <METHOD>` | HTTP method (default POST) |  |
 | `--path <PATH>` | app path (default /) |  |
+| `--header <NAME:VALUE>` | request header (repeatable) |  |
+| `--max-attempts <N>` | maximum delivery attempts |  |
+| `--retry-base-seconds <N>` | base retry delay in seconds |  |
+| `--retry-max-seconds <N>` | maximum retry delay in seconds |  |
+| `--retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
+| `--retention <DURATION>` | terminal result retention |  |
+| `--on-success-webhook <ID>` | success webhook subscription |  |
+| `--on-failure-webhook <ID>` | failure webhook subscription |  |
 | `--idempotency-key <KEY>` | stable create retry key |  |
 
 ### delayed-task list
@@ -2260,6 +2269,7 @@ Promote a live deployment to 100% production traffic
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--deployment <ID>` | deployment id or vN revision to promote | required |
+| `--if-serving <ID>` | require this deployment id or vN revision to remain at 100% traffic |  |
 
 ### traffic status
 

@@ -92,6 +92,7 @@ export type { AppSecurityPostureResponse } from './AppSecurityPostureResponse.js
 export type { AppSecurityQuarantine } from './AppSecurityQuarantine.js';
 export type { AppSecurityRequest } from './AppSecurityRequest.js';
 export type { AppSecurityResponse } from './AppSecurityResponse.js';
+export type { AppServiceBinding } from './AppServiceBinding.js';
 export type { AppStaticEgressIPResponse } from './AppStaticEgressIPResponse.js';
 export type { AppStreamingStatus } from './AppStreamingStatus.js';
 export type { AppTrustedSignerListResponse } from './AppTrustedSignerListResponse.js';
@@ -245,6 +246,8 @@ export type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 export type { DebugTelemetrySpan } from './DebugTelemetrySpan.js';
 export type { DebugTimelineEvent } from './DebugTimelineEvent.js';
 export type { DeclaredRoute } from './DeclaredRoute.js';
+export type { DelayedTaskAfterRequest } from './DelayedTaskAfterRequest.js';
+export type { DelayedTaskAtRequest } from './DelayedTaskAtRequest.js';
 export type { DelayedTaskRequest } from './DelayedTaskRequest.js';
 export type { DelayedTaskResponse } from './DelayedTaskResponse.js';
 export type { DeliverAppEventRequest } from './DeliverAppEventRequest.js';

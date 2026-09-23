@@ -47,6 +47,29 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 		if caller.AccountID == "" || caller.AccountID != target.AccountID {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
+		// A project preview reaches production services because service names
+		// are not environment-scoped yet. Enforce the customer-owned project
+		// policy before endpoint lookup or wake so a denied call cannot consume
+		// production capacity or produce application side effects.
+		if caller.PreviewOfSlug != "" && target.PreviewOfSlug == "" {
+			projectID, err := previewCallerProjectID(ctx, store, caller)
+			if err != nil {
+				return gateway.ServiceCaller{}, err
+			}
+			if projectID != "" {
+				policyStore, ok := store.(state.GitHubDeployPolicyStore)
+				if !ok {
+					return gateway.ServiceCaller{}, errors.New("preview service policy storage is unavailable")
+				}
+				policy, err := policyStore.GetGitHubDeployPolicy(ctx, projectID, caller.AccountID)
+				if err != nil {
+					return gateway.ServiceCaller{}, fmt.Errorf("load preview service policy: %w", err)
+				}
+				if policy.PreviewServicePolicy == state.PreviewServicePolicyDeny {
+					return gateway.ServiceCaller{}, gateway.ErrServiceProxyPreviewProductionDenied
+				}
+			}
+		}
 		// The caller row is already loaded; carrying its preview identity out
 		// saves the hop a third store read for a fact we have in hand.
 		return gateway.ServiceCaller{
@@ -55,6 +78,31 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			AccountID:     caller.AccountID,
 		}, nil
 	}
+}
+
+// previewCallerProjectID preserves policy enforcement for preview rows created
+// before githubd copied project_id onto them. New previews take the zero-read
+// fast path; legacy rows pay one parent lookup only while they remain alive.
+// Standalone app previews have no project policy and retain the documented
+// allow-and-mark behaviour.
+func previewCallerProjectID(ctx context.Context, store state.Store, caller state.App) (string, error) {
+	if caller.ProjectID != "" || caller.PreviewOfSlug == "" {
+		return caller.ProjectID, nil
+	}
+	parent, err := store.AppBySlug(ctx, caller.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		// A dangling preview identity is not a standalone app. Without its
+		// parent we cannot prove whether a project policy applies, so fail
+		// closed instead of silently restoring production access.
+		return "", gateway.ErrServiceProxyDenied
+	}
+	if err != nil {
+		return "", fmt.Errorf("load preview parent app: %w", err)
+	}
+	if parent.AccountID != caller.AccountID {
+		return "", gateway.ErrServiceProxyDenied
+	}
+	return parent.ProjectID, nil
 }
 
 // isAppID reports whether the id could name a row in apps.id (a uuid column).

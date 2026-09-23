@@ -1484,8 +1484,12 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
-	WorkingDir          string `json:"working_dir,omitempty"`
-	Port                int    `json:"port,omitempty"`
+	// ServiceBindings is the authoritative project-reconcile projection of
+	// Compose depends_on edges. Keeping it beside the generated service URL
+	// environment makes the declaration inspectable without parsing env text.
+	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
+	WorkingDir      string                  `json:"working_dir,omitempty"`
+	Port            int                     `json:"port,omitempty"`
 	// Ports is the app-owned listener declaration. It is merged into every
 	// deployment manifest so the gateway can expose named TCP listeners while
 	// UDP listeners remain available to workloads through guest discovery.
@@ -1532,7 +1536,7 @@ func (m AppManifest) EffectiveCrawlerPolicy() string {
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1545,15 +1549,23 @@ func (m AppManifest) IsZero() bool {
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
-	if len(desired.Env) > 0 {
+	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
+	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
+			if strings.HasPrefix(key, "GREGALE_SERVICE_") && strings.HasSuffix(key, "_URL") {
+				continue
+			}
 			merged[key] = value
 		}
 		for key, value := range desired.Env {
 			merged[key] = value
 		}
-		existing.Env = merged
+		if len(merged) == 0 {
+			existing.Env = nil
+		} else {
+			existing.Env = merged
+		}
 	}
 	return existing
 }
@@ -5746,8 +5758,51 @@ type AppSecret struct {
 	// object-storage binding. Customer secret mutations reject rows carrying
 	// this ownership marker until the binding is revoked and cleaned up.
 	ManagedObjectStorageCredentialID string
-	CreatedAt                        time.Time
-	UpdatedAt                        time.Time
+	// DeliveryVersion advances only when the runtime value changes. Host-key
+	// reseals deliberately preserve it because they do not change what the
+	// application receives. DeliveredVersion identifies the newest version
+	// confirmed by a successful runtime start.
+	DeliveryVersion         int64
+	DeliveredVersion        int64
+	DeliveryStatus          SecretDeliveryStatus
+	LastDeliveryAttemptAt   *time.Time
+	LastDeliveredAt         *time.Time
+	LastDeliveryErrorCode   string
+	LastDeliveredWakeID     string
+	LastDeliveredInstanceID string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+type SecretDeliveryStatus string
+
+const (
+	SecretDeliveryPending   SecretDeliveryStatus = "pending"
+	SecretDeliveryDelivered SecretDeliveryStatus = "delivered"
+	SecretDeliveryFailed    SecretDeliveryStatus = "failed"
+)
+
+// AppSecretDeliveryCandidate is the non-sensitive identity of one exact
+// secret version staged into a runtime. The version fence prevents a late
+// wake from marking a newer rotation as delivered.
+type AppSecretDeliveryCandidate struct {
+	Scope   string
+	Key     string
+	Version int64
+}
+
+// AppSecretDeliveryResult records one runtime-start attempt for the staged
+// candidates. ErrorCode is a closed, non-sensitive reason; secret values and
+// ciphertext are intentionally absent.
+type AppSecretDeliveryResult struct {
+	AccountID   string
+	AppID       string
+	WakeID      string
+	InstanceID  string
+	Status      SecretDeliveryStatus
+	ErrorCode   string
+	AttemptedAt time.Time
+	Candidates  []AppSecretDeliveryCandidate
 }
 
 // AccountAppSecret is the per-row shape returned by

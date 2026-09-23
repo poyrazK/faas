@@ -65,6 +65,11 @@ var (
 	ErrServiceProxyNotFound = errors.New("service proxy service not found")
 	// ErrServiceProxyDenied is the stable authorization failure sentinel.
 	ErrServiceProxyDenied = errors.New("service proxy access denied")
+	// ErrServiceProxyPreviewProductionDenied is the customer-owned policy
+	// verdict for a preview caller crossing into a production dependency.
+	// Keep it distinct from ErrServiceProxyDenied: cross-account access is an
+	// identity failure, while this one has an actionable project setting.
+	ErrServiceProxyPreviewProductionDenied = errors.New("preview-to-production service call denied")
 )
 
 // ServiceTarget is the resolved routing identity of a named service. It
@@ -409,6 +414,16 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
 	callerInfo, err := p.authorize(dependencyCtx, caller, target.AppID)
 	if err != nil {
+		if errors.Is(err, ErrServiceProxyPreviewProductionDenied) {
+			p.metrics.IncServiceCall(ServiceCallPreviewDenied)
+			api.WriteProblem(dispatchWriter, api.NewProblem(
+				http.StatusForbidden,
+				api.CodePreviewProductionDependencyDenied,
+				"Preview dependency denied",
+				"this project blocks preview applications from calling production services; use an isolated preview dependency or explicitly set preview_service_policy to allow_marked",
+			))
+			return
+		}
 		if errors.Is(err, ErrServiceProxyDenied) {
 			p.metrics.IncServiceCall(ServiceCallDenied)
 			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller is not allowed to reach this service")

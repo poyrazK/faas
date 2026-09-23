@@ -923,8 +923,10 @@ export class DeploymentsService {
    * Range-check [0, 100] is enforced at the handler (422
    * `invalid_traffic_percent`). The Σ invariant is asserted
    * post-write as a defensive backstop (409
-   * `traffic_percent_sum_invalid`) — structurally unreachable
-   * with zero-siblings, but pinned by the test suite.
+   * `traffic_percent_sum_invalid`).
+   * An optional expected_serving_deployment_id is checked under the
+   * same live-row locks before rebalance. A stale expectation returns
+   * 409 `traffic_serving_changed` without changing traffic.
    *
    * @returns DeploymentResponse The updated deployment with the new traffic_percent.
    * @throws ApiError
@@ -956,10 +958,11 @@ export class DeploymentsService {
         \`plan_traffic_split_not_allowed\`.
         `,
         404: `code: not_found`,
-        409: `\`409 Conflict\` — post-write Σ invariant check tripped.
-        Structurally unreachable with the zero-siblings rebalance
-        form, but pinned by the test suite as a defensive
-        backstop against future refactors.
+        409: `\`409 Conflict\` — either the post-write Σ invariant check
+        tripped (\`traffic_percent_sum_invalid\`) or the optional
+        expected_serving_deployment_id was stale
+        (\`traffic_serving_changed\`). A stale expectation is checked
+        before any traffic write.
         `,
         422: `\`422 Unprocessable Entity\` — \`traffic_percent\` was
         outside the inclusive \`[0, 100]\` range. Stable code

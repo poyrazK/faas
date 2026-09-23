@@ -57,6 +57,7 @@ var errorDocsURL = map[string]string{
 	api.CodePlanRollbackOn5xxNotAllowed: cliDocsURL,
 	api.CodeInvalidTrafficPercent:       cliDocsURL,
 	api.CodeTrafficPercentSumInvalid:    cliDocsURL,
+	api.CodeTrafficServingChanged:       cliDocsURL,
 	api.CodeAccountDeletionConfirm:      cliDocsURL,
 	api.CodeAccountDeletionPending:      cliDocsURL,
 	api.CodeAccountNotRestorable:        cliDocsURL,

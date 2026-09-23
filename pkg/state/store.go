@@ -151,6 +151,21 @@ var ErrInvalidTrafficPercent = errors.New("state: invalid traffic_percent")
 // repair a superseded, failed, or pending target.
 var ErrDeploymentNotLive = errors.New("state: deployment is not live")
 
+// ErrTrafficServingChanged means a conditional traffic update observed a
+// different sole 100% serving deployment while holding the live-row locks.
+var ErrTrafficServingChanged = errors.New("state: serving deployment changed")
+
+// sameDeploymentID accepts both API-supported UUID spellings. PgStore reads
+// dashed IDs from PostgreSQL; MemStore's historical IDs are 32-hex.
+func sameDeploymentID(a, b string) bool {
+	if a == b {
+		return true
+	}
+	parsedA, errA := uuid.Parse(a)
+	parsedB, errB := uuid.Parse(b)
+	return errA == nil && errB == nil && parsedA == parsedB
+}
+
 // ErrCanaryStepConflict is returned by AdvanceCanary when the deployment's
 // current step differs from the caller's expected step. The compare-and-swap
 // is checked while the deployment row is locked, so this is the safe race
@@ -2181,8 +2196,8 @@ type Store interface {
 	// ListProjectsForAccount returns every project under the account
 	// (sorted by created_at desc) for the dashboard list view.
 	//
-	// AppsForProject returns the project's member apps in
-	// slug-ascending order, filtered to status <> 'deleted'. Cross-
+	// AppsForProject returns the project's production workload apps in
+	// workload-name order, excluding deleted apps and preview rows. Cross-
 	// account reads return ErrNotFound, mirroring the AppsByAccount
 	// precedent so handlers can 404 cleanly without checking which
 	// store is in use.
@@ -2564,8 +2579,9 @@ type Store interface {
 	// unknown. The handler is responsible for the plan-gate (Pro+
 	// only, ErrPlanTrafficSplitNotAllowed) and the request-time
 	// range-check — this method holds the FOR UPDATE lock that
-	// makes the rebalance race-free against CreateDeployment.
-	UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int) (Deployment, error)
+	// makes the rebalance race-free against CreateDeployment. An optional
+	// expectedServingID is checked while those locks are held, before writes.
+	UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error)
 
 	// RecoverRollout (issue #976 / ADR-122 / SAFE-RELEASES-R) is
 	// the operator manual-recovery escape hatch — the back-end
@@ -2727,6 +2743,7 @@ type Store interface {
 	// cheap).
 	AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (seq int64, err error)
 	ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) (rows []LogEntry, hasMore bool, err error)
+	LogEventStore
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
@@ -5521,6 +5538,10 @@ type Store interface {
 	// CountAppSecrets is the quota check helper. apid calls it before
 	// UpsertAppSecret to enforce Limits.SecretCountMax.
 	CountAppSecrets(ctx context.Context, accountID, appID string) (int, error)
+	// RecordAppSecretDelivery conditionally records one runtime-start result
+	// for the exact secret versions schedd staged. A concurrent rotation wins:
+	// candidates whose version no longer matches remain pending.
+	RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer; imaged is the only reader. PasswordEncrypted

@@ -588,9 +588,15 @@ const (
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
-	CodeForbidden        = "insufficient_scope"
-	CodeNotFound         = "not_found"
-	CodeMethodNotAllowed = "method_not_allowed"
+	CodeForbidden = "insufficient_scope"
+	// CodePreviewProductionDependencyDenied is returned by the internal
+	// service proxy when a project preview tries to call a production
+	// dependency while its preview_service_policy is deny. The rejection
+	// happens before endpoint lookup or wake, so a denied preview cannot cause
+	// production side effects or consume production capacity.
+	CodePreviewProductionDependencyDenied = "preview_production_dependency_denied"
+	CodeNotFound                          = "not_found"
+	CodeMethodNotAllowed                  = "method_not_allowed"
 	// CodeUndeclaredRoute is returned directly by gatewayd when the
 	// only-declared-routes contract is enabled and the request path/method is
 	// absent from the explicit list or imported OpenAPI document.
@@ -1041,6 +1047,9 @@ const (
 	// violated, so a future refactor that breaks the Σ
 	// tripwire surfaces a 409 (not a silent DB drift).
 	CodeTrafficPercentSumInvalid = "traffic_percent_sum_invalid"
+	// CodeTrafficServingChanged is a 409 when a conditional promotion's
+	// expected 100% serving deployment no longer serves the app.
+	CodeTrafficServingChanged = "traffic_serving_changed"
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Seven RFC 7807
 	// codes for the /v1/apps/{slug}/mirrors CRUD surface. The
@@ -1844,10 +1853,9 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict, CodeDeploymentNotLive:
-		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
-		// != 100 after UpdateDeploymentTraffic. Defensive backstop;
-		// unreachable in practice. Sits next to CodeConflict /
+	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeCanaryStepConflict, CodeDeploymentNotLive:
+		// 409 — traffic state conflicts, including a stale expected
+		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
 		// semantics are "the requested state cannot be applied
 		// alongside the existing row set", not "your plan forbids
@@ -4851,6 +4859,16 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
 		"traffic_percent sum invariant violated",
 		fmt.Sprintf("sum of traffic_percent across live deployments must be 100; observed %d.", observed)).
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
+// ErrTrafficServingChanged makes a stale promotion actionable without
+// disclosing any deployment the caller has not already been authorized to
+// read through the target app.
+func ErrTrafficServingChanged() *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
+		"Production revision changed",
+		"the expected revision is no longer the sole 100% serving deployment; run gregale traffic status before promoting again.").
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 

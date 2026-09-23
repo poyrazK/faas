@@ -791,6 +791,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			HealthPathWakes:  a.Manifest.HealthPathWakes,
 			SessionAffinity:  a.Manifest.SessionAffinity,
 		},
+		ServiceBindings: append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
 		EgressAllowlist: ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger
 		// targets. 0 = "disabled" (no autoscale rule). Reactive

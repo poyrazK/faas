@@ -160,8 +160,11 @@ Customers can read and update the project policy through
 The policy supports a repository-relative root directory for root workloads,
 ignored change paths (exact paths, one-segment globs, and trailing `/**`
 directory patterns), a preview enable switch, and a preview TTL from 1 hour
-to 30 days. Existing projects default to previews enabled, a 7-day TTL, no
-ignored paths, and the repository root, so adopting the policy is additive.
+to 30 days. It also controls whether previews can call production internal
+services. New projects default to `preview_service_policy: deny`; projects
+that existed when the policy shipped were migration-backed to `allow_marked`
+to avoid changing live traffic. All projects otherwise default to previews
+enabled, a 7-day TTL, no ignored paths, and the repository root.
 
 When all changed files match ignored paths, githubd records the delivery as a
 successful no-op and does not enqueue builds. Compare-API failures still use
@@ -173,8 +176,9 @@ must not be mistaken for an ignored change set.
 From a checkout, `gregale github setup <slug> --repo OWNER/NAME` binds the
 application, writes `.github/workflows/gregale.yml`, and leaves the existing
 preview defaults in place. Add `--preview`, `--no-preview`,
-`--preview-ttl-hours`, `--root-dir`, or `--ignore` to configure the project
-policy in the same command. Use `--rollout safe` to generate a production
+`--preview-ttl-hours`, `--preview-service-policy deny|allow_marked`,
+`--root-dir`, or `--ignore` to configure the project policy in the same
+command. Use `--rollout safe` to generate a production
 workflow with the balanced health-gated rollout (Pro/Scale only); the default
 `standard` mode preserves the existing full-traffic behavior. Use `--dry-run`
 to inspect the workflow without network or file changes; an existing different
@@ -193,10 +197,26 @@ be managed by the connected GitHub integration.
 ## Internal service calls from a preview
 
 A preview is one app, not a copy of your whole project, so it has no preview
-copy of the services it depends on. Internal calls from a preview reach your
-**production** services, and their side effects are real.
+copy of the services it depends on. Service names are not environment-scoped:
+if a preview is allowed to call a dependency, the destination is the
+**production** service and its side effects are real.
 
-Gregale marks every such call with `X-Faas-Caller-Env: preview` and
+For new projects, Gregale denies that boundary by default. The proxy returns
+`403 application/problem+json` with code
+`preview_production_dependency_denied` before endpoint discovery or wake-up,
+so the rejected call cannot consume production capacity or reach customer
+code. Existing projects retain the former behaviour until you opt them into
+strict isolation:
+
+```bash
+gregale github setup checkout --preview-service-policy deny
+```
+
+Use `--preview-service-policy allow_marked` only when the production dependency
+is intentionally preview-safe.
+
+In `allow_marked` mode, Gregale marks every such call with
+`X-Faas-Caller-Env: preview` and
 `X-Faas-Caller-Preview-Of: <production app slug>`. Both are platform-owned and
 cannot be set by a workload. See [networking](networking.md) for how to use
 them to skip side effects or refuse the call.

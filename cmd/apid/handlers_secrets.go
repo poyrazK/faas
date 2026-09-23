@@ -123,12 +123,16 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 	out := make([]api.AppSecretResponse, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, api.AppSecretResponse{
-			Key:       row.Key,
-			Scope:     row.Scope,
-			CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339),
-			UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339),
-			Kid:       row.Kid,
-			ValueHash: row.ValueHash,
+			Key: row.Key, Scope: row.Scope,
+			CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339),
+			Kid: row.Kid, ValueHash: row.ValueHash,
+			DeliveryVersion: row.DeliveryVersion, DeliveredVersion: row.DeliveredVersion,
+			DeliveryStatus:          string(row.DeliveryStatus),
+			LastDeliveryAttemptAt:   formatOptionalSecretTime(row.LastDeliveryAttemptAt),
+			LastDeliveredAt:         formatOptionalSecretTime(row.LastDeliveredAt),
+			LastDeliveryErrorCode:   row.LastDeliveryErrorCode,
+			LastDeliveredWakeID:     row.LastDeliveredWakeID,
+			LastDeliveredInstanceID: row.LastDeliveredInstanceID,
 		})
 	}
 	totalCount, err := s.store.CountAppSecrets(r.Context(), acct.ID, app.ID)
@@ -156,12 +160,16 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 	bucket := map[string][]api.ScopedAppSecretResponse{}
 	for _, r := range rows {
 		bucket[r.Scope] = append(bucket[r.Scope], api.ScopedAppSecretResponse{
-			Scope:     r.Scope,
-			Key:       r.Key,
-			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
-			UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
-			Kid:       r.Kid,
-			ValueHash: r.ValueHash,
+			Scope: r.Scope, Key: r.Key,
+			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
+			Kid: r.Kid, ValueHash: r.ValueHash,
+			DeliveryVersion: r.DeliveryVersion, DeliveredVersion: r.DeliveredVersion,
+			DeliveryStatus:          string(r.DeliveryStatus),
+			LastDeliveryAttemptAt:   formatOptionalSecretTime(r.LastDeliveryAttemptAt),
+			LastDeliveredAt:         formatOptionalSecretTime(r.LastDeliveredAt),
+			LastDeliveryErrorCode:   r.LastDeliveryErrorCode,
+			LastDeliveredWakeID:     r.LastDeliveredWakeID,
+			LastDeliveredInstanceID: r.LastDeliveredInstanceID,
 		})
 	}
 	for scope := range bucket {
@@ -184,6 +192,13 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 		Quota:          quota,
 		Count:          len(rows),
 	})
+}
+
+func formatOptionalSecretTime(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 // setSecret seals the plaintext VALUE and upserts the (app_id, key) row.

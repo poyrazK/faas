@@ -6978,9 +6978,11 @@ paths:
       operationId: getGitHubDeploymentPolicy
       summary: Read the customer-owned GitHub deployment policy.
       description: |
-        Returns the project-level policy applied by githubd to source
-        staging and pull-request previews. Missing policy rows resolve to
-        backwards-compatible defaults.
+        Returns the project-level policy applied to source staging,
+        pull-request previews, and preview-to-production internal service
+        calls. A missing policy row resolves to the safe defaults for a new
+        project; projects created before preview service isolation was
+        introduced are migration-backed to the legacy allow_marked policy.
       security:
         - bearerAuth: [github:manage]
       responses:
@@ -7001,7 +7003,10 @@ paths:
         Updates project-level GitHub deployment behaviour. Fields are
         replace-on-write; omitted fields retain their current values. The
         ignored_paths list accepts exact paths, one-segment shell globs, and
-        trailing `/**` directory patterns. Mutations require MFA.
+        trailing `/**` directory patterns. `preview_service_policy=deny`
+        rejects preview calls to production dependencies before discovery or
+        wake-up; `allow_marked` preserves the marked-call compatibility mode.
+        Mutations require MFA.
       security:
         - bearerAuth: [github:manage]
       requestBody:
@@ -9210,8 +9215,10 @@ paths:
         Range-check [0, 100] is enforced at the handler (422
         `invalid_traffic_percent`). The Σ invariant is asserted
         post-write as a defensive backstop (409
-        `traffic_percent_sum_invalid`) — structurally unreachable
-        with zero-siblings, but pinned by the test suite.
+        `traffic_percent_sum_invalid`).
+        An optional expected_serving_deployment_id is checked under the
+        same live-row locks before rebalance. A stale expectation returns
+        409 `traffic_serving_changed` without changing traffic.
       requestBody:
         required: true
         content:
@@ -9239,10 +9246,11 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            `409 Conflict` — post-write Σ invariant check tripped.
-            Structurally unreachable with the zero-siblings rebalance
-            form, but pinned by the test suite as a defensive
-            backstop against future refactors.
+            `409 Conflict` — either the post-write Σ invariant check
+            tripped (`traffic_percent_sum_invalid`) or the optional
+            expected_serving_deployment_id was stale
+            (`traffic_serving_changed`). A stale expectation is checked
+            before any traffic write.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '422':
           description: |
@@ -15029,9 +15037,10 @@ paths:
       description: |
         Supply exactly one of `scheduled_at` or `delay_seconds`. Scheduling is
         bounded to one year. Cap-checked against the plan's
-        MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). The drain
-        re-checks at dispatch. Delivery is at least once; handlers should use
-        the invocation id to make side effects idempotent.
+        MaxDelayedTasksPerApp (Hobby 5, Pro 50, Scale 1_000_000). Accepted
+        tasks are grandfathered across later plan changes. Delivery is at
+        least once; handlers should use the invocation id to make side effects
+        idempotent.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -19366,7 +19375,7 @@ components:
     GitHubDeploymentPolicy:
       description: Customer-owned project-level GitHub deployment behaviour.
       type: object
-      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours]
+      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, preview_service_policy]
       properties:
         project_id: { type: string, format: uuid }
         root_dir:
@@ -19380,6 +19389,16 @@ components:
           description: Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds.
         preview_enabled: { type: boolean, default: true }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720, default: 168 }
+        preview_service_policy:
+          type: string
+          enum: [deny, allow_marked]
+          default: deny
+          description: |
+            Controls calls from project previews to production internal
+            services. `deny` rejects the call before discovery or wake-up;
+            `allow_marked` permits it and marks the request as preview-origin
+            traffic. Projects created before this policy was introduced are
+            migration-backed to `allow_marked`.
 
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
@@ -19393,6 +19412,9 @@ components:
           items: { type: string, minLength: 1, maxLength: 255 }
         preview_enabled: { type: boolean }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720 }
+        preview_service_policy:
+          type: string
+          enum: [deny, allow_marked]
 
     GitHubInstallMutationRequest:
       description: |
@@ -20334,6 +20356,20 @@ components:
             type: string
             enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, CONNECT, TRACE]
 
+    AppServiceBinding:
+      description: "A repository-declared dependency on another same-account app. The binding is injected for discovery; gateway authorization remains account-scoped until a separate bindings-only policy is enabled."
+      type: object
+      required: [binding, service]
+      properties:
+        binding:
+          type: string
+          pattern: '^GREGALE_SERVICE_[A-Z0-9_]+_URL$'
+          description: "Platform-owned environment key containing the internal service URL."
+        service:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{1,61})[a-z0-9]$'
+          description: "Stable target app name used by private service discovery."
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
@@ -20413,6 +20449,11 @@ components:
           format: date-time
           description: "Automatic teardown deadline for a preview, when one is configured."
         manifest: { $ref: '#/components/schemas/AppManifest' }
+        service_bindings:
+          description: "Repository-declared same-account service dependencies currently injected into this workload. This is a read-only discovery projection, not an enforcement allowlist."
+          type: array
+          items:
+            $ref: '#/components/schemas/AppServiceBinding'
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
         # the per-app outbound CIDR allowlist. Each entry is a
         # canonical CIDR string — v4 ("1.2.3.0/24") or v6
@@ -22649,7 +22690,7 @@ components:
         older_than: { type: string, description: "Echoes the cutoff the store applied to this clear pass (e.g. 168h = 7 days)." }
 
     UpdateDeploymentTrafficRequest:
-      description: "Body for PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). Sets the per-deployment traffic-split weight (integer [0, 100]). PR-A uses the zero-siblings rebalance form: setting row R's traffic_percent to N forces every other live row in the same app to 0, keeping Σ = 100 by construction. Pro/Scale only — Free/Hobby are rejected at 403 plan_traffic_split_not_allowed."
+      description: "Body for PATCH /v1/deployments/{id}/traffic. Optionally require a particular live sibling to remain the sole 100% serving deployment when the update commits."
       type: object
       required: [traffic_percent]
       properties:
@@ -22659,6 +22700,9 @@ components:
           maximum: 100
           description: "Per-deployment traffic-split weight. 0 = no traffic (used during rollback). 100 = sole live deployment."
           example: 25
+        expected_serving_deployment_id:
+          type: string
+          description: "Optional 32-hex or dashed deployment id. If this deployment is no longer the sole live 100% serving sibling at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."
 
     AdvanceCanaryRequest:
       description: "Body for POST /v1/deployments/{id}/canary/advance (issue #976 / ADR-122). expected_step is the persisted canary step observed by the progression worker; APID derives the next traffic percentage and rejects stale observations."
@@ -28622,7 +28666,7 @@ components:
     AppSecretResponse:
       description: "A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the env-scope the row belongs to (ADR-092 PR-B). Pre-PR-B callers see scope='default' echoed on every row."
       type: object
-      required: [key, scope, created_at, updated_at]
+      required: [key, scope, created_at, updated_at, delivery_version, delivery_status]
       properties:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         # ADR-092 PR-B: scope echoes the env-scope the row was
@@ -28647,6 +28691,14 @@ components:
           maxLength: 16
           description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows. Same value across scopes = byte-identical plaintext."
           example: "abcdef0123456789"
+        delivery_version: { type: integer, format: int64, minimum: 1, description: "Opaque monotonic version of the runtime value. Advances on value mutation, not host-key reseal." }
+        delivered_version: { type: integer, format: int64, minimum: 1, description: "Newest version confirmed in a successfully started runtime. Omitted until the first successful delivery." }
+        delivery_status: { type: string, enum: [pending, delivered, failed], description: "Delivery state for the current delivery_version. A concurrent rotation remains pending until that exact version starts successfully." }
+        last_delivery_attempt_at: { type: string, format: date-time }
+        last_delivered_at: { type: string, format: date-time }
+        last_delivery_error_code: { type: string, enum: [runtime_start_failed], description: "Non-sensitive closed failure reason for the current version; omitted unless delivery_status is failed." }
+        last_delivered_wake_id: { type: string, description: "Wake correlation id of the most recent successful delivery." }
+        last_delivered_instance_id: { type: string, description: "Runtime instance that most recently received a secret version." }
 
     # ADR-092 PR-B: per-row shape for the nested secrets_by_scope
     # response (mirror of ScopedAppEnvResponse). Reserved for the
@@ -28661,7 +28713,7 @@ components:
         a second lookup. Value is NEVER echoed (same posture as
         AppSecretResponse).
       type: object
-      required: [scope, key, created_at, updated_at]
+      required: [scope, key, created_at, updated_at, delivery_version, delivery_status]
       properties:
         scope:
           type: string
@@ -28680,6 +28732,14 @@ components:
           maxLength: 16
           description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows."
           example: "abcdef0123456789"
+        delivery_version: { type: integer, format: int64, minimum: 1, description: "Opaque monotonic version of the runtime value." }
+        delivered_version: { type: integer, format: int64, minimum: 1, description: "Newest version confirmed in a successfully started runtime." }
+        delivery_status: { type: string, enum: [pending, delivered, failed] }
+        last_delivery_attempt_at: { type: string, format: date-time }
+        last_delivered_at: { type: string, format: date-time }
+        last_delivery_error_code: { type: string, enum: [runtime_start_failed] }
+        last_delivered_wake_id: { type: string }
+        last_delivered_instance_id: { type: string }
 
     AppSecretListResponse:
       description: "Paginated list of sealed-secret envelopes (no plaintext). Discriminated union: `secrets` is the flat arm; `secrets_by_scope` is the `?scope=__all__` arm (ADR-092 PR-B)."
@@ -31530,13 +31590,30 @@ components:
 
     DelayedTaskRequest:
       description: "Body for POST /v1/apps/{slug}/delayed-tasks. Supply exactly one scheduling form; the maximum delay is 31,536,000 seconds (365 days)."
-      type: object
       oneOf:
-        - required: [scheduled_at]
-        - required: [delay_seconds]
+        - $ref: '#/components/schemas/DelayedTaskAtRequest'
+        - $ref: '#/components/schemas/DelayedTaskAfterRequest'
+
+    DelayedTaskAtRequest:
+      description: Schedule a delayed task at an absolute RFC 3339 timestamp.
+      type: object
+      required: [scheduled_at]
       properties:
         payload: { type: object, additionalProperties: true }
         scheduled_at: { type: string, format: date-time }
+        headers: { type: object, additionalProperties: true }
+        method: { type: string, default: POST }
+        path: { type: string, default: "/" }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+        retention_seconds: { type: integer, minimum: 0 }
+        destinations: { $ref: '#/components/schemas/InvocationDestinations' }
+
+    DelayedTaskAfterRequest:
+      description: Schedule a delayed task after a relative whole-second delay.
+      type: object
+      required: [delay_seconds]
+      properties:
+        payload: { type: object, additionalProperties: true }
         delay_seconds: { type: integer, format: int64, minimum: 1, maximum: 31536000 }
         headers: { type: object, additionalProperties: true }
         method: { type: string, default: POST }

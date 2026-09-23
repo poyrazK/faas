@@ -100,6 +100,7 @@ export type { AppSecurityPostureResponse } from './models/AppSecurityPostureResp
 export type { AppSecurityQuarantine } from './models/AppSecurityQuarantine.js';
 export type { AppSecurityRequest } from './models/AppSecurityRequest.js';
 export type { AppSecurityResponse } from './models/AppSecurityResponse.js';
+export type { AppServiceBinding } from './models/AppServiceBinding.js';
 export type { AppSLOResponse } from './models/AppSLOResponse.js';
 export type { AppsMetricsResponse } from './models/AppsMetricsResponse.js';
 export type { AppStaticEgressIPResponse } from './models/AppStaticEgressIPResponse.js';
@@ -251,6 +252,8 @@ export type { DebugTelemetryRequestItem } from './models/DebugTelemetryRequestIt
 export type { DebugTelemetrySpan } from './models/DebugTelemetrySpan.js';
 export type { DebugTimelineEvent } from './models/DebugTimelineEvent.js';
 export type { DeclaredRoute } from './models/DeclaredRoute.js';
+export type { DelayedTaskAfterRequest } from './models/DelayedTaskAfterRequest.js';
+export type { DelayedTaskAtRequest } from './models/DelayedTaskAtRequest.js';
 export type { DelayedTaskRequest } from './models/DelayedTaskRequest.js';
 export type { DelayedTaskResponse } from './models/DelayedTaskResponse.js';
 export type { DeliverAppEventRequest } from './models/DeliverAppEventRequest.js';

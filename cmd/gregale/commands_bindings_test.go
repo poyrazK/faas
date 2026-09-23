@@ -15,7 +15,7 @@ func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
-			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api","service_bindings":[{"binding":"GREGALE_SERVICE_BILLING_URL","service":"billing"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
 			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"primary"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
@@ -52,6 +52,7 @@ func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 			{Type: bindingTypeObjectStorage, Name: "assets", Binding: "GREGALE_S3_ASSETS", Scope: "production", Access: "read_write", State: "active"},
 			{Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready"},
 			{Type: bindingTypeQueue, Name: "email", Binding: "email-worker", Scope: "app", Access: "push", State: "active"},
+			{Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL", Scope: "app", Access: "invoke", State: "declared"},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {

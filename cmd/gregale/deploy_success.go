@@ -98,8 +98,33 @@ func deploymentCommandRef(dep api.DeploymentResponse) string {
 	return dep.ID
 }
 
-func deploymentPromotionCommand(appSlug string, dep api.DeploymentResponse) string {
-	return fmt.Sprintf("gregale traffic promote --app %s --deployment %s", appSlug, deploymentCommandRef(dep))
+// deploymentPromotionCommand includes a production-revision precondition when
+// a single live sibling owns 100% of traffic. A split or failed read cannot
+// safely provide a copy-paste promotion command.
+func deploymentPromotionCommand(ctx context.Context, c *Client, appSlug string, dep api.DeploymentResponse) (command, servingRef string) {
+	if c == nil || appSlug == "" {
+		return "", ""
+	}
+	readCtx, cancel := context.WithTimeout(ctx, deploymentReceiptFetchTimeout)
+	defer cancel()
+	deployments, err := c.ListAppDeploymentsAll(readCtx, appSlug)
+	if err != nil {
+		return "", ""
+	}
+	command = fmt.Sprintf("gregale traffic promote --app %s --deployment %s", appSlug, deploymentCommandRef(dep))
+	for _, sibling := range deployments {
+		if sibling.ID == dep.ID || sibling.Status != statusLive || sibling.TrafficPercent == 0 {
+			continue
+		}
+		if sibling.TrafficPercent != 100 || servingRef != "" {
+			return "", ""
+		}
+		servingRef = deploymentCommandRef(sibling)
+	}
+	if servingRef != "" {
+		command += " --if-serving " + servingRef
+	}
+	return command, servingRef
 }
 
 func renderQueuedDeployment(dep api.DeploymentResponse, appURL string, darkDeploy bool) {
@@ -157,8 +182,17 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		} else {
 			PrintProgress(osStdout, "Preview: gregale deploys show %s --app %s --url", ref, appSlug)
 		}
-		PrintProgress(osStdout, "Production traffic remains unchanged. %s", appURL)
-		PrintProgress(osStdout, "Promote: %s", deploymentPromotionCommand(appSlug, final))
+		promotionCommand, servingRef := deploymentPromotionCommand(ctx, c, appSlug, final)
+		if servingRef != "" {
+			PrintProgress(osStdout, "Production remains on %s. %s", servingRef, appURL)
+		} else {
+			PrintProgress(osStdout, "Production traffic remains unchanged. %s", appURL)
+		}
+		if promotionCommand != "" {
+			PrintProgress(osStdout, "Promote: %s", promotionCommand)
+		} else {
+			PrintProgress(osStdout, "Promotion: inspect current traffic with gregale traffic status %s", appSlug)
+		}
 	} else if label := renderRevision(final.Revision); label != "" {
 		PrintOK(osStdout, "Deployed %s. %s", label, appURL)
 	} else {
@@ -349,7 +383,7 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256, simplePlans...)
 	if final.Status == statusLive && darkDeploy && final.TrafficPercent == 0 {
 		receipt.PreviewURL = deploymentPreviewURL(ctx, c, final.ID)
-		receipt.PromotionCommand = deploymentPromotionCommand(appSlug, final)
+		receipt.PromotionCommand, _ = deploymentPromotionCommand(ctx, c, appSlug, final)
 	}
 	if final.Status == statusLive && !darkDeploy {
 		if summary, summaryOK := deploymentWithReleaseSummary(ctx, c, appSlug, final.ID); summaryOK {

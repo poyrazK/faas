@@ -23,7 +23,7 @@ func TestGitHubDeployPolicyDefaultsAndIgnorePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGitHubDeployPolicy(default): %v", err)
 	}
-	if !got.PreviewEnabled || got.PreviewTTLHours != GitHubDeployPolicyDefaultPreviewTTLHours {
+	if !got.PreviewEnabled || got.PreviewTTLHours != GitHubDeployPolicyDefaultPreviewTTLHours || got.PreviewServicePolicy != PreviewServicePolicyDeny {
 		t.Fatalf("defaults = %+v", got)
 	}
 	got.RootDir = "apps/web"
@@ -45,9 +45,9 @@ func TestGitHubDeployPolicyDefaultsAndIgnorePath(t *testing.T) {
 
 func TestGitHubDeployPolicyRejectsUnsafeValues(t *testing.T) {
 	cases := []GitHubDeployPolicy{
-		{ProjectID: "p", AccountID: "a", RootDir: "../escape", PreviewEnabled: true, PreviewTTLHours: 168},
-		{ProjectID: "p", AccountID: "a", IgnoredPaths: []string{"["}, PreviewEnabled: true, PreviewTTLHours: 168},
-		{ProjectID: "p", AccountID: "a", PreviewEnabled: true, PreviewTTLHours: 0},
+		{ProjectID: "p", AccountID: "a", RootDir: "../escape", PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: PreviewServicePolicyDeny},
+		{ProjectID: "p", AccountID: "a", IgnoredPaths: []string{"["}, PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: PreviewServicePolicyDeny},
+		{ProjectID: "p", AccountID: "a", PreviewEnabled: true, PreviewTTLHours: 0, PreviewServicePolicy: PreviewServicePolicyDeny},
 	}
 	for _, policy := range cases {
 		if err := policy.Validate(); err == nil {
@@ -57,7 +57,7 @@ func TestGitHubDeployPolicyRejectsUnsafeValues(t *testing.T) {
 }
 
 func TestGitHubDeployPolicyValidationCoverage(t *testing.T) {
-	base := GitHubDeployPolicy{ProjectID: "p", AccountID: "a", PreviewEnabled: true, PreviewTTLHours: 168}
+	base := GitHubDeployPolicy{ProjectID: "p", AccountID: "a", PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: PreviewServicePolicyDeny}
 	cases := []struct {
 		name string
 		edit func(*GitHubDeployPolicy)
@@ -79,6 +79,7 @@ func TestGitHubDeployPolicyValidationCoverage(t *testing.T) {
 		{name: "invalid glob", edit: func(p *GitHubDeployPolicy) { p.IgnoredPaths = []string{"["} }},
 		{name: "ttl too low", edit: func(p *GitHubDeployPolicy) { p.PreviewTTLHours = GitHubDeployPolicyMinPreviewTTLHours - 1 }},
 		{name: "ttl too high", edit: func(p *GitHubDeployPolicy) { p.PreviewTTLHours = GitHubDeployPolicyMaxPreviewTTLHours + 1 }},
+		{name: "invalid preview service policy", edit: func(p *GitHubDeployPolicy) { p.PreviewServicePolicy = "allow" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,8 +121,8 @@ func TestGitHubDeployPolicyMemStoreErrorsAndCopy(t *testing.T) {
 	if _, err := m.GetGitHubDeployPolicy(ctx, project.ID, "wrong-account"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("wrong account lookup error = %v", err)
 	}
-	policy := GitHubDeployPolicy{ProjectID: project.ID, AccountID: acct.ID, IgnoredPaths: []string{"docs/**"}, PreviewEnabled: true, PreviewTTLHours: 168}
-	if _, err := m.UpsertGitHubDeployPolicy(ctx, GitHubDeployPolicy{ProjectID: "missing", AccountID: acct.ID, PreviewEnabled: true, PreviewTTLHours: 168}); !errors.Is(err, ErrNotFound) {
+	policy := GitHubDeployPolicy{ProjectID: project.ID, AccountID: acct.ID, IgnoredPaths: []string{"docs/**"}, PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: PreviewServicePolicyAllowMarked}
+	if _, err := m.UpsertGitHubDeployPolicy(ctx, GitHubDeployPolicy{ProjectID: "missing", AccountID: acct.ID, PreviewEnabled: true, PreviewTTLHours: 168, PreviewServicePolicy: PreviewServicePolicyDeny}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing project upsert error = %v", err)
 	}
 	if _, err := m.UpsertGitHubDeployPolicy(ctx, policy); err != nil {

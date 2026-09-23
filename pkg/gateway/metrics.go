@@ -1424,7 +1424,7 @@ func NewMetrics() *Metrics {
 		serviceCallTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_service_call_total",
-				Help: "Count of same-account service-to-service calls handled by the node-local service proxy (ADR-196 / ADR-197). Labelled by outcome: forwarded (target was already warm), woken (target was parked and a wake produced a replica), no_replica, registry_unavailable, wake_failed, wake_queue_full, unauthenticated, denied, not_found, upgrade_rejected. Not labelled by app — the series count must stay bounded; per-app attribution lives in the wake timeline.",
+				Help: "Count of same-account service-to-service calls handled by the node-local service proxy (ADR-196 / ADR-197). Labelled by outcome: forwarded (target was already warm), woken (target was parked and a wake produced a replica), no_replica, registry_unavailable, wake_failed, wake_queue_full, unauthenticated, denied, preview_denied, not_found, upgrade_rejected. Not labelled by app — the series count must stay bounded; per-app attribution lives in the wake timeline.",
 			},
 			[]string{"outcome"},
 		),
@@ -1773,6 +1773,7 @@ func NewMetrics() *Metrics {
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
 	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceWakeLatency)
+	reg.MustRegister(m.servicePreviewToProduction)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -3232,6 +3233,10 @@ const (
 	// ServiceCallUpgradeRejected — an Upgrade request the target does not
 	// accept, or no raw bridge is wired on this node (ADR-197).
 	ServiceCallUpgradeRejected ServiceCallOutcome = "upgrade_rejected"
+	// ServiceCallPreviewDenied — the caller was a project preview whose
+	// preview_service_policy blocks production dependencies. This verdict is
+	// made before endpoint lookup or wake.
+	ServiceCallPreviewDenied ServiceCallOutcome = "preview_denied"
 )
 
 // ServiceCallOutcomes is the full closed set, used to pre-instantiate every
@@ -3240,7 +3245,7 @@ var ServiceCallOutcomes = []ServiceCallOutcome{
 	ServiceCallForwarded, ServiceCallWoken, ServiceCallNoReplica,
 	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
 	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallNotFound,
-	ServiceCallUpgradeRejected,
+	ServiceCallUpgradeRejected, ServiceCallPreviewDenied,
 }
 
 // IncServiceCall bumps gateway_service_call_total for one outcome.

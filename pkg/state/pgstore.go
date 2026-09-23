@@ -4260,6 +4260,7 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		{"usage_daily", `delete from usage_daily where app_id = $1`},
 		{"snapshot_storage_daily", `delete from snapshot_storage_daily where app_id = $1`},
 		{"request_telemetry", `delete from request_telemetry where app_id = $1`},
+		{"log_events", `delete from log_events where app_id = $1`},
 		{"debug_regression_observations", `delete from debug_regression_observations where app_id = $1`},
 		{"mirror_invocation_results", `delete from mirror_invocation_results where app_id = $1`},
 		{"mirror_invocation_summary", `delete from mirror_invocation_summary where app_id = $1`},
@@ -4619,7 +4620,7 @@ func (s *PgStore) AppsForProject(ctx context.Context, accountID, projectID strin
 	}
 	sel := `select ` + appsSelectColumns + `
 		   from apps
-		  where project_id = $1 and status <> 'deleted'
+		  where project_id = $1 and preview_of_slug is null and status <> 'deleted'
 		  order by workload_name asc, created_at asc`
 	rows, err := s.pool.Query(ctx, sel, projectID)
 	if err != nil {
@@ -5124,7 +5125,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		return ProjectReconcileResult{}, err
 	}
 
-	rows, err := tx.Query(ctx, `select `+appsSelectColumns+` from apps where project_id = $1 and status <> 'deleted' for update`, project.ID)
+	rows, err := tx.Query(ctx, `select `+appsSelectColumns+` from apps where project_id = $1 and preview_of_slug is null and status <> 'deleted' for update`, project.ID)
 	if err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: load project apps: %w", err)
 	}
@@ -5148,6 +5149,9 @@ func (s *PgStore) ApplyProjectReconcile(
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "create":
+			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
+				return ProjectReconcileResult{}, ErrConflict
+			}
 			creates++
 			var collisionID string
 			if err := tx.QueryRow(ctx, `select id from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID); err == nil {
@@ -5219,7 +5223,7 @@ func (s *PgStore) ApplyProjectReconcile(
 			if marshalErr != nil {
 				return ProjectReconcileResult{}, fmt.Errorf("state: marshal project app manifest: %w", marshalErr)
 			}
-			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7 where id = $1 and project_id = $6 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes))
+			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7 where id = $1 and project_id = $6 and preview_of_slug is null and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes))
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
@@ -5233,7 +5237,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		case "create":
 			app := mutation.App
 			app.AccountID, app.ProjectID = project.AccountID, project.ID
-			tombstone, tombErr := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where account_id = $1 and project_id = $2 and workload_name = $3 and status = 'deleted' order by deleted_at desc nulls last limit 1 for update`, project.AccountID, project.ID, app.WorkloadName))
+			tombstone, tombErr := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where account_id = $1 and project_id = $2 and workload_name = $3 and preview_of_slug is null and status = 'deleted' order by deleted_at desc nulls last limit 1 for update`, project.AccountID, project.ID, app.WorkloadName))
 			if tombErr == nil {
 				tombstone.RootDir = app.RootDir
 				tombstone.WorkloadName = app.WorkloadName
@@ -5267,7 +5271,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		// Resolve the complete post-mutation workload → app map, then reconcile
 		// every desired (schedule,path) identity. Repeated applies retain IDs,
 		// update enabled state, and remove legacy or source-deleted rows.
-		rows, err = tx.Query(ctx, `select id, workload_name from apps where project_id = $1 and status <> 'deleted'`, project.ID)
+		rows, err = tx.Query(ctx, `select id, workload_name from apps where project_id = $1 and preview_of_slug is null and status <> 'deleted'`, project.ID)
 		if err != nil {
 			return ProjectReconcileResult{}, err
 		}
@@ -6951,7 +6955,7 @@ func (s *PgStore) UpdateDeploymentMinInstances(ctx context.Context, id string, m
 // the request path. The CHECK constraint (migration 00160) is the
 // third layer; any out-of-range value reaching this method trips a
 // 23514 SQLSTATE.
-func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int) (Deployment, error) {
+func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, fmt.Errorf("state: update deployment traffic %d: %w", newPercent, ErrInvalidTrafficPercent)
 	}
@@ -7030,6 +7034,20 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return Deployment{}, fmt.Errorf("state: iterate sibling weights: %w", err)
+	}
+	if len(expectedServingID) > 0 {
+		servingID := ""
+		servingCount := 0
+		for _, sibling := range siblings {
+			if sibling.Prior == 100 {
+				servingID = sibling.ID
+				servingCount++
+			}
+		}
+		if servingCount != 1 || !sameDeploymentID(servingID, expectedServingID[0]) {
+			return Deployment{}, fmt.Errorf("state: expected serving deployment %s, found %s: %w",
+				expectedServingID[0], servingID, ErrTrafficServingChanged)
+		}
 	}
 
 	if _, err := tx.Exec(ctx,
@@ -21070,7 +21088,11 @@ func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, 
 		 values ($1, $2, $3, $4, $5)
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
-		       updated_at = now()
+		       updated_at = now(),
+		       delivery_version = app_secrets.delivery_version + 1,
+		       delivery_status = 'pending',
+		       last_delivery_attempt_at = null,
+		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext)
@@ -21090,7 +21112,11 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
-		       updated_at = now()
+		       updated_at = now(),
+		       delivery_version = app_secrets.delivery_version + 1,
+		       delivery_status = 'pending',
+		       last_delivery_attempt_at = null,
+		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid)
@@ -21124,7 +21150,11 @@ func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context,
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
 		       value_hash = excluded.value_hash,
-		       updated_at = now()
+		       updated_at = now(),
+		       delivery_version = app_secrets.delivery_version + 1,
+		       delivery_status = 'pending',
+		       last_delivery_attempt_at = null,
+		       last_delivery_error_code = null
 		 where app_secrets.managed_postgres_binding_id is null
 		   and app_secrets.managed_object_storage_credential_id is null`,
 		accountID, appID, scope, key, ciphertext, kid, valueHash)
@@ -21190,6 +21220,26 @@ func (s *PgStore) PutManagedPostgresSecret(ctx context.Context, secret AppSecret
 			value_hash = excluded.value_hash,
 			managed_credential_ref = excluded.managed_credential_ref,
 			managed_credential_generation = excluded.managed_credential_generation,
+			delivery_version = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN app_secrets.delivery_version + 1
+				ELSE app_secrets.delivery_version
+			END,
+			delivery_status = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN 'pending'
+				ELSE app_secrets.delivery_status
+			END,
+			last_delivery_attempt_at = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN NULL
+				ELSE app_secrets.last_delivery_attempt_at
+			END,
+			last_delivery_error_code = CASE
+				WHEN app_secrets.managed_credential_generation < excluded.managed_credential_generation
+				THEN NULL
+				ELSE app_secrets.last_delivery_error_code
+			END,
 			updated_at = now()
 		 where app_secrets.managed_postgres_binding_id = excluded.managed_postgres_binding_id
 		   and (
@@ -21272,6 +21322,10 @@ func (s *PgStore) PutManagedObjectStorageSecret(ctx context.Context, secret AppS
 			kid = excluded.kid,
 			value_hash = excluded.value_hash,
 			managed_object_storage_credential_id = excluded.managed_object_storage_credential_id,
+			delivery_version = app_secrets.delivery_version + 1,
+			delivery_status = 'pending',
+			last_delivery_attempt_at = null,
+			last_delivery_error_code = null,
 			updated_at = now()
 		 where app_secrets.managed_object_storage_credential_id = excluded.managed_object_storage_credential_id
 		   and app_secrets.managed_postgres_binding_id is null`,
@@ -21308,12 +21362,18 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 	err := s.pool.QueryRow(ctx,
 		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
-		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''), created_at, updated_at
+		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''),
+		        delivery_version, COALESCE(delivered_version, 0), delivery_status,
+		        last_delivery_attempt_at, last_delivered_at, COALESCE(last_delivery_error_code, ''),
+		        COALESCE(last_delivered_wake_id, ''), COALESCE(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
 		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.ValueHash,
 		&out.ManagedPostgresBindingID, &out.ManagedCredentialRef, &out.ManagedCredentialGeneration, &out.ManagedObjectStorageCredentialID,
+		&out.DeliveryVersion, &out.DeliveredVersion, &out.DeliveryStatus,
+		&out.LastDeliveryAttemptAt, &out.LastDeliveredAt, &out.LastDeliveryErrorCode,
+		&out.LastDeliveredWakeID, &out.LastDeliveredInstanceID,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -21519,7 +21579,10 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
+		        delivery_version, coalesce(delivered_version, 0), delivery_status,
+		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -21534,6 +21597,9 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
 			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
+			&r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
+			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
+			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -21561,7 +21627,10 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 	rows, err := s.pool.Query(ctx,
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''), created_at, updated_at
+		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
+		        delivery_version, coalesce(delivered_version, 0), delivery_status,
+		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -21576,6 +21645,9 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
 			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
+			&r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
+			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
+			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -21654,6 +21726,74 @@ func (s *PgStore) CountAppSecrets(ctx context.Context, accountID, appID string) 
 		`select count(*) from app_secrets where account_id = $1 and app_id = $2`,
 		accountID, appID).Scan(&n)
 	return n, err
+}
+
+// RecordAppSecretDelivery updates only rows whose delivery_version still
+// matches the version schedd staged. This compare-and-set is the race fence
+// between an in-flight boot and a concurrent rotation.
+func (s *PgStore) RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error) {
+	if result.AccountID == "" || result.AppID == "" || result.WakeID == "" || result.InstanceID == "" {
+		return 0, ErrInvalidArgument
+	}
+	if result.Status != SecretDeliveryDelivered && result.Status != SecretDeliveryFailed {
+		return 0, ErrInvalidArgument
+	}
+	if result.Status == SecretDeliveryFailed && result.ErrorCode == "" {
+		return 0, ErrInvalidArgument
+	}
+	if len(result.Candidates) == 0 {
+		return 0, nil
+	}
+	attemptedAt := result.AttemptedAt.UTC()
+	if attemptedAt.IsZero() {
+		attemptedAt = time.Now().UTC()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	updated := 0
+	for _, candidate := range result.Candidates {
+		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
+			return 0, ErrInvalidArgument
+		}
+		var tag pgconn.CommandTag
+		if result.Status == SecretDeliveryDelivered {
+			tag, err = tx.Exec(ctx,
+				`update app_secrets
+				 set delivered_version = delivery_version,
+				     delivery_status = 'delivered',
+				     last_delivery_attempt_at = $7,
+				     last_delivered_at = $7,
+				     last_delivery_error_code = null,
+				     last_delivered_wake_id = $5,
+				     last_delivered_instance_id = $6
+				 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+				   and delivery_version = $8`,
+				result.AccountID, result.AppID, candidate.Scope, candidate.Key,
+				result.WakeID, result.InstanceID, attemptedAt, candidate.Version)
+		} else {
+			tag, err = tx.Exec(ctx,
+				`update app_secrets
+				 set delivery_status = 'failed',
+				     last_delivery_attempt_at = $5,
+				     last_delivery_error_code = $7
+				 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+				   and delivery_version = $6
+				   and coalesce(delivered_version, 0) < delivery_version`,
+				result.AccountID, result.AppID, candidate.Scope, candidate.Key,
+				attemptedAt, candidate.Version, result.ErrorCode)
+		}
+		if err != nil {
+			return 0, mapErr(err)
+		}
+		updated += int(tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, mapErr(err)
+	}
+	return updated, nil
 }
 
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------
