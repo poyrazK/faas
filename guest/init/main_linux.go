@@ -275,6 +275,12 @@ func boot() error {
 	if err := startFrameworkReadyProxy(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
 		slog.Default().Warn("framework_ready proxy unavailable", "err", err)
 	}
+	// ADR-222: without the reseed server, Node and Python processes restored
+	// from a snapshot replay the captured random state. Env stamping injects
+	// no preload when this fails, so a failure is loud but not fatal.
+	if err := startRestoreReseedServer(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
+		slog.Default().Error("restore reseed server unavailable", "err", err)
+	}
 
 	// G2: read /etc/faas/secrets.env (unsealed JSON, written by vmmd at
 	// wake time) and stash the entry count on the supervisor via a small
@@ -415,6 +421,7 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
+	env = StampRestoreReseedEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env as the
 	// boot/wake trace seed. The W3C trace context was shipped from the

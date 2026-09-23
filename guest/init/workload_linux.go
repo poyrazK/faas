@@ -748,6 +748,12 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
+	// ADR-222: a sidecar chrooted into its own rootfs cannot see
+	// /run/guest-init, and a --require of a missing file stops Node from
+	// starting, so only shared-root workloads get the restore reseed preload.
+	if directRoot == "" {
+		env = StampRestoreReseedEnv(env)
+	}
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	if directRoot != "" {
 		// exec.Command resolves bare names against the guest-init process's
