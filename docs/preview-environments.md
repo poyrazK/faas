@@ -213,10 +213,13 @@ workload's transitive `depends_on` app closure, in dependency order. Enqueue
 order does not itself guarantee that a dependency is live before its caller
 starts. Unrelated project workloads are not copied. Retries reuse the same
 preview rows; closing the PR closes the sibling rows together. Managed services
-are external to this app fan-out, and a newly declared workload that has no
-active production app cannot yet be provisioned as a preview. When a dependency
-preview is absent, the gateway considers the **production** service and its
-side effects are real if policy permits it.
+are external to this app fan-out. A newly declared dependency with no
+production app gets a preview-only sibling from the PR source, with no
+environment or credentials copied from the bound workload. If a production
+app for that workload appears later, subsequent pushes reuse that sibling. An
+existing non-deleted but inactive production dependency is still rejected.
+When a dependency preview is absent, the gateway considers the **production**
+service and its side effects are real if policy permits it.
 
 The `gregale-preview` GitHub check reports the **whole selected workload set**
 for the current PR head. It stays in progress until every member has a live
