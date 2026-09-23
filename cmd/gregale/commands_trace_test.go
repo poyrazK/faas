@@ -25,7 +25,8 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 					{App: "beta", Request: api.DebugTelemetryRequestItem{ID: "row-beta", Route: "/checkout", Method: "GET", Status: 200, LatencyMS: 40}},
 				},
 				Invocations: []api.AccountTraceInvocation{
-					{App: "alpha", ID: "inv-async", Source: "async_invoke", State: "completed", Attempts: 1, CreatedAt: "2026-09-22T10:00:00.020Z", CompletedAt: "2026-09-22T10:00:00.070Z"},
+					{App: "alpha", ID: "inv-queue", Source: "queue", QueueName: "orders", State: "completed", Attempts: 1,
+						CreatedAt: "2026-09-22T10:00:00.020Z", StartedAt: "2026-09-22T10:00:00.030Z", CompletedAt: "2026-09-22T10:00:00.070Z"},
 				},
 				Logs: []api.LogQueryEvent{
 					{ID: "log-alpha", App: "alpha", Timestamp: "2026-09-22T10:00:00.010Z", Source: api.LogSourceHTTP, Method: "GET", Route: "/checkout", Status: 200, LatencyMS: 100},
@@ -60,10 +61,11 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 		"INVOCATIONS",
 		"HTTP ACCESS LOGS",
 		"2026-09-22T10:00:00.010Z · alpha · GET /checkout · status=200 · latency=100ms · event log-alpha",
-		"alpha · async_invoke inv-async · state=completed · attempts=1 · created_at=2026-09-22T10:00:00.020Z · duration=50.00ms",
+		"alpha · queue inv-queue · state=completed · attempts=1 · created_at=2026-09-22T10:00:00.020Z · queue=orders · started_at=2026-09-22T10:00:00.030Z · total=50.00ms",
 		"WATERFALL (relative to earliest retained event)",
 		"0.00ms → 100.00ms | edge.request [server]",
-		"20.00ms → 50.00ms  | alpha · async_invoke inv-async · state=completed",
+		"20.00ms → 10.00ms  | alpha · queue=orders · invocation=inv-queue · enqueued → latest claim (attempt=1)",
+		"30.00ms → 40.00ms  | alpha · queue=orders · invocation=inv-queue · latest attempt → completion",
 		"└─ edge.request [server] 100 ms",
 		"└─ guest.request [server] 40.00 ms",
 	} {

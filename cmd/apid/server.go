@@ -1949,6 +1949,7 @@ func (s *server) handler() http.Handler {
 	// Internal event ingress (EPIC #1278 / ADR-180). The handler persists a
 	// tenant-scoped CloudEvents envelope and wakes schedd's content matcher;
 	// the durable events row remains the recovery source.
+	mux.HandleFunc("POST /v1/events:preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewEvent))))
 	mux.HandleFunc("POST /v1/events:publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.publishEvent)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventSubscriptions))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventDeliveries))))

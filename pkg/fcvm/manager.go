@@ -3580,6 +3580,14 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// successes slower than SlowWakeLogThreshold. The named `err`
 	// return is what lets this defer distinguish the two.
 	phases := newWakePhases()
+	// ADR-225: start warming the snapshot's recorded working set before the
+	// lease, network and restore gate so the reads overlap that work.
+	var restorePrefetchBytes int64
+	if req.Snapshot != nil {
+		if p, ok := m.vmm.(restorePrefetcher); ok {
+			restorePrefetchBytes = p.PrefetchRestore(req.Snapshot.StorageKey)
+		}
+	}
 	defer func() {
 		switch {
 		case err != nil:
@@ -4230,6 +4238,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		"uid", lease.UID, "host_ip", lease.HostIP.String(),
 		"setup_network_ms", timings.netnsTapMs, "scan_check_ms", timings.scanCheckMs,
 		"restore_ms", timings.restoreMs, "cold_boot_ms", timings.coldBootMs,
+		"restore_prefetch_bytes", restorePrefetchBytes,
 	}
 	// Include every outer phase measurement on successes too. A
 	// fallback can spend most of its wall time before Firecracker Boot (for

@@ -3276,12 +3276,24 @@ type UpdateAppWebhookParams struct {
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 }
 
-// AppWebhook is one per-app subscription row (issue #476 /
-// ADR-076). The webhook secret is at-rest sealed
-// (SecretSealed, age/X25519 via pkg/secretbox) and is never surfaced
-// on a read — the apid response carries a masked constant.
+// AppWebhookScope is the closed storage vocabulary for ADR-224. Existing
+// subscriptions are app-scoped; account scope is not yet publicly creatable.
+type AppWebhookScope string
+
+const (
+	AppWebhookScopeApp     AppWebhookScope = "app"
+	AppWebhookScopeAccount AppWebhookScope = "account"
+)
+
+// ErrInvalidAppWebhookScope prevents the app-only creation path from silently
+// creating an app subscription when passed an account-scoped request.
+var ErrInvalidAppWebhookScope = errors.New("state: invalid app webhook scope")
+
+// AppWebhook is a subscription row (ADR-076, ADR-224). Its sealed secret is
+// never surfaced on a read; the apid response carries a masked constant.
 type AppWebhook struct {
 	ID             string
+	Scope          AppWebhookScope
 	AppID          string
 	AccountID      string
 	TargetURL      string
@@ -4181,6 +4193,7 @@ type MirrorRule struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -4192,10 +4205,11 @@ type MirrorRule struct {
 // zero value" — the latter is rare but legal (e.g. Percent=0
 // disables the rule without removing it).
 type MirrorRulePatch struct {
-	Percent       *int
-	Enabled       *bool
-	IncludeBody   *bool
-	RedactHeaders *[]string
+	Percent            *int
+	Enabled            *bool
+	IncludeBody        *bool
+	AllowUnsafeMethods *bool
+	RedactHeaders      *[]string
 }
 
 // CreateMirrorRuleParams (issue #72 / ADR-125) is the parameter
@@ -4213,6 +4227,7 @@ type CreateMirrorRuleParams struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 }
 
@@ -4225,33 +4240,34 @@ type CreateMirrorRuleParams struct {
 // endpoint SUM these columns instead of comparing values client
 // side — the customer's read path stays O(1) per row.
 //
-// All *bytea fields are 32 bytes (SHA-256). Go-side: `[]byte`
-// with len==32, OR nil when the rule has include_body=false (the
-// `body_hash` columns are the only ones that can be nil — the
-// schema_hash columns are always populated for JSON responses).
+// Hash fields are 32-byte SHA-256 fingerprints. Body hashes are nil when
+// `include_body=false`; schema fingerprints are present only for complete JSON
+// responses. Any hash can be nil when its source/mirror snapshot is missing or
+// truncated.
 type MirrorInvocationResult struct {
-	ID                 string
-	MirrorRuleID       string
-	AccountID          string
-	AppID              string
-	SourceDeploymentID string
-	MirrorDeploymentID string
-	InstanceID         string
-	SourceInstanceID   string
-	StatusCode         int
-	SourceStatusCode   int
-	LatencyMs          int
-	SourceLatencyMs    int
-	BodyHash           []byte
-	SourceBodyHash     []byte
-	SchemaHash         []byte
-	SourceSchemaHash   []byte
-	StatusDiff         bool
-	SchemaDiff         bool
-	BodyDiff           bool
-	Crashed            bool
-	RequestID          string
-	CompletedAt        time.Time
+	ID                   string
+	MirrorRuleID         string
+	AccountID            string
+	AppID                string
+	SourceDeploymentID   string
+	MirrorDeploymentID   string
+	InstanceID           string
+	SourceInstanceID     string
+	StatusCode           int
+	SourceStatusCode     int
+	LatencyMs            int
+	SourceLatencyMs      int
+	BodyHash             []byte
+	SourceBodyHash       []byte
+	SchemaHash           []byte
+	SourceSchemaHash     []byte
+	StatusDiff           bool
+	SchemaDiff           bool
+	BodyDiff             bool
+	Crashed              bool
+	ComparisonIncomplete bool
+	RequestID            string
+	CompletedAt          time.Time
 }
 
 // MirrorSummary (issue #72 / ADR-125) is the aggregate the
@@ -4262,15 +4278,16 @@ type MirrorInvocationResult struct {
 // = mirror is slower). `P99LatencyDiffMs` is signed and is the
 // operator's drift signal.
 type MirrorSummary struct {
-	TotalInvocations     int
-	ChangedResponseCount int
-	StatusDiffCount      int
-	SchemaDiffCount      int
-	BodyDiffCount        int
-	MeanLatencyDiffMs    int
-	P99LatencyDiffMs     int
-	CrashCount           int
-	WindowSeconds        int
+	TotalInvocations          int
+	ChangedResponseCount      int
+	StatusDiffCount           int
+	SchemaDiffCount           int
+	BodyDiffCount             int
+	MeanLatencyDiffMs         int
+	P99LatencyDiffMs          int
+	CrashCount                int
+	IncompleteComparisonCount int
+	WindowSeconds             int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis

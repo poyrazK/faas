@@ -93,16 +93,16 @@ func cmdMirrorList(args []string) int {
 }
 
 // cmdMirrorCreate implements `gregale mirror create`. Required
-// flags: --app --source --mirror. --percent defaults to 100
-// (mirror every customer request); --redact-header can be passed
-// 0..N times to populate the customer's additive redact list.
+// flags: --app --source --mirror. Sampling defaults to 5%; mutating
+// methods are skipped unless --allow-unsafe-methods is explicit.
 func cmdMirrorCreate(args []string) int {
 	fs := newFlagSet("mirror create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	source := fs.String("source", "", "source deployment id or vN revision (required)")
 	mirror := fs.String("mirror", "", "mirror deployment id or vN revision (required)")
-	percent := fs.Int("percent", 100, "fan-out percent in [0, 100]; 100 = every request")
-	includeBody := fs.Bool("include-body", false, "include request/response body hashes in the comparison ledger")
+	percent := fs.Int("percent", 5, "fan-out percent in [0, 100]; defaults to a 5% sample")
+	includeBody := fs.Bool("include-body", false, "compare response values and retain hashes; raw bodies are never stored")
+	allowUnsafe := fs.Bool("allow-unsafe-methods", false, "also mirror POST, PUT, PATCH, and DELETE (may trigger side effects)")
 	var redactHeaders multiFlag
 	fs.Var(&redactHeaders, "redact-header", "extra header name to redact (repeatable); always-stripped list applies regardless")
 	if err := fs.Parse(args); err != nil {
@@ -112,7 +112,7 @@ func cmdMirrorCreate(args []string) int {
 		return 1
 	}
 	if *slug == "" || *source == "" || *mirror == "" {
-		PrintUsage(os.Stderr, "usage: gregale mirror create --app <slug> --source <id> --mirror <id> [--percent N] [--include-body] [--redact-header Name]…", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale mirror create --app <slug> --source <id> --mirror <id> [--percent N] [--include-body] [--allow-unsafe-methods] [--redact-header Name]…", "mirror")
 		return 1
 	}
 	client, err := authedClient()
@@ -139,8 +139,9 @@ func cmdMirrorCreate(args []string) int {
 	resp, err := client.PostAppsSlugMirrors(context.Background(), *slug, api.CreateMirrorRuleRequest{
 		SourceDeploymentID: sourceID,
 		MirrorDeploymentID: mirrorID,
-		Percent:            *percent,
+		Percent:            percent,
 		IncludeBody:        *includeBody,
+		AllowUnsafeMethods: *allowUnsafe,
 		RedactHeaders:      headers,
 	})
 	if err != nil {
@@ -190,6 +191,7 @@ func cmdMirrorInfo(args []string) int {
 	_, _ = fmt.Fprintf(os.Stdout, "Percent:      %d%%\n", resp.Percent)
 	_, _ = fmt.Fprintf(os.Stdout, "Enabled:      %t\n", resp.Enabled)
 	_, _ = fmt.Fprintf(os.Stdout, "Include body: %t\n", resp.IncludeBody)
+	_, _ = fmt.Fprintf(os.Stdout, "Unsafe methods: %t\n", resp.AllowUnsafeMethods)
 	if len(resp.RedactHeaders) > 0 {
 		_, _ = fmt.Fprintf(os.Stdout, "Redact hdrs:  %s\n", strings.Join(resp.RedactHeaders, ", "))
 	}
@@ -214,6 +216,8 @@ func cmdMirrorUpdate(args []string) int {
 	disable := fs.Bool("disable", false, "disable the rule")
 	includeBody := fs.Bool("include-body", false, "enable body-hash comparison")
 	noIncludeBody := fs.Bool("no-include-body", false, "disable body-hash comparison")
+	allowUnsafe := fs.Bool("allow-unsafe-methods", false, "also mirror POST, PUT, PATCH, and DELETE")
+	safeMethodsOnly := fs.Bool("safe-methods-only", false, "skip POST, PUT, PATCH, and DELETE")
 	var redactHeaders multiFlag
 	fs.Var(&redactHeaders, "redact-header", "extra header name to redact (repeatable)")
 	var clearRedact bool
@@ -225,7 +229,7 @@ func cmdMirrorUpdate(args []string) int {
 		return 1
 	}
 	if *slug == "" || *id == "" {
-		PrintUsage(os.Stderr, "usage: gregale mirror update --app <slug> --id <mirror-id> [--percent N] [--enable|--disable] [--include-body|--no-include-body] [--redact-header Name]… [--clear-redact]", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale mirror update --app <slug> --id <mirror-id> [--percent N] [--enable|--disable] [--include-body|--no-include-body] [--allow-unsafe-methods|--safe-methods-only] [--redact-header Name]… [--clear-redact]", "mirror")
 		return 1
 	}
 	if *enable && *disable {
@@ -234,6 +238,10 @@ func cmdMirrorUpdate(args []string) int {
 	}
 	if *includeBody && *noIncludeBody {
 		PrintUsage(os.Stderr, "usage: gregale mirror update --app <slug> --id <mirror-id> [--include-body|--no-include-body] (mutually exclusive)", "mirror")
+		return 1
+	}
+	if *allowUnsafe && *safeMethodsOnly {
+		PrintUsage(os.Stderr, "usage: gregale mirror update --app <slug> --id <mirror-id> [--allow-unsafe-methods|--safe-methods-only] (mutually exclusive)", "mirror")
 		return 1
 	}
 	client, err := authedClient()
@@ -266,6 +274,16 @@ func cmdMirrorUpdate(args []string) int {
 				f := false
 				req.IncludeBody = &f
 			}
+		case "allow-unsafe-methods":
+			if *allowUnsafe {
+				v := true
+				req.AllowUnsafeMethods = &v
+			}
+		case "safe-methods-only":
+			if *safeMethodsOnly {
+				v := false
+				req.AllowUnsafeMethods = &v
+			}
 		case "redact-header":
 			// collected below into req.RedactHeaders
 		case "clear-redact":
@@ -283,7 +301,7 @@ func cmdMirrorUpdate(args []string) int {
 		headers := []string(redactHeaders)
 		req.RedactHeaders = &headers
 	}
-	if req.Percent == nil && req.Enabled == nil && req.IncludeBody == nil && req.RedactHeaders == nil {
+	if req.Percent == nil && req.Enabled == nil && req.IncludeBody == nil && req.AllowUnsafeMethods == nil && req.RedactHeaders == nil {
 		return printErr("No mirror changes requested", fmt.Errorf("set at least one mirror update value"))
 	}
 	resp, err := client.PatchAppsSlugMirrorsId(context.Background(), *slug, *id, req)
@@ -362,6 +380,7 @@ func cmdMirrorSummary(args []string) int {
 	_, _ = fmt.Fprintf(os.Stdout, "Window:         %d s\n", resp.WindowSeconds)
 	_, _ = fmt.Fprintf(os.Stdout, "Invocations:    %d\n", resp.TotalInvocations)
 	_, _ = fmt.Fprintf(os.Stdout, "Changed:        %d (%.2f%%)\n", resp.ChangedResponseCount, resp.ChangedResponsePct)
+	_, _ = fmt.Fprintf(os.Stdout, "Inconclusive:   %d\n", resp.IncompleteComparisonCount)
 	_, _ = fmt.Fprintf(os.Stdout, "Status diff:    %d\n", resp.StatusDiffCount)
 	_, _ = fmt.Fprintf(os.Stdout, "Schema diff:    %d\n", resp.SchemaDiffCount)
 	_, _ = fmt.Fprintf(os.Stdout, "Body diff:      %d\n", resp.BodyDiffCount)

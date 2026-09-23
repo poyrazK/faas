@@ -110,6 +110,48 @@ func TestCDComputeWorkflowSharesSSHKeyWithFleetPreflight(t *testing.T) {
 	}
 }
 
+func TestCDComputeWorkflowExportsNodeScopedPKIForExistingHosts(t *testing.T) {
+	computeBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compute := string(computeBody)
+	for _, required := range []string{
+		"pki_source:",
+		`PKI_SOURCE_KIND: ${{ inputs.pki_source }}`,
+		`[[ "$PKI_SOURCE_KIND" == "live-node" ]]`,
+		`ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST"`,
+		`[[ "$candidate_fingerprint" == "$SSH_HOST_KEY_SHA256" ]]`,
+		`-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes`,
+		`gregalectl pki export-bundle`,
+		`--box-role compute-only --cn "$node_cn"`,
+		`--transport-san "$transport_san"`,
+		`[[ ! -e "$PKI_SOURCE/ca/ca.key" ]]`,
+	} {
+		if !strings.Contains(compute, required) {
+			t.Errorf("existing-host PKI export is missing %q", required)
+		}
+	}
+	if strings.Contains(compute, "StrictHostKeyChecking=no") {
+		t.Fatal("existing-host PKI export must not weaken host identity")
+	}
+	platformBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := string(platformBody)
+	for _, required := range []string{
+		"compute_pki_source:",
+		`if [[ "$COMPUTE_PKI_SOURCE" == "live-node" ]]; then`,
+		"batch_prepare=false",
+		"pki_source: ${{ inputs.compute_pki_source }}",
+	} {
+		if !strings.Contains(platform, required) {
+			t.Errorf("platform does not route node-scoped PKI through the serial rollout: missing %q", required)
+		}
+	}
+}
+
 func TestCDComputeWorkflowPinsDynamicHostForPostJoinProbes(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {

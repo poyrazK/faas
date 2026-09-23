@@ -892,6 +892,7 @@ type MirrorRuleRow struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 }
 

@@ -34,6 +34,9 @@ type Config struct {
 	// Three stays below the measured contention knee on four-vCPU hosts while
 	// still sustaining a high restore rate. Operators can tune 1..64.
 	RestoreConcurrency int `toml:"restore_concurrency"`
+	// DisableRestorePrefetch turns off the ADR-225 restore working-set
+	// prefetch. It is on by default; FAAS_RESTORE_PREFETCH=0 overrides TOML.
+	DisableRestorePrefetch bool `toml:"disable_restore_prefetch"`
 	// SocketPath is the unix-domain socket the gRPC server binds when
 	// ListenAddr is empty. Defaults to /run/faas/vmmd.sock.
 	// ADR-015 dictates mode 0660 group `faas`.
@@ -639,6 +642,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CONCURRENCY must be between 1 and 64")
 		}
 		c.RestoreConcurrency = n
+	}
+	if v := os.Getenv("FAAS_RESTORE_PREFETCH"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_PREFETCH must be a boolean (got %q)", v)
+		}
+		c.DisableRestorePrefetch = !enabled
 	}
 	if c.RestoreConcurrency < 1 || c.RestoreConcurrency > 64 {
 		return nil, fmt.Errorf("vmmd: restore_concurrency must be between 1 and 64 (got %d)", c.RestoreConcurrency)

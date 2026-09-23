@@ -332,6 +332,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REQUIRE_SHARED_ARTIFACTS` | shared | `envfile` |  |  | `` |  |
 | `FAAS_RESIDENCY_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RESTORE_CONCURRENCY` | vmmd | `default` |  |  | `` | optional snapshot-restore concurrency override (1–64); production default is 3 |
+| `FAAS_RESTORE_PREFETCH` | vmmd | `default` |  |  | `` | optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled |
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |

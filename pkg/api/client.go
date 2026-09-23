@@ -6274,6 +6274,14 @@ func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (Pub
 	return resp, err
 }
 
+// PreviewEvent evaluates one tenant-scoped event against enabled subscriptions
+// without persisting it or waking asynchronous fanout.
+func (c *Client) PreviewEvent(ctx context.Context, req PreviewEventRequest) (PreviewEventResponse, error) {
+	var resp PreviewEventResponse
+	err := c.do(ctx, "POST", "/v1/events:preview", req, &resp)
+	return resp, err
+}
+
 // ListEventSubscriptions returns the manifest declarations currently
 // reconciled for one app, in stable creation order.
 func (c *Client) ListEventSubscriptions(ctx context.Context, slug string) (EventSubscriptionListResponse, error) {

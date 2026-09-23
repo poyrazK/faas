@@ -10,7 +10,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
-| [`events`](#events) | Publish events and inspect subscriptions and deliveries |
+| [`events`](#events) | Preview routing, publish events and inspect subscriptions and deliveries |
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
@@ -86,7 +86,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
-| [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only) |
+| [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained. |
 | [`cache`](#cache) | Declare or purge response caching (cache GET /path/:id for 30s) |
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
@@ -257,9 +257,21 @@ Show one audit event
 
 ## events
 
-Publish events and inspect subscriptions and deliveries
+Preview routing, publish events and inspect subscriptions and deliveries
 
 `gregale events [<subcommand>]`
+
+### events preview
+
+Preview account-wide event routing without publishing
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | event id to use when filters inspect the CloudEvents id |  |
+| `--source <SOURCE>` | event source (or first positional argument) |  |
+| `--type <TYPE>` | event type (or second positional argument) |  |
+| `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
+| `--time <RFC3339>` | event time (RFC3339; defaults to server time) |  |
 
 ### events publish
 
@@ -1294,13 +1306,15 @@ List edge rules
 
 ### edge-rules trace
 
-Preview which edge rules match a proposed request (no actions executed)
+Preview matching edge rules and simulate IP/geo decisions
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--url <URL>` | absolute HTTP(S) request URL | required |
 | `--method <method>` | request method (default GET) |  |
+| `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
+| `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 
 ### edge-rules create
 
@@ -2362,7 +2376,7 @@ Show live deployment traffic weights for an app
 
 ## mirror
 
-Manage traffic mirroring and sanitized replay (Pro/Scale only)
+Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained.
 
 `gregale mirror [<subcommand>]`
 
@@ -2383,8 +2397,9 @@ Create a mirror rule
 | `--app <slug>` | app slug | required |
 | `--source <ID>` | source deployment id or vN revision (live) | required |
 | `--mirror <ID>` | mirror deployment id or vN revision (live; same app) | required |
-| `--percent <N>` | fan-out percent in [0, 100]; 100 = every request |  |
-| `--include-body` | include request/response body hashes in the comparison ledger |  |
+| `--percent <N>` | fan-out percent in [0, 100]; defaults to a 5% sample |  |
+| `--include-body` | compare response values using hashes; raw response bodies are never retained |  |
+| `--allow-unsafe-methods` | also mirror POST, PUT, PATCH, and DELETE; these can cause side effects |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 
 ### mirror info
@@ -2409,6 +2424,8 @@ Patch a mirror rule (patch semantics)
 | `--disable` | disable the rule (mutually exclusive with --enable) |  |
 | `--include-body` | enable body-hash comparison (mutually exclusive with --no-include-body) |  |
 | `--no-include-body` | disable body-hash comparison |  |
+| `--allow-unsafe-methods` | also mirror POST, PUT, PATCH, and DELETE |  |
+| `--safe-methods-only` | skip POST, PUT, PATCH, and DELETE |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 | `--clear-redact` | clear the customer&#39;s redact_headers list (drop to always-stripped only) |  |
 
