@@ -1,3 +1,5 @@
+// spec: §11 — G2 sealed secrets are unsealed on the host and staged only into
+// the owning guest at wake time.
 // Tests for the G2 secrets-staging path: cold-wake + restore both unseal
 // the per-app sealed entries, merge them into a single envelope, marshal
 // back to canonical JSON, and pass it to the VMM's StageSecretsEnv method.
