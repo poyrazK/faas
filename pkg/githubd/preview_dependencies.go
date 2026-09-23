@@ -161,7 +161,8 @@ func (s *Service) closePRDependencies(ctx context.Context, parent state.App, prN
 		return err
 	}
 	for _, preview := range previews {
-		if preview.ProjectID != parent.ProjectID || preview.PreviewPrNumber != prNumber || preview.PreviewOfSlug == parent.Slug {
+		if preview.ProjectID != parent.ProjectID || preview.PreviewPrNumber != prNumber || preview.PreviewOfSlug == parent.Slug ||
+			preview.PreviewPrState == state.PreviewPrStateStale || preview.PreviewPrState == state.PreviewPrStateTornDown {
 			continue
 		}
 		if _, err := s.closePRPreview(ctx, preview.ID, expiresAt); err != nil {
