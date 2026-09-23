@@ -195,7 +195,9 @@ func TestHandlePullRequest_DependencyQuotaStopsBuilds(t *testing.T) {
 	if len(rec.checks) < 2 || rec.checks[len(rec.checks)-1].phase != githubdgrpc.CheckPhaseFailed {
 		t.Fatalf("checks = %+v, want failed quota check", rec.checks)
 	}
-	if _, err := rig.mem.AppBySlug(ctx, "pr-42-worker"); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("over-quota dependency preview = %v, want ErrNotFound", err)
+	for _, slug := range []string{"pr-42-demo-app", "pr-42-db", "pr-42-worker"} {
+		if _, err := rig.mem.AppBySlug(ctx, slug); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("partial over-quota preview %q = %v, want ErrNotFound", slug, err)
+		}
 	}
 }

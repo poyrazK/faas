@@ -1399,69 +1399,134 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve preview account limits: %w", err)
 	}
 	previewLimits := api.MustLimitsFor(account.Plan)
-	created, err := s.Reconcile.Store.CreateAppIfUnderQuota(ctx, previewApp, previewLimits)
-	if err != nil {
-		var qe *state.QuotaError
-		if errors.As(err, &qe) {
-			// Rebuilding an existing preview does not consume another slot. The
-			// quota guard runs before the uniqueness check, so resolve that
-			// idempotent path before reporting the account as full.
-			existing, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal)
-			if lookupErr == nil && existing.AccountID == parentApp.AccountID &&
-				existing.ProjectID == parentApp.ProjectID && existing.PreviewPrNumber == ev.Number &&
-				existing.PreviewOfSlug == parentApp.Slug {
-				created = existing
-				err = nil
-			} else {
-				previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
-				if werr := s.writePreviewCheck(ctx, install.InstallationID,
-					ev.Repository.FullName, ev.PullRequest.HeadSHA,
-					githubdgrpc.CheckPhaseFailed, previewURL,
-					"Preview skipped: account has reached its deployed app limit. "+
-						"Close an existing app or upgrade your plan."); werr != nil {
-					s.Log.Warn("githubd: write quota preview check", "err", werr,
-						"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
-				}
-				s.Log.Info("githubd pull_request: quota exhausted",
-					"repo", ev.Repository.FullName, "pr_number", ev.Number,
-					"sender", ev.Sender.Login)
-				result := reconcile.Result{}
-				result.WasIgnored = true
-				return result, ErrIgnored
-			}
+	// Discover the complete PR-head closure before reserving any app slots.
+	// The production path reserves all rows in one store transaction, so an
+	// over-quota dependency cannot strand a root or earlier sibling preview.
+	sourceReady := ev.Action != PullRequestActionClosed && s.Source != nil && s.Enqueuer != nil && s.WorkDir != ""
+	var tree SourceTree
+	var scan reposcan.Result
+	var dependencies []state.App
+	var workloads map[string]reposcan.Workload
+	var available map[string]struct{}
+	if sourceReady {
+		tree, err = s.Source.Fetch(ctx, binding.AccountID, install.InstallationID,
+			ev.Repository.FullName, ev.PullRequest.HeadSHA)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: fetch preview source: %w", err)
+		}
+		defer func() { _ = tree.Close() }()
+		scan, err = s.Reconcile.Scan(tree.FS())
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("githubd: scan PR source: %w", err)
+		}
+		dependencies, err = s.previewDependencyParents(ctx, parentApp, scan)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		workloads = make(map[string]reposcan.Workload, len(scan.Workloads))
+		available = make(map[string]struct{}, len(scan.Workloads))
+		for _, workload := range scan.Workloads {
+			key := strings.ToLower(workload.Name)
+			workloads[key] = workload
+			available[key] = struct{}{}
 		}
 	}
-	if err != nil {
-		// Pre-existing row on (account_id, slug) → ErrConflict.
-		// That's the idempotent path: a 2nd synchronize /
-		// reopened / closed event for the same PR. We treat it as
-		// success — the row is already provisioned. The state
-		// machine still has to advance, though, so the dispatcher
-		// looks the existing row up by slug (the freshly-failed
-		// INSERT didn't mint an ID) and stamps preview_pr_state
-		// on it. Before PR-C this branch swallowed ErrConflict
-		// silently, which meant a `closed` event never actually
-		// mutated the row's preview_pr_state — the janitor's
-		// only signal was preview_expires_at, so PRs that were
-		// reopened-then-closed stayed open forever.
-		// ADR-095 PR-C.1.
-		if !errors.Is(err, state.ErrConflict) {
-			return reconcile.Result{}, fmt.Errorf("githubd: create preview app: %w", err)
+	var created state.App
+	var siblingPreviews []state.App
+	if sourceReady {
+		batch := make([]state.App, 0, len(dependencies)+1)
+		batch = append(batch, previewApp)
+		for _, dependency := range dependencies {
+			preview, buildErr := makePRDependencyPreview(dependency, ev.Number, expiresAt, policy)
+			if buildErr != nil {
+				return reconcile.Result{}, fmt.Errorf("githubd: prepare PR dependency %q: %w", dependency.WorkloadName, buildErr)
+			}
+			batch = append(batch, preview)
 		}
-		existing, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal)
-		if lookupErr != nil {
-			// The row vanished between the ErrConflict and the
-			// lookup — treat it as a teardown race: the row is
-			// already gone, so there's nothing to stamp and
-			// nothing for the janitor to reap. Return success
-			// so GitHub doesn't retry; the Check Run we'll
-			// write below reflects the live preview URL, which
-			// is fine because the row's deletion makes it 410.
-			s.Log.Info("githubd pull_request: conflict path lost row to concurrent delete",
-				"err", lookupErr, "preview_slug", previewSlugVal)
-			return reconcile.Result{}, nil
+		reserver, ok := s.Reconcile.Store.(state.PRPreviewBatchStore)
+		if !ok {
+			return reconcile.Result{}, fmt.Errorf("githubd: preview store does not support atomic reservation")
 		}
-		created = existing
+		reserved, reserveErr := reserver.CreatePRPreviewAppsIfUnderQuota(ctx, batch, previewLimits)
+		if reserveErr != nil {
+			var quota *state.QuotaError
+			if errors.As(reserveErr, &quota) {
+				previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
+				if werr := s.writePreviewCheck(ctx, install.InstallationID, ev.Repository.FullName,
+					ev.PullRequest.HeadSHA, githubdgrpc.CheckPhaseFailed, previewURL,
+					"Preview skipped: the full dependency set exceeds the deployed app limit. Close an app or upgrade your plan."); werr != nil {
+					s.Log.Warn("githubd: write quota preview check", "err", werr)
+				}
+				return reconcile.Result{WasIgnored: true}, ErrIgnored
+			}
+			return reconcile.Result{}, fmt.Errorf("githubd: reserve PR preview set: %w", reserveErr)
+		}
+		created, siblingPreviews = reserved[0], reserved[1:]
+	} else {
+		created, err = s.Reconcile.Store.CreateAppIfUnderQuota(ctx, previewApp, previewLimits)
+		if err != nil {
+			var qe *state.QuotaError
+			if errors.As(err, &qe) {
+				// Rebuilding an existing preview does not consume another slot. The
+				// quota guard runs before the uniqueness check, so resolve that
+				// idempotent path before reporting the account as full.
+				existing, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal)
+				if lookupErr == nil && existing.AccountID == parentApp.AccountID &&
+					existing.ProjectID == parentApp.ProjectID && existing.PreviewPrNumber == ev.Number &&
+					existing.PreviewOfSlug == parentApp.Slug {
+					created = existing
+					err = nil
+				} else {
+					previewURL := "https://" + previewHostnameForSlug(previewSlugVal)
+					if werr := s.writePreviewCheck(ctx, install.InstallationID,
+						ev.Repository.FullName, ev.PullRequest.HeadSHA,
+						githubdgrpc.CheckPhaseFailed, previewURL,
+						"Preview skipped: account has reached its deployed app limit. "+
+							"Close an existing app or upgrade your plan."); werr != nil {
+						s.Log.Warn("githubd: write quota preview check", "err", werr,
+							"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
+					}
+					s.Log.Info("githubd pull_request: quota exhausted",
+						"repo", ev.Repository.FullName, "pr_number", ev.Number,
+						"sender", ev.Sender.Login)
+					result := reconcile.Result{}
+					result.WasIgnored = true
+					return result, ErrIgnored
+				}
+			}
+		}
+		if err != nil {
+			// Pre-existing row on (account_id, slug) → ErrConflict.
+			// That's the idempotent path: a 2nd synchronize /
+			// reopened / closed event for the same PR. We treat it as
+			// success — the row is already provisioned. The state
+			// machine still has to advance, though, so the dispatcher
+			// looks the existing row up by slug (the freshly-failed
+			// INSERT didn't mint an ID) and stamps preview_pr_state
+			// on it. Before PR-C this branch swallowed ErrConflict
+			// silently, which meant a `closed` event never actually
+			// mutated the row's preview_pr_state — the janitor's
+			// only signal was preview_expires_at, so PRs that were
+			// reopened-then-closed stayed open forever.
+			// ADR-095 PR-C.1.
+			if !errors.Is(err, state.ErrConflict) {
+				return reconcile.Result{}, fmt.Errorf("githubd: create preview app: %w", err)
+			}
+			existing, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal)
+			if lookupErr != nil {
+				// The row vanished between the ErrConflict and the
+				// lookup — treat it as a teardown race: the row is
+				// already gone, so there's nothing to stamp and
+				// nothing for the janitor to reap. Return success
+				// so GitHub doesn't retry; the Check Run we'll
+				// write below reflects the live preview URL, which
+				// is fine because the row's deletion makes it 410.
+				s.Log.Info("githubd pull_request: conflict path lost row to concurrent delete",
+					"err", lookupErr, "preview_slug", previewSlugVal)
+				return reconcile.Result{}, nil
+			}
+			created = existing
+		}
 	}
 	if created.AccountID != parentApp.AccountID || created.ProjectID != parentApp.ProjectID ||
 		created.PreviewOfSlug != parentApp.Slug || created.PreviewPrNumber != ev.Number {
@@ -1558,28 +1623,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	// intentionally omit these production dependencies; production always wires
 	// all three and therefore turns every open/synchronize/reopen event into a
 	// real DeploymentKindPreview build.
-	if s.Source != nil && s.Enqueuer != nil && s.WorkDir != "" {
-		tree, fetchErr := s.Source.Fetch(ctx, binding.AccountID, install.InstallationID,
-			ev.Repository.FullName, ev.PullRequest.HeadSHA)
-		if fetchErr != nil {
-			return result, fmt.Errorf("githubd: fetch preview source: %w", fetchErr)
-		}
-		defer func() { _ = tree.Close() }()
-		scan, scanErr := s.Reconcile.Scan(tree.FS())
-		if scanErr != nil {
-			return result, fmt.Errorf("githubd: scan PR source: %w", scanErr)
-		}
-		dependencies, depsErr := s.previewDependencyParents(ctx, parentApp, scan)
-		if depsErr != nil {
-			return result, depsErr
-		}
-		workloads := make(map[string]reposcan.Workload, len(scan.Workloads))
-		available := make(map[string]struct{}, len(scan.Workloads))
-		for _, workload := range scan.Workloads {
-			key := strings.ToLower(workload.Name)
-			workloads[key] = workload
-			available[key] = struct{}{}
-		}
+	if sourceReady {
 		if parentApp.ProjectID != "" {
 			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy)
 			if err != nil {
@@ -1588,18 +1632,10 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			result.Added[0] = created
 		}
 		toBuild := make([]state.App, 0, len(dependencies)+1)
-		for _, dependency := range dependencies {
-			preview, provisionErr := s.provisionPRDependency(ctx, dependency, ev.Number, expiresAt, policy, previewLimits)
-			if provisionErr != nil {
-				var quota *state.QuotaError
-				if errors.As(provisionErr, &quota) {
-					_ = s.writePreviewCheck(ctx, install.InstallationID, ev.Repository.FullName,
-						ev.PullRequest.HeadSHA, githubdgrpc.CheckPhaseFailed, previewURL,
-						fmt.Sprintf("Preview skipped: dependency %q exceeds the deployed app limit.", dependency.WorkloadName))
-					result.WasIgnored = true
-					return result, ErrIgnored
-				}
-				return result, fmt.Errorf("githubd: provision PR dependency %q: %w", dependency.WorkloadName, provisionErr)
+		for i, dependency := range dependencies {
+			preview, refreshErr := s.Reconcile.Store.RefreshPRPreview(ctx, siblingPreviews[i].ID, expiresAt)
+			if refreshErr != nil {
+				return result, fmt.Errorf("githubd: refresh PR dependency %q: %w", dependency.WorkloadName, refreshErr)
 			}
 			preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy)
 			if err != nil {

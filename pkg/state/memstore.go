@@ -3523,6 +3523,52 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.Limits) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createAppIfUnderQuotaLocked(app, limits)
+}
+
+// CreatePRPreviewAppsIfUnderQuota mirrors PgStore's all-or-nothing preview
+// reservation. The mutex covers the full batch, including quota accounting.
+func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App, limits api.Limits) ([]App, error) {
+	if err := validatePRPreviewBatch(apps); err != nil {
+		return nil, err
+	}
+	if len(apps) == 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	created := make([]App, 0, len(apps))
+	insertedIDs := make([]string, 0, len(apps))
+	rollback := func(err error) ([]App, error) {
+		for _, id := range insertedIDs {
+			delete(m.apps, id)
+		}
+		return nil, err
+	}
+	for _, app := range apps {
+		row, err := m.createAppIfUnderQuotaLocked(app, limits)
+		if errors.Is(err, ErrConflict) {
+			for _, existing := range m.apps {
+				if existing.Slug == app.Slug && existing.Status != AppDeleted {
+					row = existing
+					if samePRPreview(existing, app) {
+						err = nil
+					}
+					break
+				}
+			}
+		} else if err == nil {
+			insertedIDs = append(insertedIDs, row.ID)
+		}
+		if err != nil {
+			return rollback(err)
+		}
+		created = append(created, row)
+	}
+	return created, nil
+}
+
+func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App, error) {
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}

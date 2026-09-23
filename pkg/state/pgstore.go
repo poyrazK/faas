@@ -2204,6 +2204,53 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		return App{}, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	created, err := createAppIfUnderQuotaTx(ctx, tx, app, limits)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit create app: %w", err)
+	}
+	return created, nil
+}
+
+// CreatePRPreviewAppsIfUnderQuota reserves an entire PR preview closure in one
+// transaction. A quota error or conflicting slug rolls back every new sibling.
+// Existing siblings are returned unchanged so retries do not consume slots.
+func (s *PgStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []App, limits api.Limits) ([]App, error) {
+	if err := validatePRPreviewBatch(apps); err != nil {
+		return nil, err
+	}
+	if len(apps) == 0 {
+		return nil, nil
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("state: begin preview batch: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	created := make([]App, 0, len(apps))
+	for _, app := range apps {
+		row, createErr := createAppIfUnderQuotaTx(ctx, tx, app, limits)
+		if errors.Is(createErr, ErrConflict) {
+			row, createErr = scanApp(tx.QueryRow(ctx,
+				`select `+appsSelectColumns+` from apps where slug = $1 and status <> 'deleted'`, app.Slug))
+			if createErr == nil && !samePRPreview(row, app) {
+				return nil, ErrConflict
+			}
+		}
+		if createErr != nil {
+			return nil, createErr
+		}
+		created = append(created, row)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("state: commit preview batch: %w", err)
+	}
+	return created, nil
+}
+
+func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api.Limits) (App, error) {
 
 	// 1. Lock the parent accounts row. SELECT 1 + FOR UPDATE keeps the
 	//    lock acquisition in one round-trip; the FOR UPDATE blocks any
@@ -2424,9 +2471,6 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return App{}, fmt.Errorf("state: commit create app: %w", err)
 	}
 	return created, nil
 }

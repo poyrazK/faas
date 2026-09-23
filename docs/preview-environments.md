@@ -66,7 +66,10 @@ Each preview workload consumes **one slot** of the customer's
 
 This is the same ceiling production apps use; there is no
 separate preview cap. A preview with two app dependencies consumes three
-slots. The 7-day default TTL plus the 24h
+slots. The root and its dependency previews reserve those slots atomically:
+if the full set does not fit, no new preview rows are kept and no builds are
+queued. Existing rows for the same PR are preserved on retries. The 7-day
+default TTL plus the 24h
 closed-grace window plus the janitor's per-tick sweep keep
 the steady-state preview count bounded — a customer who
 opens 20 PRs today will not have 20 previews live a week

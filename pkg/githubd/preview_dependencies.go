@@ -2,12 +2,10 @@ package githubd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -92,14 +90,14 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 	return parents, nil
 }
 
-// provisionPRDependency is intentionally idempotent: a retried webhook must
-// reuse the same row and renew its lease, not spend another account slot.
-func (s *Service) provisionPRDependency(ctx context.Context, parent state.App, prNumber int, expiresAt time.Time, policy state.GitHubDeployPolicy, limits api.Limits) (state.App, error) {
+// makePRDependencyPreview builds the desired sibling row. The caller reserves
+// the root and all siblings together before refreshing leases or enqueueing.
+func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time, policy state.GitHubDeployPolicy) (state.App, error) {
 	slug, err := previewSlug(parent.Slug, prNumber)
 	if err != nil {
 		return state.App{}, err
 	}
-	preview := applyGitHubRootPolicy(state.App{
+	return applyGitHubRootPolicy(state.App{
 		AccountID: parent.AccountID, Slug: slug, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, MaxConcurrency: parent.MaxConcurrency,
 		IdleTimeoutS: parent.IdleTimeoutS, ProjectID: parent.ProjectID,
@@ -108,23 +106,7 @@ func (s *Service) provisionPRDependency(ctx context.Context, parent state.App, p
 		Manifest: parent.Manifest, AppProtocol: parent.AppProtocol, Status: state.AppActive,
 		PreviewOfSlug: parent.Slug, PreviewPrNumber: prNumber,
 		PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiresAt,
-	}, policy)
-	created, err := s.Reconcile.Store.CreateAppIfUnderQuota(ctx, preview, limits)
-	if err == nil {
-		return created, nil
-	}
-	if !errors.Is(err, state.ErrConflict) {
-		var quota *state.QuotaError
-		if !errors.As(err, &quota) {
-			return state.App{}, err
-		}
-	}
-	existing, lookupErr := s.Reconcile.Store.AppBySlug(ctx, slug)
-	if lookupErr != nil || existing.AccountID != parent.AccountID || existing.ProjectID != parent.ProjectID ||
-		existing.PreviewOfSlug != parent.Slug || existing.PreviewPrNumber != prNumber {
-		return state.App{}, err
-	}
-	return s.Reconcile.Store.RefreshPRPreview(ctx, existing.ID, expiresAt)
+	}, policy), nil
 }
 
 func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy) (state.App, error) {
