@@ -1332,9 +1332,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return nil, err
 			}
 			live := make(map[string]int, len(liveDeployments))
+			readinessRequired := make(map[string]bool, len(liveDeployments))
 			for _, deployment := range liveDeployments {
 				if deployment.ID != "" {
 					live[deployment.ID] = schedpkg.DeploymentRuntimePort(deployment)
+					var companions []deploymentCompanionRoute
+					if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
+						if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
+							return nil, fmt.Errorf("decode live deployment %s companions: %w", deployment.ID, err)
+						}
+					}
+					for _, companion := range companions {
+						if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil {
+							readinessRequired[deployment.ID] = true
+							break
+						}
+					}
 				}
 			}
 			instances, err := pgStore.ListInstancesForApp(ctx, appID)
@@ -1342,6 +1355,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return nil, err
 			}
 			targets := make([]gateway.Target, 0, len(instances))
+			readinessInstanceIDs := make([]string, 0, len(instances))
 			for _, instance := range instances {
 				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
 					continue
@@ -1350,14 +1364,32 @@ func run(ctx context.Context, log *slog.Logger) error {
 				if !ok {
 					continue
 				}
+				requiresReadiness := readinessRequired[instance.DeploymentID]
 				targets = append(targets, gateway.Target{
-					AppID:        appID,
-					InstanceID:   instance.ID,
-					NodeID:       instance.NodeID,
-					WakeID:       instance.WakeID,
-					DeploymentID: instance.DeploymentID,
-					Port:         port,
+					AppID:             appID,
+					InstanceID:        instance.ID,
+					NodeID:            instance.NodeID,
+					WakeID:            instance.WakeID,
+					DeploymentID:      instance.DeploymentID,
+					Port:              port,
+					RequiresReadiness: requiresReadiness,
 				})
+				if requiresReadiness {
+					readinessInstanceIDs = append(readinessInstanceIDs, instance.ID)
+				}
+			}
+			if len(readinessInstanceIDs) > 0 {
+				readiness, err := pgStore.LatestInstanceReadiness(ctx, readinessInstanceIDs)
+				if err != nil {
+					return nil, fmt.Errorf("load readiness for live targets: %w", err)
+				}
+				for i := range targets {
+					if current, ok := readiness[targets[i].InstanceID]; ok {
+						targets[i].Ready = current.Ready
+						targets[i].ReadinessUpdatedAt = current.At
+						targets[i].ReadinessEventID = current.EventID
+					}
+				}
 			}
 			return targets, nil
 		}).

@@ -494,6 +494,9 @@ type Querier interface {
 	// $1 = email
 	IsMailSuppressed(ctx context.Context, db DBTX, lower string) (bool, error)
 	LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestDeploymentRow, error)
+	// Gateway restart hydration: readiness is independent of the instance's
+	// RUNNING state, so replay only the latest reversible ready/unready event.
+	LatestInstanceReadiness(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessRow, error)
 	LatestSupersededDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestSupersededDeploymentRow, error)
 	// scopes is the auth permission set surfaced to the dashboard and the
 	// /v1/keys listing. See ADR-034 rev2.

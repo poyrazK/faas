@@ -6374,6 +6374,10 @@ type Sidecar struct {
 	// When omitted, the effective startup probe is also used for liveness to
 	// preserve the pre-existing sidecar healthcheck behavior.
 	LivenessProbe *SidecarProbe `json:"liveness_probe,omitempty"`
+	// ReadinessProbe is a reversible traffic gate for the primary-ingress
+	// companion. It must pass during startup before the instance can serve
+	// traffic; later failures withdraw the instance without killing it.
+	ReadinessProbe *SidecarProbe `json:"readiness_probe,omitempty"`
 	// DependsOn gates this workload on another workload's lifecycle state.
 	// At most WorkloadDependencyCapMax unique targets are accepted. An omitted
 	// condition means started. Init workloads remain prerequisites of the main
@@ -6490,6 +6494,21 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 			fmt.Sprintf("sidecar[%q].liveness_probe is only valid for type=sidecar.", s.Name))
 	}
 	if p := validateSidecarProbe(s.Name, "liveness_probe", s.LivenessProbe); p != nil {
+		return p
+	}
+	if s.ReadinessProbe != nil {
+		if s.Type != SidecarTypeSidecar || !s.PrimaryIngress {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar readiness probe",
+				fmt.Sprintf("sidecar[%q].readiness_probe is only valid for a primary_ingress sidecar.", s.Name))
+		}
+		if len(s.ReadinessProbe.Test) == 1 && s.ReadinessProbe.Test[0] == "NONE" {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar readiness probe",
+				fmt.Sprintf("sidecar[%q].readiness_probe cannot be disabled with test NONE.", s.Name))
+		}
+	}
+	if p := validateSidecarProbe(s.Name, "readiness_probe", s.ReadinessProbe); p != nil {
 		return p
 	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {

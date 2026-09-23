@@ -5038,7 +5038,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// leaks through (should never happen — guest-init always
 	// stamps the sidecar's name).
 	sidecarRestartTotal.WithLabelValues("", "")
-	for _, status := range []string{"starting", "healthy", "unhealthy", "restarting", "failed"} {
+	for _, status := range []string{"starting", "healthy", "unhealthy", "restarting", "failed", "ready", "unready"} {
 		sidecarHealthTransitionsTotal.WithLabelValues("", "", status)
 	}
 	// issue #301 (ADR-043, per-plan CPU fairness observability):

@@ -1391,6 +1391,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		}
 		startupProbe := sidecarProbeToProto(sc.StartupProbe)
 		livenessProbe := sidecarProbeToProto(sc.LivenessProbe)
+		readinessProbe := sidecarProbeToProto(sc.ReadinessProbe)
 		// Preserve the original flat startup fields for old vmmd binaries
 		// during a rolling upgrade. New vmmd reads the typed message above.
 		var startupProbeTest []string
@@ -1423,6 +1424,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			StartupProbeStartPeriodS: startupProbeStartPeriodS,
 			StartupProbe:             startupProbe,
 			LivenessProbe:            livenessProbe,
+			ReadinessProbe:           readinessProbe,
 		})
 	}
 	out := &vmmdpb.AppSpec{

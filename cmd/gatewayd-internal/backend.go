@@ -404,10 +404,11 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 }
 
 type deploymentCompanionRoute struct {
-	Name           string          `json:"name"`
-	Type           api.SidecarType `json:"type"`
-	Port           int             `json:"port"`
-	PrimaryIngress bool            `json:"primary_ingress,omitempty"`
+	Name           string            `json:"name"`
+	Type           api.SidecarType   `json:"type"`
+	Port           int               `json:"port"`
+	PrimaryIngress bool              `json:"primary_ingress,omitempty"`
+	ReadinessProbe *api.SidecarProbe `json:"readiness_probe,omitempty"`
 }
 
 // gatewayCompanionRoutes projects deployment-local companion specs into a
@@ -629,6 +630,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 	// RefreshDeploymentWeights on the per-app picker.
 	channels := []string{
 		db.NotifyInstanceChanged,
+		db.NotifyInstanceReadinessChanged,
 		db.NotifyAppChanged,
 		db.NotifyDomainChanged,
 		db.NotifyDomainVerify,
@@ -762,6 +764,23 @@ func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node 
 // require both app_id and instance_id and malformed payloads are logged.
 func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
+	case db.NotifyInstanceReadinessChanged:
+		var p struct {
+			AppID      string    `json:"app_id"`
+			InstanceID string    `json:"instance_id"`
+			Status     string    `json:"status"`
+			At         time.Time `json:"at"`
+			EventID    int64     `json:"event_id"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.InstanceID == "" || p.At.IsZero() {
+			log.Warn("gatewayd: bad instance_readiness_changed payload", "payload", n.Payload)
+			return
+		}
+		if setter, ok := inv.(interface {
+			SetInstanceReadiness(appID, instanceID, status string, at time.Time, eventID int64)
+		}); ok {
+			setter.SetInstanceReadiness(p.AppID, p.InstanceID, p.Status, p.At, p.EventID)
+		}
 	case db.NotifyInstanceChanged:
 		var p struct {
 			AppID      string `json:"app_id"`

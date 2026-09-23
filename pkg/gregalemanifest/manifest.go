@@ -124,6 +124,7 @@ type CompanionSpec struct {
 	Essential      *bool                 `yaml:"essential,omitempty" toml:"essential,omitempty"`
 	StartupProbe   *api.SidecarProbe     `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
 	LivenessProbe  *api.SidecarProbe     `yaml:"liveness_probe,omitempty" toml:"liveness_probe,omitempty"`
+	ReadinessProbe *api.SidecarProbe     `yaml:"readiness_probe,omitempty" toml:"readiness_probe,omitempty"`
 	DependsOn      []ExtensionDependency `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
 }
 
@@ -222,7 +223,7 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 			Cmd: append([]string(nil), ext.Cmd...), Env: env,
 			Port: ext.Port, PrimaryIngress: ext.PrimaryIngress, RamMB: ext.RamMB, ScratchMB: ext.ScratchMB,
 			CPUMillicores: ext.CPUMillicores, DiskIOProfile: ext.DiskIOProfile,
-			Essential: ext.Essential, StartupProbe: ext.StartupProbe, LivenessProbe: ext.LivenessProbe, DependsOn: deps,
+			Essential: ext.Essential, StartupProbe: ext.StartupProbe, LivenessProbe: ext.LivenessProbe, ReadinessProbe: ext.ReadinessProbe, DependsOn: deps,
 		}
 		if sc.Port == 0 {
 			sc.Port = defaults.Port

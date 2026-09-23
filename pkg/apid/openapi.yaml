@@ -16219,7 +16219,7 @@ paths:
         Oldest-first (forward narrative). Returns the sidecar's init-exit,
         restart, and health-transition frames. The `latest` field is the
         most recent `wake.sidecar_health` status (`starting`, `healthy`,
-        `unhealthy`, `restarting`, or `failed`) when one is available.
+        `unhealthy`, `restarting`, `failed`, `ready`, or `unready`) when one is available.
 
         The endpoint is a sub-resource of `/v1/apps/{slug}` and uses the
         same MFA, scope, per-app rate-limit, and Hobby+ observability gates
@@ -22334,7 +22334,7 @@ components:
 
     SidecarProbe:
       description: |
-        Container-local startup or liveness probe for a companion. Specify
+        Container-local startup, liveness, or readiness probe for a companion. Specify
         exactly one action: exec, http_get, tcp_socket, or the legacy OCI
         test field. Port 0/omitted uses the workload's declared port, then
         the image port, then the platform default.
@@ -24414,6 +24414,9 @@ components:
           HTTP GET, and TCP probes. Omit it to use the image OCI `HEALTHCHECK`.
         - `liveness_probe` independently monitors a running sidecar; when
           omitted, the effective startup probe is reused for compatibility.
+        - `readiness_probe` is valid only on the `primary_ingress` sidecar. It
+          gates initial traffic and temporarily withdraws/resumes routing
+          without restarting the companion.
         - `depends_on` optionally gates this workload on `main` or
           another sidecar. Conditions are `started`, `healthy`, and
           `completed_successfully`; omitted condition means `started`.
@@ -24482,6 +24485,8 @@ components:
         startup_probe:
           $ref: '#/components/schemas/SidecarProbe'
         liveness_probe:
+          $ref: '#/components/schemas/SidecarProbe'
+        readiness_probe:
           $ref: '#/components/schemas/SidecarProbe'
         depends_on:
           type: array
@@ -29081,7 +29086,7 @@ components:
           description: "RFC 3339 UTC timestamp of the health transition."
         status:
           type: string
-          enum: [starting, healthy, unhealthy, restarting, failed]
+          enum: [starting, healthy, unhealthy, restarting, failed, ready, unready]
           description: "Closed sidecar health state emitted by guest-init."
         reason:
           type: string

@@ -88,6 +88,14 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 				StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/usr/local/bin/ready"}, IntervalS: 5, TimeoutS: 2, Retries: 3},
 			},
 		},
+		{
+			name: "primary-ingress-readiness-probe",
+			s: Sidecar{
+				Name: "proxy", Image: "r/x@sha256:" + strings.Repeat("d", 64), Type: SidecarTypeSidecar,
+				Port: 8081, PrimaryIngress: true,
+				ReadinessProbe: &AppManifestHealthcheck{HTTPGet: &SidecarHTTPGetProbe{Path: "/readyz"}},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -238,6 +246,16 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 			name:    "startup-probe-legacy-interval-over-max",
 			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, IntervalS: 301}},
 			wantSub: "outside their supported ranges",
+		},
+		{
+			name:    "readiness-probe-not-primary-ingress",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, ReadinessProbe: &AppManifestHealthcheck{Exec: &SidecarExecProbe{Command: []string{"/ready"}}}},
+			wantSub: "only valid for a primary_ingress sidecar",
+		},
+		{
+			name:    "readiness-probe-cannot-be-disabled",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, Port: 8081, PrimaryIngress: true, ReadinessProbe: &AppManifestHealthcheck{Test: []string{"NONE"}}},
+			wantSub: "cannot be disabled",
 		},
 		{
 			name: "env-value-too-long",

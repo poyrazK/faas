@@ -648,6 +648,10 @@ const (
 	NotifyBuildLog        = "build_log"
 	NotifyDomainVerify    = "domain_verify"
 	NotifyInstanceChanged = "instance_changed"
+	// NotifyInstanceReadinessChanged carries reversible sidecar readiness
+	// transitions. Gateway listeners update the in-memory picker without
+	// changing schedd-owned instances.state.
+	NotifyInstanceReadinessChanged = "instance_readiness_changed"
 	NotifySnapshotPrime   = "snapshot_prime"
 	NotifySnapshotBoot    = "snapshot_boot"
 	NotifySnapshotWritten = "snapshot_written"

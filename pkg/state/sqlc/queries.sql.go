@@ -4599,6 +4599,53 @@ func (q *Queries) LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UU
 	return i, err
 }
 
+const latestInstanceReadiness = `-- name: LatestInstanceReadiness :many
+SELECT DISTINCT ON (CAST(data->>'instance_id' AS text))
+       CAST(data->>'instance_id' AS text) AS instance_id,
+       CAST(data->>'status' AS text) AS status,
+       at,
+       id
+FROM events
+WHERE kind = 'wake.sidecar_health'
+  AND data->>'status' IN ('ready', 'unready')
+  AND data->>'instance_id' = ANY($1::text[])
+ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC
+`
+
+type LatestInstanceReadinessRow struct {
+	InstanceID string
+	Status     string
+	At         pgtype.Timestamptz
+	ID         int64
+}
+
+// Gateway restart hydration: readiness is independent of the instance's
+// RUNNING state, so replay only the latest reversible ready/unready event.
+func (q *Queries) LatestInstanceReadiness(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessRow, error) {
+	rows, err := db.Query(ctx, latestInstanceReadiness, instanceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LatestInstanceReadinessRow{}
+	for rows.Next() {
+		var i LatestInstanceReadinessRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.Status,
+			&i.At,
+			&i.ID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const latestSupersededDeployment = `-- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
