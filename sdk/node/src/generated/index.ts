@@ -400,6 +400,7 @@ export type { ListTriggerRecordsResponse } from './models/ListTriggerRecordsResp
 export type { ListWorkflowRunsResponse } from './models/ListWorkflowRunsResponse.js';
 export type { ListWorkflowStepsResponse } from './models/ListWorkflowStepsResponse.js';
 export type { LogExcerpt } from './models/LogExcerpt.js';
+export type { LogQueryEvent } from './models/LogQueryEvent.js';
 export type { MagicLinkSignupRequest } from './models/MagicLinkSignupRequest.js';
 export type { ManagedPostgresBinding } from './models/ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './models/ManagedPostgresBindingList.js';
