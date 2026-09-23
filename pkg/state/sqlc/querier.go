@@ -198,6 +198,10 @@ type Querier interface {
 	// credential now" lever.
 	DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerParams) error
+	// The hostname label uses the app's immutable UUID so aliases remain stable
+	// across app slug renames. Keep the deployment join app-scoped and hide
+	// soft-deleted owners/targets.
+	DeploymentAliasByHostLabel(ctx context.Context, db DBTX, hostLabel string) ([]DeploymentAliasByHostLabelRow, error)
 	DeploymentByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentByIDRow, error)
 	// Called by the recovery arbiter after a successful migrate-or-
 	// recreate sweep has restored the destination's snapshot set, OR by

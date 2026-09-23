@@ -30,3 +30,16 @@ func TestValidDeploymentAliasName(t *testing.T) {
 		})
 	}
 }
+func TestDeploymentAliasHostLabel(t *testing.T) {
+	const appID = "550e8400-e29b-41d4-a716-446655440000"
+	got, ok := DeploymentAliasHostLabel(appID, "canary")
+	if !ok || got != "tag-canary-550e8400e29b41d4a716446655440000" {
+		t.Fatalf("DeploymentAliasHostLabel = %q, %v", got, ok)
+	}
+	if _, ok := DeploymentAliasHostLabel(appID, strings.Repeat("a", 27)); ok {
+		t.Fatal("hostname label exceeding 63 characters was accepted")
+	}
+	if _, ok := DeploymentAliasHostLabel("not-an-app-id", "canary"); ok {
+		t.Fatal("invalid app id accepted")
+	}
+}

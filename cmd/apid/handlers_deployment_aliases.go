@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -24,7 +25,7 @@ func (s *server) listDeploymentAliases(w http.ResponseWriter, r *http.Request, a
 	}
 	resp := api.DeploymentAliasListResponse{Items: make([]api.DeploymentAliasResponse, 0, len(rows))}
 	for _, row := range rows {
-		resp.Items = append(resp.Items, deploymentAliasResponse(row))
+		resp.Items = append(resp.Items, deploymentAliasResponse(row, app.ID, s.domain))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -35,8 +36,8 @@ func (s *server) setDeploymentAlias(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	name := r.PathValue("name")
-	if !api.ValidDeploymentAliasName(name) {
-		api.WriteProblem(w, api.ErrValidation("alias name must be a lowercase DNS label of at most 63 characters"))
+	if _, ok := api.DeploymentAliasHostLabel(app.ID, name); !ok {
+		api.WriteProblem(w, api.ErrValidation("alias name must fit in a 63-character hostname label"))
 		return
 	}
 	var req api.SetDeploymentAliasRequest
@@ -54,7 +55,12 @@ func (s *server) setDeploymentAlias(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	if errors.Is(err, state.ErrInvalidArgument) {
-		api.WriteProblem(w, api.ErrValidation("invalid deployment alias"))
+		api.WriteProblem(w, api.ErrValidation("invalid deployment alias name or hostname"))
+		return
+	}
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Alias hostname is already in use", "the generated alias host collides with an existing app hostname"))
 		return
 	}
 	if err != nil {
@@ -64,7 +70,7 @@ func (s *server) setDeploymentAlias(w http.ResponseWriter, r *http.Request, acct
 	s.audit.Emit(r.Context(), "deployment_alias.set", &acct.ID, map[string]any{
 		"app_id": app.ID, "name": alias.Name, "deployment_id": alias.DeploymentID,
 	})
-	writeJSON(w, http.StatusOK, deploymentAliasResponse(alias))
+	writeJSON(w, http.StatusOK, deploymentAliasResponse(alias, app.ID, s.domain))
 }
 
 func (s *server) deleteDeploymentAlias(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -102,9 +108,16 @@ func (s *server) deploymentAliasStore(w http.ResponseWriter) (state.DeploymentAl
 	return store, ok
 }
 
-func deploymentAliasResponse(alias state.DeploymentAlias) api.DeploymentAliasResponse {
-	return api.DeploymentAliasResponse{
+func deploymentAliasResponse(alias state.DeploymentAlias, appID, domain string) api.DeploymentAliasResponse {
+	resp := api.DeploymentAliasResponse{
 		Name: alias.Name, DeploymentID: alias.DeploymentID, Revision: alias.Revision,
 		CreatedAt: alias.CreatedAt, UpdatedAt: alias.UpdatedAt,
 	}
+	label, ok := api.DeploymentAliasHostLabel(appID, alias.Name)
+	domain = strings.Trim(strings.TrimSpace(domain), ".")
+	if ok && domain != "" {
+		resp.Host = label + "." + domain
+		resp.URL = "https://" + resp.Host
+	}
+	return resp
 }

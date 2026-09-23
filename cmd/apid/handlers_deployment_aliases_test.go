@@ -34,7 +34,12 @@ func TestDeploymentAliasesCRUD(t *testing.T) {
 	if err := json.Unmarshal(put.Body.Bytes(), &alias); err != nil {
 		t.Fatal(err)
 	}
-	if alias.Name != "candidate" || alias.DeploymentID != first.ID || alias.Revision != first.Revision {
+	expectedLabel, ok := api.DeploymentAliasHostLabel(app.ID, "candidate")
+	if !ok {
+		t.Fatal("host label rejected valid alias")
+	}
+	if alias.Name != "candidate" || alias.DeploymentID != first.ID || alias.Revision != first.Revision ||
+		alias.Host != expectedLabel+".gregale.dev" || alias.URL != "https://"+alias.Host {
 		t.Fatalf("PUT response = %+v", alias)
 	}
 
@@ -58,7 +63,7 @@ func TestDeploymentAliasesCRUD(t *testing.T) {
 	if err := json.Unmarshal(list.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Items) != 1 || got.Items[0].DeploymentID != second.ID {
+	if len(got.Items) != 1 || got.Items[0].DeploymentID != second.ID || got.Items[0].Host != alias.Host {
 		t.Fatalf("GET aliases = %+v", got.Items)
 	}
 

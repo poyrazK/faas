@@ -2624,11 +2624,13 @@ type SetDeploymentAliasRequest struct {
 
 // DeploymentAliasResponse is the persisted mapping returned by the
 // deployment-alias API. Revision is included as the readable vN handle for
-// the immutable target.
+// the immutable target; Host and URL expose its stable public route.
 type DeploymentAliasResponse struct {
 	Name         string    `json:"name"`
 	DeploymentID string    `json:"deployment_id"`
 	Revision     int       `json:"revision"`
+	Host         string    `json:"host,omitempty"`
+	URL          string    `json:"url,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

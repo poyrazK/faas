@@ -1800,6 +1800,59 @@ func (q *Queries) DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerP
 	return err
 }
 
+const deploymentAliasByHostLabel = `-- name: DeploymentAliasByHostLabel :many
+SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
+  FROM deployment_aliases a
+  JOIN apps p ON p.id = a.app_id
+             AND p.status <> 'deleted'
+             AND p.deleted_at IS NULL
+  JOIN deployments d ON d.id = a.deployment_id
+                    AND d.app_id = a.app_id
+                    AND d.deleted_at IS NULL
+ WHERE ('tag-' || a.name || '-' || replace(a.app_id::text, '-', ''))
+       = $1
+ ORDER BY a.app_id, a.name
+`
+
+type DeploymentAliasByHostLabelRow struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	Revision     int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// The hostname label uses the app's immutable UUID so aliases remain stable
+// across app slug renames. Keep the deployment join app-scoped and hide
+// soft-deleted owners/targets.
+func (q *Queries) DeploymentAliasByHostLabel(ctx context.Context, db DBTX, hostLabel string) ([]DeploymentAliasByHostLabelRow, error) {
+	rows, err := db.Query(ctx, deploymentAliasByHostLabel, hostLabel)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeploymentAliasByHostLabelRow{}
+	for rows.Next() {
+		var i DeploymentAliasByHostLabelRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.DeploymentID,
+			&i.Revision,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deploymentByID = `-- name: DeploymentByID :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -12857,6 +12910,7 @@ WITH upserted AS (
      WHERE d.app_id = $2
        AND d.id = $3
        AND a.deleted_at IS NULL
+       AND a.status <> 'deleted'
        AND d.deleted_at IS NULL
        AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live')
     ON CONFLICT (app_id, name) DO UPDATE
