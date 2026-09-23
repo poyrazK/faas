@@ -37,6 +37,9 @@ type composeCandidate struct {
 	Environment any      `yaml:"environment"`
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
+
+	ServiceBindingPolicy      string `yaml:"x-gregale-service-policy"`
+	PreviewServiceCallsPolicy string `yaml:"x-gregale-preview-calls"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -168,6 +171,20 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if s.Build != nil && !hasBuild {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s build configuration resolved empty", src, name)
 		}
+		serviceBindingPolicy, policyErr := normalizeServiceBindingPolicy(s.ServiceBindingPolicy)
+		if policyErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, policyErr)
+		}
+		if !hasBuild && serviceBindingPolicy != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-policy requires a build workload", src, name)
+		}
+		previewServiceCallsPolicy, previewPolicyErr := normalizePreviewServiceCallsPolicy(s.PreviewServiceCallsPolicy)
+		if previewPolicyErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, previewPolicyErr)
+		}
+		if !hasBuild && previewServiceCallsPolicy != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-preview-calls requires a build workload", src, name)
+		}
 		command, commandShell := commandSpec(s.Command)
 		if hasBuild {
 			if (ctx != "" && !fs.ValidPath(ctx)) || strings.HasPrefix(ctx, "../") ||
@@ -217,12 +234,42 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			command:      command,
 			commandShell: commandShell,
 			dependsOn:    dependencyNames(s.DependsOn),
-			ports:        parsePorts(s.Ports),
-			envKeys:      envKeys(s.Environment),
-			source:       src + ": " + name,
+
+			serviceBindingPolicy:      serviceBindingPolicy,
+			previewServiceCallsPolicy: previewServiceCallsPolicy,
+
+			ports:   parsePorts(s.Ports),
+			envKeys: envKeys(s.Environment),
+			source:  src + ": " + name,
 		})
 	}
 	return seeds, managed, warnings, nil
+}
+
+func normalizeServiceBindingPolicy(value string) (ServiceBindingPolicy, error) {
+	switch normalized := strings.ToLower(strings.TrimSpace(value)); normalized {
+	case "":
+		return "", nil
+	case string(ServiceBindingPolicyAccount):
+		return ServiceBindingPolicyAccount, nil
+	case string(ServiceBindingPolicyDeclared):
+		return ServiceBindingPolicyDeclared, nil
+	default:
+		return "", fmt.Errorf("x-gregale-service-policy must be account or declared")
+	}
+}
+
+func normalizePreviewServiceCallsPolicy(value string) (PreviewServiceCallsPolicy, error) {
+	switch normalized := strings.ToLower(strings.TrimSpace(value)); normalized {
+	case "":
+		return "", nil
+	case string(PreviewServiceCallsAllow):
+		return PreviewServiceCallsAllow, nil
+	case string(PreviewServiceCallsDeny):
+		return PreviewServiceCallsDeny, nil
+	default:
+		return "", fmt.Errorf("x-gregale-preview-calls must be allow or deny")
+	}
 }
 
 // dependencyNames normalizes Compose's short and long depends_on forms.

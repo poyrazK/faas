@@ -2031,6 +2031,14 @@ func (c *Client) PatchDeploymentsIdTraffic(ctx context.Context, id string, perce
 		UpdateDeploymentTrafficRequest{TrafficPercent: percent}, &out)
 }
 
+// PatchDeploymentTrafficIfServing updates traffic only if the named live
+// sibling still owns all production traffic at the transaction boundary.
+func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string, percent int, servingID string) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic",
+		UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID}, &out)
+}
+
 // AdvanceCanary advances exactly one persisted canary step. APID resolves
 // the next percentage from the deployment's stored preset and performs the
 // expected-step compare-and-swap together with traffic, rollout state, and
@@ -2952,6 +2960,14 @@ func (c *Client) InvokeAppAsync(ctx context.Context, slug string, req InvokeRequ
 func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendRequest) (QueueSendResponse, error) {
 	var out QueueSendResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/send", req, &out)
+}
+
+// SendAppMessage reliably enqueues a CloudEvents-wrapped message for another
+// Gregale application. The returned invocation id is visible through the
+// ordinary invocation and DLQ APIs.
+func (c *Client) SendAppMessage(ctx context.Context, targetApp string, req SendAppMessageRequest) (SendAppMessageResponse, error) {
+	var out SendAppMessageResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+targetApp+"/inbox", req, &out)
 }
 
 // QueueReceive long-polls for the next dispatched row on the queue.
@@ -5079,6 +5095,14 @@ func (c *Client) ListAppWebhooks(ctx context.Context, slug string) ([]AppWebhook
 func (c *Client) CreateAppWebhook(ctx context.Context, slug string, req CreateAppWebhookRequest) (AppWebhookResponse, error) {
 	var out AppWebhookResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks", req, &out)
+}
+
+// DeliverAppEvent queues an arbitrary event for a registered webhook
+// destination. The webhook subscription supplies signing, retries, timeout,
+// delivery format, and dead-letter behavior.
+func (c *Client) DeliverAppEvent(ctx context.Context, sourceApp string, req DeliverAppEventRequest) (DeliverAppEventResponse, error) {
+	var out DeliverAppEventResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+sourceApp+"/outbox", req, &out)
 }
 
 // GetAppWebhook returns a single subscription by id.

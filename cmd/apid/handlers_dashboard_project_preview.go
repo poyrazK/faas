@@ -271,8 +271,8 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 		}
 		log.Error("dashboard project_preview apply: cache lookup",
 			"account_id", acct.ID, "slug", slug, "err", cacheErr)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Cache lookup failed", cacheErr.Error()))
+		api.WriteProblem(w, api.ErrInternal("Gregale could not load the saved project preview source.").
+			WithHint("Re-upload the source and run the preview again; contact support if it continues."))
 		return
 	}
 	protected, protectionProblem := s.projectDeploymentEnvironmentProtection(r.Context(), acct, slug, pt.Environment)
@@ -298,8 +298,8 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 	if buildErr != nil {
 		log.Error("dashboard project_preview apply: build synth req",
 			"account_id", acct.ID, "slug", slug, "err", buildErr)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Apply rebuild failed", buildErr.Error()))
+		api.WriteProblem(w, api.ErrInternal("Gregale could not prepare this project preview for deployment.").
+			WithHint("Re-upload the source and try again; contact support if it continues."))
 		return
 	}
 	view := views.ProjectPreviewView{
@@ -492,13 +492,13 @@ func previewSlugOK(slug string) bool {
 func (s *server) submitProjectPreviewDispatch(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	if !previewSlugOK(slug) {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeDashboardBadRequest(w, r, "The project slug is invalid.")
 		return
 	}
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
 		// sessionAuth would have redirected; defensive 401.
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	s.submitProjectPreview(w, r, s.log, acct, slug)
@@ -510,12 +510,12 @@ func (s *server) submitProjectPreviewDispatch(w http.ResponseWriter, r *http.Req
 func (s *server) applyProjectPreviewDispatch(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	if !previewSlugOK(slug) {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeDashboardBadRequest(w, r, "The project slug is invalid.")
 		return
 	}
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	s.applyProjectPreview(w, r, s.log, acct, slug)

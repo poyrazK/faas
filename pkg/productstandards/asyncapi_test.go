@@ -26,8 +26,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Fatalf("defaultContentType = %v, want CloudEvents structured JSON", got)
 	}
 	info := object(t, document, "info")
-	if got := info["version"]; got != "1.3.0" {
-		t.Fatalf("info.version = %v, want 1.3.0 after internal event ingress expansion", got)
+	if got := info["version"]; got != "1.4.0" {
+		t.Fatalf("info.version = %v, want 1.4.0 after application inbox/outbox expansion", got)
 	}
 
 	channels := object(t, document, "channels")
@@ -72,9 +72,11 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Errorf("channels.internalEventPublish has %d messages, want 1", len(internalEventMessages))
 	}
 	for channelName, wantAddress := range map[string]string{
-		"queueSend":    "/v1/apps/{slug}/queues/send",
-		"queueReceive": "/v1/apps/{slug}/queues/receive",
-		"queueAck":     "/v1/apps/{slug}/queues/{id}/ack",
+		"queueSend":         "/v1/apps/{slug}/queues/send",
+		"queueReceive":      "/v1/apps/{slug}/queues/receive",
+		"queueAck":          "/v1/apps/{slug}/queues/{id}/ack",
+		"applicationInbox":  "/v1/apps/{slug}/inbox",
+		"applicationOutbox": "/v1/apps/{slug}/outbox",
 	} {
 		channel := object(t, channels, channelName)
 		if channel["address"] != wantAddress {
@@ -158,9 +160,11 @@ func TestAsyncAPIContract(t *testing.T) {
 		channel string
 		action  string
 	}{
-		"receiveQueueSend": {channel: "queueSend", action: "receive"},
-		"sendQueueReceive": {channel: "queueReceive", action: "send"},
-		"receiveQueueAck":  {channel: "queueAck", action: "receive"},
+		"receiveQueueSend":         {channel: "queueSend", action: "receive"},
+		"sendQueueReceive":         {channel: "queueReceive", action: "send"},
+		"receiveQueueAck":          {channel: "queueAck", action: "receive"},
+		"receiveApplicationInbox":  {channel: "applicationInbox", action: "receive"},
+		"receiveApplicationOutbox": {channel: "applicationOutbox", action: "receive"},
 	} {
 		operation := object(t, operations, operationName)
 		if operation["action"] != spec.action {

@@ -38,6 +38,33 @@ type PublishEventResponse struct {
 	AccountID  string    `json:"account_id"`
 }
 
+// SendAppMessageRequest is the application-inbox contract. Gregale wraps the
+// caller's data in a CloudEvents 1.0 envelope and places it on the target
+// application's durable invocation queue. Source defaults to "gregale.send";
+// ID and Time default to server-generated values.
+type SendAppMessageRequest struct {
+	ID              string          `json:"id,omitempty"`
+	Source          string          `json:"source,omitempty"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"data_content_type,omitempty"`
+	Data            json.RawMessage `json:"data"`
+	QueueName       string          `json:"queue_name,omitempty"`
+	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
+}
+
+// SendAppMessageResponse confirms that the message is durably queued. ID is
+// the invocation identifier used by the existing status, DLQ, and replay
+// surfaces; EventID is the CloudEvents id delivered in the payload.
+type SendAppMessageResponse struct {
+	ID        string `json:"id"`
+	EventID   string `json:"event_id"`
+	TargetApp string `json:"target_app"`
+	Status    string `json:"status"`
+	StatusURL string `json:"status_url"`
+	TraceID   string `json:"trace_id,omitempty"`
+}
+
 // EventSubscriptionResponse is one manifest-declared subscription currently
 // reconciled for an app. Filter is the normalized JSON object used by the
 // router when matching published events.
@@ -1137,6 +1164,19 @@ type AppResponse struct {
 	// The DTO reuses the existing api.AppManifest (defined in
 	// appmanifest.go) so the wire shape stays a single source of truth.
 	Manifest AppManifest `json:"manifest"`
+	// ServiceBindings are the repository-declared same-account app
+	// dependencies currently injected into this workload. They are a read-only
+	// discovery projection; authorization applies them only when
+	// ServiceBindingPolicy is "declared".
+	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	// ServiceBindingPolicy is the caller-side authorization policy applied to
+	// internal service requests. "account" preserves legacy same-account
+	// reachability; "declared" permits only ServiceBindings targets.
+	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// PreviewServiceCallsPolicy is this app's policy for calls originating
+	// from preview apps. "allow" is the legacy default; "deny" rejects them
+	// when this app is the production target.
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -1516,6 +1556,13 @@ type PublicAuthStatus struct {
 // below for the contract.
 type Sidecars []Sidecar
 
+// Companion and Companions are the customer-facing names for the bounded
+// helper workload model. Sidecar/Sidecars remain the storage and runtime wire
+// names for backwards compatibility with deployments created before the
+// companion API was introduced.
+type Companion = Sidecar
+type Companions = Sidecars
+
 // CreateDeploymentRequest ships a version (JSON variant; the multipart
 // variant is used for tarball/dockerfile deploys).
 type CreateDeploymentRequest struct {
@@ -1537,6 +1584,10 @@ type CreateDeploymentRequest struct {
 	// tarball deploys ignore this field (Railpack path bypasses the
 	// verify hook entirely).
 	RequireSigned *bool `json:"require_signed,omitempty"`
+	// Companions is the preferred customer-facing field for helper workloads.
+	// The server normalizes it into Sidecars before validation and persistence.
+	// A request must not set both fields.
+	Companions Companions `json:"companions,omitempty"`
 	// Sidecars (issue #463 / ADR-068) attaches up to 2 stateless
 	// sidecars (1 init + 1 sidecar) to the deployment. nil/empty
 	// = no sidecars. PR-A persists the field; PR-B wires the
@@ -1615,6 +1666,26 @@ type CreateDeploymentRequest struct {
 	// allow-auto setting, true forces full-rootfs, and false forces the
 	// legacy shared-base path.
 	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
+}
+
+// NormalizeCompanions preserves the existing sidecars persistence/runtime
+// contract while letting new clients use companion terminology. It mutates the
+// request once, at the deployment boundary, so all downstream code sees the
+// established Sidecars field.
+func (r *CreateDeploymentRequest) NormalizeCompanions() *Problem {
+	if r == nil {
+		return nil
+	}
+	if len(r.Companions) > 0 && len(r.Sidecars) > 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid companions",
+			"set either companions or the deprecated sidecars field, not both.")
+	}
+	if len(r.Companions) > 0 {
+		r.Sidecars = append(Sidecars(nil), r.Companions...)
+		r.Companions = nil
+	}
+	return nil
 }
 
 // CanaryPresetSpec is the canary ladder a customer asks for on a
@@ -2552,7 +2623,8 @@ type DeploymentPreviewURL struct {
 // its own "min_instances required" presence rule. Splitting the
 // DTOs keeps each handler's contract crisp.
 type UpdateDeploymentTrafficRequest struct {
-	TrafficPercent int `json:"traffic_percent"`
+	TrafficPercent              int     `json:"traffic_percent"`
+	ExpectedServingDeploymentID *string `json:"expected_serving_deployment_id,omitempty"`
 }
 
 // AdvanceCanaryRequest is the compare-and-swap body for
@@ -5588,11 +5660,15 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	Name          string   `json:"name"`
-	RootDir       string   `json:"root_dir"`
-	Dockerfile    string   `json:"dockerfile,omitempty"`
-	Command       []string `json:"command"`
-	DependsOn     []string `json:"depends_on,omitempty"`
+	Name       string   `json:"name"`
+	RootDir    string   `json:"root_dir"`
+	Dockerfile string   `json:"dockerfile,omitempty"`
+	Command    []string `json:"command"`
+	DependsOn  []string `json:"depends_on,omitempty"`
+
+	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
+	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`
 	Ports         []int    `json:"ports"`
@@ -6066,6 +6142,29 @@ const (
 	SidecarTypeSidecar SidecarType = "sidecar"
 )
 
+// CompanionPreset is the closed set of platform-managed companion images.
+// Deploy-time resolution replaces a preset-only declaration with an
+// operator-configured digest-pinned image before the deployment is persisted.
+type CompanionPreset string
+
+const (
+	CompanionPresetOpenTelemetry CompanionPreset = "opentelemetry"
+	CompanionPresetSentry        CompanionPreset = "sentry"
+	CompanionPresetDogStatsD     CompanionPreset = "datadog-dogstatsd"
+)
+
+// NormalizeCompanionPreset canonicalizes a preset name and reports whether it
+// belongs to the closed platform catalog.
+func NormalizeCompanionPreset(value string) (CompanionPreset, bool) {
+	preset := CompanionPreset(strings.ToLower(strings.TrimSpace(value)))
+	switch preset {
+	case CompanionPresetOpenTelemetry, CompanionPresetSentry, CompanionPresetDogStatsD:
+		return preset, true
+	default:
+		return "", false
+	}
+}
+
 // WorkloadDependencyCondition controls when a workload may start after one
 // of its dependencies reaches a lifecycle milestone. An empty condition is
 // treated as started for backwards-compatible clients that omit it.
@@ -6128,6 +6227,12 @@ var sidecarNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // PR-A the two-call-site duplication is acceptable.
 var sidecarImageRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
 
+// ValidCompanionImageReference reports whether ref is an immutable OCI digest
+// accepted for a custom or platform-managed companion.
+func ValidCompanionImageReference(ref string) bool {
+	return sidecarImageRe.MatchString(ref)
+}
+
 // Sidecar is one entry in the deploy request's `sidecars` array
 // (issue #463 / ADR-068). At most one with type=init and at most
 // one with type=sidecar per app (the 2-sidecar hard cap, enforced
@@ -6142,7 +6247,8 @@ var sidecarImageRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?
 // HTTP response — pinned by capture-based tests in
 // cmd/apid/handlers_deployments_test.go.
 //
-// The image reference MUST be digest-pinned (`repo@sha256:...`).
+// A custom image reference MUST be digest-pinned (`repo@sha256:...`). A
+// managed preset may omit it because apid resolves an operator-pinned digest.
 // Tag-pinning is the documented OCI supply-chain attack vector;
 // the runtime image already enforces this in pkg/imaged; the
 // API gate surfaces a useful error at the client side before
@@ -6161,9 +6267,14 @@ type Sidecar struct {
 	// Name matches the RFC 1123 label grammar. Unique within a
 	// single request. Required.
 	Name string `json:"name"`
+	// Preset selects a platform-managed companion. When Image is omitted, apid
+	// resolves the preset through its operator-configured digest catalog before
+	// validation and persistence. An explicit digest-pinned Image overrides the
+	// catalog while retaining the preset's manifest defaults.
+	Preset string `json:"preset,omitempty"`
 	// Image is the digest-pinned OCI reference (`repo@sha256:...`).
-	// Tag references rejected. Required.
-	Image string `json:"image"`
+	// Tag references are rejected. Required unless Preset is set.
+	Image string `json:"image,omitempty"`
 	// Type is the closed enum (init | sidecar). At most one of
 	// each per deployment. Required.
 	Type SidecarType `json:"type"`
@@ -6181,6 +6292,10 @@ type Sidecar struct {
 	// vmmd waitReady + runners ships in PR-B / PR-C; PR-A only
 	// persists the field.
 	Port int `json:"port,omitempty"`
+	// PrimaryIngress routes the application's normal public hostname to this
+	// long-running companion. This is intended for custom reverse proxies. It
+	// requires an explicit Port and is not valid for one-shot init workloads.
+	PrimaryIngress bool `json:"primary_ingress,omitempty"`
 	// RamMB is the cgroup memory ceiling for this sidecar. 0
 	// means "absent / inherit the plan RAM" (the common case).
 	// 32..512 enforced at the API layer.
@@ -6237,7 +6352,20 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 			"Invalid sidecar name",
 			"sidecar name \"main\" is reserved for the primary workload.")
 	}
-	if !sidecarImageRe.MatchString(s.Image) {
+	if s.Preset != "" {
+		preset, ok := NormalizeCompanionPreset(s.Preset)
+		if !ok {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid companion preset",
+				fmt.Sprintf("companion %q uses unsupported preset %q.", s.Name, s.Preset))
+		}
+		s.Preset = string(preset)
+	}
+	if s.Image == "" && s.Preset == "" {
+		return ErrSidecarInvalidImage(s.Name,
+			fmt.Errorf("image is required when preset is omitted"))
+	}
+	if s.Image != "" && !sidecarImageRe.MatchString(s.Image) {
 		return ErrSidecarInvalidImage(s.Name,
 			fmt.Errorf("not a digest-pinned reference (got %q)", s.Image))
 	}
@@ -6251,8 +6379,10 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	// every reference shape. A 403 here pre-empts the request
 	// before it ever reaches imaged — the customer sees a useful
 	// error in their browser, not a pending→failed transition.
-	if hint, denied := statefuldenylist.Match(s.Image); denied {
-		return ErrSidecarStatefulDeniedWithHint(s.Name, s.Image, hint)
+	if s.Image != "" {
+		if hint, denied := statefuldenylist.Match(s.Image); denied {
+			return ErrSidecarStatefulDeniedWithHint(s.Name, s.Image, hint)
+		}
 	}
 	if s.Type != SidecarTypeInit && s.Type != SidecarTypeSidecar {
 		return ErrSidecarInvalidType(s.Name, string(s.Type))
@@ -6278,6 +6408,16 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	}
 	if s.Port != 0 && (s.Port < 1 || s.Port > 65535) {
 		return ErrSidecarInvalidPort(s.Port)
+	}
+	if s.PrimaryIngress && s.Type != SidecarTypeSidecar {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid companion ingress",
+			fmt.Sprintf("companion %q must be a long-running sidecar to serve primary ingress.", s.Name))
+	}
+	if s.PrimaryIngress && s.Port == 0 {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid companion ingress",
+			fmt.Sprintf("companion %q must declare port when primary_ingress is true.", s.Name))
 	}
 	if s.RamMB != 0 && (s.RamMB < 32 || s.RamMB > 512) {
 		return ErrSidecarInvalidRamMB(s.RamMB)
@@ -6393,6 +6533,7 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	}
 	seen := map[SidecarType]int{}
 	names := map[string]bool{}
+	primaryIngress := ""
 	for i := range ss {
 		if p := ss[i].Validate(limits); p != nil {
 			return p
@@ -6403,6 +6544,14 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 				fmt.Sprintf("sidecar name %q appears more than once.", ss[i].Name))
 		}
 		names[ss[i].Name] = true
+		if ss[i].PrimaryIngress {
+			if primaryIngress != "" {
+				return NewProblem(http.StatusBadRequest, CodeValidation,
+					"Invalid companion ingress",
+					fmt.Sprintf("companions %q and %q both request primary ingress; only one is allowed.", primaryIngress, ss[i].Name))
+			}
+			primaryIngress = ss[i].Name
+		}
 		seen[ss[i].Type]++
 		if seen[ss[i].Type] > 1 {
 			return ErrSidecarInvalidType(ss[i].Name,

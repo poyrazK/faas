@@ -50,9 +50,9 @@ export class WorkflowsService {
         402: `code: plan_workflows_not_allowed — this plan does not include durable workflows.`,
         403: `code: plan_workflows_quota | forbidden — the concurrent-run cap is exhausted or the caller lacks scope.`,
         404: `code: workflow_definition_not_found | app_not_found — the app or named live workflow definition does not exist.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -100,9 +100,9 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -130,9 +130,9 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -160,9 +160,9 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -196,9 +196,9 @@ export class WorkflowsService {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
         409: `code: workflow_not_running — only running or awaiting_event runs accept events.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -230,9 +230,9 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },

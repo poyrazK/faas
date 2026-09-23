@@ -13,7 +13,10 @@ T = TypeVar("T", bound="AppSecurityFinding")
 
 @_attrs_define
 class AppSecurityFinding:
-    """One actionable security posture finding."""
+    """One actionable security posture finding. Codes beginning with image_scan_ describe live-image scan-evidence
+    coverage.
+
+    """
 
     code: str
     severity: AppSecurityFindingSeverity

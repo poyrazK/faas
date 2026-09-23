@@ -115,7 +115,8 @@ def sync_detailed(
     Args:
         slug (str):
         id (str):
-        body (MirrorReplayBatchRequest):
+        body (MirrorReplayBatchRequest): A bounded batch of sanitized historical requests to
+            replay against the mirror deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,7 +158,8 @@ def sync(
     Args:
         slug (str):
         id (str):
-        body (MirrorReplayBatchRequest):
+        body (MirrorReplayBatchRequest): A bounded batch of sanitized historical requests to
+            replay against the mirror deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +196,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         id (str):
-        body (MirrorReplayBatchRequest):
+        body (MirrorReplayBatchRequest): A bounded batch of sanitized historical requests to
+            replay against the mirror deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -234,7 +237,8 @@ async def asyncio(
     Args:
         slug (str):
         id (str):
-        body (MirrorReplayBatchRequest):
+        body (MirrorReplayBatchRequest): A bounded batch of sanitized historical requests to
+            replay against the mirror deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

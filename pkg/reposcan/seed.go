@@ -108,11 +108,15 @@ type workloadSeed struct {
 	command      []string
 	commandShell bool
 	dependsOn    []string
-	class        Class
-	schedule     string
-	schedules    []CronSchedule
-	ports        []int
-	envKeys      []string // KEYS only
+
+	serviceBindingPolicy      ServiceBindingPolicy
+	previewServiceCallsPolicy PreviewServiceCallsPolicy
+
+	class     Class
+	schedule  string
+	schedules []CronSchedule
+	ports     []int
+	envKeys   []string // KEYS only
 }
 
 // workloadKey is the merge-by-(RootDir, Name) key. Two seeds with

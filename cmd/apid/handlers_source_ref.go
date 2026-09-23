@@ -196,14 +196,14 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	var workflowDefs []api.WorkflowSpec
 	if manifest != nil {
 		workflowDefs = manifest.Workflows
-		if len(manifest.Extensions) > 0 {
+		if len(manifest.Companions) > 0 || len(manifest.Extensions) > 0 {
 			sidecars, sidecarErr := manifest.ToSidecars()
 			if sidecarErr != nil {
 				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", sidecarErr.Error()))
 				return
 			}
 			rolloutReq.Sidecars = sidecars
-			if sidecarProblem := validateAndPlanSidecars(rolloutReq, acct, limits); sidecarProblem != nil {
+			if sidecarProblem := s.validateAndPlanSidecars(rolloutReq, acct, limits); sidecarProblem != nil {
 				api.WriteProblem(w, sidecarProblem)
 				return
 			}

@@ -15,6 +15,13 @@
 # Default: https://gregale.dev
 # cli_auth_url_base = "https://gregale.dev"
 
+# Managed application companions. Each value must be an immutable OCI digest;
+# omit a key to make that preset return companion_preset_unavailable.
+# [companion_images]
+# opentelemetry = "registry.example.com/otel-collector@sha256:<64-hex-digest>"
+# sentry = "registry.example.com/sentry-forwarder@sha256:<64-hex-digest>"
+# datadog-dogstatsd = "registry.example.com/dogstatsd@sha256:<64-hex-digest>"
+
 # db_url: Postgres DSN. Empty => use $DATABASE_URL from the environment
 # (sealed.env on the production box; gap G2 — sealed at rest).
 # db_url = ""

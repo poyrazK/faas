@@ -230,6 +230,11 @@ type App struct {
 	// the App struct keeps the hot path allocation-free
 	// after first sight.
 	Sidecars []AppSidecar
+	// PrimaryIngressPort, when non-zero, sends the application's ordinary
+	// hostname (including custom domains) to a long-running companion instead
+	// of the main workload port. Hydration only sets it when all traffic-bearing
+	// live deployments agree, preventing proxy bypass during mixed rollouts.
+	PrimaryIngressPort int
 	// Ports is the app-owned listener roster. The public edge only selects
 	// TCP entries through the reserved `--port-<name>` hostname form;
 	// UDP entries remain guest-only.
@@ -5948,6 +5953,8 @@ haveApp:
 		// request context via a sentinel added below.
 		_ = port
 		r = withSidecarPort(r, port)
+	} else if app.PrimaryIngressPort != 0 {
+		r = withSidecarPort(r, app.PrimaryIngressPort)
 	}
 
 	// Issue #273 / ADR-042 — pre-instantiate the closed (class) set

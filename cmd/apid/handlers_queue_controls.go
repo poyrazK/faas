@@ -113,7 +113,9 @@ func (s *server) handleCancelDeployment(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrDeploymentCancelNotCancellable(id))
 	case err != nil:
 		s.ops.ObserveDeploymentCancelled("error")
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "cancel failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "cancel deployment",
+			"Gregale could not cancel this deployment.",
+			"Refresh the deployment status before retrying.", err)
 	default:
 		// ADR-124: fire one build_changed pg_notify per cascade-cancelled
 		// build so builderd's cancel-LISTEN goroutine can call VM.Cancel
@@ -188,7 +190,9 @@ func (s *server) handleReorderDeployment(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrDeploymentReorderPriorityInvalid(*req.Priority))
 		default:
 			s.ops.ObserveDeploymentReorder("error")
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "reorder failed", err.Error()))
+			writeCustomerInternalProblem(w, r, s.log, "reorder deployment",
+				"Gregale could not change this deployment's queue position.",
+				"Refresh the deployment status before retrying.", err)
 		}
 		return
 	}
@@ -220,7 +224,9 @@ func (s *server) handleClearDeployment(w http.ResponseWriter, r *http.Request, a
 			api.WriteProblem(w, api.ErrDeploymentCancelLiveForbidden(id))
 		default:
 			s.ops.ObserveDeploymentCleared("error")
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "clear failed", err.Error()))
+			writeCustomerInternalProblem(w, r, s.log, "clear deployment",
+				"Gregale could not clear this deployment.",
+				"Refresh the deployment status before retrying.", err)
 		}
 		return
 	}
@@ -272,7 +278,9 @@ func (s *server) handleClearObsoleteDeployments(w http.ResponseWriter, r *http.R
 	count, err := s.store.ClearObsoleteDeployments(r.Context(), app.ID, time.Now().UTC().Add(-olderThan))
 	if err != nil {
 		s.ops.ObserveDeploymentClearObsolete("error")
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "clear-obsolete failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "clear obsolete deployments",
+			"Gregale could not clear obsolete deployments.",
+			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
 	s.ops.ObserveDeploymentClearObsolete("ok")

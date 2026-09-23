@@ -127,14 +127,7 @@ func (s *Service) applyActions(
 			case "create":
 				app = workloadToDraftApp(project, action.Workload, action.StartCommand, acct.Plan, availableServices)
 			case "update":
-				manifest := action.App.Manifest
-				manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, action.Workload, availableServices)
-				manifest.BuildDockerfile = action.Workload.Dockerfile
-				app.RootDir = action.Workload.RootDir
-				app.WorkloadName = action.Workload.Name
-				app.WorkloadClass = workloadClassFromScan(action.Workload)
-				app.StartCommand = action.StartCommand
-				app.Manifest = manifest
+				app = ApplyScannedWorkloadToApp(app, action.Workload, availableServices)
 			}
 			mutations = append(mutations, state.ProjectReconcileMutation{Op: action.Op, App: app})
 		}
@@ -316,6 +309,9 @@ func (s *Service) applyUpdate(
 		serviceNames = available[0]
 	}
 	manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, a.Workload, serviceNames)
+	manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(a.Workload, serviceNames)
+	manifest.ServiceBindingPolicy = serviceBindingPolicyForWorkload(a.Workload)
+	manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(a.Workload)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
@@ -381,11 +377,33 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		StartCommand:  startCmd,
 		Manifest: state.AppManifest{
 			Env:             serviceEnvForWorkloadWithAvailable(nil, w, serviceNames),
+			ServiceBindings: serviceBindingsForWorkloadWithAvailable(w, serviceNames),
+
+			ServiceBindingPolicy:      serviceBindingPolicyForWorkload(w),
+			PreviewServiceCallsPolicy: previewServiceCallsPolicyForWorkload(w),
+
 			BuildDockerfile: w.Dockerfile,
 		},
 		RequireAuthn:   plan.RequireAuthnDefault(),
 		PublicAuthMode: plan.PublicAuthModeDefault(),
 	}
+}
+
+// ApplyScannedWorkloadToApp projects source-owned workload settings onto an
+// app without changing its identity or customer-owned configuration. The PR
+// preview dispatcher uses the same normalization as production reconcile, but
+// persists it only on the preview row.
+func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map[string]struct{}) state.App {
+	app.RootDir = w.RootDir
+	app.WorkloadName = w.Name
+	app.WorkloadClass = workloadClassFromScan(w)
+	app.StartCommand = resolveStartCommand(w)
+	app.Manifest.Env = serviceEnvForWorkloadWithAvailable(app.Manifest.Env, w, available)
+	app.Manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(w, available)
+	app.Manifest.ServiceBindingPolicy = serviceBindingPolicyForWorkload(w)
+	app.Manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(w)
+	app.Manifest.BuildDockerfile = w.Dockerfile
+	return app
 }
 
 // workloadClassFromScan converts the reposcan hint into the closed set that

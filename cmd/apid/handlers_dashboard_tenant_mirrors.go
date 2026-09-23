@@ -231,7 +231,7 @@ func (s *server) verifyDashboardMirrorsCSRF(w http.ResponseWriter, r *http.Reque
 func (s *server) dashboardCreateTenantSurface(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardTenantSurfacesCSRF(w, r, acct.ID) {
@@ -260,7 +260,7 @@ func (s *server) dashboardCreateTenantSurface(w http.ResponseWriter, r *http.Req
 func (s *server) dashboardDeleteTenantSurface(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardTenantSurfacesCSRF(w, r, acct.ID) {
@@ -277,7 +277,7 @@ func (s *server) dashboardDeleteTenantSurface(w http.ResponseWriter, r *http.Req
 func (s *server) dashboardAddTenantHostname(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardTenantSurfacesCSRF(w, r, acct.ID) {
@@ -299,7 +299,7 @@ func (s *server) dashboardAddTenantHostname(w http.ResponseWriter, r *http.Reque
 func (s *server) dashboardRemoveTenantHostname(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardTenantSurfacesCSRF(w, r, acct.ID) {
@@ -317,7 +317,7 @@ func (s *server) dashboardRemoveTenantHostname(w http.ResponseWriter, r *http.Re
 func (s *server) dashboardCreateMirrorRule(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardMirrorsCSRF(w, r, acct.ID) {
@@ -344,7 +344,7 @@ func (s *server) dashboardCreateMirrorRule(w http.ResponseWriter, r *http.Reques
 func (s *server) dashboardToggleMirrorRule(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardMirrorsCSRF(w, r, acct.ID) {
@@ -367,7 +367,7 @@ func (s *server) dashboardToggleMirrorRule(w http.ResponseWriter, r *http.Reques
 func (s *server) dashboardDeleteMirrorRule(w http.ResponseWriter, r *http.Request) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !s.verifyDashboardMirrorsCSRF(w, r, acct.ID) {

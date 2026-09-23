@@ -31,7 +31,7 @@ import (
 //     Surfaced in the WARN log so an operator scanning slog output
 //     can act without opening the docs.
 //   - detail: human-readable, customer-facing detail that names the
-//     provider in the body. e.g. "Google sign-in is not configured…".
+//     provider in the body.
 func (s *server) disabledOAuthResponse(w http.ResponseWriter, providerName, missingEnv, detail string) {
 	s.log.Warn(providerName+" OAuth disabled on this host",
 		"missing_env", missingEnv,
@@ -42,5 +42,5 @@ func (s *server) disabledOAuthResponse(w http.ResponseWriter, providerName, miss
 		api.CodeOAuthProviderUnavailable,
 		"OAuth Provider Unavailable",
 		detail,
-	))
+	).WithHint("Use another sign-in method, or contact support if you need this provider.").WithDocs("https://gregale.dev/auth"))
 }

@@ -35,7 +35,7 @@ func newWakeTestProxy(t *testing.T, provider ServiceEndpointProvider, wake Servi
 	now := time.Unix(100, 0)
 	return NewServiceProxy(ServiceProxyConfig{
 		Provider: provider,
-		Resolve: func(context.Context, string) (ServiceTarget, bool, error) {
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) { return ServiceCaller{}, nil },

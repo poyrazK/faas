@@ -5062,6 +5062,38 @@ func TestMemStore_ExplicitZeroTrafficPreservesStableRevision(t *testing.T) {
 	}
 }
 
+func TestMem_UpdateDeploymentTraffic_ExpectedServing(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	_, appID, stableID := memstoreSeedAppLive(t, m, ctx, "conditional-promotion")
+	candidate, err := m.CreateDeployment(ctx, Deployment{
+		AppID: appID, Kind: DeploymentKindImage, ImageDigest: "sha256:candidate",
+		Status: DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateDeploymentTraffic(ctx, candidate.ID, 100, "stale-id"); !errors.Is(err, ErrTrafficServingChanged) {
+		t.Fatalf("stale promotion err = %v, want ErrTrafficServingChanged", err)
+	}
+	stable, _ := m.DeploymentByID(ctx, stableID)
+	candidateAfter, _ := m.DeploymentByID(ctx, candidate.ID)
+	if stable.TrafficPercent != 100 || candidateAfter.TrafficPercent != 0 {
+		t.Fatalf("stale promotion changed traffic: stable=%d candidate=%d", stable.TrafficPercent, candidateAfter.TrafficPercent)
+	}
+	if _, err := m.UpdateDeploymentTraffic(ctx, candidate.ID, 100, stableID); err != nil {
+		t.Fatalf("conditional promotion: %v", err)
+	}
+	stable, _ = m.DeploymentByID(ctx, stableID)
+	candidateAfter, _ = m.DeploymentByID(ctx, candidate.ID)
+	if stable.TrafficPercent != 0 || candidateAfter.TrafficPercent != 100 {
+		t.Fatalf("promotion traffic: stable=%d candidate=%d, want 0/100", stable.TrafficPercent, candidateAfter.TrafficPercent)
+	}
+}
+
 func TestMemStore_RunningInstanceForAppIgnoresSupersededGeneration(t *testing.T) {
 	ctx := context.Background()
 	m := NewMemStore()

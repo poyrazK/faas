@@ -11,6 +11,8 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`events`](#events) | Publish events and inspect subscriptions and deliveries |
+| [`send`](#send) | Reliably send work to another Gregale application |
+| [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
 | [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|restart\|--profile NAME\|--ram N\|…]) |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
@@ -286,6 +288,36 @@ Inspect event delivery lifecycle
 | `--limit <N>` | max deliveries (1..200) |  |
 
 
+## send
+
+Reliably send work to another Gregale application
+
+`gregale send <target-app> --type <TYPE> --data <J|@file|-> [--id <ID>] [--source <SOURCE>] [--time <RFC3339>] [--queue-name <QUEUE>] [--idempotency-key <KEY>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--type <TYPE>` | event type | required |
+| `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
+| `--id <ID>` | stable event id |  |
+| `--source <SOURCE>` | event source |  |
+| `--time <RFC3339>` | event time |  |
+| `--queue-name <QUEUE>` | target logical queue name |  |
+| `--idempotency-key <KEY>` | stable key for retrying an uncertain send |  |
+
+
+## deliver
+
+Reliably deliver an event to a registered webhook
+
+`gregale deliver <source-app> <webhook-id|url> --type <TYPE> --data <J|@file|-> [--idempotency-key <KEY>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--type <TYPE>` | event type | required |
+| `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
+| `--idempotency-key <KEY>` | stable key for retrying an uncertain delivery |  |
+
+
 ## apps
 
 List your apps
@@ -511,6 +543,7 @@ Bind GitHub, configure previews, and write an Actions workflow
 | `--preview` | enable pull-request previews |  |
 | `--no-preview` | disable pull-request previews |  |
 | `--preview-ttl-hours <HOURS>` | preview lease in hours (1-720) |  |
+| `--preview-service-policy <POLICY>` | preview-to-production service calls: deny\|allow_marked | one of `deny` · `allow_marked` |
 | `--root-dir <DIR>` | repository-relative source root for the root workload |  |
 | `--ignore <PATHS>` | comma-separated ignored change paths |  |
 | `--rollout <MODE>` | production rollout mode: standard\|safe (safe requires Pro/Scale) | one of `standard` · `safe` |
@@ -852,6 +885,14 @@ Schedule a deferred invocation
 | `--payload <JSON|@FILE|->` | JSON request payload |  |
 | `--method <METHOD>` | HTTP method (default POST) |  |
 | `--path <PATH>` | app path (default /) |  |
+| `--header <NAME:VALUE>` | request header (repeatable) |  |
+| `--max-attempts <N>` | maximum delivery attempts |  |
+| `--retry-base-seconds <N>` | base retry delay in seconds |  |
+| `--retry-max-seconds <N>` | maximum retry delay in seconds |  |
+| `--retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
+| `--retention <DURATION>` | terminal result retention |  |
+| `--on-success-webhook <ID>` | success webhook subscription |  |
+| `--on-failure-webhook <ID>` | failure webhook subscription |  |
 | `--idempotency-key <KEY>` | stable create retry key |  |
 
 ### delayed-task list
@@ -2228,6 +2269,7 @@ Promote a live deployment to 100% production traffic
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--deployment <ID>` | deployment id or vN revision to promote | required |
+| `--if-serving <ID>` | require this deployment id or vN revision to remain at 100% traffic |  |
 
 ### traffic status
 

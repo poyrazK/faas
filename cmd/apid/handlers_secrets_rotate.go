@@ -102,7 +102,10 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 	prev, err := s.store.GetAppSecretInScope(r.Context(), acct.ID, app.ID, scope, key)
 	switch {
 	case err == nil && prev == nil:
-		api.WriteProblem(w, api.ErrCapacity("GetAppSecretInScope returned (nil, nil) — store contract broken"))
+		s.log.Error("secret rotate: store contract violation", "operation", "read previous secret", "app", app.Slug)
+		api.WriteProblem(w, customerCapacityProblem(s.log, "rotate app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", nil))
 		return
 	case err != nil && !errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.ErrCapacity("could not read previous secret"))
@@ -116,17 +119,23 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 	// to seal without a kid is consistent with refusing to seal
 	// without a recipient.
 	if mfaIdentities == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age identities not loaded — refusing to seal"))
+		api.WriteProblem(w, customerCapacityProblem(s.log, "rotate app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", nil))
 		return
 	}
 	idents := mfaIdentities()
 	if len(idents) == 0 {
-		api.WriteProblem(w, api.ErrCapacity("host age identities not loaded — refusing to seal"))
+		api.WriteProblem(w, customerCapacityProblem(s.log, "rotate app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", nil))
 		return
 	}
 	kid, err := secretbox.IdentityFingerprint(idents)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve kid: "+err.Error()))
+		api.WriteProblem(w, customerCapacityProblem(s.log, "fingerprint app secret identity", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", err))
 		return
 	}
 
@@ -210,22 +219,30 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 func (s *server) sealAndPersistWithKid(c stdctx, acct state.Account, app state.App, scope, key, value string, limits api.Limits, kid string) *api.Problem {
 	recipient := setSecretRecipient()
 	if recipient == nil {
-		return api.ErrCapacity("host age recipient not loaded — refusing to seal")
+		return customerCapacityProblem(s.log, "store rotated app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	hmacKey := hostHMACKey()
 	if len(hmacKey) == 0 {
-		return api.ErrCapacity("host hmac key not loaded — refusing to seal")
+		return customerCapacityProblem(s.log, "store rotated app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
 	valueHash, err := secretbox.ValueFingerprint([]byte(value), hmacKey)
 	if err != nil {
-		return api.ErrCapacity("could not compute value_hash: " + err.Error())
+		return customerCapacityProblem(s.log, "fingerprint rotated app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
 	ciphertext, err := secretbox.SealOne(recipient, key, value, limits.SecretValueMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			return prob
 		}
-		return api.ErrCapacity("could not seal secret")
+		return customerCapacityProblem(s.log, "encrypt rotated app secret", "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
 	if err := s.store.UpsertAppSecretWithKidAndValueHashInScope(c, acct.ID, app.ID, scope, key, kid, valueHash, ciphertext); err != nil {
 		if errors.Is(err, state.ErrConflict) {

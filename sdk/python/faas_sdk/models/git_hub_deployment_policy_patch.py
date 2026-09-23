@@ -5,6 +5,10 @@ from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.git_hub_deployment_policy_patch_preview_service_policy import (
+    GitHubDeploymentPolicyPatchPreviewServicePolicy,
+    check_git_hub_deployment_policy_patch_preview_service_policy,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="GitHubDeploymentPolicyPatch")
@@ -18,6 +22,7 @@ class GitHubDeploymentPolicyPatch:
     ignored_paths: list[str] | Unset = UNSET
     preview_enabled: bool | Unset = UNSET
     preview_ttl_hours: int | Unset = UNSET
+    preview_service_policy: GitHubDeploymentPolicyPatchPreviewServicePolicy | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         root_dir = self.root_dir
@@ -30,6 +35,10 @@ class GitHubDeploymentPolicyPatch:
 
         preview_ttl_hours = self.preview_ttl_hours
 
+        preview_service_policy: str | Unset = UNSET
+        if not isinstance(self.preview_service_policy, Unset):
+            preview_service_policy = self.preview_service_policy
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -41,6 +50,8 @@ class GitHubDeploymentPolicyPatch:
             field_dict["preview_enabled"] = preview_enabled
         if preview_ttl_hours is not UNSET:
             field_dict["preview_ttl_hours"] = preview_ttl_hours
+        if preview_service_policy is not UNSET:
+            field_dict["preview_service_policy"] = preview_service_policy
 
         return field_dict
 
@@ -55,11 +66,21 @@ class GitHubDeploymentPolicyPatch:
 
         preview_ttl_hours = d.pop("preview_ttl_hours", UNSET)
 
+        _preview_service_policy = d.pop("preview_service_policy", UNSET)
+        preview_service_policy: GitHubDeploymentPolicyPatchPreviewServicePolicy | Unset
+        if isinstance(_preview_service_policy, Unset):
+            preview_service_policy = UNSET
+        else:
+            preview_service_policy = check_git_hub_deployment_policy_patch_preview_service_policy(
+                _preview_service_policy
+            )
+
         git_hub_deployment_policy_patch = cls(
             root_dir=root_dir,
             ignored_paths=ignored_paths,
             preview_enabled=preview_enabled,
             preview_ttl_hours=preview_ttl_hours,
+            preview_service_policy=preview_service_policy,
         )
 
         return git_hub_deployment_policy_patch

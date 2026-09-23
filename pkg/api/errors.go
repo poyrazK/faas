@@ -262,6 +262,19 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 	_ = json.NewEncoder(w).Encode(&wire)
 }
 
+// WriteProblemForRequest renders the browser-safe HTML variant when r
+// explicitly accepts text/html, and the canonical JSON problem otherwise.
+// Middleware has the request in hand but often wraps a plain ResponseWriter,
+// so it cannot rely on the gateway-specific ProblemHTMLRequest adapter used by
+// WriteProblem.
+func WriteProblemForRequest(w http.ResponseWriter, r *http.Request, p *Problem) {
+	if AcceptsHTML(r) {
+		writeProblemHTML(w, p)
+		return
+	}
+	WriteProblem(w, p)
+}
+
 // WriteProblemWithErrors is the kind=validate-shaped variant: the
 // same problem+json envelope but with a populated Errors []FieldError
 // so a customer's JSON-Schema rejection renders as a structured
@@ -553,6 +566,10 @@ const (
 	// known wake did not leave a live instance. The health endpoint never
 	// wakes an app unless the per-app opt-in is enabled.
 	CodeAppHealthUnavailable = "app_health_unavailable"
+	// CodeAppUnavailable is the generic retryable 503 used when the gateway
+	// cannot reach the selected app instance. Unlike CodeAppHealthUnavailable,
+	// it does not assert that the app's health check failed.
+	CodeAppUnavailable = "app_unavailable"
 	// CodeAdmissionRefused marks a wake that schedd refused because
 	// the account's current-month overage cents met/exceeded
 	// accounts.overage_cap_cents (issue #561 / PR-XXX). Distinct
@@ -588,9 +605,15 @@ const (
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
-	CodeForbidden        = "insufficient_scope"
-	CodeNotFound         = "not_found"
-	CodeMethodNotAllowed = "method_not_allowed"
+	CodeForbidden = "insufficient_scope"
+	// CodePreviewProductionDependencyDenied is returned by the internal
+	// service proxy when a project preview tries to call a production
+	// dependency while its preview_service_policy is deny. The rejection
+	// happens before endpoint lookup or wake, so a denied preview cannot cause
+	// production side effects or consume production capacity.
+	CodePreviewProductionDependencyDenied = "preview_production_dependency_denied"
+	CodeNotFound                          = "not_found"
+	CodeMethodNotAllowed                  = "method_not_allowed"
 	// CodeUndeclaredRoute is returned directly by gatewayd when the
 	// only-declared-routes contract is enabled and the request path/method is
 	// absent from the explicit list or imported OpenAPI document.
@@ -1041,6 +1064,9 @@ const (
 	// violated, so a future refactor that breaks the Σ
 	// tripwire surfaces a 409 (not a silent DB drift).
 	CodeTrafficPercentSumInvalid = "traffic_percent_sum_invalid"
+	// CodeTrafficServingChanged is a 409 when a conditional promotion's
+	// expected 100% serving deployment no longer serves the app.
+	CodeTrafficServingChanged = "traffic_serving_changed"
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Seven RFC 7807
 	// codes for the /v1/apps/{slug}/mirrors CRUD surface. The
@@ -1079,6 +1105,7 @@ const (
 	CodeSidecarInvalidCPUMillicores = "sidecar_invalid_cpu_millicores"
 	CodeSidecarInvalidDiskIOProfile = "sidecar_invalid_disk_io_profile"
 	CodeSidecarNotAllowedOnPlan     = "sidecar_not_allowed_on_plan"
+	CodeCompanionPresetUnavailable  = "companion_preset_unavailable"
 
 	// CodeInitSidecarFailed (issue #463 / ADR-069 / PR-B AC #1) is
 	// the RFC 7807 stable code vmmd stamps onto a deployments row
@@ -1572,6 +1599,7 @@ const (
 	// and billing mutations when a password-signup account has not yet
 	// consumed its verification link.
 	CodeEmailVerificationRequired = "email_verification_required"
+	CodeVerificationLinkInvalid   = "verification_link_invalid"
 	CodePasswordTooWeak           = "password_too_weak"
 	CodeResetTokenInvalid         = "reset_token_invalid"
 	CodeResetTokenExpired         = "reset_token_expired"
@@ -1589,6 +1617,10 @@ const (
 	// later unset both vars; the dashboard's /v1/auth/capabilities
 	// signal keeps the button off in steady state.
 	CodeOAuthProviderUnavailable = "oauth_provider_unavailable"
+	// CodeEventStreamUnavailable is emitted on the authenticated account event
+	// stream when Gregale cannot subscribe to its change notifications. SSE
+	// clients can reconnect without parsing infrastructure diagnostics.
+	CodeEventStreamUnavailable = "event_stream_unavailable"
 
 	// Organizations (issue #190 / IAM-6 / ADR-061). Twelve stable
 	// strings surface the full org lifecycle: slug shape, slug
@@ -1786,7 +1818,7 @@ func StatusForCode(code string) int {
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
-		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeInboundWebhookInvalid, CodeInboundWebhookBadSignature, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeHandlerMissing, CodeImageRequired,
+		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeInboundWebhookInvalid, CodeInboundWebhookBadSignature, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeLogArchiveInvalidQuery, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
 		CodePrivateNetworkInvalid,
@@ -1800,8 +1832,8 @@ func StatusForCode(code string) int {
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
 	case CodeCapacity, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
-		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
-		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid:
+		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
+		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
@@ -1843,10 +1875,9 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeCanaryStepConflict, CodeDeploymentNotLive:
-		// 409 — issue #556. Σ(traffic_percent WHERE status='live')
-		// != 100 after UpdateDeploymentTraffic. Defensive backstop;
-		// unreachable in practice. Sits next to CodeConflict /
+	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeCanaryStepConflict, CodeDeploymentNotLive:
+		// 409 — traffic state conflicts, including a stale expected
+		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
 		// semantics are "the requested state cannot be applied
 		// alongside the existing row set", not "your plan forbids
@@ -2074,6 +2105,8 @@ func StatusForCode(code string) int {
 		// the gatewayd-internal handler maps disabled plans to this
 		// code via ErrPlanLogArchiveNotAllowed.
 		return http.StatusPaymentRequired
+	case CodeLogArchiveRetentionExceeded:
+		return http.StatusForbidden
 	case CodePlanPerAppMetricsNotAllowed:
 		// Per-app observability surface (per-app metrics +
 		// wake-timeline JSON mirror) is Hobby+. Free gets the
@@ -2158,7 +2191,7 @@ func StatusForCode(code string) int {
 		return http.StatusForbidden
 	case CodePasswordTooWeak, CodeAccountExists:
 		return http.StatusBadRequest
-	case CodeResetTokenInvalid, CodeResetTokenExpired:
+	case CodeResetTokenInvalid, CodeResetTokenExpired, CodeVerificationLinkInvalid:
 		return http.StatusGone
 	// Organizations (issue #190 / IAM-6 / ADR-061). 404 for slug
 	// not-found matches the IDOR convention used by LoadApp
@@ -2555,6 +2588,21 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithDocs("https://gregale.dev/docs/deployments#rate-limit")
+}
+
+// ErrAuthRateLimited reports that the caller's source IP exhausted the
+// failed-authentication budget. The stable shape is shared by API, CLI-auth,
+// and browser login middleware; browser negotiation happens at the writer.
+func ErrAuthRateLimited(retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 60
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeAuthRateLimited,
+		"Too many failed authentication attempts",
+		fmt.Sprintf("The failed-authentication limit was reached. Retry after %d seconds with valid credentials.", retryAfterS)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithHint("Wait for the retry window, then sign in again with valid credentials.").
+		WithDocs(docsBase + "/auth")
 }
 
 // ErrInternal is the catch-all 500 envelope for handler-side failures
@@ -3234,6 +3282,10 @@ const (
 	CodePlanRealtimeNotAllowed = "plan_realtime_not_allowed"
 	CodePlanRealtimeQuota      = "plan_realtime_quota"
 	CodeRealtimeInvalid        = "realtime_invalid"
+	// CodeRealtimeUnavailable is returned when the public realtime proxy
+	// cannot reach the managed realtime service. It is deliberately distinct
+	// from invalid endpoint configuration: retrying is appropriate here.
+	CodeRealtimeUnavailable = "realtime_unavailable"
 )
 
 // CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
@@ -3302,6 +3354,17 @@ const CodeTriggerInvalidRetryPolicy = "trigger_invalid_retry_policy"
 // branches on without parsing the body.
 const CodePlanLogArchiveNotAllowed = "plan_log_archive_not_allowed"
 
+// Customer-facing log retrieval failures. The unavailable codes intentionally
+// hide gateway/S3 wiring details; those remain in daemon logs. Invalid query
+// and retention failures give CLI and SDK callers stable branches without
+// parsing prose.
+const (
+	CodeAppLogsUnavailable          = "app_logs_unavailable"
+	CodeLogArchiveUnavailable       = "log_archive_unconfigured"
+	CodeLogArchiveInvalidQuery      = "log_archive_invalid_query"
+	CodeLogArchiveRetentionExceeded = "log_archive_retention_exceeded"
+)
+
 // ErrPlanLogArchiveNotAllowed is returned by the gatewayd-internal
 // archive log read-back handler when the customer's plan has
 // LogArchiveEnabled() == false. Mirrors
@@ -3314,6 +3377,39 @@ func ErrPlanLogArchiveNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanLogArchiveNotAllowed,
 		"Log archive unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include log archive read-back; upgrade to a plan with archive access to query historical logs from object storage.", p)).
+		WithDocs(docsBase + "/plans#log-archive")
+}
+
+func ErrAppLogsUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeAppLogsUnavailable,
+		"Live logs temporarily unavailable",
+		"Gregale could not open the live log stream for this app.").
+		WithHeader("Retry-After", "5").
+		WithHint("Retry `gregale logs APP` in a few seconds.").
+		WithDocs(docsBase + "/logs")
+}
+
+func ErrLogArchiveUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeLogArchiveUnavailable,
+		"Archived logs temporarily unavailable",
+		"Gregale could not access archived logs for this app.").
+		WithHeader("Retry-After", "30").
+		WithHint("Retry shortly, or use `gregale logs APP` for live logs.").
+		WithDocs(docsBase + "/logs")
+}
+
+func ErrLogArchiveInvalidQuery(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeLogArchiveInvalidQuery,
+		"Invalid archived log request", reason).
+		WithHint("Choose an instance and a date formatted as YYYY-MM-DD, then retry.").
+		WithDocs(docsBase + "/logs")
+}
+
+func ErrLogArchiveRetentionExceeded(plan Plan, day string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeLogArchiveRetentionExceeded,
+		"Archived log date is outside the retention window",
+		fmt.Sprintf("%s retains archived logs for %d day(s); %s is outside that window.", plan, plan.LogArchiveRetentionDaysMax(), day)).
+		WithHint("Choose a more recent date, or review plans with longer log retention.").
 		WithDocs(docsBase + "/plans#log-archive")
 }
 
@@ -3949,6 +4045,18 @@ func ErrPlanRealtimeQuota(plan Plan, scope string, limit, observed int) *Problem
 func ErrRealtimeInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid,
 		"Invalid managed realtime endpoint", reason)
+}
+
+// ErrRealtimeUnavailable is safe to expose at the public WebSocket proxy.
+// The socket or dial error stays in structured logs; customers receive a
+// stable retryable code without internal paths or host details.
+func ErrRealtimeUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeRealtimeUnavailable,
+		"Managed realtime temporarily unavailable",
+		"Gregale could not reach the managed realtime service.").
+		WithHeader("Retry-After", "5").
+		WithHint("Retry the connection in a few seconds.").
+		WithDocs(docsBase + "/plans#realtime")
 }
 
 // ErrPlanTriggersNotAllowed is returned by apid's createTrigger /
@@ -4853,6 +4961,16 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
+// ErrTrafficServingChanged makes a stale promotion actionable without
+// disclosing any deployment the caller has not already been authorized to
+// read through the target app.
+func ErrTrafficServingChanged() *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
+		"Production revision changed",
+		"the expected revision is no longer the sole 100% serving deployment; run gregale traffic status before promoting again.").
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
 // ErrPlanMirrorNotAllowed (issue #72 / ADR-125 traffic mirroring
 // PR-A2) is returned when a Free/Hobby account tries to create a
 // mirror rule (issue #72 / ADR-125). The customer's bill on
@@ -5108,6 +5226,17 @@ func ErrSidecarNotAllowedOnPlan(p Plan) *Problem {
 		"Plan doesn't allow sidecars",
 		fmt.Sprintf("the %s plan doesn't allow sidecars (issue #463 / ADR-068).", p)).
 		WithDocs(docsBase + "/plans#sidecars")
+}
+
+// ErrCompanionPresetUnavailable means the declaration is valid, but this
+// installation has no operator-pinned image for the requested managed preset.
+// This is a service configuration failure rather than a customer validation
+// failure, so the deploy can be retried after the catalog is configured.
+func ErrCompanionPresetUnavailable(preset string) *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeCompanionPresetUnavailable,
+		"Companion preset unavailable",
+		fmt.Sprintf("managed companion preset %q is not configured on this installation; provide a digest-pinned image or contact the platform operator.", preset)).
+		WithDocs(docsBase + "/companions#managed-presets")
 }
 
 // ErrPlanMaxInstancesNotAllowed (issue #462 / ADR-058) is the
@@ -5647,6 +5776,17 @@ func ErrEmailVerificationRequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
 		"Email verification required",
 		"verify your email address before deploying apps or changing billing settings.").
+		WithDocs(docsBase + "/auth/email-verification")
+}
+
+// ErrVerificationLinkInvalid intentionally collapses malformed, expired and
+// consumed verification links into one public response. This avoids revealing
+// token state while still telling the customer how to recover.
+func ErrVerificationLinkInvalid() *Problem {
+	return NewProblem(http.StatusGone, CodeVerificationLinkInvalid,
+		"Verification link no longer valid",
+		"This verification link is invalid, expired, or has already been used.").
+		WithHint("Request a new verification email, then open the latest link.").
 		WithDocs(docsBase + "/auth/email-verification")
 }
 

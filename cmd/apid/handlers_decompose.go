@@ -274,7 +274,9 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	}
 	currentApps, err := s.store.AppsForProject(r.Context(), acct.ID, insertedProject.ID)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal(fmt.Sprintf("load applied project apps: %v", err)))
+		writeCustomerInternalProblem(w, r, s.log, "load apps after applying project",
+			"Gregale could not finish loading the project after applying the changes.",
+			"Reload the project before retrying the operation.", err)
 		return
 	}
 	appIDs := make([]appSummary, 0, len(currentApps))
@@ -505,8 +507,9 @@ func (s *server) deleteDeploymentScopeExclusion(w http.ResponseWriter, r *http.R
 				fmt.Sprintf("project=%q slug=%q", projectSlug, excludedSlug)))
 			return
 		}
-		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("load project for exclusion delete: %v", projErr)))
+		writeCustomerInternalProblem(w, r, s.log, "load project for exclusion delete",
+			"Gregale could not load this project to remove the deployment exclusion.",
+			"Retry the request in a moment; if it continues, contact support.", projErr)
 		return
 	}
 	if err := s.store.DeleteDeploymentScopeExclusion(r.Context(), acct.ID, proj.ID, excludedSlug); err != nil {
@@ -516,8 +519,9 @@ func (s *server) deleteDeploymentScopeExclusion(w http.ResponseWriter, r *http.R
 				fmt.Sprintf("project=%q slug=%q", projectSlug, excludedSlug)))
 			return
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"Delete failed", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "delete deployment scope exclusion",
+			"Gregale could not remove this deployment exclusion.",
+			"Check the project and workload names, then retry. If it continues, contact support.", err)
 		return
 	}
 	// Audit the manual override so SOC 2 reviewers can tell the
@@ -544,7 +548,8 @@ func (s *server) deleteDeploymentScopeExclusion(w http.ResponseWriter, r *http.R
 // so the handler body stays a single switch.
 func quotaProblem(plan api.Plan, l api.Limits, qe *state.QuotaError) *api.Problem {
 	if qe == nil {
-		return api.ErrInternal("quota error missing body")
+		return api.ErrInternal("Gregale could not complete the project quota check.").
+			WithHint("Retry the operation in a moment; if it continues, contact support.")
 	}
 	switch qe.Kind {
 	case state.QuotaErrorKindCrons:

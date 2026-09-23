@@ -3398,6 +3398,21 @@ groups:
           description: "The schedd consumer is at least 1,000 messages behind the broker high-water mark for source {{ $labels.source }} shard {{ $labels.shard }} for ten minutes. Check the binding's worker capacity, retry rate, and broker connectivity before increasing concurrency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableQueue.md"
 
+  - name: faas_delayed_tasks
+    interval: 30s
+    rules:
+      - alert: FaasDelayedTaskDispatchLag
+        expr: histogram_quantile(0.99, sum by (le) (rate(schedd_delayed_task_schedule_lag_seconds_bucket[10m]))) > 60
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: delayed_tasks
+        annotations:
+          summary: "Delayed tasks are dispatching late"
+          description: "The p99 delay between a requested execution time and the first scheduler claim has exceeded 60 seconds for ten minutes. Check schedd health, invocation backlog, account concurrency pressure, and database latency."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDelayedTaskDispatchLag.md"
+
   - name: faas_tcp_ingress
     interval: 30s
     rules:

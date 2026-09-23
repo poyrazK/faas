@@ -90,7 +90,7 @@ func (s *server) renderGitHubAuthRedirect(w http.ResponseWriter, r *http.Request
 	if !s.oauthConfig.GitHub.Enabled() {
 		s.disabledOAuthResponse(w, auth.GitHubProviderName,
 			"GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET unset",
-			"GitHub sign-in is not configured on this host. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in /etc/faas/sealed.env and restart.")
+			"GitHub sign-in is not available for this Gregale installation. Use email sign-in or contact support.")
 		return
 	}
 	clientID := s.oauthConfig.GitHub.ClientID
@@ -195,7 +195,7 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	if !s.oauthConfig.GitHub.Enabled() {
 		s.disabledOAuthResponse(w, auth.GitHubProviderName,
 			"GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET unset",
-			"GitHub sign-in is not configured on this host. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in /etc/faas/sealed.env and restart.")
+			"GitHub sign-in is not available for this Gregale installation. Use email sign-in or contact support.")
 		return
 	}
 	pkceCookie, err := r.Cookie(githubAuthPKCECookie)
@@ -295,7 +295,9 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// keyed on the string form (decimal).
 	acct, err := s.provisionOrFetchOAuthAccount(r.Context(), "github", githubUserEmailID(githubUser), email, githubUser)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Account Error", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "complete GitHub sign-in",
+			"Gregale could not finish setting up your account.",
+			"Return to sign in and try connecting GitHub again.", err)
 		return
 	}
 
@@ -317,7 +319,9 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// row is created + auth.session.created is emitted.
 	cookie, _, err := s.issueDashboardSessionWithGithub(r.Context(), r, acct.ID, mfaSessionPending(acct), "github", githubUser.Login)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Session Error", err.Error()))
+		writeCustomerInternalProblem(w, r, s.log, "create GitHub dashboard session",
+			"Gregale could not start your dashboard session.",
+			"Return to sign in and try connecting GitHub again.", err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{

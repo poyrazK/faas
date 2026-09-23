@@ -23,14 +23,16 @@ func TestBuildWorkloadEndpointEnv(t *testing.T) {
 		t.Fatalf("buildWorkloadEndpointEnv: %v", err)
 	}
 	want := map[string]string{
-		"FAAS_WORKLOAD_MAIN_HOST":              "127.0.0.1",
-		"FAAS_WORKLOAD_MAIN_PORT":              "8080",
-		"FAAS_WORKLOAD_MAIN_ADDR":              "127.0.0.1:8080",
-		"FAAS_WORKLOAD_MAIN_PROTOCOL":          "tcp",
-		"FAAS_WORKLOAD_METRICS_AGENT_HOST":     "127.0.0.1",
-		"FAAS_WORKLOAD_METRICS_AGENT_PORT":     "9090",
-		"FAAS_WORKLOAD_METRICS_AGENT_ADDR":     "127.0.0.1:9090",
-		"FAAS_WORKLOAD_METRICS_AGENT_PROTOCOL": "tcp",
+		"FAAS_WORKLOAD_MAIN_HOST":                "127.0.0.1",
+		"FAAS_WORKLOAD_MAIN_PORT":                "8080",
+		"FAAS_WORKLOAD_MAIN_ADDR":                "127.0.0.1:8080",
+		"FAAS_WORKLOAD_MAIN_PROTOCOL":            "tcp",
+		"FAAS_WORKLOAD_METRICS_AGENT_HOST":       "127.0.0.1",
+		"FAAS_WORKLOAD_METRICS_AGENT_PORT":       "9090",
+		"FAAS_WORKLOAD_METRICS_AGENT_ADDR":       "127.0.0.1:9090",
+		"FAAS_WORKLOAD_METRICS_AGENT_PROTOCOL":   "tcp",
+		"FAAS_WORKLOAD_METRICS_AGENT_SHARED_DIR": "/tmp/gregale/companions/metrics-agent",
+		"FAAS_WORKLOAD_MIGRATE_SHARED_DIR":       "/tmp/gregale/companions/migrate",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("endpoint env = %#v, want %#v", got, want)

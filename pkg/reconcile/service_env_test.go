@@ -4,7 +4,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestServiceEnvForWorkload(t *testing.T) {
@@ -30,5 +32,64 @@ func TestServiceEnvSkipsManagedDependencies(t *testing.T) {
 	)
 	if got != nil {
 		t.Fatalf("service env = %#v, want nil", got)
+	}
+}
+
+func TestServiceBindingsForWorkloadAreStableAndDeduplicated(t *testing.T) {
+	got := serviceBindingsForWorkloadWithAvailable(
+		reposcan.Workload{Name: "api", DependsOn: []string{" DB ", "cache", "db", "managed"}},
+		map[string]struct{}{"db": {}, "cache": {}},
+	)
+	want := []api.AppServiceBinding{
+		{Binding: "GREGALE_SERVICE_CACHE_URL", Service: "cache"},
+		{Binding: "GREGALE_SERVICE_DB_URL", Service: "db"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("service bindings = %#v, want %#v", got, want)
+	}
+}
+
+func TestDiffFieldsChangedBackfillsServiceBindingReadModel(t *testing.T) {
+	workload := reposcan.Workload{Name: "api", DependsOn: []string{"db"}}
+	app := state.App{
+		WorkloadName:  "api",
+		WorkloadClass: state.WorkloadClassHTTP,
+		Manifest: state.AppManifest{Env: map[string]string{
+			"GREGALE_SERVICE_DB_URL": "http://db.svc.gregale:10080",
+		}},
+	}
+	got := diffFieldsChanged(app, workload, "", map[string]struct{}{"api": {}, "db": {}})
+	want := []string{"service_bindings"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("changed fields = %v, want %v", got, want)
+	}
+}
+
+func TestDiffFieldsChangedDetectsServiceBindingPolicy(t *testing.T) {
+	workload := reposcan.Workload{
+		Name:                 "api",
+		ServiceBindingPolicy: reposcan.ServiceBindingPolicyDeclared,
+	}
+	app := state.App{
+		WorkloadName:  "api",
+		WorkloadClass: state.WorkloadClassHTTP,
+	}
+	got := diffFieldsChanged(app, workload, "")
+	want := []string{"service_binding_policy"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("changed fields = %v, want %v", got, want)
+	}
+}
+
+func TestDiffFieldsChangedDetectsPreviewServiceCallsPolicy(t *testing.T) {
+	workload := reposcan.Workload{
+		Name:                      "billing",
+		PreviewServiceCallsPolicy: reposcan.PreviewServiceCallsDeny,
+	}
+	app := state.App{WorkloadName: "billing", WorkloadClass: state.WorkloadClassHTTP}
+	got := diffFieldsChanged(app, workload, "")
+	want := []string{"preview_service_calls_policy"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("changed fields = %v, want %v", got, want)
 	}
 }

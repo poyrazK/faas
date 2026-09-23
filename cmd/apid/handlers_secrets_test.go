@@ -29,6 +29,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 
@@ -149,6 +150,23 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	}
 	if listResp.Count != 1 || len(listResp.Secrets) != 1 || listResp.Secrets[0].Key != "STRIPE_KEY" {
 		t.Errorf("list shape = %+v, want one STRIPE_KEY", listResp)
+	}
+	if got := listResp.Secrets[0]; got.DeliveryVersion != 1 || got.DeliveryStatus != string(state.SecretDeliveryPending) {
+		t.Errorf("new secret delivery = version %d status %q, want 1/pending", got.DeliveryVersion, got.DeliveryStatus)
+	}
+	if _, err := e.store.RecordAppSecretDelivery(context.Background(), state.AppSecretDeliveryResult{
+		AccountID: e.acct.ID, AppID: app.ID, WakeID: "wake-delivered", InstanceID: "instance-delivered",
+		Status: state.SecretDeliveryDelivered, AttemptedAt: time.Now().UTC(),
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: api.DefaultEnvScope, Key: "STRIPE_KEY", Version: 1}},
+	}); err != nil {
+		t.Fatalf("record delivery: %v", err)
+	}
+	listRec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/secrets", nil, nil)
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode delivered list: %v", err)
+	}
+	if got := listResp.Secrets[0]; got.DeliveryStatus != string(state.SecretDeliveryDelivered) || got.DeliveredVersion != 1 || got.LastDeliveredWakeID != "wake-delivered" {
+		t.Errorf("delivered metadata = %+v", got)
 	}
 
 	// DELETE.

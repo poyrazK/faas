@@ -159,7 +159,7 @@ func (s *server) dashboardGitHubSync(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !validSlug(slug) {
@@ -203,7 +203,7 @@ func (s *server) dashboardGitHubDisconnect(w http.ResponseWriter, r *http.Reques
 	slug := r.PathValue("slug")
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !validSlug(slug) {
@@ -238,7 +238,7 @@ func (s *server) dashboardGitHubRetry(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if !validSlug(slug) {

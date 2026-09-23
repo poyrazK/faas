@@ -15,6 +15,8 @@ T = TypeVar("T", bound="MirrorReplayBatchResponse")
 
 @_attrs_define
 class MirrorReplayBatchResponse:
+    """The replay invocations accepted and queued for asynchronous mirror execution."""
+
     queued: int
     invocations: list[MirrorReplayInvocation]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -1592,9 +1592,9 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 	return append([]api.WorkflowSpec{}, m.Workflows...), nil
 }
 
-// loadExtensionSidecarsManifestForDeploy resolves the manifest's named
-// telemetry presets before any deployment mutation. The image digest stays
-// customer-supplied; the preset only contributes stable defaults.
+// loadExtensionSidecarsManifestForDeploy resolves the manifest's companion
+// declarations before any deployment mutation. Preset-only companions keep
+// their image empty here; apid resolves the operator-pinned digest.
 func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) (api.Sidecars, error) {
 	if cwd == "" {
 		return nil, nil
@@ -1603,7 +1603,7 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 	if err != nil {
 		return nil, err
 	}
-	if !ok || m == nil || len(m.Extensions) == 0 {
+	if !ok || m == nil || (len(m.Companions) == 0 && len(m.Extensions) == 0) {
 		return nil, nil
 	}
 	if err := m.Validate(); err != nil {
@@ -1611,7 +1611,7 @@ func loadExtensionSidecarsManifestForDeploy(ctx context.Context, client manifest
 	}
 	acct, err := client.Whoami(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("resolve account plan for extension manifest: %w", err)
+		return nil, fmt.Errorf("resolve account plan for companion manifest: %w", err)
 	}
 	if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
 		return nil, err
@@ -3626,7 +3626,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Canary:         canarySpec,
 			RollbackOn5xx:  rollbackOn5xxPtr,
 			NoTriggers:     *noTriggers,
-			Sidecars:       sidecarDefs,
+			Companions:     sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3655,7 +3655,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
 				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx,
 				Reason: ann.Reason, Tag: ann.Tag,
-				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Sidecars: sidecarDefs,
+				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
 			}
 			var progress resumableUploadProgress
@@ -3783,7 +3783,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:    *environment,
 		RollbackOn5xx:  rollbackOn5xxPtr,
 		Workflows:      workflowDefs,
-		Sidecars:       sidecarDefs,
+		Companions:     sidecarDefs,
 		TrafficPercent: optTrafficPercent(*trafficPercent),
 		Reason:         annPtr(*reason),
 		Tag:            annPtr(*tag),
@@ -4112,6 +4112,7 @@ func cmdTrafficPromote(args []string) int {
 	fs := newFlagSet("traffic promote", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	deployment := fs.String("deployment", "", "deployment id or vN revision to promote to 100% production traffic")
+	ifServing := fs.String("if-serving", "", "promote only if this deployment id or vN revision still serves 100% of production traffic")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -4119,8 +4120,13 @@ func cmdTrafficPromote(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*deployment) == "" {
-		PrintUsage(os.Stderr, "usage: gregale traffic promote [--app <slug>] --deployment <id|vN>", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale traffic promote [--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
 		return 1
+	}
+	var ifServingSet bool
+	fs.Visit(func(f *flag.Flag) { ifServingSet = ifServingSet || f.Name == "if-serving" })
+	if ifServingSet && !validDeploymentRef(*ifServing) {
+		return printErr("Traffic promote failed", fmt.Errorf("--if-serving requires a deployment id or vN revision"))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -4130,6 +4136,21 @@ func cmdTrafficPromote(args []string) int {
 	deploymentID, err := resolveDeploymentArg(ctx, client, *app, *deployment)
 	if err != nil {
 		return printErr("Traffic promote failed", err)
+	}
+	var servingID string
+	if ifServingSet {
+		resolved, resolveErr := resolveDeploymentArg(ctx, client, *app, *ifServing)
+		if resolveErr != nil {
+			return printErr("Traffic promote failed", resolveErr)
+		}
+		serving, readErr := client.GetDeployment(ctx, resolved)
+		if readErr != nil {
+			return printErr("Traffic promote failed", readErr)
+		}
+		servingID = serving.ID
+		if servingID == deploymentID {
+			return printErr("Traffic promote failed", fmt.Errorf("--if-serving must name a different deployment from --deployment"))
+		}
 	}
 	current, err := client.GetDeployment(ctx, deploymentID)
 	if err != nil {
@@ -4153,7 +4174,12 @@ func cmdTrafficPromote(args []string) int {
 		return 0
 	}
 
-	updated, err := client.PatchDeploymentsIdTraffic(ctx, deploymentID, 100)
+	var updated api.DeploymentResponse
+	if ifServingSet {
+		updated, err = client.PatchDeploymentTrafficIfServing(ctx, deploymentID, 100, servingID)
+	} else {
+		updated, err = client.PatchDeploymentsIdTraffic(ctx, deploymentID, 100)
+	}
 	if err != nil {
 		return printErr("Traffic promote failed", err)
 	}

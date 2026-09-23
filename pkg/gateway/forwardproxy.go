@@ -201,6 +201,32 @@ func fwdOnce(w http.ResponseWriter, r *http.Request, nodes NodeClientLookup, log
 	fwdOnceWithEvents(w, r, nodes, log, t, nil)
 }
 
+// writeForwarderProblem keeps infrastructure vocabulary out of customer
+// responses. The detailed node, stream and gRPC errors remain in logs; app
+// visitors get a stable code, a safe explanation and one next action.
+func writeForwarderProblem(w http.ResponseWriter, status int) {
+	var problem *api.Problem
+	switch status {
+	case http.StatusServiceUnavailable:
+		problem = api.NewProblem(status, api.CodeAppUnavailable,
+			"App temporarily unavailable",
+			"Gregale could not reach this app.").
+			WithHeader("Retry-After", "5").
+			WithHint("Retry the request in a few seconds.").
+			WithDocs("https://gregale.dev/status")
+	case http.StatusBadGateway:
+		problem = api.NewProblem(status, api.CodeBadGateway,
+			"App connection failed",
+			"Gregale could not complete the connection to this app.").
+			WithHint("Retry the request; if it still fails, check the app logs.").
+			WithDocs("https://gregale.dev/docs")
+	default:
+		problem = api.ErrInternal("Gregale encountered an unexpected gateway error.").
+			WithHint("Retry the request; if it still fails, contact support.")
+	}
+	api.WriteProblem(w, problem)
+}
+
 // fwdOnceWithEvents (issue #517 / PR-C / ADR-064) is the
 // events-aware variant of fwdOnce. The events seam threads
 // through to fwdStreamOnce so wake.proxy_first_byte can be
@@ -212,7 +238,7 @@ func fwdOnceWithEvents(w http.ResponseWriter, r *http.Request, nodes NodeClientL
 		if rec := recover(); rec != nil {
 			log.Error("gateway: forwarder panic",
 				"node", t.NodeID, "err", fmt.Sprintf("%v", rec))
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			writeForwarderProblem(w, http.StatusInternalServerError)
 		}
 	}()
 
@@ -223,14 +249,14 @@ func fwdOnceWithEvents(w http.ResponseWriter, r *http.Request, nodes NodeClientL
 		// Target-check and the proxy call run on the same goroutine
 		// under the WakeGate, but the contract has to outlive the
 		// goroutine.
-		http.Error(w, "no node available", http.StatusServiceUnavailable)
+		writeForwarderProblem(w, http.StatusServiceUnavailable)
 		return
 	}
 
 	cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 	if !ok {
 		markStaleTarget(r.Context())
-		http.Error(w, "node unavailable", http.StatusServiceUnavailable)
+		writeForwarderProblem(w, http.StatusServiceUnavailable)
 		return
 	}
 	defer func() { _ = closer.Close() }()
@@ -315,7 +341,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		log.Error("gateway: forwarder stream open failed",
 			"node", t.NodeID, "err", err.Error())
-		http.Error(w, "forwarder stream open failed", responseStatus)
+		writeForwarderProblem(w, responseStatus)
 		return
 	}
 
@@ -382,7 +408,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		log.Error("gateway: forwarder stream init send failed",
 			"node", t.NodeID, "err", err.Error())
-		http.Error(w, "forwarder stream init failed", http.StatusBadGateway)
+		writeForwarderProblem(w, http.StatusBadGateway)
 		return
 	}
 
@@ -463,17 +489,17 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				markStaleTarget(r.Context())
 				log.Warn("gateway: forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
-				http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 				markStaleTarget(r.Context())
-				http.Error(w, "instance gone", http.StatusServiceUnavailable)
+				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
 			log.Error("gateway: forwarder stream Recv failed",
 				"node", t.NodeID, "err", err.Error())
-			http.Error(w, "forwarder stream failed", http.StatusBadGateway)
+			writeForwarderProblem(w, http.StatusBadGateway)
 			return
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
@@ -653,7 +679,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder stream open failed",
 			"node", t.NodeID, "err", err.Error())
-		http.Error(w, "raw forwarder stream open failed", http.StatusBadGateway)
+		writeForwarderProblem(w, http.StatusBadGateway)
 		return
 	}
 
@@ -686,7 +712,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder stream init send failed",
 			"node", t.NodeID, "err", err.Error())
-		http.Error(w, "raw forwarder stream init failed", http.StatusBadGateway)
+		writeForwarderProblem(w, http.StatusBadGateway)
 		return
 	}
 
@@ -699,7 +725,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder request head build failed",
 			"node", t.NodeID, "err", err.Error())
-		http.Error(w, "raw forwarder request head failed", http.StatusBadGateway)
+		writeForwarderProblem(w, http.StatusBadGateway)
 		return
 	}
 	if err := stream.Send(&vmmdpb.ForwardRawRequest{
@@ -708,7 +734,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		wsOutcome = WSOutcomeInitFailed
 		log.Error("gateway: raw forwarder request head send failed",
 			"node", t.NodeID, "err", err.Error())
-		http.Error(w, "raw forwarder request head failed", http.StatusBadGateway)
+		writeForwarderProblem(w, http.StatusBadGateway)
 		return
 	}
 	if metrics != nil {
@@ -820,18 +846,18 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				wsOutcome = WSOutcomeUpstreamUnavailable
 				log.Warn("gateway: raw forwarder stream Unavailable; surfacing 503",
 					"node", t.NodeID)
-				http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 				wsOutcome = WSOutcomeUpstreamUnavailable
-				http.Error(w, "instance gone", http.StatusServiceUnavailable)
+				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
 			wsOutcome = WSOutcomeUpstreamUnavailable
 			log.Error("gateway: raw forwarder stream Recv failed",
 				"node", t.NodeID, "err", err.Error())
-			http.Error(w, "raw forwarder stream failed", http.StatusBadGateway)
+			writeForwarderProblem(w, http.StatusBadGateway)
 			return
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
@@ -1120,7 +1146,7 @@ func ForwardingRawReverseProxyWithEventsAndDrain(nodes NodeClientLookup, log *sl
 			ctx := contextWithProxyStart(r.Context(), time.Now())
 			cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 			if !ok {
-				http.Error(w, "node unavailable", http.StatusServiceUnavailable)
+				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}
 			defer func() { _ = closer.Close() }()

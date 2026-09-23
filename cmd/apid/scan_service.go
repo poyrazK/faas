@@ -226,6 +226,10 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		Dockerfile: w.Dockerfile,
 		Command:    w.Command,
 		DependsOn:  w.DependsOn,
+
+		ServiceBindingPolicy:      api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective(),
+		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective(),
+
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
 		Ports:      w.Ports,
@@ -1356,8 +1360,9 @@ func (s *server) scanService(
 	// round-trip per scan.
 	acctApps, listErr := s.store.ListApps(r.Context(), acct.ID)
 	if listErr != nil {
-		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
-			fmt.Sprintf("list account apps: %v", listErr))
+		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "list apps for project scan",
+			"Gregale could not load your apps for this project scan.",
+			"Retry the scan in a moment; if it continues, contact support.", listErr)
 	}
 	// Resolve managed-Postgres declarations before project/app mutation.
 	// This makes scan previews honest and prevents a missing database,
@@ -1477,8 +1482,9 @@ func (s *server) scanService(
 	// pre-check (no Tx here — the store is authoritative).
 	observedApps, appCountErr := s.store.CountDeployedApps(r.Context(), acct.ID)
 	if appCountErr != nil {
-		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
-			fmt.Sprintf("count apps: %v", appCountErr))
+		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "count apps for project scan",
+			"Gregale could not check your account's app capacity.",
+			"Retry the scan in a moment; if it continues, contact support.", appCountErr)
 	}
 	// Resolve the project before admission so an existing slug is treated as
 	// an update only when it belongs to this exact project member. Matching
@@ -1493,14 +1499,16 @@ func (s *server) scanService(
 				fmt.Sprintf("project uses %q; request supplied %q", proj.ProductionBranch, req.ProdBranch))
 		}
 	} else if !errors.Is(projErr, state.ErrNotFound) {
-		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
-			fmt.Sprintf("load project for workload admission: %v", projErr))
+		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "load project for workload admission",
+			"Gregale could not load this project's settings.",
+			"Retry the scan in a moment; if it continues, contact support.", projErr)
 	}
 
 	cronInventory, observedCrons, cronInventoryErr := loadCronInventory(r.Context(), s, acctApps)
 	if cronInventoryErr != nil {
-		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
-			fmt.Sprintf("load account crons: %v", cronInventoryErr))
+		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "load scheduled jobs for project scan",
+			"Gregale could not check your account's scheduled jobs.",
+			"Retry the scan in a moment; if it continues, contact support.", cronInventoryErr)
 	}
 	projectApps := make([]state.App, 0)
 	existingProjectCrons := 0
@@ -1694,8 +1702,9 @@ func (s *server) scanService(
 	if planToken == "" {
 		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256)
 		if mintErr != nil {
-			return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
-				fmt.Sprintf("mint plan_token: %v", mintErr))
+			return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "create project scan token",
+				"Gregale could not finish preparing this project scan.",
+				"Retry the scan; if it continues, contact support.", mintErr)
 		}
 		resp.PlanToken = tok
 	} else {
@@ -1829,7 +1838,9 @@ func (s *server) scanService(
 					api.CodeValidation, "Account not found", "")
 				return resp, state.Project{}, nil, nil, nil, nil, prob
 			} else {
-				prob := api.ErrInternal(fmt.Sprintf("create project: %v", projErr))
+				prob := customerInternalProblem(s.log, "create project during apply",
+					"Gregale could not create this project.",
+					"Retry the deployment in a moment; if it continues, contact support.", projErr)
 				return resp, state.Project{}, nil, nil, nil, nil, prob
 			}
 		} else {
@@ -1837,7 +1848,9 @@ func (s *server) scanService(
 			projectCreated = true
 		}
 	default:
-		prob := api.ErrInternal(fmt.Sprintf("load existing project: %v", lookupErr))
+		prob := customerInternalProblem(s.log, "load project during apply",
+			"Gregale could not load this project.",
+			"Retry the deployment in a moment; if it continues, contact support.", lookupErr)
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
 	// Defer project rollback for any error path below.
@@ -1910,7 +1923,9 @@ func (s *server) scanService(
 	// what was deleted.
 	preRemoveApps, preLoadErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 	if preLoadErr != nil {
-		prob := api.ErrInternal(fmt.Sprintf("load existing apps: %v", preLoadErr))
+		prob := customerInternalProblem(s.log, "load workloads before project apply",
+			"Gregale could not load this project's existing workloads.",
+			"Retry the deployment in a moment; if it continues, contact support.", preLoadErr)
 		capturedProb = prob
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
@@ -1982,7 +1997,9 @@ func (s *server) scanService(
 		}
 		// mapReconcileError returned nil for nil err — unreachable
 		// here, but defensively pass through as 500.
-		prob := api.ErrInternal(fmt.Sprintf("reconcile: %v", recErr))
+		prob := customerInternalProblem(s.log, "apply project workloads",
+			"Gregale could not apply this project's workloads.",
+			"Review the project status before retrying; contact support if it remains incomplete.", recErr)
 		capturedProb = prob
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
@@ -2009,7 +2026,9 @@ func (s *server) scanService(
 		// when project_id is nulled by rollback.
 		bindingApps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if appsErr != nil {
-			prob := api.ErrInternal(fmt.Sprintf("load apps for managed PostgreSQL bindings: %v", appsErr))
+			prob := customerInternalProblem(s.log, "load workloads for managed database bindings",
+				"Gregale could not finish connecting the declared databases to your workloads.",
+				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifestBindings, bindingApps); prob != nil {

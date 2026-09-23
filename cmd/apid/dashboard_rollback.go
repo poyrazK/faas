@@ -24,7 +24,7 @@ func (s *server) dashboardRollback(w http.ResponseWriter, r *http.Request) {
 	}
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeDashboardUnauthorized(w, r)
 		return
 	}
 	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardRollbackAction, acct.ID, dashboardRollbackCSRFCookie); err != nil {

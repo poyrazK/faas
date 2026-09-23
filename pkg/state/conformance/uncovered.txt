@@ -220,7 +220,6 @@ GetAppErrorSample
 GetAppOpenAPIDoc
 GetAppRegistryCredential
 GetAppSecret
-GetAppSecretInScope
 GetConsumerKeyByID
 GetCorsPresetByID
 GetDataUpstreamByID
@@ -268,6 +267,7 @@ InsertDataUpstreamProbe
 InsertMirrorResult
 InsertOIDCExchangedToken
 InsertRequestTelemetry
+InsertRequestTelemetryWithLogEvent
 InsertStatusIncident
 InsertTriggerDeadLetter
 InsertWorkflowEvent
@@ -674,7 +674,6 @@ UpsertAppOpenAPIDoc
 UpsertAppOpenAPIDocIfUnderQuota
 UpsertAppRegistryCredential
 UpsertAppSecret
-UpsertAppSecretInScope
 UpsertAppSecretWithKid
 UpsertAppSecretWithKidAndValueHashInScope
 UpsertAppSecretWithKidInScope

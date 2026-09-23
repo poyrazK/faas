@@ -126,7 +126,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "add", "bindings", "crons", "delayed-task", "events", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "bindings", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
@@ -386,6 +386,32 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:        "send",
+		DocSlug:     "send",
+		Short:       "Reliably send work to another Gregale application",
+		Positionals: []string{"<target-app>"},
+		Flags: []cliFlag{
+			{Name: "type", Short: "event type", Req: true, Value: "TYPE"},
+			{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
+			{Name: "id", Short: "stable event id", Value: "ID"},
+			{Name: "source", Short: "event source", Value: "SOURCE"},
+			{Name: "time", Short: "event time", Value: "RFC3339"},
+			{Name: "queue-name", Short: "target logical queue name", Value: "QUEUE"},
+			{Name: "idempotency-key", Short: "stable key for retrying an uncertain send", Value: "KEY"},
+		},
+	},
+	{
+		Name:        "deliver",
+		DocSlug:     "deliver",
+		Short:       "Reliably deliver an event to a registered webhook",
+		Positionals: []string{"<source-app>", "<webhook-id|url>"},
+		Flags: []cliFlag{
+			{Name: "type", Short: "event type", Req: true, Value: "TYPE"},
+			{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
+			{Name: "idempotency-key", Short: "stable key for retrying an uncertain delivery", Value: "KEY"},
+		},
+	},
+	{
 		Name:    dispatchApps,
 		DocSlug: "apps",
 		Short:   "List your apps",
@@ -513,6 +539,7 @@ var cliCommands = []cliCommand{
 				{Name: "preview", Short: "enable pull-request previews"},
 				{Name: "no-preview", Short: "disable pull-request previews"},
 				{Name: "preview-ttl-hours", Short: "preview lease in hours (1-720)", Value: "HOURS"},
+				{Name: "preview-service-policy", Short: "preview-to-production service calls: deny|allow_marked", Value: "POLICY", ClosedSet: []string{"deny", "allow_marked"}},
 				{Name: "root-dir", Short: "repository-relative source root for the root workload", Value: "DIR"},
 				{Name: "ignore", Short: "comma-separated ignored change paths", Value: "PATHS"},
 				{Name: "rollout", Short: "production rollout mode: standard|safe (safe requires Pro/Scale)", Value: "MODE", ClosedSet: []string{"standard", "safe"}},
@@ -693,6 +720,14 @@ var cliCommands = []cliCommand{
 				{Name: "payload", Value: "JSON|@FILE|-", Short: "JSON request payload"},
 				{Name: "method", Value: "METHOD", Short: "HTTP method (default POST)"},
 				{Name: "path", Value: "PATH", Short: "app path (default /)"},
+				{Name: "header", Value: "NAME:VALUE", Short: "request header (repeatable)"},
+				{Name: "max-attempts", Value: "N", Short: "maximum delivery attempts"},
+				{Name: "retry-base-seconds", Value: "N", Short: "base retry delay in seconds"},
+				{Name: "retry-max-seconds", Value: "N", Short: "maximum retry delay in seconds"},
+				{Name: "retry-jitter-seconds", Value: "N", Short: "retry jitter fraction (0..1)"},
+				{Name: "retention", Value: "DURATION", Short: "terminal result retention"},
+				{Name: "on-success-webhook", Value: "ID", Short: "success webhook subscription"},
+				{Name: "on-failure-webhook", Value: "ID", Short: "failure webhook subscription"},
 				{Name: "idempotency-key", Value: "KEY", Short: "stable create retry key"},
 			}},
 			{Name: "list", Short: "List delayed tasks for an app", Flags: []cliFlag{
@@ -1696,6 +1731,7 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 					{Name: "deployment", Short: "deployment id or vN revision to promote", Req: true, Value: "ID"},
+					{Name: "if-serving", Short: "require this deployment id or vN revision to remain at 100% traffic", Value: "ID"},
 				},
 			},
 			{

@@ -400,10 +400,27 @@ env = { OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318" }
 	}
 }
 
-func TestExtensionPresetRequiresDigestImage(t *testing.T) {
-	m := &Manifest{Extensions: []ExtensionSpec{{Preset: string(ExtensionPresetSentry)}}}
-	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "image") {
-		t.Fatalf("Validate = %v, want missing image error", err)
+func TestCompanionPresetMayUseManagedImage(t *testing.T) {
+	m := &Manifest{Companions: []CompanionSpec{{Preset: string(ExtensionPresetSentry)}}}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate = %v, want managed preset accepted", err)
+	}
+	companions, err := m.ToSidecars()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(companions) != 1 || companions[0].Preset != "sentry" || companions[0].Image != "" {
+		t.Fatalf("companions = %+v, want unresolved managed sentry preset", companions)
+	}
+}
+
+func TestManifestRejectsCompanionsAndExtensionsTogether(t *testing.T) {
+	m := &Manifest{
+		Companions: []CompanionSpec{{Preset: string(ExtensionPresetSentry)}},
+		Extensions: []ExtensionSpec{{Preset: string(ExtensionPresetOpenTelemetry)}},
+	}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("Validate = %v, want alias conflict", err)
 	}
 }
 

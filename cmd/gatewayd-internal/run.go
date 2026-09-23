@@ -1298,6 +1298,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return gateway.App{}, false, err
 			}
+			liveDeployments, err := pgStore.LiveDeployments(ctx, app.ID)
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return gateway.App{}, false, err
+			}
+			companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
+			if err != nil {
+				return gateway.App{}, false, err
+			}
 			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
 			concurrencyOverflow := ""
 			maxQueueWaitMS := 0
@@ -1311,7 +1319,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -3192,24 +3200,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
 		serviceProxyConfig := gateway.ServiceProxyConfig{
-			Provider: serviceEndpointProvider,
-			Resolve: func(ctx context.Context, service string) (gateway.ServiceTarget, bool, error) {
-				app, err := pgStore.AppBySlug(ctx, service)
-				if errors.Is(err, state.ErrNotFound) {
-					return gateway.ServiceTarget{}, false, nil
-				}
-				if err != nil {
-					return gateway.ServiceTarget{}, false, fmt.Errorf("resolve service %q: %w", service, err)
-				}
-				// ADR-197: carry the target's wire-protocol posture with its
-				// identity so the guest hop can pick the H1 or H2C bridge
-				// without a second store read on the request path.
-				return gateway.ServiceTarget{
-					AppID:            app.ID,
-					AppProtocol:      app.AppProtocol,
-					WebSocketEnabled: app.WebSocketEnabled,
-				}, app.ID != "", nil
-			},
+			Provider:   serviceEndpointProvider,
+			Resolve:    newServiceProxyResolver(pgStore),
 			Authorize:  newServiceProxyAuthorizer(pgStore),
 			Forward:    deps.nodeCache.Forwarding(),
 			RawForward: deps.nodeCache.RawForwarding(),

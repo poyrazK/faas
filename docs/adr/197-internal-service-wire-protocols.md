@@ -103,9 +103,10 @@ ones. Pinned by `TestServiceProxyPropagatesTrailers`, which fails without it.
   as an app protocol is validated by `Plan.AppProtocolAllowed` at the apid
   boundary, and upgrade traffic by the target's `websocket_enabled` column.
   This ADR adds no new entry to `pkg/api/limits.go`.
-- `ServiceProxyResolver`'s signature changed. It is an internal package seam
-  with one production caller, so the migration is mechanical, but any
-  out-of-tree wiring must return `ServiceTarget`.
+- `ServiceProxyResolver` returns `ServiceTarget`. ADR-212 later adds the caller
+  app id to its inputs and `ServiceTarget.PreviewScoped` so resolution can be
+  scoped to a PR environment and telemetry can distinguish the selected
+  target environment.
 
 ## Rejected alternatives
 
