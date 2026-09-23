@@ -3231,16 +3231,13 @@ const (
 	// ServiceCallBindingDenied — a same-account caller selected the declared
 	// policy but did not declare the requested target service.
 	ServiceCallBindingDenied ServiceCallOutcome = "binding_denied"
-	// ServiceCallPreviewDenied — a production target rejects preview callers.
-	ServiceCallPreviewDenied ServiceCallOutcome = "preview_denied"
 	// ServiceCallNotFound — the service name resolves to no app.
 	ServiceCallNotFound ServiceCallOutcome = "not_found"
 	// ServiceCallUpgradeRejected — an Upgrade request the target does not
 	// accept, or no raw bridge is wired on this node (ADR-197).
 	ServiceCallUpgradeRejected ServiceCallOutcome = "upgrade_rejected"
-	// ServiceCallPreviewDenied — the caller was a project preview whose
-	// preview_service_policy blocks production dependencies. This verdict is
-	// made before endpoint lookup or wake.
+	// ServiceCallPreviewDenied — a project policy or production target rejects
+	// a preview caller before the request is forwarded or the target is woken.
 	ServiceCallPreviewDenied ServiceCallOutcome = "preview_denied"
 )
 
