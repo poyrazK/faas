@@ -10,7 +10,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
-| [`events`](#events) | Publish events and inspect subscriptions and deliveries |
+| [`events`](#events) | Preview routing, publish events and inspect subscriptions and deliveries |
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
@@ -257,9 +257,21 @@ Show one audit event
 
 ## events
 
-Publish events and inspect subscriptions and deliveries
+Preview routing, publish events and inspect subscriptions and deliveries
 
 `gregale events [<subcommand>]`
+
+### events preview
+
+Preview account-wide event routing without publishing
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | event id to use when filters inspect the CloudEvents id |  |
+| `--source <SOURCE>` | event source (or first positional argument) |  |
+| `--type <TYPE>` | event type (or second positional argument) |  |
+| `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
+| `--time <RFC3339>` | event time (RFC3339; defaults to server time) |  |
 
 ### events publish
 

@@ -318,6 +318,7 @@ export type { EnvScope } from './models/EnvScope.js';
 export type { ErrorNewWebhookPayload } from './models/ErrorNewWebhookPayload.js';
 export type { EventDeliveryListResponse } from './models/EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './models/EventDeliveryResponse.js';
+export type { EventPreviewSubscription } from './models/EventPreviewSubscription.js';
 export type { EventSubscriptionListResponse } from './models/EventSubscriptionListResponse.js';
 export type { EventSubscriptionResponse } from './models/EventSubscriptionResponse.js';
 export type { ExecutionFailure } from './models/ExecutionFailure.js';
@@ -523,6 +524,8 @@ export type { PreviewArtifactResponse } from './models/PreviewArtifactResponse.j
 export type { PreviewCreatedWebhookPayload } from './models/PreviewCreatedWebhookPayload.js';
 export type { PreviewEnvironmentMemberResponse } from './models/PreviewEnvironmentMemberResponse.js';
 export type { PreviewEnvironmentStatusResponse } from './models/PreviewEnvironmentStatusResponse.js';
+export type { PreviewEventRequest } from './models/PreviewEventRequest.js';
+export type { PreviewEventResponse } from './models/PreviewEventResponse.js';
 export type { PreviewProductionChangesResponse } from './models/PreviewProductionChangesResponse.js';
 export type { PreviewResourceLinksResponse } from './models/PreviewResourceLinksResponse.js';
 export type { PreviewResourceResponse } from './models/PreviewResourceResponse.js';
