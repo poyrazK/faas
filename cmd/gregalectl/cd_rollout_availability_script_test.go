@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,7 +69,8 @@ printf '200\t0.010\t0.001\t0.005'
 			output, err := command.CombinedOutput()
 			gotExit := 0
 			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok {
+				var exitErr *exec.ExitError
+				if errors.As(err, &exitErr) {
 					gotExit = exitErr.ExitCode()
 				} else {
 					t.Fatalf("run observer: %v", err)
