@@ -180,8 +180,8 @@ func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 		onGet: func() (int, any) {
 			return http.StatusOK, api.AppSecretListResponse{
 				Secrets: []api.AppSecretResponse{
-					{Key: "STRIPE_KEY"},
-					{Key: "DB_URL"},
+					{Key: "STRIPE_KEY", DeliveryStatus: "pending"},
+					{Key: "DB_URL", DeliveryStatus: "delivered"},
 				},
 				Quota: 25,
 				Count: 2,
@@ -203,7 +203,7 @@ func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 		t.Fatalf("cmdSecrets list = %d, want 0", code)
 	}
 	out := stdout.String()
-	for _, want := range []string{"my-app", "2/25", "STRIPE_KEY", "DB_URL"} {
+	for _, want := range []string{"my-app", "2/25", "STRIPE_KEY", "delivery pending", "DB_URL", "delivery delivered"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n%s", want, out)
 		}

@@ -131,6 +131,7 @@ func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 			Binding: "GREGALE_SERVICE_API_URL",
 			Service: "api",
 		}},
+		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
 	}
 
 	got := mergeProjectManagedManifest(existing, desired)
@@ -142,5 +143,8 @@ func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 	}
 	if len(got.ServiceBindings) != 1 || got.ServiceBindings[0] != desired.ServiceBindings[0] {
 		t.Fatalf("service bindings = %#v, want %#v", got.ServiceBindings, desired.ServiceBindings)
+	}
+	if got.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+		t.Fatalf("service binding policy = %q, want declared", got.ServiceBindingPolicy)
 	}
 }

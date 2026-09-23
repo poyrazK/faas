@@ -1488,8 +1488,11 @@ type AppManifest struct {
 	// Compose depends_on edges. Keeping it beside the generated service URL
 	// environment makes the declaration inspectable without parsing env text.
 	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
-	WorkingDir      string                  `json:"working_dir,omitempty"`
-	Port            int                     `json:"port,omitempty"`
+
+	ServiceBindingPolicy api.ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+
+	WorkingDir string `json:"working_dir,omitempty"`
+	Port       int    `json:"port,omitempty"`
 	// Ports is the app-owned listener declaration. It is merged into every
 	// deployment manifest so the gateway can expose named TCP listeners while
 	// UDP listeners remain available to workloads through guest discovery.
@@ -1531,12 +1534,19 @@ func (m AppManifest) EffectiveCrawlerPolicy() string {
 	}
 }
 
+// EffectiveServiceBindingPolicy returns the runtime authorization policy.
+// Empty legacy manifests retain same-account reachability; unknown non-empty
+// values fail closed through api.ServiceBindingPolicy.Effective.
+func (m AppManifest) EffectiveServiceBindingPolicy() api.ServiceBindingPolicy {
+	return m.ServiceBindingPolicy.Effective()
+}
+
 // IsZero reports whether the manifest carries no runner or lifecycle fields.
 // It keeps the legacy empty-manifest JSON shape while allowing lifecycle-only
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1550,6 +1560,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
+	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
@@ -5758,8 +5769,51 @@ type AppSecret struct {
 	// object-storage binding. Customer secret mutations reject rows carrying
 	// this ownership marker until the binding is revoked and cleaned up.
 	ManagedObjectStorageCredentialID string
-	CreatedAt                        time.Time
-	UpdatedAt                        time.Time
+	// DeliveryVersion advances only when the runtime value changes. Host-key
+	// reseals deliberately preserve it because they do not change what the
+	// application receives. DeliveredVersion identifies the newest version
+	// confirmed by a successful runtime start.
+	DeliveryVersion         int64
+	DeliveredVersion        int64
+	DeliveryStatus          SecretDeliveryStatus
+	LastDeliveryAttemptAt   *time.Time
+	LastDeliveredAt         *time.Time
+	LastDeliveryErrorCode   string
+	LastDeliveredWakeID     string
+	LastDeliveredInstanceID string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+type SecretDeliveryStatus string
+
+const (
+	SecretDeliveryPending   SecretDeliveryStatus = "pending"
+	SecretDeliveryDelivered SecretDeliveryStatus = "delivered"
+	SecretDeliveryFailed    SecretDeliveryStatus = "failed"
+)
+
+// AppSecretDeliveryCandidate is the non-sensitive identity of one exact
+// secret version staged into a runtime. The version fence prevents a late
+// wake from marking a newer rotation as delivered.
+type AppSecretDeliveryCandidate struct {
+	Scope   string
+	Key     string
+	Version int64
+}
+
+// AppSecretDeliveryResult records one runtime-start attempt for the staged
+// candidates. ErrorCode is a closed, non-sensitive reason; secret values and
+// ciphertext are intentionally absent.
+type AppSecretDeliveryResult struct {
+	AccountID   string
+	AppID       string
+	WakeID      string
+	InstanceID  string
+	Status      SecretDeliveryStatus
+	ErrorCode   string
+	AttemptedAt time.Time
+	Candidates  []AppSecretDeliveryCandidate
 }
 
 // AccountAppSecret is the per-row shape returned by

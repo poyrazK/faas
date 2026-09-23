@@ -20292,7 +20292,7 @@ components:
             enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, CONNECT, TRACE]
 
     AppServiceBinding:
-      description: "A repository-declared dependency on another same-account app. The binding is injected for discovery; gateway authorization remains account-scoped until a separate bindings-only policy is enabled."
+      description: "A repository-declared dependency on another same-account app. The binding is injected for discovery and becomes an authorization capability when the caller selects the `declared` service binding policy."
       type: object
       required: [binding, service]
       properties:
@@ -20304,6 +20304,11 @@ components:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]{1,61})[a-z0-9]$'
           description: "Stable target app name used by private service discovery."
+
+    ServiceBindingPolicy:
+      description: "Caller-side authorization policy for internal service requests. `account` preserves same-account reachability; `declared` permits only targets present in the caller's service bindings."
+      type: string
+      enum: [account, declared]
 
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
@@ -20385,10 +20390,13 @@ components:
           description: "Automatic teardown deadline for a preview, when one is configured."
         manifest: { $ref: '#/components/schemas/AppManifest' }
         service_bindings:
-          description: "Repository-declared same-account service dependencies currently injected into this workload. This is a read-only discovery projection, not an enforcement allowlist."
+          description: "Repository-declared same-account service dependencies currently injected into this workload. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy."
           type: array
           items:
             $ref: '#/components/schemas/AppServiceBinding'
+        service_binding_policy:
+          $ref: '#/components/schemas/ServiceBindingPolicy'
+          description: "Effective internal-service authorization policy. Legacy apps without a stored value return `account`."
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
         # the per-app outbound CIDR allowlist. Each entry is a
         # canonical CIDR string — v4 ("1.2.3.0/24") or v6
@@ -25985,6 +25993,9 @@ components:
           type: array
           items: { type: string }
           description: "Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies."
+        service_binding_policy:
+          $ref: '#/components/schemas/ServiceBindingPolicy'
+          description: "Effective policy selected by the Compose `x-gregale-service-policy` extension. Defaults to `account`."
         class:
           type: string
           enum: [http, graphql, grpc, job, worker, server, unknown]
@@ -28573,7 +28584,7 @@ components:
     AppSecretResponse:
       description: "A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the env-scope the row belongs to (ADR-092 PR-B). Pre-PR-B callers see scope='default' echoed on every row."
       type: object
-      required: [key, scope, created_at, updated_at]
+      required: [key, scope, created_at, updated_at, delivery_version, delivery_status]
       properties:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         # ADR-092 PR-B: scope echoes the env-scope the row was
@@ -28598,6 +28609,14 @@ components:
           maxLength: 16
           description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows. Same value across scopes = byte-identical plaintext."
           example: "abcdef0123456789"
+        delivery_version: { type: integer, format: int64, minimum: 1, description: "Opaque monotonic version of the runtime value. Advances on value mutation, not host-key reseal." }
+        delivered_version: { type: integer, format: int64, minimum: 1, description: "Newest version confirmed in a successfully started runtime. Omitted until the first successful delivery." }
+        delivery_status: { type: string, enum: [pending, delivered, failed], description: "Delivery state for the current delivery_version. A concurrent rotation remains pending until that exact version starts successfully." }
+        last_delivery_attempt_at: { type: string, format: date-time }
+        last_delivered_at: { type: string, format: date-time }
+        last_delivery_error_code: { type: string, enum: [runtime_start_failed], description: "Non-sensitive closed failure reason for the current version; omitted unless delivery_status is failed." }
+        last_delivered_wake_id: { type: string, description: "Wake correlation id of the most recent successful delivery." }
+        last_delivered_instance_id: { type: string, description: "Runtime instance that most recently received a secret version." }
 
     # ADR-092 PR-B: per-row shape for the nested secrets_by_scope
     # response (mirror of ScopedAppEnvResponse). Reserved for the
@@ -28612,7 +28631,7 @@ components:
         a second lookup. Value is NEVER echoed (same posture as
         AppSecretResponse).
       type: object
-      required: [scope, key, created_at, updated_at]
+      required: [scope, key, created_at, updated_at, delivery_version, delivery_status]
       properties:
         scope:
           type: string
@@ -28631,6 +28650,14 @@ components:
           maxLength: 16
           description: "16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows."
           example: "abcdef0123456789"
+        delivery_version: { type: integer, format: int64, minimum: 1, description: "Opaque monotonic version of the runtime value." }
+        delivered_version: { type: integer, format: int64, minimum: 1, description: "Newest version confirmed in a successfully started runtime." }
+        delivery_status: { type: string, enum: [pending, delivered, failed] }
+        last_delivery_attempt_at: { type: string, format: date-time }
+        last_delivered_at: { type: string, format: date-time }
+        last_delivery_error_code: { type: string, enum: [runtime_start_failed] }
+        last_delivered_wake_id: { type: string }
+        last_delivered_instance_id: { type: string }
 
     AppSecretListResponse:
       description: "Paginated list of sealed-secret envelopes (no plaintext). Discriminated union: `secrets` is the flat arm; `secrets_by_scope` is the `?scope=__all__` arm (ADR-092 PR-B)."

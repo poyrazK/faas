@@ -64,3 +64,19 @@ func TestDiffFieldsChangedBackfillsServiceBindingReadModel(t *testing.T) {
 		t.Fatalf("changed fields = %v, want %v", got, want)
 	}
 }
+
+func TestDiffFieldsChangedDetectsServiceBindingPolicy(t *testing.T) {
+	workload := reposcan.Workload{
+		Name:                 "api",
+		ServiceBindingPolicy: reposcan.ServiceBindingPolicyDeclared,
+	}
+	app := state.App{
+		WorkloadName:  "api",
+		WorkloadClass: state.WorkloadClassHTTP,
+	}
+	got := diffFieldsChanged(app, workload, "")
+	want := []string{"service_binding_policy"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("changed fields = %v, want %v", got, want)
+	}
+}

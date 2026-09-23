@@ -543,6 +543,53 @@ func TestTierD_DelayedTaskAdd_RelativeDelayAndStableIdempotencyKey(t *testing.T)
 	}
 }
 
+func TestTierD_DelayedTaskAdd_FullInvocationOptions(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
+	if code := cmdDelayedTaskAdd([]string{
+		"--app", "demo", "--delay", "30m", "--method", "PUT", "--path", "/remind",
+		"--header", "x-correlation-id: corr-123", "--header", "X-Tenant:acme",
+		"--max-attempts", "4", "--retry-base-seconds", "1.5", "--retry-max-seconds", "30", "--retry-jitter-seconds", "0.2",
+		"--retention", "2h", "--on-success-webhook", "success-id", "--on-failure-webhook", "failure-id",
+	}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	headers, _ := got["headers"].(map[string]any)
+	if headers["X-Correlation-Id"] != "corr-123" || headers["X-Tenant"] != "acme" {
+		t.Fatalf("headers = %v", headers)
+	}
+	retry, _ := got["retry_policy"].(map[string]any)
+	if retry["max_attempts"] != float64(4) || retry["base_seconds"] != 1.5 || retry["max_seconds"] != float64(30) || retry["jitter_seconds"] != 0.2 {
+		t.Fatalf("retry_policy = %v", retry)
+	}
+	if got["retention_seconds"] != float64(7200) {
+		t.Fatalf("retention_seconds = %v", got["retention_seconds"])
+	}
+	destinations, _ := got["destinations"].(map[string]any)
+	if destinations["on_success"] != "success-id" || destinations["on_failure"] != "failure-id" {
+		t.Fatalf("destinations = %v", destinations)
+	}
+}
+
+func TestTierD_DelayedTaskAdd_RejectsInvalidExtendedOptions(t *testing.T) {
+	resetJSONOut(t)
+	for _, args := range [][]string{
+		{"--app", "demo", "--delay", "30m", "--header", "X-Test:one", "--header", "x-test:two"},
+		{"--app", "demo", "--delay", "30m", "--retention", "1500ms"},
+		{"--app", "demo", "--delay", "30m", "--max-attempts", "26"},
+		{"--app", "demo", "--delay", "30m", "--retry-base-seconds", "NaN"},
+		{"--app", "demo", "--delay", "30m", "--retry-base-seconds", "10", "--retry-max-seconds", "5"},
+	} {
+		if code := cmdDelayedTaskAdd(args); code != 1 {
+			t.Fatalf("cmdDelayedTaskAdd(%v) = %d, want 1", args, code)
+		}
+	}
+}
+
 func TestTierD_DelayedTaskList_HappyPath(t *testing.T) {
 	resetJSONOut(t)
 	f := authedFakeAPI(t, `{"tasks":[]}`, http.StatusOK)

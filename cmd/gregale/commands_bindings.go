@@ -78,6 +78,10 @@ func collectAppBindingInventory(ctx context.Context, client appBindingInventoryC
 		App:      appSlug,
 		Bindings: make([]appBindingInventoryItem, 0),
 	}
+	serviceBindingState := "declared"
+	if app.ServiceBindingPolicy.Effective() == api.ServiceBindingPolicyDeclared {
+		serviceBindingState = "enforced"
+	}
 	for _, binding := range app.ServiceBindings {
 		inventory.Bindings = append(inventory.Bindings, appBindingInventoryItem{
 			Type:    bindingTypeService,
@@ -85,7 +89,7 @@ func collectAppBindingInventory(ctx context.Context, client appBindingInventoryC
 			Binding: binding.Binding,
 			Scope:   "app",
 			Access:  "invoke",
-			State:   "declared",
+			State:   serviceBindingState,
 		})
 	}
 

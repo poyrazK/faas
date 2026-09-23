@@ -853,6 +853,14 @@ Schedule a deferred invocation
 | `--payload <JSON|@FILE|->` | JSON request payload |  |
 | `--method <METHOD>` | HTTP method (default POST) |  |
 | `--path <PATH>` | app path (default /) |  |
+| `--header <NAME:VALUE>` | request header (repeatable) |  |
+| `--max-attempts <N>` | maximum delivery attempts |  |
+| `--retry-base-seconds <N>` | base retry delay in seconds |  |
+| `--retry-max-seconds <N>` | maximum retry delay in seconds |  |
+| `--retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
+| `--retention <DURATION>` | terminal result retention |  |
+| `--on-success-webhook <ID>` | success webhook subscription |  |
+| `--on-failure-webhook <ID>` | failure webhook subscription |  |
 | `--idempotency-key <KEY>` | stable create retry key |  |
 
 ### delayed-task list

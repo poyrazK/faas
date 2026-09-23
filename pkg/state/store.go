@@ -2749,6 +2749,7 @@ type Store interface {
 	// cheap).
 	AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (seq int64, err error)
 	ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) (rows []LogEntry, hasMore bool, err error)
+	LogEventStore
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
@@ -5543,6 +5544,10 @@ type Store interface {
 	// CountAppSecrets is the quota check helper. apid calls it before
 	// UpsertAppSecret to enforce Limits.SecretCountMax.
 	CountAppSecrets(ctx context.Context, accountID, appID string) (int, error)
+	// RecordAppSecretDelivery conditionally records one runtime-start result
+	// for the exact secret versions schedd staged. A concurrent rotation wins:
+	// candidates whose version no longer matches remain pending.
+	RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer; imaged is the only reader. PasswordEncrypted

@@ -31,6 +31,10 @@ Use either an absolute timestamp or a relative delay:
 ```bash
 gregale delayed-task add --app billing --delay 30m \
   --path /internal/send-reminder --payload '{"invoice_id":"inv_123"}' \
+  --header 'X-Correlation-ID:inv_123' \
+  --max-attempts 4 --retry-base-seconds 1 --retry-max-seconds 30 \
+  --retry-jitter-seconds 0.2 --retention 24h \
+  --on-failure-webhook FAILURE_WEBHOOK_ID \
   --idempotency-key reminder-inv-123
 
 gregale delayed-task add --app billing \
@@ -42,6 +46,11 @@ The API accepts the same target envelope as an asynchronous invocation:
 and optional success/failure webhook destinations. Exactly one of
 `scheduled_at` or `delay_seconds` is required. The time must be in the future
 and no more than 365 days away.
+
+The CLI exposes that complete envelope through repeatable `--header` flags,
+the `--max-attempts` and `--retry-*` retry controls, `--retention`, and
+`--on-success-webhook` / `--on-failure-webhook`. Retry settings must satisfy
+the plan limits; omit them to use the plan defaults.
 
 List, inspect, or cancel work without querying the general invocation ledger:
 

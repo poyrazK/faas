@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // drainSynth is a recording GatewaySynth that captures the invocations
@@ -185,6 +188,59 @@ func TestDrain_DispatchesDueRow(t *testing.T) {
 	if notif.count(db.NotifyInvocationDone) != 1 {
 		t.Errorf("notify invocation_done count = %d, want 1", notif.count(db.NotifyInvocationDone))
 	}
+}
+
+func TestDrain_ObservesDelayedTaskLagAndSuccess(t *testing.T) {
+	t.Parallel()
+	d, store, _, _, synth := newDrainHarness(t, api.PlanHobby, true)
+	metrics := wire.NewOpsMetrics("schedd")
+	d.ops = metrics
+	now := time.Now().UTC().Truncate(time.Second)
+	d.now = func() time.Time { return now }
+	d.accts = newAcctCache(d.now)
+
+	apps, err := store.ListAllApps(context.Background())
+	if err != nil || len(apps) == 0 {
+		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+	}
+	scheduledAt := now.Add(-30 * time.Second)
+	_, err = store.EnqueueInvocation(context.Background(), state.Invocation{
+		AppID: apps[0].ID, AccountID: apps[0].AccountID,
+		Source: state.InvocationDelayedTask, Method: http.MethodPost, Path: "/x",
+		DueAt: scheduledAt, ScheduledAt: &scheduledAt,
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+
+	synth.transient.Store(true)
+	d.Tick(context.Background())
+	synth.transient.Store(false)
+	now = now.Add(10 * time.Second)
+	d.Tick(context.Background())
+
+	body := renderDrainMetrics(t, metrics)
+	for _, want := range []string{
+		`schedd_delayed_task_dispatch_total{outcome="success"} 1`,
+		`schedd_delayed_task_dispatch_total{outcome="retry"} 1`,
+		`schedd_delayed_task_schedule_lag_seconds_bucket{le="30"} 1`,
+		`schedd_delayed_task_schedule_lag_seconds_count 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing delayed-task metric %q in:\n%s", want, body)
+		}
+	}
+}
+
+func renderDrainMetrics(t *testing.T, metrics *wire.OpsMetrics) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want 200", rec.Code)
+	}
+	return rec.Body.String()
 }
 
 func TestDrain_DoesNotClaimAnotherNodesInvocation(t *testing.T) {

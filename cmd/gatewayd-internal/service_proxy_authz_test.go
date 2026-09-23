@@ -22,11 +22,15 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	newApp := func(accountID, slug string) state.App {
+	newApp := func(accountID, slug string, manifests ...state.AppManifest) state.App {
 		t.Helper()
+		var manifest state.AppManifest
+		if len(manifests) > 0 {
+			manifest = manifests[0]
+		}
 		app, err := store.CreateApp(ctx, state.App{
 			AccountID: accountID, Slug: slug,
-			Type: state.AppTypeApp, RAMMB: 128, Status: state.AppActive,
+			Type: state.AppTypeApp, RAMMB: 128, Status: state.AppActive, Manifest: manifest,
 		})
 		if err != nil {
 			t.Fatalf("CreateApp %q: %v", slug, err)
@@ -35,6 +39,26 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 	}
 	caller := newApp(acct.ID, "authzcaller")
 	target := newApp(acct.ID, "authztarget")
+	strictAllowed := newApp(acct.ID, "strictallowed", state.AppManifest{
+		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+		ServiceBindings: []api.AppServiceBinding{{
+			Binding: "GREGALE_SERVICE_AUTHZTARGET_URL",
+			Service: "authztarget",
+		}},
+	})
+	strictUndeclared := newApp(acct.ID, "strictundeclared", state.AppManifest{
+		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+		ServiceBindings: []api.AppServiceBinding{{
+			Binding: "GREGALE_SERVICE_OTHER_URL",
+			Service: "other",
+		}},
+	})
+	strictEmpty := newApp(acct.ID, "strictempty", state.AppManifest{
+		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+	})
+	unknownPolicy := newApp(acct.ID, "unknownpolicy", state.AppManifest{
+		ServiceBindingPolicy: api.ServiceBindingPolicy("future-policy"),
+	})
 
 	// A second account, to stand in for a cross-tenant caller.
 	otherAcct, err := store.CreateAccount(ctx, "other@local", api.PlanPro)
@@ -53,6 +77,10 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 		wantErr error
 	}{
 		{"same account is allowed", caller.ID, target.ID, nil},
+		{"declared binding is allowed", strictAllowed.ID, target.ID, nil},
+		{"undeclared target is binding denied", strictUndeclared.ID, target.ID, gateway.ErrServiceProxyBindingDenied},
+		{"empty strict binding set denies all services", strictEmpty.ID, target.ID, gateway.ErrServiceProxyBindingDenied},
+		{"unknown persisted policy fails closed", unknownPolicy.ID, target.ID, gateway.ErrServiceProxyBindingDenied},
 		{"cross-account is denied", outsider.ID, target.ID, gateway.ErrServiceProxyDenied},
 		{"absent caller is denied", absentUUID, target.ID, gateway.ErrServiceProxyDenied},
 		{"absent target is denied", caller.ID, absentUUID, gateway.ErrServiceProxyDenied},

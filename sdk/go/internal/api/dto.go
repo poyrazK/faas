@@ -398,6 +398,13 @@ type AppServiceBinding struct {
 	Service string `json:"service"`
 }
 
+type ServiceBindingPolicy string
+
+const (
+	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
+	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+)
+
 // AppResponse is an app as returned by the API.
 // RepoResponse is one repository visible to the account's GitHub App
 // installation. Installation credentials are never returned.
@@ -485,8 +492,12 @@ type AppResponse struct {
 	// appmanifest.go) so the wire shape stays a single source of truth.
 	Manifest AppManifest `json:"manifest"`
 	// ServiceBindings are repository-declared discovery edges. They do not
-	// change the service mesh's account-scoped authorization policy.
+	// change authorization under the account policy and become the outbound
+	// allowlist under the declared policy.
 	ServiceBindings []AppServiceBinding `json:"service_bindings,omitempty"`
+	// ServiceBindingPolicy is the caller-side internal-service authorization
+	// policy returned by the API.
+	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6

@@ -79,6 +79,10 @@ func serviceBindingsEqual(left, right []api.AppServiceBinding) bool {
 	return true
 }
 
+func serviceBindingPolicyForWorkload(w reposcan.Workload) api.ServiceBindingPolicy {
+	return api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
+}
+
 func serviceEnvKey(name string) string {
 	name = strings.ToUpper(strings.TrimSpace(name))
 	var b strings.Builder
