@@ -2640,6 +2640,57 @@ func TestApplyEdgeRuleCORS_Preflight_EmitsApplySuccess(t *testing.T) {
 	}
 }
 
+type methodScopedCORSMatcher struct {
+	noOpEdgeRuleMatcher
+	rules []EdgeRuleCORSResolved
+}
+
+func (m methodScopedCORSMatcher) MatchCORS(_ context.Context, _, path, method string) *EdgeRuleCORSResolved {
+	return PickFirstCORSMatch(m.rules, path, method)
+}
+
+func TestApplyEdgeRuleCORS_PreflightMatchesRequestedMethod(t *testing.T) {
+	h := &Handler{edgeRules: methodScopedCORSMatcher{rules: []EdgeRuleCORSResolved{{
+		ID:           "get-only",
+		AccountID:    "acct-1",
+		Methods:      map[string]bool{http.MethodGet: true},
+		AllowOrigins: []string{"https://allowed.example"},
+		AllowMethods: []string{http.MethodGet},
+	}}}}
+	app := App{ID: "app-1", AccountID: "acct-1"}
+	for _, tc := range []struct {
+		name          string
+		origin        string
+		requestMethod string
+		wantHandled   bool
+	}{
+		{name: "allowed_GET", origin: "https://allowed.example", requestMethod: http.MethodGet, wantHandled: true},
+		{name: "disallowed_POST", origin: "https://allowed.example", requestMethod: http.MethodPost},
+		{name: "disallowed_origin", origin: "https://other.example", requestMethod: http.MethodGet},
+		{name: "not_a_preflight", origin: "https://allowed.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodOptions, "http://app.example.test/api", nil)
+			req.Header.Set("Origin", tc.origin)
+			if tc.requestMethod != "" {
+				req.Header.Set("Access-Control-Request-Method", tc.requestMethod)
+			}
+			rec := httptest.NewRecorder()
+			handled := h.applyEdgeRuleCORS(rec, req, app, nil)
+			if handled != tc.wantHandled {
+				t.Fatalf("handled = %t, want %t", handled, tc.wantHandled)
+			}
+			if tc.wantHandled {
+				if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != tc.origin || rec.Header().Get("Access-Control-Allow-Methods") != http.MethodGet {
+					t.Fatalf("allowed preflight status/headers = %d/%v", rec.Code, rec.Header())
+				}
+			} else if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+				t.Fatalf("disallowed preflight exposed allow-origin %q", got)
+			}
+		})
+	}
+}
+
 // TestApplyEdgeRuleCORS_NonPreflight_EmitsApplySuccess mirrors the
 // preflight test above but walks the GET (non-preflight) branch.
 // The non-preflight path installs the Access-Control-Allow-Origin

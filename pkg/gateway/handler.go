@@ -2353,7 +2353,19 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchCORS(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	// A browser preflight is sent as OPTIONS but asks permission for the
+	// method in Access-Control-Request-Method. Match method-scoped CORS rules
+	// against that intended request; otherwise a GET-only rule can never
+	// answer its own GET preflight.
+	matchMethod := r.Method
+	requestedMethod := ""
+	if r.Method == http.MethodOptions && r.Header.Get("Origin") != "" {
+		requestedMethod = strings.TrimSpace(r.Header.Get("Access-Control-Request-Method"))
+		if requestedMethod != "" {
+			matchMethod = requestedMethod
+		}
+	}
+	rule := h.edgeRules.MatchCORS(r.Context(), hostname(r.Host), r.URL.Path, matchMethod)
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("cors", "miss")
@@ -2398,6 +2410,21 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 			h.metrics.ObserveEdgeRuleApply("cors", "success")
 		}
 		return false
+	}
+	if requestedMethod != "" {
+		allowed := false
+		for _, method := range rule.AllowMethods {
+			if method == requestedMethod {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			if h.metrics != nil {
+				h.metrics.ObserveEdgeRuleMatch("cors", "miss")
+			}
+			return false
+		}
 	}
 	origin := r.Header.Get("Origin")
 	allowedOrigin := matchOrigin(rule.AllowOrigins, origin)
