@@ -111,10 +111,10 @@ func buildTestTarGz(t *testing.T, entries []tar.Header, bodies map[string][]byte
 	tw := tar.NewWriter(gz)
 	for _, h := range entries {
 		hdr := h
-		if hdr.Mode == 0 {
+		if hdr.Typeflag != tar.TypeXGlobalHeader && hdr.Mode == 0 {
 			hdr.Mode = 0o644
 		}
-		if hdr.ModTime.IsZero() {
+		if hdr.Typeflag != tar.TypeXGlobalHeader && hdr.ModTime.IsZero() {
 			hdr.ModTime = time.Unix(0, 0)
 		}
 		// Body length drives hdr.Size — tar.Writer refuses writes that
