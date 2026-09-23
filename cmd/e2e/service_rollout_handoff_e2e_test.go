@@ -2,6 +2,11 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,10 +14,14 @@ import (
 	"testing"
 	"time"
 
+	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -104,9 +113,12 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 	}
 
 	// A restarted scheduler must find the unfinished rollout in durable state.
+	signingKey, keyID := registerServiceHandoffNodeKey(t, f)
 	if err := f.h.RestartSchedd(); err != nil {
 		t.Fatalf("restart schedd during blocked handoff: %v", err)
 	}
+	reporter := newServiceHandoffReporter(t, f.h.ScheddSock, f.nodeID, signingKey, keyID,
+		stableInstance.ID, candidateInstance.ID)
 	secondaryURL := f.h.StartAdditionalGateway(secondaryName)
 	secondaryGatewayTarget := "tcp://" + strings.TrimPrefix(secondaryURL, "http://")
 	secondary.GatewayTargetURL = &secondaryGatewayTarget
@@ -127,6 +139,8 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 			t.Fatalf("%s did not adopt candidate route: %d %q", name, status, body)
 		}
 	}
+	reporter.Report(t, 1)
+	assertServiceHandoffPredecessorLive(t, f, stable.ID, longDone)
 
 	gate.Release()
 	select {
@@ -138,15 +152,111 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 		t.Fatal("pre-cutover request did not complete after release")
 	}
 	setServiceHandoffInflight(f.vmmd, stableInstance.ID, 0)
-	waitServiceHandoff(t, f, candidate.ID, 40*time.Second, func(d state.Deployment) bool {
-		return d.RolloutState == "complete" && d.ServiceRolloutHandoff.Phase == state.ServiceRolloutPhaseComplete
-	})
+	// The scheduler's drain cache is populated by vmmd's signed capacity
+	// stream, not its Stats RPC. Keep reporting zero after the real request
+	// finishes so the post-ACK quiet window can complete.
+	deadline := time.Now().Add(40 * time.Second)
+	var last state.Deployment
+	for time.Now().Before(deadline) {
+		reporter.Report(t, 0)
+		last, err = f.store.DeploymentByID(f.ctx, candidate.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if last.RolloutState == "complete" && last.ServiceRolloutHandoff.Phase == state.ServiceRolloutPhaseComplete {
+			break
+		}
+		time.Sleep(350 * time.Millisecond)
+	}
+	if last.RolloutState != "complete" || last.ServiceRolloutHandoff.Phase != state.ServiceRolloutPhaseComplete {
+		t.Fatalf("service rollout did not complete after zero-inflight reports: status=%s rollout=%s handoff=%+v",
+			last.Status, last.RolloutState, last.ServiceRolloutHandoff)
+	}
 	old, err := f.store.DeploymentByID(f.ctx, stable.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if old.Status != state.DeploySuperseded {
 		t.Fatalf("predecessor status = %s, want superseded after request drain", old.Status)
+	}
+}
+
+func registerServiceHandoffNodeKey(t *testing.T, f *normalPathFixture) (*ecdsa.PrivateKey, string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyID, err := sched.KeyIDForPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	if err := f.store.UpsertNodeKey(f.ctx, f.nodeID, keyID, string(publicPEM)); err != nil {
+		t.Fatalf("register capacity report signing key: %v", err)
+	}
+	return key, keyID
+}
+
+type serviceHandoffReporter struct {
+	client      scheddpb.ScheddClient
+	key         *ecdsa.PrivateKey
+	keyID       string
+	nodeID      string
+	stableID    string
+	candidateID string
+}
+
+func newServiceHandoffReporter(t *testing.T, sock, nodeID string, key *ecdsa.PrivateKey, keyID, stableID, candidateID string) *serviceHandoffReporter {
+	t.Helper()
+	conn, err := grpc.NewClient("unix://"+sock, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("connect capacity stream: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return &serviceHandoffReporter{
+		client: scheddpb.NewScheddClient(conn), key: key, keyID: keyID,
+		nodeID: nodeID, stableID: stableID, candidateID: candidateID,
+	}
+}
+
+func (r *serviceHandoffReporter) Report(t *testing.T, inflight int64) {
+	t.Helper()
+	now := time.Now().UTC()
+	const liveCount = 2
+	const usedMB = liveCount * e2etest.FakeSnapshotRAMMB
+	report := sched.CapacityReport{
+		NodeID: r.nodeID, SampledAt: now, LiveCount: liveCount,
+		UsedMB: usedMB, RAMHeadroomMB: 32000,
+	}
+	signature, err := sched.SignNodeReport(r.key, report)
+	if err != nil {
+		t.Fatalf("sign capacity report: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := r.client.ReportCapacity(ctx)
+	if err != nil {
+		t.Fatalf("open capacity stream: %v", err)
+	}
+	resident := wrapperspb.Int64(int64(e2etest.FakeSnapshotRAMMB) << 20)
+	if err := stream.Send(&scheddpb.CapacityReport{
+		NodeId: r.nodeID, SampledAtUnixMs: now.UnixMilli(), LiveCount: liveCount,
+		UsedMb: usedMB, RamHeadroomMb: 32000,
+		NodeSignature: signature, NodeKeyId: r.keyID,
+		Instances: []*scheddpb.InstanceTelemetry{
+			{InstanceId: r.stableID, ResidentBytes: resident, InflightRequests: inflight},
+			{InstanceId: r.candidateID, ResidentBytes: resident},
+		},
+	}); err != nil {
+		t.Fatalf("send capacity report: %v", err)
+	}
+	if _, err := stream.CloseAndRecv(); err != nil {
+		t.Fatalf("ack capacity report: %v", err)
 	}
 }
 
