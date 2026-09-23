@@ -31,7 +31,7 @@ func TestE2E_ServiceRollout_TwoGatewayRecoveryAndDrain(t *testing.T) {
 			Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false),
 			ExecutionMode:   api.ExecutionModeService,
 			ServiceReplicas: &api.ServiceReplicas{Min: 1, Max: 1, Desired: 1},
-		}, "FAAS_NODE_NAME="+primaryName)
+		}, "FAAS_E2E_GATEWAY_NODE_NAME="+primaryName)
 	if f == nil {
 		return // pgtest skips when PostgreSQL is unavailable.
 	}

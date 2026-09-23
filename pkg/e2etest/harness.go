@@ -984,6 +984,14 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
+	// Multi-gateway tests need a named gateway without making the legacy
+	// single-box schedd claim the synthetic default-local node. Keep this
+	// test-only override scoped to gatewayd-internal.
+	for _, entry := range extraEnv {
+		if nodeName, ok := strings.CutPrefix(entry, "FAAS_E2E_GATEWAY_NODE_NAME="); ok {
+			env = append(env, "FAAS_NODE_NAME="+nodeName)
+		}
+	}
 	h.procs = append(h.procs, startProc(t, bin, "gatewayd-internal", env))
 	h.GatewayURL = "http://" + addr
 	h.GatewayControlURL = "http://" + controlAddr
