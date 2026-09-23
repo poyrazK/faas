@@ -3789,8 +3789,28 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 	// Pre-marshal byte cap projection (PR-B review finding #7).
 	// Cap runs BEFORE json.Marshal — matches the posture
 	// writeWorkloadManifest adopts. The roster is at most 1
-	// main + SidecarCapMax (2) sidecars, so the projection
-	// multiplies per-workload projections by len(sidecars)+1.
+	// main + SidecarCapMax helpers, so the projection multiplies
+	// per-workload projections by len(sidecars)+1.
+	if len(sidecars) > api.SidecarCapMax {
+		return nil, fmt.Errorf("workload roster has %d helpers; cap is %d", len(sidecars), api.SidecarCapMax)
+	}
+	initCount, sidecarCount := 0, 0
+	for _, sc := range sidecars {
+		switch sc.Type {
+		case string(api.SidecarTypeInit):
+			initCount++
+		case string(api.SidecarTypeSidecar):
+			sidecarCount++
+		default:
+			return nil, fmt.Errorf("workload roster helper %q has invalid type %q", sc.Name, sc.Type)
+		}
+	}
+	if initCount > 1 {
+		return nil, fmt.Errorf("workload roster has %d init helpers; cap is 1", initCount)
+	}
+	if sidecarCount > api.SidecarLongRunningCapMax {
+		return nil, fmt.Errorf("workload roster has %d long-running helpers; cap is %d", sidecarCount, api.SidecarLongRunningCapMax)
+	}
 	if projected := projectedWorkloadRosterBytes(main, sidecars); projected > api.MaxExportedLayerBytes {
 		return nil, fmt.Errorf("workload roster projected %d bytes exceeds cap %d (sidecars=%d)", projected, api.MaxExportedLayerBytes, len(sidecars))
 	}

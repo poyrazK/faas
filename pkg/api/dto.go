@@ -389,6 +389,33 @@ type PreviewResourceLinksResponse struct {
 	Configuration string `json:"configuration"`
 }
 
+// PreviewEnvironmentStatusResponse reports the complete current-head workload
+// set for a GitHub-managed PR preview. Developer previews have no recorded set.
+type PreviewEnvironmentStatusResponse struct {
+	RootSlug       string                             `json:"root_slug"`
+	RepoFullName   string                             `json:"repo_full_name"`
+	PRNumber       int                                `json:"pr_number"`
+	CommitSHA      string                             `json:"commit_sha"`
+	Phase          string                             `json:"phase"`
+	Ready          bool                               `json:"ready"`
+	Summary        string                             `json:"summary"`
+	LiveWorkloads  int                                `json:"live_workloads"`
+	TotalWorkloads int                                `json:"total_workloads"`
+	Members        []PreviewEnvironmentMemberResponse `json:"members"`
+}
+
+// PreviewEnvironmentMemberResponse identifies one expected workload and its
+// newest preview deployment at the recorded PR head.
+type PreviewEnvironmentMemberResponse struct {
+	AppID            string `json:"app_id"`
+	Slug             string `json:"slug"`
+	WorkloadName     string `json:"workload_name"`
+	AppStatus        string `json:"app_status"`
+	PreviewState     string `json:"preview_state"`
+	DeploymentID     string `json:"deployment_id"`
+	DeploymentStatus string `json:"deployment_status"`
+}
+
 // UpsertDevSessionRequest describes the application shape for an expiring,
 // CLI-managed developer preview. The project identity lives in the URL path;
 // WorkspaceID separates developers and local source trees within that project.
@@ -6272,9 +6299,8 @@ type AdminSetGithubWebhookSecretResponse struct {
 }
 
 // SidecarType is the closed enum on Sidecar.Type (issue #463 /
-// ADR-068 §Decision 1). The 2-sidecar cap is enforced as 1 init +
-// 1 sidecar per deployment — `Sidecars.Validate` rejects any other
-// shape (e.g. 2 init) with `ErrSidecarInvalidType`.
+// ADR-068 §Decision 1). A deployment may have one init helper and up to
+// SidecarLongRunningCapMax concurrent sidecars, subject to SidecarCapMax.
 type SidecarType string
 
 const (
@@ -6381,11 +6407,10 @@ func ValidCompanionImageReference(ref string) bool {
 	return sidecarImageRe.MatchString(ref)
 }
 
-// Sidecar is one entry in the deploy request's `sidecars` array
-// (issue #463 / ADR-068). At most one with type=init and at most
-// one with type=sidecar per app (the 2-sidecar hard cap, enforced
-// by `Sidecars.Validate` + the schema CHECK on
-// `deployments.sidecars` in migration 00095).
+// Sidecar is one entry in the deploy request's `companions` array
+// (legacy spelling: `sidecars`). A deployment may declare one init helper
+// and up to SidecarLongRunningCapMax concurrently running companions; the
+// total helper cap is enforced by `Sidecars.Validate` and the database.
 //
 // The env map is stored envelope-sealed at rest via
 // `secretbox.SealBytes` (namespace="sidecar_env", mirrors
@@ -6423,8 +6448,8 @@ type Sidecar struct {
 	// Image is the digest-pinned OCI reference (`repo@sha256:...`).
 	// Tag references are rejected. Required unless Preset is set.
 	Image string `json:"image,omitempty"`
-	// Type is the closed enum (init | sidecar). At most one of
-	// each per deployment. Required.
+	// Type is the closed enum (init | sidecar). A deployment may declare one
+	// init helper and multiple long-running sidecars. Required.
 	Type SidecarType `json:"type"`
 	// Cmd is the argv array (the image's ENTRYPOINT is unchanged;
 	// Cmd overrides the CMD). Every element non-empty if present.
@@ -6742,9 +6767,8 @@ func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 	return nil
 }
 
-// Validate enforces the 2-cap (global `SidecarCapMax` constant),
-// type-uniqueness (at most one init + one sidecar), name
-// uniqueness, and per-sidecar `Validate`.
+// Validate enforces the global helper cap, one-init/four-running-companion
+// cardinality bounds, name uniqueness, and per-sidecar `Validate`.
 //
 // The limits argument is reserved for a future per-plan
 // `SidecarAllowed` gate (PR-A's accessor returns true for every
@@ -6779,9 +6803,12 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 			primaryIngress = ss[i].Name
 		}
 		seen[ss[i].Type]++
-		if seen[ss[i].Type] > 1 {
+		if ss[i].Type == SidecarTypeInit && seen[ss[i].Type] > 1 {
 			return ErrSidecarInvalidType(ss[i].Name,
 				fmt.Sprintf("at most one sidecar of type %q (got %d)", ss[i].Type, seen[ss[i].Type]))
+		}
+		if ss[i].Type == SidecarTypeSidecar && seen[ss[i].Type] > SidecarLongRunningCapMax {
+			return ErrSidecarCapExceeded(seen[ss[i].Type], SidecarLongRunningCapMax)
 		}
 	}
 	// Validate the complete graph, including compatibility edges that keep

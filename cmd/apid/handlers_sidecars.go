@@ -155,7 +155,7 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 //
 // Extracted from createDeployment (handlers.go) so the handler stays
 // under the CLAUDE.md 50-line cap. The plan-tier gate is currently
-// a no-op (every plan inherits the global 2-cap); the accessor
+// a no-op (every plan inherits the global five-helper cap); the accessor
 // exists so a future PR can add a per-plan matrix without a
 // handler-side branch.
 func validateAndPlanSidecars(req *api.CreateDeploymentRequest, acct state.Account, limits api.Limits) *api.Problem {

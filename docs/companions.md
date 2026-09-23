@@ -106,10 +106,37 @@ the primary companion and port. Gregale fails routing closed when they do not,
 so a rollout cannot accidentally bypass the proxy. Deploy matching companion
 configuration in the new revision before moving traffic.
 
+## Multiple long-running companions
+
+A deployment may include up to four long-running companions, plus one optional
+one-shot setup helper. Use `depends_on` to order startup; `healthy` waits for a
+dependency's startup probe to pass before the dependent workload starts:
+
+```yaml
+companions:
+  - name: metrics
+    image: registry.example.com/metrics@sha256:<64-hex-digest>
+    type: sidecar
+    port: 9090
+    startup_probe:
+      http_get: {path: /ready, port: 9090}
+  - name: proxy
+    image: registry.example.com/proxy@sha256:<64-hex-digest>
+    type: sidecar
+    port: 8081
+    depends_on:
+      - name: metrics
+        condition: healthy
+```
+
+Each companion retains its own memory, CPU, scratch, and I/O limits. The
+instance admission and billing reservation includes the RAM configured for
+every companion; dependency ordering does not change resource accounting.
+
 ## Limits and lifecycle
 
-- A deployment accepts at most two helper entries: one one-shot setup helper
-  and one long-running companion.
+- A deployment accepts at most five helper entries: one one-shot setup helper
+  and up to four long-running companions.
 - Helpers must be stateless and safe to restart. Database server images and
   other stateful images are rejected.
 - Each helper has its own memory, CPU, scratch, and disk-I/O controls. Its

@@ -490,26 +490,15 @@ CREATE FUNCTION public.deployment_sidecar_layers_cap_check() RETURNS trigger
 DECLARE
     current_count integer;
 BEGIN
-    -- NEW-row predicate on UPDATE; existing-row count on INSERT.
-    -- Same query works for both because NEW carries the row's
-    -- deployment_id whether we're inserting a fresh row or
-    -- rewriting an existing one.
-    -- `current_count` is the number of rows for this deployment_id
-    -- ALREADY in the table at the time of this trigger call. We
-    -- reject the operation when the row count would exceed
-    -- SidecarCapMax (=2). Because the trigger fires BEFORE the
-    -- row is written, the post-insert count is current_count + 1
-    -- (INSERT) or unchanged (UPDATE that doesn't move the row to
-    -- a different deployment). We compare against the post-write
-    -- ceiling: if the existing count is already at or above
-    -- SidecarCapMax, refuse — that is, current_count >= 2 is a
-    -- hard reject, since adding another row would push us to 3.
+    -- Excluding NEW.sidecar_name makes an upsert of an existing layer safe
+    -- even when the deployment already has the maximum number of helpers.
     SELECT count(*) INTO current_count
         FROM deployment_sidecar_layers
-        WHERE deployment_id = NEW.deployment_id;
+        WHERE deployment_id = NEW.deployment_id
+          AND sidecar_name <> NEW.sidecar_name;
 
-    IF current_count >= 2 THEN
-        RAISE EXCEPTION 'deployment_sidecar_layers: deployment % exceeds the 2-row cap (existing=%, new would make 3)',
+    IF current_count >= 5 THEN
+        RAISE EXCEPTION 'deployment_sidecar_layers: deployment % exceeds the 5-row cap (existing other rows=%, new would exceed 5)',
             NEW.deployment_id, current_count
             USING ERRCODE = 'check_violation';
     END IF;
@@ -2531,7 +2520,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 2)),
+    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
     CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
     CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
     CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),

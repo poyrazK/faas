@@ -1432,29 +1432,31 @@ func EvictionPriorityOrBestEffort(p string) string {
 	return p
 }
 
-// PreviewPrStateOpen / Closed / Stale / TornDown are the four
+// PreviewPrStateOpen / Closed / Stale / TearingDown / TornDown are the
 // closed-set values for state.App.PreviewPrState. Mirrors the
 // apps_preview_pr_state_chk CHECK constraint introduced by
-// migration 00218 (issue #272 / ADR-094). Empty string means
+// migration 00220 (issue #272 / ADR-094), extended by the teardown-claim
+// migration. Empty string means
 // "production app, no preview state" — the SQL CHECK allows
-// NULL or one of the four values; the Go side represents NULL
+// NULL or one of these values; the Go side represents NULL
 // as "" (same convention as EvictionPriorityOrBestEffort).
 const (
-	PreviewPrStateOpen     = "open"
-	PreviewPrStateClosed   = "closed"
-	PreviewPrStateStale    = "stale"
-	PreviewPrStateTornDown = "torn_down"
+	PreviewPrStateOpen        = "open"
+	PreviewPrStateClosed      = "closed"
+	PreviewPrStateStale       = "stale"
+	PreviewPrStateTearingDown = "tearing_down"
+	PreviewPrStateTornDown    = "torn_down"
 )
 
 // PreviewPrStateIsValid reports whether the value is one of
-// the four legal preview_pr_state values. Empty string is the
+// the legal preview_pr_state values. Empty string is the
 // "production app" shape (preview_pr_state IS NULL) — the SQL
 // CHECK allows NULL; the Go side uses "" for that. Callers
 // building a new preview App MUST set a non-empty value from
 // the closed set above.
 func PreviewPrStateIsValid(s string) bool {
 	switch s {
-	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTornDown:
+	case PreviewPrStateOpen, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown:
 		return true
 	default:
 		return false
@@ -2029,8 +2031,8 @@ type Deployment struct {
 	// 3 / 60s) are applied on the apid read path when this
 	// column is empty.
 	OverrideLivenessProbe json.RawMessage `json:"override_liveness_probe,omitempty"`
-	// Sidecars (issue #463 / ADR-068). Up to 2 stateless sidecars
-	// (1 init + 1 sidecar) per app. Persisted as jsonb on the
+	// Sidecars (issue #463 / ADR-068). Up to 5 stateless helpers
+	// (1 init + 4 long-running companions) per app. Persisted as jsonb on the
 	// `deployments.sidecars` column (migration 00095). Field is
 	// json.RawMessage (NOT []api.Sidecar) so the state package
 	// does NOT import pkg/api — see pkg/api ↔ pkg/state cycle
@@ -2522,8 +2524,9 @@ type StageStateItem struct {
 // handle (issue #463 / ADR-069 / PR-B). imaged writes one row per
 // sidecar during the buildImageLayer pass; vmmd reads it at wake
 // time to resolve the StorageBackend key into a tmp path. The
-// 2-row cap is mirrored at the schema layer via the
-// `deployments.sidecars` jsonb CHECK constraint (migration 00118);
+// five-row cap is mirrored at the schema layer via the
+// `deployments.sidecars` jsonb CHECK constraint and this table's
+// trigger (migration 20260923163517663);
 // this table's own constraint is just the PK uniqueness
 // (deployment_id, sidecar_name). The FK CASCADE means deleting
 // the deployment carries the rows with it (defence-in-depth —

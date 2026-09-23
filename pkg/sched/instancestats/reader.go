@@ -177,7 +177,7 @@ type InstanceStat struct {
 	// `sidecars jsonb` column at Tick time. Nil/empty = legacy
 	// no-sidecar shape (meterd's sampler collapses to the
 	// single-arg helper). Length is bounded by
-	// api.SidecarCapMax = 2; the broker that populates this
+	// api.SidecarCapMax = 5; the broker that populates this
 	// field (pkg/state.DeploymentSidecarRAMs) is the same one
 	// schedd's Request builder reads at Admit time, so a
 	// deployment with no sidecars on Admit stays no-sidecars on

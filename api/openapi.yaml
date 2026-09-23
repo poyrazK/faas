@@ -4115,6 +4115,31 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/preview/{slug}/environment:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [previews]
+      operationId: getPreviewEnvironmentStatus
+      summary: Read the current-head workload set for a GitHub PR preview.
+      description: |
+        The slug must be the root preview app of a recorded GitHub PR set.
+        The response evaluates only preview deployments for the recorded
+        commit. It never reports a root as ready while an expected sibling is
+        missing, building, failed, or on an older commit. Closed PRs are not
+        ready. Developer previews and unrecorded legacy PR previews return 404.
+        Requires the deployment read scope and account ownership of the root.
+      responses:
+        '200':
+          description: Current-head preview environment status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewEnvironmentStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/preview/{slug}/destroy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -21571,6 +21596,37 @@ components:
           type: boolean
           example: false
 
+    PreviewEnvironmentStatusResponse:
+      description: Aggregate current-head readiness for a recorded GitHub PR preview workload set.
+      type: object
+      required: [root_slug, repo_full_name, pr_number, commit_sha, phase, ready, summary, live_workloads, total_workloads, members]
+      properties:
+        root_slug: { type: string }
+        repo_full_name: { type: string }
+        pr_number: { type: integer, minimum: 1 }
+        commit_sha: { type: string }
+        phase: { type: string, enum: [building, live, failed, closed] }
+        ready: { type: boolean }
+        summary: { type: string }
+        live_workloads: { type: integer, minimum: 0 }
+        total_workloads: { type: integer, minimum: 1 }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/PreviewEnvironmentMemberResponse' }
+
+    PreviewEnvironmentMemberResponse:
+      description: One expected preview workload and its latest deployment for the recorded commit.
+      type: object
+      required: [app_id, slug, workload_name, app_status, preview_state, deployment_id, deployment_status]
+      properties:
+        app_id: { type: string, format: uuid }
+        slug: { type: string, description: Empty if the recorded app is missing. }
+        workload_name: { type: string }
+        app_status: { type: string, description: Includes missing when the recorded app is unavailable. }
+        preview_state: { type: string }
+        deployment_id: { type: string, description: Empty until a deployment for the recorded commit exists. }
+        deployment_status: { type: string, description: Missing until a deployment for the recorded commit exists. }
+
     CreatePreviewRequest:
       description: Pull-request preview provisioning payload. Source is deployed separately after the preview app is created.
       type: object
@@ -22799,12 +22855,12 @@ components:
           items: { $ref: '#/components/schemas/WorkflowSpec' }
         companions:
           type: array
-          maxItems: 2
+          maxItems: 5
           items: { $ref: '#/components/schemas/Sidecar' }
-          description: "Preferred field for companions carried across the resumable upload session."
+          description: "Preferred field for up to five helpers carried across the resumable upload session (one init helper and up to four long-running companions)."
         sidecars:
           type: array
-          maxItems: 2
+          maxItems: 5
           items: { $ref: '#/components/schemas/Sidecar' }
           deprecated: true
           description: "Deprecated spelling of companions."
@@ -24244,17 +24300,16 @@ components:
           example: true
         companions:
           type: array
-          maxItems: 2
+          maxItems: 5
           items:
             $ref: '#/components/schemas/Sidecar'
-          description: "Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with sidecars."
+          description: "Preferred field. Up to 5 stateless helpers total (one init helper and up to four long-running companions); managed presets may omit image. Do not set together with sidecars."
         # Issue #463 / ADR-068: backwards-compatible spelling.
-        # (1 init + 1 sidecar). The runtime effect (imaged,
-        # fcvm, guest-init) ships in PR-B; PR-A persists the
-        # shape and the handler envelope-seals env values.
+        # New deployments can declare one init helper and up to
+        # four long-running sidecars.
         sidecars:
           type: array
-          maxItems: 2
+          maxItems: 5
           items:
             $ref: '#/components/schemas/Sidecar'
           deprecated: true
@@ -24737,9 +24792,9 @@ components:
     Sidecar:
       description: |
         One entry in the deploy request's preferred `companions` array
-        (legacy name: `sidecars`). Up to 2 helpers per app (1 init
-        + 1 sidecar; the array is type-uniqueness + 2-capped at
-        the schema layer via migration 00095's CHECK constraint).
+        (legacy name: `sidecars`). Up to 5 helpers per app (1 init
+        + up to 4 long-running sidecars; total cardinality is capped
+        at the API, runtime, and database layers).
         Stateless only — stateful base images (Postgres, Redis,
         MySQL, MongoDB, etc.) are rejected at the API gate
         with 403 `sidecar_stateful_denied` and again at imaged
@@ -24757,8 +24812,8 @@ components:
           `image`; apid resolves an operator-pinned immutable digest.
         - `image` is required for a custom helper and must be a
           digest-pinned OCI reference. Tag references are rejected.
-        - `type` ∈ {`init`, `sidecar`}. At most one of each per
-          deployment.
+        - `type` ∈ {`init`, `sidecar`}. At most one init helper and
+          up to four long-running sidecars per deployment.
         - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
           overridden). Every element non-empty.
         - `env` is plaintext on the wire, sealed at rest. Keys

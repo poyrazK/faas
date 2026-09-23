@@ -23,7 +23,7 @@ import (
 // pgSidecarsFixture creates an account + app for sidecar round-trip
 // tests against a real Postgres schema. The deployment is created
 // separately by the test so the test can pin the Sidecars raw bytes
-// verbatim. The pool is returned so the 2-cap rejection test can
+// verbatim. The pool is returned so the capacity rejection test can
 // run the raw INSERT against the same schema the app was created on.
 func pgSidecarsFixture(t *testing.T) (*state.PgStore, context.Context, state.App, *pgxpool.Pool) {
 	t.Helper()
@@ -44,7 +44,7 @@ func pgSidecarsFixture(t *testing.T) (*state.PgStore, context.Context, state.App
 
 // TestPgStore_Deployment_Sidecars_JSONRoundTrip pins that the
 // 2-sidecar JSONB payload survives CreateDeployment ↔ DeploymentByID
-// byte-for-byte (PR-A's contract). The 2-cap end of the contract is
+// byte-for-byte (PR-A's contract). The capacity end of the contract is
 // pinned by the migration test (deployments_sidecars_test.go); this
 // test pins the byte-level round-trip on the most common shape.
 func TestPgStore_Deployment_Sidecars_JSONRoundTrip(t *testing.T) {
@@ -125,26 +125,26 @@ func decodeJSONB(t *testing.T, raw []byte) interface{} {
 	return out
 }
 
-// TestPgStore_Deployment_Sidecars_2CapRejection pins the schema-level
-// cap. The API gate (Sidecars.Validate) is the load-bearing 2-cap
+// TestPgStore_Deployment_Sidecars_FiveCapRejection pins the schema-level
+// cap. The API gate (Sidecars.Validate) is the load-bearing five-helper
 // guard, but the schema CHECK is the second-line defence. A
 // hand-call to the store layer that bypasses the API gate (manual
 // SQL, future grpc handler, debug shell) must still trip the cap.
 //
 // Pinned via raw pool.Exec, not s.CreateDeployment (the latter
 // would short-circuit on the notNullEmptyJSONRaw write path).
-func TestPgStore_Deployment_Sidecars_2CapRejection(t *testing.T) {
+func TestPgStore_Deployment_Sidecars_FiveCapRejection(t *testing.T) {
 	s, ctx, app, pool := pgSidecarsFixture(t)
 
 	if _, err := s.CreateDeployment(ctx, state.Deployment{
 		AppID:       app.ID,
 		Kind:        state.DeploymentKindImage,
-		ImageDigest: "sha256:setup-2cap",
+		ImageDigest: "sha256:setup-cap",
 	}); err != nil {
 		t.Fatalf("setup CreateDeployment: %v", err)
 	}
 
-	// Now attempt a 3-sidecar INSERT via the raw pool, bypassing
+	// Now attempt a 6-helper INSERT via the raw pool, bypassing
 	// the store-layer notNullEmptyJSONRaw normalisation. This
 	// round-trips through the exact column shape the migration
 	// created. The CHECK constraint must reject with 23514.
@@ -152,12 +152,15 @@ func TestPgStore_Deployment_Sidecars_2CapRejection(t *testing.T) {
 		`insert into deployments (app_id, image_digest, kind, status, sidecars)
 		 values ($1, 'sha256:over-cap', 'image', 'pending',
 		         '[
-		           {"name":"a","image":"x@sha256:01","type":"init"},
-		           {"name":"b","image":"x@sha256:02","type":"init"},
-		           {"name":"c","image":"x@sha256:03","type":"sidecar"}
+		           {"name":"a","image":"x@sha256:01","type":"sidecar"},
+		           {"name":"b","image":"x@sha256:02","type":"sidecar"},
+		           {"name":"c","image":"x@sha256:03","type":"sidecar"},
+		           {"name":"d","image":"x@sha256:04","type":"sidecar"},
+		           {"name":"e","image":"x@sha256:05","type":"sidecar"},
+		           {"name":"f","image":"x@sha256:06","type":"sidecar"}
 		         ]'::jsonb)`,
 		app.ID,
 	); err == nil {
-		t.Errorf("3-sidecar INSERT: got no error; want CHECK cap violation (23514)")
+		t.Errorf("6-helper INSERT: got no error; want CHECK cap violation (23514)")
 	}
 }

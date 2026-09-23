@@ -308,8 +308,8 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 	if log == nil {
 		log = slog.Default()
 	}
-	if len(roster.Sidecars) > 2 {
-		return fmt.Errorf("workload roster: deployment has %d sidecars; cap is 2 (ADR-069 §Decision 1)", len(roster.Sidecars))
+	if err := validateWorkloadCardinality(roster); err != nil {
+		return err
 	}
 	if err := hydrateSidecarPortMetadata(&roster); err != nil {
 		return err

@@ -1491,6 +1491,7 @@ func (s *server) handler() http.Handler {
 	// — destroying a preview is just as destructive as destroying
 	// a production app from the customer's POV.
 	mux.HandleFunc("POST /v1/preview/{slug}/destroy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyPreview))))
+	mux.HandleFunc("GET /v1/preview/{slug}/environment", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getPreviewEnvironmentStatus))))
 	// Issue #472 / ADR-054 — admin-only signature-enforcement toggle.
 	// Mounted with the admin+MFA chain (mirrors PATCH /v1/account/plan
 	// at server.go:516) so a customer cannot self-onboard signature
