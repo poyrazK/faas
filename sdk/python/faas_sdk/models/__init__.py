@@ -490,6 +490,8 @@ from .deploy_dev_source_body_runtime import DeployDevSourceBodyRuntime
 from .deploy_token_response import DeployTokenResponse
 from .deploy_token_response_scopes_item import DeployTokenResponseScopesItem
 from .deploy_token_response_status import DeployTokenResponseStatus
+from .deployment_alias_list_response import DeploymentAliasListResponse
+from .deployment_alias_response import DeploymentAliasResponse
 from .deployment_audit_response import DeploymentAuditResponse
 from .deployment_audit_response_kind import DeploymentAuditResponseKind
 from .deployment_change import DeploymentChange
@@ -497,8 +499,11 @@ from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
 from .deployment_change_field import DeploymentChangeField
 from .deployment_failed_webhook_payload import DeploymentFailedWebhookPayload
+from .deployment_failed_webhook_payload_status import DeploymentFailedWebhookPayloadStatus
 from .deployment_healthcheck import DeploymentHealthcheck
 from .deployment_list_response import DeploymentListResponse
+from .deployment_live_webhook_payload import DeploymentLiveWebhookPayload
+from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayloadStatus
 from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_response import DeploymentResponse
@@ -1256,6 +1261,7 @@ from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
+from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
@@ -1925,6 +1931,8 @@ __all__ = (
     "DeliverAppEventResponseStatus",
     "DeployDevSourceBody",
     "DeployDevSourceBodyRuntime",
+    "DeploymentAliasListResponse",
+    "DeploymentAliasResponse",
     "DeploymentAuditResponse",
     "DeploymentAuditResponseKind",
     "DeploymentChange",
@@ -1932,9 +1940,12 @@ __all__ = (
     "DeploymentChangeBeforeType3",
     "DeploymentChangeField",
     "DeploymentFailedWebhookPayload",
+    "DeploymentFailedWebhookPayloadStatus",
     "DeploymentHealthcheck",
     "DeploymentListResponse",
     "DeploymentLivenessProbe",
+    "DeploymentLiveWebhookPayload",
+    "DeploymentLiveWebhookPayloadStatus",
     "DeploymentPreviewURL",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
@@ -2668,6 +2679,7 @@ __all__ = (
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
+    "SetDeploymentAliasRequest",
     "SetGraceWindowRequest",
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",

@@ -34019,13 +34019,24 @@ components:
           additionalProperties: { type: string }
 
     # ─── Outbound webhooks (issue #476 / ADR-076) ──────────────────────────────
+    DeploymentLiveWebhookPayload:
+      type: object
+      description: Deployment reached the live state. Delivery IDs are stable across retries.
+      required: [app_id, deployment_id, status]
+      properties:
+        app_id: { type: string, description: App that owns this live deployment. }
+        deployment_id: { type: string, description: Deployment that entered the live state. }
+        status: { type: string, enum: [live] }
+      additionalProperties: true
+
     DeploymentFailedWebhookPayload:
       type: object
-      description: Deployment failure details delivered with deployment.failed.
-      required: [app_id, deployment_id]
+      description: Deployment failure details delivered with deployment.failed. Delivery IDs are stable across retries.
+      required: [app_id, deployment_id, status]
       properties:
-        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
-        deployment_id: { type: string }
+        app_id: { type: string, description: App that owns this failed deployment. }
+        deployment_id: { type: string, description: Deployment that entered the failed state. }
+        status: { type: string, enum: [failed] }
         error_code: { type: string }
         error_hint: { type: string }
         error_why: { type: string }
@@ -34197,7 +34208,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -34611,7 +34622,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -34668,7 +34679,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

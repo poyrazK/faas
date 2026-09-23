@@ -266,6 +266,7 @@ export type { DeploymentFailedWebhookPayload } from './models/DeploymentFailedWe
 export type { DeploymentHealthcheck } from './models/DeploymentHealthcheck.js';
 export type { DeploymentListResponse } from './models/DeploymentListResponse.js';
 export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.js';
+export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
