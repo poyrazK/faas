@@ -41,6 +41,9 @@ BEGIN
 END;
 $$;
 
+-- A database may have this trigger even if its goose ledger is behind.
+-- Replacing it in the migration transaction makes replay safe.
+DROP TRIGGER IF EXISTS deployments_lifecycle_webhooks ON deployments;
 CREATE TRIGGER deployments_lifecycle_webhooks
 AFTER UPDATE OF status ON deployments
 FOR EACH ROW EXECUTE FUNCTION enqueue_deployment_lifecycle_webhooks();
