@@ -1047,7 +1047,12 @@ func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloa
 	if err != nil {
 		return false, err
 	}
+	learn, present := v.preBoot.learnable(captureKey), false
 	err = loopMountSession(drive1, "faas-vmm-preboot-", func(mountRoot string) error {
+		if learn && preBootFilesPresent(mountRoot, writers) {
+			present = true
+			return nil
+		}
 		for _, w := range writers {
 			if err := w.write(mountRoot); err != nil {
 				return fmt.Errorf("%s: %w", w.what, err)
@@ -1058,16 +1063,24 @@ func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloa
 	if err != nil {
 		return false, err
 	}
+	if present {
+		v.preBoot.learned(captureKey, digest)
+	}
 	v.preBoot.instanceHas(instance, digest)
 	return false, nil
 }
 
 // preBootFileWriter is one deferred write against a mounted drive1. what is
 // the operation label the caller wraps errors with, matching the messages
-// the previous one-mount-per-file implementation produced.
+// the previous one-mount-per-file implementation produced. path, want and
+// mode describe the file the write leaves behind (path before full-rootfs
+// resolution), so a restore can tell the drive already holds it.
 type preBootFileWriter struct {
 	what  string
 	write func(mountRoot string) error
+	path  string
+	want  []byte
+	mode  os.FileMode
 }
 
 // preBootFileWriters validates inputs and projects byte caps BEFORE any
@@ -1082,13 +1095,13 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		digest.add("secrets.env", secretsEnvJSON)
 		writers = append(writers, preBootFileWriter{what: "stage secrets.env", write: func(mp string) error {
 			return writeSecretsEnv(mp, secretsEnvJSON)
-		}})
+		}, path: secretsEnvPath, want: secretsEnvJSON, mode: 0o400})
 	}
 	if len(apiEnvJSON) > 0 {
 		digest.add("env.json", apiEnvJSON)
 		writers = append(writers, preBootFileWriter{what: "stage env.json", write: func(mp string) error {
 			return writeAPIEnv(mp, apiEnvJSON)
-		}})
+		}, path: apiEnvPath, want: apiEnvJSON, mode: 0o400})
 	}
 	if strings.TrimSpace(serviceDiscoveryIP) != "" {
 		ip, err := parseServiceDiscoveryIP(serviceDiscoveryIP)
@@ -1098,13 +1111,14 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		digest.add("resolv.conf", []byte(ip.String()))
 		writers = append(writers, preBootFileWriter{what: "stage service resolver", write: func(mp string) error {
 			return writeServiceDiscoveryResolver(mp, ip)
-		}})
+		}, path: serviceDiscoveryResolverPath, want: serviceDiscoveryResolverContents(ip), mode: serviceDiscoveryResolverMode})
 	}
 	if appTask {
 		digest.add("app-task.json", nil)
+		marker := []byte(`{"kind":"app_task","version":1}`)
 		writers = append(writers, preBootFileWriter{what: "stage app task marker", write: func(mp string) error {
-			return writeDriveFile(mp, appTaskMarkerPath, []byte(`{"kind":"app_task","version":1}`), 0o400, "app-task.json")
-		}})
+			return writeDriveFile(mp, appTaskMarkerPath, marker, 0o400, "app-task.json")
+		}, path: appTaskMarkerPath, want: marker, mode: 0o400})
 	}
 	if len(workloads) > 1 {
 		// Sidecar drives are deliberately read-only. Image defaults and the
@@ -1122,7 +1136,7 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 			digest.add("workload-env:"+name, blob)
 			writers = append(writers, preBootFileWriter{what: "stage workload " + name + " env", write: func(mp string) error {
 				return writeWorkloadEnv(mp, name, blob)
-			}})
+			}, path: filepath.Join(workloadEnvPath, name, "env.json"), want: blob, mode: 0o400})
 		}
 		manifest, err := marshalWorkloadManifest(workloads[0])
 		if err != nil {
@@ -1131,7 +1145,7 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		digest.add("workload.json", manifest)
 		writers = append(writers, preBootFileWriter{what: "stage main workload manifest", write: func(mp string) error {
 			return writeDriveFile(mp, workloadManifestPath, manifest, 0o400, "workload.json")
-		}})
+		}, path: workloadManifestPath, want: manifest, mode: 0o400})
 		roster, err := marshalWorkloadRoster(workloads[0], workloads[1:])
 		if err != nil {
 			return nil, "", fmt.Errorf("stage workload roster: %w", err)
@@ -1139,7 +1153,7 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		digest.add("workloads.json", roster)
 		writers = append(writers, preBootFileWriter{what: "stage workload roster", write: func(mp string) error {
 			return writeDriveFile(mp, workloadRosterPath, roster, 0o400, "workloads.json")
-		}})
+		}, path: workloadRosterPath, want: roster, mode: 0o400})
 	}
 	return writers, digest.sum(), nil
 }
@@ -1225,11 +1239,16 @@ func writeServiceDiscoveryResolver(mountRoot string, ip netip.Addr) error {
 	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove existing resolver file: %w", err)
 	}
-	contents := fmt.Sprintf("# Gregale tenant service resolver\nnameserver %s\noptions timeout:2 attempts:2\n", ip)
-	if err := os.WriteFile(target, []byte(contents), 0o644); err != nil {
+	if err := os.WriteFile(target, serviceDiscoveryResolverContents(ip), serviceDiscoveryResolverMode); err != nil {
 		return fmt.Errorf("write resolver file: %w", err)
 	}
 	return nil
+}
+
+const serviceDiscoveryResolverMode os.FileMode = 0o644
+
+func serviceDiscoveryResolverContents(ip netip.Addr) []byte {
+	return fmt.Appendf(nil, "# Gregale tenant service resolver\nnameserver %s\noptions timeout:2 attempts:2\n", ip)
 }
 
 // applyPreBootCgroupFence installs the host-side memory/CPU fence after
