@@ -495,7 +495,7 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	_, _ = copyStreaming(w, resp.Body)
 }
 
 // newGuestRequest carries the inbound H2 stream's framing to the guest leg.
@@ -561,7 +561,7 @@ func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Co
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	_, _ = copyStreaming(w, resp.Body)
 
 	select {
 	case err := <-bodyErr:

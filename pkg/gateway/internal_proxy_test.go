@@ -801,8 +801,8 @@ func TestInternalReverseProxy_StripsCaseInsensitiveUpgrade(t *testing.T) {
 	req.Header["Upgrade"] = []string{"websocket"}
 	rr := httptest.NewRecorder()
 	p.ServeHTTP(rr, req)
-	if gotConnection != "upgrade" {
-		t.Errorf("Connection header = %q, want upgrade (preserved)", gotConnection)
+	if !strings.EqualFold(gotConnection, "upgrade") {
+		t.Errorf("Connection header = %q, want upgrade token (case-insensitive)", gotConnection)
 	}
 	if gotUpgrade != "websocket" {
 		t.Errorf("Upgrade header = %q, want websocket (preserved)", gotUpgrade)

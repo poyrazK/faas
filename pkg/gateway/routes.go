@@ -12,6 +12,7 @@ import (
 // same app row.
 type RouteTarget struct {
 	AppID                 string
+	RoutedSurfaceID       string
 	PinnedDeploymentID    string
 	PinnedDeploymentScope string
 }

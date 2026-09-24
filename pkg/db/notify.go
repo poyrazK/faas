@@ -73,6 +73,40 @@ type RuntimeConfigChangedPayload struct {
 	Key       string `json:"key,omitempty"`
 }
 
+// AppTaskChangedPayload is the durable scheduler -> imaged handoff emitted
+// when a deployment-attached task reaches a terminal state. The task row is
+// still authoritative; the payload contains only enough identity for imaged
+// to re-read it and resume (or fail) a release-gated deployment.
+type AppTaskChangedPayload struct {
+	AccountID    string `json:"account_id"`
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+	TaskID       string `json:"task_id"`
+	Kind         string `json:"kind"`
+	Status       string `json:"status"`
+}
+
+// ParseAppTaskChangedPayload validates the immutable identities needed to
+// look up the authoritative task and deployment rows. Kind and status remain
+// strings here so pkg/db does not depend on pkg/state.
+func ParseAppTaskChangedPayload(raw string) (AppTaskChangedPayload, error) {
+	var payload AppTaskChangedPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return AppTaskChangedPayload{}, fmt.Errorf("db: decode app task payload: %w", err)
+	}
+	payload.AccountID = strings.TrimSpace(payload.AccountID)
+	payload.AppID = strings.TrimSpace(payload.AppID)
+	payload.DeploymentID = strings.TrimSpace(payload.DeploymentID)
+	payload.TaskID = strings.TrimSpace(payload.TaskID)
+	payload.Kind = strings.TrimSpace(payload.Kind)
+	payload.Status = strings.TrimSpace(payload.Status)
+	if payload.AccountID == "" || payload.AppID == "" || payload.DeploymentID == "" ||
+		payload.TaskID == "" || payload.Kind == "" || payload.Status == "" {
+		return AppTaskChangedPayload{}, errors.New("db: incomplete app task payload")
+	}
+	return payload, nil
+}
+
 // ParseRuntimeConfigChangedPayload validates the minimal identity needed to
 // invalidate one app's cached configuration. Legacy bare app IDs are accepted
 // so mixed-version control planes can still invalidate safely.
@@ -471,6 +505,12 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         RUNNING instance; jobs are artifact-only at deploy
 //	                         time and omit instance_id. imaged remains the sole
 //	                         deployment-live writer.
+//	NotifyAppTaskChanged    {"account_id":uuid,"app_id":uuid,
+//	                         "deployment_id":uuid,"task_id":uuid,
+//	                         "kind":"release","status":"succeeded|failed|timed_out|cancelled"}
+//	                         state → imaged: a release task reached a terminal
+//	                         state; imaged re-reads the task before resuming or
+//	                         failing the deployment's pre-boot gate.
 //	NotifyBillingPastDue    {"account_id":uuid, "used_gb":float,
 //	                         "quota_gb":int, "at":rfc3339nano}
 //	                         meterd → apid/dashboard: Free-tier hard stop
@@ -656,9 +696,13 @@ const (
 	NotifySnapshotBoot             = "snapshot_boot"
 	NotifySnapshotWritten          = "snapshot_written"
 	NotifyDeploymentReady          = "deployment_ready"
-	NotifyBillingPastDue           = "billing_past_due"
-	NotifyQuotaWarning             = "quota_warning"
-	NotifyCronFired                = "cron_fired"
+	// NotifyAppTaskChanged is a durable terminal-state handoff. Release tasks
+	// use it to resume deployment priming only after their command succeeds;
+	// manual tasks currently have no daemon-side consumer.
+	NotifyAppTaskChanged = "app_task_changed"
+	NotifyBillingPastDue = "billing_past_due"
+	NotifyQuotaWarning   = "quota_warning"
+	NotifyCronFired      = "cron_fired"
 	// NotifyDebugRegressionChanged carries one account-scoped, redacted
 	// regression observation whenever detection or operator workflow state
 	// changes. Payload includes app_id, deployment_id, route, and state.

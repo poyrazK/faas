@@ -2260,18 +2260,19 @@ func (h *Harness) waitBuilderdListens(d time.Duration) error {
 // being up is not enough: it stages bases before it subscribes, and a notify
 // sent before the subscription is lost — imaged's sweep only revisits
 // deployments older than staleDeploymentThreshold (2h). A session named
-// faas-imaged whose last statement is a LISTEN is the subscription itself.
+// faas-imaged-direct whose last statement is a LISTEN is the subscription
+// itself, and proves imaged keeps that session off its ordinary query pool.
 func (h *Harness) waitImagedListens(d time.Duration) error {
 	h.T.Helper()
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		ok, err := sessionListens(context.Background(), h.Pool, "faas-imaged")
+		ok, err := sessionListens(context.Background(), h.Pool, "faas-imaged-direct")
 		if err == nil && ok {
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("no application_name='faas-imaged' session holding a LISTEN in pg_stat_activity within %s", d)
+	return fmt.Errorf("no application_name='faas-imaged-direct' session holding a LISTEN in pg_stat_activity within %s", d)
 }
 
 // sessionListens reports whether a session with the given application_name

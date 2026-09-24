@@ -64,6 +64,7 @@ deploy_one() {
 verify_receipt() {
 	local output="$1"
 	jq -e '
+		(.id | type == "string" and length > 0) and
 		.status == "live" and
 		.rollout_state == "complete" and
 		.hosting_receipt.smoke.status == "verified" and
@@ -76,12 +77,15 @@ verify_receipt() {
 	curl --fail --silent --show-error --location \
 		--retry 10 --retry-delay 2 --retry-all-errors \
 		--connect-timeout 3 --max-time 10 "${app_url}${health_path}" >/dev/null
+	# The normal /healthz path may be answered from gateway wake state without
+	# entering the guest. Exercise an ordinary origin route as well.
+	curl --fail --silent --show-error --location \
+		--retry 10 --retry-delay 2 --retry-all-errors \
+		--connect-timeout 3 --max-time 10 "${app_url%/}/" >/dev/null
 }
 
-# Submit both execution shapes with enough total deployments for every active
-# node. Ownership is claimed concurrently across node-local schedulers, so the
-# verifier requires node coverage plus both shapes fleet-wide; it must not
-# assume each random claim race produces one of each shape on every node.
+# Submit both execution shapes. Placement is capacity-ranked, not round-robin,
+# so this first wave proves both shapes but cannot guarantee node coverage.
 pids=()
 outputs=()
 for i in $(seq 1 "$ACTIVE_NODE_COUNT"); do
@@ -107,13 +111,54 @@ done
 
 slug_csv="$(IFS=,; echo "${slugs[*]}")"
 placement_file="$workdir/placement.json"
-"$GREGALECTL_BIN" release-acceptance verify-placement --slugs "$slug_csv" >"$placement_file"
+placement_ok=false
+if "$GREGALECTL_BIN" release-acceptance verify-placement --slugs "$slug_csv" >"$placement_file"; then
+	placement_ok=true
+else
+	placement_exit=$?
+	(( placement_exit == 3 )) || exit "$placement_exit"
+fi
+
+# If the capacity chooser placed the entire first wave on one node, submit
+# bounded, serial follow-ups until an actual running/parked instance covers
+# every active node. Every added deployment must pass the same receipt and
+# public smoke checks; this is not a placement-gate bypass. A saturated or
+# unreachable node remains a hard failure after the bounded budget.
+max_extra=$((ACTIVE_NODE_COUNT * 4))
+coverage_deadline=$((SECONDS + 25 * 60))
+for ((i=1; i<=max_extra; i++)); do
+	if [[ "$placement_ok" == true ]]; then
+		break
+	fi
+	if ((SECONDS >= coverage_deadline)); then
+		break
+	fi
+	extra_slug="ra-${short_sha}-${run_suffix}-x${i}"
+	extra_output="$workdir/${extra_slug}.json"
+	slugs+=("$extra_slug")
+	deploy_one hello-node "$extra_slug" "$extra_output"
+	verify_receipt "$extra_output"
+	slug_csv="$(IFS=,; echo "${slugs[*]}")"
+	if "$GREGALECTL_BIN" release-acceptance verify-placement --slugs "$slug_csv" >"$placement_file"; then
+		placement_ok=true
+	else
+		placement_exit=$?
+		(( placement_exit == 3 )) || exit "$placement_exit"
+	fi
+done
+if [[ "$placement_ok" != true ]]; then
+	echo "production acceptance placement did not cover every active node within ${max_extra} extra verified deployments and the 25-minute admission window" >&2
+	jq -c . "$placement_file" >&2
+	exit 1
+fi
 jq -e --argjson expected "$ACTIVE_NODE_COUNT" \
 	'.ready == true and ((.nodes | length) == $expected)' "$placement_file" >/dev/null
 
-# A redeploy must keep the prior revision publicly healthy until the candidate
-# finishes post-readiness verification. The final wait uses the shipped CLI,
-# proving it does not return during the temporary live state.
+# A redeploy must keep the prior revision publicly serving until the candidate
+# finishes post-readiness verification. Probe the hello app's origin / route:
+# /healthz defaults to an edge answer and cannot prove workload continuity.
+# The final wait uses the shipped CLI, proving it does not return during the
+# temporary live state.
 redeploy_queued="$workdir/redeploy-queued.json"
 FAAS_JSON=1 "$GREGALE_BIN" deploy \
 	--template hello-node --name "${slugs[0]}" --no-wait --yes --no-require-authn \
@@ -123,14 +168,29 @@ redeploy_final="$workdir/redeploy-final.json"
 FAAS_JSON=1 "$GREGALE_BIN" deployment wait "$redeploy_id" \
 	--rollout --timeout "$DEPLOY_TIMEOUT_SECONDS" >"$redeploy_final" &
 wait_pid="$!"
+probe_headers="$workdir/redeploy-health-headers"
+probe_body="$workdir/redeploy-health-body"
 while kill -0 "$wait_pid" 2>/dev/null; do
-	curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
-		"https://${slugs[0]}.${FAAS_APPS_DOMAIN}/healthz" >/dev/null || {
-			kill "$wait_pid" 2>/dev/null || true
-			wait "$wait_pid" 2>/dev/null || true
-			echo "previous serving revision became unavailable during redeploy" >&2
-			exit 1
-		}
+	probe_rc=0
+	curl --fail-with-body --silent --show-error --connect-timeout 3 --max-time 10 \
+		--dump-header "$probe_headers" --output "$probe_body" \
+		"https://${slugs[0]}.${FAAS_APPS_DOMAIN}/" || probe_rc=$?
+	if (( probe_rc != 0 )); then
+		kill "$wait_pid" 2>/dev/null || true
+		wait "$wait_pid" 2>/dev/null || true
+		echo "previous serving revision became unavailable during redeploy (curl exit ${probe_rc})" >&2
+		if [[ -s "$probe_headers" ]]; then
+			# Retain only response metadata. The request-id lets operators
+			# correlate this exact failed probe with edge and compute logs.
+			sed -n '1p' "$probe_headers" >&2
+			grep -i '^x-faas-request-id:' "$probe_headers" >&2 || true
+		fi
+		if [[ -s "$probe_body" ]]; then
+			head -c 2048 "$probe_body" >&2
+			echo >&2
+		fi
+		exit 1
+	fi
 	sleep 2
 done
 wait "$wait_pid"

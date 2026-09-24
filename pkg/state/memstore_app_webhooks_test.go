@@ -600,3 +600,27 @@ func TestMemStoreAppWebhookDelivery_ByID_NotFound(t *testing.T) {
 		t.Errorf("AppWebhookDeliveryByID missing = %v, want ErrNotFound", err)
 	}
 }
+
+// ADR-224: the legacy app write path cannot impersonate another account or
+// silently turn an account-scoped request into an app-scoped subscription.
+func TestMemStoreAppWebhook_AppOnlyCreationScope(t *testing.T) {
+	m, ctx, account, app := webhookFixture(t)
+	input := memSampleWebhook(account.ID, app.ID)
+	input.Scope = AppWebhookScopeAccount
+	if _, err := m.CreateAppWebhook(ctx, input); !errors.Is(err, ErrInvalidAppWebhookScope) {
+		t.Errorf("uncapped account-scope create = %v", err)
+	}
+	if _, err := m.CreateAppWebhookIfUnderQuota(ctx, input, api.MustLimitsFor(api.PlanPro)); !errors.Is(err, ErrInvalidAppWebhookScope) {
+		t.Errorf("capped account-scope create = %v", err)
+	}
+	input.Scope = ""
+	input.AccountID = "another-account"
+	if _, err := m.CreateAppWebhookIfUnderQuota(ctx, input, api.MustLimitsFor(api.PlanPro)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("foreign-account app create = %v", err)
+	}
+	input.AccountID = account.ID
+	created, err := m.CreateAppWebhookIfUnderQuota(ctx, input, api.MustLimitsFor(api.PlanPro))
+	if err != nil || created.Scope != AppWebhookScopeApp {
+		t.Errorf("app create = %+v, %v", created, err)
+	}
+}

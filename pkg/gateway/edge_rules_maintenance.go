@@ -1,5 +1,7 @@
 package gateway
 
+import "net/http"
+
 // Edge rule kind=maintenance subset (ADR-091 amendment, see
 // migrations/00224_edge_rules_kind_maintenance.sql).
 //
@@ -52,8 +54,9 @@ type EdgeRuleMaintenanceResolved struct {
 	Priority          int
 	PathGlob          string          // "" = any path
 	Methods           map[string]bool // nil = any method
-	RetryAfterSeconds int             // always > 0 post-compile
-	Message           string          // optional, ≤512 B apid-validated
+	MatchHeaders      map[string]string
+	RetryAfterSeconds int    // always > 0 post-compile
+	Message           string // optional, ≤512 B apid-validated
 }
 
 // PickFirstMaintenanceMatch is the priority-ASC + methods + path-glob
@@ -72,9 +75,12 @@ type EdgeRuleMaintenanceResolved struct {
 // path glob: passed through the local pathGlobMatch helper (see
 // pkg/gateway/edge_rules.go); "" = match all; "*" = match all;
 // "/api/*" = prefix-wildcard on the second segment.
-func PickFirstMaintenanceMatch(rules []EdgeRuleMaintenanceResolved, requestPath, method string) *EdgeRuleMaintenanceResolved {
+func PickFirstMaintenanceMatch(rules []EdgeRuleMaintenanceResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleMaintenanceResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}

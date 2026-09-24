@@ -166,6 +166,16 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		consumerID = state.NewPgtypeUUID(parsed)
 		consumerKey = parsed.String()
 	}
+	platformTenantID := ""
+	if raw := req.GetPlatformTenantId(); raw != "" {
+		parsed, parseErr := uuid.Parse(raw)
+		if parseErr != nil || consumerKey == state.AnonymousConsumerKey {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
+		platformTenantID = parsed.String()
+	}
 
 	count := int(req.GetCount())
 	if count < 1 {
@@ -187,7 +197,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		// fallback is deterministic for the same collapsed payload, so a
 		// response-loss retry remains idempotent even before all gateways
 		// carry event_id.
-		eventID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s/%s/%s/%d/%d/%d/%s/%s/%d/%s/%s/%s", accountID, appID, consumerKey, windowStart.Unix(), req.GetHttpStatus(), count, req.GetRouteTemplate(), req.GetMethod(), req.GetLatencyMs(), req.GetTraceId(), req.GetWakeId(), req.GetInstanceId()))).String()
+		eventID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s/%s/%s/%s/%d/%d/%d/%s/%s/%d/%s/%s/%s", accountID, appID, consumerKey, platformTenantID, windowStart.Unix(), req.GetHttpStatus(), count, req.GetRouteTemplate(), req.GetMethod(), req.GetLatencyMs(), req.GetTraceId(), req.GetWakeId(), req.GetInstanceId()))).String()
 	}
 	var errorCount int64
 	if req.GetHttpStatus() >= 400 {
@@ -202,7 +212,8 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 	_, usageErr := usageStore.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
 		EventID: eventID, AccountID: accountID.String(), AppID: appID.String(),
 		ConsumerKey: consumerKey, WindowStart: windowStart,
-		RequestCount: int64(count), ErrorCount: errorCount, BillableUnits: int64(count),
+		PlatformTenantID: platformTenantID,
+		RequestCount:     int64(count), ErrorCount: errorCount, BillableUnits: int64(count),
 	})
 	if usageErr != nil {
 		r.observe(rtOutcomeDBError)

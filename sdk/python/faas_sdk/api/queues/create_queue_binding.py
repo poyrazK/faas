@@ -99,8 +99,8 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateQueueBindingRequest): Durable mapping from a logical queue to a worker/job
-            workload.
+        body (CreateQueueBindingRequest): Durable queue mapping. HTTP functions may use push mode;
+            pull mode remains for worker/job workloads.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,8 +135,8 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateQueueBindingRequest): Durable mapping from a logical queue to a worker/job
-            workload.
+        body (CreateQueueBindingRequest): Durable queue mapping. HTTP functions may use push mode;
+            pull mode remains for worker/job workloads.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -166,8 +166,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateQueueBindingRequest): Durable mapping from a logical queue to a worker/job
-            workload.
+        body (CreateQueueBindingRequest): Durable queue mapping. HTTP functions may use push mode;
+            pull mode remains for worker/job workloads.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -200,8 +200,8 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateQueueBindingRequest): Durable mapping from a logical queue to a worker/job
-            workload.
+        body (CreateQueueBindingRequest): Durable queue mapping. HTTP functions may use push mode;
+            pull mode remains for worker/job workloads.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

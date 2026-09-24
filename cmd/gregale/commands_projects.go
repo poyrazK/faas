@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|releases|history|config|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|releases|history|config|routes|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -60,6 +60,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentHistory(args[1:])
 	case "config":
 		return cmdProjectsEnvironmentConfig(args[1:])
+	case "routes":
+		return cmdProjectsEnvironmentRoutes(args[1:])
 	case "diff":
 		return cmdProjectsEnvironmentConfigDiff(args[1:])
 	case "preview", "promotion-preview":
@@ -395,11 +397,20 @@ func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
 		for _, change := range workload.Bindings {
 			_, _ = fmt.Fprintf(osStdout, "  binding  %-20s %-8s %s\n", change.BindingID, change.Change, change.Kind)
 		}
+		if workload.Routes.Kind != "unchanged" {
+			_, _ = fmt.Fprintf(osStdout, "  routes   %-20s %s -> %s\n", workload.Routes.Kind,
+				routePolicySummary(workload.Routes.Before), routePolicySummary(workload.Routes.After))
+		}
 	}
 	_, _ = fmt.Fprintln(osStdout, "\nSHARED (not environment-scoped)")
 	for _, resource := range diff.SharedResources {
 		_, _ = fmt.Fprintf(osStdout, "  %s\n", resource.Kind)
 	}
+}
+
+func routePolicySummary(policy api.ProjectEnvironmentRoutePolicyResponse) string {
+	return fmt.Sprintf("%s (enforced=%t, declarations=%d)", policy.Ownership,
+		policy.OnlyAllowDeclaredRoutes, len(policy.DeclaredRoutes))
 }
 
 func releaseSummary(release api.ProjectEnvironmentReleaseWorkloadResponse) string {
@@ -737,9 +748,9 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  protected: %t\n  updated: %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
 	if environment.Clone != nil {
-		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d\n  shared: %s\n",
+		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d routes=%d\n  shared: %s\n",
 			environment.ClonedFrom, environment.Clone.ConfigurationCopied, environment.Clone.VariablesCopied,
-			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, environment.Clone.BindingsCopied,
+			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, environment.Clone.BindingsCopied, environment.Clone.RoutesCopied,
 			strings.Join(environment.Clone.SharedResources, ", "))
 		if strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "managed_postgres_data") ||
 			strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "object_storage_bucket_data") {

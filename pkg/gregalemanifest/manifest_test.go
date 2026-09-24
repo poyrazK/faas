@@ -25,6 +25,23 @@ func TestLoad_NoManifest(t *testing.T) {
 	}
 }
 
+// adr: 231 — HTTP function queue bindings are push-only.
+func TestQueueBindingHTTPRequiresPush(t *testing.T) {
+	for _, tc := range []struct {
+		mode    string
+		wantErr bool
+	}{
+		{mode: "push"},
+		{mode: "pull", wantErr: true},
+	} {
+		binding := QueueBinding{Name: "default", QueueName: "default", Mode: tc.mode, WorkloadClass: "http"}
+		err := binding.Validate()
+		if (err != nil) != tc.wantErr {
+			t.Errorf("mode %q: Validate() = %v, want error = %t", tc.mode, err, tc.wantErr)
+		}
+	}
+}
+
 func TestLoad_YAMLPresent(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("triggers: []\n"), 0o644); err != nil {
@@ -39,6 +56,42 @@ func TestLoad_YAMLPresent(t *testing.T) {
 	}
 	if len(m.Triggers) != 0 {
 		t.Errorf("triggers = %+v, want empty", m.Triggers)
+	}
+}
+
+func TestLoad_ReleaseCommand(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("release:\n  command: bundle exec rails db:migrate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, ok, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || m.Release == nil || m.Release.Command != "bundle exec rails db:migrate" {
+		t.Fatalf("release = %+v, want shell command", m.Release)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestReleaseCommandValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "empty", command: "  ", want: "executable is required"},
+		{name: "nul", command: "echo\x00oops", want: "contains NUL"},
+		{name: "too long", command: strings.Repeat("x", api.AppTaskMaxCommandArgBytes+1), want: "exceeds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manifest{Release: &ReleaseConfig{Command: tc.command}}
+			if err := m.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() = %v, want error containing %q", err, tc.want)
+			}
+		})
 	}
 }
 

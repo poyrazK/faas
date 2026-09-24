@@ -22,6 +22,10 @@ const (
 	DeploymentIDHeader = "X-Faas-Deployment-Id"
 	// TenantIDHeader identifies the owning account for the selected app.
 	TenantIDHeader = "X-Faas-Tenant-Id"
+	// PlatformTenantIDHeader is the authenticated end-customer tenant, distinct
+	// from TenantIDHeader (the app's owning account). Empty for anonymous or
+	// unlinked requests; clients cannot author this claim.
+	PlatformTenantIDHeader = "X-Faas-Platform-Tenant-Id"
 	// InstanceIDHeader identifies the VM that handled the request.
 	InstanceIDHeader = "X-Faas-Instance-Id"
 	// NodeIDHeader identifies the compute node hosting the VM.
@@ -40,6 +44,9 @@ const (
 	// InvocationIDHeader carries the durable invocation id for synthetic work
 	// and the public request id for direct HTTP function calls.
 	InvocationIDHeader = "X-Faas-Invocation-Id"
+	// InvocationSourceHeader identifies the platform-authored source of a
+	// synthetic invocation; it must not be forwarded from customer requests.
+	InvocationSourceHeader = "X-Faas-Invocation-Source"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
 	// response body. Edge adapters use it to distinguish a Gregale timeout
 	// from a genuine CDN/origin failure.
@@ -72,6 +79,7 @@ type PlatformIdentity struct {
 	AppID               string
 	DeploymentID        string
 	TenantID            string
+	PlatformTenantID    string
 	InstanceID          string
 	NodeID              string
 	Region              string
@@ -99,6 +107,7 @@ func (i PlatformIdentity) ApplyGuestHeaders(h http.Header) {
 	set(AppIDHeader, i.AppID)
 	set(DeploymentIDHeader, i.DeploymentID)
 	set(TenantIDHeader, i.TenantID)
+	set(PlatformTenantIDHeader, i.PlatformTenantID)
 	set(InstanceIDHeader, i.InstanceID)
 	set(NodeIDHeader, i.NodeID)
 	set(RegionHeader, i.Region)
@@ -138,7 +147,7 @@ func ClearGuestIdentityHeaders(h http.Header) {
 func IsGuestIdentityHeader(name string) bool {
 	switch strings.ToLower(name) {
 	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",
-		"x-faas-tenant-id", "x-faas-instance-id", "x-faas-node-id",
+		"x-faas-tenant-id", "x-faas-platform-tenant-id", "x-faas-instance-id", "x-faas-node-id",
 		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
 		"x-faas-deployment-created-at", "x-faas-image-digest":
 		return true

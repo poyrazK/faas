@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	_ OrgActivityOutboxStore      = (*PgStore)(nil)
-	_ OrgActivityEnvMutationStore = (*PgStore)(nil)
+	_ OrgActivityOutboxStore             = (*PgStore)(nil)
+	_ OrgActivityEnvMutationStore        = (*PgStore)(nil)
+	_ OrgActivityDeploymentMutationStore = (*PgStore)(nil)
 )
 
 // UpsertAppEnvInScopeWithActivity persists the env update and its activity

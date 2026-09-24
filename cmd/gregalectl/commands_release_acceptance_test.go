@@ -73,18 +73,37 @@ func TestReleaseAcceptanceVerifyPlacementRequiresEveryNodeAndBothFleetShapes(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	// App ownership is assigned by a distributed claim race, so a healthy
-	// batch is not guaranteed to put both shapes on every node. Require each
-	// node to execute at least one deployment and both shapes across the fleet.
+	// App ownership is assigned by a distributed claim race, and a live
+	// instance may spill away from that owner. Require actual instance
+	// placement, not just the app ownership row.
 	slugs := []string{"app-a", "fn-a", "app-b"}
 	fixtures := []state.App{
 		{AccountID: account.ID, Slug: slugs[0], Type: state.AppTypeApp, NodeID: local.ID},
 		{AccountID: account.ID, Slug: slugs[1], Type: state.AppTypeFunction, NodeID: local.ID},
 		{AccountID: account.ID, Slug: slugs[2], Type: state.AppTypeApp, NodeID: node.ID},
 	}
-	for _, fixture := range fixtures {
-		if _, err := store.CreateApp(ctx, fixture); err != nil {
+	var lastAppID, lastDeploymentID string
+	for i, fixture := range fixtures {
+		app, err := store.CreateApp(ctx, fixture)
+		if err != nil {
 			t.Fatal(err)
+		}
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{
+			AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:acceptance",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+		// All three initially ran on local even though app-b is owned
+		// by node-b; the first report must reject false owner coverage.
+		if _, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), 128, local.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		if i == len(fixtures)-1 {
+			lastAppID, lastDeploymentID = app.ID, deployment.ID
 		}
 	}
 
@@ -97,8 +116,23 @@ func TestReleaseAcceptanceVerifyPlacementRequiresEveryNodeAndBothFleetShapes(t *
 	releaseAcceptanceStoreOpener = func() (state.Store, func(), error) { return store, func() {}, nil }
 	var out, stderr bytes.Buffer
 	osStdout, osStderr = &out, &stderr
+	if code := cmdReleaseAcceptanceVerifyPlacement([]string{"--slugs", strings.Join(slugs, ",")}); code != 3 {
+		t.Fatalf("owner-only placement accepted: code=%d stderr=%s", code, stderr.String())
+	}
+	var first releaseAcceptancePlacementReport
+	if err := json.Unmarshal(out.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	if first.Ready || first.Nodes[1].HasApp {
+		t.Fatalf("owner-only report = %+v, want node-b uncovered", first)
+	}
+	if _, err := store.CreateInstance(ctx, lastAppID, lastDeploymentID, string(state.StateParked), 128, node.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	stderr.Reset()
 	if code := cmdReleaseAcceptanceVerifyPlacement([]string{"--slugs", strings.Join(slugs, ",")}); code != 0 {
-		t.Fatalf("verify code=%d stderr=%s", code, stderr.String())
+		t.Fatalf("verify actual placement code=%d stderr=%s", code, stderr.String())
 	}
 	var report releaseAcceptancePlacementReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {

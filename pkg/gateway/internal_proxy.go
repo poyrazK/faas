@@ -393,6 +393,14 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		writeForwarderProblem(w, http.StatusBadGateway)
 		return
 	}
+	// A protocol switch needs a bidirectional HTTP/1.1 tunnel. The ordinary
+	// response-body copier cannot relay a 101, and the optional H2C transport
+	// has no HTTP/1.1 Upgrade semantics. Keep upgrades on their own path so
+	// both successful tunnels and ordinary non-101 refusals reach the client.
+	if isUpgradeRequest(r) {
+		p.serveUpgrade(w, r)
+		return
+	}
 	streamCtx, detachBudget, touch, cancelStream := newStreamSession(r.Context(), 0, streamIdleTimeout)
 	defer cancelStream()
 	outReq := r.Clone(streamCtx)
@@ -407,19 +415,9 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// the Host header must stay the customer-facing hostname.
 	outReq.Host = r.Host
 	outReq.RequestURI = "" // required for outgoing client requests
-	// Strip hop-by-hop in place (no second map alloc). The strip
-	// is correct for plain HTTP (RFC 7230 §6.1) — but it would
-	// destroy the Connection: Upgrade + Upgrade: <token>
-	// handshake for inbound WebSocket / h2c / MQTT-over-WS
-	// requests before gatewayd-internal's Upgrade detector ever
-	// sees them (issue #676 / ADR-080). Skip the strip when the
-	// request is an upgrade; the detector lives in pkg/gateway
-	// (upgrade.go) and is shared with Handler.ServeHTTP so the
-	// two sides of the public→internal hop agree on the
-	// case-insensitive RFC 7230 §3.2 parse.
-	if !isUpgradeRequest(r) {
-		stripHopByHopInPlace(outReq.Header)
-	}
+	// Upgrade traffic branched above; plain HTTP must not forward hop-by-hop
+	// headers from an untrusted client.
+	stripHopByHopInPlace(outReq.Header)
 	// This transport is intentionally custom rather than otelhttp.Transport,
 	// so propagate the active public-edge span explicitly. The internal
 	// gateway extracts it before starting gateway.request, keeping the edge,

@@ -106,6 +106,7 @@ func TestPlatformIdentityAttributes(t *testing.T) {
 		AppID:               "app-1",
 		DeploymentID:        "dep-1",
 		TenantID:            "tenant-1",
+		PlatformTenantID:    "customer-1",
 		InstanceID:          "instance-1",
 		NodeID:              "node-1",
 		Region:              "eu-west",
@@ -120,7 +121,7 @@ func TestPlatformIdentityAttributes(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"request_id": "req-1", "app_id": "app-1", "deployment_id": "dep-1",
-		"tenant_id": "tenant-1", "instance_id": "instance-1", "node_id": "node-1",
+		"tenant_id": "tenant-1", "platform_tenant.id": "customer-1", "instance_id": "instance-1", "node_id": "node-1",
 		"region": "eu-west", "commit_sha": "abc123", "deployment_tag": "canary",
 		"deployment_created_at": "2026-09-19T19:00:00Z", "image_digest": "sha256:digest",
 	} {

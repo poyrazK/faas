@@ -18,6 +18,17 @@ func TestDashboardPRPreviewEnvironment_CurrentHeadAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	production := make(map[string]state.App)
+	for _, slug := range []string{"api", "worker"} {
+		parent, err := store.CreateAppIfUnderQuota(ctx, state.App{
+			AccountID: account.ID, Slug: slug, Type: "stateless", Runtime: "node22",
+			RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 30, Status: state.AppActive,
+		}, api.Limits{DeployedApps: 10000})
+		if err != nil {
+			t.Fatalf("create production app %q: %v", slug, err)
+		}
+		production[slug] = parent
+	}
 	root := seedPreviewForDashboard(t, store, account.ID, "pr-42-api", "api", 42)
 	worker := seedPreviewForDashboard(t, store, account.ID, "pr-42-worker", "worker", 42)
 	sha := strings.Repeat("a", 40)
@@ -27,6 +38,13 @@ func TestDashboardPRPreviewEnvironment_CurrentHeadAndScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
+	for _, slug := range []string{"api", "worker"} {
+		if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: production[slug].ID,
+			Kind: state.DeploymentKindGitHub, ImageDigest: "sha256:" + strings.Repeat("c", 64),
+			CommitSHA: strings.Repeat("d", 40), Status: state.DeployLive, CreatedAt: now}); err != nil {
+			t.Fatalf("create production deployment for %q: %v", slug, err)
+		}
+	}
 	for _, row := range []struct {
 		appID  string
 		status state.DeploymentStatus
@@ -61,7 +79,8 @@ func TestDashboardPRPreviewEnvironment_CurrentHeadAndScope(t *testing.T) {
 		}
 	}
 	assertPage(`id="pr-preview-environment"`, `https://github.com/octo/api/pull/42`,
-		`1/2 current-head deployments live`, `pr-42-worker`, `building`)
+		`1/2 current-head deployments live`, `pr-42-worker`, `building`,
+		`href="/v1/apps/pr-42-worker/logs"`, `artifact differs`, `<code>runtime</code>`)
 	if sibling := get(worker.Slug); sibling.Code != http.StatusOK || strings.Contains(sibling.Body.String(), `id="pr-preview-environment"`) {
 		t.Fatalf("sibling detail exposed root environment: status=%d", sibling.Code)
 	}

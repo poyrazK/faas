@@ -3,7 +3,7 @@ package db
 import "testing"
 
 func TestDurableNotificationChannelSet(t *testing.T) {
-	for _, channel := range []string{NotifyAppWake, NotifyRuntimeConfigRestart, NotifyPrivateNetworkAttachmentChanged, NotifyPrivateNetworkChanged, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady} {
+	for _, channel := range []string{NotifyAppWake, NotifyRuntimeConfigRestart, NotifyPrivateNetworkAttachmentChanged, NotifyPrivateNetworkChanged, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady, NotifyAppTaskChanged} {
 		if !IsDurableNotificationChannel(channel) {
 			t.Fatalf("%q is not marked durable", channel)
 		}
@@ -12,6 +12,19 @@ func TestDurableNotificationChannelSet(t *testing.T) {
 		if IsDurableNotificationChannel(channel) {
 			t.Fatalf("%q should remain advisory", channel)
 		}
+	}
+}
+
+func TestParseAppTaskChangedPayload(t *testing.T) {
+	payload, err := ParseAppTaskChangedPayload(`{"account_id":"account","app_id":"app","deployment_id":"deployment","task_id":"task","kind":"release","status":"succeeded"}`)
+	if err != nil {
+		t.Fatalf("ParseAppTaskChangedPayload: %v", err)
+	}
+	if payload.TaskID != "task" || payload.DeploymentID != "deployment" || payload.Kind != "release" || payload.Status != "succeeded" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if _, err := ParseAppTaskChangedPayload(`{"task_id":"task"}`); err == nil {
+		t.Fatal("incomplete app task payload accepted")
 	}
 }
 

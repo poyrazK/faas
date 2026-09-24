@@ -47,6 +47,19 @@ service Vmmd {
   // source and input cross the boundary later through ExecuteExecution.
   rpc RestoreExecution(RestoreExecutionRequest) returns (RestoreExecutionResponse);
 
+  // RestoreAppTask creates a fresh deployment-attached VM without carrying
+  // command data. The command crosses the trust boundary only after schedd
+  // has committed the durable running fence.
+  rpc RestoreAppTask(RestoreAppTaskRequest) returns (RestoreAppTaskResponse);
+
+  // ExecuteAppTask dispatches exactly one command to a restored app-task VM.
+  // vmmd tears the disposable VM down before returning the terminal result.
+  rpc ExecuteAppTask(ExecuteAppTaskRequest) returns (ExecuteAppTaskResponse);
+
+  // ExecuteAppTaskStream is the live-output variant. The terminal frame is
+  // metadata-only because stdout/stderr have already arrived as chunks.
+  rpc ExecuteAppTaskStream(ExecuteAppTaskRequest) returns (stream ExecuteAppTaskEvent);
+
   // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
   // The caller supplies the deadline on the gRPC context.
   rpc WaitJobExit(WaitJobExitRequest) returns (JobExitResponse);
@@ -2075,4 +2088,58 @@ message ResumeWarmInstanceRequest {
 // ResumeWarmInstanceResponse acknowledges the in-place resume.
 message ResumeWarmInstanceResponse {
   string instance = 1;
+}
+
+// RestoreAppTaskRequest is the command-free preparation envelope for a
+// deployment-attached one-shot command. App carries the same immutable
+// runtime, environment, secret, and network projection as an ordinary wake.
+message RestoreAppTaskRequest {
+  string instance = 1;
+  AppSpec app = 2;
+  string plan = 3;
+  string account_id = 4;
+  string deployment_id = 5;
+}
+
+message RestoreAppTaskResponse {
+  string instance = 1;
+  int32 lease_uid = 2;
+  WakeMethod method = 3;
+}
+
+// ExecuteAppTaskRequest contains only dispatch-time data. In particular it
+// cannot replace the deployment artifact or scoped environment selected by
+// RestoreAppTask.
+message ExecuteAppTaskRequest {
+  string instance = 1;
+  uint32 version = 2;
+  string task_id = 3;
+  repeated string command = 4;
+  bool command_shell = 5;
+  int32 timeout_seconds = 6;
+  int32 max_output_bytes = 7;
+}
+
+message ExecuteAppTaskResponse {
+  string task_id = 1;
+  string status = 2;
+  bool output_truncated = 3;
+  google.protobuf.Int32Value exit_code = 4;
+  string failure_code = 5;
+  string failure_message = 6;
+  bytes stdout = 7;
+  bytes stderr = 8;
+}
+
+message ExecuteAppTaskEvent {
+  oneof frame {
+    ExecuteAppTaskOutputChunk output = 1;
+    ExecuteAppTaskResponse terminal = 2;
+  }
+}
+
+message ExecuteAppTaskOutputChunk {
+  // stream is one of "stdout" or "stderr".
+  string stream = 1;
+  bytes chunk = 2;
 }

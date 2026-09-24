@@ -171,6 +171,11 @@ message IncrementRequestTelemetryRequest {
   string deployment_tag = 26;
   string deployment_created_at = 27;
   string image_digest = 28;
+
+  // Verified account-level platform customer at request time. Empty for
+  // anonymous, unlinked, and pre-upgrade gateway requests. This is an
+  // attribution snapshot, not a hint to infer from current consumer links.
+  string platform_tenant_id = 29;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

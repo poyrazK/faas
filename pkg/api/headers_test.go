@@ -11,6 +11,7 @@ func TestPlatformIdentityApplyGuestHeadersOverridesClaims(t *testing.T) {
 	h.Set("X-Faas-Instance", "attacker-instance")
 	h.Set("X-Faas-Unknown", "internal-only")
 	h.Set(TargetDeploymentHeader, "attacker-deployment")
+	h.Set(PlatformTenantIDHeader, "attacker-tenant")
 
 	PlatformIdentity{
 		RequestID:           "req-1",
@@ -34,6 +35,7 @@ func TestPlatformIdentityApplyGuestHeadersOverridesClaims(t *testing.T) {
 		AppIDHeader:               "app-1",
 		DeploymentIDHeader:        "dep-1",
 		TenantIDHeader:            "tenant-1",
+		PlatformTenantIDHeader:    "",
 		InstanceIDHeader:          "instance-1",
 		NodeIDHeader:              "node-1",
 		RegionHeader:              "eu-west",
@@ -48,6 +50,22 @@ func TestPlatformIdentityApplyGuestHeadersOverridesClaims(t *testing.T) {
 		if got := h.Get(name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestPlatformIdentityPlatformTenantClaimIsAuthoredOnlyWhenVerified(t *testing.T) {
+	h := http.Header{}
+	h.Set(PlatformTenantIDHeader, "forged")
+	(PlatformIdentity{TenantID: "account-1", PlatformTenantID: "customer-1"}).ApplyGuestHeaders(h)
+	if got := h.Get(PlatformTenantIDHeader); got != "customer-1" {
+		t.Fatalf("verified platform tenant = %q", got)
+	}
+	(PlatformIdentity{TenantID: "account-1"}).ApplyGuestHeaders(h)
+	if got := h.Get(PlatformTenantIDHeader); got != "" {
+		t.Fatalf("anonymous request inherited tenant claim %q", got)
+	}
+	if got := h.Get(TenantIDHeader); got != "account-1" {
+		t.Fatalf("account tenant header changed: %q", got)
 	}
 }
 

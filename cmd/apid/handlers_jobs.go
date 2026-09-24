@@ -947,22 +947,9 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 	}
-	// Per-account concurrent cap (JobConcurrentPerAccount):
-	// refuse the run if the customer already has too many
-	// live job_task instances. Different from
-	// JobConcurrentPerAccount (per-account live limit) and
-	// the per-node RAM ceiling — that gate lives in schedd
-	// at WakeJob (admission.KindJob).
-	concurrent, err := s.store.JobConcurrentByAccount(r.Context(), acct.ID)
-	if err != nil {
-		s.log.Error("create job run: concurrent count failed", "account", acct.ID, "err", err)
-		api.WriteProblem(w, api.ErrCapacity("could not create run"))
-		return
-	}
-	if cap := api.JobConcurrentPerAccount[idx]; concurrent+req.Tasks > cap {
-		api.WriteProblem(w, api.ErrJobQuota(acct.Plan, "concurrent", cap, concurrent+req.Tasks))
-		return
-	}
+	// Tasks are queued work, not live concurrency. A run may contain more
+	// tasks than the account can execute at once; the atomic dispatch claim
+	// enforces both the per-run parallelism and account live-instance cap.
 	envOverrides, prob := encodeEnvOverrides(req.EnvOverrides)
 	if prob != nil {
 		api.WriteProblem(w, prob)

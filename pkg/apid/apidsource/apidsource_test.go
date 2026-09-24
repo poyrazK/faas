@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
@@ -175,13 +176,15 @@ func TestEnqueue_HappyPath_FirstDeploy(t *testing.T) {
 	srcPath, srcBytes := stageSource(t, srcDir)
 
 	res, err := Enqueue(context.Background(), st, notif, EnqueueParams{
-		AppID:       app.ID,
-		Kind:        state.DeploymentKindTarball,
-		SourcePath:  srcPath,
-		SourceBytes: srcBytes,
-		Source:      "tarball",
-		LogSpool:    spoolDir,
-		Log:         quietLogger(),
+		AppID:               app.ID,
+		Kind:                state.DeploymentKindTarball,
+		SourcePath:          srcPath,
+		SourceBytes:         srcBytes,
+		Source:              "tarball",
+		LogSpool:            spoolDir,
+		Log:                 quietLogger(),
+		ReleaseCommand:      []string{"bundle exec rails db:migrate"},
+		ReleaseCommandShell: true,
 	})
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
@@ -201,6 +204,9 @@ func TestEnqueue_HappyPath_FirstDeploy(t *testing.T) {
 	}
 	if got, err := hashSourceFile(srcPath); err != nil || dep.SourceSHA256 != got {
 		t.Fatalf("source digest = %q err %v, want %q", dep.SourceSHA256, err, got)
+	}
+	if len(dep.ReleaseCommand) != 1 || dep.ReleaseCommand[0] != "bundle exec rails db:migrate" || !dep.ReleaseCommandShell {
+		t.Fatalf("release command = %v shell=%v", dep.ReleaseCommand, dep.ReleaseCommandShell)
 	}
 
 	// First deploy: only the build_queued notify fires, no
@@ -704,5 +710,36 @@ func TestEnqueue_BuildLogSpoolExists(t *testing.T) {
 	expected := filepath.Join(spoolDir, res.DeploymentID, "build.log")
 	if _, err := os.Stat(expected); err != nil {
 		t.Fatalf("build.log not at %s: %v", expected, err)
+	}
+}
+
+func TestEnqueue_CommitsDeploymentActivityWithBuildQueue(t *testing.T) {
+	st := state.NewMemStore()
+	app := mustSeedApp(t, st)
+	appID := uuid.MustParse(app.ID)
+	orgID := uuid.New()
+	srcPath, srcBytes := stageSource(t, t.TempDir())
+	activity := &state.OrgActivity{
+		OrgID: orgID, Kind: "app.deployed", ActorType: state.OrgActivityActorUser,
+		ActorLabel: "person@example.com", ResourceType: "app", ResourceID: app.ID,
+		ResourceLabel: app.Slug, AppID: &appID, SourceType: "deployment",
+		Data: []byte(`{"source":"tarball"}`),
+	}
+
+	result, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: srcPath,
+		SourceBytes: srcBytes, LogSpool: t.TempDir(), Log: quietLogger(), Activity: activity,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	deploymentID, err := uuid.Parse(result.DeploymentID)
+	if err != nil {
+		t.Fatalf("parse deployment ID: %v", err)
+	}
+	rows, err := st.ListOrgActivity(context.Background(), state.OrgActivityFilter{OrgID: orgID, Limit: 10})
+	if err != nil || len(rows) != 1 || rows[0].SourceID != result.DeploymentID ||
+		rows[0].DeploymentID == nil || *rows[0].DeploymentID != deploymentID {
+		t.Fatalf("deployment activity = (%#v, %v), want one event for %s", rows, err, result.DeploymentID)
 	}
 }

@@ -55,6 +55,7 @@ const (
 	subInfo     = "info"
 	subGet      = "get"
 	subCreate   = "create"
+	subExec     = "exec"
 	// Issue #961 / Mega-A PR-3: domains surface verbs. Lifted from
 	// inline literals so goconst stops flagging the "verify" /
 	// "show" / "set-default" strings in cli_meta.go + the dispatch
@@ -1919,7 +1920,7 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
-	case "cron-worker":
+	case "cron-worker", "event-worker", "queue-worker":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
 		return "", "", false

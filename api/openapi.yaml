@@ -50,6 +50,8 @@ tags:
     description: Effective app networking and provider-neutral private-network attachment intent.
   - name: consumers
     description: Stable end-customer identities and credentials for monetized APIs (ADR-120).
+  - name: platform-tenants
+    description: Account-level end customers spanning app consumers and tenant surfaces.
   - name: debugger
     description: Customer production debugger request evidence and safe replay.
   - name: uploads
@@ -1677,6 +1679,39 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/events:preview:
+    post:
+      tags: [events]
+      operationId: previewEvent
+      summary: Preview event routing without publishing.
+      description: |
+        Evaluates an event against the authenticated account's enabled
+        subscriptions using the same matcher as asynchronous fanout. The
+        preview is read-only: it does not persist the event or enqueue work.
+        Counts cover every source/type candidate; response lists are bounded
+        samples and `truncated` is true when either sample omits candidates.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreviewEventRequest' }
+      responses:
+        '200':
+          description: Routing preview completed without publishing the event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500':
+          description: The router could not read the current subscription set.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/events:publish:
     post:
       tags: [events]
@@ -1805,7 +1840,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
-          description: Cancellation accepted or already applied.
+          description: Execution cancellation requested, or its existing terminal receipt returned.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ExecutionResponse' }
@@ -1853,6 +1888,112 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [runs]
+      operationId: listAppTasks
+      summary: List deployment-attached tasks for an app.
+      description: |
+        Returns newest-first one-off command receipts for the app. Task rows
+        remain pinned to the immutable deployment selected at admission.
+        Scheduler leases and artifact storage identifiers are never returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum number of task receipts to return.
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of task receipts to skip.
+      responses:
+        '200':
+          description: App-scoped task page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [runs]
+      operationId: createAppTask
+      summary: Run a one-off command against an app deployment.
+      description: |
+        Queues one manual command in a fresh task VM using the app's current
+        live deployment, scoped configuration, bindings, and network policy.
+        The selected deployment is pinned at admission and the VM is destroyed
+        before terminal completion. Release tasks cannot be created here.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppTaskRequest' }
+      responses:
+        '202':
+          description: Manual app task admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      tags: [runs]
+      operationId: getAppTask
+      summary: Get one deployment-attached app task.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current or terminal app-task receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [runs]
+      operationId: cancelAppTask
+      summary: Cancel one deployment-attached app task.
+      description: Cancellation is idempotent; claimed work is torn down before terminal acknowledgement.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: App-task cancellation recorded, or its existing terminal receipt returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/account:
@@ -3443,6 +3584,164 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/platform-tenants:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenants
+      summary: List account-level platform customers.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of platform tenants in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+        - name: offset
+          in: query
+          description: Zero-based offset for the account's tenant list.
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: One page of platform customers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenant
+      summary: Register an account-level end customer idempotently by external_ref.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantRequest' }
+      responses:
+        '200':
+          description: Existing customer with the same external_ref and name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantResponse' }
+        '201':
+          description: New platform customer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant UUID in the authenticated account.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenant
+      summary: Read one customer and its linked app consumers and tenant surfaces.
+      responses:
+        '200':
+          description: Customer with current resource links.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantDetailResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantStatus
+      summary: Suspend or resume linked consumer credentials and hostnames.
+      description: Anonymous traffic, independent JWT auth, and unrelated app domains keep their own access policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantStatusRequest' }
+      responses:
+        '200':
+          description: Updated platform customer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/consumers:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer receiving the app-consumer link.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [platform-tenants]
+      operationId: linkPlatformTenantConsumer
+      summary: Link an existing same-account app consumer to this customer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkPlatformTenantConsumerRequest' }
+      responses:
+        '200':
+          description: Linked consumer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/surfaces:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer receiving the hostname-surface link.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [platform-tenants]
+      operationId: linkPlatformTenantSurface
+      summary: Link an existing same-account tenant surface to this customer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkPlatformTenantSurfaceRequest' }
+      responses:
+        '200':
+          description: Linked surface.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSurfaceResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/usage:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer whose linked app usage is requested.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantUsage
+      summary: Read durable cross-app usage for linked consumers.
+      description: Raw usage only; app-specific rate cards and invoices are not aggregated.
+      parameters:
+        - name: since
+          in: query
+          description: Inclusive UTC start of the usage window, snapped to midnight.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Exclusive UTC end of the usage window, snapped to midnight.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Usage for the requested bounded UTC window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantUsageResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/consumers:
     parameters:
@@ -12012,6 +12311,44 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project owning the environment.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Registered environment whose route contract is replaced.
+        schema: { type: string }
+      - name: workload
+        in: path
+        required: true
+        description: Workload application slug in the project.
+        schema: { type: string }
+    put:
+      tags: [projects]
+      operationId: updateProjectEnvironmentRoutes
+      summary: Replace a workload's declared-route contract in one environment.
+      description: Scoped deployment URLs use this contract; the ordinary application hostname retains its application-wide contract.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentRoutePolicyRequest' }
+      responses:
+        '200':
+          description: Stored environment-owned route contract.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/diff:
     parameters:
       - name: slug
@@ -13329,10 +13666,8 @@ paths:
         mirror VM per request, billed per running second, capped at
         `MirrorMaxLifetimeSeconds=5`). Per-app quota returns 422
         `mirror_rule_quota_exceeded` once `Limits.MirrorTargetsPerApp`
-        is reached. The runtime dispatch (gateway goroutine, redaction,
-        schedd stamping) lands in PR-A3 — A2 stores the rule + emits
-        `mirror_rule.created` audit + pg_notify `kind="mirror"` so PR-A3
-        picks up the change within ~1s.
+        is reached. Sampling defaults to 5%; only GET, HEAD, and OPTIONS
+        are mirrored unless `allow_unsafe_methods` is explicitly enabled.
       requestBody:
         required: true
         content:
@@ -13341,8 +13676,9 @@ paths:
             example:
               source_deployment_id: "0123456789abcdef0123456789abcdef"
               mirror_deployment_id: "0123456789abcdef0123456789abcdf0"
-              percent: 100
+              percent: 5
               include_body: false
+              allow_unsafe_methods: false
               redact_headers: [X-Tenant-Id]
       responses:
         '201':
@@ -13470,10 +13806,10 @@ paths:
       description: |
         Read-only aggregate. Source: `mirror_invocation_results` rows
         whose `completed_at >= now - window_seconds`. Returns:
-        total invocations, status diff count, schema diff count, body
-        diff count, mean/p99 latency delta, crash count. PR-A2 returns
-        zeros (PR-A1's ledger has no writers until A3 ships the
-        runtime); post-A3 this is the dashboard widget's data source.
+        total invocations, complete changed-response count and percent,
+        status/schema/body diff counts, incomplete comparisons, mean/p99
+        latency delta, and mirror crash count. Incomplete rows are excluded
+        from the changed-response percentage denominator.
       responses:
         '200':
           description: Aggregated drift counts.
@@ -13946,6 +14282,166 @@ paths:
       responses:
         '200':
           description: The re-armed delivery.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookRetryDeliveryResponse' }
+        '400': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks:
+    get:
+      tags: [webhooks]
+      operationId: listAccountReleaseWebhooks
+      summary: List release receivers owned by the active account.
+      responses:
+        '200':
+          description: Account-owned release receivers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AccountReleaseWebhookResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [webhooks]
+      operationId: createAccountReleaseWebhook
+      summary: Subscribe one receiver to release events from all current and future account apps.
+      description: The target is SSRF-guarded and the signing secret is sealed at rest; the response never exposes plaintext.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountReleaseWebhookRequest' }
+      responses:
+        '201':
+          description: Release receiver created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountReleaseWebhookResponse' }
+        '400': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '403': { $ref: '#/components/responses/PlanWebhookQuota' }
+        '409': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [webhooks]
+      operationId: getAccountReleaseWebhook
+      summary: Fetch one account release receiver.
+      responses:
+        '200':
+          description: The receiver.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountReleaseWebhookResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [webhooks]
+      operationId: updateAccountReleaseWebhook
+      summary: Update an account release receiver.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAccountReleaseWebhookRequest' }
+      responses:
+        '200':
+          description: The updated receiver.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountReleaseWebhookResponse' }
+        '400': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [webhooks]
+      operationId: deleteAccountReleaseWebhook
+      summary: Delete an account release receiver and its delivery history.
+      responses:
+        '204': { description: Receiver removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}/rotate-secret:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [webhooks]
+      operationId: rotateAccountReleaseWebhookSecret
+      summary: Replace a release receiver's HMAC signing secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateAppWebhookSecretRequest' }
+      responses:
+        '200':
+          description: Secret rotated; plaintext is never returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RotateAppWebhookSecretResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}/deliveries:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - in: query
+        name: page_size
+        description: Maximum number of deliveries returned in this page.
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - in: query
+        name: page_token
+        description: Opaque cursor from the preceding response.
+        schema: { type: string }
+    get:
+      tags: [webhooks]
+      operationId: listAccountReleaseWebhookDeliveries
+      summary: List release deliveries across all source apps, newest first.
+      responses:
+        '200':
+          description: Delivery page; each row includes its source app_id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}/deliveries/{did}/retry:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - in: path
+        name: did
+        required: true
+        description: Delivery identifier to re-arm.
+        schema: { type: string, pattern: '^[0-9a-f]{32}$' }
+    post:
+      tags: [webhooks]
+      operationId: retryAccountReleaseWebhookDelivery
+      summary: Re-arm one dead account release delivery.
+      responses:
+        '200':
+          description: The re-armed account release delivery.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppWebhookRetryDeliveryResponse' }
@@ -18568,6 +19064,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Canonical UUID for a disposable execution.
+    AppTaskID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a deployment-attached app task.
     ManagedPostgresID:
       name: id
       in: path
@@ -21103,6 +21605,113 @@ components:
           enum: [http1, http2, grpc]
           example: http1
 
+    CreatePlatformTenantRequest:
+      description: Register a stable external customer reference under this account.
+      type: object
+      required: [external_ref, name]
+      properties:
+        external_ref: { type: string, minLength: 1, maxLength: 256 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+
+    SetPlatformTenantStatusRequest:
+      description: Suspend or resume linked credential and hostname paths.
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [active, suspended] }
+
+    LinkPlatformTenantConsumerRequest:
+      description: Attach an existing app-local API consumer to one platform customer.
+      type: object
+      required: [consumer_id]
+      properties:
+        consumer_id: { type: string, format: uuid }
+
+    LinkPlatformTenantSurfaceRequest:
+      description: Attach an existing tenant surface to one platform customer.
+      type: object
+      required: [surface_id]
+      properties:
+        surface_id: { type: string, format: uuid }
+
+    PlatformTenantResponse:
+      description: Account-level end customer; links and credentials are separate resources.
+      type: object
+      required: [id, external_ref, name, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, suspended] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PlatformTenantListResponse:
+      description: A bounded page of account-level customers.
+      type: object
+      required: [tenants]
+      properties:
+        tenants:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantResponse' }
+        next_offset: { type: integer, minimum: 0 }
+
+    PlatformTenantSurfaceResponse:
+      description: A linked tenant surface summary; use the app endpoint for hostnames.
+      type: object
+      required: [id, app_id, name, status]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string }
+
+    PlatformTenantDetailResponse:
+      description: One customer and its current app-local consumer and surface links.
+      type: object
+      required: [id, external_ref, name, status, created_at, updated_at, consumers, surfaces]
+      properties:
+        id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, suspended] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerResponse' }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSurfaceResponse' }
+
+    PlatformTenantUsageBucketResponse:
+      description: One UTC day of app-consumer usage from the durable raw usage ledger.
+      type: object
+      required: [app_id, consumer_id, window_start, request_count, error_count, billable_units]
+      properties:
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        window_start: { type: string, format: date-time }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        error_count: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+
+    PlatformTenantUsageResponse:
+      description: Cross-app raw usage totals with app and consumer attribution.
+      type: object
+      required: [tenant_id, period_start, period_end, request_count, error_count, billable_units, buckets, as_of]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        error_count: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantUsageBucketResponse' }
+        as_of: { type: string, format: date-time }
+
     CreateAPIConsumerRequest:
       description: "Stable customer identity to which consumer credentials can be attached."
       type: object
@@ -21593,6 +22202,13 @@ components:
         preview_state: { type: string }
         deployment_id: { type: string, description: Empty until a deployment for the recorded commit exists. }
         deployment_status: { type: string, description: Missing until a deployment for the recorded commit exists. }
+        expires_at: { type: string, format: date-time, description: Preview workload expiration. }
+        changes_from_production:
+          description: Safe artifact and configuration-group comparison with the production parent; never includes secret values.
+          $ref: '#/components/schemas/PreviewProductionChangesResponse'
+        links:
+          description: URL and diagnostic links for this preview workload.
+          $ref: '#/components/schemas/PreviewResourceLinksResponse'
 
     CreatePreviewRequest:
       description: Pull-request preview provisioning payload. Source is deployed separately after the preview app is created.
@@ -23968,6 +24584,77 @@ components:
           items:
             $ref: '#/components/schemas/WorkflowStepSpec'
 
+    PreviewEventRequest:
+      description: Event fields to evaluate without persisting or delivering the event.
+      type: object
+      additionalProperties: false
+      required: [source, type, data]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Optional event id used when filters inspect the CloudEvents id.
+        source:
+          type: string
+          minLength: 1
+          maxLength: 256
+        type:
+          type: string
+          minLength: 1
+          maxLength: 256
+        time:
+          type: string
+          format: date-time
+          description: Event occurrence time; omitted values use the current time.
+        data_content_type:
+          type: string
+          enum: [application/json]
+          default: application/json
+        data:
+          description: JSON event payload evaluated by subscription filters.
+
+    EventPreviewSubscription:
+      description: A bounded sample of an enabled subscription considered by the event router.
+      type: object
+      additionalProperties: false
+      required: [app_slug, subscription_id, source, type, filter, reason]
+      properties:
+        app_slug: { type: string }
+        subscription_id: { type: string, format: uuid }
+        source: { type: string }
+        type: { type: string }
+        filter:
+          type: object
+          additionalProperties: true
+          description: Normalized content filter declared by this subscription.
+        reason:
+          type: string
+          description: would_deliver, content_filter_mismatch, pattern_mismatch, tenant_mismatch, or an invalid_subscription explanation.
+
+    PreviewEventResponse:
+      description: Read-only event-routing preview; counts cover all candidates while lists are bounded samples.
+      type: object
+      additionalProperties: false
+      required: [event_id, source, type, candidate_count, matched_count, filter_mismatch_count, other_mismatch_count, matches, non_matches, truncated]
+      properties:
+        event_id: { type: string }
+        source: { type: string }
+        type: { type: string }
+        candidate_count: { type: integer, minimum: 0, description: Enabled source/type candidates considered. }
+        matched_count: { type: integer, minimum: 0, description: Subscriptions that would receive the event. }
+        filter_mismatch_count: { type: integer, minimum: 0, description: Candidates excluded by their content filters. }
+        other_mismatch_count: { type: integer, minimum: 0, description: "Candidates rejected for another reason, including invalid stored subscription data." }
+        matches:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventPreviewSubscription' }
+        non_matches:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventPreviewSubscription' }
+        truncated: { type: boolean, description: True when either sample omits additional candidates. }
+
     PublishEventRequest:
       description: Caller-authored envelope for the tenant-scoped internal event router.
       type: object
@@ -25308,7 +25995,7 @@ components:
         image_ref: { type: string }
         image_resolved_digest: { type: string, description: "Immutable OCI manifest digest selected from image_ref." }
         image_storage_key: { type: string, description: "Canonical ext4 artifact key consumed by vmmd." }
-        image_materialization_status: { type: string, enum: [pending, ready, failed] }
+        image_materialization_status: { type: string, enum: [pending, verifying_legacy, ready, failed] }
         image_materialization_error: { type: string, description: "Actionable pull/build failure when materialization_status is failed." }
         image_materialized_at: { type: string, format: date-time }
         command:
@@ -26021,13 +26708,14 @@ components:
     ProjectEnvironmentCloneResponse:
       description: Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only after explicit opt-in.
       type: object
-      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, bindings_copied, shared_resources]
+      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, bindings_copied, routes_copied, shared_resources]
       properties:
         configuration_copied: { type: boolean }
         variables_copied: { type: integer, minimum: 0 }
         secrets_copied: { type: integer, minimum: 0 }
         workloads_copied: { type: integer, minimum: 0 }
         bindings_copied: { type: integer, minimum: 0 }
+        routes_copied: { type: integer, minimum: 0 }
         shared_resources:
           type: array
           items: { type: string, enum: [domains, policies, routes, managed_postgres_data, object_storage_bucket_data] }
@@ -26096,7 +26784,7 @@ components:
     ProjectEnvironmentStateWorkloadResponse:
       description: Effective configuration and live release state for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -26110,6 +26798,30 @@ components:
         bindings:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
+        routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
+
+    ProjectEnvironmentRoutePolicyResponse:
+      description: Effective declared-route contract and whether it is environment-owned.
+      type: object
+      required: [ownership, only_allow_declared_routes, declared_routes]
+      properties:
+        ownership: { type: string, enum: [application, environment] }
+        only_allow_declared_routes: { type: boolean }
+        declared_routes:
+          type: array
+          items: { $ref: '#/components/schemas/DeclaredRoute' }
+
+    UpdateProjectEnvironmentRoutePolicyRequest:
+      description: Complete replacement for a workload's environment route contract. Enabling enforcement requires a non-empty explicit route list; application-wide OpenAPI documents are not cloned.
+      type: object
+      required: [only_allow_declared_routes, declared_routes]
+      additionalProperties: false
+      properties:
+        only_allow_declared_routes: { type: boolean }
+        declared_routes:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/DeclaredRoute' }
 
     ProjectEnvironmentSharedResourceResponse:
       description: Application-scoped resource that is shared by all environments.
@@ -26191,7 +26903,7 @@ components:
     ProjectEnvironmentWorkloadDiffResponse:
       description: Release, variable, secret, and binding changes for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -26205,6 +26917,16 @@ components:
         bindings:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingChangeResponse' }
+        routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyDiffResponse' }
+
+    ProjectEnvironmentRoutePolicyDiffResponse:
+      description: Difference in the effective declared-route contract or its ownership.
+      type: object
+      required: [kind, before, after]
+      properties:
+        kind: { type: string, enum: [unchanged, changed] }
+        before: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
+        after: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
 
     ProjectEnvironmentDiffResponse:
       description: Effective-state comparison from one project environment to another.
@@ -27640,6 +28362,7 @@ components:
         - match_host
         - match_path
         - match_methods
+        - match_headers
         - priority
         - enabled
         - kind
@@ -27665,6 +28388,11 @@ components:
           items: { type: string }
           description: 'Empty array = match any method.'
           example: [GET, POST]
+        match_headers:
+          type: object
+          maxProperties: 10
+          additionalProperties: { type: string, maxLength: 1024 }
+          description: 'Request headers required to match this rule. Names are case-insensitive; every configured name must have an exact value present, and any repeated request-header value may satisfy it.'
         priority:
           type: integer
           minimum: 0
@@ -27715,6 +28443,11 @@ components:
         match_methods:
           type: array
           items: { type: string }
+        match_headers:
+          type: object
+          maxProperties: 10
+          additionalProperties: { type: string, maxLength: 1024 }
+          description: 'Optional exact-value request-header selectors. Header names compare case-insensitively; every configured name must match, with any repeated request-header value eligible to satisfy it.'
         priority: { type: integer, minimum: 0, maximum: 10000, default: 100 }
         enabled: { type: boolean, default: true }
         kind:
@@ -27757,6 +28490,11 @@ components:
         match_methods:
           type: array
           items: { type: string }
+        match_headers:
+          type: object
+          maxProperties: 10
+          additionalProperties: { type: string, maxLength: 1024 }
+          description: 'Replacing this map changes the request-header selectors. Header names compare case-insensitively and values compare exactly; use an empty object to remove all header conditions.'
         priority: { type: integer, minimum: 0, maximum: 10000 }
         enabled: { type: boolean }
         validate_mode:
@@ -28798,14 +29536,18 @@ components:
     CreateMirrorRuleRequest:
       description: |
         Body for POST /v1/apps/{slug}/mirrors. Both deployments must
-        be `live` and belong to the same app. `include_body` defaults
-        to `false`; enabling it stores only request/response SHA-256
-        hashes for body-difference classification, never raw bodies.
+        be `live` and belong to the same app. `percent` defaults to
+        a 5% sample. `include_body` defaults to `false`; when enabled,
+        only response SHA-256 hashes are retained. Raw bodies are never
+        stored. POST, PUT, PATCH, and DELETE are skipped unless
+        `allow_unsafe_methods` is explicitly enabled.
         `redact_headers` is the
         customer's additive list on top of the always-stripped list
         (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
         WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
-        A2's storage layer).
+        A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
+        snapshot cap are safely skipped rather than sending a partial request
+        to the mirror deployment.
       type: object
       required: [source_deployment_id, mirror_deployment_id]
       properties:
@@ -28823,13 +29565,17 @@ components:
           type: integer
           minimum: 0
           maximum: 100
-          default: 100
-          description: "Fan-out percent. 100 = mirror every customer request; lower = sampled shadow."
-          example: 100
+          default: 5
+          description: "Fan-out percent. Defaults to a 5% sample; 100 mirrors every eligible request."
+          example: 5
         include_body:
           type: boolean
           default: false
-          description: "If true, the comparison ledger captures request/response SHA-256 hashes for body-difference classification. Raw bodies are never stored. Off by default."
+          description: "If true, compare response values using hashes. Raw response bodies are never stored. Off by default."
+        allow_unsafe_methods:
+          type: boolean
+          default: false
+          description: "If true, also mirror POST, PUT, PATCH, and DELETE. These methods may cause side effects in the mirror deployment."
         redact_headers:
           type: array
           description: "Customer-supplied additional header names to redact on top of the always-stripped list (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization, WWW-Authenticate)."
@@ -28855,7 +29601,10 @@ components:
           description: "Set false to pause the rule without removing it."
         include_body:
           type: boolean
-          description: "Toggle request/response body-hash comparison in the ledger. Raw bodies are never stored."
+          description: "Toggle response-value comparison using hashes. Raw bodies are never stored."
+        allow_unsafe_methods:
+          type: boolean
+          description: "Also mirror POST, PUT, PATCH, and DELETE; these can cause side effects in the mirror deployment."
         redact_headers:
           type: array
           description: "Replace the customer's redact list. Empty array clears it."
@@ -28877,6 +29626,7 @@ components:
         - percent
         - enabled
         - include_body
+        - allow_unsafe_methods
         - redact_headers
         - always_stripped_headers
         - created_at
@@ -28897,6 +29647,7 @@ components:
           maximum: 100
         enabled: { type: boolean }
         include_body: { type: boolean }
+        allow_unsafe_methods: { type: boolean }
         redact_headers:
           type: array
           items: { type: string }
@@ -28923,10 +29674,9 @@ components:
 
     MirrorSummaryResponse:
       description: |
-        Aggregated mirror drift counts over a trailing window. PR-A2
-        returns zeros (PR-A1's ledger has no writers until A3 ships
-        the runtime dispatch); post-A3 this is the dashboard widget's
-        data source.
+        Aggregated mirror drift counts over a trailing window. The changed
+        response percentage uses only complete comparisons; `incomplete_comparison_count`
+        separately reports missing or truncated response snapshots.
       type: object
       required:
         - total_invocations
@@ -28938,6 +29688,7 @@ components:
         - mean_latency_diff_ms
         - p99_latency_diff_ms
         - crash_count
+        - incomplete_comparison_count
         - window_seconds
       properties:
         total_invocations:
@@ -28946,13 +29697,13 @@ components:
         changed_response_count:
           type: integer
           format: int64
-          description: "Requests with any status, schema, or body difference; each request is counted once."
+          description: "Complete comparisons with any status, schema, or body difference; each request is counted once."
         changed_response_percent:
           type: number
           format: double
           minimum: 0
           maximum: 100
-          description: "100 × changed_response_count / total_invocations; zero when the window is empty."
+          description: "100 × changed_response_count / complete comparisons; zero when none are complete."
         status_diff_count:
           type: integer
           format: int64
@@ -28972,6 +29723,10 @@ components:
         crash_count:
           type: integer
           format: int64
+        incomplete_comparison_count:
+          type: integer
+          format: int64
+          description: "Comparisons skipped because a response was missing or exceeded the capture limit."
         window_seconds:
           type: integer
           minimum: 1
@@ -31955,6 +32710,7 @@ components:
         state: { type: string }
         attempts: { type: integer, minimum: 0 }
         created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, description: "Most recent claim/delivery time; updated on retry and omitted before the first claim." }
         completed_at: { type: string, format: date-time }
         traceparent: { type: string }
 
@@ -32266,6 +33022,78 @@ components:
         offset: { type: integer, minimum: 0 }
         next_offset: { type: integer, description: "Next offset, or -1 at the end of the result set." }
 
+    CreateAppTaskRequest:
+      description: |
+        One manual command to execute against the app's live deployment.
+        `command_shell=false` executes argv directly. Shell mode requires one
+        command string and is explicit so clients preserve quoting semantics.
+      type: object
+      required: [command]
+      additionalProperties: false
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+        command_shell: { type: boolean, default: false }
+        timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Zero uses the 600-second default." }
+        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024." }
+
+    AppTaskFailure:
+      description: Bounded customer-visible failure details for an app task.
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, maxLength: 64 }
+        message: { type: string, maxLength: 4096 }
+
+    AppTaskResponse:
+      description: |
+        App-scoped receipt for a deployment-attached command. Scheduler lease
+        data, rootfs storage keys, and image digests are intentionally omitted.
+      type: object
+      required: [id, app_id, deployment_id, deployment_scope, kind, command, command_shell, status, timeout_seconds, max_output_bytes, output_truncated, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_scope: { type: string }
+        kind: { type: string, enum: [manual, release] }
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+        command_shell: { type: boolean }
+        status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, cancelled] }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        max_output_bytes: { type: integer, minimum: 1024, maximum: 16777216 }
+        stdout_tail: { type: string }
+        stderr_tail: { type: string }
+        output_truncated: { type: boolean }
+        exit_code: { type: [integer, "null"], minimum: 0, maximum: 255 }
+        failure: { anyOf: [{ $ref: '#/components/schemas/AppTaskFailure' }, { type: "null" }] }
+        cancel_requested_at: { type: [string, "null"], format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AppTaskListResponse:
+      description: |
+        App-scoped page of task receipts. `next_offset` is -1 when there is no
+        following page; otherwise pass it as `offset`.
+      type: object
+      required: [tasks, limit, offset, next_offset]
+      properties:
+        tasks:
+          type: array
+          items: { $ref: '#/components/schemas/AppTaskResponse' }
+        limit: { type: integer, minimum: 1, maximum: 200 }
+        offset: { type: integer, minimum: 0 }
+        next_offset: { type: integer, description: "Offset for the following app-task page, or -1 when this page is final." }
+
     Invocation:
       description: "A single invocations row. Account-scoped; cross-account reads return 404."
       type: object
@@ -32396,14 +33224,14 @@ components:
         created: { type: boolean, description: True when the default binding was created by this request. }
 
     CreateQueueBindingRequest:
-      description: Durable mapping from a logical queue to a worker/job workload.
+      description: Durable queue mapping. HTTP functions may use push mode; pull mode remains for worker/job workloads.
       type: object
       required: [name, queue_name]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push], default: pull }
-        workload_class: { type: string, enum: [worker, job], default: worker }
+        workload_class: { type: string, enum: [worker, job, http], default: worker }
         enabled: { type: boolean, default: true }
         max_concurrency: { type: integer, minimum: 1, maximum: 10000, default: 1 }
         retry_policy:
@@ -32417,7 +33245,7 @@ components:
       properties:
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push] }
-        workload_class: { type: string, enum: [worker, job] }
+        workload_class: { type: string, enum: [worker, job, http] }
         enabled: { type: boolean }
         max_concurrency: { type: integer, minimum: 1, maximum: 10000 }
         retry_policy:
@@ -32435,7 +33263,7 @@ components:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push] }
-        workload_class: { type: string, enum: [worker, job] }
+        workload_class: { type: string, enum: [worker, job, http] }
         enabled: { type: boolean }
         max_concurrency: { type: integer, minimum: 1, maximum: 10000 }
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
@@ -32452,7 +33280,7 @@ components:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push] }
-        workload_class: { type: string, enum: [worker, job] }
+        workload_class: { type: string, enum: [worker, job, http] }
         enabled: { type: boolean }
         consumer_state: { type: string, enum: [active, paused, not_configured, external] }
         consumer_state_reason: { type: string }
@@ -34322,6 +35150,28 @@ components:
         created_at: "2026-08-06T10:00:00Z"
         updated_at: "2026-08-06T10:00:00Z"
 
+    AccountReleaseWebhookResponse:
+      type: object
+      description: Account-owned release receiver; no app_id because it follows all current and future apps.
+      required: [id, scope, account_id, target_url, webhook_secret_sealed_masked, event_filter, retry_policy, delivery_format, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        scope: { type: string, enum: [account] }
+        account_id: { type: string, format: uuid }
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        webhook_secret_sealed_masked: { type: string, enum: ["***"] }
+        event_filter:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+        retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format: { type: string, enum: [json, cloudevents] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
     ManagedRealtimeConnectionResponse:
       type: object
       description: Safe control-plane projection of one live managed realtime connection.
@@ -34733,6 +35583,30 @@ components:
         delivery_format: "json"
         enabled: true
 
+    CreateAccountReleaseWebhookRequest:
+      type: object
+      description: Subscribe a target to release events emitted by every app owned by the active account.
+      required: [target_url, webhook_secret, event_filter]
+      properties:
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+        event_filter:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+        retry_policy: { type: string, enum: [default, aggressive, none], default: default }
+        delivery_format: { type: string, enum: [json, cloudevents], default: json }
+        enabled: { type: boolean, default: true }
+      example:
+        target_url: "https://example.com/releases"
+        webhook_secret: "replace-with-random-secret"
+        event_filter: ["deployment.live", "deployment.failed"]
+        retry_policy: "default"
+        delivery_format: "cloudevents"
+        enabled: true
+
     DeliverAppEventRequest:
       description: Request to enqueue a signed webhook delivery owned by the source app.
       type: object
@@ -34785,6 +35659,22 @@ components:
         target_url: "https://example.com/hook2"
         delivery_format: "cloudevents"
         enabled: true
+
+    UpdateAccountReleaseWebhookRequest:
+      type: object
+      description: Partial update; omitted fields retain their current value.
+      properties:
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+        event_filter:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+        retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format: { type: string, enum: [json, cloudevents] }
+        enabled: { type: boolean }
 
     RotateAppWebhookSecretResponse:
       type: object
@@ -35578,6 +36468,9 @@ components:
         status_diff: { type: boolean }
         body_diff: { type: boolean }
         crashed: { type: boolean }
+        comparison_incomplete:
+          type: boolean
+          description: "True when neither source status nor source body hash was supplied, or the mirror produced no response."
 
 
   responses:

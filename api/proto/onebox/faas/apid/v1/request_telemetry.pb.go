@@ -143,8 +143,12 @@ type IncrementRequestTelemetryRequest struct {
 	DeploymentTag       string `protobuf:"bytes,26,opt,name=deployment_tag,json=deploymentTag,proto3" json:"deployment_tag,omitempty"`
 	DeploymentCreatedAt string `protobuf:"bytes,27,opt,name=deployment_created_at,json=deploymentCreatedAt,proto3" json:"deployment_created_at,omitempty"`
 	ImageDigest         string `protobuf:"bytes,28,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Verified account-level platform customer at request time. Empty for
+	// anonymous, unlinked, and pre-upgrade gateway requests. This is an
+	// attribution snapshot, not a hint to infer from current consumer links.
+	PlatformTenantId string `protobuf:"bytes,29,opt,name=platform_tenant_id,json=platformTenantId,proto3" json:"platform_tenant_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -373,6 +377,13 @@ func (x *IncrementRequestTelemetryRequest) GetImageDigest() string {
 	return ""
 }
 
+func (x *IncrementRequestTelemetryRequest) GetPlatformTenantId() string {
+	if x != nil {
+		return x.PlatformTenantId
+	}
+	return ""
+}
+
 // IncrementRequestTelemetryResponse is the per-record outcome the
 // server returns. outcome ∈ {inserted, rate_limited, db_error}.
 // `inserted` is a successful INSERT; `rate_limited` means the
@@ -440,7 +451,7 @@ var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xbb\a\n" +
+	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xe9\a\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -476,7 +487,8 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"commit_sha\x18\x19 \x01(\tR\tcommitSha\x12%\n" +
 	"\x0edeployment_tag\x18\x1a \x01(\tR\rdeploymentTag\x122\n" +
 	"\x15deployment_created_at\x18\x1b \x01(\tR\x13deploymentCreatedAt\x12!\n" +
-	"\fimage_digest\x18\x1c \x01(\tR\vimageDigest\"c\n" +
+	"\fimage_digest\x18\x1c \x01(\tR\vimageDigest\x12,\n" +
+	"\x12platform_tenant_id\x18\x1d \x01(\tR\x10platformTenantId\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\xa3\x01\n" +

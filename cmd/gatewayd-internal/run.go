@@ -530,7 +530,7 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	}
 	sourceStatus, _ := strconv.Atoi(metadata[api.DebugReplaySourceStatusHeader])
 	sourceLatency, _ := strconv.Atoi(metadata[api.DebugReplaySourceLatencyHeader])
-	statusDiff := sourceStatus != 0 && sourceStatus != statusCode
+	statusDiff := sourceStatus != 0 && statusCode != 0 && sourceStatus != statusCode
 	var sourceBodyHash []byte
 	if encodedHash := strings.TrimSpace(metadata[api.DebugReplaySourceBodyHashHeader]); encodedHash != "" {
 		sourceBodyHash, _ = hex.DecodeString(encodedHash)
@@ -540,18 +540,21 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 		_, _, _, _, _, mirrorHash := gateway.ClassifyResultWithHashes(0, nil, statusCode, mirrorBody)
 		mirrorBodyHash = append([]byte(nil), mirrorHash[:]...)
 	}
-	bodyDiff := len(sourceBodyHash) == sha256.Size && !bytes.Equal(sourceBodyHash, mirrorBodyHash)
+	hasExpectedBody := len(sourceBodyHash) == sha256.Size
+	bodyDiff := hasExpectedBody && statusCode != 0 && !bytes.Equal(sourceBodyHash, mirrorBodyHash)
 	crashed := statusCode == 0 || statusCode >= http.StatusInternalServerError
+	comparisonIncomplete := statusCode == 0 || (sourceStatus == 0 && !hasExpectedBody)
 	result := api.DebugReplayComparison{
-		SourceDeploymentID: metadata[api.DebugReplayDeploymentIDHeader],
-		MirrorDeploymentID: rule.MirrorDeploymentID,
-		SourceStatusCode:   sourceStatus,
-		MirrorStatusCode:   statusCode,
-		SourceLatencyMS:    sourceLatency,
-		MirrorLatencyMS:    latencyMs,
-		StatusDiff:         statusDiff,
-		BodyDiff:           bodyDiff,
-		Crashed:            crashed,
+		SourceDeploymentID:   metadata[api.DebugReplayDeploymentIDHeader],
+		MirrorDeploymentID:   rule.MirrorDeploymentID,
+		SourceStatusCode:     sourceStatus,
+		MirrorStatusCode:     statusCode,
+		SourceLatencyMS:      sourceLatency,
+		MirrorLatencyMS:      latencyMs,
+		StatusDiff:           statusDiff,
+		BodyDiff:             bodyDiff,
+		Crashed:              crashed,
+		ComparisonIncomplete: comparisonIncomplete,
 	}
 	if encoded, marshalErr := json.Marshal(result); marshalErr == nil {
 		out.Result = encoded
@@ -563,26 +566,25 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			storedSourceBodyHash = sourceBodyHash
 		}
 		if storeErr := a.store.InsertMirrorResult(ctx, state.MirrorInvocationResult{
-			MirrorRuleID:       rule.ID,
-			AccountID:          rule.AccountID,
-			AppID:              appID,
-			SourceDeploymentID: metadata[api.DebugReplayDeploymentIDHeader],
-			MirrorDeploymentID: rule.MirrorDeploymentID,
-			InstanceID:         target.InstanceID,
-			StatusCode:         statusCode,
-			SourceStatusCode:   sourceStatus,
-			LatencyMs:          latencyMs,
-			SourceLatencyMs:    sourceLatency,
-			BodyHash:           storedMirrorBodyHash,
-			SourceBodyHash:     storedSourceBodyHash,
-			SchemaHash:         mirrorBodyHash,
-			SourceSchemaHash:   sourceBodyHash,
-			StatusDiff:         statusDiff,
-			SchemaDiff:         bodyDiff,
-			BodyDiff:           bodyDiff,
-			Crashed:            crashed,
-			RequestID:          metadata[api.DebugReplayRequestIDHeader],
-			CompletedAt:        time.Now().UTC(),
+			MirrorRuleID:         rule.ID,
+			AccountID:            rule.AccountID,
+			AppID:                appID,
+			SourceDeploymentID:   metadata[api.DebugReplayDeploymentIDHeader],
+			MirrorDeploymentID:   rule.MirrorDeploymentID,
+			InstanceID:           target.InstanceID,
+			StatusCode:           statusCode,
+			SourceStatusCode:     sourceStatus,
+			LatencyMs:            latencyMs,
+			SourceLatencyMs:      sourceLatency,
+			BodyHash:             storedMirrorBodyHash,
+			SourceBodyHash:       storedSourceBodyHash,
+			StatusDiff:           statusDiff,
+			SchemaDiff:           false,
+			BodyDiff:             bodyDiff,
+			Crashed:              crashed,
+			ComparisonIncomplete: comparisonIncomplete,
+			RequestID:            metadata[api.DebugReplayRequestIDHeader],
+			CompletedAt:          time.Now().UTC(),
 		}); storeErr != nil && a.log != nil {
 			a.log.Warn("gateway synth: debug replay ledger write failed", "err", storeErr, "request_id", metadata[api.DebugReplayRequestIDHeader])
 		}
@@ -758,7 +760,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	identity.AppID = inv.AppID
 	identity.ApplyGuestHeaders(req.Header)
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
-	req.Header.Set("x-faas-invocation-source", string(inv.Source))
+	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
 	// The synthetic marker is intentionally attached to this derived request
 	// context so the internal bridge can preserve platform-owned headers.
 	//nolint:contextcheck // gateway.WithSyntheticInvocation inherits req.Context.
@@ -2692,6 +2694,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestOutcome:        row.GuestOutcome,
 					GuestErrorClass:     row.GuestErrorClass,
 					ConsumerId:          row.ConsumerID,
+					PlatformTenantId:    row.PlatformTenantID,
 					NodeId:              row.NodeID,
 					Region:              row.Region,
 					CommitSha:           row.CommitSHA,
@@ -3850,6 +3853,7 @@ func (a mirrorRulesStoreAdapter) ListMirrorRules(ctx context.Context, appID stri
 			Percent:            r.Percent,
 			Enabled:            r.Enabled,
 			IncludeBody:        r.IncludeBody,
+			AllowUnsafeMethods: r.AllowUnsafeMethods,
 			RedactHeaders:      r.RedactHeaders,
 		})
 	}

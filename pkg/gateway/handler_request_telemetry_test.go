@@ -142,6 +142,8 @@ func TestHandlerObserveCarriesConsumerIdentity(t *testing.T) {
 	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{
 		ID: consumer.String(), AppID: app.String(), KeyID: uuid.NewString(),
 	}))
+	tenant := uuid.New()
+	r = r.WithContext(withAuthenticated(r.Context(), Authenticated{ConsumerID: consumer.String(), PlatformTenantID: tenant.String()}))
 
 	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{DeploymentID: uuid.NewString()})
 	rows := h.requestTelemetry.DrainBatch(1)
@@ -150,6 +152,9 @@ func TestHandlerObserveCarriesConsumerIdentity(t *testing.T) {
 	}
 	if rows[0].ConsumerID != consumer.String() {
 		t.Fatalf("ConsumerID = %q, want %q", rows[0].ConsumerID, consumer.String())
+	}
+	if rows[0].PlatformTenantID != tenant.String() {
+		t.Fatalf("PlatformTenantID = %q, want %q", rows[0].PlatformTenantID, tenant)
 	}
 }
 

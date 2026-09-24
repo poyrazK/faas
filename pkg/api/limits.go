@@ -3526,17 +3526,17 @@ const (
 	MirrorMaxLifetimeSeconds = 5
 
 	// MirrorBodySnapshotCap (issue #72 / ADR-133 / ADR-125 PR-A3
-	// code-review fix) is the maximum number of source-request body
-	// bytes the gateway captures at the fanout boundary for the
-	// mirror goroutine's ClassifyResult comparison. The handler
-	// reads up to MirrorBodySnapshotCap bytes from r.Body, then
-	// restores r.Body to a fresh reader over the SAME bytes so the
-	// downstream ReverseProxy reads the full body unchanged.
+	// code-review fix) bounds request forwarding and each response
+	// snapshot retained for mirror comparison. The handler reads up
+	// to MirrorBodySnapshotCap+1 bytes from r.Body to detect oversize
+	// inputs, then restores r.Body so the source proxy sees the full
+	// body unchanged.
 	//
 	// 64 KiB is enough for status_diff / body_diff detection on a
 	// typical JSON / form-urlencoded response — the comparison is
-	// SHA-256 over the captured bytes (A3 ships byte-equal; JCS
-	// semantic diff is an ADR-124 §Follow-on). Larger values
+	// SHA-256 over the bounded response snapshot. JSON whitespace and object-key
+	// order are normalized before the value hash, and JSON shape has its own
+	// fingerprint. Larger values
 	// (1 MiB+) start eating gateway RAM on burst traffic; smaller
 	// values lose body-diff signal on responses with a long tail.
 	// Bumping this is a PR-grade change.
@@ -4726,7 +4726,7 @@ var (
 	JobMaxPerAccount = [4]int{0, 5, 25, 100}
 
 	// JobConcurrentPerAccount caps the live job-task instances
-	// (kind='job_task' AND status NOT IN ('parked','destroyed'))
+	// (kind='job_task' AND state IN ('waking','cold_booting','running'))
 	// belonging to any single account. Independent of the app-wake
 	// concurrency budget because jobs ride the tenant RAM ceiling
 	// (kind-of-but-not-the-same-thing as wakes).
@@ -4744,14 +4744,13 @@ var (
 
 	// JobMaxParallelismPerRun is the maximum concurrent task fan-out
 	// within a single run. Distinct from JobConcurrentPerAccount
-	// which caps the account-wide pool — a Pro account with 8
-	// concurrent can run one 25-parallel run if other accounts are
-	// idle, but the scheduler enforces parallelism at dispatch time.
+	// which caps the account-wide pool. An 8-concurrent Pro account
+	// may request 25-parallel, but at most 8 tasks run at once.
 	JobMaxParallelismPerRun = [4]int{0, 10, 25, 50}
 
 	// JobMaxTasksPerRun is the per-run fan-out ceiling (number of
 	// task rows a single run materialises). Hard cap, not a quota;
-	// counts against the account's JobConcurrentPerAccount live pool.
+	// Only live task instances count against JobConcurrentPerAccount.
 	JobMaxTasksPerRun = [4]int{0, 100, 1000, 5000}
 
 	// JobMaxRetries is the maximum retry count per task before

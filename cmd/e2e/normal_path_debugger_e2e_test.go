@@ -185,11 +185,12 @@ func TestE2E_NormalPath_DebuggerTelemetryAndReplay(t *testing.T) {
 		t.Fatalf("publish debugger mirror rootfs metadata: %v", err)
 	}
 
+	percent := 100
 	body, statusCode = doReq(t, f.h, f.key, http.MethodPost,
 		"/v1/apps/normal-debugger/mirrors", api.CreateMirrorRuleRequest{
 			SourceDeploymentID: sourceDeployment.ID,
 			MirrorDeploymentID: mirrorDeployment.ID,
-			Percent:            100,
+			Percent:            &percent,
 		})
 	if statusCode != http.StatusCreated {
 		t.Fatalf("create debugger mirror rule: status=%d body=%s", statusCode, body)

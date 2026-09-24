@@ -696,6 +696,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest)
+	if releaseProblem != nil {
+		api.WriteProblem(w, releaseProblem)
+		return
+	}
 	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !opts.NoTriggers)
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
@@ -720,6 +725,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		sourceURL = "local-tar://upload-session/" + uploadID
 	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+		Activity:               s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "upload_session", "scope": rolloutReq.Scope}),
 		AppID:                  app.ID,
 		Kind:                   kind,
 		SourcePath:             row.PartPath,
@@ -744,6 +750,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
 		Workflows:              marshalWorkflowDefinitions(opts.Workflows),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		ReleaseCommand:         releaseCommand.command,
+		ReleaseCommandShell:    releaseCommand.shell,
 		Scope:                  rolloutReq.Scope,
 		HostingObserver:        s.ops,
 		HostingFlow:            "first_deploy",

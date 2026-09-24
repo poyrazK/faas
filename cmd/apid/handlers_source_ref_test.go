@@ -202,13 +202,17 @@ func buildSourceRefTarGz(t *testing.T) []byte {
 
 func buildSourceRefTarGzWithManifest(t *testing.T, manifest string) []byte {
 	t.Helper()
+	return buildSourceRefTarGzWithEntries(t, map[string]string{
+		"gregale-source-main/index.js":     "exports.handler = () => 1;\n",
+		"gregale-source-main/gregale.yaml": manifest,
+	})
+}
+
+func buildSourceRefTarGzWithEntries(t *testing.T, entries map[string]string) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	entries := map[string]string{
-		"gregale-source-main/index.js":     "exports.handler = () => 1;\n",
-		"gregale-source-main/gregale.yaml": manifest,
-	}
 	for name, body := range entries {
 		hdr := &tar.Header{Name: name, Mode: 0644, Size: int64(len(body))}
 		if err := tw.WriteHeader(hdr); err != nil {
@@ -656,6 +660,8 @@ scaling:
   target:
     metric: rps
     value: 10
+release:
+  command: bundle exec rails db:migrate
 `))}
 	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
 		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
@@ -678,6 +684,9 @@ scaling:
 	if !bytes.Contains(deps[0].Workflows, []byte("process_order")) {
 		t.Fatalf("workflows = %s, want archive workflow", deps[0].Workflows)
 	}
+	if len(deps[0].ReleaseCommand) != 1 || deps[0].ReleaseCommand[0] != "bundle exec rails db:migrate" || !deps[0].ReleaseCommandShell {
+		t.Fatalf("release command = %v shell=%v", deps[0].ReleaseCommand, deps[0].ReleaseCommandShell)
+	}
 	updated, err := e.store.AppByID(context.Background(), e.appID)
 	if err != nil {
 		t.Fatalf("AppByID: %v", err)
@@ -690,6 +699,27 @@ scaling:
 	}
 	if updated.ScalingPolicy.Target == nil || updated.ScalingPolicy.Target.Metric != "rps" || updated.ScalingPolicy.Target.Value != 10 {
 		t.Fatalf("scaling target = %+v, want rps/10", updated.ScalingPolicy.Target)
+	}
+}
+
+func TestSourceRef_PinsProcfileReleaseCommand(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithEntries(t, map[string]string{
+		"gregale-source-main/index.js": "console.log('ok')\n",
+		"gregale-source-main/Procfile": "web: node index.js\nrelease: npm run migrate\n",
+	}))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	deployment, err := e.store.LatestDeployment(context.Background(), e.appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployment.ReleaseCommand) != 1 || deployment.ReleaseCommand[0] != "npm run migrate" || !deployment.ReleaseCommandShell {
+		t.Fatalf("release command = %v shell=%v", deployment.ReleaseCommand, deployment.ReleaseCommandShell)
 	}
 }
 

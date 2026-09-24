@@ -933,12 +933,12 @@ func cmdAppRestart(slug string, args []string) int {
 }
 
 // cmdAppDispatch routes `gregale app <slug> ...` to either the new
-// subcommand form (scale / rename / security / routes / tcp) or the legacy
+// subcommand form (scale / rename / exec / security / routes / tcp) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -954,6 +954,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppRename(slug, args[2])
 		case subRestart:
 			return cmdAppRestart(slug, args[2:])
+		case subExec:
+			return cmdAppExec(slug, args[2:])
 		case subSecurity:
 			return cmdAppSecurity(slug, args[2:])
 		case subEgressAllowlist:
@@ -1221,11 +1223,11 @@ func cmdQueueBindingCreate(client *api.Client, args []string) int {
 	name := fs.String("name", "", "binding name")
 	queueName := fs.String("queue-name", "", "logical queue name")
 	mode := fs.String("mode", "pull", "delivery mode: pull|push")
-	workloadClass := fs.String("workload-class", "worker", "workload class: worker|job")
+	workloadClass := fs.String("workload-class", "worker", "workload class: worker|job|http (http requires push and a function)")
 	maxConcurrency := fs.Int("max-concurrency", 1, "maximum concurrent deliveries")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil || len(pos) != 1 || *name == "" || *queueName == "" {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings create <slug> --name NAME --queue-name QUEUE [--mode pull|push] [--workload-class worker|job] [--max-concurrency N]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue bindings create <slug> --name NAME --queue-name QUEUE [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
 		return 1
 	}
 	row, err := client.CreateQueueBinding(context.Background(), pos[0], api.CreateQueueBindingRequest{Name: *name, QueueName: *queueName, Mode: *mode, WorkloadClass: *workloadClass, MaxConcurrency: *maxConcurrency})
@@ -1243,11 +1245,11 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	fs := newFlagSet("queue bindings update", flag.ContinueOnError)
 	queueName := fs.String("queue-name", "", "logical queue name")
 	mode := fs.String("mode", "", "delivery mode: pull|push")
-	workloadClass := fs.String("workload-class", "", "workload class: worker|job")
+	workloadClass := fs.String("workload-class", "", "workload class: worker|job|http (http requires push and a function)")
 	maxConcurrency := fs.Int("max-concurrency", 0, "maximum concurrent deliveries")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil || len(pos) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job] [--max-concurrency N]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
 		return 1
 	}
 	req := api.UpdateQueueBindingRequest{}

@@ -25,7 +25,7 @@ T = TypeVar("T", bound="CreateQueueBindingRequest")
 
 @_attrs_define
 class CreateQueueBindingRequest:
-    """Durable mapping from a logical queue to a worker/job workload."""
+    """Durable queue mapping. HTTP functions may use push mode; pull mode remains for worker/job workloads."""
 
     name: str
     queue_name: str

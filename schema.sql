@@ -1398,7 +1398,7 @@ CREATE TABLE public.app_webhook_deliveries (
 
 CREATE TABLE public.app_webhooks (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
+    app_id uuid,
     account_id uuid NOT NULL,
     target_url text NOT NULL,
     secret_sealed bytea NOT NULL,
@@ -1407,7 +1407,11 @@ CREATE TABLE public.app_webhooks (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    delivery_format text DEFAULT 'json'::text NOT NULL,
+    scope text DEFAULT 'app'::text NOT NULL,
+    CONSTRAINT app_webhooks_delivery_format_chk CHECK ((delivery_format = ANY (ARRAY['json'::text, 'cloudevents'::text]))),
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
+    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 4) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text])))),
     CONSTRAINT app_webhooks_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
 
@@ -3140,7 +3144,8 @@ CREATE TABLE public.mirror_invocation_results (
     crashed boolean DEFAULT false NOT NULL,
     request_id text NOT NULL,
     completed_at timestamp with time zone DEFAULT now() NOT NULL,
-    rollup_counted boolean DEFAULT false NOT NULL
+    rollup_counted boolean DEFAULT false NOT NULL,
+    comparison_incomplete boolean DEFAULT false NOT NULL
 );
 
 
@@ -3173,12 +3178,13 @@ CREATE TABLE public.mirror_rules (
     app_id uuid NOT NULL,
     source_deployment_id uuid NOT NULL,
     mirror_deployment_id uuid NOT NULL,
-    percent integer DEFAULT 100 NOT NULL,
+    percent integer DEFAULT 5 NOT NULL,
     enabled boolean DEFAULT true NOT NULL,
     include_body boolean DEFAULT false NOT NULL,
     redact_headers text[] DEFAULT '{}'::text[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    allow_unsafe_methods boolean DEFAULT false NOT NULL,
     CONSTRAINT mirror_rules_check CHECK ((source_deployment_id <> mirror_deployment_id)),
     CONSTRAINT mirror_rules_percent_check CHECK (((percent >= 0) AND (percent <= 100))),
     CONSTRAINT mirror_rules_redact_headers_check CHECK (((array_length(redact_headers, 1) IS NULL) OR (array_length(redact_headers, 1) <= 32)))
@@ -5921,6 +5927,13 @@ CREATE UNIQUE INDEX app_log_drains_app_target_uniq ON public.app_log_drains USIN
 --
 
 CREATE UNIQUE INDEX app_webhooks_app_target_uniq ON public.app_webhooks USING btree (app_id, target_url);
+
+
+--
+-- Name: app_webhooks_account_target_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_webhooks_account_target_uniq ON public.app_webhooks USING btree (account_id, target_url) WHERE (scope = 'account'::text);
 
 
 --

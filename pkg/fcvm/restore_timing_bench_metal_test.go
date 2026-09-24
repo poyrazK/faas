@@ -291,6 +291,11 @@ func attrMillis(a slog.Attr) (int64, bool) {
 		return a.Value.Int64(), true
 	case slog.KindUint64:
 		return int64(a.Value.Uint64()), true
+	case slog.KindBool:
+		if a.Value.Bool() {
+			return 1, true
+		}
+		return 0, true
 	default:
 		return 0, false
 	}

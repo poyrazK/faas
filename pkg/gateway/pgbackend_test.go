@@ -20,6 +20,97 @@ type fakeRouter struct {
 	err   error
 }
 
+type tenantBindingRouter struct {
+	*fakeRouter
+	bindings map[string]gateway.PlatformTenantHostBinding
+	guardErr error
+}
+
+func (r *tenantBindingRouter) ResolvePlatformTenantHost(_ context.Context, host string) (gateway.PlatformTenantHostBinding, bool, error) {
+	if r.guardErr != nil {
+		return gateway.PlatformTenantHostBinding{}, false, r.guardErr
+	}
+	b, ok := r.bindings[host]
+	return b, ok, nil
+}
+
+func TestPGBackendCachedPlatformTenantRouteRevalidatesSuspension(t *testing.T) {
+	const host = "api.customer.example"
+	r := &tenantBindingRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{host: {
+			ID: "app-1", AccountID: "acct-1", RoutedSurfaceID: "surface-1", PlatformTenantID: "tenant-1",
+		}}},
+		bindings: map[string]gateway.PlatformTenantHostBinding{host: {
+			SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true,
+		}},
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PlatformTenantID != "tenant-1" {
+		t.Fatalf("initial route = %+v ok=%v", app, ok)
+	}
+	r.bindings[host] = gateway.PlatformTenantHostBinding{
+		SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true, Suspended: true,
+	}
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("suspended tenant served cached route: %+v", app)
+	}
+	r.guardErr = errors.New("postgres unavailable")
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("guard outage served cached route: %+v", app)
+	}
+	r.guardErr = nil
+	r.bindings[host] = gateway.PlatformTenantHostBinding{
+		SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true,
+	}
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PlatformTenantID != "tenant-1" {
+		t.Fatalf("reactivated route = %+v ok=%v", app, ok)
+	}
+}
+
+func TestPGBackendStalePlatformTenantRouteCannotBypassSuspension(t *testing.T) {
+	const host = "tenant.example"
+	r := &tenantBindingRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{host: {
+			ID: "app-1", AccountID: "acct-1", RoutedSurfaceID: "surface-1", PlatformTenantID: "tenant-1",
+		}}},
+		bindings: map[string]gateway.PlatformTenantHostBinding{host: {
+			SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true,
+		}},
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if _, ok := b.Lookup(context.Background(), host); !ok {
+		t.Fatal("initial route failed")
+	}
+	b.FlushRoutes()
+	r.err = errors.New("router down")
+	r.bindings[host] = gateway.PlatformTenantHostBinding{
+		SurfaceID: "surface-1", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-1", Active: true, Verified: true, Suspended: true,
+	}
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("stale suspended route served: %+v", app)
+	}
+}
+
+func TestPGBackendCachedPlatformTenantIdentityIsHostSpecific(t *testing.T) {
+	r := &tenantBindingRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{
+			"a.example": {ID: "app-1", AccountID: "acct-1", RoutedSurfaceID: "surface-a", PlatformTenantID: "tenant-a"},
+			"b.example": {ID: "app-1", AccountID: "acct-1", RoutedSurfaceID: "surface-b", PlatformTenantID: "tenant-b"},
+		}},
+		bindings: map[string]gateway.PlatformTenantHostBinding{
+			"a.example": {SurfaceID: "surface-a", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-a", Active: true, Verified: true},
+			"b.example": {SurfaceID: "surface-b", AppID: "app-1", AccountID: "acct-1", TenantID: "tenant-b", Active: true, Verified: true},
+		},
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	for _, host := range []string{"a.example", "b.example", "a.example", "b.example"} {
+		app, ok := b.Lookup(context.Background(), host)
+		if !ok || app.PlatformTenantID != r.bindings[host].TenantID {
+			t.Fatalf("%s leaked host identity: %+v ok=%v", host, app, ok)
+		}
+	}
+}
+
 func (r *fakeRouter) ResolveHost(_ context.Context, host string) (gateway.App, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

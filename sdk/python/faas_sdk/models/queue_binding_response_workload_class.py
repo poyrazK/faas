@@ -1,8 +1,9 @@
 from typing import Literal
 
-QueueBindingResponseWorkloadClass = Literal["job", "worker"]
+QueueBindingResponseWorkloadClass = Literal["http", "job", "worker"]
 
 QUEUE_BINDING_RESPONSE_WORKLOAD_CLASS_VALUES: set[QueueBindingResponseWorkloadClass] = {
+    "http",
     "job",
     "worker",
 }

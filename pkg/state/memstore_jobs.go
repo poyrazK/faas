@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // --- jobs (template) ------------------------------------------------
@@ -422,31 +424,25 @@ func (m *MemStore) JobCountByAccount(_ context.Context, accountID string) (int, 
 	return count, nil
 }
 
-// JobConcurrentByAccount counts the live job_task instances on the
-// account. The memstore approximation: count claimed/queued tasks
-// across all runs on this account. Since the memstore doesn't track
-// a parallel `instances` table for job_tasks, this is the closest
-// in-memory mirror of the pgstore predicate (kind='job_task' AND
-// status is non-terminal).
+// JobConcurrentByAccount mirrors the PostgreSQL live-instance predicate.
+// Queued tasks consume no VM slot and must not count against the account cap.
 func (m *MemStore) JobConcurrentByAccount(_ context.Context, accountID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.jobConcurrentByAccountLocked(accountID), nil
+}
+
+func (m *MemStore) jobConcurrentByAccountLocked(accountID string) int {
 	count := 0
-	for _, run := range m.jobRuns {
-		if run.AccountID != accountID {
+	for _, ins := range m.instances {
+		if ins.Kind != "job_task" || (ins.State != string(StateWaking) && ins.State != string(StateColdBooting) && ins.State != string(StateRunning)) {
 			continue
 		}
-		tasks, ok := m.jobTasks[run.ID]
-		if !ok {
-			continue
-		}
-		for _, t := range tasks {
-			if t.Status == "queued" || t.Status == "claimed" {
-				count++
-			}
+		if job, ok := m.jobs[ins.JobID]; ok && job.AccountID == accountID {
+			count++
 		}
 	}
-	return count, nil
+	return count
 }
 
 // --- job_runs --------------------------------------------------------
@@ -814,7 +810,12 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.jobs[jobID]; !ok {
+	job, ok := m.jobs[jobID]
+	if !ok {
+		return Instance{}, ErrNotFound
+	}
+	run, ok := m.jobRuns[runID]
+	if !ok || run.JobID != jobID || run.AccountID != job.AccountID {
 		return Instance{}, ErrNotFound
 	}
 	tasks, ok := m.jobTasks[runID]
@@ -824,6 +825,24 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 	task, ok := tasks[taskIndex]
 	if !ok || task.Status != "queued" {
 		return Instance{}, ErrNotFound
+	}
+	plan := api.PlanHobby // Narrow tests may seed a job without an account row.
+	if account, ok := m.accounts[job.AccountID]; ok {
+		plan = account.Plan
+	}
+	accountCap := jobLiveConcurrencyCap(plan)
+	if live := m.jobConcurrentByAccountLocked(job.AccountID); live >= accountCap {
+		return Instance{}, &JobQuotaError{Scope: JobQuotaScopeConcurrent, Limit: accountCap, Observed: live + 1}
+	}
+	runCap := run.Parallelism
+	claimed := 0
+	for _, candidate := range tasks {
+		if candidate.Status == "claimed" {
+			claimed++
+		}
+	}
+	if claimed >= runCap {
+		return Instance{}, &JobQuotaError{Scope: JobQuotaScopeParallelism, Limit: runCap, Observed: claimed + 1}
 	}
 	if instanceID == "" {
 		instanceID = newID()
@@ -861,16 +880,20 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 // Returns ErrNotFound when (run_id, task_index) does not resolve OR
 // when the task is already terminal.
 func (m *MemStore) JobTaskMarkTerminal(_ context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage string, finishedAt time.Time) error {
-	return m.jobTaskMarkTerminal(runID, taskIndex, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
+	return m.jobTaskMarkTerminal(runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
 }
 
 // JobTaskMarkTerminalWithLogs is the in-memory mirror of the PostgreSQL
 // atomic terminal transition and log persistence operation.
 func (m *MemStore) JobTaskMarkTerminalWithLogs(_ context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
-	return m.jobTaskMarkTerminal(runID, taskIndex, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+	return m.jobTaskMarkTerminal(runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
 }
 
-func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
+func (m *MemStore) JobTaskCompleteClaimedWithLogs(_ context.Context, runID string, taskIndex int, instanceID, leaseToken, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
+	return m.jobTaskMarkTerminal(runID, taskIndex, instanceID, leaseToken, true, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+}
+
+func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	tasks, ok := m.jobTasks[runID]
@@ -884,8 +907,13 @@ func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, status strin
 	if t.Status != "queued" && t.Status != "claimed" {
 		return ErrNotFound
 	}
+	if requireClaim && (t.Status != "claimed" || t.InstanceID == nil || *t.InstanceID != expectedInstanceID || t.LeaseToken == nil || *t.LeaseToken != expectedLeaseToken) {
+		return ErrNotFound
+	}
 	t.Status = status
 	t.ExitCode = &exitCode
+	t.ErrorClass = nil
+	t.ErrorMessage = nil
 	if errorClass != "" {
 		t.ErrorClass = &errorClass
 	}
@@ -942,12 +970,74 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 	return nil
 }
 
+// JobTaskFailBoot atomically fences and accounts for a pre-execution VM boot
+// failure. Unlike JobTaskRequeue, this consumes the configured retry budget.
+func (m *MemStore) JobTaskFailBoot(_ context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tasks, ok := m.jobTasks[runID]
+	if !ok {
+		return false, ErrNotFound
+	}
+	t, ok := tasks[taskIndex]
+	if !ok || t.Status != "claimed" || t.InstanceID == nil || *t.InstanceID != instanceID || t.LeaseToken == nil || *t.LeaseToken != leaseToken {
+		return false, ErrNotFound
+	}
+	class := "infra"
+	t.ErrorClass = &class
+	t.ErrorMessage = &errorMessage
+	t.LeaseToken = nil
+	t.LeaseExpiresAt = nil
+	t.LastLeaseNode = nil
+	if t.Attempt <= retryMax {
+		t.Status = "queued"
+		t.Attempt++
+		t.InstanceID = nil
+		t.StartedAt = nil
+		t.FinishedAt = nil
+		t.ExitCode = nil
+		next := nextAttemptAt.UTC()
+		t.NextAttemptAt = &next
+		tasks[taskIndex] = t
+		return true, nil
+	}
+	t.Status = "failed"
+	code := 1
+	t.ExitCode = &code
+	finished := time.Now().UTC()
+	t.FinishedAt = &finished
+	t.NextAttemptAt = nil
+	tasks[taskIndex] = t
+	return false, nil
+}
+
+// JobTaskDeferQueued only moves the due time of the same eligible queued
+// attempt. It cannot clear a lease or shorten a newer retry's backoff.
+func (m *MemStore) JobTaskDeferQueued(_ context.Context, runID string, taskIndex, expectedAttempt int, nextAttemptAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tasks, ok := m.jobTasks[runID]
+	if !ok {
+		return ErrNotFound
+	}
+	task, ok := tasks[taskIndex]
+	if !ok || task.Status != "queued" || task.Attempt != expectedAttempt || task.InstanceID != nil || task.LeaseToken != nil ||
+		(task.NextAttemptAt != nil && task.NextAttemptAt.After(time.Now().UTC())) {
+		return ErrNotFound
+	}
+	next := nextAttemptAt.UTC()
+	task.NextAttemptAt = &next
+	tasks[taskIndex] = task
+	return nil
+}
+
 // JobTaskRequeue reverses a CLAIMED-but-not-executed task back to
 // queued WITHOUT incrementing attempt. Mirrors JobTaskRetry's
 // column-reset contract (clears instance_id + lease columns +
 // started_at) but preserves the attempt counter — the customer's
 // retry budget is not consumed by transient dispatch-side failures
-// (admission denied, vmmd unreachable, run-lookup race).
+// (admission denied, run-lookup race). A claimed vmmd boot failure is
+// accounted by JobTaskFailBoot instead.
 func (m *MemStore) JobTaskRequeue(_ context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

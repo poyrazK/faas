@@ -1,3 +1,4 @@
+// adr: 099
 // memstore_jobs_coverage_test.go — pkg/state coverage pin for the
 // JobStore surface (Mega-1 jobs).
 //
@@ -652,6 +653,28 @@ func TestMemStoreJobs_CreateAndClaimJobInstanceIsAtomic(t *testing.T) {
 	}
 }
 
+func TestMemStoreJobs_AppWatchdogExcludesColdBootingJob(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-WD", "watchdog")
+	instanceID := "job-watchdog-instance"
+	if _, err := ms.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 0,
+		"cold_booting", 256, DefaultLocalNodeName, instanceID, "lease-watchdog",
+		time.Now().Add(time.Minute), DefaultLocalNodeName); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ms.ListInstancesByStatesOlderThan(ctx, []State{StateColdBooting}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == instanceID {
+			t.Fatalf("job task entered app watchdog sweep: %+v", row)
+		}
+	}
+}
+
 // TestMemStoreJobs_JobTaskMarkTerminal — happy + ErrNotFound when
 // already terminal.
 func TestMemStoreJobs_JobTaskMarkTerminal(t *testing.T) {
@@ -733,6 +756,49 @@ func TestMemStoreJobs_JobTaskRequeue(t *testing.T) {
 
 	if err := ms.JobTaskRequeue(ctx, "missing", 0, next); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("JobTaskRequeue(missing): err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemStoreJobs_JobTaskFailBootConsumesBudgetAndFencesOldClaim(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	_, run, _ := newJobAndRun(t, ms, "acct-BF", "bf1")
+	expires := time.Now().Add(time.Minute)
+	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, "instance-1", "lease-1", expires, "node-1"); err != nil {
+		t.Fatal(err)
+	}
+	next := time.Now().Add(time.Minute)
+	retried, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "artifact unavailable")
+	if err != nil || !retried {
+		t.Fatalf("first boot failure: retried=%v err=%v", retried, err)
+	}
+	task, err := ms.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.InstanceID != nil || task.NextAttemptAt == nil || task.NextAttemptAt.Before(next.Add(-time.Second)) || task.ErrorClass == nil || *task.ErrorClass != "infra" {
+		t.Fatalf("first boot failure task=%+v err=%v", task, err)
+	}
+	if _, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "stale boot"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale claim error=%v, want ErrNotFound", err)
+	}
+	if err := ms.JobTaskCompleteClaimedWithLogs(ctx, run.ID, 0, "instance-1", "lease-1", "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("late exit after retry error=%v, want ErrNotFound", err)
+	}
+	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, "instance-2", "lease-2", expires, "node-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "stale boot"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("replaced claim error=%v, want ErrNotFound", err)
+	}
+	if err := ms.JobTaskCompleteClaimedWithLogs(ctx, run.ID, 0, "instance-1", "lease-1", "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("late exit after replacement error=%v, want ErrNotFound", err)
+	}
+	retried, err = ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-2", "lease-2", 1, next, "artifact unavailable")
+	if err != nil || retried {
+		t.Fatalf("exhausted boot failure: retried=%v err=%v", retried, err)
+	}
+	task, err = ms.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || task.Status != "failed" || task.Attempt != 2 || task.FinishedAt == nil || task.ErrorMessage == nil || *task.ErrorMessage != "artifact unavailable" {
+		t.Fatalf("terminal boot failure task=%+v err=%v", task, err)
 	}
 }
 
@@ -872,24 +938,33 @@ func TestMemStoreJobs_JobTaskList(t *testing.T) {
 	}
 }
 
-// TestMemStoreJobs_JobConcurrentByAccount — counts queued + claimed
-// only; terminal statuses are excluded.
+// TestMemStoreJobs_JobConcurrentByAccount counts live job VMs, not queued
+// tasks. This matches the PostgreSQL admission and billing predicate.
 func TestMemStoreJobs_JobConcurrentByAccount(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	ms := NewMemStore()
-	_, run, _ := newJobAndRun(t, ms, "acct-CC", "cc1")
+	job, run, _ := newJobAndRun(t, ms, "acct-CC", "cc1")
 
 	before, _ := ms.JobConcurrentByAccount(ctx, "acct-CC")
-	if before != 3 {
-		t.Fatalf("JobConcurrentByAccount(3 queued) = %d, want 3", before)
+	if before != 0 {
+		t.Fatalf("JobConcurrentByAccount(3 queued) = %d, want 0", before)
 	}
 
-	// Mark task 0 succeeded → concurrent count drops to 2.
+	instanceID := newUUIDString()
+	if _, err := ms.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 0,
+		"cold_booting", 128, DefaultLocalNodeName, instanceID, newUUIDString(), time.Now().Add(time.Minute), DefaultLocalNodeName); err != nil {
+		t.Fatal(err)
+	}
+	active, _ := ms.JobConcurrentByAccount(ctx, "acct-CC")
+	if active != 1 {
+		t.Fatalf("JobConcurrentByAccount(1 live) = %d, want 1", active)
+	}
 	_ = ms.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", time.Now().UTC())
+	_ = ms.UpdateInstanceState(ctx, instanceID, string(StateStopped))
 	after, _ := ms.JobConcurrentByAccount(ctx, "acct-CC")
-	if after != 2 {
-		t.Fatalf("JobConcurrentByAccount(after 1 terminal) = %d, want 2", after)
+	if after != 0 {
+		t.Fatalf("JobConcurrentByAccount(after terminal) = %d, want 0", after)
 	}
 }
 

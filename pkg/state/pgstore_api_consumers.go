@@ -14,12 +14,13 @@ type consumerRowScanner interface {
 	Scan(dest ...any) error
 }
 
-const apiConsumerSelectCols = `id, account_id, app_id, external_ref, name, status, created_at, updated_at, revoked_at`
+const apiConsumerSelectCols = `id, account_id, app_id, external_ref, name, status, created_at, updated_at, revoked_at, platform_tenant_id`
 
 func scanAPIConsumerRow(row consumerRowScanner) (APIConsumer, error) {
 	var c APIConsumer
 	var status string
 	var revokedAt *time.Time
+	var platformTenantID *string
 	if err := row.Scan(
 		&c.ID,
 		&c.AccountID,
@@ -30,11 +31,15 @@ func scanAPIConsumerRow(row consumerRowScanner) (APIConsumer, error) {
 		&c.CreatedAt,
 		&c.UpdatedAt,
 		&revokedAt,
+		&platformTenantID,
 	); err != nil {
 		return APIConsumer{}, err
 	}
 	c.Status = APIConsumerStatus(status)
 	c.RevokedAt = revokedAt
+	if platformTenantID != nil {
+		c.PlatformTenantID = *platformTenantID
+	}
 	return c, nil
 }
 
@@ -162,6 +167,8 @@ func (s *PgStore) CreateConsumerKeyForConsumer(ctx context.Context, accountID, c
 		   from api_consumers c
 		  where c.id = $2::uuid and c.account_id = $1::uuid
 		    and c.status = 'active'
+		    and not exists (select 1 from platform_tenants t
+		                    where t.id = c.platform_tenant_id and t.status = 'suspended')
 		 returning `+consumerKeySelectCols,
 		accountID, consumerID, name, prefix, hash, scopes, expiresAt)
 	k, err := scanConsumerKeyRow(row)
@@ -176,6 +183,16 @@ func (s *PgStore) CreateConsumerKeyForConsumer(ctx context.Context, accountID, c
 		}
 		if getErr != nil {
 			return ConsumerKey{}, getErr
+		}
+		var suspended bool
+		if checkErr := s.pool.QueryRow(ctx, `select exists (
+			select 1 from api_consumers c join platform_tenants t on t.id = c.platform_tenant_id
+			where c.id = $1::uuid and c.account_id = $2::uuid and t.status = 'suspended'
+		)`, consumerID, accountID).Scan(&suspended); checkErr != nil {
+			return ConsumerKey{}, checkErr
+		}
+		if suspended {
+			return ConsumerKey{}, ErrConflict
 		}
 		return ConsumerKey{}, ErrNotFound
 	}

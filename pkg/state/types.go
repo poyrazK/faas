@@ -623,15 +623,16 @@ func (m ConsumerAuthMode) Valid() bool {
 // Credentials (ConsumerKey) are attached to this row so key rotation does
 // not change the identity used for throttling, usage attribution, or billing.
 type APIConsumer struct {
-	ID          string
-	AccountID   string
-	AppID       string
-	ExternalRef string
-	Name        string
-	Status      APIConsumerStatus
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	RevokedAt   *time.Time
+	ID               string
+	AccountID        string
+	AppID            string
+	PlatformTenantID string // optional account-level customer; survives key rotation
+	ExternalRef      string
+	Name             string
+	Status           APIConsumerStatus
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	RevokedAt        *time.Time
 }
 
 // Active reports whether the consumer can authenticate requests.
@@ -687,14 +688,15 @@ type ConsumerKey struct {
 // follow-up, while this ledger preserves the raw facts needed to reconcile a
 // customer invoice.
 type APIConsumerUsageEvent struct {
-	EventID       string
-	AccountID     string
-	AppID         string
-	ConsumerKey   string
-	WindowStart   time.Time
-	RequestCount  int64
-	ErrorCount    int64
-	BillableUnits int64
+	EventID          string
+	AccountID        string
+	AppID            string
+	ConsumerKey      string
+	PlatformTenantID string // immutable at-request attribution; empty for pre-link traffic
+	WindowStart      time.Time
+	RequestCount     int64
+	ErrorCount       int64
+	BillableUnits    int64
 }
 
 // APIConsumerUsageBucket is the read-side aggregate for one app, consumer,
@@ -1398,6 +1400,19 @@ type AppDeletionArtifact struct {
 type DeclaredRoute struct {
 	Path    string   `json:"path"`
 	Methods []string `json:"methods"`
+}
+
+// ProjectEnvironmentRoutePolicy overrides the application-wide declared-route
+// contract for one workload and one registered environment.
+type ProjectEnvironmentRoutePolicy struct {
+	AccountID               string
+	ProjectID               string
+	AppID                   string
+	EnvironmentSlug         string
+	OnlyAllowDeclaredRoutes bool
+	DeclaredRoutes          []DeclaredRoute
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 // IsDeveloperApp reports whether an app is the expiring environment created
@@ -2368,10 +2383,17 @@ type Deployment struct {
 	// after the readiness probe. Raw JSON keeps state independent of the API
 	// hosting receipt package.
 	APIHostingReceipt json.RawMessage `json:"api_hosting_receipt,omitempty"`
-	// InferredProfile is the versioned, non-secret source profile captured from
-	// the exact archive accepted for this deployment. It is kept as raw JSON so
-	// state does not depend on the framework-profile package's API shape.
+	// InferredProfile is the versioned, non-secret runtime profile derived from
+	// the accepted source archive or an OCI image config. The OCI projection
+	// carries the advertised serving port across imaged -> schedd -> vmmd.
+	// Raw JSON keeps state independent of the framework-profile package shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
+	// ReleaseCommand is immutable pre-activation intent captured from the
+	// exact source version (gregale.yaml release.command or Procfile release:).
+	// The orchestrator converts it into the deployment's unique release task;
+	// an empty slice means the deployment has no release phase.
+	ReleaseCommand      []string `json:"release_command,omitempty"`
+	ReleaseCommandShell bool     `json:"release_command_shell,omitempty"`
 }
 
 // OperatorDeploymentFilter bounds the provider-side deployment incident
@@ -3274,12 +3296,24 @@ type UpdateAppWebhookParams struct {
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 }
 
-// AppWebhook is one per-app subscription row (issue #476 /
-// ADR-076). The webhook secret is at-rest sealed
-// (SecretSealed, age/X25519 via pkg/secretbox) and is never surfaced
-// on a read — the apid response carries a masked constant.
+// AppWebhookScope is the closed storage vocabulary for ADR-224. Existing
+// subscriptions are app-scoped; account scope is not yet publicly creatable.
+type AppWebhookScope string
+
+const (
+	AppWebhookScopeApp     AppWebhookScope = "app"
+	AppWebhookScopeAccount AppWebhookScope = "account"
+)
+
+// ErrInvalidAppWebhookScope prevents the app-only creation path from silently
+// creating an app subscription when passed an account-scoped request.
+var ErrInvalidAppWebhookScope = errors.New("state: invalid app webhook scope")
+
+// AppWebhook is a subscription row (ADR-076, ADR-224). Its sealed secret is
+// never surfaced on a read; the apid response carries a masked constant.
 type AppWebhook struct {
 	ID             string
+	Scope          AppWebhookScope
 	AppID          string
 	AccountID      string
 	TargetURL      string
@@ -4183,6 +4217,7 @@ type MirrorRule struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -4194,10 +4229,11 @@ type MirrorRule struct {
 // zero value" — the latter is rare but legal (e.g. Percent=0
 // disables the rule without removing it).
 type MirrorRulePatch struct {
-	Percent       *int
-	Enabled       *bool
-	IncludeBody   *bool
-	RedactHeaders *[]string
+	Percent            *int
+	Enabled            *bool
+	IncludeBody        *bool
+	AllowUnsafeMethods *bool
+	RedactHeaders      *[]string
 }
 
 // CreateMirrorRuleParams (issue #72 / ADR-125) is the parameter
@@ -4215,6 +4251,7 @@ type CreateMirrorRuleParams struct {
 	Percent            int
 	Enabled            bool
 	IncludeBody        bool
+	AllowUnsafeMethods bool
 	RedactHeaders      []string
 }
 
@@ -4227,33 +4264,34 @@ type CreateMirrorRuleParams struct {
 // endpoint SUM these columns instead of comparing values client
 // side — the customer's read path stays O(1) per row.
 //
-// All *bytea fields are 32 bytes (SHA-256). Go-side: `[]byte`
-// with len==32, OR nil when the rule has include_body=false (the
-// `body_hash` columns are the only ones that can be nil — the
-// schema_hash columns are always populated for JSON responses).
+// Hash fields are 32-byte SHA-256 fingerprints. Body hashes are nil when
+// `include_body=false`; schema fingerprints are present only for complete JSON
+// responses. Any hash can be nil when its source/mirror snapshot is missing or
+// truncated.
 type MirrorInvocationResult struct {
-	ID                 string
-	MirrorRuleID       string
-	AccountID          string
-	AppID              string
-	SourceDeploymentID string
-	MirrorDeploymentID string
-	InstanceID         string
-	SourceInstanceID   string
-	StatusCode         int
-	SourceStatusCode   int
-	LatencyMs          int
-	SourceLatencyMs    int
-	BodyHash           []byte
-	SourceBodyHash     []byte
-	SchemaHash         []byte
-	SourceSchemaHash   []byte
-	StatusDiff         bool
-	SchemaDiff         bool
-	BodyDiff           bool
-	Crashed            bool
-	RequestID          string
-	CompletedAt        time.Time
+	ID                   string
+	MirrorRuleID         string
+	AccountID            string
+	AppID                string
+	SourceDeploymentID   string
+	MirrorDeploymentID   string
+	InstanceID           string
+	SourceInstanceID     string
+	StatusCode           int
+	SourceStatusCode     int
+	LatencyMs            int
+	SourceLatencyMs      int
+	BodyHash             []byte
+	SourceBodyHash       []byte
+	SchemaHash           []byte
+	SourceSchemaHash     []byte
+	StatusDiff           bool
+	SchemaDiff           bool
+	BodyDiff             bool
+	Crashed              bool
+	ComparisonIncomplete bool
+	RequestID            string
+	CompletedAt          time.Time
 }
 
 // MirrorSummary (issue #72 / ADR-125) is the aggregate the
@@ -4264,15 +4302,16 @@ type MirrorInvocationResult struct {
 // = mirror is slower). `P99LatencyDiffMs` is signed and is the
 // operator's drift signal.
 type MirrorSummary struct {
-	TotalInvocations     int
-	ChangedResponseCount int
-	StatusDiffCount      int
-	SchemaDiffCount      int
-	BodyDiffCount        int
-	MeanLatencyDiffMs    int
-	P99LatencyDiffMs     int
-	CrashCount           int
-	WindowSeconds        int
+	TotalInvocations          int
+	ChangedResponseCount      int
+	StatusDiffCount           int
+	SchemaDiffCount           int
+	BodyDiffCount             int
+	MeanLatencyDiffMs         int
+	P99LatencyDiffMs          int
+	CrashCount                int
+	IncompleteComparisonCount int
+	WindowSeconds             int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
@@ -7037,6 +7076,7 @@ type EdgeRule struct {
 	MatchHost    string
 	MatchPath    string
 	MatchMethods []string
+	MatchHeaders map[string]string
 	Priority     int
 	Enabled      bool
 	Kind         EdgeRuleKind
@@ -7187,6 +7227,7 @@ type CreateEdgeRuleParams struct {
 	MatchHost    string
 	MatchPath    string
 	MatchMethods []string
+	MatchHeaders map[string]string
 	Priority     int
 	Enabled      bool
 	Kind         EdgeRuleKind
@@ -7216,6 +7257,7 @@ type UpdateEdgeRuleParams struct {
 	MatchHost    *string
 	MatchPath    *string
 	MatchMethods *[]string
+	MatchHeaders *map[string]string
 	Priority     *int
 	Enabled      *bool
 	Action       *EdgeRuleAction

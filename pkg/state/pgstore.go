@@ -100,7 +100,10 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 // the public smoke request and the eventual live/failed transition. The
 // notification outbox broadcasts snapshot_written to every imaged process;
 // the loser reloads the deployment after this lock and observes the winner's
-// terminal state instead of running a second verification wake.
+// terminal state instead of running a second verification wake. Contenders
+// must not hold a pool connection while waiting: imaged's three-connection
+// pool can otherwise be exhausted by its LISTEN connection and two activation
+// handlers, leaving the lock holder unable to load the deployment.
 func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (func(context.Context), error) {
 	deploymentID = strings.TrimSpace(deploymentID)
 	if deploymentID == "" {
@@ -109,18 +112,36 @@ func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymen
 	if s == nil || s.pool == nil {
 		return nil, errors.New("state: pgstore has nil pool")
 	}
-	conn, err := db.DirectPool(s.pool).Acquire(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
-	}
-	const lockSQL = `select pg_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`
-	if _, err := conn.Exec(ctx, lockSQL, deploymentID); err != nil {
-		// Cancellation can race a server-side lock grant. Closing the
-		// session is the only safe way to rule out an orphaned lock.
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		_ = conn.Hijack().Close(closeCtx)
-		cancel()
-		return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+	var conn *pgxpool.Conn
+	for {
+		var err error
+		conn, err = db.DirectPool(s.pool).Acquire(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
+		}
+		var locked bool
+		err = conn.QueryRow(ctx,
+			`select pg_try_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&locked)
+		if err != nil {
+			// Cancellation can race a server-side lock grant. Closing the
+			// session is the only safe way to rule out an orphaned lock.
+			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			_ = conn.Hijack().Close(closeCtx)
+			cancel()
+			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+		}
+		if locked {
+			break
+		}
+		conn.Release()
+		// A second subscriber may contend for the same deployment while the
+		// winner still needs this pool for ordinary reads and stage writes.
+		// Give the connection back before retrying or waiting for cancellation.
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 	var once sync.Once
 	return func(ctx context.Context) {
@@ -4219,6 +4240,17 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 	row := s.pool.QueryRow(ctx, `
 		with removed_crons as (
 			delete from crons where app_id = $1 returning id
+		), cancelled_app_tasks as (
+			update app_tasks
+			   set status = case when status = 'queued' then 'cancelled' else status end,
+			       cancel_requested_at = case
+			           when status in ('restoring', 'running') then coalesce(cancel_requested_at, now())
+			           else cancel_requested_at
+			       end,
+			       finished_at = case when status = 'queued' then now() else finished_at end,
+			       updated_at = now()
+			 where app_id = $1 and status in ('queued', 'restoring', 'running')
+			 returning id
 		)
 		update apps
 		   set status = 'deleted',
@@ -4476,6 +4508,18 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 	}
 	if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, id); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app remove crons: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update app_tasks
+		   set status = case when status = 'queued' then 'cancelled' else status end,
+		       cancel_requested_at = case
+		           when status in ('restoring', 'running') then coalesce(cancel_requested_at, $2)
+		           else cancel_requested_at
+		       end,
+		       finished_at = case when status = 'queued' then $2 else finished_at end,
+		       updated_at = $2
+		 where app_id = $1 and status in ('queued', 'restoring', 'running')`, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app cancel app tasks: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		with candidates as (
@@ -6384,10 +6428,22 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // to supply a deterministic UUID; all other callers keep the database-generated
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	created, _, err := s.createDeployment(ctx, d, nil)
+	return created, err
+}
+
+func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	return s.createDeployment(ctx, d, &activity)
+}
+
+func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
+		return Deployment{}, 0, err
+	}
 	d.Scope = normalizedDeploymentScope(d.Scope)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return Deployment{}, fmt.Errorf("state: begin tx: %w", err)
+		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 	if d.RolloutState == "" {
@@ -6408,9 +6464,9 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		`select 1 from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
 		d.AppID).Scan(&locked); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Deployment{}, ErrNotFound
+			return Deployment{}, 0, ErrNotFound
 		}
-		return Deployment{}, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+		return Deployment{}, 0, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
 	// 2. Supersede an older pending row, if any. A live deployment remains
 	//    routable until MarkDeploymentLive atomically promotes its healthy
@@ -6453,14 +6509,14 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		  for update`,
 			d.AppID, normalizedDeploymentScope(d.Scope)).Scan(&priorID); err != nil {
 			if !errors.Is(err, pgx.ErrNoRows) {
-				return Deployment{}, fmt.Errorf("state: lock prior pending deployment: %w", err)
+				return Deployment{}, 0, fmt.Errorf("state: lock prior pending deployment: %w", err)
 			}
 		} else {
 			if _, err := tx.Exec(ctx,
 				`update deployments
 				    set status = 'superseded', traffic_percent = 0
 				  where id = $1`, priorID); err != nil {
-				return Deployment{}, fmt.Errorf("state: supersede prior pending %s: %w", priorID, err)
+				return Deployment{}, 0, fmt.Errorf("state: supersede prior pending %s: %w", priorID, err)
 			}
 		}
 	}
@@ -6514,7 +6570,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 	}
 	stageState, err := deploymentStageStateForCreate(d.StageState, stageStartedAt)
 	if err != nil {
-		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
+		return Deployment{}, 0, fmt.Errorf("state: encode deployment stage state: %w", err)
 	}
 	row := tx.QueryRow(ctx,
 		`insert into deployments (id, app_id, image_digest, kind, source_path, source_root, source_bytes, source_sha256, handler, log_path, source_url, commit_sha,
@@ -6533,7 +6589,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
-		                          stage_state, rollback_on_5xx, disable_startup_cpu_boost)
+		                          stage_state, rollback_on_5xx, release_command, release_command_shell, disable_startup_cpu_boost)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -6547,7 +6603,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47)
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -6588,15 +6644,40 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
 		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
-		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx, d.DisableStartupCPUBoost)
+		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx,
+		notNullEmptyTextArray(d.ReleaseCommand), d.ReleaseCommandShell, d.DisableStartupCPUBoost)
 	created, err := scanDeployment(row)
 	if err != nil {
-		return Deployment{}, err
+		return Deployment{}, 0, err
+	}
+	var outboxID int64
+	if activity != nil {
+		deploymentID, err := uuid.Parse(created.ID)
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: parse created deployment activity id: %w", err)
+		}
+		activity.SourceID = created.ID
+		activity.DeploymentID = &deploymentID
+		if activity.AppID == nil {
+			appID, parseErr := uuid.Parse(created.AppID)
+			if parseErr != nil {
+				return Deployment{}, 0, fmt.Errorf("state: parse created deployment app id: %w", parseErr)
+			}
+			activity.AppID = &appID
+		}
+		normalized, normalizeErr := normalizeOrgActivity(*activity, time.Now())
+		if normalizeErr != nil {
+			return Deployment{}, 0, normalizeErr
+		}
+		outboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, normalized)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Deployment{}, fmt.Errorf("state: commit create deployment: %w", err)
+		return Deployment{}, 0, fmt.Errorf("state: commit create deployment: %w", err)
 	}
-	return created, nil
+	return created, outboxID, nil
 }
 
 func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, error) {
@@ -8810,6 +8891,24 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: update deployment: %w", err)
 	}
+	// Release tasks are part of the deployment pipeline, not independent
+	// operator work. A queued command must never start after its candidate is
+	// cancelled; a leased command receives the same cooperative cancellation
+	// fence used by the public app-task endpoint.
+	if _, err := tx.Exec(ctx, `
+		UPDATE app_tasks
+		   SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+		       cancel_requested_at = CASE
+		           WHEN status IN ('restoring', 'running') THEN coalesce(cancel_requested_at, $2)
+		           ELSE cancel_requested_at
+		       END,
+		       finished_at = CASE WHEN status = 'queued' THEN $2 ELSE finished_at END,
+		       updated_at = $2
+		 WHERE deployment_id = $1
+		   AND kind = 'release'
+		   AND status IN ('queued', 'restoring', 'running')`, id, now); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: cancel release task: %w", err)
+	}
 
 	// Cascade-cancel every non-terminal build row attached to
 	// this deployment. Running rows also get a durable VM cleanup
@@ -9387,7 +9486,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          reason, tag, deployed_by, pr_number,
 		                          priority,
 		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
-		                          traffic_percent_explicit)
+		                          traffic_percent_explicit,
+		                          release_command, release_command_shell)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -9401,7 +9501,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45)
+		         $40, $41, $42, $43, $44, $45, $46, $47)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -9429,7 +9529,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		nullString(newDep.Reason), nullString(newDep.Tag), nullString(newDep.DeployedBy), newDep.PRNumber,
 		newDep.Priority,
 		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile),
-		newDep.TrafficPercentExplicit)
+		newDep.TrafficPercentExplicit,
+		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -9732,6 +9833,27 @@ func (s *PgStore) SetDeploymentRootfsIfActive(ctx context.Context, id, path, key
 		  where id = $1
 		    and status in ('pending', 'building', 'imaging', 'snapshotting')`,
 		id, nullString(path), nullString(key), bytes)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+	var status DeploymentStatus
+	if err := s.pool.QueryRow(ctx, `select status from deployments where id = $1`, id).Scan(&status); err != nil {
+		return mapErr(err)
+	}
+	return ErrInvalidStateTransition
+}
+
+func (s *PgStore) SetDeploymentRuntimeProfile(ctx context.Context, id string, profile []byte) error {
+	if !json.Valid(profile) {
+		return errors.New("state: deployment runtime profile must be valid JSON")
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update deployments set inferred_profile = $2::jsonb
+		  where id = $1 and kind = 'image'
+		    and status in ('pending', 'building', 'imaging')`, id, profile)
 	if err != nil {
 		return err
 	}
@@ -10732,31 +10854,51 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 // CreateBuildWithID publishes a pre-uploaded source into the queue and
 // advances its deployment under the same lock used by cancellation.
 func (s *PgStore) CreateBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
+	build, _, err := s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, nil)
+	return build, err
+}
+
+func (s *PgStore) CreateBuildWithIDAndActivity(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity OrgActivity) (Build, int64, error) {
+	return s.createBuildWithID(ctx, id, deploymentID, kind, sourceBytes, logPath, &activity)
+}
+
+func (s *PgStore) createBuildWithID(ctx context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity) (Build, int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return Build{}, err
+		return Build{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `update deployments set status='building' where id=$1 and status in ('pending','building')`, deploymentID)
 	if err != nil {
-		return Build{}, err
+		return Build{}, 0, err
 	}
 	if tag.RowsAffected() != 1 {
-		return Build{}, ErrNotFound
+		return Build{}, 0, ErrNotFound
 	}
 	build, err := scanBuild(tx.QueryRow(ctx, `insert into builds(id,deployment_id,kind,source_bytes,status,log_path)
 	values($1,$2,$3,$4,'queued',$5)
 	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade,coalesce(cache_status,''),coalesce(cache_key_sha256,'')`, id, deploymentID, kind, sourceBytes, nullString(logPath)))
 	if err != nil {
-		return Build{}, err
+		return Build{}, 0, err
 	}
 	if _, err := tx.Exec(ctx, `update deployments set build_id=$2 where id=$1`, deploymentID, id); err != nil {
-		return Build{}, err
+		return Build{}, 0, err
+	}
+	var outboxID int64
+	if activity != nil {
+		normalized, normalizeErr := normalizeOrgActivity(*activity, time.Now())
+		if normalizeErr != nil {
+			return Build{}, 0, normalizeErr
+		}
+		outboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, normalized)
+		if err != nil {
+			return Build{}, 0, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Build{}, err
+		return Build{}, 0, err
 	}
-	return build, nil
+	return build, outboxID, nil
 }
 
 func (s *PgStore) FailSourceDeployment(ctx context.Context, id, message string) error {
@@ -12580,7 +12722,7 @@ func (s *PgStore) NextDeploymentRouteGeneration(ctx context.Context) (int64, err
 
 const edgeRuleSelectCols = `id, account_id, app_id, match_host, match_path,
        match_methods, priority, enabled, kind, action,
-       cors_preset_id, validate_mode, created_at, updated_at`
+       cors_preset_id, validate_mode, created_at, updated_at, match_headers`
 
 // scanEdgeRule reads a single row. ErrNotFound on no-rows; raw error
 // otherwise. The kind column comes back as text; Action comes back
@@ -12620,21 +12762,27 @@ func scanEdgeRules(rows pgx.Rows) ([]EdgeRule, error) {
 // commit, so a SELECT-write drift cannot silently swallow a column.
 func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 	var (
-		r            EdgeRule
-		kind         string
-		matchMethods []string
-		actionBytes  []byte
-		corsPresetID *string
+		r                 EdgeRule
+		kind              string
+		matchMethods      []string
+		actionBytes       []byte
+		matchHeadersBytes []byte
+		corsPresetID      *string
 	)
 	if err := scan(
 		&r.ID, &r.AccountID, &r.AppID, &r.MatchHost, &r.MatchPath,
 		&matchMethods, &r.Priority, &r.Enabled, &kind, &actionBytes,
-		&corsPresetID, &r.ValidateMode, &r.CreatedAt, &r.UpdatedAt,
+		&corsPresetID, &r.ValidateMode, &r.CreatedAt, &r.UpdatedAt, &matchHeadersBytes,
 	); err != nil {
 		return EdgeRule{}, err
 	}
 	r.Kind = EdgeRuleKind(kind)
 	r.MatchMethods = matchMethods
+	if len(matchHeadersBytes) > 0 {
+		if err := json.Unmarshal(matchHeadersBytes, &r.MatchHeaders); err != nil {
+			return EdgeRule{}, fmt.Errorf("state: decode edge_rules.match_headers for %s: %w", r.ID, err)
+		}
+	}
 	if corsPresetID != nil {
 		r.CorsPresetID = corsPresetID
 	}
@@ -12664,6 +12812,13 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 	if methods == nil {
 		methods = []string{}
 	}
+	matchHeadersBytes, err := json.Marshal(in.MatchHeaders)
+	if err != nil {
+		return EdgeRule{}, fmt.Errorf("state: marshal edge_rule.match_headers: %w", err)
+	}
+	if in.MatchHeaders == nil {
+		matchHeadersBytes = []byte(`{}`)
+	}
 	var corsPresetIDArg any
 	if in.CorsPresetID != nil {
 		corsPresetIDArg = *in.CorsPresetID
@@ -12672,11 +12827,11 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			cors_preset_id, validate_mode
+			cors_preset_id, validate_mode, match_headers
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			$10::uuid, coalesce(nullif($11, ''), 'block')
+			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -12692,6 +12847,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		// coalesce keeps the wire surface consistent with the
 		// empty-handler default at pkg/gateway/handler.go:2694.
 		in.ValidateMode,
+		matchHeadersBytes,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -12812,15 +12968,22 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 	if methods == nil {
 		methods = []string{}
 	}
+	matchHeadersBytes, err := json.Marshal(in.MatchHeaders)
+	if err != nil {
+		return EdgeRule{}, fmt.Errorf("state: marshal edge_rule.match_headers: %w", err)
+	}
+	if in.MatchHeaders == nil {
+		matchHeadersBytes = []byte(`{}`)
+	}
 	row := tx.QueryRow(ctx, `
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			validate_mode
+			validate_mode, match_headers
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			coalesce(nullif($10, ''), 'block')
+			coalesce(nullif($10, ''), 'block'), $11::jsonb
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -12828,6 +12991,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		// $10: same empty-string→'block' coalesce as the un-capped
 		// CreateEdgeRule path (ADR-128).
 		in.ValidateMode,
+		matchHeadersBytes,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -13576,9 +13740,12 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		hostArg, pathArg any
 		methodsArg       any
 		actionArg        any
+		matchHeadersArg  any
 		validateModeArg  any
+		err              error
 		corsPresetSet    bool
 		corsPresetValue  any
+		matchHeadersSet  bool
 	)
 	if p.MatchHost != nil {
 		hostArg = *p.MatchHost
@@ -13588,6 +13755,16 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 	}
 	if p.MatchMethods != nil {
 		methodsArg = *p.MatchMethods
+	}
+	if p.MatchHeaders != nil {
+		matchHeadersSet = true
+		matchHeadersArg, err = json.Marshal(*p.MatchHeaders)
+		if err != nil {
+			return EdgeRule{}, fmt.Errorf("state: marshal edge_rule.match_headers: %w", err)
+		}
+		if *p.MatchHeaders == nil {
+			matchHeadersArg = []byte(`{}`)
+		}
 	}
 	if p.Action != nil {
 		bytes, err := json.Marshal(*p.Action)
@@ -13630,7 +13807,8 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 			enabled       = coalesce($6, enabled),
 			action        = case when $7 then $8::jsonb else action end,
 			cors_preset_id = case when $10 then $11::uuid else cors_preset_id end,
-			validate_mode = coalesce(nullif($9, ''), validate_mode)
+			validate_mode = coalesce(nullif($9, ''), validate_mode),
+			match_headers = case when $12 then $13::jsonb else match_headers end
 		where id = $1
 		returning `+edgeRuleSelectCols,
 		id, hostArg, pathArg, methodsArg, p.Priority, p.Enabled,
@@ -13648,7 +13826,7 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		// is set to $11, which is nil → SQL NULL for
 		// the "customer cleared the preset" signal or
 		// a UUID for the "set preset" signal.
-		corsPresetSet, corsPresetValue,
+		corsPresetSet, corsPresetValue, matchHeadersSet, matchHeadersArg,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -15942,7 +16120,7 @@ func (s *PgStore) GetInstanceTailCount(ctx context.Context, id string) (int32, e
 	return n, nil
 }
 
-// ListInstancesByStatesOlderThan is the watchdog's lookup (spec §6.1).
+// ListInstancesByStatesOlderThan is the app watchdog's lookup (spec §6.1).
 // Filters on state ∈ states and a state-aware "age" column:
 // started_at for WAKING / COLD_BOOTING (stamped on creation by the
 // trigger in migration 00015), parked_at for SNAPSHOTTING (stamped on
@@ -15966,6 +16144,8 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
 		 where state = any($1)
+		   and kind is distinct from 'job_task'
+		   and mode is distinct from 'job'
 		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
 		stateStrs, threshold)
 	if err != nil {
@@ -22987,6 +23167,7 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(full_rootfs_allow_auto, false), full_rootfs_override,
 	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
+	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 	disable_startup_cpu_boost`
 
 // Compile-time anchors for the deployment column constants. See the
@@ -23043,6 +23224,7 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override,
 	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
+	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 	d.disable_startup_cpu_boost`
 
 var _ = deploymentSelectColumnsQualified
@@ -23158,7 +23340,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.DeletedAt, &d.DeletedByPrincipal, &d.Workflows,
 		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
 		&d.APIHostingReceipt,
-		&d.InferredProfile, &d.DisableStartupCPUBoost,
+		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 	); err != nil {
 		return mapErr(err)
 	}
@@ -23752,6 +23934,16 @@ func notNullEmptyJSONRaw(b json.RawMessage) any {
 		return "[]" // pgx encodes Go string as text → jsonb parser sees `[]`
 	}
 	return b
+}
+
+// notNullEmptyTextArray mirrors notNullEmptyJSONRaw for immutable array
+// metadata. pgx encodes a nil slice as SQL NULL, which would bypass the
+// column default and violate deployments.release_command's NOT NULL guard.
+func notNullEmptyTextArray(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 // nullableOverridePort returns nil when port is 0 (the "absent" sentinel
@@ -29387,7 +29579,12 @@ func (s *PgStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appI
 		   from consumer_keys
 		  where app_id = $1::uuid
 		    and account_id = $2::uuid
-		    and prefix = $3`,
+		    and prefix = $3
+		    and not exists (
+		        select 1 from api_consumers c
+		        join platform_tenants t on t.id = c.platform_tenant_id
+		        where c.id = consumer_keys.consumer_id and t.status = 'suspended'
+		    )`,
 		appID, accountID, prefix)
 	k, err := scanConsumerKeyRow(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -29419,14 +29616,14 @@ func (s *PgStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appI
 // ----------------------------------------------------------------------------
 
 const mirrorRuleSelectCols = `id, account_id, app_id, source_deployment_id,
-       mirror_deployment_id, percent, enabled, include_body, redact_headers,
+       mirror_deployment_id, percent, enabled, include_body, allow_unsafe_methods, redact_headers,
        created_at, updated_at`
 
 const mirrorResultSelectCols = `id, mirror_rule_id, account_id, app_id,
        source_deployment_id, mirror_deployment_id, instance_id, source_instance_id,
        status_code, source_status_code, latency_ms, source_latency_ms,
        body_hash, source_body_hash, schema_hash, source_schema_hash,
-       status_diff, schema_diff, body_diff, crashed, request_id, completed_at`
+       status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at`
 
 // scanMirrorRule reads a single mirror_rule row. ErrNotFound on
 // no-rows; mapErr handles raw errors (e.g. constraint violations).
@@ -29463,7 +29660,7 @@ func scanMirrorRuleCols(scan func(...any) error) (MirrorRule, error) {
 	)
 	if err := scan(
 		&r.ID, &r.AccountID, &r.AppID, &r.SourceDeploymentID,
-		&r.MirrorDeploymentID, &r.Percent, &r.Enabled, &r.IncludeBody,
+		&r.MirrorDeploymentID, &r.Percent, &r.Enabled, &r.IncludeBody, &r.AllowUnsafeMethods,
 		&redactHeaders, &r.CreatedAt, &r.UpdatedAt,
 	); err != nil {
 		return MirrorRule{}, err
@@ -29493,7 +29690,7 @@ func scanMirrorResult(scan func(...any) error) (MirrorInvocationResult, error) {
 		&r.SourceDeploymentID, &r.MirrorDeploymentID, &instanceID, &sourceInstanceID,
 		&statusCode, &sourceStatusCode, &latencyMs, &sourceLatencyMs,
 		&r.BodyHash, &r.SourceBodyHash, &r.SchemaHash, &r.SourceSchemaHash,
-		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.RequestID, &r.CompletedAt,
+		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.ComparisonIncomplete, &r.RequestID, &r.CompletedAt,
 	); err != nil {
 		return MirrorInvocationResult{}, err
 	}
@@ -29607,14 +29804,14 @@ func (s *PgStore) CreateMirrorRuleIfUnderQuota(ctx context.Context, in CreateMir
 	row := tx.QueryRow(ctx, `
 		insert into mirror_rules (
 			account_id, app_id, source_deployment_id, mirror_deployment_id,
-			percent, enabled, include_body, redact_headers
+			percent, enabled, include_body, allow_unsafe_methods, redact_headers
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
-			$5, $6, $7, $8
+			$5, $6, $7, $8, $9
 		)
 		returning `+mirrorRuleSelectCols,
 		in.AccountID, in.AppID, in.SourceDeploymentID, in.MirrorDeploymentID,
-		in.Percent, in.Enabled, in.IncludeBody, redactHeaders,
+		in.Percent, in.Enabled, in.IncludeBody, in.AllowUnsafeMethods, redactHeaders,
 	)
 	r, err := s.scanMirrorRule(row)
 	if err != nil {
@@ -29702,10 +29899,11 @@ func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorR
 	// pattern for partial-update SQL and keeps the call site free
 	// of dynamic SQL string-build.
 	var (
-		setPercent       *int
-		setEnabled       *bool
-		setIncludeBody   *bool
-		setRedactHeaders *[]string
+		setPercent            *int
+		setEnabled            *bool
+		setIncludeBody        *bool
+		setAllowUnsafeMethods *bool
+		setRedactHeaders      *[]string
 	)
 	if patch.Percent != nil {
 		p := *patch.Percent
@@ -29718,6 +29916,10 @@ func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorR
 	if patch.IncludeBody != nil {
 		b := *patch.IncludeBody
 		setIncludeBody = &b
+	}
+	if patch.AllowUnsafeMethods != nil {
+		b := *patch.AllowUnsafeMethods
+		setAllowUnsafeMethods = &b
 	}
 	if patch.RedactHeaders != nil {
 		headers := *patch.RedactHeaders
@@ -29732,10 +29934,11 @@ func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorR
 		    enabled        = coalesce($3::boolean,    enabled),
 		    include_body   = coalesce($4::boolean,    include_body),
 		    redact_headers = coalesce($5::text[],     redact_headers),
+		    allow_unsafe_methods = coalesce($6::boolean, allow_unsafe_methods),
 		    updated_at     = now()
 		where id = $1::uuid
 		returning `+mirrorRuleSelectCols,
-		id, setPercent, setEnabled, setIncludeBody, setRedactHeaders,
+		id, setPercent, setEnabled, setIncludeBody, setRedactHeaders, setAllowUnsafeMethods,
 	)
 	r, err := s.scanMirrorRule(row)
 	if err != nil {
@@ -29823,22 +30026,22 @@ func (s *PgStore) InsertMirrorResult(ctx context.Context, r MirrorInvocationResu
 			source_deployment_id, mirror_deployment_id,
 			instance_id, source_instance_id,
 			status_code, source_status_code, latency_ms, source_latency_ms,
-			body_hash, source_body_hash, schema_hash, source_schema_hash,
-			status_diff, schema_diff, body_diff, crashed, request_id, completed_at
+		    body_hash, source_body_hash, schema_hash, source_schema_hash,
+		    status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at
 		) values (
 			$1::uuid, $2::uuid, $3::uuid,
 			$4::uuid, $5::uuid,
 			$6, $7,
 			$8, $9, $10, $11,
 			$12, $13, $14, $15,
-			$16, $17, $18, $19, $20, $21
+		    $16, $17, $18, $19, $20, $21, $22
 		)`,
 		r.MirrorRuleID, r.AccountID, r.AppID,
 		r.SourceDeploymentID, r.MirrorDeploymentID,
 		instanceID, srcInstanceID,
 		statusCode, srcStatusCode, latencyMs, srcLatencyMs,
 		bodyHash, srcBodyHash, schemaHash, srcSchemaHash,
-		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.RequestID, r.CompletedAt,
+		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.ComparisonIncomplete, r.RequestID, r.CompletedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("state: insert mirror_invocation_result: %w", err)
@@ -29884,11 +30087,12 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 	if err := s.pool.QueryRow(ctx, `
 		select
 			count(*),
-			coalesce(sum(case when status_diff or schema_diff or body_diff then 1 else 0 end), 0),
+			coalesce(sum(case when not comparison_incomplete and (status_diff or schema_diff or body_diff) then 1 else 0 end), 0),
 			coalesce(sum(case when status_diff then 1 else 0 end), 0),
-			coalesce(sum(case when schema_diff then 1 else 0 end), 0),
-			coalesce(sum(case when body_diff   then 1 else 0 end), 0),
+			coalesce(sum(case when not comparison_incomplete and schema_diff then 1 else 0 end), 0),
+			coalesce(sum(case when not comparison_incomplete and body_diff   then 1 else 0 end), 0),
 			coalesce(sum(case when crashed     then 1 else 0 end), 0),
+			coalesce(sum(case when comparison_incomplete then 1 else 0 end), 0),
 			avg(case when latency_ms is not null and source_latency_ms is not null
 			         then (latency_ms - source_latency_ms)::double precision
 			         else null end),
@@ -29900,7 +30104,7 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2`,
 		ruleID, since,
-	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
+	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &s2.IncompleteComparisonCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
 		return MirrorSummary{}, fmt.Errorf("state: mirror summary for rule %s: %w", ruleID, err)
 	}
 	if meanLatencyDiff != nil {

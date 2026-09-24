@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -170,6 +171,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 			dashboardBase := "https://" + domain
 			marker := "<!-- gregale-preview:" + commentSlug + " -->"
 			body := fmt.Sprintf("%s\n### Gregale preview\n\nPreview status: **%s**\n\n[Open preview](%s) · [Latest workload deployment](%s/dashboard/apps/%s/deployments/%s) · [Deployment logs](%s/v1/deployments/%s/logs) · [Destroy preview](%s/dashboard/apps/%s/preview/%s/destroy)\n\nCommit: `%s`", marker, commentStatus, previewURL, dashboardBase, appSlug, deploymentID, dashboardBase, deploymentID, dashboardBase, commentParent, commentSlug, commitSHA)
+			body += fmt.Sprintf("\n\n[Preview environment details](%s/dashboard/apps/%s)", dashboardBase, url.PathEscape(commentSlug))
 			if deployedByText != "" {
 				body += "\nDeployed by: **" + deployedByText + "**"
 			}

@@ -739,8 +739,11 @@ func (b QueueBinding) Validate() error {
 	if class == "" {
 		class = "worker"
 	}
-	if class != "worker" && class != "job" {
-		return fmt.Errorf("queue binding %q: workload_class must be worker or job", b.Name)
+	if class != "worker" && class != "job" && class != "http" {
+		return fmt.Errorf("queue binding %q: workload_class must be worker, job, or http", b.Name)
+	}
+	if class == "http" && mode != "push" {
+		return fmt.Errorf("queue binding %q: http workload_class requires push mode", b.Name)
 	}
 	if b.MaxConcurrency < 0 || b.MaxConcurrency > 10000 {
 		return fmt.Errorf("queue binding %q: max_concurrency must be between 0 and 10000", b.Name)
@@ -997,7 +1000,7 @@ func (d BucketDependency) EffectiveLabel() string {
 
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
-// `function`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
+// `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
 // `triggers`, `event_triggers`, `companions`, `extensions`, `workflows`,
 // `databases`, `buckets`, and the local-only `dev` profile; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true))
@@ -1010,6 +1013,7 @@ type Manifest struct {
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	Dev           *DevConfig            `yaml:"dev,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
+	Release       *ReleaseConfig        `yaml:"release,omitempty"`
 	Lifecycle     *LifecycleConfig      `yaml:"lifecycle,omitempty"`
 	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. It is
@@ -1029,6 +1033,28 @@ type Manifest struct {
 	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
+}
+
+// ReleaseConfig declares a command that must succeed for the candidate
+// deployment before it becomes eligible for traffic. String form is
+// deliberately shell-shaped, matching a Procfile's `release:` entry and
+// preserving operators' existing quoting and expansion semantics.
+type ReleaseConfig struct {
+	Command string `yaml:"command"`
+}
+
+func (c *ReleaseConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	_, problem := (api.CreateAppTaskRequest{
+		Command:      []string{c.Command},
+		CommandShell: true,
+	}).Resolve()
+	if problem != nil {
+		return fmt.Errorf("release: %s", problem.Detail)
+	}
+	return nil
 }
 
 // DevConfig declares local defaults for the remote `gregale dev` loop. Paths
@@ -1435,6 +1461,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := m.Dev.Validate(); err != nil {
 			return err
 		}
+	}
+	if err := m.Release.Validate(); err != nil {
+		return err
 	}
 	if m.Scaling != nil {
 		if err := m.Scaling.Validate(); err != nil {

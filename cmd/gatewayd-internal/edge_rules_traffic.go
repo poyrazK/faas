@@ -70,6 +70,7 @@ func compileRetryRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRetryReso
 			Priority:           r.Priority,
 			PathGlob:           r.MatchPath,
 			Methods:            buildMethodsMap(r.MatchMethods),
+			MatchHeaders:       buildMatchHeadersMap(r.MatchHeaders),
 			MaxAttempts:        attempts,
 			AllowNonIdempotent: r.Action.Retry.AllowNonIdempotent,
 			MinRemaining:       time.Duration(minRemaining) * time.Millisecond,
@@ -129,6 +130,7 @@ func compileCircuitBreakerRules(storeRules []state.EdgeRule) ([]gateway.EdgeRule
 			Priority:         r.Priority,
 			PathGlob:         r.MatchPath,
 			Methods:          buildMethodsMap(r.MatchMethods),
+			MatchHeaders:     buildMatchHeadersMap(r.MatchHeaders),
 			FailureThreshold: threshold,
 			MinRequests:      minRequests,
 			Window:           time.Duration(window) * time.Second,
@@ -159,7 +161,7 @@ func (g *gatewaydEdgeRules) MatchRetry(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Retry
 	}
-	return gateway.PickFirstRetryMatch(rules, requestPath, method)
+	return gateway.PickFirstRetryMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // MatchCircuitBreaker is the ADR-201 §2 matcher.
@@ -179,5 +181,5 @@ func (g *gatewaydEdgeRules) MatchCircuitBreaker(ctx context.Context, host, reque
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.CircuitBreaker
 	}
-	return gateway.PickFirstCircuitBreakerMatch(rules, requestPath, method)
+	return gateway.PickFirstCircuitBreakerMatch(rules, requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }

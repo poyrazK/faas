@@ -116,7 +116,6 @@ CreateAPIKeyWithExpiry
 CreateAPIKeyWithExpiryAndProvenance
 CreateAccountWithPersonalOrg
 CreateAlertRuleIfUnderQuota
-CreateAndClaimJobInstance
 CreateAppLogDrain
 CreateAppLogDrainIfUnderQuota
 CreateAppWebhookIfUnderQuota
@@ -606,7 +605,6 @@ SetInstanceRuntime
 SetMFARequired
 SetMFASecret
 SetProjectScanSource
-SoftDeleteAppCascade
 SoftDeleteOrg
 StampAppScaleIn
 StampAppScaleOut

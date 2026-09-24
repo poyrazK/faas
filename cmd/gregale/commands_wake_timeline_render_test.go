@@ -126,6 +126,18 @@ func TestRenderContextSuffix_TriggerOnly(t *testing.T) {
 	}
 }
 
+// TestRenderContextSuffix_ColdReason shows why a wake cold-booted next to
+// its trigger, so `gregale wake-timeline` answers "why no restore?".
+func TestRenderContextSuffix_ColdReason(t *testing.T) {
+	ev := api.WakeTimelineEvent{
+		Kind: "wake.boot_started",
+		Data: map[string]any{"trigger": "gateway", "cold_reason": "snapshots_stale"},
+	}
+	if got, want := renderContextSuffix(ev), "trigger=gateway cold_reason=snapshots_stale"; got != want {
+		t.Errorf("renderContextSuffix = %q, want %q", got, want)
+	}
+}
+
 func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
 	ev := api.WakeTimelineEvent{
 		Kind: "wake.restore_breakdown",

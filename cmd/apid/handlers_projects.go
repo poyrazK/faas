@@ -323,17 +323,17 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		"environment_id": environment.ID, "environment_slug": environment.Slug,
 		"protected": environment.Protected, "cloned_from": req.FromEnvironment,
 		"variables_copied": clone.VariablesCopied, "secrets_copied": clone.SecretsCopied,
-		"bindings_copied": clone.BindingsCopied,
+		"bindings_copied": clone.BindingsCopied, "routes_copied": clone.RoutesCopied,
 	})
 	response := projectEnvironmentResponse(environment)
 	if req.FromEnvironment != "" {
 		response.ClonedFrom = req.FromEnvironment
-		sharedResources := []string{"domains", "policies", "routes"}
+		sharedResources := []string{"domains", "policies"}
 		sharedResources = append(sharedResources, clone.SharedResources...)
 		response.Clone = &api.ProjectEnvironmentCloneResponse{
 			ConfigurationCopied: clone.ConfigurationCopied, VariablesCopied: clone.VariablesCopied,
 			SecretsCopied: clone.SecretsCopied, WorkloadsCopied: clone.WorkloadsCopied,
-			BindingsCopied: clone.BindingsCopied, SharedResources: sharedResources,
+			BindingsCopied: clone.BindingsCopied, RoutesCopied: clone.RoutesCopied, SharedResources: sharedResources,
 		}
 	}
 	writeJSON(w, http.StatusCreated, response)

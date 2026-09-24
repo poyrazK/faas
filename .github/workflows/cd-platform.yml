@@ -41,6 +41,14 @@ on:
         options:
           - phased
           - full
+      compute_pki_source:
+        description: "Compute PKI source: secret for enrollment, live-node for pinned existing hosts"
+        required: false
+        default: secret
+        type: choice
+        options:
+          - secret
+          - live-node
       claim_file:
         description: "Path to the active node's ComputeNodeClaim (preferred)"
         required: false
@@ -126,6 +134,8 @@ jobs:
       batch_prepare: ${{ steps.matrix.outputs.batch_prepare }}
     env:
       COMPUTE_TARGETS: ${{ inputs.compute_targets }}
+      COMPUTE_PKI_SOURCE: ${{ inputs.compute_pki_source }}
+      COMPUTE_ROLLOUT_MODE: ${{ inputs.compute_rollout_mode }}
       CLAIM_FILE: ${{ inputs.claim_file }}
       FLEET_BUNDLE_URL: ${{ inputs.fleet_bundle_url }}
       FLEET_BUNDLE_SIGNATURE_URL: ${{ inputs.fleet_bundle_signature_url }}
@@ -143,6 +153,10 @@ jobs:
         name: Build validated compute matrix
         run: |
           set -euo pipefail
+          case "$COMPUTE_PKI_SOURCE" in
+            secret|live-node) ;;
+            *) echo "::error::unsupported compute_pki_source" >&2; exit 1 ;;
+          esac
           targets_file="$RUNNER_TEMP/compute-targets.json"
           if [[ -n "$COMPUTE_TARGETS" && "$COMPUTE_TARGETS" != "[]" ]]; then
             printf '%s' "$COMPUTE_TARGETS" > "$targets_file"
@@ -187,12 +201,27 @@ jobs:
                   then error("each target needs claim_file, fleet_bundle_url, or complete node/ssh_host/ssh_host_key_sha256 fields")
                   else . end
               )' "$targets_file")"
+          if [[ "$COMPUTE_PKI_SOURCE" == "live-node" ]]; then
+            jq -e 'all(.[];
+              .claim_file == "" and .fleet_bundle_url == "" and
+              (.node | test("^[A-Za-z0-9._-]+$")) and
+              (.ssh_host | test("^[A-Za-z0-9.-]+$"))
+            )' <<<"$targets" >/dev/null || {
+              echo "::error::live-node PKI requires existing legacy targets with explicit node and SSH host" >&2
+              exit 1
+            }
+          fi
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
           batch_prepare="$(jq -r 'all(.[];
             .claim_file == "" and
             .fleet_bundle_url == "" and
             .skip_fleet_preflight == false
           )' <<<"$targets")"
+          if [[ "$COMPUTE_PKI_SOURCE" == "live-node" ]]; then
+            # Each existing host has a different node-identity leaf set.
+            # The shared join-fleet PKI directory cannot serve both nodes.
+            batch_prepare=false
+          fi
           echo "batch_prepare=$batch_prepare" >> "$GITHUB_OUTPUT"
 
   control:
@@ -211,6 +240,7 @@ jobs:
     with:
       release_tag: ${{ inputs.release_tag }}
       compute_targets: ${{ needs.plan.outputs.targets }}
+      pki_source: ${{ inputs.compute_pki_source }}
       # The batch preflight also visits manifest peers outside compute_targets.
       ssh_user: ${{ inputs.ssh_user }}
       ssh_port: ${{ inputs.ssh_port }}
@@ -231,6 +261,7 @@ jobs:
     uses: ./.github/workflows/cd-compute.yml
     with:
       release_tag: ${{ inputs.release_tag }}
+      pki_source: ${{ inputs.compute_pki_source }}
       claim_file: ${{ matrix.target.claim_file }}
       fleet_bundle_url: ${{ matrix.target.fleet_bundle_url }}
       fleet_bundle_signature_url: ${{ matrix.target.fleet_bundle_signature_url }}
@@ -260,6 +291,7 @@ jobs:
     uses: ./.github/workflows/cd-compute.yml
     with:
       release_tag: ${{ inputs.release_tag }}
+      pki_source: ${{ inputs.compute_pki_source }}
       claim_file: ${{ matrix.target.claim_file }}
       fleet_bundle_url: ${{ matrix.target.fleet_bundle_url }}
       fleet_bundle_signature_url: ${{ matrix.target.fleet_bundle_signature_url }}
@@ -281,7 +313,9 @@ jobs:
     needs: [control, compute-prepare, compute-prepare-compat, compute, plan]
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 45
+    # Initial parallel deploys, bounded serial coverage follow-ups, and the
+    # zero-downtime redeploy can exceed 45 minutes without any gate failing.
+    timeout-minutes: 90
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}

@@ -79,6 +79,9 @@ type RequestTelemetryRow struct {
 	// consumer-key middleware. It is empty for anonymous/legacy traffic.
 	// Credentials are deliberately never persisted in telemetry.
 	ConsumerID string
+	// PlatformTenantID is the verified account-level customer at request
+	// time. The publisher must not merge rows across a link transition.
+	PlatformTenantID string
 	// These dimensions are normalized at the edge. Raw User-Agent, referrer
 	// URLs, and IP addresses never enter this row or the gRPC payload.
 	UAFamily     string // normalized family, e.g. chrome, safari, bot

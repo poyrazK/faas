@@ -132,7 +132,21 @@ const (
 // world (ADR-009) is configured by the kernel's ip= autoconfig so guest-init
 // carries no networking code: guest 10.0.0.2, gateway 10.0.0.1, /30 mask. Every
 // VM boots with the same line — uniqueness lives entirely on the host side.
-const coldBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
+//
+// quiet drops the kernel's routine boot log from the console. Each byte on the
+// emulated 8250 is a VM exit, and on nested-virtualization compute nodes the
+// ~30k exits of a verbose boot cost ~0.6 s per cold boot. guest-init writes to
+// /dev/console directly and kernel errors are still printed, so the early
+// failure reports above are unaffected.
+//
+// i8042.nokbd i8042.noaux skip probing a PS/2 keyboard and aux port that
+// Firecracker does not emulate: the probe timed out for ~775 ms before init
+// could start. Firecracker's i8042 exists only to observe the guest's reset,
+// and reboot=k writes that reset to port 0x64 from arch code, not through
+// this driver.
+const guestBootConsoleArgs = "console=ttyS0,115200n8 quiet i8042.nokbd i8042.noaux "
+
+const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
@@ -145,7 +159,7 @@ const coldBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
 // executionBootArgs intentionally omits kernel ip= autoconfiguration. The
 // dedicated execution VM has no Firecracker network interface, so even the
 // guest kernel receives no tenant route or DNS/gateway hint.
-const executionBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
+const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
@@ -211,6 +225,10 @@ type ColdBootSpec struct {
 	// only by the dedicated disposable-execution path; ordinary app and job
 	// boots retain the identical inner network contract.
 	Networkless bool
+	// AppTask stages the platform-owned marker that makes guest-init wait for
+	// one command on the app-task vsock channel instead of starting the app.
+	// Unlike Networkless, it retains the deployment's normal network policy.
+	AppTask bool
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -241,7 +259,8 @@ type ColdBootSpec struct {
 // EffectiveDestroyWait is min(task_timeout_s + 90s,
 // JobDestroyWaitDefault) so a long-running job's cleanup phase
 // (SIGTERM → 30s grace → SIGKILL → poweroff) fits inside the
-// firecracker destroy budget. See pkg/fcvm/vmm.go::JobDestroyWaitDefault.
+// firecracker destroy budget. The ceiling covers every host-accepted
+// task timeout. See pkg/fcvm/job_vmm.go::JobDestroyWaitDefault.
 type JobColdBootSpec struct {
 	KernelKey  string
 	BaseKey    string
@@ -390,6 +409,10 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: mem_size_mib %d < 1", s.MemSizeMiB)
 	case s.Tap == "" && !s.Networkless:
 		return fmt.Errorf("fcvm: cold boot: empty tap device")
+	case s.AppTask && s.Networkless:
+		return fmt.Errorf("fcvm: cold boot: app task cannot be networkless")
+	case s.AppTask && !s.SkipReady:
+		return fmt.Errorf("fcvm: cold boot: app task must skip app readiness")
 	case s.StartupDeadlineS < 0:
 		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
 	case !validCharacterizationExecutionMode(s.ExecutionMode):

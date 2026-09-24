@@ -1,5 +1,7 @@
 package gateway
 
+import "net/http"
+
 // Edge rule kind=throttle subset (ADR-091 D20.5 amendment, see
 // migrations/00244_edge_rules_kind_throttle.sql; issue #881).
 //
@@ -81,8 +83,9 @@ type EdgeRuleThrottleResolved struct {
 	Priority          int
 	PathGlob          string          // "" = any path
 	Methods           map[string]bool // nil = any method
-	RequestsPerSecond float64         // > 0 post-compile
-	Burst             int             // > 0 post-compile
+	MatchHeaders      map[string]string
+	RequestsPerSecond float64 // > 0 post-compile
+	Burst             int     // > 0 post-compile
 	// Phase 3 (ADR-104):
 	KeyBy          string // "" | "none" | "api_key" | "consumer_id" | "jwt_subject" | "jwt_claim" | "country"
 	JWTClaimName   string // required iff KeyBy == "jwt_claim"
@@ -108,9 +111,12 @@ type EdgeRuleThrottleResolved struct {
 // path glob: passed through the local pathGlobMatch helper; "" =
 // match all; "*" = match all; "/api/*" = prefix-wildcard on the
 // second segment.
-func PickFirstThrottleMatch(rules []EdgeRuleThrottleResolved, requestPath, method string) *EdgeRuleThrottleResolved {
+func PickFirstThrottleMatch(rules []EdgeRuleThrottleResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleThrottleResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}

@@ -66,13 +66,15 @@ type ProjectEnvironmentResponse struct {
 }
 
 // ProjectEnvironmentCloneResponse reports non-secret counts copied by an
-// environment clone. Shared managed data resources are called out explicitly.
+// environment clone. Shared managed data and unsnapshotted OpenAPI route
+// contracts are called out explicitly.
 type ProjectEnvironmentCloneResponse struct {
 	ConfigurationCopied bool     `json:"configuration_copied"`
 	VariablesCopied     int      `json:"variables_copied"`
 	SecretsCopied       int      `json:"secrets_copied"`
 	WorkloadsCopied     int      `json:"workloads_copied"`
 	BindingsCopied      int      `json:"bindings_copied"`
+	RoutesCopied        int      `json:"routes_copied"`
 	SharedResources     []string `json:"shared_resources"`
 }
 
@@ -144,6 +146,22 @@ type ProjectEnvironmentStateWorkloadResponse struct {
 	Variables    []ProjectEnvironmentVariableResponse      `json:"variables"`
 	Secrets      []ProjectEnvironmentSecretResponse        `json:"secrets"`
 	Bindings     []ProjectEnvironmentBindingResponse       `json:"bindings"`
+	Routes       ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
+}
+
+// ProjectEnvironmentRoutePolicyResponse is the effective declared-route
+// contract. Ownership identifies legacy application fallback explicitly.
+type ProjectEnvironmentRoutePolicyResponse struct {
+	Ownership               string          `json:"ownership"`
+	OnlyAllowDeclaredRoutes bool            `json:"only_allow_declared_routes"`
+	DeclaredRoutes          []DeclaredRoute `json:"declared_routes"`
+}
+
+// UpdateProjectEnvironmentRoutePolicyRequest replaces one workload's route
+// contract in a registered project environment.
+type UpdateProjectEnvironmentRoutePolicyRequest struct {
+	OnlyAllowDeclaredRoutes *bool            `json:"only_allow_declared_routes"`
+	DeclaredRoutes          *[]DeclaredRoute `json:"declared_routes"`
 }
 
 // ProjectEnvironmentSharedResourceResponse documents resources that still
@@ -223,6 +241,13 @@ type ProjectEnvironmentWorkloadDiffResponse struct {
 	Variables    []ProjectEnvironmentVariableChangeResponse `json:"variables"`
 	Secrets      []ProjectEnvironmentSecretChangeResponse   `json:"secrets"`
 	Bindings     []ProjectEnvironmentBindingChangeResponse  `json:"bindings"`
+	Routes       ProjectEnvironmentRoutePolicyDiffResponse  `json:"routes"`
+}
+
+type ProjectEnvironmentRoutePolicyDiffResponse struct {
+	Kind   string                                `json:"kind"`
+	Before ProjectEnvironmentRoutePolicyResponse `json:"before"`
+	After  ProjectEnvironmentRoutePolicyResponse `json:"after"`
 }
 
 // ProjectEnvironmentDiffResponse is the unified comparison of configuration,

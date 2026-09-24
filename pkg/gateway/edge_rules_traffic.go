@@ -9,7 +9,10 @@ package gateway
 // pkg/gateway does not import pkg/state, so the state.EdgeRule → *Resolved
 // conversion happens in cmd/gatewayd-internal/edge_rules.go.
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
 
 // EdgeRuleRetryResolved is the kind=retry subset the matcher reads.
 //
@@ -24,7 +27,8 @@ type EdgeRuleRetryResolved struct {
 	Priority           int
 	PathGlob           string          // "" = any path
 	Methods            map[string]bool // nil = any method
-	MaxAttempts        int             // always >= 2 post-compile
+	MatchHeaders       map[string]string
+	MaxAttempts        int // always >= 2 post-compile
 	AllowNonIdempotent bool
 	MinRemaining       time.Duration
 	Backoff            time.Duration
@@ -61,6 +65,7 @@ type EdgeRuleCircuitBreakerResolved struct {
 	Priority         int
 	PathGlob         string
 	Methods          map[string]bool
+	MatchHeaders     map[string]string
 	FailureThreshold float64
 	MinRequests      int
 	Window           time.Duration
@@ -71,9 +76,12 @@ type EdgeRuleCircuitBreakerResolved struct {
 // PickFirstRetryMatch is the priority-ASC + methods + path-glob filter over
 // the compiled kind=retry slice. Mirrors PickFirstBudgetMatch exactly; the
 // slice arrives priority-ordered from the cache.
-func PickFirstRetryMatch(rules []EdgeRuleRetryResolved, requestPath, method string) *EdgeRuleRetryResolved {
+func PickFirstRetryMatch(rules []EdgeRuleRetryResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleRetryResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}
@@ -89,9 +97,12 @@ func PickFirstRetryMatch(rules []EdgeRuleRetryResolved, requestPath, method stri
 }
 
 // PickFirstCircuitBreakerMatch is the kind=circuit_breaker equivalent.
-func PickFirstCircuitBreakerMatch(rules []EdgeRuleCircuitBreakerResolved, requestPath, method string) *EdgeRuleCircuitBreakerResolved {
+func PickFirstCircuitBreakerMatch(rules []EdgeRuleCircuitBreakerResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleCircuitBreakerResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}

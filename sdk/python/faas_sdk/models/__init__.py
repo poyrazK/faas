@@ -14,6 +14,14 @@ from .account_export_response_schema_version import AccountExportResponseSchemaV
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_rate_limits_response import AccountRateLimitsResponse
+from .account_release_webhook_response import AccountReleaseWebhookResponse
+from .account_release_webhook_response_delivery_format import AccountReleaseWebhookResponseDeliveryFormat
+from .account_release_webhook_response_event_filter_item import AccountReleaseWebhookResponseEventFilterItem
+from .account_release_webhook_response_retry_policy import AccountReleaseWebhookResponseRetryPolicy
+from .account_release_webhook_response_scope import AccountReleaseWebhookResponseScope
+from .account_release_webhook_response_webhook_secret_sealed_masked import (
+    AccountReleaseWebhookResponseWebhookSecretSealedMasked,
+)
 from .account_response import AccountResponse
 from .account_response_plan import AccountResponsePlan
 from .account_response_requested_plan import AccountResponseRequestedPlan
@@ -186,6 +194,11 @@ from .app_static_egress_ip_response import AppStaticEgressIPResponse
 from .app_streaming_status import AppStreamingStatus
 from .app_streaming_status_cap_kind import AppStreamingStatusCapKind
 from .app_streaming_status_status import AppStreamingStatusStatus
+from .app_task_failure import AppTaskFailure
+from .app_task_list_response import AppTaskListResponse
+from .app_task_response import AppTaskResponse
+from .app_task_response_kind import AppTaskResponseKind
+from .app_task_response_status import AppTaskResponseStatus
 from .app_trusted_signer_list_response import AppTrustedSignerListResponse
 from .app_usage_summary_response import AppUsageSummaryResponse
 from .app_usage_summary_response_source import AppUsageSummaryResponseSource
@@ -271,6 +284,10 @@ from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
 from .cors_preset_list_response import CorsPresetListResponse
 from .cors_preset_response import CorsPresetResponse
+from .create_account_release_webhook_request import CreateAccountReleaseWebhookRequest
+from .create_account_release_webhook_request_delivery_format import CreateAccountReleaseWebhookRequestDeliveryFormat
+from .create_account_release_webhook_request_event_filter_item import CreateAccountReleaseWebhookRequestEventFilterItem
+from .create_account_release_webhook_request_retry_policy import CreateAccountReleaseWebhookRequestRetryPolicy
 from .create_alert_rule_request import CreateAlertRuleRequest
 from .create_alert_rule_request_action import CreateAlertRuleRequestAction
 from .create_alert_rule_request_comparison import CreateAlertRuleRequestComparison
@@ -292,6 +309,7 @@ from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
 from .create_app_request_type import CreateAppRequestType
 from .create_app_request_visibility import CreateAppRequestVisibility
+from .create_app_task_request import CreateAppTaskRequest
 from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
@@ -315,6 +333,7 @@ from .create_deployment_request_tag_type_2_type_1 import CreateDeploymentRequest
 from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequestTagType3Type1
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
+from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
 from .create_inbound_webhook_endpoint_request_provider import CreateInboundWebhookEndpointRequestProvider
@@ -349,6 +368,7 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
@@ -586,6 +606,7 @@ from .edge_rule_redirect_action_status_code import EdgeRuleRedirectActionStatusC
 from .edge_rule_respond_action import EdgeRuleRespondAction
 from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
+from .edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
 from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
 from .edge_rule_retry_action import EdgeRuleRetryAction
 from .edge_rule_rewrite_action import EdgeRuleRewriteAction
@@ -613,6 +634,8 @@ from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_state import EventDeliveryResponseState
+from .event_preview_subscription import EventPreviewSubscription
+from .event_preview_subscription_filter import EventPreviewSubscriptionFilter
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
@@ -762,6 +785,8 @@ from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
+from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
+from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -986,6 +1011,14 @@ from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_tier import PlanWorkloadTier
+from .platform_tenant_detail_response import PlatformTenantDetailResponse
+from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
+from .platform_tenant_list_response import PlatformTenantListResponse
+from .platform_tenant_response import PlatformTenantResponse
+from .platform_tenant_response_status import PlatformTenantResponseStatus
+from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
+from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
+from .platform_tenant_usage_response import PlatformTenantUsageResponse
 from .post_account_sessions_revoke_all_body import PostAccountSessionsRevokeAllBody
 from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
@@ -1003,6 +1036,9 @@ from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
 from .preview_environment_status_response import PreviewEnvironmentStatusResponse
 from .preview_environment_status_response_phase import PreviewEnvironmentStatusResponsePhase
+from .preview_event_request import PreviewEventRequest
+from .preview_event_request_data_content_type import PreviewEventRequestDataContentType
+from .preview_event_response import PreviewEventResponse
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
     PreviewProductionChangesResponseConfigurationChangedGroupsItem,
@@ -1097,6 +1133,10 @@ from .project_environment_release_list_response import ProjectEnvironmentRelease
 from .project_environment_release_workload_response import ProjectEnvironmentReleaseWorkloadResponse
 from .project_environment_release_workload_response_status import ProjectEnvironmentReleaseWorkloadResponseStatus
 from .project_environment_response import ProjectEnvironmentResponse
+from .project_environment_route_policy_diff_response import ProjectEnvironmentRoutePolicyDiffResponse
+from .project_environment_route_policy_diff_response_kind import ProjectEnvironmentRoutePolicyDiffResponseKind
+from .project_environment_route_policy_response import ProjectEnvironmentRoutePolicyResponse
+from .project_environment_route_policy_response_ownership import ProjectEnvironmentRoutePolicyResponseOwnership
 from .project_environment_secret_cell_response import ProjectEnvironmentSecretCellResponse
 from .project_environment_secret_cell_response_managed_by import ProjectEnvironmentSecretCellResponseManagedBy
 from .project_environment_secret_change_response import ProjectEnvironmentSecretChangeResponse
@@ -1272,6 +1312,8 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
+from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
+from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -1338,6 +1380,10 @@ from .trigger_source_type_2_type_1 import TriggerSourceType2Type1
 from .trigger_source_type_3_type_1 import TriggerSourceType3Type1
 from .trusted_signer import TrustedSigner
 from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
+from .update_account_release_webhook_request import UpdateAccountReleaseWebhookRequest
+from .update_account_release_webhook_request_delivery_format import UpdateAccountReleaseWebhookRequestDeliveryFormat
+from .update_account_release_webhook_request_event_filter_item import UpdateAccountReleaseWebhookRequestEventFilterItem
+from .update_account_release_webhook_request_retry_policy import UpdateAccountReleaseWebhookRequestRetryPolicy
 from .update_alert_rule_request import UpdateAlertRuleRequest
 from .update_alert_rule_request_action import UpdateAlertRuleRequestAction
 from .update_alert_rule_request_comparison import UpdateAlertRuleRequestComparison
@@ -1382,6 +1428,7 @@ from .update_deployment_open_api_doc_response_200_source import UpdateDeployment
 from .update_deployment_request import UpdateDeploymentRequest
 from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
+from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
 from .update_job_request import UpdateJobRequest
@@ -1401,6 +1448,7 @@ from .update_private_network_policy_request import UpdatePrivateNetworkPolicyReq
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_environment_request import UpdateProjectEnvironmentRequest
+from .update_project_environment_route_policy_request import UpdateProjectEnvironmentRoutePolicyRequest
 from .update_project_request import UpdateProjectRequest
 from .update_queue_binding_request import UpdateQueueBindingRequest
 from .update_queue_binding_request_mode import UpdateQueueBindingRequestMode
@@ -1472,6 +1520,12 @@ __all__ = (
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountRateLimitsResponse",
+    "AccountReleaseWebhookResponse",
+    "AccountReleaseWebhookResponseDeliveryFormat",
+    "AccountReleaseWebhookResponseEventFilterItem",
+    "AccountReleaseWebhookResponseRetryPolicy",
+    "AccountReleaseWebhookResponseScope",
+    "AccountReleaseWebhookResponseWebhookSecretSealedMasked",
     "AccountResponse",
     "AccountResponsePlan",
     "AccountResponseRequestedPlan",
@@ -1651,6 +1705,11 @@ __all__ = (
     "AppStreamingStatus",
     "AppStreamingStatusCapKind",
     "AppStreamingStatusStatus",
+    "AppTaskFailure",
+    "AppTaskListResponse",
+    "AppTaskResponse",
+    "AppTaskResponseKind",
+    "AppTaskResponseStatus",
     "AppTrustedSignerListResponse",
     "AppUsageSummaryResponse",
     "AppUsageSummaryResponseSource",
@@ -1729,6 +1788,10 @@ __all__ = (
     "ConsumerKeyResponseScopesItem",
     "CorsPresetListResponse",
     "CorsPresetResponse",
+    "CreateAccountReleaseWebhookRequest",
+    "CreateAccountReleaseWebhookRequestDeliveryFormat",
+    "CreateAccountReleaseWebhookRequestEventFilterItem",
+    "CreateAccountReleaseWebhookRequestRetryPolicy",
     "CreateAlertRuleRequest",
     "CreateAlertRuleRequestAction",
     "CreateAlertRuleRequestComparison",
@@ -1750,6 +1813,7 @@ __all__ = (
     "CreateAppRequestRuntime",
     "CreateAppRequestType",
     "CreateAppRequestVisibility",
+    "CreateAppTaskRequest",
     "CreateAppWebhookRequest",
     "CreateAppWebhookRequestDeliveryFormat",
     "CreateAppWebhookRequestEventFilterItem",
@@ -1773,6 +1837,7 @@ __all__ = (
     "CreateDeployTokenRequest",
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
+    "CreateEdgeRuleRequestMatchHeaders",
     "CreateEdgeRuleRequestValidateMode",
     "CreateInboundWebhookEndpointRequest",
     "CreateInboundWebhookEndpointRequestProvider",
@@ -1803,6 +1868,7 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreatePlatformTenantRequest",
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
     "CreatePrivateNetworkRequest",
@@ -2036,6 +2102,7 @@ __all__ = (
     "EdgeRuleRespondAction",
     "EdgeRuleResponse",
     "EdgeRuleResponseKind",
+    "EdgeRuleResponseMatchHeaders",
     "EdgeRuleResponseValidateMode",
     "EdgeRuleRetryAction",
     "EdgeRuleRewriteAction",
@@ -2063,6 +2130,8 @@ __all__ = (
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseState",
+    "EventPreviewSubscription",
+    "EventPreviewSubscriptionFilter",
     "EventSubscriptionListResponse",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
@@ -2212,6 +2281,8 @@ __all__ = (
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
     "LatestDeploymentsByAppResponse",
+    "LinkPlatformTenantConsumerRequest",
+    "LinkPlatformTenantSurfaceRequest",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -2432,6 +2503,14 @@ __all__ = (
     "PlanWorkloadAction",
     "PlanWorkloadClass",
     "PlanWorkloadTier",
+    "PlatformTenantDetailResponse",
+    "PlatformTenantDetailResponseStatus",
+    "PlatformTenantListResponse",
+    "PlatformTenantResponse",
+    "PlatformTenantResponseStatus",
+    "PlatformTenantSurfaceResponse",
+    "PlatformTenantUsageBucketResponse",
+    "PlatformTenantUsageResponse",
     "PostAccountSessionsRevokeAllBody",
     "PostForceColdBootAppConfirm",
     "PostForceParkInstanceConfirm",
@@ -2449,6 +2528,9 @@ __all__ = (
     "PreviewEnvironmentMemberResponse",
     "PreviewEnvironmentStatusResponse",
     "PreviewEnvironmentStatusResponsePhase",
+    "PreviewEventRequest",
+    "PreviewEventRequestDataContentType",
+    "PreviewEventResponse",
     "PreviewProductionChangesResponse",
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
     "PreviewResourceLinksResponse",
@@ -2523,6 +2605,10 @@ __all__ = (
     "ProjectEnvironmentReleaseWorkloadResponse",
     "ProjectEnvironmentReleaseWorkloadResponseStatus",
     "ProjectEnvironmentResponse",
+    "ProjectEnvironmentRoutePolicyDiffResponse",
+    "ProjectEnvironmentRoutePolicyDiffResponseKind",
+    "ProjectEnvironmentRoutePolicyResponse",
+    "ProjectEnvironmentRoutePolicyResponseOwnership",
     "ProjectEnvironmentSecretCellResponse",
     "ProjectEnvironmentSecretCellResponseManagedBy",
     "ProjectEnvironmentSecretChangeResponse",
@@ -2696,6 +2782,8 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
+    "SetPlatformTenantStatusRequest",
+    "SetPlatformTenantStatusRequestStatus",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",
@@ -2762,6 +2850,10 @@ __all__ = (
     "TriggerSourceType3Type1",
     "TrustedSigner",
     "UpdateAccountBillingInfoRequest",
+    "UpdateAccountReleaseWebhookRequest",
+    "UpdateAccountReleaseWebhookRequestDeliveryFormat",
+    "UpdateAccountReleaseWebhookRequestEventFilterItem",
+    "UpdateAccountReleaseWebhookRequestRetryPolicy",
     "UpdateAlertRuleRequest",
     "UpdateAlertRuleRequestAction",
     "UpdateAlertRuleRequestComparison",
@@ -2806,6 +2898,7 @@ __all__ = (
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
     "UpdateEdgeRuleRequest",
+    "UpdateEdgeRuleRequestMatchHeaders",
     "UpdateEdgeRuleRequestValidateMode",
     "UpdateInboundWebhookEndpointRequest",
     "UpdateJobRequest",
@@ -2821,6 +2914,7 @@ __all__ = (
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectEnvironmentRequest",
+    "UpdateProjectEnvironmentRoutePolicyRequest",
     "UpdateProjectRequest",
     "UpdateQueueBindingRequest",
     "UpdateQueueBindingRequestMode",

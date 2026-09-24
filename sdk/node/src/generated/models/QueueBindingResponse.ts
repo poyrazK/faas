@@ -13,7 +13,7 @@ export type QueueBindingResponse = {
   name: string;
   queue_name: string;
   mode: 'pull' | 'push';
-  workload_class: 'worker' | 'job';
+  workload_class: 'worker' | 'job' | 'http';
   enabled: boolean;
   max_concurrency: number;
   retry_policy?: RetryPolicyDTO;

@@ -10,11 +10,11 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
-| [`events`](#events) | Publish events and inspect subscriptions and deliveries |
+| [`events`](#events) | Preview routing, publish events and inspect subscriptions and deliveries |
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
 | [`apps`](#apps) | List your apps |
-| [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|restart\|--profile NAME\|--ram N\|…]) |
+| [`app`](#app) | Get/update one app or run a deployment-attached command |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
 | [`build`](#build) | Inspect builds (build status\|list\|provenance\|sbom) |
@@ -37,6 +37,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment (name defaults to linked context) |
 | [`diff`](#diff) | Compare two named environments in the linked project |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
+| [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
@@ -86,10 +87,10 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
-| [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only) |
+| [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained. |
 | [`cache`](#cache) | Declare or purge response caching (cache GET /path/:id for 30s) |
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
-| [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
+| [`webhooks`](#webhooks) | Manage app and account release webhooks (webhooks account &lt;verb&gt;) |
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
 | [`man`](#man) | Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg) |
@@ -257,9 +258,21 @@ Show one audit event
 
 ## events
 
-Publish events and inspect subscriptions and deliveries
+Preview routing, publish events and inspect subscriptions and deliveries
 
 `gregale events [<subcommand>]`
+
+### events preview
+
+Preview account-wide event routing without publishing
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | event id to use when filters inspect the CloudEvents id |  |
+| `--source <SOURCE>` | event source (or first positional argument) |  |
+| `--type <TYPE>` | event type (or second positional argument) |  |
+| `--data <J|@file|->` | JSON event data (inline \| @file \| -) | required |
+| `--time <RFC3339>` | event time (RFC3339; defaults to server time) |  |
 
 ### events publish
 
@@ -360,7 +373,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 ## app
 
-Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
+Get/update one app or run a deployment-attached command
 
 `gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
@@ -392,6 +405,19 @@ Rename an app
 ### app restart
 
 Park and wake from a fresh snapshot
+
+### app exec
+
+Run a one-off command against the live deployment
+
+| Flag | Meaning | |
+|---|---|---|
+| `--shell` | interpret one command string through the app shell |  |
+| `--detach` | return after the task is queued |  |
+| `--timeout-seconds <N>` | server-side command timeout |  |
+| `--max-output-bytes <N>` | combined stdout/stderr tail cap |  |
+| `--poll-interval <D>` | status polling interval while attached |  |
+| `--wait-timeout <D>` | maximum attached wait |  |
 
 ### app security
 
@@ -1259,6 +1285,45 @@ Wait for a preview deployment to become ready
 Tear down a preview app (POST /v1/preview/{slug}/destroy)
 
 
+## platform-tenants
+
+Manage one customer across app consumers and tenant hostnames
+
+`gregale platform-tenants [<subcommand>]`
+
+### platform-tenants list
+
+List platform customers
+
+### platform-tenants add
+
+Register a customer by external reference
+
+### platform-tenants info
+
+Show linked consumers and surfaces
+
+### platform-tenants link-consumer
+
+Attach an existing app consumer
+
+### platform-tenants link-surface
+
+Attach an existing tenant surface
+
+### platform-tenants usage
+
+Show cross-app raw usage
+
+### platform-tenants suspend
+
+Stop linked credentials and hostnames
+
+### platform-tenants resume
+
+Restore linked credentials and hostnames
+
+
 ## edge-rules
 
 Per-app edge rules (edge-rules list|trace|create|get|update|rm --app &lt;slug&gt;)
@@ -1281,13 +1346,16 @@ List edge rules
 
 ### edge-rules trace
 
-Preview which edge rules match a proposed request (no actions executed)
+Preview matching edge rules and simulate request headers and IP/geo decisions
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--url <URL>` | absolute HTTP(S) request URL | required |
 | `--method <method>` | request method (default GET) |  |
+| `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
+| `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
+| `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
 
 ### edge-rules create
 
@@ -2095,7 +2163,7 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|releases|history|config [set]|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]
+Manage project environments (list|create|protect|unprotect|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]
 
 ### projects update
 
@@ -2349,7 +2417,7 @@ Show live deployment traffic weights for an app
 
 ## mirror
 
-Manage traffic mirroring and sanitized replay (Pro/Scale only)
+Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained.
 
 `gregale mirror [<subcommand>]`
 
@@ -2370,8 +2438,9 @@ Create a mirror rule
 | `--app <slug>` | app slug | required |
 | `--source <ID>` | source deployment id or vN revision (live) | required |
 | `--mirror <ID>` | mirror deployment id or vN revision (live; same app) | required |
-| `--percent <N>` | fan-out percent in [0, 100]; 100 = every request |  |
-| `--include-body` | include request/response body hashes in the comparison ledger |  |
+| `--percent <N>` | fan-out percent in [0, 100]; defaults to a 5% sample |  |
+| `--include-body` | compare response values using hashes; raw response bodies are never retained |  |
+| `--allow-unsafe-methods` | also mirror POST, PUT, PATCH, and DELETE; these can cause side effects |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 
 ### mirror info
@@ -2396,6 +2465,8 @@ Patch a mirror rule (patch semantics)
 | `--disable` | disable the rule (mutually exclusive with --enable) |  |
 | `--include-body` | enable body-hash comparison (mutually exclusive with --no-include-body) |  |
 | `--no-include-body` | disable body-hash comparison |  |
+| `--allow-unsafe-methods` | also mirror POST, PUT, PATCH, and DELETE |  |
+| `--safe-methods-only` | skip POST, PUT, PATCH, and DELETE |  |
 | `--redact-header <NAME>` | extra header name to redact (repeatable) |  |
 | `--clear-redact` | clear the customer&#39;s redact_headers list (drop to always-stripped only) |  |
 
@@ -2495,7 +2566,7 @@ Remove stale and excess state safely
 
 ## webhooks
 
-Manage outbound webhooks (webhooks list|add|info|update|rm|deliveries|retry|rotate-secret)
+Manage app and account release webhooks (webhooks account &lt;verb&gt;)
 
 `gregale webhooks [<subcommand>]`
 
@@ -2536,6 +2607,10 @@ Rotate the webhook signing secret
 | `--app <slug>` | app slug | required |
 | `--secret <VALUE>` | replacement HMAC-SHA256 secret |  |
 | `--from-stdin` | read the replacement secret from stdin |  |
+
+### webhooks account
+
+Manage one release receiver across all account apps
 
 
 ## whoami

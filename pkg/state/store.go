@@ -2272,6 +2272,8 @@ type Store interface {
 	ConsumeProjectEnvironmentApproval(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string, consumedAt time.Time) (ProjectEnvironmentApproval, error)
 	ProjectEnvironmentConfigLatest(ctx context.Context, accountID, projectID, environmentSlug string) (ProjectEnvironmentConfig, error)
 	CreateProjectEnvironmentConfigVersion(ctx context.Context, config ProjectEnvironmentConfig) (ProjectEnvironmentConfig, error)
+	GetProjectEnvironmentRoutePolicy(ctx context.Context, accountID, appID, scope string) (ProjectEnvironmentRoutePolicy, error)
+	PutProjectEnvironmentRoutePolicy(ctx context.Context, policy ProjectEnvironmentRoutePolicy) (ProjectEnvironmentRoutePolicy, error)
 	CreateProjectEnvironmentPromotion(ctx context.Context, promotion ProjectEnvironmentPromotion, workloads []ProjectEnvironmentPromotionWorkload) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error)
 	ProjectEnvironmentPromotionByID(ctx context.Context, accountID, projectSlug, targetEnvironment, id string) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error)
 	ProjectEnvironmentPromotionByIdempotencyKey(ctx context.Context, accountID, projectSlug, idempotencyKey string) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error)
@@ -2834,6 +2836,11 @@ type Store interface {
 	// (e.g. "apps/<slug>/<depID>.ext4"); schedd carries it on the wake
 	// wire and vmmd resolves it via Storage.Get before staging the chroot.
 	SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error
+	// SetDeploymentRuntimeProfile records image-config-derived runtime metadata
+	// before snapshot prime. In particular, a single OCI EXPOSE port must be
+	// durable so schedd and vmmd agree on the guest DNAT target at first boot
+	// and every later wake. Only imaged writes this deployment-owned field.
+	SetDeploymentRuntimeProfile(ctx context.Context, id string, profile []byte) error
 
 	// UpsertDeploymentScanResult records the per-deploy grype CVE
 	// scan on the deployment row (issue #464 / ADR-055 / PR-3).
@@ -3352,6 +3359,11 @@ type Store interface {
 	// both apid admission and schedd lifecycle ownership meet at this narrow
 	// durable boundary.
 	ExecutionStore
+
+	// Commands attached to one immutable application deployment (ADR-230).
+	// This stays separate from ExecutionStore because app tasks inherit the
+	// app's artifact, scoped configuration, bindings, and network policy.
+	AppTaskStore
 
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and
@@ -4348,8 +4360,10 @@ type Store interface {
 	// WHERE id = $1; the column is on the hot path so the row is
 	// already in shared_buffers under normal load.
 	GetInstanceTailCount(ctx context.Context, id string) (int32, error)
-	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
-	// Returns rows currently in any of the given states whose
+	// ListInstancesByStatesOlderThan is the §6.1 app watchdog's lookup.
+	// Job-task instances are excluded: their task lease/reaper owns the
+	// artifact-restore and execution deadline. Returns app rows currently
+	// in any of the given states whose
 	// "age timestamp" is strictly older than threshold. The age
 	// column is state-aware: started_at for WAKING/COLD_BOOTING
 	// (stamped on creation by migration 00015), parked_at for
@@ -5941,6 +5955,10 @@ type Store interface {
 	//   - (AppWebhook{}, ErrNotFound) when the app row is missing
 	//   - (AppWebhook{}, ErrConflict) on a duplicate (app_id, target_url)
 	CreateAppWebhookIfUnderQuota(ctx context.Context, w AppWebhook, limits api.Limits) (AppWebhook, error)
+	// CreateAccountReleaseWebhookIfUnderQuota creates one account-owned
+	// release receiver under the same account-row lock and shared quota as
+	// app webhook creation. It never consumes a per-app slot.
+	CreateAccountReleaseWebhookIfUnderQuota(ctx context.Context, w AppWebhook, limits api.Limits) (AppWebhook, error)
 	AppWebhookByID(ctx context.Context, id string) (AppWebhook, error)
 	// UpdateAppWebhook mutates the optional fields of a webhook row.
 	// See UpdateAppWebhookParams at types.go for the pointer-to-
@@ -6022,6 +6040,9 @@ type Store interface {
 	// The result is ordered by created_at DESC (most recent first)
 	// — the dashboard's "recent deliveries" pane orientation.
 	ListAppWebhookDeliveries(ctx context.Context, appID, webhookID string, pageSize int, pageToken string) ([]AppWebhookDelivery, string, error)
+	// ListAccountReleaseWebhookDeliveries reads one account receiver across
+	// all its source apps; both IDs are enforced in the store query.
+	ListAccountReleaseWebhookDeliveries(ctx context.Context, accountID, webhookID string, pageSize int, pageToken string) ([]AppWebhookDelivery, string, error)
 	// AppWebhookDeliveryByID backs the per-delivery retry path (POST
 	// /deliveries/{id}/retry) and the dispatcher-side audit
 	// emission that needs to read the row's account_id + app_id.

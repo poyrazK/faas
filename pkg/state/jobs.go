@@ -66,7 +66,9 @@ type Job struct {
 	// ImageStorageKey is the canonical ext4 artifact consumed by vmmd
 	// (jobs/<job-id>.ext4). It is populated atomically with a ready status.
 	ImageStorageKey string
-	// ImageMaterializationStatus is pending, ready, or failed.
+	// ImageMaterializationStatus is pending, verifying_legacy, ready, or
+	// failed. The verification state fences pre-OCI ext4 references until
+	// imaged confirms the canonical artifact still exists.
 	ImageMaterializationStatus string
 	ImageMaterializationError  string
 	ImageMaterializedAt        *time.Time
@@ -212,6 +214,16 @@ func (e *JobQuotaError) Is(target error) bool {
 // (ErrJobQuota) consumes Scope / Limit / Observed.
 var ErrJobQuotaExceeded = errors.New("state: job quota exceeded")
 
+// jobLiveConcurrencyCap applies the production dispatch fallback for a Free
+// or malformed plan row. Free cannot create jobs through the API, but an old
+// queued row must not bypass the Hobby floor by indexing a zero cap.
+func jobLiveConcurrencyCap(plan api.Plan) int {
+	if !plan.Valid() || plan == api.PlanFree {
+		plan = api.PlanHobby
+	}
+	return api.JobConcurrentPerAccount[plan.PlanIndex()]
+}
+
 // JobQuotaCreator is the optional atomic job-template admission seam. The
 // caller supplies the already-resolved plan cap; implementations serialize
 // the count and insert so concurrent POST /v1/jobs requests cannot overshoot
@@ -239,6 +251,19 @@ type JobImageMaterializationClaimer interface {
 	JobClaimImageMaterialization(ctx context.Context, id, owner string, lease time.Duration) (Job, error)
 	JobClaimPendingImageMaterialization(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
 	JobRecordImageMaterializationFailure(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time, maxAttempts int) (Job, error)
+}
+
+// JobLegacyArtifactVerificationStore is a separate lease queue for old
+// apps/...ext4 references. Older imaged binaries only claim status=pending,
+// so migration can move falsely-ready legacy rows here before the new worker
+// starts without letting the old OCI parser consume them during a rollout.
+// A present legacy object must be copied to promotedKey (the job-owned
+// jobs/<id>.ext4 key) before the row can become ready: app layers have a
+// shorter GC lifetime than jobs.
+type JobLegacyArtifactVerificationStore interface {
+	JobClaimLegacyArtifactVerification(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
+	JobFinishLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, promotedKey string, found bool, reason string) (Job, error)
+	JobRetryLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time) (Job, error)
 }
 
 // JobRegistryCredentialStore is the optional persistence seam for private OCI
@@ -354,9 +379,8 @@ type JobStore interface {
 	JobCountByAccount(ctx context.Context, accountID string) (int, error)
 	// JobConcurrentByAccount counts the live job_task instances on
 	// the account (instances.kind='job_task' AND state IN
-	// ('waking','cold_booting','running')). Used by the apid admission-control
-	// gate to enforce JobConcurrentPerAccount before accepting a
-	// new run + by meterd's billing sweep for the live-pool bill.
+	// ('waking','cold_booting','running')). Dispatch uses this read as a
+	// fast path; CreateAndClaimJobInstance enforces the cap atomically.
 	JobConcurrentByAccount(ctx context.Context, accountID string) (int, error)
 
 	// --- job_runs ---
@@ -444,10 +468,9 @@ type JobStore interface {
 	// OR when the task is no longer status='queued' (e.g. a parallel
 	// dispatcher claimed it first; lost the race).
 	JobTaskMarkClaimed(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) error
-	// CreateAndClaimJobInstance atomically creates the job-task instance row
-	// and attaches it to a still-queued task. The transaction rolls back the
-	// instance insert when another dispatcher has already won the task, so a
-	// losing scheduler can never leave an unowned job VM row behind.
+	// CreateAndClaimJobInstance atomically checks account live concurrency and
+	// run parallelism, creates the job-task instance row, and attaches it to a
+	// still-queued task. A rejected claim leaves no unowned job VM row behind.
 	CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error)
 	// JobTaskMarkTerminal transitions a single task to a terminal
 	// status ('succeeded' | 'failed' | 'timeout' | 'cancelled' |
@@ -464,6 +487,10 @@ type JobStore interface {
 	// both writes in one transaction prevents cleanup from destroying the only
 	// copy of successful job output before it is durable.
 	JobTaskMarkTerminalWithLogs(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error
+	// JobTaskCompleteClaimedWithLogs is the guest-exit variant: it only
+	// accepts the currently claimed instance and lease. This prevents a
+	// delayed exit from settling a task that was already retried or cancelled.
+	JobTaskCompleteClaimedWithLogs(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error
 	// JobTaskRetry reverses a failed/timeout/oom/cancelled transition back to
 	// queued and stamps next_attempt_at with the per-attempt backoff
 	// (JobBackoffBaseSeconds * 2^(attempt-1), capped at
@@ -473,10 +500,17 @@ type JobStore interface {
 	//
 	// Returns ErrNotFound when (run_id, task_index) does not resolve.
 	JobTaskRetry(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error
+	// JobTaskFailBoot settles a claimed task whose VM did not boot. The
+	// instance ID and lease token fence a late failure from a newer attempt
+	// or a concurrent exit/cancellation. A retry consumes one attempt and
+	// respects nextAttemptAt; an exhausted task becomes a terminal failure
+	// with a customer-visible infrastructure error. Returns ErrNotFound if
+	// the claim no longer belongs to this boot.
+	JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (retryScheduled bool, err error)
 	// JobTaskRequeue reverses a CLAIMED-but-not-yet-executed task
 	// back to 'queued' WITHOUT incrementing the attempt counter.
-	// Used by the dispatch tick when admission / quota / vmmd
-	// bootstrapping fails before the customer's code runs (CR-7 /
+	// Used by the dispatch tick when admission / quota fails before
+	// the customer's code runs (CR-7 /
 	// code-review #7 — the previous code path called JobTaskRetry
 	// for transient rejections, which silently consumed the
 	// customer's retry budget for failures that were never the
@@ -492,6 +526,11 @@ type JobStore interface {
 	//
 	// Returns ErrNotFound when (run_id, task_index) does not resolve.
 	JobTaskRequeue(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error
+	// JobTaskDeferQueued postpones an eligible queued task without touching its
+	// lease or attempt. The expected attempt and due-time predicate fence a
+	// concurrent claim or a newer boot-failure retry. ErrNotFound means this
+	// candidate is no longer eligible; dispatch may continue safely.
+	JobTaskDeferQueued(ctx context.Context, runID string, taskIndex, expectedAttempt int, nextAttemptAt time.Time) error
 	// JobTaskCancel transitions a single task to status='cancelled'
 	// (called when the parent run is cancelled mid-flight, or when
 	// the job is paused). Idempotent on tasks already terminal.

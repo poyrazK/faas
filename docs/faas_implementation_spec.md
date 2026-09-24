@@ -983,6 +983,14 @@ stateDiagram-v2
 | `running → failed` | **schedd** | liveness/OOM/crash-loop event and instance terminal state | `DestroyForLivenessFailure` and OOM paths eagerly stale the latest snapshot; repeated failures may evict the app cold. |
 | current deployment → `superseded` | **apid** on the next deploy | `CreateDeployment` supersede update | The new deployment owns traffic; retained snapshot material is rollback/GC material, never the active source of truth. |
 
+For an authenticated post-readiness deployment smoke, placement first prefers
+a fitting known snapshot origin or ready replica, even when a peer has more
+spare CPU. The public verification deadline makes an uncached artifact pull a
+correctness risk for this one path. Node lifecycle, RAM, vCPU, and physical CPU
+guards remain mandatory; if no local node fits, normal fleet placement and
+shared-backend restore/cold-boot fallback still apply (ADR-063). Ordinary
+customer wakes retain CPU-first balancing.
+
 #### Snapshot invalidation and cold-boot contract
 
 Snapshots are disposable machine-state caches. A wake may use one only when
@@ -1046,7 +1054,7 @@ defaults: Hobby/Pro/Scale → period 5 s, consecutive 3,
 cooldown 60 s, max restarts 3 in window 300 s. Free is gated
 off (LivenessAllowed() returns false).
 
-Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FAILED; SNAPSHOTTING ≤ 20 s then STOPPED. Every transition is an `events` row.
+App timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FAILED; SNAPSHOTTING ≤ 20 s then STOPPED. Job-task instances are excluded from this app watchdog: their cold boot can include a first-run artifact download, and the job-task lease/reaper owns its execution deadline (`task_timeout_s + 90 s` lease grace, then stale-lease detection). Every app watchdog transition is an `events` row.
 
 **Compute-node heartbeat (ADR-028):** schedd pings every active `compute_node` on a 30 s tick via `pkg/sched.Heartbeat`. The goroutine dials each row's `target_url` (Tailscale/Wireguard overlay in production; unix:///run/faas/vmmd.sock for default-local) and stamps `last_heartbeat_at = now()` on success. A row whose `last_heartbeat_at` ages past 90 s gets `active=false` via `SetComputeNodeActive`. The pg_notify `compute_node_changed` (migration 00026) fires on the UPDATE so `gatewayd-internal`'s `NodeClientCache` evicts the cached conn without polling. Re-activation is automatic on the next successful ping. Direction was chosen to invert vmmd-pushes: schedd is the admission authority and shouldn't trust inbound traffic from a box it may have already drained; outbound probing means schedd detects failure on its own clock.
 
@@ -1903,6 +1911,16 @@ The Jobs feature ships as a post-M8 workstream rather than as part of M0–M8 be
 | **M13** | OpenAPI 12 paths + 11 schemas + SDK regen | `make sdk-check` green; Node, Python, and Go SDKs expose the explicit task-retry route |
 | **M14** | unit + metal e2e tests | 13 apid + 11 CLI + 11 metal-tagged jobs e2e tests; `cmd/e2e/jobs_metal_test.go` compiles under `-tags metal` (real impls land in follow-up commit) |
 | **M15** | docs: ADR-099 supplement + runbook + SPEC cross-link | this section; `docs/adr/099-supplement-jobs-mega1.md`; `docs/runbooks/FaasJobsQueueBacklog.md` |
+
+Job boot retry safety (issue #3052): a claimed pre-execution VM boot failure
+must consume an attempt with capped backoff, or persist a terminal `infra`
+error when `retry_max` is exhausted. The transition is fenced by both the
+claimed instance ID and lease token; a delayed guest exit cannot settle a
+newer attempt. Before-claim admission errors leave the queued task unchanged.
+The memstore/pgstore transition and scheduler dispatch regressions are the
+executable gate for this contract. vmmd in-flight cancellation, artifact
+existence repair, and cold-cache watchdog timing have separate acceptance
+gates in issue #3052.
 
 Canonical references (read in order):
 1. `docs/adr/099-jobs.md` — the v1 ADR (proposed).

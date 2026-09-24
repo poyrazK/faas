@@ -181,7 +181,10 @@ type MemStore struct {
 	consumerKeys map[string]ConsumerKey
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
-	apiConsumers map[string]APIConsumer
+	apiConsumers             map[string]APIConsumer
+	platformTenants          map[string]PlatformTenant
+	platformTenantByConsumer map[string]string
+	platformTenantBySurface  map[string]string
 	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
 	// Keyed by (accountID, customerIP) — the same composite PK
 	// as the Postgres table. Test fixture only.
@@ -465,6 +468,9 @@ type MemStore struct {
 	// runtime stream. It is deliberately separate from guest scratch storage.
 	executionEvents      map[string][]ExecutionEvent
 	nextExecutionEventID int64
+	// appTasks are deployment-attached command intents (ADR-230). Unlike
+	// disposable executions they reference an app artifact and scope.
+	appTasks map[string]AppTask
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -570,6 +576,7 @@ type MemStore struct {
 	// event is applied at most once even when the gateway retries a
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage       map[string]APIConsumerUsageBucket
+	platformTenantUsage    map[string]APIConsumerUsageBucket
 	apiConsumerUsageEvents map[string]struct{}
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
@@ -728,6 +735,7 @@ type MemStore struct {
 	projectEnvironmentCleanupJobs        map[string]ProjectEnvironmentCleanupJob
 	projectEnvironmentApprovals          map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
+	projectEnvironmentRoutePolicies      map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
 	projectEnvironmentPromotionWorkloads map[string][]ProjectEnvironmentPromotionWorkload
 	// githubDeployBranches stores the optional branch→scope rules keyed by
@@ -992,6 +1000,7 @@ func NewMemStore() *MemStore {
 		workflowRuns:                   map[string]WorkflowRun{},
 		workflowSteps:                  map[string]map[string]WorkflowStep{},
 		workflowEvents:                 map[string][]WorkflowEvent{},
+		appTasks:                       map[string]AppTask{},
 		fireNowRequests:                map[string]FireNowRequest{},
 		operatorIntents:                map[string]OperatorIntent{},
 		runtimeConfigs:                 map[string]RuntimeConfig{},
@@ -1028,9 +1037,12 @@ func NewMemStore() *MemStore {
 		// ADR-120 / issue #975 item #5 — consumer keys. The map is
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
 		// enforced at the read methods (same as the pg path).
-		consumerKeys:     map[string]ConsumerKey{},
-		apiConsumers:     map[string]APIConsumer{},
-		openAPISnapshots: map[string]OpenAPISnapshot{},
+		consumerKeys:             map[string]ConsumerKey{},
+		apiConsumers:             map[string]APIConsumer{},
+		platformTenants:          map[string]PlatformTenant{},
+		platformTenantByConsumer: map[string]string{},
+		platformTenantBySurface:  map[string]string{},
+		openAPISnapshots:         map[string]OpenAPISnapshot{},
 		// ADR-119 redesign: empty gate (no provisioned IPs in
 		// unit tests unless a test explicitly seeds them).
 		provisionedStaticEgressIPs: map[string]map[string]netip.Addr{},
@@ -1076,6 +1088,7 @@ func NewMemStore() *MemStore {
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
 		apiConsumerUsageEvents:            map[string]struct{}{},
 		apiConsumerRateCards:              map[string]APIConsumerRateCard{},
 		apiConsumerUsageStatements:        map[string]APIConsumerUsageStatement{},
@@ -1160,6 +1173,7 @@ func NewMemStore() *MemStore {
 		projectEnvironmentCleanupJobs:        map[string]ProjectEnvironmentCleanupJob{},
 		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
+		projectEnvironmentRoutePolicies:      map[string]ProjectEnvironmentRoutePolicy{},
 		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
 		projectEnvironmentPromotionWorkloads: map[string][]ProjectEnvironmentPromotionWorkload{},
 	}
@@ -2865,6 +2879,11 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			delete(m.projectEnvironmentConfigs, key)
 		}
 	}
+	for key, policy := range m.projectEnvironmentRoutePolicies {
+		if policy.ProjectID == projectID {
+			delete(m.projectEnvironmentRoutePolicies, key)
+		}
+	}
 	return nil
 }
 
@@ -3023,6 +3042,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	for key, policy := range m.projectEnvironmentRoutePolicies {
+		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
+			delete(m.projectEnvironmentRoutePolicies, key)
+		}
+	}
 	for id, approval := range m.projectEnvironmentApprovals {
 		if approval.AccountID == accountID && approval.ProjectSlug == project.Slug && approval.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentApprovals, id)
@@ -5662,6 +5686,7 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 	wasDeleted := a.Status == AppDeleted
 	a.Status = AppDeleted
 	m.apps[id] = a
+	m.cancelAppTasksForAppLocked(id, now)
 	if !wasDeleted {
 		delete(m.appDeletionClaims, id)
 	}
@@ -5833,6 +5858,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.invocations, key)
 		}
 	}
+	for key, task := range m.appTasks {
+		if task.AppID == id {
+			delete(m.appTasks, key)
+		}
+	}
 	for key, v := range m.crons {
 		if v.AppID == id {
 			delete(m.crons, key)
@@ -5925,6 +5955,7 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 		a.DeleteGraceUntil = &deadline
 	}
 	m.apps[id] = a
+	m.cancelAppTasksForAppLocked(id, now)
 	for cronID, cron := range m.crons {
 		if cron.AppID == id {
 			delete(m.crons, cronID)
@@ -6316,16 +6347,51 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
+	created, _, err := m.createDeployment(d, nil)
+	return created, err
+}
+
+func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	return m.createDeployment(d, &activity)
+}
+
+func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
+		return Deployment{}, 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
-		return Deployment{}, ErrNotFound
+		return Deployment{}, 0, ErrNotFound
 	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
-			return Deployment{}, ErrConflict
+			return Deployment{}, 0, ErrConflict
 		}
+	}
+	if d.ID == "" {
+		d.ID = newID()
+	}
+	if activity != nil {
+		deploymentID, err := uuid.Parse(d.ID)
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: parse created deployment activity id: %w", err)
+		}
+		activity.SourceID = d.ID
+		activity.DeploymentID = &deploymentID
+		if activity.AppID == nil {
+			appID, parseErr := uuid.Parse(d.AppID)
+			if parseErr != nil {
+				return Deployment{}, 0, fmt.Errorf("state: parse created deployment app id: %w", parseErr)
+			}
+			activity.AppID = &appID
+		}
+		normalized, err := normalizeOrgActivity(*activity, time.Now())
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		activity = &normalized
 	}
 	if d.CanaryPreset == "" {
 		d.CanaryPreset = "none"
@@ -6390,9 +6456,6 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		m.deployments[priorID] = prior
 	}
 
-	if d.ID == "" {
-		d.ID = newID()
-	}
 	if d.CreatedAt.IsZero() {
 		d.CreatedAt = time.Now().UTC()
 	}
@@ -6403,6 +6466,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.Kind = DeploymentKindImage
 	}
 	d.Workflows = cloneWorkflowJSON(d.Workflows)
+	d.ReleaseCommand = append([]string{}, d.ReleaseCommand...)
 	// Issue #556 PR-A: default traffic_percent to 100 for a stable
 	// deployment when the caller supplies zero. A canary's zero is
 	// meaningful (a valid custom first stage), and the APID handler
@@ -6412,7 +6476,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 	}
 	stageState, err := deploymentStageStateForCreate(d.StageState, d.CreatedAt)
 	if err != nil {
-		return Deployment{}, fmt.Errorf("state: encode deployment stage state: %w", err)
+		return Deployment{}, 0, fmt.Errorf("state: encode deployment stage state: %w", err)
 	}
 	d.StageState = stageState
 	// ADR-198 — mirror PgStore's `max(revision) + 1` per app. PgStore
@@ -6423,7 +6487,11 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
 	m.deployments[d.ID] = d
-	return d, nil
+	var outboxID int64
+	if activity != nil {
+		outboxID = m.enqueueOrgActivityOutboxLocked(*activity)
+	}
+	return d, outboxID, nil
 }
 
 // nextDeploymentRevisionLocked returns the next per-app revision. Caller
@@ -7794,6 +7862,19 @@ func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string,
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: %w", err)
 	}
 	m.deployments[id] = d
+	for taskID, task := range m.appTasks {
+		if task.DeploymentID != d.ID || task.Kind != AppTaskKindRelease || task.Status.Terminal() {
+			continue
+		}
+		if task.Status == AppTaskQueued {
+			task.Status = AppTaskCancelled
+			task.FinishedAt = appTaskTimePtr(now)
+		} else if task.CancelRequested == nil {
+			task.CancelRequested = appTaskTimePtr(now)
+		}
+		task.UpdatedAt = now
+		m.appTasks[taskID] = task
+	}
 	// Cascade-cancel any non-terminal build rows attached to
 	// this deployment. Mirrors pgstore.CancelDeploymentTx.
 	// We collect the IDs of flipped rows so the apid handler
@@ -8405,6 +8486,25 @@ func (m *MemStore) SetDeploymentRootfsIfActive(_ context.Context, id, path, key 
 	d.RootfsPath = path
 	d.RootfsKey = key
 	d.RootfsBytes = bytes
+	m.deployments[id] = d
+	return nil
+}
+
+func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, profile []byte) error {
+	if !json.Valid(profile) {
+		return errors.New("state: deployment runtime profile must be valid JSON")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if d.Kind != DeploymentKindImage ||
+		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
+		return ErrInvalidStateTransition
+	}
+	d.InferredProfile = append(json.RawMessage(nil), profile...)
 	m.deployments[id] = d
 	return nil
 }
@@ -9377,24 +9477,45 @@ func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind Depl
 }
 
 func (m *MemStore) CreateBuildWithID(_ context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
+	build, _, err := m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, nil)
+	return build, err
+}
+
+func (m *MemStore) CreateBuildWithIDAndActivity(_ context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity OrgActivity) (Build, int64, error) {
+	return m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, &activity)
+}
+
+func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity) (Build, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.deployments[deploymentID]; !ok {
-		return Build{}, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
+		return Build{}, 0, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
 	}
 	dep := m.deployments[deploymentID]
 	if dep.Status != DeployPending && dep.Status != DeployBuilding {
-		return Build{}, ErrNotFound
+		return Build{}, 0, ErrNotFound
 	}
 	if _, exists := m.builds[id]; exists {
-		return Build{}, ErrConflict
+		return Build{}, 0, ErrConflict
+	}
+	var normalized OrgActivity
+	if activity != nil {
+		var err error
+		normalized, err = normalizeOrgActivity(*activity, time.Now())
+		if err != nil {
+			return Build{}, 0, err
+		}
 	}
 	b := Build{ID: id, DeploymentID: deploymentID, Kind: kind, SourceBytes: sourceBytes, Status: BuildQueued, LogPath: logPath, EnqueuedAt: time.Now()}
 	dep.Status = DeployBuilding
 	dep.BuildID = id
 	m.deployments[deploymentID] = dep
 	m.builds[b.ID] = b
-	return b, nil
+	var outboxID int64
+	if activity != nil {
+		outboxID = m.enqueueOrgActivityOutboxLocked(normalized)
+	}
+	return b, outboxID, nil
 }
 
 func (m *MemStore) FailSourceDeployment(_ context.Context, id, message string) error {
@@ -13032,9 +13153,9 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	return nil
 }
 
-// ListInstancesByStatesOlderThan is the watchdog's lookup (commit 3,
-// spec §6.1). Mirrors PgStore: coalesce started_at / parked_at on the
-// age comparison.
+// ListInstancesByStatesOlderThan is the app watchdog's lookup (spec §6.1).
+// Jobs have their own task lease/reaper deadline, which includes artifact
+// restoration; the fixed app cold-boot budget must not terminalize them.
 func (m *MemStore) ListInstancesByStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -13045,6 +13166,9 @@ func (m *MemStore) ListInstancesByStatesOlderThan(_ context.Context, states []St
 	var out []Instance
 	for _, ins := range m.instances {
 		if !wanted[State(ins.State)] {
+			continue
+		}
+		if ins.Kind == "job_task" || ins.Mode == string(InstanceModeJob) {
 			continue
 		}
 		age := ins.StartedAt
@@ -18871,6 +18995,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.instances, iid)
 		}
 	}
+	for taskID, task := range m.appTasks {
+		if task.AccountID == id {
+			delete(m.appTasks, taskID)
+		}
+	}
 	// Snapshots + builds are keyed by deployment_id; resolve the
 	// deployment set first.
 	deletedDeployments := map[string]struct{}{}
@@ -18892,6 +19021,17 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for cid, c := range m.apiConsumers {
 		if c.AccountID == id {
 			delete(m.apiConsumers, cid)
+			delete(m.platformTenantByConsumer, cid)
+		}
+	}
+	for tid, tenant := range m.platformTenants {
+		if tenant.AccountID == id {
+			delete(m.platformTenants, tid)
+		}
+	}
+	for surfaceID, tenantID := range m.platformTenantBySurface {
+		if _, exists := m.platformTenants[tenantID]; !exists {
+			delete(m.platformTenantBySurface, surfaceID)
 		}
 	}
 	for sid, statement := range m.apiConsumerUsageStatements {
@@ -18924,6 +19064,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if a.AccountID == id {
 			delete(m.apps, aid)
 			delete(m.githubBindings, aid)
+		}
+	}
+	for key, policy := range m.projectEnvironmentRoutePolicies {
+		if policy.AccountID == id {
+			delete(m.projectEnvironmentRoutePolicies, key)
 		}
 	}
 	for kid, k := range m.keys {
@@ -19515,6 +19660,14 @@ func (m *MemStore) NextDeploymentRouteGeneration(_ context.Context) (int64, erro
 	return m.deploymentRouteGeneration, nil
 }
 
+func cloneEdgeRuleMatchHeaders(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for name, value := range in {
+		out[name] = value
+	}
+	return out
+}
+
 func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -19529,6 +19682,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		MatchHost:    in.MatchHost,
 		MatchPath:    in.MatchPath,
 		MatchMethods: in.MatchMethods,
+		MatchHeaders: cloneEdgeRuleMatchHeaders(in.MatchHeaders),
 		Priority:     in.Priority,
 		Enabled:      in.Enabled,
 		Kind:         in.Kind,
@@ -19542,7 +19696,10 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	m.edgeRules[r.ID] = r
+	stored := r
+	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
+	m.edgeRules[r.ID] = stored
+	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
 
@@ -19642,6 +19799,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		MatchHost:    in.MatchHost,
 		MatchPath:    in.MatchPath,
 		MatchMethods: in.MatchMethods,
+		MatchHeaders: cloneEdgeRuleMatchHeaders(in.MatchHeaders),
 		Priority:     in.Priority,
 		Enabled:      in.Enabled,
 		Kind:         in.Kind,
@@ -19654,7 +19812,10 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	m.edgeRules[r.ID] = r
+	stored := r
+	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
+	m.edgeRules[r.ID] = stored
+	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
 
@@ -19664,6 +19825,7 @@ func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) 
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
 		if r.AccountID == accountID {
+			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
 	}
@@ -19682,6 +19844,7 @@ func (m *MemStore) ListEdgeRulesForApp(_ context.Context, appID string) ([]EdgeR
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
 		if r.AppID == appID {
+			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
 	}
@@ -19701,6 +19864,7 @@ func (m *MemStore) GetEdgeRuleByID(_ context.Context, id string) (EdgeRule, erro
 	if !ok {
 		return EdgeRule{}, ErrNotFound
 	}
+	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
 
@@ -20203,6 +20367,9 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 		copy(cp, *p.MatchMethods)
 		r.MatchMethods = cp
 	}
+	if p.MatchHeaders != nil {
+		r.MatchHeaders = cloneEdgeRuleMatchHeaders(*p.MatchHeaders)
+	}
 	if p.Priority != nil {
 		r.Priority = *p.Priority
 	}
@@ -20222,7 +20389,10 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 		r.ValidateMode = *p.ValidateMode
 	}
 	r.UpdatedAt = time.Now()
-	m.edgeRules[id] = r
+	stored := r
+	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
+	m.edgeRules[id] = stored
+	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
 
@@ -20283,6 +20453,7 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 			continue
 		}
 		if matchHostPattern(r.MatchHost, host) {
+			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
 	}
@@ -22467,6 +22638,11 @@ func (m *MemStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, app
 	defer m.mu.Unlock()
 	for _, k := range m.consumerKeys {
 		if k.AccountID == accountID && k.AppID == appID && k.Prefix == prefix {
+			if tenantID := m.platformTenantByConsumer[k.ConsumerID]; tenantID != "" {
+				if tenant, ok := m.platformTenants[tenantID]; ok && tenant.Status == PlatformTenantSuspended {
+					return ConsumerKey{}, ErrNotFound
+				}
+			}
 			return k, nil
 		}
 	}
@@ -22605,6 +22781,7 @@ func (m *MemStore) CreateMirrorRuleIfUnderQuota(_ context.Context, in CreateMirr
 		Percent:            in.Percent,
 		Enabled:            in.Enabled,
 		IncludeBody:        in.IncludeBody,
+		AllowUnsafeMethods: in.AllowUnsafeMethods,
 		RedactHeaders:      in.RedactHeaders,
 		CreatedAt:          now,
 		UpdatedAt:          now,
@@ -22674,6 +22851,9 @@ func (m *MemStore) UpdateMirrorRule(_ context.Context, id string, patch MirrorRu
 	}
 	if patch.IncludeBody != nil {
 		r.IncludeBody = *patch.IncludeBody
+	}
+	if patch.AllowUnsafeMethods != nil {
+		r.AllowUnsafeMethods = *patch.AllowUnsafeMethods
 	}
 	if patch.RedactHeaders != nil {
 		r.RedactHeaders = *patch.RedactHeaders
@@ -22761,20 +22941,23 @@ func (m *MemStore) MirrorSummary(_ context.Context, ruleID string, since time.Ti
 			continue
 		}
 		s.TotalInvocations++
-		if r.StatusDiff || r.SchemaDiff || r.BodyDiff {
+		if !r.ComparisonIncomplete && (r.StatusDiff || r.SchemaDiff || r.BodyDiff) {
 			s.ChangedResponseCount++
 		}
 		if r.StatusDiff {
 			s.StatusDiffCount++
 		}
-		if r.SchemaDiff {
+		if !r.ComparisonIncomplete && r.SchemaDiff {
 			s.SchemaDiffCount++
 		}
-		if r.BodyDiff {
+		if !r.ComparisonIncomplete && r.BodyDiff {
 			s.BodyDiffCount++
 		}
 		if r.Crashed {
 			s.CrashCount++
+		}
+		if r.ComparisonIncomplete {
+			s.IncompleteComparisonCount++
 		}
 		if r.LatencyMs > 0 && r.SourceLatencyMs > 0 {
 			latencyDiffs = append(latencyDiffs, r.LatencyMs-r.SourceLatencyMs)

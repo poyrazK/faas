@@ -86,6 +86,10 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// Host-specific tenant surface binding. Never store these in the shared
+	// app cache: one app can serve several independent customer hostnames.
+	RoutedSurfaceID  string
+	PlatformTenantID string
 	// SecurityQuarantined is set when the live deployment has a durable
 	// security_scan_regressed parking reason. The edge rejects requests before
 	// auth, wake, or proxy work so a stale target cannot serve after quarantine.
@@ -1740,6 +1744,20 @@ func (h *Handler) WithDeclaredRouteMatcher(matcher DeclaredRouteMatcher) *Handle
 // wake/admission path. The original public path is supplied by ServeHTTP so a
 // rewrite cannot accidentally broaden or narrow the OpenAPI contract.
 func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, app App, requestPath, requestMethod string) bool {
+	if app.PinnedDeploymentScope != "" && h.declaredRoutes != nil {
+		if resolver, ok := h.declaredRoutes.(interface {
+			ResolveScopedRoutePolicy(context.Context, App) (App, error)
+		}); ok {
+			resolved, err := resolver.ResolveScopedRoutePolicy(r.Context(), app)
+			if err != nil {
+				w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
+					"Declared route policy unavailable", "the environment route policy could not be loaded"))
+				return true
+			}
+			app = resolved
+		}
+	}
 	if !app.OnlyAllowDeclaredRoutes {
 		return false
 	}
@@ -2353,7 +2371,19 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchCORS(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	// A browser preflight is sent as OPTIONS but asks permission for the
+	// method in Access-Control-Request-Method. Match method-scoped CORS rules
+	// against that intended request; otherwise a GET-only rule can never
+	// answer its own GET preflight.
+	matchMethod := r.Method
+	requestedMethod := ""
+	if r.Method == http.MethodOptions && r.Header.Get("Origin") != "" {
+		requestedMethod = strings.TrimSpace(r.Header.Get("Access-Control-Request-Method"))
+		if requestedMethod != "" {
+			matchMethod = requestedMethod
+		}
+	}
+	rule := h.edgeRules.MatchCORS(r.Context(), hostname(r.Host), r.URL.Path, matchMethod)
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("cors", "miss")
@@ -2398,6 +2428,21 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 			h.metrics.ObserveEdgeRuleApply("cors", "success")
 		}
 		return false
+	}
+	if requestedMethod != "" {
+		allowed := false
+		for _, method := range rule.AllowMethods {
+			if method == requestedMethod {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			if h.metrics != nil {
+				h.metrics.ObserveEdgeRuleMatch("cors", "miss")
+			}
+			return false
+		}
 	}
 	origin := r.Header.Get("Origin")
 	allowedOrigin := matchOrigin(rule.AllowOrigins, origin)
@@ -5445,6 +5490,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
+	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
 	r = r.WithContext(requestCtx)
 	defer func() {
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
@@ -6511,6 +6557,7 @@ haveApp:
 	// the HTTP bytes to this exact instance. ApplyGuestHeaders first clears
 	// customer-supplied claims, then stamps the scheduler-selected identity.
 	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(r))
+	identity.PlatformTenantID = authenticatedFrom(r.Context()).PlatformTenantID
 	if identity.AppID == "" {
 		identity.AppID = app.ID
 	}
@@ -6563,7 +6610,7 @@ haveApp:
 	//   - r.Body is restored to a fresh bytes.Reader so the proxy
 	//     downstream sees the full body unchanged.
 	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok { //nolint:contextcheck // request ctx at handler boundary.
-		requestBody, restoreBody := snapshotSourceBody(r)
+		requestBody, requestBodyTruncated, restoreBody := snapshotSourceBodyWithTruncation(r)
 		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
 		// it before the source proxy runs; deferring this until ServeHTTP exits
 		// leaves Content-Length non-zero with an empty body and turns mirrored
@@ -6575,7 +6622,19 @@ haveApp:
 		requestID := requestIDFrom(r)
 		for _, rule := range rules {
 			rule := rule
+			if !rule.AllowUnsafeMethods && !safeMirrorMethod(r.Method) {
+				if h.metrics != nil {
+					h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "unsafe_method_skipped")
+				}
+				continue
+			}
 			if !shouldMirrorRequest(rule.Percent, pick.Picked) {
+				continue
+			}
+			if requestBodyTruncated {
+				if h.metrics != nil {
+					h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "request_body_too_large")
+				}
 				continue
 			}
 			go h.dispatchMirror(r.Context(), target.InstanceID, &target, rule, snapshotRequestForMirror(r), requestBody, requestID, sourceCapture)
@@ -7141,6 +7200,12 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				}
 			}
 			requestTraceID := traceIDForTelemetry(r.Context())
+			platformTenantID := authenticatedFrom(r.Context()).PlatformTenantID
+			if parsed, err := uuid.Parse(platformTenantID); err == nil && consumerID != "" {
+				platformTenantID = parsed.String()
+			} else {
+				platformTenantID = ""
+			}
 			if requestTraceID == "" {
 				// Keep the legacy request-id fallback for deployments where the
 				// OTel provider is disabled. Traced requests always use the real
@@ -7168,6 +7233,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				GuestOutcome:        guestEvidence.Outcome,
 				GuestErrorClass:     guestEvidence.ErrorClass,
 				ConsumerID:          consumerID,
+				PlatformTenantID:    platformTenantID,
 				NodeID:              target.NodeID,
 				Region:              target.Region,
 				CommitSHA:           target.CommitSHA,

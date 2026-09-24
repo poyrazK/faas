@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // --- column-order contracts ----------------------------------------
@@ -541,9 +543,8 @@ func (s *PgStore) JobCountByAccount(ctx context.Context, accountID string) (int,
 // JobConcurrentByAccount counts the live job_task instances on the
 // account (instances.kind='job_task' AND state IN ('waking',
 // 'cold_booting','running')).
-// Used by apid's admission-control gate to enforce JobConcurrentPerAccount
-// before accepting a new run + by meterd's billing sweep for the live-pool
-// bill.
+// Used by dispatch as a read-only fast path; CreateAndClaimJobInstance is the
+// authoritative transactional cap check.
 func (s *PgStore) JobConcurrentByAccount(ctx context.Context, accountID string) (int, error) {
 	// job_task instances carry job_id (no app_id); we resolve the
 	// owning account via the FK to jobs. The state predicate
@@ -970,16 +971,57 @@ func (s *PgStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskInde
 	return nil
 }
 
-// CreateAndClaimJobInstance makes instance creation and queued-task ownership
-// one PostgreSQL transaction. In particular, the instance FK is satisfied
-// before job_tasks is updated, while a lost queued->claimed race rolls the
-// insert back instead of leaving an unbound billable row.
+// CreateAndClaimJobInstance makes capacity checking, instance creation and
+// queued-task ownership one PostgreSQL transaction. An account row lock
+// serializes claims across schedd replicas before counting live instances;
+// the run parallelism is checked in the same transaction. The instance FK is
+// satisfied before job_tasks is updated, while a lost queued->claimed race
+// rolls the insert back instead of leaving an unbound billable row.
 func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Instance{}, fmt.Errorf("state: begin create-and-claim job instance: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+
+	var accountID, planName string
+	var runParallelism int
+	if err := tx.QueryRow(ctx,
+		`select a.id::text, a.plan::text, r.parallelism
+		   from job_runs r
+		   join jobs j on j.id = r.job_id and j.account_id = r.account_id
+		   join accounts a on a.id = r.account_id
+		  where r.id = $1::uuid and j.id = $2::uuid
+		  for update of a`,
+		runID, jobID,
+	).Scan(&accountID, &planName, &runParallelism); err != nil {
+		return Instance{}, fmt.Errorf("state: lock account for job claim (run=%s): %w", runID, mapErr(err))
+	}
+	accountCap := jobLiveConcurrencyCap(api.Plan(planName))
+	var live int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from instances i
+		   join jobs j on j.id = i.job_id
+		  where j.account_id = $1::uuid and i.kind = 'job_task'
+		    and i.state in ('waking', 'cold_booting', 'running')`,
+		accountID,
+	).Scan(&live); err != nil {
+		return Instance{}, fmt.Errorf("state: count live job instances for account %s: %w", accountID, err)
+	}
+	if live >= accountCap {
+		return Instance{}, &JobQuotaError{Scope: JobQuotaScopeConcurrent, Limit: accountCap, Observed: live + 1}
+	}
+	runCap := runParallelism
+	var claimed int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from job_tasks where run_id = $1::uuid and status = 'claimed'`,
+		runID,
+	).Scan(&claimed); err != nil {
+		return Instance{}, fmt.Errorf("state: count claimed job tasks for run %s: %w", runID, err)
+	}
+	if claimed >= runCap {
+		return Instance{}, &JobQuotaError{Scope: JobQuotaScopeParallelism, Limit: runCap, Observed: claimed + 1}
+	}
 
 	row := tx.QueryRow(ctx,
 		`insert into instances (id, app_id, deployment_id, job_id, kind, state, ram_mb, node_id, wake_id, started_at, mode)
@@ -997,7 +1039,7 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 		`update job_tasks set
 		   status = 'claimed', instance_id = $3::uuid,
 		   lease_token = $4, lease_expires_at = $5,
-		   last_lease_node = $6::uuid,
+		   last_lease_node = $6,
 		   started_at = coalesce(started_at, now())
 		 where run_id = $1::uuid and task_index = $2 and status = 'queued'`,
 		runID, taskIndex, instanceID, leaseToken, leaseExpiresAt.UTC(), leaseOwnerNodeID)
@@ -1024,17 +1066,21 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 // when the task is already terminal (the WHERE clause gates on
 // status IN ('queued','claimed')).
 func (s *PgStore) JobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage string, finishedAt time.Time) error {
-	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
 }
 
 // JobTaskMarkTerminalWithLogs settles a task and persists its retained output
 // in the same UPDATE. The log write is deliberately limited to the guest exit
 // path; reapers continue using JobTaskMarkTerminal and preserve empty output.
 func (s *PgStore) JobTaskMarkTerminalWithLogs(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
-	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
 }
 
-func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
+func (s *PgStore) JobTaskCompleteClaimedWithLogs(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, instanceID, leaseToken, true, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+}
+
+func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
 	// nullify error_class / error_message when the caller passes
 	// the empty string — the CHECK constraint on error_class has a
 	// closed vocabulary and "" isn't in it.
@@ -1045,6 +1091,12 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 	var errorMessageArg any
 	if errorMessage != "" {
 		errorMessageArg = errorMessage
+	}
+	var expectedInstanceArg any
+	var expectedLeaseArg any
+	if requireClaim {
+		expectedInstanceArg = expectedInstanceID
+		expectedLeaseArg = expectedLeaseToken
 	}
 	tag, err := s.pool.Exec(ctx,
 		`update job_tasks set
@@ -1058,9 +1110,11 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		   lease_token   = null,
 		   lease_expires_at = null
 		 where run_id = $1::uuid and task_index = $7
-		   and status in ('queued', 'claimed')`,
+		   and status in ('queued', 'claimed')
+		   and (not $11::boolean or (status = 'claimed'
+		        and instance_id = $12::uuid and lease_token = $13))`,
 		runID, status, exitCode, errorClassArg, errorMessageArg, finishedAt.UTC(), taskIndex,
-		persistLogs, logContent, logTruncated)
+		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceArg, expectedLeaseArg)
 	if err != nil {
 		return fmt.Errorf("state: mark task (%s, %d) terminal: %w", runID, taskIndex, err)
 	}
@@ -1106,13 +1160,64 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 	return nil
 }
 
+// JobTaskFailBoot is one fenced transition for a claimed, pre-execution boot
+// failure. A failed transport RPC must not produce an unlimited series of VMs
+// while the task remains at attempt 1, and a late boot failure must not touch
+// a replacement attempt or a task already settled by exit/cancellation.
+func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
+	var retryScheduled bool
+	err := s.pool.QueryRow(ctx,
+		`update job_tasks set
+		   status           = case when attempt <= $5 then 'queued' else 'failed' end,
+		   attempt          = case when attempt <= $5 then attempt + 1 else attempt end,
+		   instance_id      = case when attempt <= $5 then null else instance_id end,
+		   next_attempt_at  = case when attempt <= $5 then $6::timestamptz else null end,
+		   started_at       = case when attempt <= $5 then null else started_at end,
+		   finished_at      = case when attempt <= $5 then null else now() end,
+		   exit_code        = case when attempt <= $5 then null else 1 end,
+		   error_class      = 'infra',
+		   error_message    = $7,
+		   lease_token      = null,
+		   lease_expires_at = null,
+		   last_lease_node  = null
+		 where run_id = $1::uuid and task_index = $2
+		   and status = 'claimed' and instance_id = $3::uuid and lease_token = $4
+		 returning status = 'queued'`,
+		runID, taskIndex, instanceID, leaseToken, retryMax, nextAttemptAt.UTC(), errorMessage).Scan(&retryScheduled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("state: fail boot for job task (%s, %d): %w", runID, taskIndex, err)
+	}
+	return retryScheduled, nil
+}
+
+// JobTaskDeferQueued only moves the due time of the same eligible queued
+// attempt. A concurrent claim or a newer retry cannot lose its lease/backoff.
+func (s *PgStore) JobTaskDeferQueued(ctx context.Context, runID string, taskIndex, expectedAttempt int, nextAttemptAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update job_tasks set next_attempt_at = $4
+		 where run_id = $1::uuid and task_index = $2 and attempt = $3
+		   and status = 'queued' and instance_id is null and lease_token is null
+		   and (next_attempt_at is null or next_attempt_at <= now())`,
+		runID, taskIndex, expectedAttempt, nextAttemptAt.UTC())
+	if err != nil {
+		return fmt.Errorf("state: defer queued job task (%s, %d): %w", runID, taskIndex, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // JobTaskRequeue reverses a CLAIMED-but-not-executed task back to
 // queued WITHOUT incrementing attempt. Mirrors JobTaskRetry's
 // column-reset contract (clears instance_id + lease columns +
 // started_at) but preserves the attempt counter — the customer's
 // retry budget is not consumed by transient dispatch-side failures
-// (admission denied, vmmd unreachable, run-lookup race, per-account
-// quota at cap). See CR-7 / code-review #7.
+// (admission denied, run-lookup race, per-account quota at cap).
+// Claimed vmmd boot failures use JobTaskFailBoot instead.
 func (s *PgStore) JobTaskRequeue(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
 	tag, err := s.pool.Exec(ctx,
 		`update job_tasks set

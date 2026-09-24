@@ -218,6 +218,12 @@ func executionAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_EXECUTION_API_ENABLED")) == "1"
 }
 
+// appTaskAPIEnabledFromEnv is the independent fail-closed public admission
+// gate. schedd's FAAS_APP_TASK_DISPATCH remains a second required opt-in.
+func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
+}
+
 func githubDeploysAvailabilityProbe(getenv func(string) string) func(context.Context) bool {
 	base := strings.TrimRight(strings.TrimSpace(getenv("FAAS_GITHUBD_LOOPBACK")), "/")
 	if base == "" {
@@ -1379,6 +1385,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCompanionImages(cfg.CompanionImages).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
+		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
@@ -1963,7 +1970,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// apid_* ops metrics AND the budget histogram + counter
 	// families in one round-trip.
 	var metricsSrv *http.Server
-	if metricsAddr := resolveMetricsAddr(deps.getenv, cfg.GetMetricsAddr(deps.getenv)); metricsAddr != "" {
+	metricsAddr := resolveMetricsAddr(deps.getenv, cfg.GetMetricsAddr(deps.getenv))
+	canaryServiceToken := strings.TrimSpace(deps.getenv("FAAS_CANARY_PROGRESSION_TOKEN"))
+	safeDeployServiceToken := strings.TrimSpace(deps.getenv("FAAS_SAFEDEPLOY_TOKEN"))
+	if metricsAddr == "" && (canaryServiceToken != "" || safeDeployServiceToken != "") {
+		return errors.New("apid: Safe Deploy service tokens require the loopback operator listener")
+	}
+	if metricsAddr != "" {
 		// Issue #571 PR-A2: wire /healthz + /readyz on the
 		// metrics mux (operator-side, loopback-only) so the LB
 		// scrape + on-box monitoring see the same readiness as
@@ -1981,6 +1994,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			promhttp.HandlerOpts{Registry: ops.Registry()},
 		))
 		metricsMux.Handle("/v1/internal/metrics/", srv.metricsDiscoveryHandler())
+		if err := srv.mountInternalSafeDeploy(metricsMux, metricsAddr, canaryServiceToken, safeDeployServiceToken); err != nil {
+			_ = l.Close()
+			return err
+		}
 		wire.ControlMuxLite(metricsMux, apidProbe.ReadyFunc(), apidProbe.ReasonFunc())
 		metricsSrv = &http.Server{
 			Addr:    metricsAddr,

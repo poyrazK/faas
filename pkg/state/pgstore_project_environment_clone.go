@@ -220,7 +220,32 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 	}
 	result.ConfigurationCopied = configurationCopied
 	result.VariablesCopied, result.SecretsCopied, err = copyProjectEnvironmentScopedValues(ctx, tx, clone)
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	if err := tx.QueryRow(ctx, `
+		with copied as (
+			insert into project_environment_route_policies
+			    (account_id, project_id, app_id, environment_slug, only_allow_declared_routes, declared_routes)
+			select a.account_id, a.project_id, a.id, $4,
+			       coalesce(p.only_allow_declared_routes, a.only_declared_routes),
+			       coalesce(p.declared_routes, a.declared_routes, '[]'::jsonb)
+			  from apps a
+			  left join project_environment_route_policies p
+			    on p.app_id = a.id and p.environment_slug = $3
+		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted'
+		   and not (coalesce(p.only_allow_declared_routes, a.only_declared_routes)
+		            and jsonb_array_length(coalesce(p.declared_routes, a.declared_routes, '[]'::jsonb)) = 0)
+			returning 1
+		)
+		select count(*) from copied
+	`, clone.AccountID, clone.ProjectID, clone.SourceSlug, clone.TargetSlug).Scan(&result.RoutesCopied); err != nil {
+		return result, mapErr(err)
+	}
+	if result.RoutesCopied < result.WorkloadsCopied {
+		result.SharedResources = append(result.SharedResources, "routes")
+	}
+	return result, nil
 }
 
 func copyProjectEnvironmentConfig(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (bool, error) {

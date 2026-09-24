@@ -38,6 +38,45 @@ type PublishEventResponse struct {
 	AccountID  string    `json:"account_id"`
 }
 
+// PreviewEventRequest asks the router to evaluate an event without persisting
+// or delivering it. ID and Time are optional and receive the same defaults as
+// publish when omitted.
+type PreviewEventRequest struct {
+	ID              string          `json:"id,omitempty"`
+	Source          string          `json:"source"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"data_content_type,omitempty"`
+	Data            json.RawMessage `json:"data"`
+}
+
+// EventPreviewSubscription describes an enabled subscription considered by a
+// read-only routing preview. Filter is the normalized manifest predicate.
+type EventPreviewSubscription struct {
+	AppSlug        string          `json:"app_slug"`
+	SubscriptionID string          `json:"subscription_id"`
+	Source         string          `json:"source"`
+	Type           string          `json:"type"`
+	Filter         json.RawMessage `json:"filter"`
+	Reason         string          `json:"reason"`
+}
+
+// PreviewEventResponse summarizes the same account-scoped matching decision
+// used by the asynchronous fanout worker. Subscription slices are bounded
+// samples; the counts cover every candidate.
+type PreviewEventResponse struct {
+	EventID             string                     `json:"event_id"`
+	Source              string                     `json:"source"`
+	Type                string                     `json:"type"`
+	CandidateCount      int                        `json:"candidate_count"`
+	MatchedCount        int                        `json:"matched_count"`
+	FilterMismatchCount int                        `json:"filter_mismatch_count"`
+	OtherMismatchCount  int                        `json:"other_mismatch_count"`
+	Matches             []EventPreviewSubscription `json:"matches"`
+	NonMatches          []EventPreviewSubscription `json:"non_matches"`
+	Truncated           bool                       `json:"truncated"`
+}
+
 // SendAppMessageRequest is the application-inbox contract. Gregale wraps the
 // caller's data in a CloudEvents 1.0 envelope and places it on the target
 // application's durable invocation queue. Source defaults to "gregale.send";
@@ -368,13 +407,16 @@ type PreviewEnvironmentStatusResponse struct {
 // PreviewEnvironmentMemberResponse identifies one expected workload and its
 // newest preview deployment at the recorded PR head.
 type PreviewEnvironmentMemberResponse struct {
-	AppID            string `json:"app_id"`
-	Slug             string `json:"slug"`
-	WorkloadName     string `json:"workload_name"`
-	AppStatus        string `json:"app_status"`
-	PreviewState     string `json:"preview_state"`
-	DeploymentID     string `json:"deployment_id"`
-	DeploymentStatus string `json:"deployment_status"`
+	AppID            string                            `json:"app_id"`
+	Slug             string                            `json:"slug"`
+	WorkloadName     string                            `json:"workload_name"`
+	AppStatus        string                            `json:"app_status"`
+	PreviewState     string                            `json:"preview_state"`
+	DeploymentID     string                            `json:"deployment_id"`
+	DeploymentStatus string                            `json:"deployment_status"`
+	ExpiresAt        *time.Time                        `json:"expires_at,omitempty"`
+	Changes          *PreviewProductionChangesResponse `json:"changes_from_production,omitempty"`
+	Links            *PreviewResourceLinksResponse     `json:"links,omitempty"`
 }
 
 // UpsertDevSessionRequest describes the application shape for an expiring,
@@ -2776,8 +2818,9 @@ type CanaryAdvanceResponse struct {
 type CreateMirrorRuleRequest struct {
 	SourceDeploymentID string   `json:"source_deployment_id"`
 	MirrorDeploymentID string   `json:"mirror_deployment_id"`
-	Percent            int      `json:"percent"`
+	Percent            *int     `json:"percent,omitempty"`
 	IncludeBody        bool     `json:"include_body"`
+	AllowUnsafeMethods bool     `json:"allow_unsafe_methods"`
 	RedactHeaders      []string `json:"redact_headers"`
 }
 
@@ -2790,10 +2833,11 @@ type CreateMirrorRuleRequest struct {
 // the customer's additive list; a PATCH that omits the field
 // leaves it untouched.
 type UpdateMirrorRuleRequest struct {
-	Percent       *int      `json:"percent,omitempty"`
-	Enabled       *bool     `json:"enabled,omitempty"`
-	IncludeBody   *bool     `json:"include_body,omitempty"`
-	RedactHeaders *[]string `json:"redact_headers,omitempty"`
+	Percent            *int      `json:"percent,omitempty"`
+	Enabled            *bool     `json:"enabled,omitempty"`
+	IncludeBody        *bool     `json:"include_body,omitempty"`
+	AllowUnsafeMethods *bool     `json:"allow_unsafe_methods,omitempty"`
+	RedactHeaders      *[]string `json:"redact_headers,omitempty"`
 }
 
 // MirrorRuleResponse is the canonical mirror-rule response
@@ -2813,6 +2857,7 @@ type MirrorRuleResponse struct {
 	Percent               int       `json:"percent"`
 	Enabled               bool      `json:"enabled"`
 	IncludeBody           bool      `json:"include_body"`
+	AllowUnsafeMethods    bool      `json:"allow_unsafe_methods"`
 	RedactHeaders         []string  `json:"redact_headers"`
 	AlwaysStrippedHeaders []string  `json:"always_stripped_headers"`
 	CreatedAt             time.Time `json:"created_at"`
@@ -2843,16 +2888,17 @@ type MirrorRuleListResponse struct {
 // the parsed window in seconds so the CLI can render "last 1h"
 // without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations     int64   `json:"total_invocations"`
-	ChangedResponseCount int64   `json:"changed_response_count"`
-	ChangedResponsePct   float64 `json:"changed_response_percent"`
-	StatusDiffCount      int64   `json:"status_diff_count"`
-	SchemaDiffCount      int64   `json:"schema_diff_count"`
-	BodyDiffCount        int64   `json:"body_diff_count"`
-	MeanLatencyDiffMs    int64   `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs     int64   `json:"p99_latency_diff_ms"`
-	CrashCount           int64   `json:"crash_count"`
-	WindowSeconds        int     `json:"window_seconds"`
+	TotalInvocations          int64   `json:"total_invocations"`
+	ChangedResponseCount      int64   `json:"changed_response_count"`
+	ChangedResponsePct        float64 `json:"changed_response_percent"`
+	StatusDiffCount           int64   `json:"status_diff_count"`
+	SchemaDiffCount           int64   `json:"schema_diff_count"`
+	BodyDiffCount             int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs         int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs          int64   `json:"p99_latency_diff_ms"`
+	CrashCount                int64   `json:"crash_count"`
+	IncompleteComparisonCount int64   `json:"incomplete_comparison_count"`
+	WindowSeconds             int     `json:"window_seconds"`
 }
 
 // MirrorReplayBatchRequest is an explicitly sanitized historical request
@@ -4567,13 +4613,16 @@ type AccountTraceMatch struct {
 // Payloads, result bodies, and arbitrary invocation headers are intentionally
 // absent. Source distinguishes async, queue, delayed, cron, and replay rows.
 type AccountTraceInvocation struct {
-	App         string `json:"app"`
-	ID          string `json:"id"`
-	Source      string `json:"source"`
-	QueueName   string `json:"queue_name,omitempty"`
-	State       string `json:"state"`
-	Attempts    int    `json:"attempts"`
-	CreatedAt   string `json:"created_at"`
+	App       string `json:"app"`
+	ID        string `json:"id"`
+	Source    string `json:"source"`
+	QueueName string `json:"queue_name,omitempty"`
+	State     string `json:"state"`
+	Attempts  int    `json:"attempts"`
+	CreatedAt string `json:"created_at"`
+	// StartedAt is the most recent claim/delivery time. It is updated when
+	// an invocation is retried and is omitted until the first claim.
+	StartedAt   string `json:"started_at,omitempty"`
 	CompletedAt string `json:"completed_at,omitempty"`
 	Traceparent string `json:"traceparent,omitempty"`
 }
@@ -8502,19 +8551,20 @@ func isHeaderToken(s string) bool {
 // deprecated and will be dropped in the release after the
 // deprecation notice.
 type EdgeRuleResponse struct {
-	ID           string          `json:"id"`
-	AccountID    string          `json:"account_id"`
-	AppID        string          `json:"app_id"`
-	MatchHost    string          `json:"match_host"`
-	MatchPath    string          `json:"match_path"`
-	MatchMethods []string        `json:"match_methods"`
-	Priority     int             `json:"priority"`
-	Enabled      bool            `json:"enabled"`
-	Kind         string          `json:"kind"`
-	ValidateMode string          `json:"validate_mode,omitempty"`
-	Action       json.RawMessage `json:"action"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID           string            `json:"id"`
+	AccountID    string            `json:"account_id"`
+	AppID        string            `json:"app_id"`
+	MatchHost    string            `json:"match_host"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods"`
+	MatchHeaders map[string]string `json:"match_headers"`
+	Priority     int               `json:"priority"`
+	Enabled      bool              `json:"enabled"`
+	Kind         string            `json:"kind"`
+	ValidateMode string            `json:"validate_mode,omitempty"`
+	Action       json.RawMessage   `json:"action"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 // CreateEdgeRuleRequest is the wire shape for POST /v1/apps/{slug}/edge-rules.
@@ -8527,14 +8577,15 @@ type EdgeRuleResponse struct {
 // action-level `action.validate_mode` (deprecated). Empty == 'block'
 // (the SQL-side default; the column is NOT NULL).
 type CreateEdgeRuleRequest struct {
-	MatchHost    string          `json:"match_host"`
-	MatchPath    string          `json:"match_path"`
-	MatchMethods []string        `json:"match_methods,omitempty"`
-	Priority     *int            `json:"priority,omitempty"`
-	Enabled      *bool           `json:"enabled,omitempty"`
-	Kind         string          `json:"kind"`
-	ValidateMode string          `json:"validate_mode,omitempty"`
-	Action       json.RawMessage `json:"action"`
+	MatchHost    string            `json:"match_host"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string `json:"match_headers,omitempty"`
+	Priority     *int              `json:"priority,omitempty"`
+	Enabled      *bool             `json:"enabled,omitempty"`
+	Kind         string            `json:"kind"`
+	ValidateMode string            `json:"validate_mode,omitempty"`
+	Action       json.RawMessage   `json:"action"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -8546,13 +8597,91 @@ type CreateEdgeRuleRequest struct {
 // existing column value. Customers who want to reset to 'block'
 // must send the explicit string "block".
 type UpdateEdgeRuleRequest struct {
-	MatchHost    *string          `json:"match_host,omitempty"`
-	MatchPath    *string          `json:"match_path,omitempty"`
-	MatchMethods *[]string        `json:"match_methods,omitempty"`
-	Priority     *int             `json:"priority,omitempty"`
-	Enabled      *bool            `json:"enabled,omitempty"`
-	ValidateMode *string          `json:"validate_mode,omitempty"`
-	Action       *json.RawMessage `json:"action,omitempty"`
+	MatchHost    *string            `json:"match_host,omitempty"`
+	MatchPath    *string            `json:"match_path,omitempty"`
+	MatchMethods *[]string          `json:"match_methods,omitempty"`
+	MatchHeaders *map[string]string `json:"match_headers,omitempty"`
+	Priority     *int               `json:"priority,omitempty"`
+	Enabled      *bool              `json:"enabled,omitempty"`
+	ValidateMode *string            `json:"validate_mode,omitempty"`
+	Action       *json.RawMessage   `json:"action,omitempty"`
+}
+
+const (
+	EdgeRuleMatchHeadersMaxCount     = 10
+	EdgeRuleMatchHeaderMaxValueBytes = 1024
+)
+
+// NormalizeEdgeRuleMatchHeaders validates and lowercases exact-value request
+// header selectors. Header names are case-insensitive, so case-only duplicate
+// keys are rejected instead of leaving matching dependent on JSON map order.
+func NormalizeEdgeRuleMatchHeaders(headers map[string]string) (map[string]string, error) {
+	if len(headers) > EdgeRuleMatchHeadersMaxCount {
+		return nil, fmt.Errorf("match_headers may contain at most %d names", EdgeRuleMatchHeadersMaxCount)
+	}
+	out := make(map[string]string, len(headers))
+	for name, value := range headers {
+		if !isEdgeRuleMatchHeaderName(name) {
+			return nil, fmt.Errorf("match_headers contains invalid HTTP header name %q", name)
+		}
+		name = strings.ToLower(name)
+		if name == "host" {
+			return nil, fmt.Errorf("match_headers cannot include Host; use match_host")
+		}
+		if _, exists := out[name]; exists {
+			return nil, fmt.Errorf("match_headers contains duplicate header name %q (header names are case-insensitive)", name)
+		}
+		if len(value) > EdgeRuleMatchHeaderMaxValueBytes || strings.ContainsAny(value, "\r\n\x00") {
+			return nil, fmt.Errorf("match_headers value for %q must be at most %d bytes and contain no CR, LF, or NUL", name, EdgeRuleMatchHeaderMaxValueBytes)
+		}
+		out[name] = value
+	}
+	return out, nil
+}
+
+// EdgeRuleRequestHeadersMatch reports whether each configured selector has an
+// exact matching request-header value. Header names compare case-insensitively;
+// any one value satisfies a selector when the request repeats a header.
+func EdgeRuleRequestHeadersMatch(expected map[string]string, actual http.Header) bool {
+	for expectedName, expectedValue := range expected {
+		found := false
+		for actualName, values := range actual {
+			if !strings.EqualFold(expectedName, actualName) {
+				continue
+			}
+			for _, value := range values {
+				if value == expectedValue {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func isEdgeRuleMatchHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		switch c {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // RekeyProgress is the response body of
@@ -9848,15 +9977,16 @@ type DebugReplayResponse struct {
 // durable replay invocation. It intentionally contains no request body,
 // headers, response body, or customer span attributes.
 type DebugReplayComparison struct {
-	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
-	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
-	SourceStatusCode   int    `json:"source_status_code"`
-	MirrorStatusCode   int    `json:"mirror_status_code"`
-	SourceLatencyMS    int    `json:"source_latency_ms"`
-	MirrorLatencyMS    int    `json:"mirror_latency_ms"`
-	StatusDiff         bool   `json:"status_diff"`
-	BodyDiff           bool   `json:"body_diff"`
-	Crashed            bool   `json:"crashed"`
+	SourceDeploymentID   string `json:"source_deployment_id,omitempty"`
+	MirrorDeploymentID   string `json:"mirror_deployment_id,omitempty"`
+	SourceStatusCode     int    `json:"source_status_code"`
+	MirrorStatusCode     int    `json:"mirror_status_code"`
+	SourceLatencyMS      int    `json:"source_latency_ms"`
+	MirrorLatencyMS      int    `json:"mirror_latency_ms"`
+	StatusDiff           bool   `json:"status_diff"`
+	BodyDiff             bool   `json:"body_diff"`
+	Crashed              bool   `json:"crashed"`
+	ComparisonIncomplete bool   `json:"comparison_incomplete"`
 }
 
 // ---- SAFE-RELEASES-R (issue #976 / ADR-122 / Mega PR #2 commit 6) ----
@@ -10067,7 +10197,7 @@ type JobResponse struct {
 	ImageResolvedDigest string `json:"image_resolved_digest,omitempty"`
 	// ImageStorageKey is the canonical ext4 artifact vmmd boots.
 	ImageStorageKey string `json:"image_storage_key,omitempty"`
-	// ImageMaterializationStatus is pending, ready, or failed.
+	// ImageMaterializationStatus is pending, verifying_legacy, ready, or failed.
 	ImageMaterializationStatus string            `json:"image_materialization_status"`
 	ImageMaterializationError  string            `json:"image_materialization_error,omitempty"`
 	ImageMaterializedAt        string            `json:"image_materialized_at,omitempty"`
