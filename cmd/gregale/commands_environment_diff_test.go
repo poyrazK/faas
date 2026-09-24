@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestEnvironmentDiffUsesLinkedProject(t *testing.T) {
@@ -28,5 +30,24 @@ func TestEnvironmentDiffUsesLinkedProject(t *testing.T) {
 	want := "/v1/projects/shop/environments/production/diff"
 	if f.sawMethod != http.MethodGet || f.sawPath != want || f.sawQuery != "from=staging" {
 		t.Fatalf("request = %s %s?%s, want GET %s?from=staging", f.sawMethod, f.sawPath, f.sawQuery, want)
+	}
+}
+
+func TestSecretCellSummaryShowsKnownAndUnknownVersions(t *testing.T) {
+	tests := []struct {
+		name string
+		cell api.ProjectEnvironmentSecretCellResponse
+		want string
+	}{
+		{"known", api.ProjectEnvironmentSecretCellResponse{Present: true, Version: 12, ValueHash: "1111111111111111"}, "version 12 (fingerprint 1111111111111111)"},
+		{"legacy", api.ProjectEnvironmentSecretCellResponse{Present: true, ValueHash: "1111111111111111"}, "version unknown (fingerprint 1111111111111111)"},
+		{"managed", api.ProjectEnvironmentSecretCellResponse{Present: true, CredentialGeneration: 9}, "generation 9"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := secretCellSummary(tc.cell); got != tc.want {
+				t.Fatalf("summary = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

@@ -273,6 +273,16 @@ func (m *MemStore) copyProjectEnvironmentSecretsLocked(apps map[string]string, s
 	for _, secret := range rows {
 		secret.Scope, secret.CreatedAt, secret.UpdatedAt = target, now, now
 		secret.Ciphertext = append([]byte(nil), secret.Ciphertext...)
+		// The secret's known customer revision follows the clone. Runtime
+		// delivery does not: the new scope must be started independently.
+		secret.DeliveryVersion = 1
+		secret.DeliveredVersion = 0
+		secret.DeliveryStatus = SecretDeliveryPending
+		secret.LastDeliveryAttemptAt = nil
+		secret.LastDeliveredAt = nil
+		secret.LastDeliveryErrorCode = ""
+		secret.LastDeliveredWakeID = ""
+		secret.LastDeliveredInstanceID = ""
 		m.secrets[secretKey{AppID: secret.AppID, Scope: target, Key: secret.Key}] = secret
 	}
 	return len(rows)

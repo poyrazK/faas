@@ -563,7 +563,6 @@ RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
 RequeueBuild
-ResealAppSecretWithKidAndValueHashInScope
 ResetAppWebhookDeliveryFromDead
 ResolveStaleRegressionObservations
 ResolveStatusIncident

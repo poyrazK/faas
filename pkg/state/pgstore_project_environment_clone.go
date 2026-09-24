@@ -274,8 +274,8 @@ func copyProjectEnvironmentScopedValues(ctx context.Context, tx pgx.Tx, clone Pr
 		return 0, 0, mapErr(err)
 	}
 	secretTag, err := tx.Exec(ctx, `
-		insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash)
-		select s.account_id, s.app_id, $4, s.key, s.ciphertext, s.kid, s.value_hash
+		insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version)
+		select s.account_id, s.app_id, $4, s.key, s.ciphertext, s.kid, s.value_hash, s.secret_version
 		  from app_secrets s join apps a on a.id = s.app_id
 		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
 		   and s.managed_postgres_binding_id is null and s.managed_object_storage_credential_id is null

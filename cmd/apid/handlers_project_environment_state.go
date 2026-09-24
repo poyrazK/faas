@@ -156,7 +156,7 @@ func projectEnvironmentSecrets(rows []state.AppSecret) []api.ProjectEnvironmentS
 	for _, row := range rows {
 		managedBy, bindingID := projectEnvironmentSecretOwner(row)
 		out = append(out, api.ProjectEnvironmentSecretResponse{
-			Key: row.Key, ValueHash: row.ValueHash, ManagedBy: managedBy, BindingID: bindingID,
+			Key: row.Key, ValueHash: row.ValueHash, Version: row.SecretVersion, ManagedBy: managedBy, BindingID: bindingID,
 			CredentialGeneration: row.ManagedCredentialGeneration,
 			UpdatedAt:            row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		})
@@ -360,12 +360,15 @@ func projectEnvironmentSecretDiffKind(before, after api.ProjectEnvironmentSecret
 	if before.ValueHash != after.ValueHash {
 		return "changed"
 	}
+	if before.Version > 0 && after.Version > 0 && before.Version != after.Version {
+		return "version_drift"
+	}
 	return "unchanged"
 }
 
 func projectEnvironmentSecretCell(secret api.ProjectEnvironmentSecretResponse, present bool) api.ProjectEnvironmentSecretCellResponse {
 	return api.ProjectEnvironmentSecretCellResponse{
-		Present: present, ValueHash: secret.ValueHash, ManagedBy: secret.ManagedBy,
+		Present: present, ValueHash: secret.ValueHash, Version: secret.Version, ManagedBy: secret.ManagedBy,
 		BindingID: secret.BindingID, CredentialGeneration: secret.CredentialGeneration,
 	}
 }

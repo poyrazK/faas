@@ -2406,8 +2406,8 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("GetAppSecretInScope(v1): %v", err)
 	}
-	if first.DeliveryVersion != 1 || first.DeliveryStatus != state.SecretDeliveryPending {
-		t.Fatalf("initial delivery metadata = version %d status %q, want 1/pending", first.DeliveryVersion, first.DeliveryStatus)
+	if first.SecretVersion != 1 || first.DeliveryVersion != 1 || first.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("initial secret metadata = revision %d delivery %d status %q, want 1/1/pending", first.SecretVersion, first.DeliveryVersion, first.DeliveryStatus)
 	}
 
 	result := state.AppSecretDeliveryResult{
@@ -2427,8 +2427,8 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("GetAppSecretInScope(v2): %v", err)
 	}
-	if rotated.DeliveryVersion != 2 || rotated.DeliveredVersion != 1 || rotated.DeliveryStatus != state.SecretDeliveryPending {
-		t.Fatalf("rotated delivery metadata = current %d delivered %d status %q, want 2/1/pending", rotated.DeliveryVersion, rotated.DeliveredVersion, rotated.DeliveryStatus)
+	if rotated.SecretVersion != 2 || rotated.DeliveryVersion != 2 || rotated.DeliveredVersion != 1 || rotated.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("rotated secret metadata = revision %d current %d delivered %d status %q, want 2/2/1/pending", rotated.SecretVersion, rotated.DeliveryVersion, rotated.DeliveredVersion, rotated.DeliveryStatus)
 	}
 
 	updated, err = fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
@@ -2439,8 +2439,15 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("GetAppSecretInScope(after stale delivery): %v", err)
 	}
-	if current.DeliveryVersion != 2 || current.DeliveryStatus != state.SecretDeliveryPending {
-		t.Fatalf("stale delivery changed current metadata = version %d status %q, want 2/pending", current.DeliveryVersion, current.DeliveryStatus)
+	if current.SecretVersion != 2 || current.DeliveryVersion != 2 || current.DeliveryStatus != state.SecretDeliveryPending {
+		t.Fatalf("stale delivery changed current metadata = revision %d delivery %d status %q, want 2/2/pending", current.SecretVersion, current.DeliveryVersion, current.DeliveryStatus)
+	}
+	if err := fx.Store.ResealAppSecretWithKidAndValueHashInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, "rekeyed", "1111111111111111", []byte("cipher-resealed")); err != nil {
+		t.Fatalf("ResealAppSecretWithKidAndValueHashInScope: %v", err)
+	}
+	resealed, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil || resealed.SecretVersion != 2 || resealed.DeliveryVersion != 2 {
+		t.Fatalf("reseal changed secret revision: secret=%+v err=%v", resealed, err)
 	}
 }
 

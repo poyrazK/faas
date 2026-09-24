@@ -26748,12 +26748,13 @@ components:
         updated_at: { type: string, format: date-time }
 
     ProjectEnvironmentSecretResponse:
-      description: Safe secret metadata. Secret values and ciphertext are never included.
+      description: Safe secret metadata. Version is omitted for legacy secrets with unknown history; secret values and ciphertext are never included.
       type: object
       required: [key]
       properties:
         key: { type: string }
         value_hash: { type: string, pattern: '^[a-f0-9]{16}$' }
+        version: { type: integer, format: int64, minimum: 1 }
         managed_by: { type: string, enum: [managed_postgres, object_storage] }
         binding_id: { type: string }
         credential_generation: { type: integer, format: int64, minimum: 1 }
@@ -26859,12 +26860,13 @@ components:
         after: { type: string }
 
     ProjectEnvironmentSecretCellResponse:
-      description: One side of a secret comparison; never contains secret material.
+      description: One side of a secret comparison. Version is omitted when unknown; never contains secret material.
       type: object
       required: [present]
       properties:
         present: { type: boolean }
         value_hash: { type: string, pattern: '^[a-f0-9]{16}$' }
+        version: { type: integer, format: int64, minimum: 1 }
         managed_by: { type: string, enum: [managed_postgres, object_storage] }
         binding_id: { type: string }
         credential_generation: { type: integer, format: int64, minimum: 1 }
@@ -26875,7 +26877,7 @@ components:
       required: [key, kind, before, after]
       properties:
         key: { type: string }
-        kind: { type: string, enum: [added, removed, changed, unknown] }
+        kind: { type: string, enum: [added, removed, changed, version_drift, unknown] }
         before: { $ref: '#/components/schemas/ProjectEnvironmentSecretCellResponse' }
         after: { $ref: '#/components/schemas/ProjectEnvironmentSecretCellResponse' }
 

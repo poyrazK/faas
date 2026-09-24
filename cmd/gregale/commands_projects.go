@@ -436,10 +436,16 @@ func secretCellSummary(cell api.ProjectEnvironmentSecretCellResponse) string {
 	if cell.CredentialGeneration > 0 {
 		return fmt.Sprintf("generation %d", cell.CredentialGeneration)
 	}
-	if cell.ValueHash == "" {
-		return "present (fingerprint unavailable)"
+	if cell.Version > 0 {
+		if cell.ValueHash != "" {
+			return fmt.Sprintf("version %d (fingerprint %s)", cell.Version, cell.ValueHash)
+		}
+		return fmt.Sprintf("version %d", cell.Version)
 	}
-	return "fingerprint " + cell.ValueHash
+	if cell.ValueHash == "" {
+		return "present (version and fingerprint unknown)"
+	}
+	return "version unknown (fingerprint " + cell.ValueHash + ")"
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {
