@@ -110,13 +110,11 @@ const PreviewJanitorMaxPerTick = 100
 // janitor uses. Defined alongside appErrorsPurgeStore so the
 // pattern stays consistent for any future apid-side cron.
 //
-// The store-level fan-out is intentionally minimal: reads use
-// the dedicated ListPreviewsForTeardown (so the SQL is owned
-// by the store, not duplicated here) and writes use the
-// existing SetPreviewPrState + SoftDeleteAppCascade. Two
-// surface methods, both already on pkg/state.Store.
+// The store owns the conditional teardown claim so a preview reopened after
+// the sweep snapshot cannot be deleted by that stale snapshot.
 type previewJanitorStore interface {
 	ListPreviewsForTeardown(ctx context.Context, now time.Time, maxPerTick int) ([]state.App, error)
+	ClaimPreviewTeardown(ctx context.Context, observed state.App, now time.Time) (state.App, error)
 	SetPreviewPrState(ctx context.Context, appID, prState string) (state.App, error)
 	SoftDeleteAppCascade(ctx context.Context, id string) (state.App, error)
 }
@@ -135,13 +133,11 @@ type previewJanitorNotifier interface {
 // per-tick failures are logged + observed; the loop continues;
 // one bad row MUST NOT silently disable the cron.
 //
-// The closed→stale grace is NOT a janitor concern — it lives
-// entirely on the row's preview_expires_at column, which the
-// githubd dispatcher re-stamps at provision time
-// (created_at + 7d) and on every sync / reopened event. The
-// janitor treats "PreviewExpiresAt < now() AND PR state ∈
-// {closed, open}" as past-grace via transition() below; no
-// in-memory grace tracking is needed.
+// The open-preview TTL lives on preview_expires_at and is refreshed
+// on each sync / reopen. When GitHub closes the PR, githubd atomically
+// replaces that lease with state.PRPreviewClosedGrace. The janitor
+// treats an expired lease in either open or closed state as eligible
+// for teardown; no in-memory grace tracking is needed.
 type previewJanitor struct {
 	store   previewJanitorStore
 	notif   previewJanitorNotifier
@@ -231,7 +227,9 @@ func (j *previewJanitor) Run(ctx context.Context) {
 //     predicate already excludes torn_down rows so the sweep is
 //     idempotent.
 //
-//  2. For each row: determine the transition.
+//  2. For each row: determine eligibility, then claim teardown only if the
+//     state and lease still match the sweep snapshot. A concurrent reopen
+//     makes the claim fail without touching the preview.
 //
 //     - preview_pr_state='open' AND preview_expires_at<now:
 //     promote to 'stale' (TTL elapsed with no PR close —
@@ -244,12 +242,8 @@ func (j *previewJanitor) Run(ctx context.Context) {
 //     - preview_pr_state='closed': still in grace; leave alone.
 //     - preview_pr_state='stale': already promoted; tombstone.
 //
-//  3. Tombstone = SetPreviewPrState='torn_down' followed by
-//     SoftDeleteAppCascade. The two writes are NOT in a single
-//     transaction by design: a crash between them is recoverable
-//     on the next tick (ListPreviewsForTeardown observes
-//     status='deleted' rows and the SetPreviewPrState is the
-//     second idempotent write).
+//  3. After cleanup, soft-delete and then mark torn_down. A crash between
+//     those writes leaves a deleted tearing_down row for the next sweep.
 //
 //  4. Emit db.NotifyAppDelete on every tombstoned row so schedd
 //     reaps in-flight instances via its existing app_delete
@@ -266,26 +260,26 @@ func (j *previewJanitor) sweepOnce(ctx context.Context) error {
 	var stale, tombstoned int
 	for _, row := range rows {
 		next, action := j.transition(row, now)
-		if next != "" {
-			if _, err := j.store.SetPreviewPrState(ctx, row.ID, next); err != nil {
-				if !errors.Is(err, state.ErrNotFound) {
-					j.log.Warn("preview janitor: set state failed",
-						"app_id", row.ID, "slug", row.Slug,
-						"to", next, "err", err)
-				}
-				continue
-			}
-			stale++
-			row.PreviewPrState = next
+		if action != actionTombstone {
+			continue
 		}
-		if action == actionTombstone {
-			if err := j.tombstone(ctx, row); err != nil {
-				j.log.Warn("preview janitor: tombstone failed",
+		claimed, err := j.store.ClaimPreviewTeardown(ctx, row, now)
+		if err != nil {
+			if !errors.Is(err, state.ErrNotFound) {
+				j.log.Warn("preview janitor: claim teardown failed",
 					"app_id", row.ID, "slug", row.Slug, "err", err)
-				continue
 			}
-			tombstoned++
+			continue
 		}
+		if next != "" {
+			stale++
+		}
+		if err := j.tombstone(ctx, claimed); err != nil {
+			j.log.Warn("preview janitor: tombstone failed",
+				"app_id", row.ID, "slug", row.Slug, "err", err)
+			continue
+		}
+		tombstoned++
 	}
 	if stale > 0 || tombstoned > 0 {
 		j.log.Info("preview janitor: sweep",
@@ -313,15 +307,16 @@ const (
 // table can exercise every combination without exercising the
 // store.
 //
-// The grace decision is encoded entirely on the row's
-// PreviewExpiresAt column (set by the githubd dispatcher at
-// provision time as created_at + 7d, refreshed on every sync /
-// reopened event). The janitor reads "expired" once and
-// routes through the state machine — no in-memory grace
-// bookkeeping is needed.
+// The grace decision is encoded entirely on PreviewExpiresAt: open
+// previews use their configured TTL, while the close webhook atomically
+// replaces it with the fixed 24-hour post-close deadline. The janitor
+// reads "expired" once and routes through the state machine — no
+// in-memory grace bookkeeping is needed.
 func (j *previewJanitor) transition(row state.App, now time.Time) (string, transitionAction) {
 	expired := row.PreviewExpiresAt != nil && row.PreviewExpiresAt.Before(now)
 	switch row.PreviewPrState {
+	case state.PreviewPrStateTearingDown:
+		return "", actionTombstone
 	case state.PreviewPrStateStale:
 		return "", actionTombstone
 	case state.PreviewPrStateClosed:
@@ -338,13 +333,9 @@ func (j *previewJanitor) transition(row state.App, now time.Time) (string, trans
 	return "", actionNone
 }
 
-// tombstone flips preview_pr_state='torn_down' then
-// status='deleted'. Each write is idempotent: SetPreviewPrState
-// refuses to relabel a closed-state row out of order (it would
-// surface ErrInvalidPreviewPrState on a corrupt value, but
-// 'torn_down' is always in the closed set). SoftDeleteAppCascade
-// is also idempotent (returns the freshly-tombstoned row or
-// ErrNotFound).
+// tombstone soft-deletes a claimed preview, then marks it torn_down. Keeping
+// tearing_down until after the soft-delete makes a crash retryable; refreshes
+// cannot reopen a claimed row while external cleanup runs.
 //
 // On success, emits db.NotifyAppDelete so schedd reaps in-flight
 // instances for the deleted app — same channel the dashboard
@@ -356,17 +347,17 @@ func (j *previewJanitor) tombstone(ctx context.Context, row state.App) error {
 			return fmt.Errorf("cleanup preview resources: %w", err)
 		}
 	}
-	if _, err := j.store.SetPreviewPrState(ctx, row.ID, state.PreviewPrStateTornDown); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return nil
-		}
-		return fmt.Errorf("set torn_down: %w", err)
-	}
 	if _, err := j.store.SoftDeleteAppCascade(ctx, row.ID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return nil
 		}
 		return fmt.Errorf("soft delete: %w", err)
+	}
+	if _, err := j.store.SetPreviewPrState(ctx, row.ID, state.PreviewPrStateTornDown); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("set torn_down: %w", err)
 	}
 	// Emit the notify AFTER both writes succeed — schedd's
 	// subscriber will see a row that's already status='deleted',

@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,6 +93,74 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 		_, _ = conn.Exec(unlockCtx, `select pg_advisory_unlock(hashtextextended($1, 0))`, appID)
 		cancel()
 		conn.Release()
+	}, nil
+}
+
+// AcquireDeploymentActivationLock holds a session-scoped advisory lock across
+// the public smoke request and the eventual live/failed transition. The
+// notification outbox broadcasts snapshot_written to every imaged process;
+// the loser reloads the deployment after this lock and observes the winner's
+// terminal state instead of running a second verification wake. Contenders
+// must not hold a pool connection while waiting: imaged's three-connection
+// pool can otherwise be exhausted by its LISTEN connection and two activation
+// handlers, leaving the lock holder unable to load the deployment.
+func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymentID string) (func(context.Context), error) {
+	deploymentID = strings.TrimSpace(deploymentID)
+	if deploymentID == "" {
+		return nil, errors.New("state: deployment activation lock requires deployment id")
+	}
+	if s == nil || s.pool == nil {
+		return nil, errors.New("state: pgstore has nil pool")
+	}
+	var conn *pgxpool.Conn
+	for {
+		var err error
+		conn, err = db.DirectPool(s.pool).Acquire(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
+		}
+		var locked bool
+		err = conn.QueryRow(ctx,
+			`select pg_try_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&locked)
+		if err != nil {
+			// Cancellation can race a server-side lock grant. Closing the
+			// session is the only safe way to rule out an orphaned lock.
+			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			_ = conn.Hijack().Close(closeCtx)
+			cancel()
+			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+		}
+		if locked {
+			break
+		}
+		conn.Release()
+		// A second subscriber may contend for the same deployment while the
+		// winner still needs this pool for ordinary reads and stage writes.
+		// Give the connection back before retrying or waiting for cancellation.
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	var once sync.Once
+	return func(ctx context.Context) {
+		once.Do(func() {
+			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			var unlocked bool
+			unlockErr := conn.QueryRow(unlockCtx,
+				`select pg_advisory_unlock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&unlocked)
+			cancel()
+			if unlockErr != nil || !unlocked {
+				// Never return a connection carrying an uncertain session lock
+				// to the pool: a later activation could block behind itself.
+				closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+				_ = conn.Hijack().Close(closeCtx)
+				closeCancel()
+				return
+			}
+			conn.Release()
+		})
 	}, nil
 }
 
@@ -2683,12 +2752,12 @@ func (s *PgStore) ListPreviewsForTeardown(ctx context.Context, now time.Time, ma
 	          from apps
 	         where preview_of_slug is not null
 	           and coalesce(preview_pr_state, '') <> $1
-	           and (coalesce(preview_pr_state, '') in ($2, $3)
-	                or (preview_expires_at is not null and preview_expires_at < $4))
+	           and (coalesce(preview_pr_state, '') in ($2, $3, $4)
+	                or (preview_expires_at is not null and preview_expires_at < $5))
 	         order by preview_expires_at asc nulls last
-	         limit $5`
+	         limit $6`
 	rows, err := s.pool.Query(ctx, sel,
-		PreviewPrStateTornDown, PreviewPrStateClosed, PreviewPrStateStale,
+		PreviewPrStateTornDown, PreviewPrStateClosed, PreviewPrStateStale, PreviewPrStateTearingDown,
 		now.UTC(), maxPerTick)
 	if err != nil {
 		return nil, fmt.Errorf("state: list previews for teardown: %w", err)
@@ -2715,7 +2784,30 @@ func (s *PgStore) SetPreviewPrState(ctx context.Context, appID, prState string) 
 	row := s.pool.QueryRow(ctx, `
 		update apps set preview_pr_state = $2
 		where id = $1 and preview_of_slug is not null
+		  and (preview_pr_state is distinct from 'tearing_down' or $2 = 'torn_down')
 		returning `+appsSelectColumns, appID, prState)
+	if err := scanAppInto(&a, row); err != nil {
+		return App{}, mapErr(err)
+	}
+	return a, nil
+}
+
+// ClosePRPreview atomically starts the post-close grace period. A duplicate
+// webhook delivery leaves an already-closed preview's deadline unchanged;
+// stale or torn-down rows cannot be reopened by a delayed close event.
+func (s *PgStore) ClosePRPreview(ctx context.Context, appID string, expiresAt time.Time) (App, error) {
+	var a App
+	row := s.pool.QueryRow(ctx, `
+		update apps
+		set preview_pr_state = $2,
+		    preview_expires_at = case when preview_pr_state = $3 or preview_expires_at is null then $4 else preview_expires_at end
+		where id = $1
+		  and preview_of_slug is not null
+		  and coalesce(preview_pr_number, 0) > 0
+		  and status <> 'deleted'
+		  and preview_pr_state in ($3, $2)
+		returning `+appsSelectColumns,
+		appID, PreviewPrStateClosed, PreviewPrStateOpen, expiresAt)
 	if err := scanAppInto(&a, row); err != nil {
 		return App{}, mapErr(err)
 	}
@@ -2735,7 +2827,9 @@ func (s *PgStore) RefreshDevSession(ctx context.Context, appID string, expiresAt
 		  and preview_of_slug is not null
 		  and coalesce(preview_pr_number, 0) = 0
 		  and status <> 'deleted'
-		returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
+		  and preview_pr_state is distinct from 'tearing_down'
+		  and preview_pr_state is distinct from 'torn_down'
+	returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
 	if err := scanAppInto(&a, row); err != nil {
 		return App{}, mapErr(err)
 	}
@@ -2753,7 +2847,9 @@ func (s *PgStore) RefreshPRPreview(ctx context.Context, appID string, expiresAt 
 		  and preview_of_slug is not null
 		  and coalesce(preview_pr_number, 0) > 0
 		  and status <> 'deleted'
-		returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
+		  and preview_pr_state is distinct from 'tearing_down'
+		  and preview_pr_state is distinct from 'torn_down'
+	returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt)
 	if err := scanAppInto(&a, row); err != nil {
 		return App{}, mapErr(err)
 	}
@@ -4144,6 +4240,17 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 	row := s.pool.QueryRow(ctx, `
 		with removed_crons as (
 			delete from crons where app_id = $1 returning id
+		), cancelled_app_tasks as (
+			update app_tasks
+			   set status = case when status = 'queued' then 'cancelled' else status end,
+			       cancel_requested_at = case
+			           when status in ('restoring', 'running') then coalesce(cancel_requested_at, now())
+			           else cancel_requested_at
+			       end,
+			       finished_at = case when status = 'queued' then now() else finished_at end,
+			       updated_at = now()
+			 where app_id = $1 and status in ('queued', 'restoring', 'running')
+			 returning id
 		)
 		update apps
 		   set status = 'deleted',
@@ -4401,6 +4508,18 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 	}
 	if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, id); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app remove crons: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update app_tasks
+		   set status = case when status = 'queued' then 'cancelled' else status end,
+		       cancel_requested_at = case
+		           when status in ('restoring', 'running') then coalesce(cancel_requested_at, $2)
+		           else cancel_requested_at
+		       end,
+		       finished_at = case when status = 'queued' then $2 else finished_at end,
+		       updated_at = $2
+		 where app_id = $1 and status in ('queued', 'restoring', 'running')`, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app cancel app tasks: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		with candidates as (
@@ -4864,9 +4983,33 @@ func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accoun
 }
 
 func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {
+	_, err := s.deleteProjectEnvironmentWithCleanup(ctx, accountID, projectID, slug, ProjectEnvironmentCleanupResources{}, "", 0)
+	return err
+}
+
+func (s *PgStore) DeleteProjectEnvironmentWithCleanup(
+	ctx context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
+	if !resources.Empty() && (leaseToken == "" || leaseDuration <= 0 || resources.ValidateForEnvironment(slug) != nil) {
+		return ProjectEnvironmentCleanupJob{}, ErrInvalidArgument
+	}
+	return s.deleteProjectEnvironmentWithCleanup(ctx, accountID, projectID, slug, resources, leaseToken, leaseDuration)
+}
+
+func (s *PgStore) deleteProjectEnvironmentWithCleanup(
+	ctx context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("state: begin project environment delete: %w", err)
+		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: begin project environment delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -4881,12 +5024,12 @@ func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, proje
 	`, accountID, projectID, slug).Scan(&projectSlug, &protected)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
+			return ProjectEnvironmentCleanupJob{}, ErrNotFound
 		}
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
-	if slug == "production" || protected {
-		return ErrConflict
+	if slug == "production" || slug == DefaultEnvScope || protected {
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 
 	var hasLiveRelease bool
@@ -4898,38 +5041,73 @@ func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, proje
 			 where a.project_id = $1 and d.scope = $2 and d.status = 'live'
 		)
 	`, projectID, slug).Scan(&hasLiveRelease); err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	if hasLiveRelease {
-		return ErrConflict
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	var job ProjectEnvironmentCleanupJob
+	if !resources.Empty() {
+		payload, err := json.Marshal(resources)
+		if err != nil {
+			return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: encode project environment cleanup resources: %w", err)
+		}
+		createdAt := time.Now().UTC()
+		job = ProjectEnvironmentCleanupJob{
+			ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: slug,
+			Resources: cloneProjectEnvironmentCleanupResources(resources), NextAttemptAt: createdAt,
+			LeaseToken: leaseToken, CreatedAt: createdAt,
+		}
+		job.LeaseUntil = job.CreatedAt.Add(leaseDuration)
+		if _, err := tx.Exec(ctx, `
+			insert into project_environment_cleanup_jobs
+			    (id, account_id, project_id, environment_slug, resources, next_attempt_at, lease_token, lease_until)
+			values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+		`, job.ID, accountID, projectID, slug, string(payload), job.NextAttemptAt, leaseToken, job.LeaseUntil); err != nil {
+			return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from app_envs e using apps a
+		 where e.app_id = a.id and a.account_id = $1 and a.project_id = $2 and e.scope = $3
+	`, accountID, projectID, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from app_secrets s using apps a
+		 where s.app_id = a.id and a.account_id = $1 and a.project_id = $2 and s.scope = $3
+		   and s.managed_postgres_binding_id is null
+		   and s.managed_object_storage_credential_id is null
+	`, accountID, projectID, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_config_versions
 		 where project_id = $1 and environment_slug = $2
 	`, projectID, slug); err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_approvals
 		 where account_id = $1 and project_slug = $2 and environment_slug = $3
 	`, accountID, projectSlug, slug); err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	tag, err := tx.Exec(ctx, `
 		delete from project_environments
 		 where project_id = $1 and slug = $2
 	`, projectID, slug)
 	if err != nil {
-		return mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: commit project environment delete: %w", err)
+		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: commit project environment delete: %w", err)
 	}
-	return nil
+	return job, nil
 }
 
 // ApplyProjectPlan persists a project + its member apps + crons in
@@ -6250,6 +6428,9 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // to supply a deterministic UUID; all other callers keep the database-generated
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
+		return Deployment{}, err
+	}
 	d.Scope = normalizedDeploymentScope(d.Scope)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -6399,7 +6580,8 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		                          full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
-		                          stage_state, rollback_on_5xx)
+		                          stage_state, rollback_on_5xx,
+		                          release_command, release_command_shell)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -6413,7 +6595,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46)
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -6454,7 +6636,8 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 		nullString(d.Reason), nullString(d.Tag), nullString(d.DeployedBy), d.PRNumber,
 		notNullEmptyJSONRaw(d.Workflows),
 		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
-		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx)
+		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx,
+		notNullEmptyTextArray(d.ReleaseCommand), d.ReleaseCommandShell)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -8676,6 +8859,24 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 	); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: update deployment: %w", err)
 	}
+	// Release tasks are part of the deployment pipeline, not independent
+	// operator work. A queued command must never start after its candidate is
+	// cancelled; a leased command receives the same cooperative cancellation
+	// fence used by the public app-task endpoint.
+	if _, err := tx.Exec(ctx, `
+		UPDATE app_tasks
+		   SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+		       cancel_requested_at = CASE
+		           WHEN status IN ('restoring', 'running') THEN coalesce(cancel_requested_at, $2)
+		           ELSE cancel_requested_at
+		       END,
+		       finished_at = CASE WHEN status = 'queued' THEN $2 ELSE finished_at END,
+		       updated_at = $2
+		 WHERE deployment_id = $1
+		   AND kind = 'release'
+		   AND status IN ('queued', 'restoring', 'running')`, id, now); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: cancel release task: %w", err)
+	}
 
 	// Cascade-cancel every non-terminal build row attached to
 	// this deployment. Running rows also get a durable VM cleanup
@@ -9253,7 +9454,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          reason, tag, deployed_by, pr_number,
 		                          priority,
 		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
-		                          traffic_percent_explicit)
+		                          traffic_percent_explicit,
+		                          release_command, release_command_shell)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -9267,7 +9469,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45)
+		         $40, $41, $42, $43, $44, $45, $46, $47)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -9295,7 +9497,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		nullString(newDep.Reason), nullString(newDep.Tag), nullString(newDep.DeployedBy), newDep.PRNumber,
 		newDep.Priority,
 		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile),
-		newDep.TrafficPercentExplicit)
+		newDep.TrafficPercentExplicit,
+		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -22810,7 +23013,8 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(workflows, '[]'::jsonb),
 	coalesce(full_rootfs_allow_auto, false), full_rootfs_override,
 	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
-	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
+	coalesce(release_command, ARRAY[]::text[]), release_command_shell`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -22865,7 +23069,8 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.workflows, '[]'::jsonb),
 	coalesce(d.full_rootfs_allow_auto, false), d.full_rootfs_override,
 	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
-	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb)`
+	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
+	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -22981,6 +23186,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
 		&d.APIHostingReceipt,
 		&d.InferredProfile,
+		&d.ReleaseCommand, &d.ReleaseCommandShell,
 	); err != nil {
 		return mapErr(err)
 	}
@@ -23574,6 +23780,16 @@ func notNullEmptyJSONRaw(b json.RawMessage) any {
 		return "[]" // pgx encodes Go string as text → jsonb parser sees `[]`
 	}
 	return b
+}
+
+// notNullEmptyTextArray mirrors notNullEmptyJSONRaw for immutable array
+// metadata. pgx encodes a nil slice as SQL NULL, which would bypass the
+// column default and violate deployments.release_command's NOT NULL guard.
+func notNullEmptyTextArray(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 // nullableOverridePort returns nil when port is 0 (the "absent" sentinel
@@ -29241,14 +29457,14 @@ func (s *PgStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appI
 // ----------------------------------------------------------------------------
 
 const mirrorRuleSelectCols = `id, account_id, app_id, source_deployment_id,
-       mirror_deployment_id, percent, enabled, include_body, redact_headers,
+       mirror_deployment_id, percent, enabled, include_body, allow_unsafe_methods, redact_headers,
        created_at, updated_at`
 
 const mirrorResultSelectCols = `id, mirror_rule_id, account_id, app_id,
        source_deployment_id, mirror_deployment_id, instance_id, source_instance_id,
        status_code, source_status_code, latency_ms, source_latency_ms,
        body_hash, source_body_hash, schema_hash, source_schema_hash,
-       status_diff, schema_diff, body_diff, crashed, request_id, completed_at`
+       status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at`
 
 // scanMirrorRule reads a single mirror_rule row. ErrNotFound on
 // no-rows; mapErr handles raw errors (e.g. constraint violations).
@@ -29285,7 +29501,7 @@ func scanMirrorRuleCols(scan func(...any) error) (MirrorRule, error) {
 	)
 	if err := scan(
 		&r.ID, &r.AccountID, &r.AppID, &r.SourceDeploymentID,
-		&r.MirrorDeploymentID, &r.Percent, &r.Enabled, &r.IncludeBody,
+		&r.MirrorDeploymentID, &r.Percent, &r.Enabled, &r.IncludeBody, &r.AllowUnsafeMethods,
 		&redactHeaders, &r.CreatedAt, &r.UpdatedAt,
 	); err != nil {
 		return MirrorRule{}, err
@@ -29315,7 +29531,7 @@ func scanMirrorResult(scan func(...any) error) (MirrorInvocationResult, error) {
 		&r.SourceDeploymentID, &r.MirrorDeploymentID, &instanceID, &sourceInstanceID,
 		&statusCode, &sourceStatusCode, &latencyMs, &sourceLatencyMs,
 		&r.BodyHash, &r.SourceBodyHash, &r.SchemaHash, &r.SourceSchemaHash,
-		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.RequestID, &r.CompletedAt,
+		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.ComparisonIncomplete, &r.RequestID, &r.CompletedAt,
 	); err != nil {
 		return MirrorInvocationResult{}, err
 	}
@@ -29429,14 +29645,14 @@ func (s *PgStore) CreateMirrorRuleIfUnderQuota(ctx context.Context, in CreateMir
 	row := tx.QueryRow(ctx, `
 		insert into mirror_rules (
 			account_id, app_id, source_deployment_id, mirror_deployment_id,
-			percent, enabled, include_body, redact_headers
+			percent, enabled, include_body, allow_unsafe_methods, redact_headers
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
-			$5, $6, $7, $8
+			$5, $6, $7, $8, $9
 		)
 		returning `+mirrorRuleSelectCols,
 		in.AccountID, in.AppID, in.SourceDeploymentID, in.MirrorDeploymentID,
-		in.Percent, in.Enabled, in.IncludeBody, redactHeaders,
+		in.Percent, in.Enabled, in.IncludeBody, in.AllowUnsafeMethods, redactHeaders,
 	)
 	r, err := s.scanMirrorRule(row)
 	if err != nil {
@@ -29524,10 +29740,11 @@ func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorR
 	// pattern for partial-update SQL and keeps the call site free
 	// of dynamic SQL string-build.
 	var (
-		setPercent       *int
-		setEnabled       *bool
-		setIncludeBody   *bool
-		setRedactHeaders *[]string
+		setPercent            *int
+		setEnabled            *bool
+		setIncludeBody        *bool
+		setAllowUnsafeMethods *bool
+		setRedactHeaders      *[]string
 	)
 	if patch.Percent != nil {
 		p := *patch.Percent
@@ -29540,6 +29757,10 @@ func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorR
 	if patch.IncludeBody != nil {
 		b := *patch.IncludeBody
 		setIncludeBody = &b
+	}
+	if patch.AllowUnsafeMethods != nil {
+		b := *patch.AllowUnsafeMethods
+		setAllowUnsafeMethods = &b
 	}
 	if patch.RedactHeaders != nil {
 		headers := *patch.RedactHeaders
@@ -29554,10 +29775,11 @@ func (s *PgStore) UpdateMirrorRule(ctx context.Context, id string, patch MirrorR
 		    enabled        = coalesce($3::boolean,    enabled),
 		    include_body   = coalesce($4::boolean,    include_body),
 		    redact_headers = coalesce($5::text[],     redact_headers),
+		    allow_unsafe_methods = coalesce($6::boolean, allow_unsafe_methods),
 		    updated_at     = now()
 		where id = $1::uuid
 		returning `+mirrorRuleSelectCols,
-		id, setPercent, setEnabled, setIncludeBody, setRedactHeaders,
+		id, setPercent, setEnabled, setIncludeBody, setRedactHeaders, setAllowUnsafeMethods,
 	)
 	r, err := s.scanMirrorRule(row)
 	if err != nil {
@@ -29645,22 +29867,22 @@ func (s *PgStore) InsertMirrorResult(ctx context.Context, r MirrorInvocationResu
 			source_deployment_id, mirror_deployment_id,
 			instance_id, source_instance_id,
 			status_code, source_status_code, latency_ms, source_latency_ms,
-			body_hash, source_body_hash, schema_hash, source_schema_hash,
-			status_diff, schema_diff, body_diff, crashed, request_id, completed_at
+		    body_hash, source_body_hash, schema_hash, source_schema_hash,
+		    status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at
 		) values (
 			$1::uuid, $2::uuid, $3::uuid,
 			$4::uuid, $5::uuid,
 			$6, $7,
 			$8, $9, $10, $11,
 			$12, $13, $14, $15,
-			$16, $17, $18, $19, $20, $21
+		    $16, $17, $18, $19, $20, $21, $22
 		)`,
 		r.MirrorRuleID, r.AccountID, r.AppID,
 		r.SourceDeploymentID, r.MirrorDeploymentID,
 		instanceID, srcInstanceID,
 		statusCode, srcStatusCode, latencyMs, srcLatencyMs,
 		bodyHash, srcBodyHash, schemaHash, srcSchemaHash,
-		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.RequestID, r.CompletedAt,
+		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.ComparisonIncomplete, r.RequestID, r.CompletedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("state: insert mirror_invocation_result: %w", err)
@@ -29706,11 +29928,12 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 	if err := s.pool.QueryRow(ctx, `
 		select
 			count(*),
-			coalesce(sum(case when status_diff or schema_diff or body_diff then 1 else 0 end), 0),
+			coalesce(sum(case when not comparison_incomplete and (status_diff or schema_diff or body_diff) then 1 else 0 end), 0),
 			coalesce(sum(case when status_diff then 1 else 0 end), 0),
-			coalesce(sum(case when schema_diff then 1 else 0 end), 0),
-			coalesce(sum(case when body_diff   then 1 else 0 end), 0),
+			coalesce(sum(case when not comparison_incomplete and schema_diff then 1 else 0 end), 0),
+			coalesce(sum(case when not comparison_incomplete and body_diff   then 1 else 0 end), 0),
 			coalesce(sum(case when crashed     then 1 else 0 end), 0),
+			coalesce(sum(case when comparison_incomplete then 1 else 0 end), 0),
 			avg(case when latency_ms is not null and source_latency_ms is not null
 			         then (latency_ms - source_latency_ms)::double precision
 			         else null end),
@@ -29722,7 +29945,7 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2`,
 		ruleID, since,
-	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
+	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &s2.IncompleteComparisonCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
 		return MirrorSummary{}, fmt.Errorf("state: mirror summary for rule %s: %w", ruleID, err)
 	}
 	if meanLatencyDiff != nil {

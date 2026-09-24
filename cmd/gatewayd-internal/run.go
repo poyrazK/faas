@@ -530,7 +530,7 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	}
 	sourceStatus, _ := strconv.Atoi(metadata[api.DebugReplaySourceStatusHeader])
 	sourceLatency, _ := strconv.Atoi(metadata[api.DebugReplaySourceLatencyHeader])
-	statusDiff := sourceStatus != 0 && sourceStatus != statusCode
+	statusDiff := sourceStatus != 0 && statusCode != 0 && sourceStatus != statusCode
 	var sourceBodyHash []byte
 	if encodedHash := strings.TrimSpace(metadata[api.DebugReplaySourceBodyHashHeader]); encodedHash != "" {
 		sourceBodyHash, _ = hex.DecodeString(encodedHash)
@@ -540,18 +540,21 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 		_, _, _, _, _, mirrorHash := gateway.ClassifyResultWithHashes(0, nil, statusCode, mirrorBody)
 		mirrorBodyHash = append([]byte(nil), mirrorHash[:]...)
 	}
-	bodyDiff := len(sourceBodyHash) == sha256.Size && !bytes.Equal(sourceBodyHash, mirrorBodyHash)
+	hasExpectedBody := len(sourceBodyHash) == sha256.Size
+	bodyDiff := hasExpectedBody && statusCode != 0 && !bytes.Equal(sourceBodyHash, mirrorBodyHash)
 	crashed := statusCode == 0 || statusCode >= http.StatusInternalServerError
+	comparisonIncomplete := statusCode == 0 || (sourceStatus == 0 && !hasExpectedBody)
 	result := api.DebugReplayComparison{
-		SourceDeploymentID: metadata[api.DebugReplayDeploymentIDHeader],
-		MirrorDeploymentID: rule.MirrorDeploymentID,
-		SourceStatusCode:   sourceStatus,
-		MirrorStatusCode:   statusCode,
-		SourceLatencyMS:    sourceLatency,
-		MirrorLatencyMS:    latencyMs,
-		StatusDiff:         statusDiff,
-		BodyDiff:           bodyDiff,
-		Crashed:            crashed,
+		SourceDeploymentID:   metadata[api.DebugReplayDeploymentIDHeader],
+		MirrorDeploymentID:   rule.MirrorDeploymentID,
+		SourceStatusCode:     sourceStatus,
+		MirrorStatusCode:     statusCode,
+		SourceLatencyMS:      sourceLatency,
+		MirrorLatencyMS:      latencyMs,
+		StatusDiff:           statusDiff,
+		BodyDiff:             bodyDiff,
+		Crashed:              crashed,
+		ComparisonIncomplete: comparisonIncomplete,
 	}
 	if encoded, marshalErr := json.Marshal(result); marshalErr == nil {
 		out.Result = encoded
@@ -563,26 +566,25 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			storedSourceBodyHash = sourceBodyHash
 		}
 		if storeErr := a.store.InsertMirrorResult(ctx, state.MirrorInvocationResult{
-			MirrorRuleID:       rule.ID,
-			AccountID:          rule.AccountID,
-			AppID:              appID,
-			SourceDeploymentID: metadata[api.DebugReplayDeploymentIDHeader],
-			MirrorDeploymentID: rule.MirrorDeploymentID,
-			InstanceID:         target.InstanceID,
-			StatusCode:         statusCode,
-			SourceStatusCode:   sourceStatus,
-			LatencyMs:          latencyMs,
-			SourceLatencyMs:    sourceLatency,
-			BodyHash:           storedMirrorBodyHash,
-			SourceBodyHash:     storedSourceBodyHash,
-			SchemaHash:         mirrorBodyHash,
-			SourceSchemaHash:   sourceBodyHash,
-			StatusDiff:         statusDiff,
-			SchemaDiff:         bodyDiff,
-			BodyDiff:           bodyDiff,
-			Crashed:            crashed,
-			RequestID:          metadata[api.DebugReplayRequestIDHeader],
-			CompletedAt:        time.Now().UTC(),
+			MirrorRuleID:         rule.ID,
+			AccountID:            rule.AccountID,
+			AppID:                appID,
+			SourceDeploymentID:   metadata[api.DebugReplayDeploymentIDHeader],
+			MirrorDeploymentID:   rule.MirrorDeploymentID,
+			InstanceID:           target.InstanceID,
+			StatusCode:           statusCode,
+			SourceStatusCode:     sourceStatus,
+			LatencyMs:            latencyMs,
+			SourceLatencyMs:      sourceLatency,
+			BodyHash:             storedMirrorBodyHash,
+			SourceBodyHash:       storedSourceBodyHash,
+			StatusDiff:           statusDiff,
+			SchemaDiff:           false,
+			BodyDiff:             bodyDiff,
+			Crashed:              crashed,
+			ComparisonIncomplete: comparisonIncomplete,
+			RequestID:            metadata[api.DebugReplayRequestIDHeader],
+			CompletedAt:          time.Now().UTC(),
 		}); storeErr != nil && a.log != nil {
 			a.log.Warn("gateway synth: debug replay ledger write failed", "err", storeErr, "request_id", metadata[api.DebugReplayRequestIDHeader])
 		}
@@ -758,7 +760,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	identity.AppID = inv.AppID
 	identity.ApplyGuestHeaders(req.Header)
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
-	req.Header.Set("x-faas-invocation-source", string(inv.Source))
+	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
 	// The synthetic marker is intentionally attached to this derived request
 	// context so the internal bridge can preserve platform-owned headers.
 	//nolint:contextcheck // gateway.WithSyntheticInvocation inherits req.Context.
@@ -1255,6 +1257,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	router := pgRouter{
 		store:                 pgStore,
 		appsSuffix:            appsSuffix(appsDomain),
+		deploySuffix:          wire.DeployWildcardSuffix,
 		tenantSurfacesEnabled: tenantSurfacesFlag.Load,
 	}
 	// ADR-025 axis 4: sticky-warm affinity cache. Built first so the
@@ -1319,7 +1322,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, VersionAffinityCookie: app.Manifest.VersionAffinityCookie, VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1331,9 +1334,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return nil, err
 			}
 			live := make(map[string]int, len(liveDeployments))
+			readinessRequired := make(map[string]bool, len(liveDeployments))
 			for _, deployment := range liveDeployments {
 				if deployment.ID != "" {
 					live[deployment.ID] = schedpkg.DeploymentRuntimePort(deployment)
+					var companions []deploymentCompanionRoute
+					if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
+						if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
+							return nil, fmt.Errorf("decode live deployment %s companions: %w", deployment.ID, err)
+						}
+					}
+					for _, companion := range companions {
+						if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil {
+							readinessRequired[deployment.ID] = true
+							break
+						}
+					}
 				}
 			}
 			instances, err := pgStore.ListInstancesForApp(ctx, appID)
@@ -1341,6 +1357,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return nil, err
 			}
 			targets := make([]gateway.Target, 0, len(instances))
+			readinessInstanceIDs := make([]string, 0, len(instances))
 			for _, instance := range instances {
 				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
 					continue
@@ -1349,16 +1366,62 @@ func run(ctx context.Context, log *slog.Logger) error {
 				if !ok {
 					continue
 				}
+				requiresReadiness := readinessRequired[instance.DeploymentID]
 				targets = append(targets, gateway.Target{
-					AppID:        appID,
-					InstanceID:   instance.ID,
-					NodeID:       instance.NodeID,
-					WakeID:       instance.WakeID,
-					DeploymentID: instance.DeploymentID,
-					Port:         port,
+					AppID:             appID,
+					InstanceID:        instance.ID,
+					NodeID:            instance.NodeID,
+					WakeID:            instance.WakeID,
+					DeploymentID:      instance.DeploymentID,
+					Port:              port,
+					RequiresReadiness: requiresReadiness,
 				})
+				if requiresReadiness {
+					readinessInstanceIDs = append(readinessInstanceIDs, instance.ID)
+				}
+			}
+			if len(readinessInstanceIDs) > 0 {
+				readiness, err := pgStore.LatestInstanceReadiness(ctx, readinessInstanceIDs)
+				if err != nil {
+					return nil, fmt.Errorf("load readiness for live targets: %w", err)
+				}
+				for i := range targets {
+					if current, ok := readiness[targets[i].InstanceID]; ok {
+						targets[i].Ready = current.Ready
+						targets[i].ReadinessUpdatedAt = current.At
+						targets[i].ReadinessEventID = current.EventID
+					}
+				}
 			}
 			return targets, nil
+		}).
+		WithDeploymentSmokeTargetLoader(func(ctx context.Context, appID, deploymentID string) (gateway.Target, bool, error) {
+			dep, err := pgStore.DeploymentByID(ctx, deploymentID)
+			if errors.Is(err, state.ErrNotFound) {
+				return gateway.Target{}, false, nil
+			}
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			if dep.AppID != appID || (dep.Status != state.DeploySnapshotting && dep.Status != state.DeployLive) {
+				return gateway.Target{}, false, nil
+			}
+			instances, err := pgStore.ListInstancesForApp(ctx, appID)
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			for _, instance := range instances {
+				if instance.DeploymentID != deploymentID || instance.State != string(state.StateRunning) ||
+					instance.ID == "" || instance.NodeID == "" {
+					continue
+				}
+				return gateway.Target{
+					AppID: appID, InstanceID: instance.ID, NodeID: instance.NodeID,
+					WakeID: instance.WakeID, DeploymentID: deploymentID,
+					Port: schedpkg.DeploymentRuntimePort(dep), AddedAt: time.Now(),
+				}, true, nil
+			}
+			return gateway.Target{}, false, nil
 		}).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
@@ -3211,7 +3274,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// forces customers to pin min_instances on every dependency and
 			// gives up the platform's central economic claim for precisely
 			// the workloads that are idle most of the time.
-			Wake: newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
+			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
+			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.
@@ -3787,6 +3852,7 @@ func (a mirrorRulesStoreAdapter) ListMirrorRules(ctx context.Context, appID stri
 			Percent:            r.Percent,
 			Enabled:            r.Enabled,
 			IncludeBody:        r.IncludeBody,
+			AllowUnsafeMethods: r.AllowUnsafeMethods,
 			RedactHeaders:      r.RedactHeaders,
 		})
 	}

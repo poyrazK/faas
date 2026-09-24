@@ -62,6 +62,7 @@ const (
 	modeBuild
 	modeJob
 	modeExecution
+	modeAppTask
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -111,10 +112,15 @@ func boot() error {
 		extensionHooks.emit(extension.PhaseInit)
 		defer extensionHooks.emit(extension.PhaseShutdown)
 	}
-	// Execution guests are disposable one-shot runtimes. They do not start
-	// the app supervisor, health probes, telemetry, or a restart loop: the
-	// execution listener accepts one protocol stream, returns one result, and
-	// powers the VM off on every path.
+	// App-task and execution guests are disposable one-shot runtimes. They do
+	// not start the app supervisor, health probes, telemetry, or a restart loop: the
+	// dedicated listener accepts one protocol stream, returns one result, and
+	// powers the VM off on every path. App tasks retain the app network and
+	// scoped environment; source executions use their networkless sandbox.
+	if mode == modeAppTask {
+		guestStage("before-app-task")
+		return runAppTaskGuest(slog.Default())
+	}
 	if mode == modeExecution {
 		guestStage("before-execution")
 		return runExecutionGuest(slog.Default())
@@ -308,6 +314,14 @@ func boot() error {
 	// sequentially, then main + type="sidecar" workloads in
 	// parallel under per-workload Supervisors.
 	roster, rosterErr := discoverRoster(os.DirFS("/"))
+	if manifest.SecretReloadSignal != "" {
+		if rosterErr != nil && !isNotExist(rosterErr) {
+			return fmt.Errorf("secret reload requires a readable workload roster: %w", rosterErr)
+		}
+		if len(roster.Sidecars) > 0 {
+			return fmt.Errorf("secret reload is not supported with sidecars; use restart-based secret rotation")
+		}
+	}
 	if rosterErr == nil && len(roster.Sidecars) > 0 {
 		return runWorkloads(manifest, roster, secrets, apiEnv, slog.Default(), sidecarProxy)
 	}
@@ -327,7 +341,20 @@ func boot() error {
 	// assignment. The wiring below is the canonical fix.
 	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
 	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
-	supRef.Start = func() error { return runAppWithEnv(manifest, secrets, apiEnv, supRef) }
+	var rotatingSecrets *runtimeSecretsState
+	if manifest.SecretReloadSignal != "" {
+		rotatingSecrets = newRuntimeSecretsState(secrets)
+		if err := writeRuntimeSecretsProjection(secretReloadFilePath, lookupUID(manifest.EffectiveUser()), secrets); err != nil {
+			return fmt.Errorf("prepare runtime secret file: %w", err)
+		}
+	}
+	supRef.Start = func() error {
+		currentSecrets := secrets
+		if rotatingSecrets != nil {
+			currentSecrets = rotatingSecrets.snapshot()
+		}
+		return runAppWithEnv(manifest, currentSecrets, apiEnv, supRef)
+	}
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: app restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
@@ -353,6 +380,9 @@ func boot() error {
 	// graceful stop), both subsystems unwind together.
 	bootCtx, bootCancel := context.WithCancel(context.Background())
 	defer bootCancel()
+	if rotatingSecrets != nil {
+		startRuntimeSecretReloader(bootCtx, manifest, rotatingSecrets, supRef, slog.Default())
+	}
 	// M-2 / ADR-139 §Decision 1: HEALTHCHECK poll goroutine.
 	// Soft-fail on bind (e.g. guest kernel without AF_VSOCK) —
 	// the engine's existing :8080 TCP-accept probe continues to
@@ -415,6 +445,7 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
+	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env as the
 	// boot/wake trace seed. The W3C trace context was shipped from the
@@ -554,10 +585,11 @@ func errorKind(err error) string {
 // decideMode picks the boot branch by looking at which manifest file exists.
 //
 // Mode priority (ADR-171):
-//  1. execution.json with kind=="execution" → modeExecution
-//  2. job.json with kind=="job"              → modeJob
-//  3. build.json (kind=="build")             → modeBuild
-//  4. else                                   → modeApp (legacy)
+//  1. app-task.json with kind=="app_task"     → modeAppTask
+//  2. execution.json with kind=="execution"   → modeExecution
+//  3. job.json with kind=="job"               → modeJob
+//  4. build.json (kind=="build")              → modeBuild
+//  5. else                                     → modeApp (legacy)
 //
 // Job VMs never co-exist with build.json (different workload
 // class), so the precedence is "what file wins". If both
@@ -570,6 +602,14 @@ func errorKind(err error) string {
 // fs.FS rejects absolute paths, and the real os.DirFS("/") used
 // at boot happily accepts the relative form on Linux.
 func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
+	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
+		if markerErr := validateAppTaskManifest(data); markerErr != nil {
+			return modeAppTask, api.BuildManifest{}, fmt.Errorf("invalid app task manifest: %w", markerErr)
+		}
+		return modeAppTask, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeAppTask, api.BuildManifest{}, fmt.Errorf("read app task manifest: %w", err)
+	}
 	if data, err := fs.ReadFile(fsys, executionManifestRelativePath); err == nil {
 		if markerErr := validateExecutionManifest(data); markerErr != nil {
 			return modeExecution, api.BuildManifest{}, fmt.Errorf("invalid execution manifest: %w", markerErr)
@@ -2126,8 +2166,8 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 	if len(roster.Sidecars) == 0 {
 		return nil, nil // present but empty — legacy supervisor shape
 	}
-	if len(roster.Sidecars) > api.SidecarCapMax {
-		return nil, fmt.Errorf("roster has %d sidecars; cap is %d", len(roster.Sidecars), api.SidecarCapMax)
+	if err := validateWorkloadCardinality(roster); err != nil {
+		return nil, err
 	}
 	out := make([]sidecarDevice, 0, len(roster.Sidecars))
 	seenNames := make(map[string]struct{}, len(roster.Sidecars))
@@ -2142,8 +2182,8 @@ func discoverSidecarDevices(mountRoot string) ([]sidecarDevice, error) {
 		seenNames[workloadName] = struct{}{}
 		// Device naming: /dev/vda = drive0 (base), /dev/vdb =
 		// drive1 (main, the per-app rw upper). Sidecar 0 starts
-		// at /dev/vdc (drive2) and increments. The cap of 2
-		// sidecars per deployment (ADR-068) caps this at vdd.
+		// at /dev/vdc (drive2) and increments. SidecarCapMax
+		// bounds this to five helper drives per deployment.
 		out = append(out, sidecarDevice{
 			name:         fmt.Sprintf("sidecar-%d", i),
 			device:       fmt.Sprintf("/dev/vd%c", 'c'+i),

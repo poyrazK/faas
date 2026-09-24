@@ -92,6 +92,11 @@ on:
         required: false
         default: full
         type: string
+      pki_source:
+        description: "PKI source: production secret, or this existing live node"
+        required: false
+        default: secret
+        type: string
   workflow_dispatch:
     inputs:
       release_tag:
@@ -172,6 +177,14 @@ on:
           - full
           - prepare
           - activate
+      pki_source:
+        description: "PKI source for an existing host; live-node requires phased rollout"
+        required: false
+        default: secret
+        type: choice
+        options:
+          - secret
+          - live-node
 
 concurrency:
   group: cd-compute-${{ inputs.node || inputs.claim_file || inputs.fleet_bundle_url || 'fleet' }}
@@ -196,8 +209,8 @@ jobs:
     outputs:
       node: ${{ steps.resolve_batch.outputs.node || steps.resolve_bundle.outputs.node || steps.resolve_claim.outputs.node || steps.resolve_legacy.outputs.node }}
       ssh_host: ${{ steps.resolve_bundle.outputs.ssh_host || steps.resolve_claim.outputs.ssh_host || steps.resolve_legacy.outputs.ssh_host }}
-      ssh_user: ${{ steps.resolve_bundle.outputs.ssh_user || steps.resolve_claim.outputs.ssh_user || steps.resolve_legacy.outputs.ssh_user }}
-      ssh_port: ${{ steps.resolve_bundle.outputs.ssh_port || steps.resolve_claim.outputs.ssh_port || steps.resolve_legacy.outputs.ssh_port }}
+      ssh_user: ${{ steps.resolve_batch.outputs.ssh_user || steps.resolve_bundle.outputs.ssh_user || steps.resolve_claim.outputs.ssh_user || steps.resolve_legacy.outputs.ssh_user }}
+      ssh_port: ${{ steps.resolve_batch.outputs.ssh_port || steps.resolve_bundle.outputs.ssh_port || steps.resolve_claim.outputs.ssh_port || steps.resolve_legacy.outputs.ssh_port }}
       ssh_host_key_sha256: ${{ steps.resolve_bundle.outputs.host_key_sha256 || steps.resolve_claim.outputs.host_key_sha256 || steps.resolve_legacy.outputs.host_key_sha256 }}
       storage_device: ${{ steps.resolve_bundle.outputs.storage_device || steps.resolve_claim.outputs.storage_device || steps.resolve_legacy.outputs.storage_device }}
       format_storage: ${{ steps.resolve_bundle.outputs.format_storage || steps.resolve_claim.outputs.format_storage || steps.resolve_legacy.outputs.format_storage }}
@@ -224,6 +237,7 @@ jobs:
           FLEET_BUNDLE_SIGNATURE_URL: ${{ inputs.fleet_bundle_signature_url }}
           FLEET_BUNDLE_SHA256: ${{ inputs.fleet_bundle_sha256 }}
           ROLLOUT_PHASE: ${{ inputs.rollout_phase }}
+          PKI_SOURCE_KIND: ${{ inputs.pki_source }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
@@ -237,6 +251,19 @@ jobs:
               exit 1
               ;;
           esac
+          case "$PKI_SOURCE_KIND" in
+            secret|live-node) ;;
+            *) echo "::error::unsupported pki_source" >&2; exit 1 ;;
+          esac
+          if [[ "$PKI_SOURCE_KIND" == "live-node" ]]; then
+            [[ "$ROLLOUT_PHASE" == "prepare" || "$ROLLOUT_PHASE" == "activate" ]] &&
+              [[ -z "$COMPUTE_TARGETS" && -z "$CLAIM_FILE" && -z "$FLEET_BUNDLE_URL" ]] &&
+              [[ "$NODE" =~ ^[A-Za-z0-9._-]+$ && "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]] &&
+              [[ "$SSH_HOST_KEY_SHA256" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]] || {
+                echo "::error::live-node PKI requires a pinned existing legacy target in prepare/activate phase" >&2
+                exit 1
+              }
+          fi
           if [[ -n "$COMPUTE_TARGETS" ]]; then
             [[ "$ROLLOUT_PHASE" == "prepare" ]] || {
               echo "::error::compute_targets is supported only for non-disruptive preparation" >&2
@@ -320,7 +347,11 @@ jobs:
       - name: Resolve parallel fleet preparation targets
         if: inputs.compute_targets != ''
         id: resolve_batch
-        run: echo 'node=fleet' >> "$GITHUB_OUTPUT"
+        env:
+          SSH_USER: ${{ inputs.ssh_user }}
+          SSH_PORT: ${{ inputs.ssh_port }}
+        run: |
+          printf 'node=fleet\nssh_user=%s\nssh_port=%s\n' "$SSH_USER" "$SSH_PORT" >> "$GITHUB_OUTPUT"
 
       - name: Check out and validate the declarative node claim
         if: inputs.claim_file != ''
@@ -512,16 +543,21 @@ jobs:
       - name: Validate required production secrets without printing values
         env:
           FLEET_BUNDLE_URL: ${{ inputs.fleet_bundle_url }}
+          PKI_SOURCE_KIND: ${{ inputs.pki_source }}
         run: |
           set -euo pipefail
           missing=0
           for name in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV COMPUTE_IMAGED_STORAGE_ENV \
-            COMPUTE_PKI_TARBALL_B64 COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY; do
+            COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::production secret $name is not configured" >&2
               missing=1
             fi
           done
+          if [[ "$PKI_SOURCE_KIND" == "secret" && -z "${COMPUTE_PKI_TARBALL_B64:-}" ]]; then
+            echo "::error::production secret COMPUTE_PKI_TARBALL_B64 is not configured" >&2
+            missing=1
+          fi
           if [[ -n "$FLEET_BUNDLE_URL" && "$FLEET_BUNDLE_URL" != https://storage.googleapis.com/* && -z "${FLEET_BUNDLE_AUTH_TOKEN:-}" ]]; then
             echo "::error::production secret FLEET_BUNDLE_AUTH_TOKEN is required for signed bundle dispatches" >&2
             missing=1
@@ -597,6 +633,7 @@ jobs:
       STORAGE_DEVICE: ${{ needs.preflight.outputs.storage_device }}
       FORMAT_STORAGE: ${{ needs.preflight.outputs.format_storage }}
       ROLLOUT_PHASE: ${{ inputs.rollout_phase }}
+      PKI_SOURCE_KIND: ${{ inputs.pki_source }}
       FLEET_BUNDLE_URL: ${{ inputs.fleet_bundle_url }}
       FLEET_BUNDLE_SIGNATURE_URL: ${{ inputs.fleet_bundle_signature_url }}
       FLEET_BUNDLE_SHA256: ${{ inputs.fleet_bundle_sha256 }}
@@ -781,13 +818,17 @@ jobs:
         run: |
           set -euo pipefail
           for required in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV COMPUTE_IMAGED_STORAGE_ENV \
-            COMPUTE_PKI_TARBALL_B64 COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY \
+            COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY \
             FLEET_AGE_KEY FLEET_AGE_RECIPIENT; do
             [[ -n "${!required:-}" ]] || {
               echo "::error::production secret $required is not configured" >&2
               exit 1
             }
           done
+          if [[ "$PKI_SOURCE_KIND" == "secret" && -z "${COMPUTE_PKI_TARBALL_B64:-}" ]]; then
+            echo "::error::production secret COMPUTE_PKI_TARBALL_B64 is not configured" >&2
+            exit 1
+          fi
           ARTIFACT_DIR="$RUNNER_TEMP/gregale-compute-join"
           mkdir -p "$ARTIFACT_DIR"
           for asset in release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml; do
@@ -830,17 +871,69 @@ jobs:
           chmod 0400 "$ARTIFACT_DIR/fleet.age"
           chmod 0444 "$ARTIFACT_DIR/fleet.age.pub"
 
-          printf '%s' "$COMPUTE_PKI_TARBALL_B64" | base64 --decode > "$RUNNER_TEMP/compute-pki.tar.gz"
+          if [[ "$PKI_SOURCE_KIND" == "live-node" ]]; then
+            # Existing hosts already hold a validated, node-scoped trust set.
+            # Export only that host's leaves; the CA private key stays on the
+            # control plane. Pin the live SSH key before sending credentials.
+            [[ "$NODE" =~ ^[A-Za-z0-9._-]+$ && "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ &&
+               "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ && "$SSH_PORT" =~ ^[0-9]+$ ]] || {
+              echo "::error::invalid live-node PKI target" >&2
+              exit 1
+            }
+            scanned_keys="$RUNNER_TEMP/compute-pki-scanned-keys"
+            verified_keys="$RUNNER_TEMP/compute-pki-known-hosts"
+            : > "$verified_keys"
+            ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST" > "$scanned_keys" 2>/dev/null
+            while IFS= read -r host_key_line; do
+              [[ -n "$host_key_line" ]] || continue
+              candidate="$RUNNER_TEMP/compute-pki-candidate-key"
+              printf '%s\n' "$host_key_line" > "$candidate"
+              candidate_fingerprint="$(ssh-keygen -lf "$candidate" -E sha256 2>/dev/null | awk 'NR == 1 { print $2 }')"
+              if [[ "$candidate_fingerprint" == "$SSH_HOST_KEY_SHA256" ]]; then
+                printf '%s\n' "$host_key_line" >> "$verified_keys"
+              fi
+            done < "$scanned_keys"
+            [[ -s "$verified_keys" ]] || {
+              echo "::error::live SSH host key does not match the authorized fingerprint" >&2
+              exit 1
+            }
+            node_cn="$NODE"
+            [[ "$node_cn" == *.faas ]] || node_cn="${node_cn}.faas"
+            ssh -i "$ARTIFACT_DIR/compute-ssh-key" -p "$SSH_PORT" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o "UserKnownHostsFile=$verified_keys" \
+              "${SSH_USER}@${SSH_HOST}" \
+              "sudo -n bash -s -- $node_cn $SSH_HOST" \
+              > "$RUNNER_TEMP/compute-pki.tar.gz" <<'REMOTE_PKI_EXPORT'
+          set -euo pipefail
+          node_cn="$1"
+          transport_san="$2"
+          staging="$(mktemp -d /var/tmp/gregale-pki-export.XXXXXXXX)"
+          [[ "$staging" == /var/tmp/gregale-pki-export.* ]] || exit 1
+          trap 'rm -rf -- "$staging"' EXIT
+          /usr/local/bin/gregalectl pki export-bundle \
+            --source-root /etc/faas/tls --output-dir "$staging/bundle" \
+            --box-role compute-only --cn "$node_cn" \
+            --transport-san "$transport_san" >&2
+          tar -C "$staging/bundle" -czf - .
+          REMOTE_PKI_EXPORT
+          else
+            printf '%s' "$COMPUTE_PKI_TARBALL_B64" | base64 --decode > "$RUNNER_TEMP/compute-pki.tar.gz"
+          fi
           if tar -tzf "$RUNNER_TEMP/compute-pki.tar.gz" | grep -Eq '(^/|(^|/)\.\./)'; then
-            echo "::error::COMPUTE_PKI_TARBALL_B64 contains an unsafe archive path" >&2
+            echo "::error::compute PKI bundle contains an unsafe archive path" >&2
             exit 1
           fi
           PKI_EXTRACT_DIR="$RUNNER_TEMP/compute-pki-extracted"
-          mkdir -p "$PKI_EXTRACT_DIR"
+          [[ ! -e "$PKI_EXTRACT_DIR" ]] || {
+            echo "::error::stale compute PKI extraction directory on fleet runner" >&2
+            exit 1
+          }
+          mkdir "$PKI_EXTRACT_DIR"
           tar --extract --gzip --file "$RUNNER_TEMP/compute-pki.tar.gz" \
             --directory "$PKI_EXTRACT_DIR" --no-same-owner --no-same-permissions
           if find "$PKI_EXTRACT_DIR" -type l -print -quit | grep -q .; then
-            echo "::error::COMPUTE_PKI_TARBALL_B64 must not contain symlinks" >&2
+            echo "::error::compute PKI bundle must not contain symlinks" >&2
             exit 1
           fi
           # Accept both archive shapes emitted by the operator tooling:
@@ -852,9 +945,13 @@ jobs:
           elif [[ -f "$PKI_EXTRACT_DIR/ca/ca.crt" ]]; then
             PKI_SOURCE="$PKI_EXTRACT_DIR"
           else
-            echo "::error::COMPUTE_PKI_TARBALL_B64 must contain pki/ca/ca.crt or ca/ca.crt" >&2
+            echo "::error::compute PKI bundle must contain pki/ca/ca.crt or ca/ca.crt" >&2
             exit 1
           fi
+          [[ ! -e "$PKI_SOURCE/ca/ca.key" ]] || {
+            echo "::error::compute PKI bundle must not contain the CA private key" >&2
+            exit 1
+          }
           mkdir -p "$ARTIFACT_DIR/pki"
           cp -a "$PKI_SOURCE/." "$ARTIFACT_DIR/pki/"
           test -f "$ARTIFACT_DIR/pki/ca/ca.crt"
@@ -931,6 +1028,12 @@ jobs:
           SKIP_FLEET_PREFLIGHT: ${{ inputs.skip_fleet_preflight }}
         run: |
           set -euo pipefail
+          # join-fleet's shared Ansible preflight also visits manifest peers
+          # outside COMPUTE_TARGETS. Give those peers the fleet operator
+          # identity; target host_vars retain their provider-specific users.
+          export ANSIBLE_PRIVATE_KEY_FILE="$ARTIFACT_DIR/compute-ssh-key"
+          export ANSIBLE_REMOTE_USER="$SSH_USER"
+          export ANSIBLE_REMOTE_PORT="$SSH_PORT"
           if [[ -n "$COMPUTE_TARGETS" ]]; then
             nodes_file="$ARTIFACT_DIR/compute-targets.json"
             jq -ce '{nodes: map({
@@ -970,9 +1073,6 @@ jobs:
           # defaults so preflight and the control-plane convergence can reach
           # every existing peer; the generated target host vars still retain
           # the provider-specific SSH override and strict host-key policy.
-          export ANSIBLE_PRIVATE_KEY_FILE="$ARTIFACT_DIR/compute-ssh-key"
-          export ANSIBLE_REMOTE_USER="$SSH_USER"
-          export ANSIBLE_REMOTE_PORT="$SSH_PORT"
           JOIN_ARGS=(
             deploy join-node
             --manifest-file "$ARTIFACT_DIR/production-manifest.yaml"
@@ -1269,6 +1369,9 @@ jobs:
             "$RUNNER_TEMP/gregale-compute-join" \
             "$RUNNER_TEMP/compute-pki.tar.gz" \
             "$RUNNER_TEMP/compute-pki-extracted" \
+            "$RUNNER_TEMP/compute-pki-scanned-keys" \
+            "$RUNNER_TEMP/compute-pki-known-hosts" \
+            "$RUNNER_TEMP/compute-pki-candidate-key" \
             "$RUNNER_TEMP/release-tools"
           find "$RUNNER_TEMP" -maxdepth 1 -mindepth 1 -type d \
             \( -name 'gregalectl-release-bootstrap-*' -o -name 'release-cosign-*' -o -name 'release-tarball-*' \) \

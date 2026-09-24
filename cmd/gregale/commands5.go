@@ -212,7 +212,7 @@ func cmdStatus(args []string) int {
 
 // --- env -------------------------------------------------------------------
 
-// cmdEnv dispatches `gregale env pull|push --app <slug>`. The pull path
+// cmdEnv dispatches environment and app-runtime environment workflows. The pull path
 // writes a KEY-only .env template (empty values) per the §11/G2
 // sealed-secrets boundary — the server never returns plaintext. The
 // push path re-uses the secrets API PUT with the same rotation-hint
@@ -220,10 +220,12 @@ func cmdStatus(args []string) int {
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <pull|push> --app <slug>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env <create|pull|push|diff>", "env")
 		return 1
 	}
 	switch args[0] {
+	case "create":
+		return envCreate(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":
@@ -931,12 +933,12 @@ func cmdAppRestart(slug string, args []string) int {
 }
 
 // cmdAppDispatch routes `gregale app <slug> ...` to either the new
-// subcommand form (scale / rename / security / routes / tcp) or the legacy
+// subcommand form (scale / rename / exec / security / routes / tcp) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -952,6 +954,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppRename(slug, args[2])
 		case subRestart:
 			return cmdAppRestart(slug, args[2:])
+		case subExec:
+			return cmdAppExec(slug, args[2:])
 		case subSecurity:
 			return cmdAppSecurity(slug, args[2:])
 		case subEgressAllowlist:

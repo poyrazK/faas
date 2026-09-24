@@ -18,6 +18,16 @@ The default subscription matches `billing.*` events of type
 
 ## Publish and inspect
 
+Preview the account-wide route first; this checks the worker's filter without
+creating an event or invocation:
+
+```sh
+gregale events preview billing.stripe invoice.paid \
+  --data '{"amount":150}'
+```
+
+Then publish and inspect the reconciled subscription:
+
 ```sh
 gregale events publish billing.stripe invoice.paid \
   --data '{"amount":150}'

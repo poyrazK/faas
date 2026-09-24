@@ -42,6 +42,42 @@ func TestLoad_YAMLPresent(t *testing.T) {
 	}
 }
 
+func TestLoad_ReleaseCommand(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("release:\n  command: bundle exec rails db:migrate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, ok, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || m.Release == nil || m.Release.Command != "bundle exec rails db:migrate" {
+		t.Fatalf("release = %+v, want shell command", m.Release)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestReleaseCommandValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "empty", command: "  ", want: "executable is required"},
+		{name: "nul", command: "echo\x00oops", want: "contains NUL"},
+		{name: "too long", command: strings.Repeat("x", api.AppTaskMaxCommandArgBytes+1), want: "exceeds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manifest{Release: &ReleaseConfig{Command: tc.command}}
+			if err := m.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() = %v, want error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoad_WorkflowDSL(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(`workflows:

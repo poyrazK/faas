@@ -55,6 +55,7 @@ const (
 	subInfo     = "info"
 	subGet      = "get"
 	subCreate   = "create"
+	subExec     = "exec"
 	// Issue #961 / Mega-A PR-3: domains surface verbs. Lifted from
 	// inline literals so goconst stops flagging the "verify" /
 	// "show" / "set-default" strings in cli_meta.go + the dispatch
@@ -1919,7 +1920,7 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
-	case "cron-worker":
+	case "cron-worker", "event-worker":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
 		return "", "", false
@@ -5414,6 +5415,7 @@ func cmdLogs(args []string) int {
 	status := fs.Int("status", 0, "only show HTTP requests with this status (100..599)")
 	route := fs.String("route", "", "only show HTTP requests for this route")
 	requestID := fs.String("request", "", "show one HTTP request by public request id or row id")
+	traceID := fs.String("trace", "", "show HTTP access logs correlated with this W3C trace id")
 	limit := fs.Int("limit", 100, "HTTP request page size (1..200)")
 	all := fs.Bool("all", false, "read every retained HTTP request page")
 	archive := fs.Bool("archive", false, "read durable logs for one instance and UTC day")
@@ -5428,7 +5430,7 @@ func cmdLogs(args []string) int {
 	// whole stream to know which error fired.
 	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
 	if err := parseAppLogFlags(fs, args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID] [--limit N|--all]", "logs")
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
 		return 1
 	}
 	if *explain && jsonOutput {
@@ -5436,7 +5438,7 @@ func cmdLogs(args []string) int {
 		return 2
 	}
 	if fs.NArg() > 1 {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID] [--limit N|--all] (slug defaults to linked project context)", "logs")
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all] (slug defaults to linked project context)", "logs")
 		return 1
 	}
 	slug := ""
@@ -5458,14 +5460,14 @@ func cmdLogs(args []string) int {
 		return 2
 	}
 	httpQueryRequested := logsFlagWasSet(fs, "status") || logsFlagWasSet(fs, "route") ||
-		logsFlagWasSet(fs, "request") || logsFlagWasSet(fs, "limit") || logsFlagWasSet(fs, "all")
+		logsFlagWasSet(fs, "request") || logsFlagWasSet(fs, "trace") || logsFlagWasSet(fs, "limit") || logsFlagWasSet(fs, "all")
 	logSource, sourceErr := normalizeLogsSource(*source, httpQueryRequested)
 	if sourceErr != nil {
 		PrintUsage(os.Stderr, sourceErr.Error(), "logs")
 		return 2
 	}
 	if logSource == logsSourceRuntime && httpQueryRequested {
-		PrintUsage(os.Stderr, "--status, --route, --request, --limit, and --all require --source http", "logs")
+		PrintUsage(os.Stderr, "--status, --route, --request, --trace, --limit, and --all require --source http", "logs")
 		return 2
 	}
 	if logsFlagWasSet(fs, "status") && (*status < 100 || *status > 599) {
@@ -5480,8 +5482,20 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, "--request requires a non-empty request id", "logs")
 		return 2
 	}
+	if logsFlagWasSet(fs, "trace") && !validTraceID(strings.TrimSpace(*traceID)) {
+		PrintUsage(os.Stderr, "--trace must be a 32-character lowercase W3C trace id", "logs")
+		return 2
+	}
+	if strings.TrimSpace(*requestID) != "" && strings.TrimSpace(*traceID) != "" {
+		PrintUsage(os.Stderr, "--request and --trace are mutually exclusive", "logs")
+		return 2
+	}
 	if strings.TrimSpace(*requestID) != "" && (*all || logsFlagWasSet(fs, "limit")) {
 		PrintUsage(os.Stderr, "--request cannot be combined with --all or --limit", "logs")
+		return 2
+	}
+	if strings.TrimSpace(*traceID) != "" && *all {
+		PrintUsage(os.Stderr, "--trace cannot be combined with --all; trace results are already bounded", "logs")
 		return 2
 	}
 	archiveRequested := *archive || *archiveInstance != "" || *archiveDate != ""
@@ -5539,7 +5553,7 @@ func cmdLogs(args []string) int {
 		deploymentRef = resolved
 	}
 	if logSource == logsSourceHTTP {
-		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), *route, normalizedSince, *status, *limit, *all, now)
+		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
 	}
 	return runLogs(context.Background(), slug, deploymentRef, api.LogFilter{
 		Grep:  *grep,

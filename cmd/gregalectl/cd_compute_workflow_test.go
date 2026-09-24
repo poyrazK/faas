@@ -52,6 +52,106 @@ func TestCDComputeWorkflowSupportsPrepareThenActivate(t *testing.T) {
 	}
 }
 
+func TestCDComputeWorkflowSharesSSHKeyWithFleetPreflight(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatalf("read cd-compute workflow: %v", err)
+	}
+	workflow := string(body)
+	start := strings.Index(workflow, "- name: Verify runner prerequisites and adopt the compute host")
+	if start < 0 {
+		t.Fatal("missing compute adoption step")
+	}
+	end := strings.Index(workflow[start:], "\n      - name:")
+	if end < 0 {
+		t.Fatal("cannot isolate compute adoption step")
+	}
+	step := workflow[start : start+end]
+	key := strings.Index(step, `export ANSIBLE_PRIVATE_KEY_FILE="$ARTIFACT_DIR/compute-ssh-key"`)
+	fleet := strings.Index(step, `if [[ -n "$COMPUTE_TARGETS" ]]; then`)
+	if key < 0 || fleet < 0 || key > fleet {
+		t.Fatal("the fleet preflight must inherit the operator SSH key before the batch branch")
+	}
+	for _, required := range []string{
+		`export ANSIBLE_REMOTE_USER="$SSH_USER"`,
+		`export ANSIBLE_REMOTE_PORT="$SSH_PORT"`,
+	} {
+		at := strings.Index(step, required)
+		if at < 0 || at > fleet {
+			t.Errorf("fleet peer preflight must inherit %q before the batch branch", required)
+		}
+	}
+	for _, required := range []string{
+		"ssh_user: ${{ steps.resolve_batch.outputs.ssh_user ||",
+		"ssh_port: ${{ steps.resolve_batch.outputs.ssh_port ||",
+		`printf 'node=fleet\nssh_user=%s\nssh_port=%s\n' "$SSH_USER" "$SSH_PORT"`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("batch preflight does not propagate fleet operator identity: missing %q", required)
+		}
+	}
+	platform, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatalf("read cd-platform workflow: %v", err)
+	}
+	prepare := string(platform)
+	start = strings.Index(prepare, "  compute-prepare:\n")
+	end = strings.Index(prepare, "  compute-prepare-compat:\n")
+	if start < 0 || end <= start {
+		t.Fatal("cannot isolate batch fleet preparation job")
+	}
+	for _, required := range []string{
+		"ssh_user: ${{ inputs.ssh_user }}",
+		"ssh_port: ${{ inputs.ssh_port }}",
+	} {
+		if !strings.Contains(prepare[start:end], required) {
+			t.Errorf("platform does not pass fleet operator identity to batch preflight: missing %q", required)
+		}
+	}
+}
+
+func TestCDComputeWorkflowExportsNodeScopedPKIForExistingHosts(t *testing.T) {
+	computeBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compute := string(computeBody)
+	for _, required := range []string{
+		"pki_source:",
+		`PKI_SOURCE_KIND: ${{ inputs.pki_source }}`,
+		`[[ "$PKI_SOURCE_KIND" == "live-node" ]]`,
+		`ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST"`,
+		`[[ "$candidate_fingerprint" == "$SSH_HOST_KEY_SHA256" ]]`,
+		`-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes`,
+		`gregalectl pki export-bundle`,
+		`--box-role compute-only --cn "$node_cn"`,
+		`--transport-san "$transport_san"`,
+		`[[ ! -e "$PKI_SOURCE/ca/ca.key" ]]`,
+	} {
+		if !strings.Contains(compute, required) {
+			t.Errorf("existing-host PKI export is missing %q", required)
+		}
+	}
+	if strings.Contains(compute, "StrictHostKeyChecking=no") {
+		t.Fatal("existing-host PKI export must not weaken host identity")
+	}
+	platformBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := string(platformBody)
+	for _, required := range []string{
+		"compute_pki_source:",
+		`if [[ "$COMPUTE_PKI_SOURCE" == "live-node" ]]; then`,
+		"batch_prepare=false",
+		"pki_source: ${{ inputs.compute_pki_source }}",
+	} {
+		if !strings.Contains(platform, required) {
+			t.Errorf("platform does not route node-scoped PKI through the serial rollout: missing %q", required)
+		}
+	}
+}
+
 func TestCDComputeWorkflowPinsDynamicHostForPostJoinProbes(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
 	if err != nil {

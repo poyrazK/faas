@@ -78,9 +78,13 @@ func TestPreviewDispatch_UnknownSubcommandExitsOne(t *testing.T) {
 	}
 }
 
-func TestPreviewDispatch_NoArgsExitsOne(t *testing.T) {
+func TestPreviewDispatch_NoArgsListsPreviews(t *testing.T) {
 	resetJSONOut(t)
-	if code := cmdPreview(nil); code != 1 {
-		t.Errorf("no args: exit = %d, want 1", code)
+	f := authedFakeAPI(t, `[]`, http.StatusOK)
+	if code := cmdPreview(nil); code != 0 {
+		t.Errorf("no args: exit = %d, want 0", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps" {
+		t.Errorf("request = %s %s, want GET /v1/apps", f.sawMethod, f.sawPath)
 	}
 }

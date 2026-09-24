@@ -166,17 +166,18 @@ func (s *server) renderAppMirrors(w http.ResponseWriter, r *http.Request, log *s
 				if row.AccountID != acct.ID || row.AppID != app.ID {
 					continue
 				}
-				item := dashboard.MirrorPageItem{ID: row.ID, SourceDeploymentID: row.SourceDeploymentID, MirrorDeploymentID: row.MirrorDeploymentID, Percent: row.Percent, Enabled: row.Enabled, IncludeBody: row.IncludeBody, RedactHeaders: append([]string(nil), row.RedactHeaders...), AlwaysStrippedHeaders: append([]string(nil), api.MirrorAlwaysStrippedHeaders...), CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt)}
+				item := dashboard.MirrorPageItem{ID: row.ID, SourceDeploymentID: row.SourceDeploymentID, MirrorDeploymentID: row.MirrorDeploymentID, Percent: row.Percent, Enabled: row.Enabled, IncludeBody: row.IncludeBody, AllowUnsafeMethods: row.AllowUnsafeMethods, RedactHeaders: append([]string(nil), row.RedactHeaders...), AlwaysStrippedHeaders: append([]string(nil), api.MirrorAlwaysStrippedHeaders...), CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt)}
 				summary, summaryErr := s.store.MirrorSummary(ctx, row.ID, since)
 				if summaryErr != nil {
 					data.ErrorMessage = "Some mirror summary counters are temporarily unavailable."
 					log.Warn("dashboard mirrors: summary", "account_id", acct.ID, "app_id", app.ID, "rule_id", row.ID, "err", summaryErr)
 				} else {
 					changedPercent := 0.0
-					if summary.TotalInvocations > 0 {
-						changedPercent = float64(summary.ChangedResponseCount) * 100 / float64(summary.TotalInvocations)
+					comparableInvocations := summary.TotalInvocations - summary.IncompleteComparisonCount
+					if comparableInvocations > 0 {
+						changedPercent = float64(summary.ChangedResponseCount) * 100 / float64(comparableInvocations)
 					}
-					item.Summary = dashboard.MirrorSummaryPageItem{TotalInvocations: int64(summary.TotalInvocations), ChangedResponseCount: int64(summary.ChangedResponseCount), ChangedResponsePct: changedPercent, StatusDiffCount: int64(summary.StatusDiffCount), SchemaDiffCount: int64(summary.SchemaDiffCount), BodyDiffCount: int64(summary.BodyDiffCount), MeanLatencyDiffMs: int64(summary.MeanLatencyDiffMs), P99LatencyDiffMs: int64(summary.P99LatencyDiffMs), CrashCount: int64(summary.CrashCount), WindowLabel: "last 1h"}
+					item.Summary = dashboard.MirrorSummaryPageItem{TotalInvocations: int64(summary.TotalInvocations), ChangedResponseCount: int64(summary.ChangedResponseCount), ChangedResponsePct: changedPercent, StatusDiffCount: int64(summary.StatusDiffCount), SchemaDiffCount: int64(summary.SchemaDiffCount), BodyDiffCount: int64(summary.BodyDiffCount), MeanLatencyDiffMs: int64(summary.MeanLatencyDiffMs), P99LatencyDiffMs: int64(summary.P99LatencyDiffMs), CrashCount: int64(summary.CrashCount), IncompleteComparisonCount: int64(summary.IncompleteComparisonCount), WindowLabel: "last 1h"}
 				}
 				data.Rules = append(data.Rules, item)
 			}
@@ -332,7 +333,7 @@ func (s *server) dashboardCreateMirrorRule(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid percent", "percent must be an integer"))
 		return
 	}
-	req := api.CreateMirrorRuleRequest{SourceDeploymentID: strings.TrimSpace(r.FormValue("source_deployment_id")), MirrorDeploymentID: strings.TrimSpace(r.FormValue("mirror_deployment_id")), Percent: percent, IncludeBody: dashboardCheckbox(r.FormValue("include_body")), RedactHeaders: splitDashboardValues(r.FormValue("redact_headers"))}
+	req := api.CreateMirrorRuleRequest{SourceDeploymentID: strings.TrimSpace(r.FormValue("source_deployment_id")), MirrorDeploymentID: strings.TrimSpace(r.FormValue("mirror_deployment_id")), Percent: &percent, IncludeBody: dashboardCheckbox(r.FormValue("include_body")), AllowUnsafeMethods: dashboardCheckbox(r.FormValue("allow_unsafe_methods")), RedactHeaders: splitDashboardValues(r.FormValue("redact_headers"))}
 	slug := r.PathValue("slug")
 	resp := s.forwardDashboardMirrorJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/mirrors", "", req, s.createMirrorRule)
 	if !dashboardMutationSucceeded(w, resp) {

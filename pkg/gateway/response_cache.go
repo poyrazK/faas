@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -72,6 +73,7 @@ type SharedResponseCacheStore interface {
 	Put(*cacheEntry) error
 	InvalidateByApp(string) error
 	InvalidateByAppPath(string, string) error
+	InvalidateByAppTag(string, string) error
 	InvalidateAll() error
 	Close() error
 }
@@ -159,6 +161,7 @@ type cacheEntry struct {
 	statusCode      int
 	header          map[string][]string
 	body            []byte
+	tags            []string
 	freshUntil      time.Time
 	revalidateUntil time.Time
 	errorUntil      time.Time
@@ -340,8 +343,24 @@ func (c *ResponseCache) Put(k CacheKey, statusCode int, header map[string][]stri
 // PutWithWindows inserts an entry with independent stale-while-revalidate and
 // stale-if-error windows. The later boundary controls retention.
 func (c *ResponseCache) PutWithWindows(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, revalidateUntil, errorUntil time.Time, ruleAction *state.EdgeRuleCacheAction) bool {
+	return c.PutWithWindowsAndTags(k, statusCode, header, body, freshUntil, revalidateUntil, errorUntil, ruleAction, nil)
+}
+
+// PutWithWindowsAndTags stores a response with its canonical purge tags.
+func (c *ResponseCache) PutWithWindowsAndTags(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, revalidateUntil, errorUntil time.Time, ruleAction *state.EdgeRuleCacheAction, tags []string) bool {
 	if c == nil {
 		return false
+	}
+	if len(tags) > api.CacheTagMaxCount {
+		return false
+	}
+	canonicalTags := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		canonical, err := api.NormalizeCacheTag(tag)
+		if err != nil || canonical != tag {
+			return false
+		}
+		canonicalTags = append(canonicalTags, tag)
 	}
 	if len(body) > ResponseCachePerEntryMaxBytes {
 		// Per-entry cap veto. The applier counts this as
@@ -358,6 +377,7 @@ func (c *ResponseCache) PutWithWindows(k CacheKey, statusCode int, header map[st
 		statusCode:      statusCode,
 		header:          copyHeader(header),
 		body:            append([]byte(nil), body...),
+		tags:            canonicalTags,
 		freshUntil:      freshUntil,
 		revalidateUntil: revalidateUntil,
 		errorUntil:      errorUntil,
@@ -370,6 +390,44 @@ func (c *ResponseCache) PutWithWindows(k CacheKey, statusCode int, header map[st
 		sharedStored = c.shared.Put(entry) == nil
 	}
 	return localStored || sharedStored
+}
+
+// InvalidateByAppTag removes entries carrying tag for one app in both tiers.
+func (c *ResponseCache) InvalidateByAppTag(appID, tag string) error {
+	if appID == "" {
+		return fmt.Errorf("cache purge app id is required")
+	}
+	canonical, err := api.NormalizeCacheTag(tag)
+	if err != nil {
+		return err
+	}
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	for key, el := range c.data {
+		entry := el.Value.(*cacheEntry)
+		if entry.key.AppID != appID || !hasCacheTag(entry.tags, canonical) {
+			continue
+		}
+		c.bytes -= len(entry.body)
+		c.list.Remove(el)
+		delete(c.data, key)
+	}
+	c.mu.Unlock()
+	if c.shared != nil {
+		return c.shared.InvalidateByAppTag(appID, canonical)
+	}
+	return nil
+}
+
+func hasCacheTag(tags []string, tag string) bool {
+	for _, candidate := range tags {
+		if candidate == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *ResponseCache) putLocal(entry *cacheEntry) bool {

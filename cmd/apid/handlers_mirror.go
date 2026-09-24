@@ -64,6 +64,7 @@ func mirrorRuleResponse(r state.MirrorRule) api.MirrorRuleResponse {
 		Percent:               r.Percent,
 		Enabled:               r.Enabled,
 		IncludeBody:           r.IncludeBody,
+		AllowUnsafeMethods:    r.AllowUnsafeMethods,
 		RedactHeaders:         r.RedactHeaders,
 		AlwaysStrippedHeaders: api.MirrorAlwaysStrippedHeaders,
 		CreatedAt:             r.CreatedAt,
@@ -85,12 +86,16 @@ func (s *server) createMirrorRule(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	percent := 5
+	if req.Percent != nil {
+		percent = *req.Percent
+	}
 	// Range check FIRST (no plan context). 422 invalid_mirror_percent
 	// with the cap + observed value so the CLI renders actionable
 	// retry guidance. Range-before-plan is intentional (see file
 	// header).
-	if req.Percent < 0 || req.Percent > 100 {
-		api.WriteProblem(w, api.ErrInvalidMirrorPercent(req.Percent))
+	if percent < 0 || percent > 100 {
+		api.WriteProblem(w, api.ErrInvalidMirrorPercent(percent))
 		return
 	}
 	// Plan tier gate. Hobby/Free always see 403 plan_mirror_not_allowed
@@ -116,15 +121,16 @@ func (s *server) createMirrorRule(w http.ResponseWriter, r *http.Request, acct s
 			AppID:              app.ID,
 			SourceDeploymentID: req.SourceDeploymentID,
 			MirrorDeploymentID: req.MirrorDeploymentID,
-			Percent:            req.Percent,
+			Percent:            percent,
 			Enabled:            true,
 			IncludeBody:        req.IncludeBody,
+			AllowUnsafeMethods: req.AllowUnsafeMethods,
 			RedactHeaders:      redact,
 		}, limits)
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrInvalidMirrorPercent):
-			api.WriteProblem(w, api.ErrInvalidMirrorPercent(req.Percent))
+			api.WriteProblem(w, api.ErrInvalidMirrorPercent(percent))
 		case errors.Is(err, state.ErrMirrorSourceTargetSame):
 			api.WriteProblem(w, api.ErrMirrorSourceTargetSame())
 		case errors.Is(err, state.ErrMirrorDeploymentNotLive):
@@ -154,12 +160,13 @@ func (s *server) createMirrorRule(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if s.audit != nil {
 		s.audit.Emit(r.Context(), "mirror_rule.created", &acct.ID, map[string]any{
-			"app":          app.ID,
-			"rule":         created.ID,
-			"source":       created.SourceDeploymentID,
-			"mirror":       created.MirrorDeploymentID,
-			"percent":      created.Percent,
-			"include_body": created.IncludeBody,
+			"app":                  app.ID,
+			"rule":                 created.ID,
+			"source":               created.SourceDeploymentID,
+			"mirror":               created.MirrorDeploymentID,
+			"percent":              created.Percent,
+			"include_body":         created.IncludeBody,
+			"allow_unsafe_methods": created.AllowUnsafeMethods,
 		})
 	}
 	// pg_notify so PR-A3's gateway refresh subscriber reloads the
@@ -275,10 +282,11 @@ func (s *server) updateMirrorRule(w http.ResponseWriter, r *http.Request, acct s
 	}
 	prev := rule
 	updated, err := s.store.UpdateMirrorRule(r.Context(), rule.ID, state.MirrorRulePatch{
-		Percent:       req.Percent,
-		Enabled:       req.Enabled,
-		IncludeBody:   req.IncludeBody,
-		RedactHeaders: req.RedactHeaders,
+		Percent:            req.Percent,
+		Enabled:            req.Enabled,
+		IncludeBody:        req.IncludeBody,
+		AllowUnsafeMethods: req.AllowUnsafeMethods,
+		RedactHeaders:      req.RedactHeaders,
 	})
 	if err != nil {
 		switch {
@@ -304,17 +312,19 @@ func (s *server) updateMirrorRule(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if s.audit != nil {
 		s.audit.Emit(r.Context(), "mirror_rule.updated", &acct.ID, map[string]any{
-			"app":          app.ID,
-			"rule":         updated.ID,
-			"source":       updated.SourceDeploymentID,
-			"mirror":       updated.MirrorDeploymentID,
-			"percent":      updated.Percent,
-			"enabled":      updated.Enabled,
-			"include_body": updated.IncludeBody,
+			"app":                  app.ID,
+			"rule":                 updated.ID,
+			"source":               updated.SourceDeploymentID,
+			"mirror":               updated.MirrorDeploymentID,
+			"percent":              updated.Percent,
+			"enabled":              updated.Enabled,
+			"include_body":         updated.IncludeBody,
+			"allow_unsafe_methods": updated.AllowUnsafeMethods,
 			"prev": map[string]any{
-				"percent":      prev.Percent,
-				"enabled":      prev.Enabled,
-				"include_body": prev.IncludeBody,
+				"percent":              prev.Percent,
+				"enabled":              prev.Enabled,
+				"include_body":         prev.IncludeBody,
+				"allow_unsafe_methods": prev.AllowUnsafeMethods,
 			},
 		})
 	}
@@ -409,21 +419,23 @@ func (s *server) getMirrorRuleSummary(w http.ResponseWriter, r *http.Request, ac
 			"Refresh the page or retry the request in a moment.", err)
 		return
 	}
+	comparableInvocations := summary.TotalInvocations - summary.IncompleteComparisonCount
 	changedPercent := 0.0
-	if summary.TotalInvocations > 0 {
-		changedPercent = float64(summary.ChangedResponseCount) * 100 / float64(summary.TotalInvocations)
+	if comparableInvocations > 0 {
+		changedPercent = float64(summary.ChangedResponseCount) * 100 / float64(comparableInvocations)
 	}
 	writeJSON(w, http.StatusOK, api.MirrorSummaryResponse{
-		TotalInvocations:     int64(summary.TotalInvocations),
-		ChangedResponseCount: int64(summary.ChangedResponseCount),
-		ChangedResponsePct:   changedPercent,
-		StatusDiffCount:      int64(summary.StatusDiffCount),
-		SchemaDiffCount:      int64(summary.SchemaDiffCount),
-		BodyDiffCount:        int64(summary.BodyDiffCount),
-		MeanLatencyDiffMs:    int64(summary.MeanLatencyDiffMs),
-		P99LatencyDiffMs:     int64(summary.P99LatencyDiffMs),
-		CrashCount:           int64(summary.CrashCount),
-		WindowSeconds:        int(window),
+		TotalInvocations:          int64(summary.TotalInvocations),
+		ChangedResponseCount:      int64(summary.ChangedResponseCount),
+		ChangedResponsePct:        changedPercent,
+		StatusDiffCount:           int64(summary.StatusDiffCount),
+		SchemaDiffCount:           int64(summary.SchemaDiffCount),
+		BodyDiffCount:             int64(summary.BodyDiffCount),
+		MeanLatencyDiffMs:         int64(summary.MeanLatencyDiffMs),
+		P99LatencyDiffMs:          int64(summary.P99LatencyDiffMs),
+		CrashCount:                int64(summary.CrashCount),
+		IncompleteComparisonCount: int64(summary.IncompleteComparisonCount),
+		WindowSeconds:             int(window),
 	})
 }
 

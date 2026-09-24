@@ -63,6 +63,7 @@ const (
 	managedPostgresFile   = "managed_postgres.go"
 	openapiContractFile   = "openapi_contract.go"
 	executionsFile        = "executions.go"      // ADR-171 — disposable one-shot execution DTOs
+	appTasksFile          = "app_tasks.go"       // ADR-230 — deployment-attached one-off command DTOs
 	projectsFile          = "projects.go"        // issue #2201 — durable project lifecycle and recovery DTOs
 	devSyncFile           = "dev_sync.go"        // developer edit-to-live history
 	privateNetworkFile    = "private_network.go" // Gregale-owned private network fabric DTOs
@@ -303,6 +304,7 @@ var dtoExclude = map[string]bool{
 	"RealtimeLimits":               true, // internal plan policy, not a wire DTO
 	"ExecutionSnapshotShape":       true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":     true, // sealed scheduler intent, not a public DTO
+	"ResolvedCreateAppTaskRequest": true, // validated state admission input, not a public DTO
 	"AlertRuleRow":                 true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
 	// pkg/api ↔ pkg/state seam. The wire DTOs are OrgResponse /
@@ -487,10 +489,17 @@ var codeExclude = map[string]bool{
 	"CodeCliAuthUnavailable": true, // /v1/cli-auth/* (anonymous)
 }
 
-// schemaSpecOnly lists schemas that exist in the spec but have no Go DTO.
-// Either inline anonymous structs in handlers, or pure-documentation shapes
-// (error envelopes that don't directly mirror a Go type).
+// schemaSpecOnly lists schemas that the struct-only DTO scanner cannot map
+// to a standalone Go struct: aliases, inline anonymous structs, or pure-
+// documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// Migration preflight verdict level is a typed string, not a struct, so
+	// the DTO scanner does not surface it. Same pattern as TriggerKind and
+	// ResourceProfile below.
+	"PreflightLevel": true,
+	// SidecarProbe is a source-compatible Go alias for AppManifestHealthcheck;
+	// the underlying fields are checked against the shared schema above.
+	"SidecarProbe": true,
 	// Status create is decoded into the shared Go request DTO, while the
 	// OpenAPI discriminator exposes stricter kind-specific SDK request shapes.
 	"AdminStatusIncidentCreateRequest":    true,
@@ -959,11 +968,13 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
+		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
+		filepath.Join(root, "pkg", "api", "preflight.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

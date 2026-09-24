@@ -1596,6 +1596,21 @@ func (c *Client) GetProjectEnvironmentReleases(ctx context.Context, projectSlug,
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
+// GetProjectEnvironmentState returns the effective configuration, release,
+// variable, safe secret metadata, and managed bindings for one environment.
+func (c *Client) GetProjectEnvironmentState(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentStateResponse, error) {
+	var out ProjectEnvironmentStateResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/state"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectEnvironmentDiff returns a unified effective-state comparison.
+func (c *Client) GetProjectEnvironmentDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentDiffResponse, error) {
+	var out ProjectEnvironmentDiffResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/diff?from=" + url.QueryEscape(sourceEnvironment)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
 // CreateProjectEnvironment adds a named environment to a project.
 func (c *Client) CreateProjectEnvironment(ctx context.Context, projectSlug string, req CreateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
 	var out ProjectEnvironmentResponse
@@ -2111,6 +2126,13 @@ func (c *Client) PurgeAppCache(ctx context.Context, slug, pathGlob string) error
 		endpoint += "?" + q.Encode()
 	}
 	return c.do(ctx, "DELETE", endpoint, nil, nil)
+}
+
+// PurgeAppCacheTag asks gateways to evict responses carrying one cache tag.
+func (c *Client) PurgeAppCacheTag(ctx context.Context, slug, tag string) error {
+	q := url.Values{}
+	q.Set("tag", tag)
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/cache?"+q.Encode(), nil, nil)
 }
 
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
@@ -5968,11 +5990,20 @@ func (c *Client) GetAppDebugRequestEvidence(ctx context.Context, slug, reqID str
 }
 
 // GetAccountTrace returns the durable tenant-scoped trace correlation view.
-// The server joins retained debugger evidence with queue invocation lifecycle
-// rows so callers do not need to fan out across every app in the account.
+// The server joins retained debugger and HTTP access-log evidence with queue
+// invocation lifecycle rows so callers do not fan out across the account.
 func (c *Client) GetAccountTrace(ctx context.Context, traceID string) (AccountTraceLookupResponse, error) {
+	return c.GetAccountTraceWithLimit(ctx, traceID, 0)
+}
+
+// GetAccountTraceWithLimit is the bounded form used by callers that need to
+// choose how much per-trace evidence to display. Zero preserves the API default.
+func (c *Client) GetAccountTraceWithLimit(ctx context.Context, traceID string, limit int) (AccountTraceLookupResponse, error) {
 	var out AccountTraceLookupResponse
 	path := "/v1/account/traces/" + url.PathEscape(traceID)
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
@@ -6240,6 +6271,14 @@ func (c *Client) SendWorkflowEvent(ctx context.Context, runID, eventName string,
 func (c *Client) PublishEvent(ctx context.Context, req PublishEventRequest) (PublishEventResponse, error) {
 	var resp PublishEventResponse
 	err := c.do(ctx, "POST", "/v1/events:publish", req, &resp)
+	return resp, err
+}
+
+// PreviewEvent evaluates one tenant-scoped event against enabled subscriptions
+// without persisting it or waking asynchronous fanout.
+func (c *Client) PreviewEvent(ctx context.Context, req PreviewEventRequest) (PreviewEventResponse, error) {
+	var resp PreviewEventResponse
+	err := c.do(ctx, "POST", "/v1/events:preview", req, &resp)
 	return resp, err
 }
 

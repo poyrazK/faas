@@ -206,7 +206,7 @@ const (
 	// previous_exit_code}.
 	WakeSidecarRestart = "wake.sidecar_restart"
 	// WakeSidecarHealth — guest-init's long-running sidecar lifecycle
-	// transition (starting, healthy, unhealthy, restarting, or failed).
+	// transition (starting, healthy, unhealthy, restarting, failed, ready, or unready).
 	// Payload: {wake_id, app_id, instance_id, sidecar_name, status, reason}.
 	WakeSidecarHealth = "wake.sidecar_health"
 )
@@ -353,6 +353,7 @@ type BootStarted struct {
 	NodeID             string
 	Method             string
 	Tier               string // warm, init, or cold_boot_fallback
+	ColdReason         string // why a cold boot did not restore (pkg/sched ColdReason*); empty on restore
 	RequestedAt        time.Time
 	Trigger            string // ADR-123 — pkg/sched/triggers.go closed enum
 	TriggerClass       string // issue #1398 — user|monitor|crawler|preview_bot|unknown
@@ -590,6 +591,9 @@ func (e BootStarted) Payload() map[string]any {
 	}
 	if e.Tier != "" {
 		p["tier"] = e.Tier
+	}
+	if e.ColdReason != "" {
+		p["cold_reason"] = e.ColdReason
 	}
 	return p
 }

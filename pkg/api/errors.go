@@ -1527,6 +1527,10 @@ const (
 	// failures so operators can tell serving-path regressions from image
 	// startup regressions.
 	CodeDeploymentSmokeFailed = "deployment_smoke_failed"
+	// CodeReleaseCommandFailed means the deployment's pre-boot release task
+	// failed, timed out, or was cancelled. The previous deployment remains
+	// live; task output is available through the app-task inspection surface.
+	CodeReleaseCommandFailed = "release_command_failed"
 	// CodeAPIContractDiffDisabled is returned by the read-only contract
 	// endpoint while the operator keeps the dark-launch flag off.
 	CodeAPIContractDiffDisabled = "api_contract_diff_disabled"
@@ -1963,12 +1967,14 @@ func StatusForCode(code string) int {
 		CodeAppRuntimeOOM,
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
-		CodeDeploymentSmokeFailed:
+		CodeDeploymentSmokeFailed,
+		CodeReleaseCommandFailed:
 		// 422 — error-explanations cluster (spec §6.4 amendment 1).
 		// Same family as CodeStatelessOnlyViolation / CodeDeployFailed:
 		// well-formed request, content policy refuses. The Detail
-		// field distinguishes the 9 failures; the pkg/whycopy catalog
-		// renders hint/why/fix prose on the CLI's 3-5 line renderer.
+		// field distinguishes the runtime failures; the pkg/whycopy catalog
+		// renders hint/why/fix prose on the CLI's 3-5 line renderer. Release
+		// failures use the same status family and point at the task output.
 		return http.StatusUnprocessableEntity
 	case CodeRequestValidationFailed:
 		// 422 — kind=validate edge rule rejected the request body.
@@ -5084,7 +5090,7 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 }
 
 // ErrSidecarCapExceeded is returned when the request carries more
-// than SidecarCapMax sidecars (issue #463 / ADR-068 §Decision 1).
+// than the global or per-type helper cap (issue #463 / ADR-068 §Decision 1).
 // 400 because the request shape is wrong; the cap is the load-bearing
 // invariant. The schema CHECK on `deployments.sidecars` is the
 // second-line defence; this error surfaces before that check
@@ -5092,14 +5098,14 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 func ErrSidecarCapExceeded(seen, cap int) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSidecarCapExceeded,
 		"Too many sidecars",
-		fmt.Sprintf("request carried %d sidecars; the cap is %d (issue #463 / ADR-068 §Decision 1).", seen, cap)).
+		fmt.Sprintf("request carried %d helpers; the cap is %d (issue #463 / ADR-068 §Decision 1).", seen, cap)).
 		WithLimit(int64(cap), int64(seen)).
 		WithDocs(docsBase + "/sidecars#cap")
 }
 
 // ErrSidecarInvalidType is returned when a sidecar carries a `type`
 // other than {init, sidecar}, or when the request carries more than
-// one init or more than one sidecar (the per-type-uniqueness rule).
+// one init helper.
 // 400 because the request shape is wrong.
 func ErrSidecarInvalidType(name, got string) *Problem {
 	if got == "" {

@@ -270,6 +270,14 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
 	}
+	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
+	if manifestProblem != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
+	}
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest)
+	if releaseProblem != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
+	}
 	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), timeNow().UTC())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: deploy admission: %v", err)
@@ -367,11 +375,13 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		// IP); ActorPusherLogin is the raw GH login from
 		// req.Pusher, suitable for downstream GitHub-API
 		// correlation.
-		ActorUserID:      req.AccountId,
-		ActorVia:         "github",
-		ActorFromIP:      "127.0.0.1",
-		ActorPusherLogin: req.Pusher,
-		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
+		ActorUserID:         req.AccountId,
+		ActorVia:            "github",
+		ActorFromIP:         "127.0.0.1",
+		ActorPusherLogin:    req.Pusher,
+		ReleaseCommand:      releaseCommand.command,
+		ReleaseCommandShell: releaseCommand.shell,
+		ServiceRollout:      app.Manifest.ExecutionMode == api.ExecutionModeService,
 		// Issue #977 / ADR-116: annotation surface forwarded onto
 		// the deployment row. DeployedBy prefers SenderLogin (the
 		// actor who triggered the webhook — for pull_request events,
@@ -410,25 +420,42 @@ func (g *githubdBridge) recordDeploymentActivity(ctx context.Context, acct state
 	if !ok {
 		return
 	}
-	org, err := store.OrgByPersonalAccount(ctx, acct.ID)
-	if err != nil {
-		g.log.Warn("githubd bridge: resolve activity organization", "deployment", res.DeploymentID, "err", err)
-		return
+	var orgID uuid.UUID
+	var orgErr error
+	if app.OrgID != "" {
+		orgID, orgErr = uuid.Parse(app.OrgID)
+	} else {
+		org, err := store.OrgByPersonalAccount(ctx, acct.ID)
+		if err != nil {
+			g.log.Warn("githubd bridge: resolve activity organization", "deployment", res.DeploymentID, "err", err)
+			return
+		}
+		orgID, orgErr = uuid.Parse(org.ID)
 	}
-	orgID, orgErr := uuid.Parse(org.ID)
 	appID, appErr := uuid.Parse(app.ID)
 	deploymentID, deploymentErr := uuid.Parse(res.DeploymentID)
 	if orgErr != nil || appErr != nil || deploymentErr != nil {
 		g.log.Warn("githubd bridge: invalid activity identifiers", "deployment", res.DeploymentID)
 		return
 	}
-	_, err = store.AppendOrgActivity(ctx, state.OrgActivity{
+	entry := state.OrgActivity{
 		OrgID: orgID, Kind: "app.deployed", ActorType: state.OrgActivityActorGitHub,
 		ActorLabel: "GitHub Actions", ResourceType: "app", ResourceID: app.ID,
 		ResourceLabel: app.Slug, AppID: &appID, DeploymentID: &deploymentID,
 		SourceType: "deployment", SourceID: res.DeploymentID,
 		Data: activityData(map[string]any{"source": "github", "repo": req.RepoFullName, "branch": req.Branch}),
-	})
+	}
+	if outbox, ok := g.store.(state.OrgActivityOutboxStore); ok {
+		id, err := outbox.EnqueueOrgActivityOutbox(ctx, entry)
+		if err == nil {
+			_, err = outbox.DeliverOrgActivityOutbox(ctx, id)
+		}
+		if err != nil {
+			g.log.Warn("githubd bridge: enqueue deployment activity", "deployment", res.DeploymentID, "err", err)
+		}
+		return
+	}
+	_, err := store.AppendOrgActivity(ctx, entry)
 	if err != nil {
 		g.log.Warn("githubd bridge: append deployment activity", "deployment", res.DeploymentID, "err", err)
 	}

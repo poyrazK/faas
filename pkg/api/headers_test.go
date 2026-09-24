@@ -10,6 +10,7 @@ func TestPlatformIdentityApplyGuestHeadersOverridesClaims(t *testing.T) {
 	h.Set(DeploymentIDHeader, "attacker-deployment")
 	h.Set("X-Faas-Instance", "attacker-instance")
 	h.Set("X-Faas-Unknown", "internal-only")
+	h.Set(TargetDeploymentHeader, "attacker-deployment")
 
 	PlatformIdentity{
 		RequestID:           "req-1",
@@ -24,6 +25,9 @@ func TestPlatformIdentityApplyGuestHeadersOverridesClaims(t *testing.T) {
 		DeploymentCreatedAt: "2026-09-19T12:00:00Z",
 		ImageDigest:         "sha256:deadbeef",
 	}.ApplyGuestHeaders(h)
+	if got := h.Get(TargetDeploymentHeader); got != "" {
+		t.Fatalf("public override header survived gateway boundary: %q", got)
+	}
 
 	for name, want := range map[string]string{
 		RequestIDHeader:           "req-1",
@@ -55,10 +59,11 @@ func TestClearGuestIdentityHeadersRemovesCanonicalAndLegacy(t *testing.T) {
 	h.Set("X-Faas-Instance", "instance")
 	h.Set("X-Faas-Node", "node")
 	h.Set("X-Faas-Invocation-Id", "invoke")
+	h.Set(TargetDeploymentHeader, "dep")
 
 	ClearGuestIdentityHeaders(h)
 
-	for _, name := range []string{RequestIDHeader, DeploymentIDHeader, "X-Faas-App", "X-Faas-Instance", "X-Faas-Node"} {
+	for _, name := range []string{RequestIDHeader, DeploymentIDHeader, "X-Faas-App", "X-Faas-Instance", "X-Faas-Node", TargetDeploymentHeader} {
 		if got := h.Get(name); got != "" {
 			t.Errorf("%s survived clear: %q", name, got)
 		}

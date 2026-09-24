@@ -7,19 +7,24 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
+from ..models.rollout_aborted_webhook_payload_rollout_state import (
+    RolloutAbortedWebhookPayloadRolloutState,
+    check_rollout_aborted_webhook_payload_rollout_state,
+)
 
 T = TypeVar("T", bound="RolloutAbortedWebhookPayload")
 
 
 @_attrs_define
 class RolloutAbortedWebhookPayload:
-    """Rollout abort details delivered with rollout.aborted."""
+    """A live rollout was aborted. Pre-live build failures emit deployment.failed instead."""
 
     app_id: str
     deployment_id: str
+    rollout_state: RolloutAbortedWebhookPayloadRolloutState
+    traffic_percent: int
     reason: str
-    aborted_at: datetime.datetime | Unset = UNSET
+    aborted_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -27,11 +32,13 @@ class RolloutAbortedWebhookPayload:
 
         deployment_id = self.deployment_id
 
+        rollout_state: str = self.rollout_state
+
+        traffic_percent = self.traffic_percent
+
         reason = self.reason
 
-        aborted_at: str | Unset = UNSET
-        if not isinstance(self.aborted_at, Unset):
-            aborted_at = self.aborted_at.isoformat()
+        aborted_at = self.aborted_at.isoformat()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -39,11 +46,12 @@ class RolloutAbortedWebhookPayload:
             {
                 "app_id": app_id,
                 "deployment_id": deployment_id,
+                "rollout_state": rollout_state,
+                "traffic_percent": traffic_percent,
                 "reason": reason,
+                "aborted_at": aborted_at,
             }
         )
-        if aborted_at is not UNSET:
-            field_dict["aborted_at"] = aborted_at
 
         return field_dict
 
@@ -54,18 +62,19 @@ class RolloutAbortedWebhookPayload:
 
         deployment_id = d.pop("deployment_id")
 
+        rollout_state = check_rollout_aborted_webhook_payload_rollout_state(d.pop("rollout_state"))
+
+        traffic_percent = d.pop("traffic_percent")
+
         reason = d.pop("reason")
 
-        _aborted_at = d.pop("aborted_at", UNSET)
-        aborted_at: datetime.datetime | Unset
-        if isinstance(_aborted_at, Unset):
-            aborted_at = UNSET
-        else:
-            aborted_at = datetime.datetime.fromisoformat(_aborted_at)
+        aborted_at = datetime.datetime.fromisoformat(d.pop("aborted_at"))
 
         rollout_aborted_webhook_payload = cls(
             app_id=app_id,
             deployment_id=deployment_id,
+            rollout_state=rollout_state,
+            traffic_percent=traffic_percent,
             reason=reason,
             aborted_at=aborted_at,
         )

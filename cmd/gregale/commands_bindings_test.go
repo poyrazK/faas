@@ -106,6 +106,67 @@ func TestCmdBindingsJSONUsesAnEmptyArray(t *testing.T) {
 	}
 }
 
+func TestCmdBindingsJSONListsOtherProvidersWhenPostgresPreviewUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/apps/api":
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api","service_bindings":[{"binding":"GREGALE_SERVICE_BILLING_URL","service":"billing"}]}`))
+		case "/v1/postgres/databases":
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":503,"code":"managed_postgres_unavailable","title":"Managed PostgreSQL unavailable"}`))
+		case "/v1/apps/api/buckets":
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		case "/v1/apps/api/queue-bindings":
+			_, _ = w.Write([]byte(`[{"name":"email-worker","queue_name":"email","mode":"push","enabled":true}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+
+	var out bytes.Buffer
+	previousOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+	if code := run([]string{"--json", "bindings", "api"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	var got appBindingInventory
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if len(got.Bindings) != 2 || got.Bindings[0].Type != bindingTypeQueue || got.Bindings[1].Type != bindingTypeService {
+		t.Fatalf("other provider bindings were lost: %+v", got.Bindings)
+	}
+	if !reflect.DeepEqual(got.Warnings, []string{managedPostgresBindingsWarning}) {
+		t.Fatalf("warnings = %v", got.Warnings)
+	}
+}
+
+func TestCmdBindingsDoesNotHideUnexpectedPostgresError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/apps/api":
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
+		case "/v1/postgres/databases":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"status":500,"code":"database_query_failed","title":"Query failed"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	if code := run([]string{"bindings", "api"}); code == 0 {
+		t.Fatal("unexpected PostgreSQL error was hidden")
+	}
+}
+
 func TestRenderAppBindingInventory(t *testing.T) {
 	var out bytes.Buffer
 	previousOut := osStdout
@@ -118,9 +179,10 @@ func TestRenderAppBindingInventory(t *testing.T) {
 			{Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready"},
 			{Type: bindingTypeQueue, Name: "jobs", Binding: "worker", Scope: "app", Access: "push", State: "active"},
 		},
+		Warnings: []string{managedPostgresBindingsWarning},
 	})
 
-	for _, want := range []string{"TYPE", "NAME", "BINDING", "SCOPE", "ACCESS", "STATE", "postgres", "DATABASE_URL", "queue", "worker"} {
+	for _, want := range []string{"TYPE", "NAME", "BINDING", "SCOPE", "ACCESS", "STATE", "postgres", "DATABASE_URL", "queue", "worker", "Warning: " + managedPostgresBindingsWarning} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}

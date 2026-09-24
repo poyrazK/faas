@@ -71,6 +71,56 @@ timestamps, and deduplicate the durable delivery id.
 Use `--idempotency-key` when retrying a `gregale deliver` call whose outcome
 is unknown; a new key can enqueue a second delivery.
 
+## Deployment lifecycle webhooks
+
+Subscribe to `deployment.live` and `deployment.failed` to drive a platform's
+customer-facing deployment status without polling:
+
+```bash
+gregale webhooks add --app checkout-api \
+  --target-url https://platform.example/deployments \
+  --secret "$WEBHOOK_SECRET" \
+  --event deployment.live --event deployment.failed
+```
+
+An event is enqueued when the deployment's durable status *changes* to `live`
+or `failed`. Rewriting the same status does not enqueue it again; creating a
+subscription does not replay old transitions. The payload identifies the app,
+deployment, and status. Failures also include any available `error_code`,
+`error_hint`, `error_why`, and `error_fix`; internal error text and log excerpts
+are not sent. `deployment.live` means the deployment reached the live state,
+not that a progressive rollout reached 100% traffic.
+
+Delivery is at least once. Verify the webhook signature and deduplicate by the
+durable delivery id in the webhook envelope or headers; retries keep that id.
+The existing delivery history and dead-letter retry API cover these events.
+
+## Rollout outcome webhooks
+
+Subscribe to `rollout.completed` and `rollout.aborted` when an external
+platform needs to close a release workflow after the deployment becomes live:
+
+```bash
+gregale webhooks add --app checkout-api \
+  --target-url https://platform.example/rollouts \
+  --secret "$WEBHOOK_SECRET" \
+  --event rollout.completed --event rollout.aborted
+```
+
+`deployment.live` means the revision is ready to serve. It does not mean its
+canary has finished. `rollout.completed` means the configured rollout entered
+the `complete` state; the payload includes `traffic_percent` because an
+explicit traffic split can complete below 100%. `rollout.aborted` means an
+in-progress live rollout entered `aborted`, with its customer-visible reason
+and final traffic percentage. A build that fails before going live emits
+`deployment.failed` instead of `rollout.aborted`.
+
+Both payloads include `app_id`, `deployment_id`, and `rollout_state`, plus
+`completed_at` or `aborted_at` respectively. An outcome is enqueued once per
+state transition, in the same transaction as the state change; updating an
+already-terminal rollout does not enqueue another event. Webhook delivery is
+at least once, so receivers must deduplicate by the stable delivery id.
+
 ## Delayed tasks
 
 Delayed tasks are durable one-shot invocations. The producer asks Gregale to
@@ -171,6 +221,20 @@ choose the idempotency key explicitly. The flag-based form remains supported:
 gregale events publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
+
+Before publishing, check which enabled subscriptions would receive a sample.
+Preview uses the router's matcher but does not persist the event or enqueue
+invocations:
+
+```bash
+gregale events preview billing.stripe invoice.paid \
+  --data '{"amount":150}'
+```
+
+The summary separates subscriptions that would receive the event from those
+rejected by content filters. `--id` and `--time` can be supplied when a filter
+inspects those CloudEvents attributes. `--json` returns the bounded samples and
+complete match counts; previews require only the read API-key scope.
 
 To confirm what Gregale reconciled for an app, list its active manifest
 subscriptions directly:

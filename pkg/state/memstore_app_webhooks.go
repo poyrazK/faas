@@ -14,15 +14,134 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// enqueueDeploymentLifecycleWebhooksLocked mirrors the database status
+// trigger. Callers hold m.mu and invoke it only on a changed terminal status.
+func (m *MemStore) enqueueDeploymentLifecycleWebhooksLocked(dep Deployment) {
+	app, ok := m.apps[dep.AppID]
+	if !ok {
+		return
+	}
+	var event AppWebhookEvent
+	var payload any
+	switch dep.Status {
+	case DeployLive:
+		event = AppWebhookEventDeploymentLive
+		payload = api.DeploymentLiveWebhookPayload{
+			AppID: dep.AppID, DeploymentID: dep.ID, Status: string(DeployLive),
+		}
+	case DeployFailed:
+		event = AppWebhookEventDeploymentFailed
+		payload = api.DeploymentFailedWebhookPayload{
+			AppID: dep.AppID, DeploymentID: dep.ID, Status: string(DeployFailed),
+			ErrorCode: dep.ErrorCode, ErrorHint: dep.ErrorHint,
+			ErrorWhy: dep.ErrorWhy, ErrorFix: dep.ErrorFix,
+		}
+	default:
+		return
+	}
+	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
+	now := time.Now().UTC()
+	for _, hook := range m.appWebhooks {
+		if !hook.Enabled || hook.AppID != dep.AppID || hook.AccountID != app.AccountID || !appWebhookMatches(hook.EventFilter, event) {
+			continue
+		}
+		id := newID()
+		m.appWebhookDeliveries[id] = AppWebhookDelivery{
+			ID: id, WebhookID: hook.ID, AppID: dep.AppID, AccountID: app.AccountID,
+			Event: event, Payload: json.RawMessage(body), Status: AppWebhookDeliveryPending,
+			NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+	}
+}
+
+// enqueueRolloutOutcomeWebhooksLocked mirrors the database rollout_state
+// trigger. Call it while holding m.mu, after a successful state mutation.
+func (m *MemStore) enqueueRolloutOutcomeWebhooksLocked(before, after Deployment) {
+	previousState := NormalizeRolloutState(before.RolloutState)
+	if previousState == NormalizeRolloutState(after.RolloutState) ||
+		(previousState != "pending" && previousState != "rolling_out") {
+		return
+	}
+	app, ok := m.apps[after.AppID]
+	if !ok {
+		return
+	}
+	var event AppWebhookEvent
+	var payload any
+	now := time.Now().UTC()
+	switch after.RolloutState {
+	case "complete":
+		if after.Status != DeployLive {
+			return
+		}
+		at := now
+		if after.RolloutCompletedAt != nil {
+			at = *after.RolloutCompletedAt
+		}
+		event = AppWebhookEventRolloutCompleted
+		payload = api.RolloutCompletedWebhookPayload{
+			AppID: after.AppID, DeploymentID: after.ID, RolloutState: "complete",
+			TrafficPercent: after.TrafficPercent, CompletedAt: at.UTC().Format(time.RFC3339Nano),
+		}
+	case "aborted":
+		if before.Status != DeployLive || (after.Status != DeployLive && after.Status != DeploySuperseded) {
+			return // build/runtime failures emit deployment.failed instead
+		}
+		at := now
+		if after.RolloutAbortedAt != nil {
+			at = *after.RolloutAbortedAt
+		}
+		reason := after.RolloutAbortedReason
+		if reason == "" {
+			reason = "rollout aborted"
+		}
+		event = AppWebhookEventRolloutAborted
+		payload = api.RolloutAbortedWebhookPayload{
+			AppID: after.AppID, DeploymentID: after.ID, RolloutState: "aborted",
+			TrafficPercent: after.TrafficPercent, Reason: reason, AbortedAt: at.UTC().Format(time.RFC3339Nano),
+		}
+	default:
+		return
+	}
+	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
+	for _, hook := range m.appWebhooks {
+		if !hook.Enabled || hook.AppID != after.AppID || hook.AccountID != app.AccountID || !appWebhookMatches(hook.EventFilter, event) {
+			continue
+		}
+		id := newID()
+		m.appWebhookDeliveries[id] = AppWebhookDelivery{
+			ID: id, WebhookID: hook.ID, AppID: after.AppID, AccountID: app.AccountID,
+			Event: event, Payload: json.RawMessage(body), Status: AppWebhookDeliveryPending,
+			NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+	}
+}
+
+func appWebhookMatches(filter []string, event AppWebhookEvent) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, candidate := range filter {
+		if candidate == string(event) {
+			return true
+		}
+	}
+	return false
+}
+
 // CreateAppWebhook rejects on duplicate (app_id, target_url) before
 // insert — same invariant the Postgres unique index holds.
 func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhook, error) {
+	if in.Scope != "" && in.Scope != AppWebhookScopeApp {
+		return AppWebhook{}, ErrInvalidAppWebhookScope
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.appWebhooks {
@@ -33,6 +152,7 @@ func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhoo
 	if in.ID == "" {
 		in.ID = newID()
 	}
+	in.Scope = AppWebhookScopeApp
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}
@@ -53,9 +173,12 @@ func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhoo
 // CreateAppWebhookIfUnderQuota enforces the per-app + per-account
 // caps with the same TOCTOU-defence shape as CreateCronIfUnderQuota:
 // MemStore is single-process so a single critical section (m.mu)
-// gates the count + insert. Unlike alert rules, an outbound webhook
-// always pins an app (no account-wide shape).
+// gates the count + insert. This app-only creation method never creates
+// account-scoped subscriptions (ADR-224).
 func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook, limits api.Limits) (AppWebhook, error) {
+	if in.Scope != "" && in.Scope != AppWebhookScopeApp {
+		return AppWebhook{}, ErrInvalidAppWebhookScope
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.appWebhooks {
@@ -64,12 +187,11 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 		}
 	}
 	if in.AppID == "" {
-		// app_id is required for an outbound webhook (no account-wide
-		// shape, unlike alert rules).
+		// The app-only creation method requires an app ID.
 		return AppWebhook{}, ErrNotFound
 	}
 	app, ok := m.apps[in.AppID]
-	if !ok || app.Status == AppDeleted {
+	if !ok || app.Status == AppDeleted || app.AccountID != in.AccountID {
 		return AppWebhook{}, ErrNotFound
 	}
 	appCount := 0
@@ -90,6 +212,10 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 		if w.AccountID != in.AccountID {
 			continue
 		}
+		if w.Scope == AppWebhookScopeAccount {
+			accountCount++
+			continue
+		}
 		if a, ok := m.apps[w.AppID]; ok && a.Status != AppDeleted {
 			accountCount++
 		}
@@ -104,6 +230,7 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 	if in.ID == "" {
 		in.ID = newID()
 	}
+	in.Scope = AppWebhookScopeApp
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}

@@ -218,6 +218,12 @@ func executionAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_EXECUTION_API_ENABLED")) == "1"
 }
 
+// appTaskAPIEnabledFromEnv is the independent fail-closed public admission
+// gate. schedd's FAAS_APP_TASK_DISPATCH remains a second required opt-in.
+func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
+}
+
 func githubDeploysAvailabilityProbe(getenv func(string) string) func(context.Context) bool {
 	base := strings.TrimRight(strings.TrimSpace(getenv("FAAS_GITHUBD_LOOPBACK")), "/")
 	if base == "" {
@@ -695,6 +701,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
+		go srv.runProjectEnvironmentCleanupReconciler(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedRealtimeEndpointReconciler(ctx)
 		go srv.runManagedRealtimeOwnerReaper(ctx)
@@ -915,6 +922,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			go func() {
 				if err := runAuditOutbox(ctx, srv.store, log, srv.eventsPlatform); err != nil && ctx.Err() == nil {
 					log.Error("audit: durable outbox exited", "err", err)
+				}
+			}()
+		}
+		if _, ok := srv.store.(state.OrgActivityOutboxStore); ok {
+			go func() {
+				if err := runOrgActivityOutbox(ctx, srv.store, log); err != nil && ctx.Err() == nil {
+					log.Error("activity: durable outbox exited", "err", err)
 				}
 			}()
 		}
@@ -1371,6 +1385,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCompanionImages(cfg.CompanionImages).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
+		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {

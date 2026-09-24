@@ -48,6 +48,8 @@ type ImageConfig struct {
 	Healthcheck *ImageHealthcheck
 	// StopSignal mirrors the OCI STOPSIGNAL value. Runtime wiring in M-2.
 	StopSignal string
+	// SecretReloadSignal is the Gregale OCI-label opt-in for live secret reload.
+	SecretReloadSignal string
 	// StopGracePeriod mirrors the OCI StopGracePeriodSeconds value
 	// (integer seconds). Runtime wiring in M-2.
 	StopGracePeriodS int

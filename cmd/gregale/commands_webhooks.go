@@ -465,11 +465,17 @@ var webhookIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-
 var validAppWebhookEvents = map[string]struct{}{
 	"app.parked":                {},
 	"app.woken":                 {},
+	"deployment.live":           {},
+	"deployment.failed":         {},
+	"rollout.completed":         {},
+	"rollout.aborted":           {},
+	"job.finished":              {},
 	"usage_statement.finalized": {},
 }
 
 var webhookEventVocab = []string{
-	"app.parked", "app.woken", "usage_statement.finalized",
+	"app.parked", "app.woken", "deployment.live", "deployment.failed",
+	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",
 }
 
 func validAppWebhookEvent(s string) bool {

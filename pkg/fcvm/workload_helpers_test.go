@@ -1,5 +1,7 @@
 //go:build !metal
 
+// adr: 223
+
 // Whitebox tests for the workload-helper surface (issue #463 /
 // ADR-069 / PR-B review finding #3 — reject sidecar named "main").
 // The helpers are package-internal; a whitebox test pins their
@@ -53,9 +55,9 @@ func TestBuildWorkloadsForColdBoot_RejectsSidecarNamedMain(t *testing.T) {
 // TestBuildWorkloadsForColdBoot_LegacySingleWorkload pins the
 // no-sidecar fallback: an empty Sidecars slice must return nil
 // so BootColdBoot's "Workloads empty → resolve LayerKey" branch
-// runs unchanged. The 2-row cap and the main-name rejection are
-// only exercised on the new path; a regression that drops them
-// on the new path while keeping the legacy path unchanged must
+// runs unchanged. Roster validation and the main-name rejection
+// are only exercised on the new path; a regression that drops
+// them on the new path while keeping the legacy path unchanged must
 // not affect this test.
 func TestBuildWorkloadsForColdBoot_LegacySingleWorkload(t *testing.T) {
 	req := WakeRequest{

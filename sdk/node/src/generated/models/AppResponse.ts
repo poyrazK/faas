@@ -129,6 +129,14 @@ export type AppResponse = {
    */
   session_affinity?: boolean;
   /**
+   * Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes the value before forwarding it as a key.
+   */
+  version_affinity_cookie?: string;
+  /**
+   * Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie.
+   */
+  version_affinity_managed_cookie?: boolean;
+  /**
    * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
    */
   route_metrics_enabled?: boolean;

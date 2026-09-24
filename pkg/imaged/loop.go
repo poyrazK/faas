@@ -191,6 +191,7 @@ func (l *Loop) WithSecurityLeaseChannel(ch <-chan time.Time) *Loop {
 // longer re-emits db.NotifyBuildQueued on a reap tick; only the
 // deployment-side signals (NotifyDeploymentChanged,
 // NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady,
+// NotifyAppTaskChanged,
 // NotifyAppChanged) drive
 // imaged's handlers.
 //
@@ -257,6 +258,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
 			db.NotifyDeploymentReady,
+			db.NotifyAppTaskChanged,
 			db.NotifyAppChanged,
 			// Issue #472 / ADR-054: cosign trusted-publisher CRUD
 			// (apid → imaged refresh) + imaged-side audit emits

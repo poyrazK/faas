@@ -180,6 +180,16 @@ them only in its short-lived runner workspace and never prints their values:
 | `COMPUTE_PKI_TARBALL_B64` | base64 of a tar.gz containing `pki/ca/ca.crt` and compute leaves |
 | `COMPUTE_SIGN_KEY` / `COMPUTE_VERIFY_KEY` | image-signing key pair |
 
+For an existing managed multi-node fleet, dispatch `cd-platform` with
+`compute_pki_source=live-node` and `compute_rollout_mode=phased`. Preparation
+then uses one job per node: the trusted runner pins that node's SSH host key,
+exports its validated trust-only bundle, and never transfers the CA private
+key. The default `secret` source remains for first-time node enrollment. Do
+not reuse one host-scoped `COMPUTE_PKI_TARBALL_B64` across different node
+identities; the signed manifest requires each leaf to carry its own transport
+SAN and node identity. For this mode, the SSH host must also match the node's
+manifest transport SAN; otherwise the export fails closed.
+
 `COMPUTE_ANSIBLE_VARS_B64` is optional for provider/overlay variables. The
 backup secrets are also optional while backup initialization is deferred:
 `COMPUTE_BOX_AGE_KEY`, `COMPUTE_RCLONE_ENVELOPE_B64`, and

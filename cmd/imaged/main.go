@@ -488,6 +488,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// override with FAAS_VMM_SOCK for dev (e.g. a bufconn
 		// test on a Mac).
 		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log))
+	releasePhaseEnabled, err := parseBoolEnv("FAAS_RELEASE_PHASE_ENABLED", getenv("FAAS_RELEASE_PHASE_ENABLED"))
+	if err != nil {
+		return err
+	}
+	h.WithReleasePhaseEnabled(releasePhaseEnabled)
+	if releasePhaseEnabled {
+		log.Info("imaged: deployment release phase enabled")
+	}
 	// Public-beta compute nodes require a configured public-origin smoke. The
 	// verifier remains optional for single-box/offline development, but the
 	// required flag installs it even when the URL is missing so deployments
@@ -505,7 +513,9 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	h.WithHostingSmokeRequired(smokeRequired)
 	if smokeURL != "" || smokeRequired {
 		verifier := apihostingreceipt.Verifier{
-			BaseURL: smokeURL, AppsDomain: appsDomain, Timeout: 10 * time.Second, Required: smokeRequired,
+			BaseURL: smokeURL, AppsDomain: appsDomain,
+			Timeout: 60 * time.Second, RequestTimeout: 12 * time.Second,
+			RetryInterval: time.Second, Required: smokeRequired,
 			Authorize: func(ctx context.Context, deploymentID, token string, expiresAt time.Time) error {
 				dep, err := store.DeploymentByID(ctx, deploymentID)
 				if err != nil {
@@ -756,6 +766,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
 			db.NotifyDeploymentReady,
+			db.NotifyAppTaskChanged,
 		}, func(ctx context.Context, n db.Notification) error {
 			return loop.HandleNotification(ctx, n)
 		}, log)

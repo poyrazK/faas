@@ -21,7 +21,8 @@
 // source checks; four require deployed-app telemetry and are marked
 // skipped rather than reported as false positives:
 //
-//   1. port-bind         requires a live listener probe
+//   1. port-bind         warns on likely fixed source ports; live verification
+//                        still requires a deployed listener probe
 //   2. loopback-bind     scans for app.listen("127.0.0.1"...) patterns
 //   3. arch              detects target/host arch mismatch
 //   4. env-required      scans source for env-var references; flags undeclared
@@ -63,7 +64,7 @@ import (
 type doctorCheck struct {
 	Name    string   `json:"name"`             // e.g. "port-bind"
 	Status  string   `json:"status"`           // "ok" | "warn" | "error" | "skipped"
-	Code    string   `json:"code,omitempty"`   // RFC 7807 code when status != "ok"
+	Code    string   `json:"code,omitempty"`   // stable doctor finding code; RFC 7807 code when applicable
 	Reason  string   `json:"reason,omitempty"` // why a check was skipped
 	Hint    string   `json:"hint,omitempty"`
 	Why     string   `json:"why,omitempty"`
@@ -226,7 +227,7 @@ func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 			rep.Profile = &profile
 		}
 	}
-	rep.Checks = append(rep.Checks, doctorCheckPortBind())
+	rep.Checks = append(rep.Checks, doctorCheckPortBind(path))
 	rep.Checks = append(rep.Checks, doctorCheckLoopbackBind(path))
 	rep.Checks = append(rep.Checks, doctorCheckArch(path))
 	rep.Checks = append(rep.Checks, doctorCheckEnvRequired(path))
@@ -242,11 +243,28 @@ func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 	return rep
 }
 
-// doctorCheckPortBind requires a live app to verify that the process
-// actually listens on the platform-provided port. Source inspection
-// cannot prove that, so it is explicitly skipped rather than shown as
-// ok. The loopback-bind check below remains locally detectable.
-func doctorCheckPortBind() doctorCheck {
+// hardCodedPortBindRegex covers common Node, Go, and Python listener forms.
+// It deliberately does not match expressions that begin with a PORT lookup,
+// even when they include a local fallback (for example process.env.PORT ||
+// 3000). This is an advisory heuristic, not proof of the effective listener.
+var hardCodedPortBindRegex = regexp.MustCompile(`(?:\b(?:app|application|server|httpServer|httpsServer)\s*\.\s*listen\s*\(\s*[0-9]{1,5}\s*(?:[,)]|$)|\)\s*\.\s*listen\s*\(\s*[0-9]{1,5}\s*(?:[,)]|$)|\bhttp\.ListenAndServe\s*\(\s*["']:[0-9]{1,5}["']|\b(?:app|application|uvicorn)\s*\.\s*run\s*\([^\n)]*\bport\s*=\s*[0-9]{1,5}\b|\bnet\.Listen\s*\(\s*["']tcp["']\s*,\s*["']:[0-9]{1,5}["'])`)
+
+// doctorCheckPortBind surfaces likely fixed listener ports before upload, but
+// cannot verify the effective listener without a deployed app. If static
+// source inspection finds nothing, retain the explicit skipped result instead
+// of implying that runtime port binding was checked.
+func doctorCheckPortBind(path string) doctorCheck {
+	sources := scanSourceExtensions(path, hardCodedPortBindRegex, 5, ".js", ".ts", ".py", ".go")
+	if len(sources) > 0 {
+		return doctorCheck{
+			Name:    "port-bind",
+			Status:  "warn",
+			Code:    "hard_coded_port",
+			Hint:    "Static source inspection found a numeric listener port; runtime binding is unverified and the literal may drift from the deployment profile.",
+			Fix:     "Read PORT when starting the server, keeping a local fallback if needed, or set hosting.port in gregale.yaml to match the listener.",
+			Sources: sources,
+		}
+	}
 	return doctorCheck{
 		Name:   "port-bind",
 		Status: "skipped",
@@ -422,6 +440,18 @@ func doctorCheckStartupTimeout() doctorCheck {
 // always 1 today; line-by-line grep would require bufio.Scanner
 // per file, which adds 30 LoC for marginal value).
 func scanSource(root string, re *regexp.Regexp, maxHits int) []string {
+	return scanSourceFiltered(root, re, maxHits, nil)
+}
+
+func scanSourceExtensions(root string, re *regexp.Regexp, maxHits int, extensions ...string) []string {
+	allowed := make(map[string]struct{}, len(extensions))
+	for _, extension := range extensions {
+		allowed[strings.ToLower(extension)] = struct{}{}
+	}
+	return scanSourceFiltered(root, re, maxHits, allowed)
+}
+
+func scanSourceFiltered(root string, re *regexp.Regexp, maxHits int, extensions map[string]struct{}) []string {
 	out := []string{}
 	patterns := loadGregaleignore(root)
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
@@ -446,6 +476,11 @@ func scanSource(root string, re *regexp.Regexp, maxHits int) []string {
 		}
 		if doctorPathExcluded(root, p, info, patterns) {
 			return nil
+		}
+		if extensions != nil {
+			if _, ok := extensions[strings.ToLower(filepath.Ext(p))]; !ok {
+				return nil
+			}
 		}
 		if len(out) >= maxHits {
 			return filepath.SkipAll
@@ -900,6 +935,12 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 			}
 			if c.Hint != "" {
 				RenderHintRow(w, c.Hint)
+			}
+			if c.Fix != "" {
+				RenderFixRow(w, c.Fix)
+			}
+			if len(c.Sources) > 0 {
+				_, _ = fmt.Fprintf(w, "    sources: %s\n", strings.Join(c.Sources, ", "))
 			}
 		case "error":
 			hasFinding = true

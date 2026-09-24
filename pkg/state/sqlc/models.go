@@ -444,16 +444,18 @@ type AppTrustedSigner struct {
 }
 
 type AppWebhook struct {
-	ID           pgtype.UUID
-	AppID        pgtype.UUID
-	AccountID    pgtype.UUID
-	TargetUrl    string
-	SecretSealed []byte
-	EventFilter  []string
-	RetryPolicy  string
-	Enabled      bool
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	TargetUrl      string
+	SecretSealed   []byte
+	EventFilter    []string
+	RetryPolicy    string
+	Enabled        bool
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	DeliveryFormat string
+	Scope          string
 }
 
 type AppWebhookDelivery struct {
@@ -886,6 +888,14 @@ type Deployment struct {
 	ApiHostingReceipt        []byte
 	InferredProfile          []byte
 	Revision                 int32
+}
+
+type DeploymentAlias struct {
+	AppID        pgtype.UUID
+	Name         string
+	DeploymentID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type DeploymentAudit struct {
@@ -1363,29 +1373,30 @@ type MfaDisableRequest struct {
 }
 
 type MirrorInvocationResult struct {
-	ID                 pgtype.UUID
-	MirrorRuleID       pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	SourceDeploymentID pgtype.UUID
-	MirrorDeploymentID pgtype.UUID
-	InstanceID         pgtype.Text
-	SourceInstanceID   pgtype.Text
-	StatusCode         pgtype.Int4
-	SourceStatusCode   pgtype.Int4
-	LatencyMs          pgtype.Int4
-	SourceLatencyMs    pgtype.Int4
-	BodyHash           []byte
-	SourceBodyHash     []byte
-	SchemaHash         []byte
-	SourceSchemaHash   []byte
-	StatusDiff         bool
-	SchemaDiff         bool
-	BodyDiff           bool
-	Crashed            bool
-	RequestID          string
-	CompletedAt        pgtype.Timestamptz
-	RollupCounted      bool
+	ID                   pgtype.UUID
+	MirrorRuleID         pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	SourceDeploymentID   pgtype.UUID
+	MirrorDeploymentID   pgtype.UUID
+	InstanceID           pgtype.Text
+	SourceInstanceID     pgtype.Text
+	StatusCode           pgtype.Int4
+	SourceStatusCode     pgtype.Int4
+	LatencyMs            pgtype.Int4
+	SourceLatencyMs      pgtype.Int4
+	BodyHash             []byte
+	SourceBodyHash       []byte
+	SchemaHash           []byte
+	SourceSchemaHash     []byte
+	StatusDiff           bool
+	SchemaDiff           bool
+	BodyDiff             bool
+	Crashed              bool
+	RequestID            string
+	CompletedAt          pgtype.Timestamptz
+	RollupCounted        bool
+	ComparisonIncomplete bool
 }
 
 type MirrorInvocationSummary struct {
@@ -1414,6 +1425,7 @@ type MirrorRule struct {
 	RedactHeaders      []string
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	AllowUnsafeMethods bool
 }
 
 type NodeJoinJob struct {
@@ -1443,25 +1455,26 @@ type OauthLink struct {
 }
 
 type ObjectBucket struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	Name               string
-	Scope              string
-	Region             string
-	BackendID          string
-	BackendFingerprint string
-	PhysicalName       string
-	State              string
-	LeaseToken         pgtype.Text
-	LeaseUntil         pgtype.Timestamptz
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	AttemptCount       int32
-	RetryAt            pgtype.Timestamptz
-	LastErrorCode      string
-	PublicRead         bool
-	ServeAt            pgtype.Text
+	ID                             pgtype.UUID
+	AccountID                      pgtype.UUID
+	AppID                          pgtype.UUID
+	Name                           string
+	Scope                          string
+	Region                         string
+	BackendID                      string
+	BackendFingerprint             string
+	PhysicalName                   string
+	State                          string
+	LeaseToken                     pgtype.Text
+	LeaseUntil                     pgtype.Timestamptz
+	CreatedAt                      pgtype.Timestamptz
+	UpdatedAt                      pgtype.Timestamptz
+	AttemptCount                   int32
+	RetryAt                        pgtype.Timestamptz
+	LastErrorCode                  string
+	PublicRead                     bool
+	ServeAt                        pgtype.Text
+	EnvironmentCloneSourceBucketID pgtype.UUID
 }
 
 type ObjectStorageAccessGrant struct {
@@ -1684,6 +1697,23 @@ type OrgActivity struct {
 	SourceID   string
 }
 
+type OrgActivityOutbox struct {
+	ID          int64
+	OrgID       pgtype.UUID
+	SourceType  string
+	SourceID    string
+	Activity    []byte
+	State       string
+	Attempts    int32
+	AvailableAt pgtype.Timestamptz
+	ClaimedBy   pgtype.Text
+	ClaimedAt   pgtype.Timestamptz
+	LeaseUntil  pgtype.Timestamptz
+	DeliveredAt pgtype.Timestamptz
+	LastError   pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+}
+
 type OrgInvitation struct {
 	ID                 pgtype.UUID
 	OrgID              pgtype.UUID
@@ -1738,6 +1768,19 @@ type Project struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	OrgID            pgtype.UUID
+}
+
+type ProjectEnvironmentCleanupJob struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Resources       []byte
+	AttemptCount    int32
+	NextAttemptAt   pgtype.Timestamptz
+	LeaseToken      string
+	LeaseUntil      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
 }
 
 type ProvisionedStaticEgressIp struct {

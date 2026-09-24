@@ -90,7 +90,7 @@ Four flags drive the ledger row + metric increment:
 - `bodyDiff`: same predicate as schemaDiff (field exists distinct for forward-compat with JCS semantic diff)
 - `crashed`: `mirrorStatus == 0` (timeout / transport error) OR `mirrorStatus >= 500`
 
-A3 ships byte-equal diff via SHA-256. JCS schema-hash body
+A3 ships byte-equal diff via per-comparison HMAC-SHA-256. JCS schema-hash body
 diff is an ADR-124 §Follow-on. The four-flag shape is
 stable, so the dashboard chip doesn't need to change when
 semantic diff lands.

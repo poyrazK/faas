@@ -62,6 +62,7 @@ type fakeBackend struct {
 	// branch (PR scale-out readiness).
 	wakeMethodOut       WakeMethod
 	lastAdmitDeployment string
+	lastAdmitScope      string
 	lastAdmitTrigger    string
 	lastAdmitMax        int
 	// failNextPick forces the next Pick call to return !ok so the
@@ -212,7 +213,7 @@ func (b *fakeBackend) HealthyCount(_ string) int {
 	return 0
 }
 
-func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, _, trigger string, maxConcurrency int) (string, WakeMethod, bool, error) {
+func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, scope, trigger string, maxConcurrency int) (string, WakeMethod, bool, error) {
 	// Issue #168 fan-out invariant: the HealthyCount + addTarget pair
 	// must be serialized. The fakeBackend takes b.mu for the whole
 	// call so concurrent Admit callers cannot collectively exceed
@@ -222,6 +223,7 @@ func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, _, trigger str
 	defer b.mu.Unlock()
 	b.lastAdmitCorrelation, _ = wire.FromContext(ctx)
 	b.lastAdmitDeployment = deploymentID
+	b.lastAdmitScope = scope
 	b.lastAdmitTrigger = trigger
 	b.lastAdmitMax = maxConcurrency
 	if len(b.targets) >= maxConcurrency {
@@ -2635,6 +2637,57 @@ func TestApplyEdgeRuleCORS_Preflight_EmitsApplySuccess(t *testing.T) {
 	}
 	if !strings.Contains(body, `gateway_cors_preflight_edge_total{app="app-1"} 1`) {
 		t.Errorf("cors_preflight_edge_total{app-1} != 1; body:\n%s", body)
+	}
+}
+
+type methodScopedCORSMatcher struct {
+	noOpEdgeRuleMatcher
+	rules []EdgeRuleCORSResolved
+}
+
+func (m methodScopedCORSMatcher) MatchCORS(_ context.Context, _, path, method string) *EdgeRuleCORSResolved {
+	return PickFirstCORSMatch(m.rules, path, method)
+}
+
+func TestApplyEdgeRuleCORS_PreflightMatchesRequestedMethod(t *testing.T) {
+	h := &Handler{edgeRules: methodScopedCORSMatcher{rules: []EdgeRuleCORSResolved{{
+		ID:           "get-only",
+		AccountID:    "acct-1",
+		Methods:      map[string]bool{http.MethodGet: true},
+		AllowOrigins: []string{"https://allowed.example"},
+		AllowMethods: []string{http.MethodGet},
+	}}}}
+	app := App{ID: "app-1", AccountID: "acct-1"}
+	for _, tc := range []struct {
+		name          string
+		origin        string
+		requestMethod string
+		wantHandled   bool
+	}{
+		{name: "allowed_GET", origin: "https://allowed.example", requestMethod: http.MethodGet, wantHandled: true},
+		{name: "disallowed_POST", origin: "https://allowed.example", requestMethod: http.MethodPost},
+		{name: "disallowed_origin", origin: "https://other.example", requestMethod: http.MethodGet},
+		{name: "not_a_preflight", origin: "https://allowed.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodOptions, "http://app.example.test/api", nil)
+			req.Header.Set("Origin", tc.origin)
+			if tc.requestMethod != "" {
+				req.Header.Set("Access-Control-Request-Method", tc.requestMethod)
+			}
+			rec := httptest.NewRecorder()
+			handled := h.applyEdgeRuleCORS(rec, req, app, nil)
+			if handled != tc.wantHandled {
+				t.Fatalf("handled = %t, want %t", handled, tc.wantHandled)
+			}
+			if tc.wantHandled {
+				if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != tc.origin || rec.Header().Get("Access-Control-Allow-Methods") != http.MethodGet {
+					t.Fatalf("allowed preflight status/headers = %d/%v", rec.Code, rec.Header())
+				}
+			} else if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+				t.Fatalf("disallowed preflight exposed allow-origin %q", got)
+			}
+		})
 	}
 }
 

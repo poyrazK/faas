@@ -38,6 +38,45 @@ type PublishEventResponse struct {
 	AccountID  string    `json:"account_id"`
 }
 
+// PreviewEventRequest asks the router to evaluate an event without persisting
+// or delivering it. ID and Time are optional and receive the same defaults as
+// publish when omitted.
+type PreviewEventRequest struct {
+	ID              string          `json:"id,omitempty"`
+	Source          string          `json:"source"`
+	Type            string          `json:"type"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"data_content_type,omitempty"`
+	Data            json.RawMessage `json:"data"`
+}
+
+// EventPreviewSubscription describes an enabled subscription considered by a
+// read-only routing preview. Filter is the normalized manifest predicate.
+type EventPreviewSubscription struct {
+	AppSlug        string          `json:"app_slug"`
+	SubscriptionID string          `json:"subscription_id"`
+	Source         string          `json:"source"`
+	Type           string          `json:"type"`
+	Filter         json.RawMessage `json:"filter"`
+	Reason         string          `json:"reason"`
+}
+
+// PreviewEventResponse summarizes the same account-scoped matching decision
+// used by the asynchronous fanout worker. Subscription slices are bounded
+// samples; the counts cover every candidate.
+type PreviewEventResponse struct {
+	EventID             string                     `json:"event_id"`
+	Source              string                     `json:"source"`
+	Type                string                     `json:"type"`
+	CandidateCount      int                        `json:"candidate_count"`
+	MatchedCount        int                        `json:"matched_count"`
+	FilterMismatchCount int                        `json:"filter_mismatch_count"`
+	OtherMismatchCount  int                        `json:"other_mismatch_count"`
+	Matches             []EventPreviewSubscription `json:"matches"`
+	NonMatches          []EventPreviewSubscription `json:"non_matches"`
+	Truncated           bool                       `json:"truncated"`
+}
+
 // SendAppMessageRequest is the application-inbox contract. Gregale wraps the
 // caller's data in a CloudEvents 1.0 envelope and places it on the target
 // application's durable invocation queue. Source defaults to "gregale.send";
@@ -200,6 +239,9 @@ type CreateAppRequest struct {
 	// SessionAffinity enables best-effort cookie-based routing to the same
 	// running instance. It is off by default.
 	SessionAffinity *bool `json:"session_affinity,omitempty"`
+	// VersionAffinityCookie derives rollout affinity from this browser cookie.
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -303,6 +345,77 @@ type CreatePreviewRequest struct {
 	TTLHours int `json:"ttl_hours,omitempty"`
 }
 
+// PreviewResourceResponse is the first-class preview read model. It keeps
+// streamed logs and time-windowed metrics behind their native endpoints while
+// making those endpoints, the effective app configuration, production
+// baseline, artifact comparison, and expiration discoverable from one object.
+type PreviewResourceResponse struct {
+	App                  AppResponse                      `json:"app"`
+	Parent               *AppResponse                     `json:"parent,omitempty"`
+	LatestDeployment     *DeploymentResponse              `json:"latest_deployment,omitempty"`
+	ProductionDeployment *DeploymentResponse              `json:"production_deployment,omitempty"`
+	Changes              PreviewProductionChangesResponse `json:"changes_from_production"`
+	Links                PreviewResourceLinksResponse     `json:"links"`
+}
+
+// PreviewProductionChangesResponse summarizes safe, non-secret differences
+// between a preview and its production parent.
+type PreviewProductionChangesResponse struct {
+	ArtifactChanged            bool                    `json:"artifact_changed"`
+	PreviewArtifact            PreviewArtifactResponse `json:"preview_artifact"`
+	ProductionArtifact         PreviewArtifactResponse `json:"production_artifact"`
+	ConfigurationChangedGroups []string                `json:"configuration_changed_groups"`
+}
+
+// PreviewArtifactResponse is the strongest available immutable identity for a
+// deployment plus enough provenance for a human-readable comparison.
+type PreviewArtifactResponse struct {
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Revision     int    `json:"revision,omitempty"`
+	Status       string `json:"status,omitempty"`
+	ImageDigest  string `json:"image_digest,omitempty"`
+	SourceSHA256 string `json:"source_sha256,omitempty"`
+	CommitSHA    string `json:"commit_sha,omitempty"`
+	BuildID      string `json:"build_id,omitempty"`
+}
+
+// PreviewResourceLinksResponse points to the preview's public URL and native
+// observability/configuration APIs. Logs remain SSE and metrics remain
+// time-windowed instead of being embedded as stale snapshots.
+type PreviewResourceLinksResponse struct {
+	URL           string `json:"url"`
+	Logs          string `json:"logs"`
+	Metrics       string `json:"metrics"`
+	Configuration string `json:"configuration"`
+}
+
+// PreviewEnvironmentStatusResponse reports the complete current-head workload
+// set for a GitHub-managed PR preview. Developer previews have no recorded set.
+type PreviewEnvironmentStatusResponse struct {
+	RootSlug       string                             `json:"root_slug"`
+	RepoFullName   string                             `json:"repo_full_name"`
+	PRNumber       int                                `json:"pr_number"`
+	CommitSHA      string                             `json:"commit_sha"`
+	Phase          string                             `json:"phase"`
+	Ready          bool                               `json:"ready"`
+	Summary        string                             `json:"summary"`
+	LiveWorkloads  int                                `json:"live_workloads"`
+	TotalWorkloads int                                `json:"total_workloads"`
+	Members        []PreviewEnvironmentMemberResponse `json:"members"`
+}
+
+// PreviewEnvironmentMemberResponse identifies one expected workload and its
+// newest preview deployment at the recorded PR head.
+type PreviewEnvironmentMemberResponse struct {
+	AppID            string `json:"app_id"`
+	Slug             string `json:"slug"`
+	WorkloadName     string `json:"workload_name"`
+	AppStatus        string `json:"app_status"`
+	PreviewState     string `json:"preview_state"`
+	DeploymentID     string `json:"deployment_id"`
+	DeploymentStatus string `json:"deployment_status"`
+}
+
 // UpsertDevSessionRequest describes the application shape for an expiring,
 // CLI-managed developer preview. The project identity lives in the URL path;
 // WorkspaceID separates developers and local source trees within that project.
@@ -395,6 +508,9 @@ type UpdateAppRequest struct {
 	// SessionAffinity toggles best-effort cookie-based routing to the same
 	// running instance. Nil leaves the current setting unchanged.
 	SessionAffinity *bool `json:"session_affinity,omitempty"`
+	// VersionAffinityCookie replaces the cookie source; empty disables it.
+	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1217,7 +1333,9 @@ type AppResponse struct {
 	WebSocketEnabled bool `json:"websocket_enabled"`
 	// SessionAffinity reports whether best-effort cookie-based instance
 	// routing is enabled for this app.
-	SessionAffinity bool `json:"session_affinity"`
+	SessionAffinity              bool   `json:"session_affinity"`
+	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
+	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -2616,6 +2734,32 @@ type DeploymentPreviewURL struct {
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
 }
 
+// SetDeploymentAliasRequest is the body for PUT
+// /v1/apps/{slug}/deployment-aliases/{name}. The deployment ID is explicit:
+// an alias is a stable name for one immutable row, not a moving "latest"
+// selector.
+type SetDeploymentAliasRequest struct {
+	DeploymentID string `json:"deployment_id"`
+}
+
+// DeploymentAliasResponse is the persisted mapping returned by the
+// deployment-alias API. Revision is included as the readable vN handle for
+// the immutable target; Host and URL expose its stable public route.
+type DeploymentAliasResponse struct {
+	Name         string    `json:"name"`
+	DeploymentID string    `json:"deployment_id"`
+	Revision     int       `json:"revision"`
+	Host         string    `json:"host,omitempty"`
+	URL          string    `json:"url,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// DeploymentAliasListResponse is the bounded per-app alias list shape.
+type DeploymentAliasListResponse struct {
+	Items []DeploymentAliasResponse `json:"items"`
+}
+
 // UpdateDeploymentTrafficRequest is the body for
 // PATCH /v1/deployments/{id}/traffic (issue #556 PR-A). The PATCH
 // route is dedicated to traffic splitting rather than reusing
@@ -2664,8 +2808,9 @@ type CanaryAdvanceResponse struct {
 type CreateMirrorRuleRequest struct {
 	SourceDeploymentID string   `json:"source_deployment_id"`
 	MirrorDeploymentID string   `json:"mirror_deployment_id"`
-	Percent            int      `json:"percent"`
+	Percent            *int     `json:"percent,omitempty"`
 	IncludeBody        bool     `json:"include_body"`
+	AllowUnsafeMethods bool     `json:"allow_unsafe_methods"`
 	RedactHeaders      []string `json:"redact_headers"`
 }
 
@@ -2678,10 +2823,11 @@ type CreateMirrorRuleRequest struct {
 // the customer's additive list; a PATCH that omits the field
 // leaves it untouched.
 type UpdateMirrorRuleRequest struct {
-	Percent       *int      `json:"percent,omitempty"`
-	Enabled       *bool     `json:"enabled,omitempty"`
-	IncludeBody   *bool     `json:"include_body,omitempty"`
-	RedactHeaders *[]string `json:"redact_headers,omitempty"`
+	Percent            *int      `json:"percent,omitempty"`
+	Enabled            *bool     `json:"enabled,omitempty"`
+	IncludeBody        *bool     `json:"include_body,omitempty"`
+	AllowUnsafeMethods *bool     `json:"allow_unsafe_methods,omitempty"`
+	RedactHeaders      *[]string `json:"redact_headers,omitempty"`
 }
 
 // MirrorRuleResponse is the canonical mirror-rule response
@@ -2701,6 +2847,7 @@ type MirrorRuleResponse struct {
 	Percent               int       `json:"percent"`
 	Enabled               bool      `json:"enabled"`
 	IncludeBody           bool      `json:"include_body"`
+	AllowUnsafeMethods    bool      `json:"allow_unsafe_methods"`
 	RedactHeaders         []string  `json:"redact_headers"`
 	AlwaysStrippedHeaders []string  `json:"always_stripped_headers"`
 	CreatedAt             time.Time `json:"created_at"`
@@ -2731,16 +2878,17 @@ type MirrorRuleListResponse struct {
 // the parsed window in seconds so the CLI can render "last 1h"
 // without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations     int64   `json:"total_invocations"`
-	ChangedResponseCount int64   `json:"changed_response_count"`
-	ChangedResponsePct   float64 `json:"changed_response_percent"`
-	StatusDiffCount      int64   `json:"status_diff_count"`
-	SchemaDiffCount      int64   `json:"schema_diff_count"`
-	BodyDiffCount        int64   `json:"body_diff_count"`
-	MeanLatencyDiffMs    int64   `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs     int64   `json:"p99_latency_diff_ms"`
-	CrashCount           int64   `json:"crash_count"`
-	WindowSeconds        int     `json:"window_seconds"`
+	TotalInvocations          int64   `json:"total_invocations"`
+	ChangedResponseCount      int64   `json:"changed_response_count"`
+	ChangedResponsePct        float64 `json:"changed_response_percent"`
+	StatusDiffCount           int64   `json:"status_diff_count"`
+	SchemaDiffCount           int64   `json:"schema_diff_count"`
+	BodyDiffCount             int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs         int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs          int64   `json:"p99_latency_diff_ms"`
+	CrashCount                int64   `json:"crash_count"`
+	IncompleteComparisonCount int64   `json:"incomplete_comparison_count"`
+	WindowSeconds             int     `json:"window_seconds"`
 }
 
 // MirrorReplayBatchRequest is an explicitly sanitized historical request
@@ -4401,15 +4549,44 @@ type QueueReceiveResponse struct {
 	Traceparent string          `json:"traceparent,omitempty"`
 }
 
+// LogQueryEvent is the stable, source-neutral shape emitted by database-backed
+// log queries. Fields that do not apply to a source are omitted so future
+// build, deploy, network, and DNS sources can join the same stream without
+// changing the existing HTTP event contract.
+type LogQueryEvent struct {
+	ID           string    `json:"id"`
+	App          string    `json:"app,omitempty"`
+	Timestamp    string    `json:"timestamp"`
+	Source       LogSource `json:"source"`
+	DeploymentID string    `json:"deployment_id,omitempty"`
+	InstanceID   string    `json:"instance_id,omitempty"`
+	RequestID    string    `json:"request_id,omitempty"`
+	TraceID      string    `json:"trace_id,omitempty"`
+	Route        string    `json:"route,omitempty"`
+	Method       string    `json:"method,omitempty"`
+	Status       int       `json:"status,omitempty"`
+	Level        string    `json:"level,omitempty"`
+	Stream       string    `json:"stream,omitempty"`
+	Message      string    `json:"message"`
+	LatencyMS    int       `json:"latency_ms,omitempty"`
+	Count        int       `json:"count,omitempty"`
+	ColdBoot     bool      `json:"cold_boot,omitempty"`
+}
+
 // AccountTraceLookupResponse is the tenant-scoped correlation envelope used
-// by `gregale trace`. It combines retained request evidence with durable queue
-// lifecycle rows without exposing request payloads or raw headers.
+// by `gregale trace`. It combines retained request evidence and safe access
+// log projections with durable queue lifecycle rows without exposing request
+// payloads or raw headers.
 type AccountTraceLookupResponse struct {
-	TraceID        string                    `json:"trace_id"`
-	GeneratedAt    time.Time                 `json:"generated_at"`
-	Limit          int                       `json:"limit"`
-	Matches        []AccountTraceMatch       `json:"matches"`
-	Invocations    []AccountTraceInvocation  `json:"invocations"`
+	TraceID     string                   `json:"trace_id"`
+	GeneratedAt time.Time                `json:"generated_at"`
+	Limit       int                      `json:"limit"`
+	Matches     []AccountTraceMatch      `json:"matches"`
+	Invocations []AccountTraceInvocation `json:"invocations"`
+	// Logs contains metadata-only HTTP access events within trace retention.
+	Logs []LogQueryEvent `json:"logs"`
+	// LogsTruncated indicates that the bounded per-trace log result omitted rows.
+	LogsTruncated  bool                      `json:"logs_truncated"`
 	Spans          []DebugTelemetrySpan      `json:"spans"`
 	SpansTruncated bool                      `json:"spans_truncated"`
 	Partial        bool                      `json:"partial,omitempty"`
@@ -4426,13 +4603,16 @@ type AccountTraceMatch struct {
 // Payloads, result bodies, and arbitrary invocation headers are intentionally
 // absent. Source distinguishes async, queue, delayed, cron, and replay rows.
 type AccountTraceInvocation struct {
-	App         string `json:"app"`
-	ID          string `json:"id"`
-	Source      string `json:"source"`
-	QueueName   string `json:"queue_name,omitempty"`
-	State       string `json:"state"`
-	Attempts    int    `json:"attempts"`
-	CreatedAt   string `json:"created_at"`
+	App       string `json:"app"`
+	ID        string `json:"id"`
+	Source    string `json:"source"`
+	QueueName string `json:"queue_name,omitempty"`
+	State     string `json:"state"`
+	Attempts  int    `json:"attempts"`
+	CreatedAt string `json:"created_at"`
+	// StartedAt is the most recent claim/delivery time. It is updated when
+	// an invocation is retried and is omitted until the first claim.
+	StartedAt   string `json:"started_at,omitempty"`
 	CompletedAt string `json:"completed_at,omitempty"`
 	Traceparent string `json:"traceparent,omitempty"`
 }
@@ -6126,9 +6306,8 @@ type AdminSetGithubWebhookSecretResponse struct {
 }
 
 // SidecarType is the closed enum on Sidecar.Type (issue #463 /
-// ADR-068 §Decision 1). The 2-sidecar cap is enforced as 1 init +
-// 1 sidecar per deployment — `Sidecars.Validate` rejects any other
-// shape (e.g. 2 init) with `ErrSidecarInvalidType`.
+// ADR-068 §Decision 1). A deployment may have one init helper and up to
+// SidecarLongRunningCapMax concurrent sidecars, subject to SidecarCapMax.
 type SidecarType string
 
 const (
@@ -6235,11 +6414,10 @@ func ValidCompanionImageReference(ref string) bool {
 	return sidecarImageRe.MatchString(ref)
 }
 
-// Sidecar is one entry in the deploy request's `sidecars` array
-// (issue #463 / ADR-068). At most one with type=init and at most
-// one with type=sidecar per app (the 2-sidecar hard cap, enforced
-// by `Sidecars.Validate` + the schema CHECK on
-// `deployments.sidecars` in migration 00095).
+// Sidecar is one entry in the deploy request's `companions` array
+// (legacy spelling: `sidecars`). A deployment may declare one init helper
+// and up to SidecarLongRunningCapMax concurrently running companions; the
+// total helper cap is enforced by `Sidecars.Validate` and the database.
 //
 // The env map is stored envelope-sealed at rest via
 // `secretbox.SealBytes` (namespace="sidecar_env", mirrors
@@ -6277,8 +6455,8 @@ type Sidecar struct {
 	// Image is the digest-pinned OCI reference (`repo@sha256:...`).
 	// Tag references are rejected. Required unless Preset is set.
 	Image string `json:"image,omitempty"`
-	// Type is the closed enum (init | sidecar). At most one of
-	// each per deployment. Required.
+	// Type is the closed enum (init | sidecar). A deployment may declare one
+	// init helper and multiple long-running sidecars. Required.
 	Type SidecarType `json:"type"`
 	// Cmd is the argv array (the image's ENTRYPOINT is unchanged;
 	// Cmd overrides the CMD). Every element non-empty if present.
@@ -6322,10 +6500,18 @@ type Sidecar struct {
 	// from "explicit true/false". PR-A only persists the field;
 	// the runtime effect is PR-B.
 	Essential *bool `json:"essential,omitempty"`
-	// StartupProbe optionally replaces the image's baked OCI HEALTHCHECK for
-	// this workload. The exec-style shape matches AppManifest.Healthcheck;
-	// use Test=["NONE"] to explicitly disable an image healthcheck.
-	StartupProbe *AppManifestHealthcheck `json:"startup_probe,omitempty"`
+	// StartupProbe gates this workload's healthy lifecycle state. If omitted,
+	// the image's OCI HEALTHCHECK remains the startup probe. The legacy OCI
+	// test/interval_s/retries shape remains accepted for compatibility.
+	StartupProbe *SidecarProbe `json:"startup_probe,omitempty"`
+	// LivenessProbe is an optional steady-state probe for long-running sidecars.
+	// When omitted, the effective startup probe is also used for liveness to
+	// preserve the pre-existing sidecar healthcheck behavior.
+	LivenessProbe *SidecarProbe `json:"liveness_probe,omitempty"`
+	// ReadinessProbe is a reversible traffic gate for the primary-ingress
+	// companion. It must pass during startup before the instance can serve
+	// traffic; later failures withdraw the instance without killing it.
+	ReadinessProbe *SidecarProbe `json:"readiness_probe,omitempty"`
 	// DependsOn gates this workload on another workload's lifecycle state.
 	// At most WorkloadDependencyCapMax unique targets are accepted. An omitted
 	// condition means started. Init workloads remain prerequisites of the main
@@ -6433,7 +6619,30 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	if !ValidSidecarDiskIOProfile(s.DiskIOProfile) {
 		return ErrSidecarInvalidDiskIOProfile(s.DiskIOProfile)
 	}
-	if p := validateSidecarStartupProbe(s.Name, s.StartupProbe); p != nil {
+	if p := validateSidecarProbe(s.Name, "startup_probe", s.StartupProbe); p != nil {
+		return p
+	}
+	if s.LivenessProbe != nil && s.Type != SidecarTypeSidecar {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid sidecar liveness probe",
+			fmt.Sprintf("sidecar[%q].liveness_probe is only valid for type=sidecar.", s.Name))
+	}
+	if p := validateSidecarProbe(s.Name, "liveness_probe", s.LivenessProbe); p != nil {
+		return p
+	}
+	if s.ReadinessProbe != nil {
+		if s.Type != SidecarTypeSidecar || !s.PrimaryIngress {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar readiness probe",
+				fmt.Sprintf("sidecar[%q].readiness_probe is only valid for a primary_ingress sidecar.", s.Name))
+		}
+		if len(s.ReadinessProbe.Test) == 1 && s.ReadinessProbe.Test[0] == "NONE" {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid sidecar readiness probe",
+				fmt.Sprintf("sidecar[%q].readiness_probe cannot be disabled with test NONE.", s.Name))
+		}
+	}
+	if p := validateSidecarProbe(s.Name, "readiness_probe", s.ReadinessProbe); p != nil {
 		return p
 	}
 	if len(s.DependsOn) > WorkloadDependencyCapMax {
@@ -6470,57 +6679,122 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 	return nil
 }
 
-func validateSidecarStartupProbe(name string, probe *AppManifestHealthcheck) *Problem {
+// SidecarProbe describes one container-local probe. The Test and legacy timing
+// fields retain the original OCI HEALTHCHECK-shaped startup_probe contract;
+// new callers should use exactly one of Exec, HTTPGet, or TCPSocket.
+// SidecarProbe aliases the OCI healthcheck wire model so callers compiled
+// against the original startup_probe Go field type remain source-compatible.
+type SidecarProbe = AppManifestHealthcheck
+
+type SidecarExecProbe struct {
+	Command []string `json:"command" yaml:"command" toml:"command"`
+}
+
+type SidecarHTTPGetProbe struct {
+	Path string `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
+	Port int    `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+}
+
+type SidecarTCPSocketProbe struct {
+	Port int `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+}
+
+func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 	if probe == nil {
 		return nil
 	}
-	if len(probe.Test) == 0 {
+	invalid := func(detail string) *Problem {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe.test must contain CMD, CMD-SHELL, or NONE; use [\"NONE\"] to disable the image probe.", name))
+			"Invalid sidecar probe",
+			fmt.Sprintf("sidecar[%q].%s %s", name, field, detail))
 	}
-	switch probe.Test[0] {
-	case "NONE":
-		if len(probe.Test) != 1 {
-			return NewProblem(http.StatusBadRequest, CodeValidation,
-				"Invalid sidecar startup probe",
-				fmt.Sprintf("sidecar[%q].startup_probe.test with NONE must contain exactly one element.", name))
-		}
-	case "CMD", "CMD-SHELL":
-		if len(probe.Test) < 2 || probe.Test[1] == "" {
-			return NewProblem(http.StatusBadRequest, CodeValidation,
-				"Invalid sidecar startup probe",
-				fmt.Sprintf("sidecar[%q].startup_probe.test %s requires a non-empty command.", name, probe.Test[0]))
-		}
-		if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
-			return NewProblem(http.StatusBadRequest, CodeValidation,
-				"Invalid sidecar startup probe",
-				fmt.Sprintf("sidecar[%q].startup_probe.test CMD-SHELL requires exactly one command string.", name))
-		}
-	default:
-		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe.test must start with CMD, CMD-SHELL, or NONE.", name))
+	actions := 0
+	if len(probe.Test) > 0 {
+		actions++
 	}
-	if probe.IntervalS < 0 || probe.TimeoutS < 0 || probe.Retries < 0 || probe.StartPeriodS < 0 {
-		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe interval_s, timeout_s, retries, and start_period_s must be >= 0.", name))
+	if probe.Exec != nil {
+		actions++
 	}
-	// These values cross the vmmd protobuf boundary as int32. Reject values
-	// that would wrap and change the guest's probe timing or retry budget.
-	const maxProtoInt32 = 1<<31 - 1
-	if probe.IntervalS > maxProtoInt32 || probe.TimeoutS > maxProtoInt32 || probe.Retries > maxProtoInt32 || probe.StartPeriodS > maxProtoInt32 {
-		return NewProblem(http.StatusBadRequest, CodeValidation,
-			"Invalid sidecar startup probe",
-			fmt.Sprintf("sidecar[%q].startup_probe timing and retry values must fit in int32.", name))
+	if probe.HTTPGet != nil {
+		actions++
+	}
+	if probe.TCPSocket != nil {
+		actions++
+	}
+	if actions != 1 {
+		return invalid("must specify exactly one of exec, http_get, tcp_socket, or the legacy test field.")
+	}
+	if len(probe.Test) > 0 {
+		switch probe.Test[0] {
+		case "NONE":
+			if len(probe.Test) != 1 {
+				return invalid("test with NONE must contain exactly one element.")
+			}
+		case "CMD", "CMD-SHELL":
+			if len(probe.Test) < 2 || probe.Test[1] == "" {
+				return invalid(fmt.Sprintf("test %s requires a non-empty command.", probe.Test[0]))
+			}
+			if probe.Test[0] == "CMD-SHELL" && len(probe.Test) != 2 {
+				return invalid("test CMD-SHELL requires exactly one command string.")
+			}
+		default:
+			return invalid("test must start with CMD, CMD-SHELL, or NONE.")
+		}
+	}
+	if probe.Exec != nil {
+		if len(probe.Exec.Command) == 0 {
+			return invalid("exec.command must contain at least one non-empty argv element.")
+		}
+		for _, arg := range probe.Exec.Command {
+			if arg == "" {
+				return invalid("exec.command elements must be non-empty.")
+			}
+		}
+	}
+	if probe.HTTPGet != nil {
+		if probe.HTTPGet.Path != "" && !strings.HasPrefix(probe.HTTPGet.Path, "/") {
+			return invalid("http_get.path must start with '/'.")
+		}
+		if probe.HTTPGet.Port < 0 || probe.HTTPGet.Port > 65535 {
+			return invalid("http_get.port must be 0 (container port) or in 1..65535.")
+		}
+	}
+	if probe.TCPSocket != nil && (probe.TCPSocket.Port < 0 || probe.TCPSocket.Port > 65535) {
+		return invalid("tcp_socket.port must be 0 (container port) or in 1..65535.")
+	}
+	period := probe.PeriodS
+	if period == 0 {
+		period = probe.IntervalS
+	} else if probe.IntervalS != 0 && probe.IntervalS != period {
+		return invalid("period_s and legacy interval_s cannot disagree.")
+	}
+	failures := probe.FailureThreshold
+	if failures == 0 {
+		failures = probe.Retries
+	} else if probe.Retries != 0 && probe.Retries != failures {
+		return invalid("failure_threshold and legacy retries cannot disagree.")
+	}
+	if period < 0 || period > 300 || probe.TimeoutS < 0 || probe.TimeoutS > 120 ||
+		probe.InitialDelayS < 0 || probe.InitialDelayS > 600 || probe.StartPeriodS < 0 || probe.StartPeriodS > 600 ||
+		failures < 0 || failures > 20 || probe.SuccessThreshold < 0 || probe.SuccessThreshold > 20 {
+		return invalid("period, timeout, delay, and threshold values are outside their supported ranges.")
+	}
+	effectivePeriod := period
+	if effectivePeriod == 0 {
+		if len(probe.Test) > 0 {
+			effectivePeriod = 30
+		} else {
+			effectivePeriod = 10
+		}
+	}
+	if probe.TimeoutS > 0 && probe.TimeoutS > effectivePeriod {
+		return invalid("timeout_s cannot exceed period_s.")
 	}
 	return nil
 }
 
-// Validate enforces the 2-cap (global `SidecarCapMax` constant),
-// type-uniqueness (at most one init + one sidecar), name
-// uniqueness, and per-sidecar `Validate`.
+// Validate enforces the global helper cap, one-init/four-running-companion
+// cardinality bounds, name uniqueness, and per-sidecar `Validate`.
 //
 // The limits argument is reserved for a future per-plan
 // `SidecarAllowed` gate (PR-A's accessor returns true for every
@@ -6555,9 +6829,12 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 			primaryIngress = ss[i].Name
 		}
 		seen[ss[i].Type]++
-		if seen[ss[i].Type] > 1 {
+		if ss[i].Type == SidecarTypeInit && seen[ss[i].Type] > 1 {
 			return ErrSidecarInvalidType(ss[i].Name,
 				fmt.Sprintf("at most one sidecar of type %q (got %d)", ss[i].Type, seen[ss[i].Type]))
+		}
+		if ss[i].Type == SidecarTypeSidecar && seen[ss[i].Type] > SidecarLongRunningCapMax {
+			return ErrSidecarCapExceeded(seen[ss[i].Type], SidecarLongRunningCapMax)
 		}
 	}
 	// Validate the complete graph, including compatibility edges that keep
@@ -9608,15 +9885,16 @@ type DebugReplayResponse struct {
 // durable replay invocation. It intentionally contains no request body,
 // headers, response body, or customer span attributes.
 type DebugReplayComparison struct {
-	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
-	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
-	SourceStatusCode   int    `json:"source_status_code"`
-	MirrorStatusCode   int    `json:"mirror_status_code"`
-	SourceLatencyMS    int    `json:"source_latency_ms"`
-	MirrorLatencyMS    int    `json:"mirror_latency_ms"`
-	StatusDiff         bool   `json:"status_diff"`
-	BodyDiff           bool   `json:"body_diff"`
-	Crashed            bool   `json:"crashed"`
+	SourceDeploymentID   string `json:"source_deployment_id,omitempty"`
+	MirrorDeploymentID   string `json:"mirror_deployment_id,omitempty"`
+	SourceStatusCode     int    `json:"source_status_code"`
+	MirrorStatusCode     int    `json:"mirror_status_code"`
+	SourceLatencyMS      int    `json:"source_latency_ms"`
+	MirrorLatencyMS      int    `json:"mirror_latency_ms"`
+	StatusDiff           bool   `json:"status_diff"`
+	BodyDiff             bool   `json:"body_diff"`
+	Crashed              bool   `json:"crashed"`
+	ComparisonIncomplete bool   `json:"comparison_incomplete"`
 }
 
 // ---- SAFE-RELEASES-R (issue #976 / ADR-122 / Mega PR #2 commit 6) ----

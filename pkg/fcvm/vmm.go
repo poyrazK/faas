@@ -57,6 +57,10 @@ type JailerVMM struct {
 	// its latency SLO through CPU and mount contention. nil preserves the
 	// unbounded legacy behavior for direct test constructors.
 	restoreSlots chan struct{}
+	// restorePrefetch remembers each snapshot family's restore working set
+	// and warms it ahead of the next wake (ADR-225). nil disables both the
+	// recording and the prefetch.
+	restorePrefetch *restorePrefetchStore
 	// storage is the artifact backend where snapshot blobs live per
 	// #96 / ADR-025 axis 2. Restore resolves StorageKey → local tmp;
 	// Snapshot Streams the produced mem blob back through Storage.Put.
@@ -513,6 +517,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		materialisedTmp:          make(map[string][]string),
 		bindMounts:               make(map[string][]ephemeralBind),
 		bindSourceModes:          make(map[string]bindSourceMode),
+		restorePrefetch:          newRestorePrefetchStore(),
 	}
 }
 
@@ -758,9 +763,9 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// (pre-PR-D default). Non-empty → waitReady does HTTP GET
 	// <HealthcheckPath> against <HostIP>:8080 and accepts 2xx as ready.
 	if spec.SkipReady {
-		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, nil)
+		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil)
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.ExecutionMode, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, nil, &breakdown); err != nil {
+	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.ExecutionMode, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -769,8 +774,8 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	return nil
 }
 
-func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest) error {
-	return v.boot(ctx, l, cfg, true, "", 0, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, jobManifest, nil)
+func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest) error {
+	return v.boot(ctx, l, cfg, true, "", 0, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, nil)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -792,10 +797,10 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
-	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, "", nil, nil, nil, "", nil, nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, "", nil, nil, nil, "", false, nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
@@ -814,7 +819,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
 	provisionedAt := time.Now()
-	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP); err != nil {
+	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 	if jobManifest != nil {
@@ -979,8 +984,8 @@ func (v *JailerVMM) preparesWakeStateBeforeBoot() bool { return true }
 // restore breakdown's stage window on the production SSD nodes. The
 // per-file writers are shared with the public Stage* methods, which keep
 // their single-file mount for the legacy Manager path and for tests.
-func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string) error {
-	writers, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP)
+func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) error {
+	writers, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
 	if err != nil {
 		return err
 	}
@@ -1012,9 +1017,9 @@ type preBootFileWriter struct {
 // preBootFileWriters validates inputs and projects byte caps BEFORE any
 // mount, so a rejected payload never costs a loop mount — the same posture
 // the individual Stage* methods always had. Order is preserved from the
-// previous implementation: secrets, API env, resolver, sidecar env
-// overrides, main manifest, roster.
-func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string) ([]preBootFileWriter, error) {
+// previous implementation: secrets, API env, resolver, app-task marker,
+// sidecar env overrides, main manifest, roster.
+func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) ([]preBootFileWriter, error) {
 	var writers []preBootFileWriter
 	if len(secretsEnvJSON) > 0 {
 		writers = append(writers, preBootFileWriter{what: "stage secrets.env", write: func(mp string) error {
@@ -1033,6 +1038,11 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		}
 		writers = append(writers, preBootFileWriter{what: "stage service resolver", write: func(mp string) error {
 			return writeServiceDiscoveryResolver(mp, ip)
+		}})
+	}
+	if appTask {
+		writers = append(writers, preBootFileWriter{what: "stage app task marker", write: func(mp string) error {
+			return writeDriveFile(mp, appTaskMarkerPath, []byte(`{"kind":"app_task","version":1}`), 0o400, "app-task.json")
 		}})
 	}
 	if len(workloads) > 1 {
@@ -1129,6 +1139,8 @@ func writeWorkloadEnv(mountRoot, workloadName string, blob []byte) error {
 }
 
 const serviceDiscoveryResolverPath = "upper/etc/resolv.conf"
+
+const appTaskMarkerPath = "upper/etc/faas/app-task.json"
 
 func parseServiceDiscoveryIP(bridgeIP string) (netip.Addr, error) {
 	ip, err := netip.ParseAddr(strings.TrimSpace(bridgeIP))
@@ -1376,7 +1388,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
-	if err := v.stagePreBootFiles(l.Instance, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP); err != nil {
+	if err := v.stagePreBootFiles(l.Instance, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 	tPreBootFiles := time.Now()
@@ -1485,6 +1497,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tDone := time.Now()
+	if !spec.KeepPaused {
+		// ADR-225: remember what this restore faulted so the family's next
+		// wake can prefetch it. Runs in the background after readiness.
+		v.recordRestoreWorkingSet(l.Instance, spec.StorageKey, memSrc)
+	}
 	breakdown := restoreTimingBreakdown{
 		Prepare:              spec.Prepare,
 		RestoreGateWaitMs:    restoreAdmitted.Sub(t0).Milliseconds(),
@@ -3572,6 +3589,7 @@ func marshalWorkloadManifest(w WorkloadSpec) ([]byte, error) {
 		DiskIOProfile: w.DiskIOProfile,
 		Port:          w.Port,
 		Essential:     w.Essential,
+		LivenessProbe: w.LivenessProbe,
 		StartupProbe:  w.StartupProbe,
 		Cmd:           w.Cmd,
 		Entrypoint:    w.Entrypoint,
@@ -3634,13 +3652,7 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	for _, dep := range w.DependsOn {
 		dependencyBytes += int64(len(dep.Name)+len(dep.Condition)) * 2
 	}
-	startupProbeBytes := int64(0)
-	if w.StartupProbe != nil {
-		for _, arg := range w.StartupProbe.Test {
-			startupProbeBytes += int64(len(arg)) * 2
-		}
-		startupProbeBytes += 64
-	}
+	probeBytes := projectedSidecarProbeBytes(w.StartupProbe) + projectedSidecarProbeBytes(w.LivenessProbe)
 	// Three int fields (port, ram_mb, cpu_millicores) and a bool + 2 array
 	// fields. 11 bytes per int is the worst case for a 32-bit
 	// value; 5 bytes for "false". The 5 quoted keys + 2 numeric
@@ -3648,7 +3660,26 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	// overhead; we over-estimate at 128 to absorb the new
 	// cmd/entrypoint keys.
 	const fixedOverhead = 128
-	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + startupProbeBytes + fixedOverhead
+	return nameBytes + cmdBytes + entrypointBytes + dependencyBytes + probeBytes + fixedOverhead
+}
+
+func projectedSidecarProbeBytes(probe *api.SidecarProbe) int64 {
+	if probe == nil {
+		return 0
+	}
+	bytes := int64(128)
+	for _, value := range probe.Test {
+		bytes += int64(len(value)) * 2
+	}
+	if probe.Exec != nil {
+		for _, value := range probe.Exec.Command {
+			bytes += int64(len(value))*2 + 4
+		}
+	}
+	if probe.HTTPGet != nil {
+		bytes += int64(len(probe.HTTPGet.Path)) * 2
+	}
+	return bytes
 }
 
 // projectedWorkloadRosterBytes (issue #463 / ADR-069 / PR-B
@@ -3704,18 +3735,20 @@ func projectedWorkloadRosterBytes(main WorkloadSpec, sidecars []WorkloadSpec) in
 // must be a single PR that updates both sides + the projection
 // helper.
 type workloadManifest struct {
-	Cmd           []string                    `json:"cmd,omitempty"`
-	CPUMillicores int                         `json:"cpu_millicores,omitempty"`
-	DiskIOProfile string                      `json:"disk_io_profile,omitempty"`
-	DependsOn     []api.WorkloadDependency    `json:"depends_on,omitempty"`
-	Entrypoint    []string                    `json:"entrypoint,omitempty"`
-	Essential     bool                        `json:"essential"`
-	Name          string                      `json:"name"`
-	Port          int                         `json:"port"`
-	RamMB         int                         `json:"ram_mb"`
-	ScratchMB     int                         `json:"scratch_mb,omitempty"`
-	StartupProbe  *api.AppManifestHealthcheck `json:"startup_probe,omitempty"`
-	Type          string                      `json:"type"`
+	Cmd            []string                 `json:"cmd,omitempty"`
+	CPUMillicores  int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile  string                   `json:"disk_io_profile,omitempty"`
+	DependsOn      []api.WorkloadDependency `json:"depends_on,omitempty"`
+	Entrypoint     []string                 `json:"entrypoint,omitempty"`
+	Essential      bool                     `json:"essential"`
+	LivenessProbe  *api.SidecarProbe        `json:"liveness_probe,omitempty"`
+	Name           string                   `json:"name"`
+	Port           int                      `json:"port"`
+	RamMB          int                      `json:"ram_mb"`
+	ScratchMB      int                      `json:"scratch_mb,omitempty"`
+	StartupProbe   *api.SidecarProbe        `json:"startup_probe,omitempty"`
+	ReadinessProbe *api.SidecarProbe        `json:"readiness_probe,omitempty"`
+	Type           string                   `json:"type"`
 }
 
 // workloadRosterPath is the in-guest location guest-init reads
@@ -3774,8 +3807,28 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 	// Pre-marshal byte cap projection (PR-B review finding #7).
 	// Cap runs BEFORE json.Marshal — matches the posture
 	// writeWorkloadManifest adopts. The roster is at most 1
-	// main + SidecarCapMax (2) sidecars, so the projection
-	// multiplies per-workload projections by len(sidecars)+1.
+	// main + SidecarCapMax helpers, so the projection multiplies
+	// per-workload projections by len(sidecars)+1.
+	if len(sidecars) > api.SidecarCapMax {
+		return nil, fmt.Errorf("workload roster has %d helpers; cap is %d", len(sidecars), api.SidecarCapMax)
+	}
+	initCount, sidecarCount := 0, 0
+	for _, sc := range sidecars {
+		switch sc.Type {
+		case string(api.SidecarTypeInit):
+			initCount++
+		case string(api.SidecarTypeSidecar):
+			sidecarCount++
+		default:
+			return nil, fmt.Errorf("workload roster helper %q has invalid type %q", sc.Name, sc.Type)
+		}
+	}
+	if initCount > 1 {
+		return nil, fmt.Errorf("workload roster has %d init helpers; cap is 1", initCount)
+	}
+	if sidecarCount > api.SidecarLongRunningCapMax {
+		return nil, fmt.Errorf("workload roster has %d long-running helpers; cap is %d", sidecarCount, api.SidecarLongRunningCapMax)
+	}
 	if projected := projectedWorkloadRosterBytes(main, sidecars); projected > api.MaxExportedLayerBytes {
 		return nil, fmt.Errorf("workload roster projected %d bytes exceeds cap %d (sidecars=%d)", projected, api.MaxExportedLayerBytes, len(sidecars))
 	}
@@ -3790,24 +3843,27 @@ func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, 
 			DiskIOProfile: main.DiskIOProfile,
 			Port:          main.Port,
 			Essential:     main.Essential,
+			LivenessProbe: main.LivenessProbe,
 			StartupProbe:  main.StartupProbe,
 			DependsOn:     main.DependsOn,
 		},
 	}
 	for _, sc := range sidecars {
 		roster.Sidecars = append(roster.Sidecars, workloadManifest{
-			Name:          sc.Name,
-			Type:          sc.Type,
-			RamMB:         sc.RamMB,
-			CPUMillicores: sc.CPUMillicores,
-			ScratchMB:     sc.ScratchMB,
-			DiskIOProfile: sc.DiskIOProfile,
-			Port:          sc.Port,
-			Essential:     sc.Essential,
-			StartupProbe:  sc.StartupProbe,
-			Cmd:           sc.Cmd,
-			Entrypoint:    sc.Entrypoint,
-			DependsOn:     sc.DependsOn,
+			Name:           sc.Name,
+			Type:           sc.Type,
+			RamMB:          sc.RamMB,
+			CPUMillicores:  sc.CPUMillicores,
+			ScratchMB:      sc.ScratchMB,
+			DiskIOProfile:  sc.DiskIOProfile,
+			Port:           sc.Port,
+			Essential:      sc.Essential,
+			LivenessProbe:  sc.LivenessProbe,
+			ReadinessProbe: sc.ReadinessProbe,
+			StartupProbe:   sc.StartupProbe,
+			Cmd:            sc.Cmd,
+			Entrypoint:     sc.Entrypoint,
+			DependsOn:      sc.DependsOn,
 		})
 	}
 	blob, err := json.Marshal(roster)

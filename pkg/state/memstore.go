@@ -133,6 +133,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	deploymentActivationMu    sync.Mutex
+	deploymentActivationLocks map[string]*deploymentActivationLock
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
 	runtimeConfigChangedAt map[string]time.Time
 	// serviceCallerKeys mirrors service_caller_keys: one published
@@ -214,6 +216,7 @@ type MemStore struct {
 	// the in-memory implementation of the I1 cooldown gate.
 	deployFailedEmailAt map[string]time.Time
 	deployments         map[string]Deployment
+	deploymentAliases   map[string]DeploymentAlias
 	devSyncHistory      map[string]DevSyncHistory
 	// statusIncidents (issue #599 / ADR-130) is the in-memory
 	// mirror of the status_incidents table (migrations/00412).
@@ -462,6 +465,9 @@ type MemStore struct {
 	// runtime stream. It is deliberately separate from guest scratch storage.
 	executionEvents      map[string][]ExecutionEvent
 	nextExecutionEventID int64
+	// appTasks are deployment-attached command intents (ADR-230). Unlike
+	// disposable executions they reference an app artifact and scope.
+	appTasks map[string]AppTask
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -551,6 +557,11 @@ type MemStore struct {
 	// projection. Source keys are deduplicated on append, matching the
 	// database unique constraint.
 	orgActivity []OrgActivity
+	// orgActivityOutbox mirrors org_activity_outbox. Queue state is kept
+	// separate from the projection so tests can exercise retry/replay paths.
+	orgActivityOutbox       map[int64]orgActivityOutboxRow
+	orgActivityOutboxByKey  map[string]int64
+	nextOrgActivityOutboxID int64
 	// usage holds one row per (instance, minute) — mirrors PgStore's
 	// usage_minutes PK. Aggregated into `usageByMonth` (per app, per
 	// calendar month) so UsageByMonth can keep returning the spec §10
@@ -717,6 +728,7 @@ type MemStore struct {
 	projectsByAccountSlug                map[string]map[string]string // account_id → slug → id
 	projectsByInstallRepo                map[installRepoKey]string    // install_id, repo_full_name → id
 	projectEnvironments                  map[string]ProjectEnvironment
+	projectEnvironmentCleanupJobs        map[string]ProjectEnvironmentCleanupJob
 	projectEnvironmentApprovals          map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
 	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
@@ -933,6 +945,7 @@ func NewMemStore() *MemStore {
 		mailSuppressions:    map[string]mailSuppressionRow{},
 		deployFailedEmailAt: map[string]time.Time{},
 		deployments:         map[string]Deployment{},
+		deploymentAliases:   map[string]DeploymentAlias{},
 		devSyncHistory:      map[string]DevSyncHistory{},
 		statusCreateKeys:    map[string]string{},
 		statusUpdateKeys:    map[string]string{},
@@ -982,6 +995,7 @@ func NewMemStore() *MemStore {
 		workflowRuns:                   map[string]WorkflowRun{},
 		workflowSteps:                  map[string]map[string]WorkflowStep{},
 		workflowEvents:                 map[string][]WorkflowEvent{},
+		appTasks:                       map[string]AppTask{},
 		fireNowRequests:                map[string]FireNowRequest{},
 		operatorIntents:                map[string]OperatorIntent{},
 		runtimeConfigs:                 map[string]RuntimeConfig{},
@@ -1060,6 +1074,9 @@ func NewMemStore() *MemStore {
 		auditOutbox:                       map[int64]auditEventOutboxRow{},
 		auditOutboxByKey:                  map[string]int64{},
 		nextAuditOutboxID:                 1,
+		orgActivityOutbox:                 map[int64]orgActivityOutboxRow{},
+		orgActivityOutboxByKey:            map[string]int64{},
+		nextOrgActivityOutboxID:           1,
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
@@ -1144,6 +1161,7 @@ func NewMemStore() *MemStore {
 		projectsByAccountSlug:                map[string]map[string]string{},
 		projectsByInstallRepo:                map[installRepoKey]string{},
 		projectEnvironments:                  map[string]ProjectEnvironment{},
+		projectEnvironmentCleanupJobs:        map[string]ProjectEnvironmentCleanupJob{},
 		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
 		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
@@ -2930,13 +2948,27 @@ func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, account
 	return ProjectEnvironment{}, ErrNotFound
 }
 
-func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projectID, slug string) error {
+func (m *MemStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {
+	_, err := m.DeleteProjectEnvironmentWithCleanup(ctx, accountID, projectID, slug, ProjectEnvironmentCleanupResources{}, "", 0)
+	return err
+}
+
+func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
+	_ context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
+	if !resources.Empty() && (leaseToken == "" || leaseDuration <= 0 || resources.ValidateForEnvironment(slug) != nil) {
+		return ProjectEnvironmentCleanupJob{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	project, ok := m.projects[projectID]
 	if !ok || project.AccountID != accountID {
-		return ErrNotFound
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
 	}
 
 	var environmentID string
@@ -2949,10 +2981,10 @@ func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projec
 		}
 	}
 	if environmentID == "" {
-		return ErrNotFound
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
 	}
-	if slug == "production" || environment.Protected {
-		return ErrConflict
+	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 
 	for _, app := range m.apps {
@@ -2962,11 +2994,37 @@ func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projec
 		for _, deployment := range m.deployments {
 			if deployment.AppID == app.ID && deployment.Status == DeployLive &&
 				normalizedDeploymentScope(deployment.Scope) == slug {
-				return ErrConflict
+				return ProjectEnvironmentCleanupJob{}, ErrConflict
 			}
 		}
 	}
 
+	var job ProjectEnvironmentCleanupJob
+	if !resources.Empty() {
+		now := time.Now().UTC()
+		job = ProjectEnvironmentCleanupJob{
+			ID: newID(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: slug,
+			Resources: cloneProjectEnvironmentCleanupResources(resources), NextAttemptAt: now,
+			LeaseToken: leaseToken, LeaseUntil: now.Add(leaseDuration), CreatedAt: now,
+		}
+	}
+
+	for key, env := range m.envs {
+		if env.Scope != slug {
+			continue
+		}
+		if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
+			delete(m.envs, key)
+		}
+	}
+	for key, secret := range m.secrets {
+		if secret.Scope != slug || secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" {
+			continue
+		}
+		if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
+			delete(m.secrets, key)
+		}
+	}
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
 	for id, approval := range m.projectEnvironmentApprovals {
@@ -2974,7 +3032,79 @@ func (m *MemStore) DeleteProjectEnvironment(_ context.Context, accountID, projec
 			delete(m.projectEnvironmentApprovals, id)
 		}
 	}
+	if job.ID != "" {
+		m.projectEnvironmentCleanupJobs[job.ID] = cloneProjectEnvironmentCleanupJob(job)
+	}
+	return job, nil
+}
+
+func (m *MemStore) ClaimNextProjectEnvironmentCleanup(_ context.Context, leaseToken string, now time.Time, leaseDuration time.Duration) (ProjectEnvironmentCleanupJob, error) {
+	if leaseToken == "" || leaseDuration <= 0 {
+		return ProjectEnvironmentCleanupJob{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var selected ProjectEnvironmentCleanupJob
+	for _, job := range m.projectEnvironmentCleanupJobs {
+		if job.NextAttemptAt.After(now) || job.LeaseUntil.After(now) {
+			continue
+		}
+		if selected.ID == "" || job.NextAttemptAt.Before(selected.NextAttemptAt) ||
+			(job.NextAttemptAt.Equal(selected.NextAttemptAt) && job.ID < selected.ID) {
+			selected = job
+		}
+	}
+	if selected.ID == "" {
+		return ProjectEnvironmentCleanupJob{}, ErrNotFound
+	}
+	selected.LeaseToken = leaseToken
+	selected.LeaseUntil = now.Add(leaseDuration)
+	selected.AttemptCount++
+	m.projectEnvironmentCleanupJobs[selected.ID] = cloneProjectEnvironmentCleanupJob(selected)
+	return cloneProjectEnvironmentCleanupJob(selected), nil
+}
+
+func (m *MemStore) RetryProjectEnvironmentCleanup(_ context.Context, id, leaseToken string, nextAttemptAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job, ok := m.projectEnvironmentCleanupJobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if leaseToken == "" || job.LeaseToken != leaseToken {
+		return ErrConflict
+	}
+	job.NextAttemptAt = nextAttemptAt.UTC()
+	job.LeaseToken = ""
+	job.LeaseUntil = time.Time{}
+	m.projectEnvironmentCleanupJobs[id] = job
 	return nil
+}
+
+func (m *MemStore) CompleteProjectEnvironmentCleanup(_ context.Context, id, leaseToken string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	job, ok := m.projectEnvironmentCleanupJobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if leaseToken == "" || job.LeaseToken != leaseToken {
+		return ErrConflict
+	}
+	delete(m.projectEnvironmentCleanupJobs, id)
+	return nil
+}
+
+func cloneProjectEnvironmentCleanupResources(resources ProjectEnvironmentCleanupResources) ProjectEnvironmentCleanupResources {
+	resources.Postgres = append([]ProjectEnvironmentPostgresCleanupResource(nil), resources.Postgres...)
+	resources.ObjectStorage = append([]ProjectEnvironmentObjectStorageCleanupResource(nil), resources.ObjectStorage...)
+	return resources
+}
+
+func cloneProjectEnvironmentCleanupJob(job ProjectEnvironmentCleanupJob) ProjectEnvironmentCleanupJob {
+	job.Resources = cloneProjectEnvironmentCleanupResources(job.Resources)
+	return job
 }
 
 func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
@@ -3782,7 +3912,7 @@ func (m *MemStore) ListPreviewsForTeardown(_ context.Context, now time.Time, max
 		if a.PreviewPrState == PreviewPrStateTornDown {
 			continue
 		}
-		if a.PreviewPrState == PreviewPrStateClosed || a.PreviewPrState == PreviewPrStateStale {
+		if a.PreviewPrState == PreviewPrStateClosed || a.PreviewPrState == PreviewPrStateStale || a.PreviewPrState == PreviewPrStateTearingDown {
 			out = append(out, a)
 			continue
 		}
@@ -3822,10 +3952,30 @@ func (m *MemStore) SetPreviewPrState(_ context.Context, appID, prState string) (
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[appID]
-	if !ok || a.PreviewOfSlug == "" {
+	if !ok || a.PreviewOfSlug == "" || (a.PreviewPrState == PreviewPrStateTearingDown && prState != PreviewPrStateTornDown) {
 		return App{}, ErrNotFound
 	}
 	a.PreviewPrState = prState
+	m.apps[appID] = a
+	return a, nil
+}
+
+// ClosePRPreview atomically starts the post-close grace period. Duplicate
+// close deliveries preserve the first deadline, and stale/torn-down rows
+// cannot be revived by delayed webhook events.
+func (m *MemStore) ClosePRPreview(_ context.Context, appID string, expiresAt time.Time) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[appID]
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber <= 0 || a.Status == AppDeleted ||
+		(a.PreviewPrState != PreviewPrStateOpen && a.PreviewPrState != PreviewPrStateClosed) {
+		return App{}, ErrNotFound
+	}
+	if a.PreviewPrState == PreviewPrStateOpen || a.PreviewExpiresAt == nil {
+		expiry := expiresAt
+		a.PreviewExpiresAt = &expiry
+	}
+	a.PreviewPrState = PreviewPrStateClosed
 	m.apps[appID] = a
 	return a, nil
 }
@@ -3837,7 +3987,8 @@ func (m *MemStore) RefreshDevSession(_ context.Context, appID string, expiresAt 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[appID]
-	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber != 0 || a.Status == AppDeleted {
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber != 0 || a.Status == AppDeleted ||
+		a.PreviewPrState == PreviewPrStateTearingDown || a.PreviewPrState == PreviewPrStateTornDown {
 		return App{}, ErrNotFound
 	}
 	t := expiresAt
@@ -3854,7 +4005,8 @@ func (m *MemStore) RefreshPRPreview(_ context.Context, appID string, expiresAt t
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[appID]
-	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber <= 0 || a.Status == AppDeleted {
+	if !ok || a.PreviewOfSlug == "" || a.PreviewPrNumber <= 0 || a.Status == AppDeleted ||
+		a.PreviewPrState == PreviewPrStateTearingDown || a.PreviewPrState == PreviewPrStateTornDown {
 		return App{}, ErrNotFound
 	}
 	t := expiresAt
@@ -4204,6 +4356,7 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if !ok {
 		return Deployment{}, 0, ErrNotFound
 	}
+	before := d
 	rolloutState := NormalizeRolloutState(d.RolloutState)
 	if d.Status != DeployLive || (rolloutState != "pending" && rolloutState != "rolling_out") ||
 		d.CanaryTotalSteps <= 0 || params.ExpectedStep >= d.CanaryTotalSteps {
@@ -4272,6 +4425,7 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: append canary audit: %w", err)
 	}
+	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	return d, auditID, nil
 }
 
@@ -5512,6 +5666,7 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 	wasDeleted := a.Status == AppDeleted
 	a.Status = AppDeleted
 	m.apps[id] = a
+	m.cancelAppTasksForAppLocked(id, now)
 	if !wasDeleted {
 		delete(m.appDeletionClaims, id)
 	}
@@ -5683,6 +5838,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.invocations, key)
 		}
 	}
+	for key, task := range m.appTasks {
+		if task.AppID == id {
+			delete(m.appTasks, key)
+		}
+	}
 	for key, v := range m.crons {
 		if v.AppID == id {
 			delete(m.crons, key)
@@ -5775,6 +5935,7 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 		a.DeleteGraceUntil = &deadline
 	}
 	m.apps[id] = a
+	m.cancelAppTasksForAppLocked(id, now)
 	for cronID, cron := range m.crons {
 		if cron.AppID == id {
 			delete(m.crons, cronID)
@@ -6166,6 +6327,9 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
+	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
+		return Deployment{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[d.AppID]
@@ -6253,6 +6417,7 @@ func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment
 		d.Kind = DeploymentKindImage
 	}
 	d.Workflows = cloneWorkflowJSON(d.Workflows)
+	d.ReleaseCommand = append([]string{}, d.ReleaseCommand...)
 	// Issue #556 PR-A: default traffic_percent to 100 for a stable
 	// deployment when the caller supplies zero. A canary's zero is
 	// meaningful (a valid custom first stage), and the APID handler
@@ -6569,6 +6734,7 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
+	before := d
 	d.RolloutState = NormalizeRolloutState(rolloutState)
 	if startedAt != nil {
 		t := *startedAt
@@ -6584,6 +6750,7 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	}
 	d.RolloutAbortedReason = abortedReason
 	m.deployments[id] = d
+	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	return d, nil
 }
 
@@ -6675,6 +6842,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	if target.CanaryTotalSteps <= 0 && !IsServiceRollout(*target) {
 		return *target, 0, ErrRolloutStateInvalid
 	}
+	before := *target
 
 	now := time.Now()
 	if IsServiceRollout(*target) {
@@ -6801,6 +6969,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
 		}
+		m.enqueueRolloutOutcomeWebhooksLocked(before, *target)
 		return *target, auditID, nil
 
 	case "promote":
@@ -6835,6 +7004,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
 		}
+		m.enqueueRolloutOutcomeWebhooksLocked(before, *target)
 		return *target, auditID, nil
 
 	case "abort":
@@ -6873,6 +7043,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
 		}
+		m.enqueueRolloutOutcomeWebhooksLocked(before, *target)
 		return *target, auditID, nil
 	}
 	return Deployment{}, 0, ErrInvalidRecoverAction
@@ -7288,12 +7459,16 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
+	previousStatus := d.Status
 	if status == DeployFailed {
 		m.failDeploymentLocked(d, errMsg)
 	} else {
 		d.Status = status
 		d.Error = errMsg
 		m.deployments[id] = d
+		if status == DeployLive && previousStatus != DeployLive {
+			m.enqueueDeploymentLifecycleWebhooksLocked(d)
+		}
 	}
 	if status == DeployFailed || status == DeployCancelled {
 		m.markDeploymentSnapshotsStaleLocked(id)
@@ -7302,6 +7477,8 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 }
 
 func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
+	before := d
+	previousStatus := d.Status
 	now := time.Now().UTC()
 	d.Status = DeployFailed
 	d.Error = message
@@ -7328,6 +7505,10 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 		}
 	}
 	m.deployments[d.ID] = d
+	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
+	if previousStatus != DeployFailed {
+		m.enqueueDeploymentLifecycleWebhooksLocked(d)
+	}
 
 	var fallbackID string
 	var fallback Deployment
@@ -7382,13 +7563,26 @@ func (m *MemStore) MarkDeploymentSuperseded(ctx context.Context, id string) erro
 	return m.UpdateDeploymentStatus(ctx, id, DeploySuperseded, "")
 }
 
-func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
+func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
 	}
+	before := d
+	previousStatus := d.Status
+	defer func() {
+		if err == nil {
+			if current, exists := m.deployments[id]; exists {
+				m.enqueueRolloutOutcomeWebhooksLocked(before, current)
+				if previousStatus == DeployLive || current.Status != DeployLive {
+					return
+				}
+				m.enqueueDeploymentLifecycleWebhooksLocked(current)
+			}
+		}
+	}()
 	if d.Status == DeployCancelled {
 		return ErrInvalidStateTransition
 	}
@@ -7615,6 +7809,19 @@ func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string,
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: %w", err)
 	}
 	m.deployments[id] = d
+	for taskID, task := range m.appTasks {
+		if task.DeploymentID != d.ID || task.Kind != AppTaskKindRelease || task.Status.Terminal() {
+			continue
+		}
+		if task.Status == AppTaskQueued {
+			task.Status = AppTaskCancelled
+			task.FinishedAt = appTaskTimePtr(now)
+		} else if task.CancelRequested == nil {
+			task.CancelRequested = appTaskTimePtr(now)
+		}
+		task.UpdatedAt = now
+		m.appTasks[taskID] = task
+	}
 	// Cascade-cancel any non-terminal build rows attached to
 	// this deployment. Mirrors pgstore.CancelDeploymentTx.
 	// We collect the IDs of flipped rows so the apid handler
@@ -8100,6 +8307,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || d.Status != DeployLive {
 			continue
 		}
+		before := d
 		d.Status = DeploySuperseded
 		d.TrafficPercent = 0
 		d.RolloutState = "aborted"
@@ -8111,9 +8319,11 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 			d.RolloutAbortedReason = "automatic rollback"
 		}
 		m.deployments[id] = d
+		m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	}
 	cur = m.deployments[currentDeploymentID]
 	target := m.deployments[targetID]
+	beforeTarget := target
 	target.Status = DeployLive
 	target.Error = ""
 	target.TrafficPercent = 100
@@ -8136,6 +8346,8 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	}
 	m.deployments[currentDeploymentID] = cur
 	m.deployments[targetID] = target
+	m.enqueueRolloutOutcomeWebhooksLocked(beforeTarget, target)
+	m.enqueueDeploymentLifecycleWebhooksLocked(target)
 	return targetID, nil
 }
 
@@ -9394,6 +9606,7 @@ func (m *MemStore) SweepStuckRunningBuildsWithIDs(_ context.Context, threshold t
 				d.Error = "build timed out"
 				d.ErrorCode = api.CodeBuildTimeout
 				m.deployments[b.DeploymentID] = d
+				m.enqueueDeploymentLifecycleWebhooksLocked(d)
 			}
 		}
 		ids = append(ids, id)
@@ -18649,6 +18862,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.instances, iid)
 		}
 	}
+	for taskID, task := range m.appTasks {
+		if task.AccountID == id {
+			delete(m.appTasks, taskID)
+		}
+	}
 	// Snapshots + builds are keyed by deployment_id; resolve the
 	// deployment set first.
 	deletedDeployments := map[string]struct{}{}
@@ -22383,6 +22601,7 @@ func (m *MemStore) CreateMirrorRuleIfUnderQuota(_ context.Context, in CreateMirr
 		Percent:            in.Percent,
 		Enabled:            in.Enabled,
 		IncludeBody:        in.IncludeBody,
+		AllowUnsafeMethods: in.AllowUnsafeMethods,
 		RedactHeaders:      in.RedactHeaders,
 		CreatedAt:          now,
 		UpdatedAt:          now,
@@ -22452,6 +22671,9 @@ func (m *MemStore) UpdateMirrorRule(_ context.Context, id string, patch MirrorRu
 	}
 	if patch.IncludeBody != nil {
 		r.IncludeBody = *patch.IncludeBody
+	}
+	if patch.AllowUnsafeMethods != nil {
+		r.AllowUnsafeMethods = *patch.AllowUnsafeMethods
 	}
 	if patch.RedactHeaders != nil {
 		r.RedactHeaders = *patch.RedactHeaders
@@ -22539,20 +22761,23 @@ func (m *MemStore) MirrorSummary(_ context.Context, ruleID string, since time.Ti
 			continue
 		}
 		s.TotalInvocations++
-		if r.StatusDiff || r.SchemaDiff || r.BodyDiff {
+		if !r.ComparisonIncomplete && (r.StatusDiff || r.SchemaDiff || r.BodyDiff) {
 			s.ChangedResponseCount++
 		}
 		if r.StatusDiff {
 			s.StatusDiffCount++
 		}
-		if r.SchemaDiff {
+		if !r.ComparisonIncomplete && r.SchemaDiff {
 			s.SchemaDiffCount++
 		}
-		if r.BodyDiff {
+		if !r.ComparisonIncomplete && r.BodyDiff {
 			s.BodyDiffCount++
 		}
 		if r.Crashed {
 			s.CrashCount++
+		}
+		if r.ComparisonIncomplete {
+			s.IncompleteComparisonCount++
 		}
 		if r.LatencyMs > 0 && r.SourceLatencyMs > 0 {
 			latencyDiffs = append(latencyDiffs, r.LatencyMs-r.SourceLatencyMs)

@@ -119,6 +119,10 @@ const (
 	// toward resident RAM/vCPU, but not serving concurrency until the
 	// scheduler resumes it for a request.
 	KindWarmPool
+	// KindAppTask is a deployment-attached one-off command. It consumes real
+	// node RAM/vCPU/CPU but is not a serving replica and therefore must not
+	// consume the app's request-concurrency budget.
+	KindAppTask
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -126,7 +130,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask
 }
 
 // Request is an admission request for one instance (a wake or a build).
@@ -147,9 +151,9 @@ type Request struct {
 	// per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Admit time. Each entry adds to the
 	// billable shutter via `api.BillableRAMMBWithSidecars`; the cap
-	// enforcement (SidecarCapMax = 2) happens upstream in apid's
+	// enforcement (SidecarCapMax = 5) happens upstream in apid's
 	// Sidecar.Validate and the schema CHECK on migration 00118, so
-	// the ledger trusts len(SidecarMBs) ≤ 2 and never re-checks it.
+	// the ledger trusts len(SidecarMBs) ≤ SidecarCapMax and never re-checks it.
 	// Nil or empty = legacy no-sidecar shape; BillableRAMMB
 	// (single-arg form) collapses to the same math in that case.
 	SidecarMBs []int

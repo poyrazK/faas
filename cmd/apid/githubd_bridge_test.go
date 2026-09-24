@@ -28,6 +28,9 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -218,7 +221,24 @@ func stageFixtureFile(t *testing.T, rootDir, subpath string, body []byte) (strin
 		t.Fatalf("mkdir: %v", mkErr)
 	}
 	path := filepath.Join(dir, "source.tar.gz")
-	if err := os.WriteFile(path, body, 0o600); err != nil {
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	for _, name := range []string{"index.js", "services/api/index.js"} {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatalf("tar header: %v", err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatalf("tar body: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	st, err := os.Stat(path)

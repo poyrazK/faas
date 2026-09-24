@@ -23,7 +23,7 @@ export type CreateDeploymentRequest = {
    */
   require_signed?: boolean | null;
   /**
-   * Preferred field. Up to 2 stateless companions; managed presets may omit image. Do not set together with sidecars.
+   * Preferred field. Up to 5 stateless helpers total (one init helper and up to four long-running companions); managed presets may omit image. Do not set together with sidecars.
    */
   companions?: Array<Sidecar>;
   /**

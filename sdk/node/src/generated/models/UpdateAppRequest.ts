@@ -100,6 +100,14 @@ export type UpdateAppRequest = {
    * Toggle best-effort cookie-based routing to the same running instance. Omit for no change.
    */
   session_affinity?: boolean | null;
+  /**
+   * Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change.
+   */
+  version_affinity_cookie?: string | null;
+  /**
+   * Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no change.
+   */
+  version_affinity_managed_cookie?: boolean | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

@@ -6046,6 +6046,8 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 		CanaryStepStartedAt: &oldStepStarted,
 		CanaryStages:        customStages,
 		RolloutState:        "rolling_out",
+		ReleaseCommand:      []string{"bundle exec rails db:migrate"},
+		ReleaseCommandShell: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -6080,6 +6082,9 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	}
 	if got.CommitSHA != failed.CommitSHA {
 		t.Errorf("CommitSHA not copied: got %q, want %q", got.CommitSHA, failed.CommitSHA)
+	}
+	if len(got.ReleaseCommand) != 1 || got.ReleaseCommand[0] != failed.ReleaseCommand[0] || !got.ReleaseCommandShell {
+		t.Errorf("release command not copied: got %v shell=%v, want %v shell=%v", got.ReleaseCommand, got.ReleaseCommandShell, failed.ReleaseCommand, failed.ReleaseCommandShell)
 	}
 	if string(got.Sidecars) != string(failed.Sidecars) {
 		t.Errorf("Sidecars not copied: got %s, want %s", got.Sidecars, failed.Sidecars)

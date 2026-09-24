@@ -908,6 +908,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	out := make([]appliedBuild, 0, len(touched))
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
+		workload := workloadByName[strings.ToLower(app.WorkloadName)]
 		kind := state.DeploymentKindTarball
 		if app.Manifest.BuildDockerfile != "" {
 			kind = state.DeploymentKindDockerfile
@@ -943,6 +944,33 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		releaseCommand := deploymentReleaseCommand{
+			command: append([]string(nil), workload.ReleaseCommand...),
+			shell:   workload.ReleaseCommandShell,
+		}
+		// A single-workload project has no ownership ambiguity, so it may
+		// also use the explicit gregale.yaml release.command declaration.
+		// Multi-workload Procfiles are already assigned exactly once by
+		// reposcan (web first, otherwise deterministic process order).
+		if len(workloads) == 1 {
+			manifest, manifestProblem := loadSourceRefManifest(staged, app, acct.Plan)
+			if manifestProblem != nil {
+				_ = os.Remove(staged)
+				res.Error = "release declaration invalid (server logs carry the detail)"
+				s.log.Warn("apid: apply release manifest invalid", "app_id", app.ID, "project_id", project.ID, "detail", manifestProblem.Detail)
+				out = append(out, res)
+				continue
+			}
+			var releaseProblem *api.Problem
+			releaseCommand, releaseProblem = resolveSourceReleaseCommand(staged, app, manifest)
+			if releaseProblem != nil {
+				_ = os.Remove(staged)
+				res.Error = "release declaration invalid (server logs carry the detail)"
+				s.log.Warn("apid: apply release command invalid", "app_id", app.ID, "project_id", project.ID, "detail", releaseProblem.Detail)
+				out = append(out, res)
+				continue
+			}
+		}
 		// Enqueue via the shared helper. The helper does CreateDeployment
 		// + build.log spool + UpdateDeploymentStatus(building) + CreateBuild
 		// + NotifyBuildQueued + (optional) NotifyDeploymentChanged for
@@ -970,10 +998,12 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			// surface. routeKindForRequest + ClientIP
 			// are the same single source of truth used by
 			// every other HTTP-routed deploy path.
-			ActorUserID:    acct.ID,
-			ActorVia:       routeKindForRequest(r),
-			ActorFromIP:    middleware.ClientIP(r),
-			ServiceRollout: app.Manifest.ExecutionMode == api.ExecutionModeService,
+			ActorUserID:         acct.ID,
+			ActorVia:            routeKindForRequest(r),
+			ActorFromIP:         middleware.ClientIP(r),
+			ReleaseCommand:      releaseCommand.command,
+			ReleaseCommandShell: releaseCommand.shell,
+			ServiceRollout:      app.Manifest.ExecutionMode == api.ExecutionModeService,
 		})
 		if enqErr != nil {
 			// Same wire/server split as the stage branch

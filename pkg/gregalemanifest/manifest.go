@@ -109,21 +109,23 @@ type EventTrigger struct {
 // operator-configured immutable digest before persistence. Custom companions
 // must continue to provide an explicit digest-pinned image.
 type CompanionSpec struct {
-	Name           string                      `yaml:"name,omitempty" toml:"name,omitempty"`
-	Preset         string                      `yaml:"preset,omitempty" toml:"preset,omitempty"`
-	Image          string                      `yaml:"image,omitempty" toml:"image,omitempty"`
-	Type           api.SidecarType             `yaml:"type,omitempty" toml:"type,omitempty"`
-	Cmd            []string                    `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
-	Env            map[string]string           `yaml:"env,omitempty" toml:"env,omitempty"`
-	Port           int                         `yaml:"port,omitempty" toml:"port,omitempty"`
-	PrimaryIngress bool                        `yaml:"primary_ingress,omitempty" toml:"primary_ingress,omitempty"`
-	RamMB          int                         `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
-	ScratchMB      int                         `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
-	CPUMillicores  int                         `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
-	DiskIOProfile  string                      `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
-	Essential      *bool                       `yaml:"essential,omitempty" toml:"essential,omitempty"`
-	StartupProbe   *api.AppManifestHealthcheck `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
-	DependsOn      []ExtensionDependency       `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
+	Name           string                `yaml:"name,omitempty" toml:"name,omitempty"`
+	Preset         string                `yaml:"preset,omitempty" toml:"preset,omitempty"`
+	Image          string                `yaml:"image,omitempty" toml:"image,omitempty"`
+	Type           api.SidecarType       `yaml:"type,omitempty" toml:"type,omitempty"`
+	Cmd            []string              `yaml:"cmd,omitempty" toml:"cmd,omitempty"`
+	Env            map[string]string     `yaml:"env,omitempty" toml:"env,omitempty"`
+	Port           int                   `yaml:"port,omitempty" toml:"port,omitempty"`
+	PrimaryIngress bool                  `yaml:"primary_ingress,omitempty" toml:"primary_ingress,omitempty"`
+	RamMB          int                   `yaml:"ram_mb,omitempty" toml:"ram_mb,omitempty"`
+	ScratchMB      int                   `yaml:"scratch_mb,omitempty" toml:"scratch_mb,omitempty"`
+	CPUMillicores  int                   `yaml:"cpu_millicores,omitempty" toml:"cpu_millicores,omitempty"`
+	DiskIOProfile  string                `yaml:"disk_io_profile,omitempty" toml:"disk_io_profile,omitempty"`
+	Essential      *bool                 `yaml:"essential,omitempty" toml:"essential,omitempty"`
+	StartupProbe   *api.SidecarProbe     `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
+	LivenessProbe  *api.SidecarProbe     `yaml:"liveness_probe,omitempty" toml:"liveness_probe,omitempty"`
+	ReadinessProbe *api.SidecarProbe     `yaml:"readiness_probe,omitempty" toml:"readiness_probe,omitempty"`
+	DependsOn      []ExtensionDependency `yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
 }
 
 // ExtensionSpec is the deprecated manifest name retained for source
@@ -221,7 +223,7 @@ func (m *Manifest) ToSidecars() (api.Sidecars, error) {
 			Cmd: append([]string(nil), ext.Cmd...), Env: env,
 			Port: ext.Port, PrimaryIngress: ext.PrimaryIngress, RamMB: ext.RamMB, ScratchMB: ext.ScratchMB,
 			CPUMillicores: ext.CPUMillicores, DiskIOProfile: ext.DiskIOProfile,
-			Essential: ext.Essential, StartupProbe: ext.StartupProbe, DependsOn: deps,
+			Essential: ext.Essential, StartupProbe: ext.StartupProbe, LivenessProbe: ext.LivenessProbe, ReadinessProbe: ext.ReadinessProbe, DependsOn: deps,
 		}
 		if sc.Port == 0 {
 			sc.Port = defaults.Port
@@ -995,7 +997,7 @@ func (d BucketDependency) EffectiveLabel() string {
 
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
-// `function`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
+// `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
 // `triggers`, `event_triggers`, `companions`, `extensions`, `workflows`,
 // `databases`, `buckets`, and the local-only `dev` profile; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true))
@@ -1008,6 +1010,7 @@ type Manifest struct {
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	Dev           *DevConfig            `yaml:"dev,omitempty"`
 	Function      *FunctionConfig       `yaml:"function,omitempty"`
+	Release       *ReleaseConfig        `yaml:"release,omitempty"`
 	Lifecycle     *LifecycleConfig      `yaml:"lifecycle,omitempty"`
 	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. It is
@@ -1027,6 +1030,28 @@ type Manifest struct {
 	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
+}
+
+// ReleaseConfig declares a command that must succeed for the candidate
+// deployment before it becomes eligible for traffic. String form is
+// deliberately shell-shaped, matching a Procfile's `release:` entry and
+// preserving operators' existing quoting and expansion semantics.
+type ReleaseConfig struct {
+	Command string `yaml:"command"`
+}
+
+func (c *ReleaseConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	_, problem := (api.CreateAppTaskRequest{
+		Command:      []string{c.Command},
+		CommandShell: true,
+	}).Resolve()
+	if problem != nil {
+		return fmt.Errorf("release: %s", problem.Detail)
+	}
+	return nil
 }
 
 // DevConfig declares local defaults for the remote `gregale dev` loop. Paths
@@ -1433,6 +1458,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := m.Dev.Validate(); err != nil {
 			return err
 		}
+	}
+	if err := m.Release.Validate(); err != nil {
+		return err
 	}
 	if m.Scaling != nil {
 		if err := m.Scaling.Validate(); err != nil {

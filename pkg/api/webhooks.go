@@ -68,15 +68,26 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 
 // AllowedAppWebhookEvents is the closed set for events a customer may select
 // on a new or updated subscription. Keep this list limited to events with a
-// production call to pkg/webhook.Emit; accepting a future event before its
-// source-of-truth producer exists creates a subscription that can never fire.
+// production producer (pkg/webhook.Emit or a transactional status trigger);
+// accepting a future event before its source-of-truth producer exists creates
+// a subscription that can never fire.
 //
 // The delivery ledger intentionally retains its wider historical enum so old
 // rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
 	"app.parked", "app.woken",
+	"deployment.live", "deployment.failed",
+	"rollout.completed", "rollout.aborted",
 	"job.finished",
 	"usage_statement.finalized",
+}
+
+// DeploymentLiveWebhookPayload is the payload stored for a deployment.live
+// delivery. The delivery id in the webhook envelope is stable across retries.
+type DeploymentLiveWebhookPayload struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
 }
 
 // DeploymentFailedWebhookPayload is the payload stored for a deployment.failed
@@ -84,6 +95,7 @@ var AllowedAppWebhookEvents = []string{
 type DeploymentFailedWebhookPayload struct {
 	AppID        string   `json:"app_id"`
 	DeploymentID string   `json:"deployment_id"`
+	Status       string   `json:"status"`
 	ErrorCode    string   `json:"error_code,omitempty"`
 	ErrorHint    string   `json:"error_hint,omitempty"`
 	ErrorWhy     string   `json:"error_why,omitempty"`
@@ -91,13 +103,26 @@ type DeploymentFailedWebhookPayload struct {
 	RelevantLogs []string `json:"relevant_logs,omitempty"`
 }
 
+// RolloutCompletedWebhookPayload is the payload stored when a deployment's
+// configured rollout completes. Explicit traffic splits can complete below
+// 100%, so consumers must read TrafficPercent rather than assume full traffic.
+type RolloutCompletedWebhookPayload struct {
+	AppID          string `json:"app_id"`
+	DeploymentID   string `json:"deployment_id"`
+	RolloutState   string `json:"rollout_state"`
+	TrafficPercent int    `json:"traffic_percent"`
+	CompletedAt    string `json:"completed_at"`
+}
+
 // RolloutAbortedWebhookPayload is the payload stored for a rollout.aborted
-// delivery.
+// delivery. Pre-live build failures emit deployment.failed instead.
 type RolloutAbortedWebhookPayload struct {
-	AppID        string `json:"app_id"`
-	DeploymentID string `json:"deployment_id"`
-	Reason       string `json:"reason"`
-	AbortedAt    string `json:"aborted_at,omitempty"`
+	AppID          string `json:"app_id"`
+	DeploymentID   string `json:"deployment_id"`
+	RolloutState   string `json:"rollout_state"`
+	TrafficPercent int    `json:"traffic_percent"`
+	Reason         string `json:"reason"`
+	AbortedAt      string `json:"aborted_at"`
 }
 
 // ErrorNewWebhookPayload is the payload stored for an error.new delivery.

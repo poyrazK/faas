@@ -175,13 +175,15 @@ func TestEnqueue_HappyPath_FirstDeploy(t *testing.T) {
 	srcPath, srcBytes := stageSource(t, srcDir)
 
 	res, err := Enqueue(context.Background(), st, notif, EnqueueParams{
-		AppID:       app.ID,
-		Kind:        state.DeploymentKindTarball,
-		SourcePath:  srcPath,
-		SourceBytes: srcBytes,
-		Source:      "tarball",
-		LogSpool:    spoolDir,
-		Log:         quietLogger(),
+		AppID:               app.ID,
+		Kind:                state.DeploymentKindTarball,
+		SourcePath:          srcPath,
+		SourceBytes:         srcBytes,
+		Source:              "tarball",
+		LogSpool:            spoolDir,
+		Log:                 quietLogger(),
+		ReleaseCommand:      []string{"bundle exec rails db:migrate"},
+		ReleaseCommandShell: true,
 	})
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
@@ -201,6 +203,9 @@ func TestEnqueue_HappyPath_FirstDeploy(t *testing.T) {
 	}
 	if got, err := hashSourceFile(srcPath); err != nil || dep.SourceSHA256 != got {
 		t.Fatalf("source digest = %q err %v, want %q", dep.SourceSHA256, err, got)
+	}
+	if len(dep.ReleaseCommand) != 1 || dep.ReleaseCommand[0] != "bundle exec rails db:migrate" || !dep.ReleaseCommandShell {
+		t.Fatalf("release command = %v shell=%v", dep.ReleaseCommand, dep.ReleaseCommandShell)
 	}
 
 	// First deploy: only the build_queued notify fires, no

@@ -227,10 +227,7 @@ func (m *MemStore) ListEnabledEventSubscriptionsForAccount(_ context.Context, ac
 	canonicalAccountID := canonicalMemUUID(accountID)
 	out := make([]EventSubscription, 0)
 	for _, subscription := range m.eventSubscriptions {
-		app, appExists := m.apps[subscription.AppID]
-		if !appExists {
-			app, appExists = m.apps[canonicalMemUUID(subscription.AppID)]
-		}
+		app, appExists := m.eventSubscriptionAppLocked(subscription.AppID)
 		if subscription.AccountID == canonicalAccountID && subscription.Enabled && appExists && app.Status != AppDeleted {
 			out = append(out, subscription)
 		}
@@ -276,10 +273,7 @@ func (m *MemStore) ListMatchingEventSubscriptionsForAccount(_ context.Context, a
 	canonicalAccountID := canonicalMemUUID(accountID)
 	out := make([]EventSubscription, 0, limit)
 	for _, subscription := range m.eventSubscriptions {
-		app, appExists := m.apps[subscription.AppID]
-		if !appExists {
-			app, appExists = m.apps[canonicalMemUUID(subscription.AppID)]
-		}
+		app, appExists := m.eventSubscriptionAppLocked(subscription.AppID)
 		if subscription.AccountID != canonicalAccountID || !subscription.Enabled || !appExists || app.Status == AppDeleted {
 			continue
 		}
@@ -303,6 +297,22 @@ func (m *MemStore) ListMatchingEventSubscriptionsForAccount(_ context.Context, a
 	return out, nil
 }
 
+// eventSubscriptionAppLocked resolves both the compact UUID spelling used by
+// MemStore-generated rows and the canonical spelling stored on subscriptions.
+// Callers hold m.mu.
+func (m *MemStore) eventSubscriptionAppLocked(appID string) (App, bool) {
+	if app, ok := m.apps[appID]; ok {
+		return app, true
+	}
+	canonical := canonicalMemUUID(appID)
+	if app, ok := m.apps[canonical]; ok {
+		return app, true
+	}
+	compact := strings.ReplaceAll(canonical, "-", "")
+	app, ok := m.apps[compact]
+	return app, ok
+}
+
 func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, source, typ string, filter json.RawMessage) (EventSubscription, bool, error) {
 	canonical, err := normalizeEventSubscriptionFilter(filter)
 	if err != nil {
@@ -324,10 +334,9 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	if m.eventSubscriptions == nil {
 		m.eventSubscriptions = make(map[string]EventSubscription)
 	}
-	for existingKey, subscription := range m.eventSubscriptions {
-		if subscription.AppID == canonicalMemUUID(appID) && existingKey == key {
-			return subscription, false, nil
-		}
+	mapKey := canonicalMemUUID(appID) + "\x00" + key
+	if existing, ok := m.eventSubscriptions[mapKey]; ok {
+		return existing, false, nil
 	}
 	now := time.Now().UTC()
 	subscription := EventSubscription{
@@ -343,7 +352,7 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	}
 	// Include the app id in the map key so two apps can declare the same
 	// source/type/filter without colliding in the in-memory implementation.
-	m.eventSubscriptions[subscription.AppID+"\x00"+key] = subscription
+	m.eventSubscriptions[mapKey] = subscription
 	return subscription, true, nil
 }
 
