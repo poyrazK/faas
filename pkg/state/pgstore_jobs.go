@@ -1051,8 +1051,10 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		errorMessageArg = errorMessage
 	}
 	var expectedInstanceArg any
+	var expectedLeaseArg any
 	if requireClaim {
 		expectedInstanceArg = expectedInstanceID
+		expectedLeaseArg = expectedLeaseToken
 	}
 	tag, err := s.pool.Exec(ctx,
 		`update job_tasks set
@@ -1070,7 +1072,7 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		   and (not $11::boolean or (status = 'claimed'
 		        and instance_id = $12::uuid and lease_token = $13))`,
 		runID, status, exitCode, errorClassArg, errorMessageArg, finishedAt.UTC(), taskIndex,
-		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceArg, expectedLeaseToken)
+		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceArg, expectedLeaseArg)
 	if err != nil {
 		return fmt.Errorf("state: mark task (%s, %d) terminal: %w", runID, taskIndex, err)
 	}
