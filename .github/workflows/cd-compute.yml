@@ -178,7 +178,7 @@ on:
           - prepare
           - activate
       pki_source:
-        description: "PKI source for an existing host; live-node requires phased rollout"
+        description: "PKI source for an existing host; live-node requires a pinned legacy target"
         required: false
         default: secret
         type: choice
@@ -256,11 +256,11 @@ jobs:
             *) echo "::error::unsupported pki_source" >&2; exit 1 ;;
           esac
           if [[ "$PKI_SOURCE_KIND" == "live-node" ]]; then
-            [[ "$ROLLOUT_PHASE" == "prepare" || "$ROLLOUT_PHASE" == "activate" ]] &&
+            [[ "$ROLLOUT_PHASE" == "full" || "$ROLLOUT_PHASE" == "prepare" || "$ROLLOUT_PHASE" == "activate" ]] &&
               [[ -z "$COMPUTE_TARGETS" && -z "$CLAIM_FILE" && -z "$FLEET_BUNDLE_URL" ]] &&
               [[ "$NODE" =~ ^[A-Za-z0-9._-]+$ && "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]] &&
               [[ "$SSH_HOST_KEY_SHA256" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]] || {
-                echo "::error::live-node PKI requires a pinned existing legacy target in prepare/activate phase" >&2
+                echo "::error::live-node PKI requires a pinned existing legacy target" >&2
                 exit 1
               }
           fi

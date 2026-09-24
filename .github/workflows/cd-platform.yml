@@ -42,7 +42,7 @@ on:
           - phased
           - full
       compute_pki_source:
-        description: "Compute PKI source: secret for enrollment, live-node for existing managed hosts"
+        description: "Compute PKI source: secret for enrollment, live-node for pinned existing hosts"
         required: false
         default: secret
         type: choice
@@ -157,10 +157,6 @@ jobs:
             secret|live-node) ;;
             *) echo "::error::unsupported compute_pki_source" >&2; exit 1 ;;
           esac
-          if [[ "$COMPUTE_PKI_SOURCE" == "live-node" && "$COMPUTE_ROLLOUT_MODE" != "phased" ]]; then
-            echo "::error::live-node PKI is only supported for phased existing-host rollouts" >&2
-            exit 1
-          fi
           targets_file="$RUNNER_TEMP/compute-targets.json"
           if [[ -n "$COMPUTE_TARGETS" && "$COMPUTE_TARGETS" != "[]" ]]; then
             printf '%s' "$COMPUTE_TARGETS" > "$targets_file"
