@@ -4,10 +4,10 @@ Status: accepted
 
 ## Context
 
-ADR-168 gives application VMs a bounded CPU allowance while cold-booting or
-restoring a snapshot, then restores the configured quota before the VM is
-published as ready. Some deployments prefer to keep their configured CPU quota
-through startup, for predictable resource behavior.
+ADR-168 gives eligible application VMs a bounded CPU allowance while
+cold-booting or restoring a snapshot. Some deployments prefer to keep their
+configured CPU quota throughout startup and the post-readiness tail, for
+predictable resource behavior.
 
 ## Decision
 
@@ -23,7 +23,9 @@ cgroup setup. Readiness and routing order do not change.
 
 ## Consequences
 
-This adds an opt-out without changing the default CPU behavior or the
-pre-routing quota restoration invariant. A post-readiness boost tail, such as
-Cloud Run's, remains out of scope until Gregale defines its CPU accounting and
-admission treatment; it must not be introduced as unaccounted headroom.
+This adds an opt-out without changing the default CPU behavior or readiness
+ordering. The opt-out covers both the startup phase and the post-readiness
+tail. Tail quota exposure is separately recorded from actual CPU consumption;
+the scheduler reserves the temporary peak against node CPU capacity until the
+persisted expiry, including across scheduler restarts. The feature does not
+change CPU billing semantics.

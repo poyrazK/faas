@@ -15,6 +15,7 @@ package sched
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -61,7 +62,11 @@ type reservation struct {
 	admissionMB   int    // ram_mb + PerVMOverheadMB
 	vcpu          int
 	cpuMillicores int
-	countsConc    bool // still in {WAKING,COLD_BOOTING,RUNNING}
+	// cpuBoostMillicores is the temporary delta above the sustained quota.
+	// It remains reserved until cpuBoostUntil (readiness + bounded tail).
+	cpuBoostMillicores int
+	cpuBoostUntil      time.Time
+	countsConc         bool // still in {WAKING,COLD_BOOTING,RUNNING}
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -159,8 +164,14 @@ type Request struct {
 	// guest topology may expose four vCPUs while cpu.max permits only one
 	// physical core. Zero preserves legacy/test callers that pre-date host
 	// CPU admission.
-	CPUMillicores  int
-	MaxConcurrency int // the app's configured max (already validated ≤ plan cap)
+	CPUMillicores int
+	// CPUStartupBoostMillicores is the temporary peak cgroup quota during
+	// startup and its post-readiness tail. It is a total quota, not a delta;
+	// values below CPUMillicores have no effect. CPUStartupBoostUntil bounds
+	// the reservation and is durable so SeedLedger can reconstruct it.
+	CPUStartupBoostMillicores int
+	CPUStartupBoostUntil      time.Time
+	MaxConcurrency            int // the app's configured max (already validated ≤ plan cap)
 	// AllowConcurrencyOverlap permits exactly one counted serving instance
 	// above MaxConcurrency. It is reserved for the authenticated deployment
 	// verifier so a candidate can overlap the stable revision during rollout,
@@ -271,6 +282,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.expireCPUBoosts_locked(time.Now())
 
 	if _, dup := l.entries[r.Instance]; dup {
 		return fmt.Errorf("sched: admit: instance %q already admitted", r.Instance)
@@ -363,22 +375,26 @@ func (l *NodeLedger) Admit(r Request) error {
 	// against physical host capacity. Startup recovery may record an
 	// already-overcommitted node, but can never use that exception for a
 	// newly-created reservation.
-	if r.CPUMillicores > 0 && r.CPUBudgetMillicores > 0 &&
-		node.usedCPUMillicores+r.CPUMillicores > r.CPUBudgetMillicores &&
+	reservedCPU := r.CPUMillicores
+	boostCPU := max(0, r.CPUStartupBoostMillicores-r.CPUMillicores)
+	reservedCPU += boostCPU
+	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
+		node.usedCPUMillicores+reservedCPU > r.CPUBudgetMillicores &&
 		!r.AllowCPUOvercommitRecovery {
 		return api.ErrCapacity(fmt.Sprintf(
-			"CPU headroom: node %q reserved %d millicores + %d requested exceeds the %d millicore physical CPU budget",
-			r.NodeID, node.usedCPUMillicores, r.CPUMillicores, r.CPUBudgetMillicores))
+			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
+			r.NodeID, node.usedCPUMillicores, reservedCPU, r.CPUBudgetMillicores))
 	}
 
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, nodeID: r.NodeID,
 		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
+		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
 		countsConc: kindCountsConcurrency(r.Kind),
 	}
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
-	node.usedCPUMillicores += r.CPUMillicores
+	node.usedCPUMillicores += reservedCPU
 	if kindCountsConcurrency(r.Kind) {
 		l.perApp[r.AppID]++
 		if r.DeploymentID != "" {
@@ -386,6 +402,47 @@ func (l *NodeLedger) Admit(r Request) error {
 		}
 	}
 	return nil
+}
+
+// SetCPUStartupBoostUntil moves an admitted reservation's temporary CPU
+// allowance to its actual expiry after vmmd returns from readiness. Until the
+// call, the conservative provisional deadline supplied at Admit is retained.
+func (l *NodeLedger) SetCPUStartupBoostUntil(instance string, until time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.expireCPUBoosts_locked(time.Now())
+	r := l.entries[instance]
+	if r == nil || r.cpuBoostMillicores <= 0 {
+		return false
+	}
+	if !until.After(time.Now()) {
+		l.releaseCPUBoost_locked(r)
+		return true
+	}
+	r.cpuBoostUntil = until
+	return true
+}
+
+func (l *NodeLedger) expireCPUBoosts_locked(now time.Time) {
+	for _, r := range l.entries {
+		if r.cpuBoostMillicores > 0 && !r.cpuBoostUntil.IsZero() && !now.Before(r.cpuBoostUntil) {
+			l.releaseCPUBoost_locked(r)
+		}
+	}
+}
+
+func (l *NodeLedger) releaseCPUBoost_locked(r *reservation) {
+	if r == nil || r.cpuBoostMillicores <= 0 {
+		return
+	}
+	if node := l.resident[r.nodeID]; node != nil {
+		node.usedCPUMillicores -= r.cpuBoostMillicores
+		if node.usedCPUMillicores < 0 {
+			node.usedCPUMillicores = 0
+		}
+	}
+	r.cpuBoostMillicores = 0
+	r.cpuBoostUntil = time.Time{}
 }
 
 // ceilingForNode_locked resolves the per-node admission ceiling.
@@ -513,7 +570,7 @@ func (l *NodeLedger) Release(instance string) {
 		if node.usedVCPU < 0 {
 			node.usedVCPU = 0
 		}
-		node.usedCPUMillicores -= e.cpuMillicores
+		node.usedCPUMillicores -= e.cpuMillicores + e.cpuBoostMillicores
 		if node.usedCPUMillicores < 0 {
 			node.usedCPUMillicores = 0
 		}
@@ -586,6 +643,7 @@ func (l *NodeLedger) UsedVCPUForNode(nodeID string) int {
 func (l *NodeLedger) UsedCPUMillicoresForNode(nodeID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.expireCPUBoosts_locked(time.Now())
 	if r, ok := l.resident[nodeID]; ok {
 		return r.usedCPUMillicores
 	}

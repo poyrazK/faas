@@ -72,6 +72,10 @@ type JailerVMM struct {
 	mu      sync.Mutex
 	proc    map[string]*exec.Cmd // instance -> running jailer process
 	clients map[string]*http.Client
+	// cpuBoostTails owns the post-readiness quota-restoration timers. They live
+	// in vmmd rather than schedd so the wake RPC can return as soon as the app
+	// is ready; Kill cancels the timer before a cgroup can be reused.
+	cpuBoostTails map[string]*startupCPUBoostTail
 	// guestVsockListeners are bound before a VM is allowed to boot. Firecracker
 	// forwards guest-initiated AF_VSOCK streams to <uds_path>_<port>; keeping the
 	// listeners here closes the race where a fast guest sends its characterization
@@ -138,6 +142,23 @@ type JailerVMM struct {
 	// wake.readiness_200 (the first 2xx probe). nil opts out
 	// (pre-PR-C test fixtures).
 	events *events.Platform
+}
+
+// StartupCPUBoostTailDuration is the bounded post-readiness window modeled on
+// Cloud Run's startup CPU boost. The temporary quota remains capped by the
+// startup profile (at most one host CPU) and is restored by vmmd after this
+// duration without extending wake latency.
+const StartupCPUBoostTailDuration = 10 * time.Second
+
+type startupCPUBoostTail struct {
+	timer     *time.Timer
+	lease     Lease
+	workloads []WorkloadSpec
+	profile   startupCPUProfile
+	ctx       context.Context
+	wakeID    string
+	appID     string
+	readyAt   time.Time
 }
 
 type ephemeralBind struct {
@@ -505,6 +526,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		exportMaxBytes:           0,                // resolved to api.MaxExportedLayerBytes at first export
 		proc:                     make(map[string]*exec.Cmd),
 		clients:                  make(map[string]*http.Client),
+		cpuBoostTails:            make(map[string]*startupCPUBoostTail),
 		guestVsockListeners:      make(map[guestVsockListenerKey]*net.UnixListener),
 		guestVsockStreamHandlers: make(map[uint32]GuestVsockStreamHandler),
 		characterizationReceipts: make(map[string]*characterizationReceipt),
@@ -796,6 +818,7 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheck
 }
 
 func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+	v.cancelStartupCPUBoostTail(l.Instance)
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
 	if err != nil {
@@ -924,19 +947,30 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		}
 		readyAt = time.Now()
 		if trackColdBootCPU {
-			quotaRestoreStartedAt := time.Now()
-			if err = v.restoreConfiguredCPUFence(l, workloads, coldBootCPU.ConfiguredMillicores); err != nil {
-				return fmt.Errorf("vmm: restore configured CPU fence: %w", err)
+			if coldBootCPU.StartupMillicores > coldBootCPU.ConfiguredMillicores {
+				v.emitColdBootCPU(ctx, l, readyAt, events.ColdBootCPU{
+					StartupCPUMillicores:    coldBootCPU.StartupMillicores,
+					ConfiguredCPUMillicores: coldBootCPU.ConfiguredMillicores,
+					PreReadyMs:              readyAt.Sub(bootStartedAt).Milliseconds(),
+					WaitReadyMs:             readyAt.Sub(readinessStartedAt).Milliseconds(),
+					TotalMs:                 readyAt.Sub(bootStartedAt).Milliseconds(),
+				})
+				v.scheduleStartupCPUBoostTail(ctx, l, workloads, coldBootCPU, readyAt, StartupCPUBoostTailDuration)
+			} else {
+				quotaRestoreStartedAt := time.Now()
+				if err = v.restoreConfiguredCPUFence(l, workloads, coldBootCPU.ConfiguredMillicores); err != nil {
+					return fmt.Errorf("vmm: restore configured CPU fence: %w", err)
+				}
+				quotaRestoredAt = time.Now()
+				v.emitColdBootCPU(ctx, l, quotaRestoredAt, events.ColdBootCPU{
+					StartupCPUMillicores:    coldBootCPU.StartupMillicores,
+					ConfiguredCPUMillicores: coldBootCPU.ConfiguredMillicores,
+					PreReadyMs:              readyAt.Sub(bootStartedAt).Milliseconds(),
+					WaitReadyMs:             readyAt.Sub(readinessStartedAt).Milliseconds(),
+					QuotaRestoreMs:          quotaRestoredAt.Sub(quotaRestoreStartedAt).Milliseconds(),
+					TotalMs:                 quotaRestoredAt.Sub(bootStartedAt).Milliseconds(),
+				})
 			}
-			quotaRestoredAt = time.Now()
-			v.emitColdBootCPU(ctx, l, quotaRestoredAt, events.ColdBootCPU{
-				StartupCPUMillicores:    coldBootCPU.StartupMillicores,
-				ConfiguredCPUMillicores: coldBootCPU.ConfiguredMillicores,
-				PreReadyMs:              readyAt.Sub(bootStartedAt).Milliseconds(),
-				WaitReadyMs:             readyAt.Sub(readinessStartedAt).Milliseconds(),
-				QuotaRestoreMs:          quotaRestoredAt.Sub(quotaRestoreStartedAt).Milliseconds(),
-				TotalMs:                 quotaRestoredAt.Sub(bootStartedAt).Milliseconds(),
-			})
 		}
 	}
 	if breakdown != nil {
@@ -1197,6 +1231,108 @@ func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec,
 	return nil
 }
 
+// scheduleStartupCPUBoostTail keeps the bounded startup allowance in place
+// after readiness and restores the configured quota asynchronously. The
+// callback is owned by this vmmd process and canceled by Kill, so wake
+// completion does not wait for the Cloud Run-style 10-second tail.
+func (v *JailerVMM) scheduleStartupCPUBoostTail(
+	ctx context.Context,
+	l Lease,
+	workloads []WorkloadSpec,
+	profile startupCPUProfile,
+	readyAt time.Time,
+	tailDuration time.Duration,
+) {
+	if tailDuration <= 0 {
+		return
+	}
+	fields, _ := wire.FromContext(ctx)
+	tail := &startupCPUBoostTail{
+		lease:     l,
+		workloads: append([]WorkloadSpec(nil), workloads...),
+		profile:   profile,
+		ctx:       context.WithoutCancel(ctx),
+		wakeID:    fields.WakeID,
+		appID:     fields.AppID,
+		readyAt:   readyAt,
+	}
+
+	v.mu.Lock()
+	if v.cpuBoostTails == nil {
+		v.cpuBoostTails = make(map[string]*startupCPUBoostTail)
+	}
+	if previous := v.cpuBoostTails[l.Instance]; previous != nil && previous.timer != nil {
+		previous.timer.Stop()
+	}
+	v.cpuBoostTails[l.Instance] = tail
+	tail.timer = time.AfterFunc(tailDuration, func() {
+		v.finishStartupCPUBoostTail(tail.ctx, tail)
+	})
+	v.mu.Unlock()
+}
+
+// finishStartupCPUBoostTail serializes quota restoration with Kill and a
+// replacement VM using the same instance id. A stale callback is ignored.
+func (v *JailerVMM) finishStartupCPUBoostTail(ctx context.Context, tail *startupCPUBoostTail) {
+	v.mu.Lock()
+	if v.cpuBoostTails[tail.lease.Instance] != tail {
+		v.mu.Unlock()
+		return
+	}
+	delete(v.cpuBoostTails, tail.lease.Instance)
+	restoreStartedAt := time.Now()
+	err := v.restoreConfiguredCPUFence(tail.lease, tail.workloads, tail.profile.ConfiguredMillicores)
+	quotaRestoredAt := time.Now()
+	v.mu.Unlock()
+
+	tailMs := quotaRestoredAt.Sub(tail.readyAt).Milliseconds()
+	additionalCPUQuotaMillicoreMs := int64(tail.profile.StartupMillicores-tail.profile.ConfiguredMillicores) * tailMs
+	restoreError := ""
+	if err != nil {
+		restoreError = err.Error()
+		slog.Error("vmm: restore configured CPU quota after startup boost tail",
+			"instance", tail.lease.Instance, "configured_millicores", tail.profile.ConfiguredMillicores, "err", err)
+		// Do not leave a live tenant VM with an allowance that could not be
+		// returned to its configured ceiling. Teardown is the fail-closed path.
+		if killErr := v.Kill(context.WithoutCancel(ctx), tail.lease); killErr != nil {
+			slog.Error("vmm: kill instance after startup CPU quota restore failure",
+				"instance", tail.lease.Instance, "err", killErr)
+		}
+	}
+	if tail.wakeID != "" && v.events != nil {
+		v.events.EmitAsync(ctx, events.CPUBoostTail{
+			EmitAt:                        quotaRestoredAt.UTC(),
+			WakeID:                        tail.wakeID,
+			AppID:                         tail.appID,
+			InstanceID:                    tail.lease.Instance,
+			StartupCPUMillicores:          tail.profile.StartupMillicores,
+			ConfiguredCPUMillicores:       tail.profile.ConfiguredMillicores,
+			TailMs:                        tailMs,
+			AdditionalCPUQuotaMillicoreMs: additionalCPUQuotaMillicoreMs,
+			RestoreError:                  restoreError,
+		})
+	}
+	slog.Info("vmm: startup CPU boost tail complete",
+		"instance", tail.lease.Instance,
+		"startup_millicores", tail.profile.StartupMillicores,
+		"configured_millicores", tail.profile.ConfiguredMillicores,
+		"tail_ms", tailMs,
+		"quota_restore_ms", quotaRestoredAt.Sub(restoreStartedAt).Milliseconds(),
+		"additional_cpu_quota_millicore_ms", additionalCPUQuotaMillicoreMs,
+		"restore_error", restoreError)
+}
+
+func (v *JailerVMM) cancelStartupCPUBoostTail(instance string) {
+	v.mu.Lock()
+	if tail := v.cpuBoostTails[instance]; tail != nil {
+		delete(v.cpuBoostTails, instance)
+		if tail.timer != nil {
+			tail.timer.Stop()
+		}
+	}
+	v.mu.Unlock()
+}
+
 // Restore starts a bare jailed firecracker and loads a snapshot into it, resuming
 // the guest (spec §4.4, mem_backend File). The netns/tap already exist (the
 // Manager set them up); the restored net device references tap0 by name.
@@ -1207,6 +1343,7 @@ func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec,
 // HTTP GET <path> against <HostIP>:8080 and accepts 2xx as ready. The
 // Manager threads WakeRequest.HealthcheckPath into this field at bringUp.
 func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err error) {
+	v.cancelStartupCPUBoostTail(l.Instance)
 	// Start the breakdown before any chroot or storage work. The manager's
 	// RestoreMs already covers this full method; keeping the detailed log on
 	// the same boundary makes its total_ms comparable to that field and keeps
@@ -1430,7 +1567,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	tTunReady := time.Now()
 	var restoreCPU startupCPUProfile
-	trackRestoreCPU := shouldApplyStartupCPUBoost(l, true)
+	trackRestoreCPU := shouldApplyStartupCPUBoost(l, !spec.KeepPaused && !spec.SkipReady)
 	if l.IsBuilder || l.Plan.Valid() {
 		fenceLease := l
 		if trackRestoreCPU {
@@ -1479,7 +1616,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// the next period, adding up to 750 ms to an otherwise sub-200 ms SSD wake.
 	// Keep the same bounded one-core allowance used for cold boot until the
 	// guest is ready, then restore the configured quota before publishing it.
-	if trackRestoreCPU {
+	if trackRestoreCPU && restoreCPU.StartupMillicores > restoreCPU.ConfiguredMillicores {
+		v.scheduleStartupCPUBoostTail(ctx, l, spec.Workloads, restoreCPU, tReady, StartupCPUBoostTailDuration)
+	} else if trackRestoreCPU {
 		if err = v.restoreConfiguredCPUFence(l, spec.Workloads, restoreCPU.ConfiguredMillicores); err != nil {
 			return fmt.Errorf("vmm: restore configured CPU fence after snapshot restore: %w", err)
 		}
@@ -2662,6 +2801,7 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
 func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
+	v.cancelStartupCPUBoostTail(l.Instance)
 	v.closeGuestVsockListeners(l.Instance)
 	v.mu.Lock()
 	cmd, hasCmd := v.proc[l.Instance]
@@ -4956,9 +5096,9 @@ func (v *JailerVMM) emitRestoreBreakdown(ctx context.Context, l Lease, at time.T
 	})
 }
 
-// emitColdBootCPU records the temporary startup allowance only after the
-// configured quota has been restored. Operator calls without a wake envelope
-// remain log-only so the customer timeline never receives an unjoinable row.
+// emitColdBootCPU records the temporary startup allowance at readiness, or
+// immediately after quota restoration when no tail is needed. Operator calls
+// without a wake envelope remain log-only so the timeline has no unjoinable row.
 func (v *JailerVMM) emitColdBootCPU(ctx context.Context, l Lease, at time.Time, event events.ColdBootCPU) {
 	if v.events == nil {
 		return
