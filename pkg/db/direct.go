@@ -36,8 +36,10 @@
 // thread it would silently do session work on a pooled connection, which is
 // the failure this file exists to prevent.
 //
-// Until FAAS_DATABASE_URL_DIRECT is set, the direct pool IS the ordinary
-// pool, so this file changes nothing about how the platform runs today.
+// Without FAAS_DATABASE_URL_DIRECT, most daemons use the ordinary pool for
+// session work. imaged isolates its LISTEN and long-held deployment locks in
+// a sibling pool even when both pools connect to the same postmaster: its
+// three-connection ordinary pool can otherwise be exhausted during activation.
 package db
 
 import (
@@ -53,7 +55,8 @@ import (
 
 // DirectDSNEnv points session-scoped work at Postgres directly, bypassing a
 // pooler that the ordinary DSN goes through. Unset means "no pooler in play":
-// the direct pool is the ordinary pool and nothing changes.
+// most daemons use their ordinary pool, while imaged isolates session work
+// in a sibling pool using the ordinary DSN.
 //
 // The value is a full DSN rather than a flag: it can name a separate pool at
 // the same postmaster (isolating long-held connections), or the postmaster
@@ -109,9 +112,8 @@ func registerDirectPool(ordinary, direct *pgxpool.Pool) {
 
 // DirectPool returns the pool that session-scoped work must use for p.
 //
-// When no direct sibling is registered — the default, and every deployment
-// without a pooler — it returns p itself, so callers are correct either way
-// and need no branch of their own.
+// When no direct sibling is registered it returns p itself, so callers are
+// correct either way and need no branch of their own.
 func DirectPool(p *pgxpool.Pool) *pgxpool.Pool {
 	if p == nil {
 		return nil
@@ -141,10 +143,22 @@ func closeDirectPool(p *pgxpool.Pool) {
 	}
 }
 
-// openDirect builds the session-scoped pool when DirectDSNEnv names one.
+// directDSNFor returns the configured direct DSN, or imaged's ordinary DSN
+// when no pooler is configured. Other daemons retain their existing default.
+func directDSNFor(appName, ordinaryDSN string) string {
+	if dsn := os.Getenv(DirectDSNEnv); dsn != "" {
+		return dsn
+	}
+	if strings.TrimPrefix(strings.TrimSpace(appName), "faas-") == "imaged" {
+		return ordinaryDSN
+	}
+	return ""
+}
+
+// openDirect builds the session-scoped pool when a direct DSN is selected.
 // Returns nil when unset, which registerDirectPool treats as "no sibling".
-func openDirect(ctx context.Context, appName string) (*pgxpool.Pool, error) {
-	dsn := os.Getenv(DirectDSNEnv)
+func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool, error) {
+	dsn := directDSNFor(appName, ordinaryDSN)
 	if dsn == "" {
 		return nil, nil
 	}

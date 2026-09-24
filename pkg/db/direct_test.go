@@ -102,6 +102,36 @@ func TestPooledExecModeOnlyWhenPoolingIsConfigured(t *testing.T) {
 	}
 }
 
+func TestImagedIsolatesSessionPoolWithoutDirectDSN(t *testing.T) {
+	t.Setenv(DirectDSNEnv, "")
+	ordinaryDSN := "postgres://u@localhost/d"
+	for _, appName := range []string{"faas-imaged", "imaged"} {
+		if got := directDSNFor(appName, ordinaryDSN); got != ordinaryDSN {
+			t.Errorf("directDSNFor(%q) = %q, want ordinary DSN", appName, got)
+		}
+	}
+	if got := directDSNFor("faas-schedd", ordinaryDSN); got != "" {
+		t.Errorf("schedd direct DSN = %q, want no sibling", got)
+	}
+	t.Setenv(DirectDSNEnv, "postgres://u@direct/d")
+	if got := directDSNFor("faas-imaged", ordinaryDSN); got != "postgres://u@direct/d" {
+		t.Errorf("configured imaged direct DSN = %q", got)
+	}
+}
+
+func TestImagedOpensSeparateSessionPoolWithoutDirectDSN(t *testing.T) {
+	postgres := pgtest.Open(t)
+	t.Setenv(DirectDSNEnv, "")
+	ordinary, err := open(context.Background(), postgres.Config().ConnString(), "faas-imaged")
+	if err != nil {
+		t.Fatalf("open imaged pool: %v", err)
+	}
+	t.Cleanup(func() { Close(ordinary) })
+	if got := DirectPool(ordinary); got == ordinary || got == nil {
+		t.Fatal("imaged must isolate LISTEN and deployment locks from ordinary queries")
+	}
+}
+
 func TestSameDSNSessionPoolPreservesJSONBEncoding(t *testing.T) {
 	pool := pgtest.Open(t)
 	ctx := context.Background()
