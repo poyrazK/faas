@@ -33,6 +33,15 @@ type OrgActivityEnvMutationStore interface {
 	DeleteAppEnvInScopeWithActivity(context.Context, string, string, string, string, OrgActivity) (int64, error)
 }
 
+// OrgActivityDeploymentMutationStore atomically couples a deployment write
+// with its timeline handoff. Source builds enqueue at the build-queue
+// transaction boundary; image deployments enqueue with the deployment row.
+type OrgActivityDeploymentMutationStore interface {
+	OrgActivityOutboxStore
+	CreateDeploymentWithActivity(context.Context, Deployment, OrgActivity) (Deployment, int64, error)
+	CreateBuildWithIDAndActivity(context.Context, string, string, DeploymentKind, int64, string, OrgActivity) (Build, int64, error)
+}
+
 const (
 	OrgActivityOutboxMaxAttempts = 12
 

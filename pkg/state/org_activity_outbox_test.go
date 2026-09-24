@@ -96,3 +96,69 @@ func TestMemStoreOrgActivityOutboxEnvMutationAndDelivery(t *testing.T) {
 		t.Fatalf("deliver external activity = (%v, %v), want (true, nil)", delivered, err)
 	}
 }
+
+func TestMemStoreOrgActivityDeploymentMutationAtomic(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemStore()
+	orgID, appID, actorID := uuid.New(), uuid.New(), uuid.New()
+	store.apps[appID.String()] = App{ID: appID.String(), AccountID: actorID.String(), Slug: "payments", Status: AppActive}
+	entry := OrgActivity{
+		OrgID: orgID, Kind: "app.deployed", ActorType: OrgActivityActorUser,
+		ActorAccountID: &actorID, ActorLabel: "person@example.com",
+		ResourceType: "app", ResourceID: appID.String(), ResourceLabel: "payments",
+		AppID: &appID, SourceType: "deployment", Data: []byte(`{"source":"image"}`),
+	}
+
+	bad := entry
+	bad.Data = []byte(`[]`)
+	badDeploymentID := uuid.NewString()
+	if _, _, err := store.CreateDeploymentWithActivity(ctx, Deployment{ID: badDeploymentID, AppID: appID.String()}, bad); err == nil {
+		t.Fatal("deployment with invalid activity succeeded")
+	}
+	if _, err := store.DeploymentByID(ctx, badDeploymentID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deployment after rejected transaction = %v, want ErrNotFound", err)
+	}
+
+	created, outboxID, err := store.CreateDeploymentWithActivity(ctx, Deployment{AppID: appID.String()}, entry)
+	if err != nil || created.ID == "" || outboxID == 0 {
+		t.Fatalf("transactional deployment = (%+v, %d, %v)", created, outboxID, err)
+	}
+	claimed, err := store.ClaimOrgActivityOutbox(ctx, "deployment-test", time.Minute)
+	if err != nil || claimed.ID != outboxID || claimed.Activity.SourceID != created.ID ||
+		claimed.Activity.DeploymentID == nil || *claimed.Activity.DeploymentID != uuid.MustParse(created.ID) {
+		t.Fatalf("deployment activity claim = (%+v, %v), want source/deployment %s", claimed, err, created.ID)
+	}
+	if delivered, err := store.DeliverOrgActivityOutbox(ctx, outboxID); err != nil || !delivered {
+		t.Fatalf("deployment activity delivery = (%v, %v), want true", delivered, err)
+	}
+
+	queuedDeployment, err := store.CreateDeployment(ctx, Deployment{AppID: appID.String()})
+	if err != nil {
+		t.Fatalf("create source deployment: %v", err)
+	}
+	bad.SourceID = queuedDeployment.ID
+	badDeploymentUUID := uuid.MustParse(queuedDeployment.ID)
+	bad.DeploymentID = &badDeploymentUUID
+	if _, _, err := store.CreateBuildWithIDAndActivity(ctx, uuid.NewString(), queuedDeployment.ID, DeploymentKindTarball, 100, "build.log", bad); err == nil {
+		t.Fatal("build with invalid activity succeeded")
+	}
+	unchanged, err := store.DeploymentByID(ctx, queuedDeployment.ID)
+	if err != nil || unchanged.Status != DeployPending || unchanged.BuildID != "" {
+		t.Fatalf("deployment after rejected build/activity transaction = (%+v, %v), want pending without build", unchanged, err)
+	}
+
+	activity := entry
+	activity.SourceID = queuedDeployment.ID
+	activityDeploymentUUID := uuid.MustParse(queuedDeployment.ID)
+	activity.DeploymentID = &activityDeploymentUUID
+	buildID := uuid.NewString()
+	build, buildOutboxID, err := store.CreateBuildWithIDAndActivity(ctx, buildID, queuedDeployment.ID, DeploymentKindTarball, 100, "build.log", activity)
+	if err != nil || build.ID != buildID || buildOutboxID == 0 {
+		t.Fatalf("transactional build = (%+v, %d, %v)", build, buildOutboxID, err)
+	}
+	queuedActivity, err := store.ClaimOrgActivityOutbox(ctx, "deployment-test", time.Minute)
+	if err != nil || queuedActivity.ID != buildOutboxID || queuedActivity.Activity.SourceID != queuedDeployment.ID {
+		t.Fatalf("build activity claim = (%+v, %v), want source %s", queuedActivity, err, queuedDeployment.ID)
+	}
+}
