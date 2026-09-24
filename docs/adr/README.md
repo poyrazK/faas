@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 233 | [Environment-owned declared route contracts](233-environment-owned-declared-routes.md) | accepted | Scoped route-policy replacement, atomic clone, effective diff, and deployment-URL enforcement; OpenAPI fallback remains shared |
 | 226 | [Account-level platform tenants](226-platform-tenants.md) | accepted | One end-customer identity across app consumers, hostnames, and raw usage; reversible linked-path suspension |
 | 232 | [Loopback service authorization for Safe Deploy](232-loopback-safe-deploy-service-auth.md) | accepted | Separate canary and recovery credentials on APID's loopback operator listener; customer routes remain account-scoped |
 | 231 | [Queue push delivery to HTTP functions](231-http-function-queue-push.md) | accepted | Function-only HTTP push binding; serial delivery is explicit until a separate parallel-dispatch design lands |

@@ -22,8 +22,8 @@
   into a separate database and object storage is copied into a separate bucket.
   `share_resources` opts into fresh credentials over the source database or
   bucket, so the data remains shared.
-- **Ownership:** Domains, declared route structure, and edge policies are
-  currently application-scoped. The read model reports them as shared instead
+- **Ownership (initial decision):** Domains, declared route structure, and edge policies were
+  application-scoped when this ADR landed. The read model reported them as shared instead
   of pretending they are environment-owned or silently declaring them equal.
   Moving any of those resources into the cloneable set requires durable
   environment ownership and an additive follow-up API.
@@ -52,3 +52,17 @@
   client. Comparing sealed ciphertext is invalid because age encryption is
   nondeterministic. Treating application-global routes, domains, and policies
   as environment resources would make clone output look safer than it is.
+
+## Follow-up: environment-owned declared routes (ADR-233)
+
+Registered environments can now own an explicit per-workload declared-route
+contract. The route-policy PUT endpoint replaces that contract, clone snapshots
+it atomically, and state/diff report both the contract and its ownership.
+The CLI exposes the write as
+`gregale projects environments routes set <project> <environment> <workload> --file routes.json --yes`.
+Deployment-specific URLs enforce the scoped contract; the ordinary application
+hostname continues to use the application-wide contract. An application-wide
+OpenAPI document is not copied: when enforcement depends on one without an
+explicit route list, clone leaves routes shared and reports that limitation.
+Domains and edge rules remain application-scoped; they are not part of this
+route-policy follow-up.

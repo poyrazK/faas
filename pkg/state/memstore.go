@@ -735,6 +735,7 @@ type MemStore struct {
 	projectEnvironmentCleanupJobs        map[string]ProjectEnvironmentCleanupJob
 	projectEnvironmentApprovals          map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
+	projectEnvironmentRoutePolicies      map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
 	projectEnvironmentPromotionWorkloads map[string][]ProjectEnvironmentPromotionWorkload
 	// githubDeployBranches stores the optional branch→scope rules keyed by
@@ -1172,6 +1173,7 @@ func NewMemStore() *MemStore {
 		projectEnvironmentCleanupJobs:        map[string]ProjectEnvironmentCleanupJob{},
 		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
+		projectEnvironmentRoutePolicies:      map[string]ProjectEnvironmentRoutePolicy{},
 		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
 		projectEnvironmentPromotionWorkloads: map[string][]ProjectEnvironmentPromotionWorkload{},
 	}
@@ -2877,6 +2879,11 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			delete(m.projectEnvironmentConfigs, key)
 		}
 	}
+	for key, policy := range m.projectEnvironmentRoutePolicies {
+		if policy.ProjectID == projectID {
+			delete(m.projectEnvironmentRoutePolicies, key)
+		}
+	}
 	return nil
 }
 
@@ -3035,6 +3042,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	for key, policy := range m.projectEnvironmentRoutePolicies {
+		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
+			delete(m.projectEnvironmentRoutePolicies, key)
+		}
+	}
 	for id, approval := range m.projectEnvironmentApprovals {
 		if approval.AccountID == accountID && approval.ProjectSlug == project.Slug && approval.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentApprovals, id)
@@ -19015,6 +19027,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if a.AccountID == id {
 			delete(m.apps, aid)
 			delete(m.githubBindings, aid)
+		}
+	}
+	for key, policy := range m.projectEnvironmentRoutePolicies {
+		if policy.AccountID == id {
+			delete(m.projectEnvironmentRoutePolicies, key)
 		}
 	}
 	for kid, k := range m.keys {

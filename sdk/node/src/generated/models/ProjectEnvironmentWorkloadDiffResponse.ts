@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ProjectEnvironmentBindingChangeResponse } from './ProjectEnvironmentBindingChangeResponse.js';
 import type { ProjectEnvironmentReleaseDiffResponse } from './ProjectEnvironmentReleaseDiffResponse.js';
+import type { ProjectEnvironmentRoutePolicyDiffResponse } from './ProjectEnvironmentRoutePolicyDiffResponse.js';
 import type { ProjectEnvironmentSecretChangeResponse } from './ProjectEnvironmentSecretChangeResponse.js';
 import type { ProjectEnvironmentVariableChangeResponse } from './ProjectEnvironmentVariableChangeResponse.js';
 /**
@@ -16,5 +17,6 @@ export type ProjectEnvironmentWorkloadDiffResponse = {
   variables: Array<ProjectEnvironmentVariableChangeResponse>;
   secrets: Array<ProjectEnvironmentSecretChangeResponse>;
   bindings: Array<ProjectEnvironmentBindingChangeResponse>;
+  routes: ProjectEnvironmentRoutePolicyDiffResponse;
 };
 
