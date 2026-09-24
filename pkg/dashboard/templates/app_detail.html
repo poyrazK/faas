@@ -718,7 +718,7 @@
             </p>
             <p>{{.Summary}}</p>
             <table aria-label="PR preview workloads">
-              <thead><tr><th>Workload</th><th>Preview app</th><th>App</th><th>PR state</th><th>Deployment</th></tr></thead>
+              <thead><tr><th>Workload</th><th>Preview app</th><th>App</th><th>PR state</th><th>Deployment</th><th>Resources</th><th>Changes from production</th><th>Expires</th></tr></thead>
               <tbody>
                 {{range .Members}}
                   <tr>
@@ -727,6 +727,29 @@
                     <td>{{.AppStatus}}</td>
                     <td>{{if .PreviewState}}{{.PreviewState}}{{else}}—{{end}}</td>
                     <td>{{.DeploymentStatus}}</td>
+                    <td>
+                      {{if .Links}}
+                        <a href="{{.Links.URL}}">URL</a> ·
+                        <a href="{{.Links.Logs}}">logs</a> ·
+                        <a href="{{.Links.Metrics}}">metrics</a> ·
+                        <a href="{{.Links.Configuration}}">config</a>
+                      {{else}}—{{end}}
+                    </td>
+                    <td>
+                      {{if .Changes}}
+                        {{if not .DeploymentID}}artifact pending at current head
+                        {{else if not .Changes.PreviewArtifact.DeploymentID}}current-head artifact unavailable
+                        {{else if not .Changes.ProductionArtifact.DeploymentID}}production baseline unavailable
+                        {{else if .Changes.ArtifactChanged}}artifact differs
+                        {{else}}artifact matches{{end}}
+                        {{if .Changes.ConfigurationChangedGroups}}
+                          <br><small>config: {{range $index, $group := .Changes.ConfigurationChangedGroups}}{{if $index}}, {{end}}<code>{{$group}}</code>{{end}}</small>
+                        {{else}}
+                          <br><small>no configuration groups changed</small>
+                        {{end}}
+                      {{else}}—{{end}}
+                    </td>
+                    <td>{{if .ExpiresAt}}<time datetime="{{.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.ExpiresAt.Format "2006-01-02 15:04 MST"}}</time>{{else}}—{{end}}</td>
                   </tr>
                 {{end}}
               </tbody>

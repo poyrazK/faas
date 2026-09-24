@@ -152,8 +152,44 @@ func TestPreviewShowUsesCurrentHeadEnvironment(t *testing.T) {
 	if got.Environment == nil || got.Environment.Phase != "building" || got.Environment.TotalWorkloads != 2 {
 		t.Fatalf("environment = %+v", got.Environment)
 	}
+	root := got.Environment.Members[0]
+	if root.Links == nil || root.Links.URL != "https://pr-42-web.gregale.dev" || root.Changes == nil ||
+		!root.Changes.ArtifactChanged || root.ExpiresAt == nil {
+		t.Fatalf("root member diagnostics = %+v", root)
+	}
 	if got.LatestDeployment == nil || got.LatestDeployment.ID != "current-root" {
 		t.Fatalf("latest deployment = %+v, want current-head root", got.LatestDeployment)
+	}
+}
+
+func TestRenderPreviewEnvironmentDetailsIncludesPerWorkloadDiffAndLinks(t *testing.T) {
+	oldOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+	environment := previewEnvironmentFixture("live", true, statusLive)
+	renderPreviewEnvironmentDetails(environment)
+	for _, fragment := range []string{
+		"Artifact: differs from production", "Config:   routing", "https://pr-42-web.gregale.dev",
+		"/v1/apps/pr-42-web/logs", "/v1/apps/pr-42-worker/metrics",
+	} {
+		if !strings.Contains(out.String(), fragment) {
+			t.Errorf("preview details missing %q: %s", fragment, out.String())
+		}
+	}
+}
+
+func TestRenderPreviewEnvironmentDetailsDoesNotCompareUnavailableArtifact(t *testing.T) {
+	oldOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+	environment := previewEnvironmentFixture("live", true, statusLive)
+	environment.Members[0].Changes.PreviewArtifact.DeploymentID = ""
+	renderPreviewEnvironmentDetails(environment)
+	if strings.Contains(out.String(), "Artifact: matches production") ||
+		!strings.Contains(out.String(), "Artifact: current-head artifact unavailable") {
+		t.Fatalf("unavailable preview artifact was misclassified: %s", out.String())
 	}
 }
 
@@ -339,11 +375,21 @@ func previewEnvironmentFixture(phase string, ready bool, workerStatus string) ap
 		RootSlug: "pr-42-web", PRNumber: 42, CommitSHA: "current-sha", Phase: phase,
 		Ready: ready, Summary: "PR preview " + phase, LiveWorkloads: live, TotalWorkloads: 2,
 		Members: []api.PreviewEnvironmentMemberResponse{
-			{AppID: "preview-web", Slug: "pr-42-web", WorkloadName: "web", AppStatus: "active", PreviewState: "open", DeploymentID: "current-root", DeploymentStatus: statusLive},
-			{AppID: "preview-worker", Slug: "pr-42-worker", WorkloadName: "worker", AppStatus: "active", PreviewState: "open", DeploymentID: "worker-deploy", DeploymentStatus: workerStatus},
+			{AppID: "preview-web", Slug: "pr-42-web", WorkloadName: "web", AppStatus: "active", PreviewState: "open", DeploymentID: "current-root", DeploymentStatus: statusLive,
+				ExpiresAt: previewTimePtr(time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)),
+				Changes: &api.PreviewProductionChangesResponse{ArtifactChanged: true,
+					PreviewArtifact:            api.PreviewArtifactResponse{DeploymentID: "current-root", CommitSHA: "current-sha"},
+					ProductionArtifact:         api.PreviewArtifactResponse{DeploymentID: "production-root", CommitSHA: "production-sha"},
+					ConfigurationChangedGroups: []string{"routing"}},
+				Links: &api.PreviewResourceLinksResponse{URL: "https://pr-42-web.gregale.dev", Logs: "/v1/apps/pr-42-web/logs", Metrics: "/v1/apps/pr-42-web/metrics", Configuration: "/v1/apps/pr-42-web"}},
+			{AppID: "preview-worker", Slug: "pr-42-worker", WorkloadName: "worker", AppStatus: "active", PreviewState: "open", DeploymentID: "worker-deploy", DeploymentStatus: workerStatus,
+				Changes: &api.PreviewProductionChangesResponse{ConfigurationChangedGroups: []string{}},
+				Links:   &api.PreviewResourceLinksResponse{URL: "https://pr-42-worker.gregale.dev", Logs: "/v1/apps/pr-42-worker/logs", Metrics: "/v1/apps/pr-42-worker/metrics", Configuration: "/v1/apps/pr-42-worker"}},
 		},
 	}
 }
+
+func previewTimePtr(value time.Time) *time.Time { return &value }
 
 func TestPreviewWaitTimeoutKeepsResumeReceipt(t *testing.T) {
 	resetJSONOut(t)

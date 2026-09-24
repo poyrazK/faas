@@ -36,6 +36,34 @@ func renderPreviewEnvironmentDetails(environment api.PreviewEnvironmentStatusRes
 	PrintProgress(osStdout, "Commit:       %s", environment.CommitSHA)
 	for _, member := range environment.Members {
 		PrintProgress(osStdout, "  %-20s %s", previewMemberName(member), previewMemberStatus(member))
+		if member.ExpiresAt != nil {
+			PrintProgress(osStdout, "    Expires: %s", previewExpiry(member.ExpiresAt))
+		}
+		if member.Changes != nil {
+			artifact := "matches production"
+			switch {
+			case member.DeploymentID == "":
+				artifact = "not deployed at current PR head"
+			case member.Changes.PreviewArtifact.DeploymentID == "":
+				artifact = "current-head artifact unavailable"
+			case member.Changes.ProductionArtifact.DeploymentID == "":
+				artifact = "production baseline unavailable"
+			case member.Changes.ArtifactChanged:
+				artifact = "differs from production"
+			}
+			PrintProgress(osStdout, "    Artifact: %s", artifact)
+			if len(member.Changes.ConfigurationChangedGroups) == 0 {
+				PrintProgress(osStdout, "    Config:   no changed groups")
+			} else {
+				PrintProgress(osStdout, "    Config:   %s", strings.Join(member.Changes.ConfigurationChangedGroups, ", "))
+			}
+		}
+		if member.Links != nil {
+			PrintProgress(osStdout, "    URL:      %s", member.Links.URL)
+			PrintProgress(osStdout, "    Logs:     %s", member.Links.Logs)
+			PrintProgress(osStdout, "    Metrics:  %s", member.Links.Metrics)
+			PrintProgress(osStdout, "    Config:   %s", member.Links.Configuration)
+		}
 	}
 	if environment.Phase == "failed" {
 		PrintProgress(osStdout, "Next:         %s", previewEnvironmentNextAction(environment))

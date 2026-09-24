@@ -407,13 +407,16 @@ type PreviewEnvironmentStatusResponse struct {
 // PreviewEnvironmentMemberResponse identifies one expected workload and its
 // newest preview deployment at the recorded PR head.
 type PreviewEnvironmentMemberResponse struct {
-	AppID            string `json:"app_id"`
-	Slug             string `json:"slug"`
-	WorkloadName     string `json:"workload_name"`
-	AppStatus        string `json:"app_status"`
-	PreviewState     string `json:"preview_state"`
-	DeploymentID     string `json:"deployment_id"`
-	DeploymentStatus string `json:"deployment_status"`
+	AppID            string                            `json:"app_id"`
+	Slug             string                            `json:"slug"`
+	WorkloadName     string                            `json:"workload_name"`
+	AppStatus        string                            `json:"app_status"`
+	PreviewState     string                            `json:"preview_state"`
+	DeploymentID     string                            `json:"deployment_id"`
+	DeploymentStatus string                            `json:"deployment_status"`
+	ExpiresAt        *time.Time                        `json:"expires_at,omitempty"`
+	Changes          *PreviewProductionChangesResponse `json:"changes_from_production,omitempty"`
+	Links            *PreviewResourceLinksResponse     `json:"links,omitempty"`
 }
 
 // UpsertDevSessionRequest describes the application shape for an expiring,

@@ -805,7 +805,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		Crons:              cronItems,
 		Workflows:          workflowItems,
 		Previews:           previews,
-		PreviewEnvironment: s.dashboardPreviewEnvironment(ctx, log, app),
+		PreviewEnvironment: s.dashboardPreviewEnvironment(ctx, log, acct, app),
 		Domains:            domainItems,
 		RecentInstances:    recentItems,
 		// Issue #791 PR-E / ADR-090 closure — cron fire-now

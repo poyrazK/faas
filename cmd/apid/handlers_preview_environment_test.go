@@ -15,6 +15,17 @@ import (
 func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	ctx := context.Background()
+	production := make(map[string]state.App)
+	for _, slug := range []string{"api", "worker"} {
+		app, err := e.store.CreateAppIfUnderQuota(ctx, state.App{
+			AccountID: e.acct.ID, Slug: slug, Type: "stateless", Runtime: "node22",
+			RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 30, Status: state.AppActive,
+		}, api.Limits{DeployedApps: 10000})
+		if err != nil {
+			t.Fatalf("create production app %q: %v", slug, err)
+		}
+		production[slug] = app
+	}
 	root := seedPreviewAppForTest(t, e, "pr-42-api", "api", 42)
 	worker := seedPreviewAppForTest(t, e, "pr-42-worker", "worker", 42)
 	sha := strings.Repeat("a", 40)
@@ -31,6 +42,13 @@ func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
 		}
 	}
 	now := time.Now().UTC()
+	for _, slug := range []string{"api", "worker"} {
+		if _, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: production[slug].ID,
+			Kind: state.DeploymentKindGitHub, ImageDigest: "sha256:" + strings.Repeat("c", 64),
+			CommitSHA: strings.Repeat("d", 40), Status: state.DeployLive, CreatedAt: now}); err != nil {
+			t.Fatalf("create production deployment for %q: %v", slug, err)
+		}
+	}
 	create(root.ID, sha, state.DeployLive, now)
 	create(worker.ID, sha, state.DeployBuilding, now)
 	read := func() api.PreviewEnvironmentStatusResponse {
@@ -50,6 +68,16 @@ func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
 		len(got.Members) != 2 || got.Members[1].DeploymentStatus != "building" || got.CommitSHA != sha {
 		t.Fatalf("partial environment = %+v", got)
 	}
+	rootResource := got.Members[0]
+	if rootResource.ExpiresAt == nil || rootResource.Links == nil || rootResource.Links.URL == "" ||
+		rootResource.Links.Logs != "/v1/apps/pr-42-api/logs" || rootResource.Changes == nil ||
+		!rootResource.Changes.ArtifactChanged || rootResource.Changes.PreviewArtifact.CommitSHA != sha ||
+		rootResource.Changes.ProductionArtifact.CommitSHA != strings.Repeat("d", 40) {
+		t.Fatalf("root preview resources = %+v, want current-head diff and diagnostic links", rootResource)
+	}
+	if !strings.Contains(strings.Join(rootResource.Changes.ConfigurationChangedGroups, ","), "runtime") {
+		t.Fatalf("root config change groups = %v, want runtime", rootResource.Changes.ConfigurationChangedGroups)
+	}
 	create(worker.ID, sha, state.DeployFailed, now.Add(time.Second))
 	got = read()
 	if got.Ready || got.Phase != "failed" || !strings.Contains(got.Summary, "worker") {
@@ -63,6 +91,9 @@ func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
 	got = read()
 	if got.Ready || got.LiveWorkloads != 0 || got.Members[0].DeploymentStatus != "missing" {
 		t.Fatalf("new head inherited old readiness: %+v", got)
+	}
+	if got.Members[0].Changes == nil || got.Members[0].Changes.PreviewArtifact.DeploymentID != "" {
+		t.Fatalf("new head inherited an old preview artifact: %+v", got.Members[0].Changes)
 	}
 	create(root.ID, set.CommitSHA, state.DeployLive, now.Add(time.Second))
 	create(worker.ID, set.CommitSHA, state.DeployLive, now.Add(time.Second))
