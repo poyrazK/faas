@@ -77,6 +77,11 @@ verify_receipt() {
 	curl --fail --silent --show-error --location \
 		--retry 10 --retry-delay 2 --retry-all-errors \
 		--connect-timeout 3 --max-time 10 "${app_url}${health_path}" >/dev/null
+	# The normal /healthz path may be answered from gateway wake state without
+	# entering the guest. Exercise an ordinary origin route as well.
+	curl --fail --silent --show-error --location \
+		--retry 10 --retry-delay 2 --retry-all-errors \
+		--connect-timeout 3 --max-time 10 "${app_url%/}/" >/dev/null
 }
 
 # Submit both execution shapes. Placement is capacity-ranked, not round-robin,
@@ -149,9 +154,11 @@ fi
 jq -e --argjson expected "$ACTIVE_NODE_COUNT" \
 	'.ready == true and ((.nodes | length) == $expected)' "$placement_file" >/dev/null
 
-# A redeploy must keep the prior revision publicly healthy until the candidate
-# finishes post-readiness verification. The final wait uses the shipped CLI,
-# proving it does not return during the temporary live state.
+# A redeploy must keep the prior revision publicly serving until the candidate
+# finishes post-readiness verification. Probe the hello app's origin / route:
+# /healthz defaults to an edge answer and cannot prove workload continuity.
+# The final wait uses the shipped CLI, proving it does not return during the
+# temporary live state.
 redeploy_queued="$workdir/redeploy-queued.json"
 FAAS_JSON=1 "$GREGALE_BIN" deploy \
 	--template hello-node --name "${slugs[0]}" --no-wait --yes --no-require-authn \
@@ -167,7 +174,7 @@ while kill -0 "$wait_pid" 2>/dev/null; do
 	probe_rc=0
 	curl --fail-with-body --silent --show-error --connect-timeout 3 --max-time 10 \
 		--dump-header "$probe_headers" --output "$probe_body" \
-		"https://${slugs[0]}.${FAAS_APPS_DOMAIN}/healthz" || probe_rc=$?
+		"https://${slugs[0]}.${FAAS_APPS_DOMAIN}/" || probe_rc=$?
 	if (( probe_rc != 0 )); then
 		kill "$wait_pid" 2>/dev/null || true
 		wait "$wait_pid" 2>/dev/null || true

@@ -111,7 +111,11 @@ fi
 		t.Fatal(err)
 	}
 	if got := strings.Count(string(curls), "/healthz"); got < 7 {
-		t.Fatalf("public smoke count = %d, want initial four, two extras, and redeploy: %s", got, curls)
+		t.Fatalf("public health count = %d, want initial four, two extras, and redeploy: %s", got, curls)
+	}
+	if got := strings.Count(string(curls), "https://test.invalid/"); got < 7 ||
+		!strings.Contains(string(curls), "https://ra-aaaaaaaa-12345678-a1.gregale.dev/") {
+		t.Fatalf("origin route was not checked for each receipt and redeploy continuity: %s", curls)
 	}
 	if _, err := os.Stat(revokeLog); err != nil {
 		t.Fatalf("acceptance token was not revoked: %v", err)
