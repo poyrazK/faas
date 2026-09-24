@@ -96,6 +96,20 @@ func TestSidecar_Validate_Accepts(t *testing.T) {
 				ReadinessProbe: &AppManifestHealthcheck{HTTPGet: &SidecarHTTPGetProbe{Path: "/readyz"}},
 			},
 		},
+		{
+			name: "grpc-startup-probe",
+			s: Sidecar{
+				Name: "rpc", Image: "r/x@sha256:" + strings.Repeat("e", 64), Type: SidecarTypeSidecar, Port: 50051,
+				StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Service: "grpc.health.v1.Health"}},
+			},
+		},
+		{
+			name: "grpc-service-limit-counts-characters",
+			s: Sidecar{
+				Name: "rpc", Image: "r/x@sha256:" + strings.Repeat("f", 64), Type: SidecarTypeSidecar, Port: 50051,
+				StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Service: strings.Repeat("界", SidecarGRPCProbeServiceMaxLength)}},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -230,6 +244,21 @@ func TestSidecar_Validate_Rejects(t *testing.T) {
 		{
 			name:    "startup-probe-empty-test",
 			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{}},
+			wantSub: "must specify exactly one",
+		},
+		{
+			name:    "startup-probe-grpc-port-out-of-range",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Port: 65536}}},
+			wantSub: "grpc.port",
+		},
+		{
+			name:    "startup-probe-grpc-service-too-long",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Service: strings.Repeat("x", SidecarGRPCProbeServiceMaxLength+1)}}},
+			wantSub: "grpc.service",
+		},
+		{
+			name:    "startup-probe-multiple-actions",
+			s:       Sidecar{Name: "ok", Image: goodImage, Type: SidecarTypeSidecar, StartupProbe: &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{}, TCPSocket: &SidecarTCPSocketProbe{Port: 8080}}},
 			wantSub: "must specify exactly one",
 		},
 		{
@@ -515,6 +544,7 @@ func TestSidecar_JSONRoundTrip(t *testing.T) {
 				CPUMillicores: 500,
 				DiskIOProfile: string(SidecarDiskIOProfileHigh),
 				Essential:     &essTrue,
+				StartupProbe:  &AppManifestHealthcheck{GRPC: &SidecarGRPCProbe{Port: 50051, Service: "grpc.health.v1.Health"}, PeriodS: 5, TimeoutS: 2},
 			},
 		},
 		{
@@ -575,6 +605,14 @@ func TestSidecar_JSONRoundTrip(t *testing.T) {
 			}
 			if got.DiskIOProfile != tc.original.DiskIOProfile {
 				t.Errorf("DiskIOProfile: got %q, want %q", got.DiskIOProfile, tc.original.DiskIOProfile)
+			}
+			if tc.original.StartupProbe != nil {
+				if got.StartupProbe == nil || got.StartupProbe.GRPC == nil {
+					t.Fatal("StartupProbe.GRPC was lost during round-trip")
+				}
+				if got.StartupProbe.GRPC.Port != tc.original.StartupProbe.GRPC.Port || got.StartupProbe.GRPC.Service != tc.original.StartupProbe.GRPC.Service {
+					t.Errorf("StartupProbe.GRPC = %+v, want %+v", got.StartupProbe.GRPC, tc.original.StartupProbe.GRPC)
+				}
 			}
 			// Essential tri-state pin: nil must round-trip as nil,
 			// *true as *true, *false as *false. A nil-vs-false

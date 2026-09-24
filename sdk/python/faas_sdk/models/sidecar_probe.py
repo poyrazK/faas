@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.sidecar_exec_probe import SidecarExecProbe
+    from ..models.sidecar_grpc_probe import SidecarGRPCProbe
     from ..models.sidecar_http_get_probe import SidecarHTTPGetProbe
     from ..models.sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 
@@ -20,9 +21,9 @@ T = TypeVar("T", bound="SidecarProbe")
 @_attrs_define
 class SidecarProbe:
     """Container-local startup, liveness, or readiness probe for a companion. Specify
-    exactly one action: exec, http_get, tcp_socket, or the legacy OCI
-    test field. Port 0/omitted uses the workload's declared port, then
-    the image port, then the platform default.
+    exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
+    test field. Network probes use port 0/omitted to inherit the workload's
+    declared port, then the image port, then the platform default.
 
     """
 
@@ -34,6 +35,8 @@ class SidecarProbe:
     """HTTP GET probe sent from inside the container."""
     tcp_socket: SidecarTCPSocketProbe | Unset = UNSET
     """TCP connection probe opened from inside the container."""
+    grpc: SidecarGRPCProbe | Unset = UNSET
+    """Standard gRPC health Check RPC sent to the companion's loopback listener."""
     period_s: int | Unset = UNSET
     """Probe interval in seconds; typed-probe default 10, legacy OCI default 30."""
     interval_s: int | Unset = UNSET
@@ -69,6 +72,10 @@ class SidecarProbe:
         if not isinstance(self.tcp_socket, Unset):
             tcp_socket = self.tcp_socket.to_dict()
 
+        grpc: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.grpc, Unset):
+            grpc = self.grpc.to_dict()
+
         period_s = self.period_s
 
         interval_s = self.interval_s
@@ -96,6 +103,8 @@ class SidecarProbe:
             field_dict["http_get"] = http_get
         if tcp_socket is not UNSET:
             field_dict["tcp_socket"] = tcp_socket
+        if grpc is not UNSET:
+            field_dict["grpc"] = grpc
         if period_s is not UNSET:
             field_dict["period_s"] = period_s
         if interval_s is not UNSET:
@@ -118,6 +127,7 @@ class SidecarProbe:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.sidecar_exec_probe import SidecarExecProbe
+        from ..models.sidecar_grpc_probe import SidecarGRPCProbe
         from ..models.sidecar_http_get_probe import SidecarHTTPGetProbe
         from ..models.sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 
@@ -145,6 +155,13 @@ class SidecarProbe:
         else:
             tcp_socket = SidecarTCPSocketProbe.from_dict(_tcp_socket)
 
+        _grpc = d.pop("grpc", UNSET)
+        grpc: SidecarGRPCProbe | Unset
+        if isinstance(_grpc, Unset):
+            grpc = UNSET
+        else:
+            grpc = SidecarGRPCProbe.from_dict(_grpc)
+
         period_s = d.pop("period_s", UNSET)
 
         interval_s = d.pop("interval_s", UNSET)
@@ -166,6 +183,7 @@ class SidecarProbe:
             exec_=exec_,
             http_get=http_get,
             tcp_socket=tcp_socket,
+            grpc=grpc,
             period_s=period_s,
             interval_s=interval_s,
             timeout_s=timeout_s,

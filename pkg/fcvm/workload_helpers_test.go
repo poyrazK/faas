@@ -12,7 +12,11 @@
 
 package fcvm
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // TestBuildWorkloadsForColdBoot_RejectsSidecarNamedMain pins
 // the load-bearing rejection: a sidecar whose Name == "main"
@@ -68,6 +72,21 @@ func TestBuildWorkloadsForColdBoot_LegacySingleWorkload(t *testing.T) {
 	}
 	if got := buildWorkloadsForColdBoot(req); got != nil {
 		t.Errorf("empty Sidecars: got %v, want nil (legacy single-workload path)", got)
+	}
+}
+
+func TestBuildWorkloadsForColdBoot_ClonesGRPCProbe(t *testing.T) {
+	probe := &api.AppManifestHealthcheck{GRPC: &api.SidecarGRPCProbe{Port: 9090, Service: "grpc.health.v1.Health"}}
+	req := WakeRequest{Sidecars: []WorkloadSpec{{Name: "metrics", Type: "sidecar", StartupProbe: probe}}}
+	got := buildWorkloadsForColdBoot(req)
+	if len(got) != 2 || got[1].StartupProbe == nil || got[1].StartupProbe.GRPC == nil {
+		t.Fatalf("workloads = %+v, want cloned gRPC startup probe", got)
+	}
+	if got[1].StartupProbe.GRPC == probe.GRPC {
+		t.Fatal("startup probe gRPC pointer was not cloned")
+	}
+	if got[1].StartupProbe.GRPC.Port != probe.GRPC.Port || got[1].StartupProbe.GRPC.Service != probe.GRPC.Service {
+		t.Fatalf("cloned gRPC probe = %+v, want %+v", got[1].StartupProbe.GRPC, probe.GRPC)
 	}
 }
 

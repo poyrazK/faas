@@ -20,6 +20,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"golang.org/x/sys/unix"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 // Healthcheck DGRAM wire format (ADR-139 §Decision 1):
@@ -256,7 +259,7 @@ func sidecarProbeFromHealthcheck(hc *api.AppManifestHealthcheck) *api.SidecarPro
 
 func sidecarProbeDisabled(probe *api.SidecarProbe) bool {
 	return probe == nil || (len(probe.Test) > 0 && probe.Test[0] == "NONE") ||
-		(len(probe.Test) == 0 && probe.Exec == nil && probe.HTTPGet == nil && probe.TCPSocket == nil)
+		(len(probe.Test) == 0 && probe.Exec == nil && probe.HTTPGet == nil && probe.TCPSocket == nil && probe.GRPC == nil)
 }
 
 func sidecarProbeSettings(probe *api.SidecarProbe) (period, timeout, initialDelay, startPeriod time.Duration, failures, successes int) {
@@ -469,6 +472,8 @@ func sidecarProbeType(probe *api.SidecarProbe) string {
 		return "http"
 	case probe.TCPSocket != nil:
 		return "tcp"
+	case probe.GRPC != nil:
+		return "grpc"
 	case len(probe.Test) > 0 && probe.Test[0] == "NONE":
 		return "none"
 	default:
@@ -540,9 +545,35 @@ func runSidecarProbeOnce(ctx context.Context, probe *api.SidecarProbe, container
 		}
 		_ = conn.Close()
 		return HealthcheckReport{Status: healthcheckStatusPass}
+	case probe.GRPC != nil:
+		port := probe.GRPC.Port
+		if port == 0 {
+			port = containerPort
+		}
+		if port == 0 {
+			port = api.DefaultAppPort
+		}
+		return runSidecarGRPCProbe(probeCtx, port, probe.GRPC.Service)
 	default:
 		return HealthcheckReport{Status: healthcheckStatusFail, Output: []byte("probe action is not configured")}
 	}
+}
+
+func runSidecarGRPCProbe(ctx context.Context, port int, service string) HealthcheckReport {
+	target := "passthrough:///" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return HealthcheckReport{Status: healthcheckStatusFail, Output: []byte("gRPC health client setup failed")}
+	}
+	defer func() { _ = conn.Close() }()
+	response, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{Service: service})
+	if err != nil {
+		return HealthcheckReport{Status: healthcheckStatusFail, Output: []byte("gRPC health check RPC failed")}
+	}
+	if response.GetStatus() != healthpb.HealthCheckResponse_SERVING {
+		return HealthcheckReport{Status: healthcheckStatusFail, Output: []byte("gRPC health status is " + response.GetStatus().String())}
+	}
+	return HealthcheckReport{Status: healthcheckStatusPass}
 }
 
 func runSidecarExecProbe(ctx context.Context, argv []string, timeout time.Duration, env []string, dir, root string, uid int, procAttr *syscall.SysProcAttr, log *slog.Logger) HealthcheckReport {

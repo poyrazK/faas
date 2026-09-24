@@ -109,21 +109,21 @@ class Sidecar:
     """Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."""
     startup_probe: SidecarProbe | Unset = UNSET
     """Container-local startup, liveness, or readiness probe for a companion. Specify
-    exactly one action: exec, http_get, tcp_socket, or the legacy OCI
-    test field. Port 0/omitted uses the workload's declared port, then
-    the image port, then the platform default.
+    exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
+    test field. Network probes use port 0/omitted to inherit the workload's
+    declared port, then the image port, then the platform default.
     """
     liveness_probe: SidecarProbe | Unset = UNSET
     """Container-local startup, liveness, or readiness probe for a companion. Specify
-    exactly one action: exec, http_get, tcp_socket, or the legacy OCI
-    test field. Port 0/omitted uses the workload's declared port, then
-    the image port, then the platform default.
+    exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
+    test field. Network probes use port 0/omitted to inherit the workload's
+    declared port, then the image port, then the platform default.
     """
     readiness_probe: SidecarProbe | Unset = UNSET
     """Container-local startup, liveness, or readiness probe for a companion. Specify
-    exactly one action: exec, http_get, tcp_socket, or the legacy OCI
-    test field. Port 0/omitted uses the workload's declared port, then
-    the image port, then the platform default.
+    exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
+    test field. Network probes use port 0/omitted to inherit the workload's
+    declared port, then the image port, then the platform default.
     """
     depends_on: list[WorkloadDependency] | Unset = UNSET
     """Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running

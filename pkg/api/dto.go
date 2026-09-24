@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -6693,7 +6694,7 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 
 // SidecarProbe describes one container-local probe. The Test and legacy timing
 // fields retain the original OCI HEALTHCHECK-shaped startup_probe contract;
-// new callers should use exactly one of Exec, HTTPGet, or TCPSocket.
+// new callers should use exactly one of Exec, HTTPGet, TCPSocket, or GRPC.
 // SidecarProbe aliases the OCI healthcheck wire model so callers compiled
 // against the original startup_probe Go field type remain source-compatible.
 type SidecarProbe = AppManifestHealthcheck
@@ -6709,6 +6710,11 @@ type SidecarHTTPGetProbe struct {
 
 type SidecarTCPSocketProbe struct {
 	Port int `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+}
+
+type SidecarGRPCProbe struct {
+	Port    int    `json:"port,omitempty" yaml:"port,omitempty" toml:"port,omitempty"`
+	Service string `json:"service,omitempty" yaml:"service,omitempty" toml:"service,omitempty"`
 }
 
 func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
@@ -6733,8 +6739,11 @@ func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 	if probe.TCPSocket != nil {
 		actions++
 	}
+	if probe.GRPC != nil {
+		actions++
+	}
 	if actions != 1 {
-		return invalid("must specify exactly one of exec, http_get, tcp_socket, or the legacy test field.")
+		return invalid("must specify exactly one of exec, http_get, tcp_socket, grpc, or the legacy test field.")
 	}
 	if len(probe.Test) > 0 {
 		switch probe.Test[0] {
@@ -6773,6 +6782,14 @@ func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 	}
 	if probe.TCPSocket != nil && (probe.TCPSocket.Port < 0 || probe.TCPSocket.Port > 65535) {
 		return invalid("tcp_socket.port must be 0 (container port) or in 1..65535.")
+	}
+	if probe.GRPC != nil {
+		if probe.GRPC.Port < 0 || probe.GRPC.Port > 65535 {
+			return invalid("grpc.port must be 0 (container port) or in 1..65535.")
+		}
+		if utf8.RuneCountInString(probe.GRPC.Service) > SidecarGRPCProbeServiceMaxLength {
+			return invalid(fmt.Sprintf("grpc.service must be at most %d characters.", SidecarGRPCProbeServiceMaxLength))
+		}
 	}
 	period := probe.PeriodS
 	if period == 0 {

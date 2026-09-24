@@ -3,13 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { SidecarExecProbe } from './SidecarExecProbe.js';
+import type { SidecarGRPCProbe } from './SidecarGRPCProbe.js';
 import type { SidecarHTTPGetProbe } from './SidecarHTTPGetProbe.js';
 import type { SidecarTCPSocketProbe } from './SidecarTCPSocketProbe.js';
 /**
  * Container-local startup, liveness, or readiness probe for a companion. Specify
- * exactly one action: exec, http_get, tcp_socket, or the legacy OCI
- * test field. Port 0/omitted uses the workload's declared port, then
- * the image port, then the platform default.
+ * exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
+ * test field. Network probes use port 0/omitted to inherit the workload's
+ * declared port, then the image port, then the platform default.
  *
  */
 export type SidecarProbe = {
@@ -20,6 +21,7 @@ export type SidecarProbe = {
   exec?: SidecarExecProbe;
   http_get?: SidecarHTTPGetProbe;
   tcp_socket?: SidecarTCPSocketProbe;
+  grpc?: SidecarGRPCProbe;
   /**
    * Probe interval in seconds; typed-probe default 10, legacy OCI default 30.
    */

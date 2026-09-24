@@ -708,6 +708,7 @@ export type { SetPlatformTenantStatusRequest } from './SetPlatformTenantStatusRe
 export type { SeverityCounts } from './SeverityCounts.js';
 export type { Sidecar } from './Sidecar.js';
 export type { SidecarExecProbe } from './SidecarExecProbe.js';
+export type { SidecarGRPCProbe } from './SidecarGRPCProbe.js';
 export type { SidecarHTTPGetProbe } from './SidecarHTTPGetProbe.js';
 export type { SidecarProbe } from './SidecarProbe.js';
 export type { SidecarTCPSocketProbe } from './SidecarTCPSocketProbe.js';

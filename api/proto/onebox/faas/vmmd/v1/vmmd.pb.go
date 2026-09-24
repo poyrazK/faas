@@ -703,7 +703,7 @@ func (x *SidecarSpec) GetReadinessProbe() *SidecarProbeSpec {
 }
 
 // SidecarProbeSpec carries one container-local startup, liveness, or readiness probe.
-// probe_type is one of exec, http, tcp, or none. test plus the legacy timing
+// probe_type is one of exec, http, tcp, grpc, or none. test plus the legacy timing
 // aliases preserve the original OCI HEALTHCHECK-shaped sidecar override.
 type SidecarProbeSpec struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -720,8 +720,11 @@ type SidecarProbeSpec struct {
 	InitialDelayS    int32                  `protobuf:"varint,11,opt,name=initial_delay_s,json=initialDelayS,proto3" json:"initial_delay_s,omitempty"`
 	Retries          int32                  `protobuf:"varint,12,opt,name=retries,proto3" json:"retries,omitempty"`
 	StartPeriodS     int32                  `protobuf:"varint,13,opt,name=start_period_s,json=startPeriodS,proto3" json:"start_period_s,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// grpc_service is set when probe_type is "grpc". Port reuses the
+	// shared probe port field above; empty service checks overall health.
+	GrpcService   string `protobuf:"bytes,14,opt,name=grpc_service,json=grpcService,proto3" json:"grpc_service,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SidecarProbeSpec) Reset() {
@@ -843,6 +846,13 @@ func (x *SidecarProbeSpec) GetStartPeriodS() int32 {
 		return x.StartPeriodS
 	}
 	return 0
+}
+
+func (x *SidecarProbeSpec) GetGrpcService() string {
+	if x != nil {
+		return x.GrpcService
+	}
+	return ""
 }
 
 // SealedSecret is one (key, ciphertext) pair from an app or sidecar env
@@ -7870,7 +7880,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1cstartup_probe_start_period_s\x18\x12 \x01(\x05R\x18startupProbeStartPeriodS\x12J\n" +
 	"\rstartup_probe\x18\x13 \x01(\v2%.onebox.faas.vmmd.v1.SidecarProbeSpecR\fstartupProbe\x12L\n" +
 	"\x0eliveness_probe\x18\x14 \x01(\v2%.onebox.faas.vmmd.v1.SidecarProbeSpecR\rlivenessProbe\x12N\n" +
-	"\x0freadiness_probe\x18\x15 \x01(\v2%.onebox.faas.vmmd.v1.SidecarProbeSpecR\x0ereadinessProbe\"\xa0\x03\n" +
+	"\x0freadiness_probe\x18\x15 \x01(\v2%.onebox.faas.vmmd.v1.SidecarProbeSpecR\x0ereadinessProbe\"\xc3\x03\n" +
 	"\x10SidecarProbeSpec\x12\x1d\n" +
 	"\n" +
 	"probe_type\x18\x01 \x01(\tR\tprobeType\x12\x12\n" +
@@ -7887,7 +7897,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	" \x01(\x05R\x10successThreshold\x12&\n" +
 	"\x0finitial_delay_s\x18\v \x01(\x05R\rinitialDelayS\x12\x18\n" +
 	"\aretries\x18\f \x01(\x05R\aretries\x12$\n" +
-	"\x0estart_period_s\x18\r \x01(\x05R\fstartPeriodS\"@\n" +
+	"\x0estart_period_s\x18\r \x01(\x05R\fstartPeriodS\x12!\n" +
+	"\fgrpc_service\x18\x0e \x01(\tR\vgrpcService\"@\n" +
 	"\fSealedSecret\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1e\n" +
 	"\n" +

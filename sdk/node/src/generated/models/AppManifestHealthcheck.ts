@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { SidecarExecProbe } from './SidecarExecProbe.js';
+import type { SidecarGRPCProbe } from './SidecarGRPCProbe.js';
 import type { SidecarHTTPGetProbe } from './SidecarHTTPGetProbe.js';
 import type { SidecarTCPSocketProbe } from './SidecarTCPSocketProbe.js';
 /**
@@ -16,6 +17,10 @@ export type AppManifestHealthcheck = {
   exec?: SidecarExecProbe;
   http_get?: SidecarHTTPGetProbe;
   tcp_socket?: SidecarTCPSocketProbe;
+  /**
+   * Companion-only probe action; rejected on the app's own healthcheck.
+   */
+  grpc?: SidecarGRPCProbe;
   /**
    * Typed sidecar probe cadence in seconds; defaults to 10, or 30 for legacy OCI checks.
    */

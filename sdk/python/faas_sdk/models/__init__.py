@@ -1356,6 +1356,7 @@ from .sidecar_cpu_millicores import SidecarCpuMillicores
 from .sidecar_disk_io_profile import SidecarDiskIoProfile
 from .sidecar_env import SidecarEnv
 from .sidecar_exec_probe import SidecarExecProbe
+from .sidecar_grpc_probe import SidecarGRPCProbe
 from .sidecar_http_get_probe import SidecarHTTPGetProbe
 from .sidecar_preset import SidecarPreset
 from .sidecar_probe import SidecarProbe
@@ -2863,6 +2864,7 @@ __all__ = (
     "SidecarDiskIoProfile",
     "SidecarEnv",
     "SidecarExecProbe",
+    "SidecarGRPCProbe",
     "SidecarHTTPGetProbe",
     "SidecarPreset",
     "SidecarProbe",

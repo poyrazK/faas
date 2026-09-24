@@ -328,6 +328,7 @@ type AppManifestHealthcheck struct {
 	Exec             *SidecarExecProbe      `json:"exec,omitempty" yaml:"exec,omitempty" toml:"exec,omitempty"`
 	HTTPGet          *SidecarHTTPGetProbe   `json:"http_get,omitempty" yaml:"http_get,omitempty" toml:"http_get,omitempty"`
 	TCPSocket        *SidecarTCPSocketProbe `json:"tcp_socket,omitempty" yaml:"tcp_socket,omitempty" toml:"tcp_socket,omitempty"`
+	GRPC             *SidecarGRPCProbe      `json:"grpc,omitempty" yaml:"grpc,omitempty" toml:"grpc,omitempty"`
 	PeriodS          int                    `json:"period_s,omitempty" yaml:"period_s,omitempty" toml:"period_s,omitempty"`
 	FailureThreshold int                    `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty" toml:"failure_threshold,omitempty"`
 	SuccessThreshold int                    `json:"success_threshold,omitempty" yaml:"success_threshold,omitempty" toml:"success_threshold,omitempty"`
@@ -461,6 +462,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)
+	}
+	if m.Healthcheck != nil && m.Healthcheck.GRPC != nil {
+		return fmt.Errorf("app manifest: grpc health checks are supported only for companion probes")
 	}
 	if m.SecretReloadSignal != "" {
 		switch m.SecretReloadSignal {

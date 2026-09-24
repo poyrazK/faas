@@ -7,6 +7,18 @@ import (
 	"time"
 )
 
+func TestAppManifestRejectsCompanionOnlyGRPCHealthcheck(t *testing.T) {
+	manifest := AppManifest{
+		Entrypoint: []string{"/app"},
+		Healthcheck: &AppManifestHealthcheck{
+			GRPC: &SidecarGRPCProbe{Port: 50051, Service: "grpc.health.v1.Health"},
+		},
+	}
+	if err := manifest.Validate(); err == nil || !strings.Contains(err.Error(), "only for companion probes") {
+		t.Fatalf("Validate() = %v, want companion-only gRPC probe rejection", err)
+	}
+}
+
 func TestManifestDefaults(t *testing.T) {
 	m := AppManifest{Entrypoint: []string{"/app/server"}}
 	if m.EffectivePort() != DefaultAppPort {

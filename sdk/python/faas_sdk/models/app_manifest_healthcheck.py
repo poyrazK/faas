@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.sidecar_exec_probe import SidecarExecProbe
+    from ..models.sidecar_grpc_probe import SidecarGRPCProbe
     from ..models.sidecar_http_get_probe import SidecarHTTPGetProbe
     from ..models.sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 
@@ -32,6 +33,8 @@ class AppManifestHealthcheck:
     """HTTP GET probe sent from inside the container."""
     tcp_socket: SidecarTCPSocketProbe | Unset = UNSET
     """TCP connection probe opened from inside the container."""
+    grpc: SidecarGRPCProbe | Unset = UNSET
+    """Standard gRPC health Check RPC sent to the companion's loopback listener."""
     period_s: int | Unset = UNSET
     """Typed sidecar probe cadence in seconds; defaults to 10, or 30 for legacy OCI checks."""
     interval_s: int | None | Unset = UNSET
@@ -66,6 +69,10 @@ class AppManifestHealthcheck:
         tcp_socket: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tcp_socket, Unset):
             tcp_socket = self.tcp_socket.to_dict()
+
+        grpc: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.grpc, Unset):
+            grpc = self.grpc.to_dict()
 
         period_s = self.period_s
 
@@ -110,6 +117,8 @@ class AppManifestHealthcheck:
             field_dict["http_get"] = http_get
         if tcp_socket is not UNSET:
             field_dict["tcp_socket"] = tcp_socket
+        if grpc is not UNSET:
+            field_dict["grpc"] = grpc
         if period_s is not UNSET:
             field_dict["period_s"] = period_s
         if interval_s is not UNSET:
@@ -132,6 +141,7 @@ class AppManifestHealthcheck:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.sidecar_exec_probe import SidecarExecProbe
+        from ..models.sidecar_grpc_probe import SidecarGRPCProbe
         from ..models.sidecar_http_get_probe import SidecarHTTPGetProbe
         from ..models.sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 
@@ -158,6 +168,13 @@ class AppManifestHealthcheck:
             tcp_socket = UNSET
         else:
             tcp_socket = SidecarTCPSocketProbe.from_dict(_tcp_socket)
+
+        _grpc = d.pop("grpc", UNSET)
+        grpc: SidecarGRPCProbe | Unset
+        if isinstance(_grpc, Unset):
+            grpc = UNSET
+        else:
+            grpc = SidecarGRPCProbe.from_dict(_grpc)
 
         period_s = d.pop("period_s", UNSET)
 
@@ -208,6 +225,7 @@ class AppManifestHealthcheck:
             exec_=exec_,
             http_get=http_get,
             tcp_socket=tcp_socket,
+            grpc=grpc,
             period_s=period_s,
             interval_s=interval_s,
             timeout_s=timeout_s,
