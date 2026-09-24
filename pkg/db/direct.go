@@ -55,9 +55,9 @@ import (
 // pooler that the ordinary DSN goes through. Unset means "no pooler in play":
 // the direct pool is the ordinary pool and nothing changes.
 //
-// The value is a full DSN rather than a flag because the two paths differ in
-// host and port, not merely in routing — the pooled DSN points at PgBouncer,
-// this one at the postmaster.
+// The value is a full DSN rather than a flag: it can name a separate pool at
+// the same postmaster (isolating long-held connections), or the postmaster
+// when the ordinary DSN points at PgBouncer.
 const DirectDSNEnv = "FAAS_DATABASE_URL_DIRECT"
 
 // directHubOnMaxConns caps the session-scoped pool while the ADR-190 notify
@@ -186,13 +186,16 @@ func openDirect(ctx context.Context, appName string) (*pgxpool.Pool, error) {
 // exist". PgBouncer 1.21+ can track prepared statements itself, but relying
 // on that couples correctness to the pooler's version and configuration;
 // QueryExecModeExec sends the query and its parameters together every time,
-// which is correct against any pooler and against no pooler at all.
+// which is safe through a transaction pooler but cannot infer ambiguous
+// PostgreSQL parameter types such as JSONB from a Go []byte alone.
 //
-// Applied ONLY when a direct DSN is configured. Without a pooler the default
-// mode is faster and there is nothing to be safe from, so a deployment that
-// has not opted in keeps today's behaviour exactly.
-func applyPooledExecMode(cfg *pgxpool.Config) {
-	if os.Getenv(DirectDSNEnv) == "" {
+// A separate session pool can also point at the same direct Postgres DSN as
+// the ordinary pool. That separates long-held LISTEN/advisory connections
+// without introducing a transaction pooler, so retain pgx's typed default
+// mode: QueryExecModeExec guesses []byte JSONB parameters as bytea text.
+func applyPooledExecMode(cfg *pgxpool.Config, ordinaryDSN string) {
+	directDSN := os.Getenv(DirectDSNEnv)
+	if directDSN == "" || directDSN == ordinaryDSN {
 		return
 	}
 	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
