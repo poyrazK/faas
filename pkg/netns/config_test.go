@@ -1307,3 +1307,44 @@ func TestProductionBridgeUnitAvoidsNetworkPreOrderingCycle(t *testing.T) {
 		t.Fatalf("vmmd unit must pull nftables and the tenant bridge:\n%s", vmmdBody)
 	}
 }
+
+// adr: 149 — a prepared namespace is retargeted to a guest port by rewriting
+// only its prerouting chain. After the retarget the chain must hold exactly
+// the rules a fresh NftCommands for that port installs, private ingress
+// included, so a retargeted namespace is indistinguishable from a rebuilt one.
+func TestRetargetAppPortCommandsMatchFullRuleset(t *testing.T) {
+	base := NewConfig("i", "fc-i", "vh0", "vp0", netip.MustParseAddr("10.100.0.2"))
+	private := base
+	private.PrivateVethHost, private.PrivateVethPeer, private.PrivateNetworkBridge = "gpn-h00001", "gpn-p00001", "gpn-br"
+	private.PrivateNetworkCIDRs = []netip.Prefix{netip.MustParsePrefix("10.42.0.0/24")}
+	private.PrivateNetworkAddress = netip.MustParseAddr("10.42.0.7")
+	for name, c := range map[string]Config{"public": base, "private": private} {
+		for _, port := range []int{0, AppPort, 3000, 65535} {
+			t.Run(fmt.Sprintf("%s/%d", name, port), func(t *testing.T) {
+				c.GuestAppPort = port
+				retarget := c.RetargetAppPortCommands()
+				wantFlush := []string{"ip", "netns", "exec", "fc-i", "nft", "flush", "chain", "ip", "faas", "prerouting"}
+				if len(retarget) == 0 || strings.Join(retarget[0], " ") != strings.Join(wantFlush, " ") {
+					t.Fatalf("first command = %v, want the prerouting flush", retarget)
+				}
+				var installed []string
+				for _, argv := range c.NftCommands() {
+					if line := strings.Join(argv, " "); strings.Contains(line, " add rule ip faas prerouting ") {
+						installed = append(installed, line)
+					}
+				}
+				var added []string
+				for _, argv := range retarget[1:] {
+					added = append(added, strings.Join(argv, " "))
+				}
+				if strings.Join(added, "\n") != strings.Join(installed, "\n") {
+					t.Fatalf("retarget adds\n%s\nfull ruleset installs\n%s", strings.Join(added, "\n"), strings.Join(installed, "\n"))
+				}
+				want := strconv.Itoa(c.guestAppPort())
+				if !strings.HasSuffix(added[0], "dnat to "+GuestIP+":"+want) {
+					t.Fatalf("public DNAT = %q, want target port %s", added[0], want)
+				}
+			})
+		}
+	}
+}

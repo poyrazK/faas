@@ -214,6 +214,34 @@ func (c Config) guestAppPort() int {
 	return c.GuestAppPort
 }
 
+// appPortDNATRules publishes the stable :8080 on the prerouting chain to the
+// guest's app port. They are the only rules GuestAppPort changes, and the
+// only rules in that chain.
+func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
+	port := strconv.Itoa(AppPort)
+	target := fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort())
+	rules := [][]string{nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", target)}
+	if c.privateNetworkEnabled() {
+		// Private ingress targets the stable allocated app address. DNAT
+		// happens before local-delivery routing, so the address can remain
+		// owned by the private veth while the guest keeps its fixed tap IP.
+		rules = append(rules, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
+			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", port, "dnat", "to", target))
+	}
+	return rules
+}
+
+// RetargetAppPortCommands rewrites the prerouting chain of a namespace that
+// NftCommands configured for another guest port so it matches c: the chain is
+// flushed and c's DNAT rules added. Run them as one nft transaction
+// (`nft -f`), so no packet ever sees an empty chain. A prepared, never-used
+// namespace (ADR-149) is retargeted this way instead of being rebuilt.
+func (c Config) RetargetAppPortCommands() [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	return append([][]string{nft("flush", "chain", "ip", "faas", "prerouting")}, c.appPortDNATRules(nft)...)
+}
+
 // SetupCommands returns the ordered argv list that creates the namespace, veth
 // pair, tap device, and addressing. Each element is a full command (no shell).
 // The metal layer executes them in order; a failure at step N must trigger
@@ -442,15 +470,7 @@ func (c Config) NftCommands() [][]string {
 	}
 	// NAT: publish :8080 to the guest; masquerade the guest's egress.
 	add("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}")
-	add("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))
-	if c.privateNetworkEnabled() {
-		// Private ingress targets the stable allocated app address. DNAT
-		// happens before local-delivery routing, so the address can remain
-		// owned by the private veth while the guest keeps its fixed tap IP.
-		add("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
-			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", port,
-			"dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))
-	}
+	cmds = append(cmds, c.appPortDNATRules(nft)...)
 	add("add", "chain", "ip", "faas", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
 	add("add", "rule", "ip", "faas", "postrouting", "oifname", c.VethPeer, "masquerade")
 	if c.privateNetworkEnabled() {

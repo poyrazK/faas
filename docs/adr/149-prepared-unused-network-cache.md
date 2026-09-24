@@ -22,8 +22,17 @@
   through the ordinary setup path before starting any VMM.
   The documented default guest-port representations (`0` and `8080`) are
   equivalent for this comparison: both install the same `:8080` DNAT rule.
-  All other identity and policy fields still require exact equality; custom
-  or invalid ports are not normalized into eligibility.
+  All other identity and policy fields still require exact equality; invalid
+  ports are not normalized into eligibility.
+  *Amended 2026-09-24:* the guest port is not part of the cached policy. A
+  custom port (1–65535) is eligible. When a claimed entry differs from the
+  request only in its guest port, vmmd replaces the entry's `prerouting`
+  chain, the only rules the port renders, with the request's DNAT rules in
+  one `nft -f` transaction before any VMM starts. If that fails, vmmd
+  rebuilds through ordinary setup. Before this, every app on a non-default
+  port (Node's 3000, Python's 8000) rebuilt its namespace on every wake:
+  prod measured 40–114 ms of `setup_network` on 24 of 24 such wakes, while
+  8080 apps on the same node hit the cache every time.
 - **Lifecycle:** Replenishment follows successful wakes and runs in one daemon
   worker with bounded operations. Entries expire after 60 seconds. While a
   configured cache remains enabled, the most recently observed eligible policy

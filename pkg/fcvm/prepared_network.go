@@ -98,11 +98,14 @@ func (m *Manager) ClosePreparedNetworks() error {
 
 // Restrict the first implementation to the default per-app policy. Static IP,
 // builders, per-app allowlists, and operator bundles use ordinary setup. The
-// full resulting config is checked again after Wake validates its request.
+// guest port is not part of the policy: a claimed namespace is retargeted to
+// the request's port (setupWakeNetwork), so apps on 3000 or 8000 share the
+// pool with apps on 8080. The full resulting config is checked again after
+// Wake validates its request.
 func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) {
 	if !req.Plan.Valid() || req.ExportDir != "" || req.StaticEgressIP != "" ||
 		len(req.EgressAllowlist) != 0 || len(m.mergeOperatorBundle(nil)) != 0 ||
-		(req.Port != 0 && req.Port != netns.AppPort) {
+		req.Port < 0 || req.Port > 65535 {
 		return preparedNetworkPolicy{}, false
 	}
 	return preparedNetworkPolicy{req.EgressMbit, m.conntrackCap, hostIPForSlot(0)}, true
@@ -284,6 +287,16 @@ func (m *Manager) setupWakeNetwork(ctx context.Context, nc netns.Config, prepare
 	if prepared != nil && preparedNetworkConfigMatches(prepared.config, nc) {
 		return true, nil
 	}
+	if prepared != nil && preparedNetworkDiffersOnlyInPort(prepared.config, nc) {
+		// No VMM has started and the namespace never carried traffic, so
+		// only the DNAT target is wrong. One nft transaction replaces it —
+		// milliseconds, against 40-110 ms to rebuild the namespace.
+		err := m.runNftCommands(ctx, nc.Netns, nc.RetargetAppPortCommands())
+		if err == nil {
+			return true, nil
+		}
+		m.log.Warn("prepared network port retarget failed; rebuilding", "instance", nc.Instance, "err", err)
+	}
 	// A bundle reload may change the policy after claim. setupNetwork destroys
 	// the unused network and installs the complete validated current policy.
 	return false, m.setupNetwork(ctx, nc)
@@ -301,5 +314,17 @@ func preparedNetworkConfigMatches(prepared, requested netns.Config) bool {
 	if requested.GuestAppPort == 0 {
 		requested.GuestAppPort = netns.AppPort
 	}
+	return reflect.DeepEqual(prepared, requested)
+}
+
+// preparedNetworkDiffersOnlyInPort reports whether requested is prepared
+// with a different, valid guest port and every other field equal — the one
+// difference RetargetAppPortCommands can repair in place. Invalid ports are
+// never normalized into eligibility.
+func preparedNetworkDiffersOnlyInPort(prepared, requested netns.Config) bool {
+	if requested.GuestAppPort < 1 || requested.GuestAppPort > 65535 {
+		return false
+	}
+	prepared.GuestAppPort = requested.GuestAppPort
 	return reflect.DeepEqual(prepared, requested)
 }
