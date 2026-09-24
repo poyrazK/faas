@@ -46,6 +46,7 @@ type objectStorageE2EEnv struct {
 func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv {
 	t.Helper()
 	stub := newObjectStorageS3Stub(t)
+	tmpDir := t.TempDir()
 	config := objectstorage.Config{
 		Accounting: &api.ObjectStoragePolicy{
 			MaxAccountBytes: 1 << 30, MaxBucketBytes: 1 << 30, MaxAccountKeys: 1000,
@@ -63,6 +64,7 @@ func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv
 			ID: objectStorageE2EBackendID, Driver: "s3", Region: "us-east-1", Namespace: "e2e-s3",
 			Endpoint: stub.server.URL, S3Region: "us-east-1", PathStyle: true,
 			AccessKeyEnv: "FAAS_E2E_S3_ACCESS_KEY", SecretKeyEnv: "FAAS_E2E_S3_SECRET_KEY", AllowHTTP: true,
+			UsageReportsPath: filepath.Join(tmpDir, "usage.json"),
 		}},
 	}
 	getenv := func(name string) string {
@@ -87,7 +89,6 @@ func startObjectStorageE2E(t *testing.T, pool *pgxpool.Pool) objectStorageE2EEnv
 	if err != nil {
 		t.Fatalf("object storage config: %v", err)
 	}
-	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "object-storage.json")
 	if err := os.WriteFile(configPath, encoded, 0o600); err != nil {
 		t.Fatalf("write object storage config: %v", err)

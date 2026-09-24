@@ -83,16 +83,56 @@ func (p *fakeObjectProvider) AbortMultipartUpload(_ context.Context, b string, r
 }
 
 func objectRegistry(t *testing.T, a, b *fakeObjectProvider, defaultID string) *objectstorage.Registry {
+	return objectRegistryWithFeed(t, a, b, defaultID, true)
+}
+
+func objectRegistryWithFeed(t *testing.T, a, b *fakeObjectProvider, defaultID string, feed bool) *objectstorage.Registry {
 	t.Helper()
 	backends := []objectstorage.BackendConfig{}
 	for _, id := range []string{"external", "ceph"} {
-		backends = append(backends, objectstorage.BackendConfig{ID: id, Driver: id, Region: "us-east-1", Namespace: id, Endpoint: "https://" + id + ".example.test", S3Region: "us-east-1"})
+		backend := objectstorage.BackendConfig{ID: id, Driver: id, Region: "us-east-1", Namespace: id, Endpoint: "https://" + id + ".example.test", S3Region: "us-east-1"}
+		if feed {
+			backend.UsageReportsPath = "/var/spool/faas/" + id + "-usage.json"
+		}
+		backends = append(backends, backend)
 	}
-	r, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": defaultID}, MaxUploadBytes: 100, Backends: backends}, func(string) string { return "" }, map[string]objectstorage.Factory{"external": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return a, nil }, "ceph": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return b, nil }})
+	policy := api.ObjectStoragePolicy{MaxAccountBytes: 1000, MaxBucketBytes: 500, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 1000, MaxMonthlyRequests: 1000, MaxMonthlyEgressBytes: 1000, MaxMonthlyAuthorizations: 1000, MaxReportAgeSeconds: 3600}
+	r, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": defaultID}, MaxUploadBytes: 100, Backends: backends}, func(string) string { return "" }, map[string]objectstorage.Factory{"external": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return a, nil }, "ceph": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return b, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func TestObjectStorageUnconfiguredUsageFeedBlocksNewBucketsButNotCleanup(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	setS3Flag(t, e, true)
+	createApp(t, e, "storage-readiness")
+	provider := &fakeObjectProvider{}
+	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	path := "/v1/apps/storage-readiness/buckets"
+	bucket := bucketResponse(t, e.do(t, "POST", path, map[string]any{"name": "existing"}, nil), 201)
+
+	e.s.WithObjectStorage(objectRegistryWithFeed(t, provider, &fakeObjectProvider{}, "external", false))
+	var catalog api.ObjectBucketList
+	response := e.do(t, "GET", path, nil, nil)
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &catalog) != nil || catalog.Enabled || len(catalog.Items) != 1 {
+		t.Fatalf("catalog with missing usage feed = %d %s", response.Code, response.Body.String())
+	}
+	var capabilities api.CapabilitiesResponse
+	response = e.do(t, "GET", "/v1/capabilities", nil, nil)
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &capabilities) != nil || capabilityByKey(t, capabilities, "object-storage").Enabled {
+		t.Fatalf("capability with missing usage feed = %d %s", response.Code, response.Body.String())
+	}
+	response = e.do(t, "POST", path, map[string]any{"name": "new"}, nil)
+	if response.Code != 503 || !strings.Contains(response.Body.String(), "object_storage_usage_stale") || len(provider.created) != 1 {
+		t.Fatalf("new bucket with missing usage feed = %d %s", response.Code, response.Body.String())
+	}
+	// Idempotent retries and deletion of existing buckets remain available.
+	bucketResponse(t, e.do(t, "POST", path, map[string]any{"name": "existing"}, nil), 200)
+	if response := e.do(t, "DELETE", path+"/"+bucket.ID, nil, nil); response.Code != 204 {
+		t.Fatalf("cleanup with missing usage feed = %d %s", response.Code, response.Body.String())
+	}
 }
 func bucketResponse(t *testing.T, r *httptest.ResponseRecorder, status int) bucketView {
 	t.Helper()
