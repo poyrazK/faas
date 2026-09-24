@@ -106,6 +106,51 @@ func TestNewClientWithDeployTimeout(t *testing.T) {
 	})
 }
 
+func TestParkWaitsForMultiRevisionDrain(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/demo/park" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if calls.Add(1) <= 2 {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(Problem{Status: http.StatusServiceUnavailable, Code: CodeCapacity,
+				Detail: "app instances did not drain before the park deadline"})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	if err := NewClient(srv.URL, "token").Park(context.Background(), "demo"); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("park calls = %d, want 3", got)
+	}
+}
+
+func TestParkDoesNotRetryUnrelatedCapacityError(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(Problem{Status: http.StatusServiceUnavailable, Code: CodeCapacity,
+			Detail: "scheduler unavailable"})
+	}))
+	defer srv.Close()
+	err := NewClient(srv.URL, "token").Park(context.Background(), "demo")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Problem.Detail != "scheduler unavailable" {
+		t.Fatalf("Park error = %v, want unrelated capacity error", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("park calls = %d, want 1", got)
+	}
+}
+
 func TestRollbackUsesArtifactVerificationTimeout(t *testing.T) {
 	t.Parallel()
 
