@@ -83,6 +83,7 @@ func Run(t *testing.T, open Open) {
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"project_environment_route_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutePolicy},
+		{"project_environment_edge_policy_is_scoped_and_replaceable", testProjectEnvironmentEdgePolicy},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
@@ -658,6 +659,71 @@ func testProjectEnvironmentRoutePolicy(t *testing.T, fx *Fixture) {
 		EnvironmentSlug: "staging", DeclaredRoutes: policy.DeclaredRoutes,
 	}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account route policy update err = %v, want ErrNotFound", err)
+	}
+}
+
+func testProjectEnvironmentEdgePolicy(t *testing.T, fx *Fixture) {
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "edge-" + uuid.NewString()[:8],
+		ScanSource: state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, ProjectID: project.ID,
+		Slug: "edge-api-" + uuid.NewString()[:8], WorkloadName: "api", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentEdgePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("missing edge policy err = %v, want ErrNotFound", err)
+	}
+	policy := state.ProjectEnvironmentEdgePolicy{
+		AccountID: fx.Account.ID, ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
+		Rules: []state.ProjectEnvironmentEdgeRule{{
+			Kind: state.EdgeRuleKindHeaders, MatchPath: "/", Priority: 100, Enabled: true,
+			Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindHeaders, Headers: &state.EdgeRuleHeadersAction{
+				ResponseHeaders: []state.EdgeRuleHeaderOp{{Name: "X-Environment", Value: "staging", Action: "set"}},
+			}},
+		}},
+	}
+	created, err := fx.Store.PutProjectEnvironmentEdgePolicy(fx.Ctx, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.CreatedAt.IsZero() || !reflect.DeepEqual(created.Rules, policy.Rules) {
+		t.Fatalf("created edge policy = %+v", created)
+	}
+	got, err := fx.Store.GetProjectEnvironmentEdgePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging")
+	if err != nil || !reflect.DeepEqual(got.Rules, policy.Rules) {
+		t.Fatalf("stored edge policy = %+v, err = %v", got, err)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentEdgePolicy(fx.Ctx, uuid.NewString(), app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account edge policy err = %v, want ErrNotFound", err)
+	}
+	policy.Rules = []state.ProjectEnvironmentEdgeRule{}
+	updated, err := fx.Store.PutProjectEnvironmentEdgePolicy(fx.Ctx, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Rules) != 0 || !updated.CreatedAt.Equal(created.CreatedAt) {
+		t.Fatalf("updated edge policy = %+v", updated)
+	}
+	got, err = fx.Store.GetProjectEnvironmentEdgePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging")
+	if err != nil || len(got.Rules) != 0 {
+		t.Fatalf("replaced edge policy = %+v, err = %v", got, err)
+	}
+	if _, err := fx.Store.PutProjectEnvironmentEdgePolicy(fx.Ctx, state.ProjectEnvironmentEdgePolicy{
+		AccountID: uuid.NewString(), ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
+	}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account edge policy update err = %v, want ErrNotFound", err)
 	}
 }
 

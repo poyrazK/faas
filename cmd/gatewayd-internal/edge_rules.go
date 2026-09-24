@@ -419,7 +419,7 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 	if err != nil {
 		return nil, err
 	}
-	out := make([]state.EdgeRule, 0, len(scoped)+len(policy.Rules))
+	out := make([]state.EdgeRule, 0, len(scoped))
 	for _, rule := range scoped {
 		if rule.Kind != state.EdgeRuleKindHeaders && rule.Kind != state.EdgeRuleKindCORSA {
 			out = append(out, rule)
