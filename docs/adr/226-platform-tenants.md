@@ -19,4 +19,4 @@ Usage reads join the existing idempotent per-minute consumer ledger through link
 
 ## Activation and compatibility
 
-The migration is additive: existing consumers and surfaces have null `platform_tenant_id` and retain their present behavior. Public routes use the existing MFA-gated read and deploy-write scopes. The tenant feature is unavailable on plans that do not allow consumer keys. Platform tenant suspension requires both API and gateway binaries to understand the new schema before customers link resources; deployment must run migrations first.
+The migration is additive and replay-safe if its schema is present but its goose ledger row is missing: existing consumers and surfaces have null `platform_tenant_id` and retain their present behavior. Public routes use the existing MFA-gated read and deploy-write scopes. The tenant feature is unavailable on plans that do not allow consumer keys. Platform tenant suspension requires both API and gateway binaries to understand the new schema before customers link resources; deployment must run migrations first.
