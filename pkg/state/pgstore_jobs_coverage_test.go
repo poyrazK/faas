@@ -1,3 +1,4 @@
+// adr: 099
 // pgstore_jobs_coverage_test.go — pgstore coverage pin for the
 // JobStore surface (Mega-1 jobs). Mirrors the pattern at
 // pgstore_alert_presets_test.go: pgtest.Open + db.MigrateUp +
@@ -539,6 +540,26 @@ func TestPg_Jobs_CreateAndClaimJobInstanceAllowsControlPlaneOwner(t *testing.T) 
 	if claimed.Status != "claimed" || claimed.InstanceID == nil || *claimed.InstanceID != instanceID ||
 		claimed.LastLeaseNode == nil || *claimed.LastLeaseNode != "" {
 		t.Fatalf("claimed task = %+v, want instance and empty text owner", claimed)
+	}
+}
+
+func TestPg_Jobs_AppWatchdogExcludesColdBootingJob(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, tasks := pgJobsSeed(t, s, ctx, "watchdog")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	instanceID := uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 256, nodeID, instanceID, uuid.NewString(), time.Now().Add(time.Minute), nodeID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ListInstancesByStatesOlderThan(ctx, []state.State{state.StateColdBooting}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == instanceID {
+			t.Fatalf("job task entered app watchdog sweep: %+v", row)
+		}
 	}
 }
 

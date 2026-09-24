@@ -16032,7 +16032,7 @@ func (s *PgStore) GetInstanceTailCount(ctx context.Context, id string) (int32, e
 	return n, nil
 }
 
-// ListInstancesByStatesOlderThan is the watchdog's lookup (spec §6.1).
+// ListInstancesByStatesOlderThan is the app watchdog's lookup (spec §6.1).
 // Filters on state ∈ states and a state-aware "age" column:
 // started_at for WAKING / COLD_BOOTING (stamped on creation by the
 // trigger in migration 00015), parked_at for SNAPSHOTTING (stamped on
@@ -16056,6 +16056,8 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances
 		 where state = any($1)
+		   and kind is distinct from 'job_task'
+		   and mode is distinct from 'job'
 		   and case when state = 'snapshotting' then parked_at else started_at end < $2`,
 		stateStrs, threshold)
 	if err != nil {

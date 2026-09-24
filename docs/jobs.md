@@ -12,6 +12,10 @@ Image pulls may use account-owned private-registry credentials configured with
 the API. Materialization is retry-safe across imaged workers, and schedd does
 not dispatch a task until the job's ext4 artifact is ready.
 
+The first execution on a compute node can take longer while that artifact
+fills its local cache. Job tasks use their own timeout and lease reaper during
+this phase; the shorter HTTP-app cold-boot watchdog does not apply.
+
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
 gregale jobs run nightly --tasks 10 --parallelism 3

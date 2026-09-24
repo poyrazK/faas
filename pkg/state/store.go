@@ -4358,8 +4358,10 @@ type Store interface {
 	// WHERE id = $1; the column is on the hot path so the row is
 	// already in shared_buffers under normal load.
 	GetInstanceTailCount(ctx context.Context, id string) (int32, error)
-	// ListInstancesByStatesOlderThan is the §6.1 watchdog's lookup.
-	// Returns rows currently in any of the given states whose
+	// ListInstancesByStatesOlderThan is the §6.1 app watchdog's lookup.
+	// Job-task instances are excluded: their task lease/reaper owns the
+	// artifact-restore and execution deadline. Returns app rows currently
+	// in any of the given states whose
 	// "age timestamp" is strictly older than threshold. The age
 	// column is state-aware: started_at for WAKING/COLD_BOOTING
 	// (stamped on creation by migration 00015), parked_at for
