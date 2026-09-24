@@ -19,6 +19,10 @@ checks the canonical artifact store before returning a present artifact to
 `ready`. A missing artifact becomes `failed` with an explicit error; if the
 store cannot answer, the job remains non-dispatchable and the check retries.
 
+Cancelling a task while its job VM is still restoring an artifact also cancels
+that in-flight boot. The stop waits for vmmd to finish cleanup; a late boot
+result cannot publish a runnable VM after cancellation.
+
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
 gregale jobs run nightly --tasks 10 --parallelism 3
