@@ -2107,7 +2107,44 @@ func (c *Client) RecoverRolloutAndIdempotencyKey(ctx context.Context, slug, acti
 
 // Park and Wake toggle the app between cold-parked and live.
 func (c *Client) Park(ctx context.Context, slug string) error {
-	return c.do(ctx, "POST", "/v1/apps/"+slug+"/park", nil, nil)
+	// The first POST commits evicted_cold before schedd snapshots the live
+	// instances. A multi-revision app can need more than the API's five-second
+	// drain wait; the resulting retryable 503 does not mean the park failed.
+	// Repeating this idempotent operation waits for the zero-live boundary
+	// before callers issue a wake. Never retry an unrelated capacity failure.
+	const maxDrainWait = time.Minute
+	waitCtx, cancel := context.WithTimeout(ctx, maxDrainWait)
+	defer cancel()
+	for {
+		err := c.do(waitCtx, "POST", "/v1/apps/"+slug+"/park", nil, nil)
+		if err == nil {
+			return nil
+		}
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Problem.Code != CodeCapacity ||
+			apiErr.Problem.Detail != "app instances did not drain before the park deadline" {
+			return err
+		}
+		pause := time.Second
+		if retry := apiErr.Problem.RetryAfterSeconds; retry != nil {
+			pause = time.Duration(*retry) * time.Second
+			if pause < 100*time.Millisecond {
+				pause = 100 * time.Millisecond
+			}
+		}
+		timer := time.NewTimer(pause)
+		select {
+		case <-waitCtx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("app instances did not drain within %s: %w", maxDrainWait, err)
+		case <-timer.C:
+		}
+	}
 }
 func (c *Client) Wake(ctx context.Context, slug string) (AppWakeResponse, error) {
 	var out AppWakeResponse
