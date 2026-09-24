@@ -1,10 +1,17 @@
-# Bootstrap the trusted runner used by provider-neutral cd-compute.
+# Bootstrap the trusted runner(s) used by provider-neutral cd-compute.
 #
-# The default target is the control-plane group because the control plane has
-# private fleet/database reachability. A dedicated management host can use a
-# separate inventory group with:
+# Prefer a dedicated runner host over the control plane: the repository is
+# public, and a persistent self-hosted runner executes whatever a workflow
+# with its label asks for. Keep it off the host that holds Postgres and the
+# internal CA. Target it through a `fleet_runners` inventory group:
 #
 #   -e faas_runner_hosts=fleet_runners
+#
+# faas_runner_instances installs that many runner processes on the host
+# (instance 1 keeps the historical names; instance N adds a "-N" suffix to the
+# runner name, install root and systemd unit), so independent rollout jobs,
+# such as preparing two compute nodes, run in parallel. A dedicated host also
+# needs faas_runner_private_hosts (see the role defaults).
 #
 # FAAS_RUNNER_REGISTRATION_TOKEN is read from the controller environment and
 # is never written to inventory, logs, or the repository.
@@ -16,5 +23,15 @@
   serial: 1
   any_errors_fatal: true
 
-  roles:
-    - role: github_actions_runner
+  tasks:
+    - name: Install each runner instance
+      ansible.builtin.include_role:
+        name: github_actions_runner
+      vars:
+        faas_runner_suffix: "{{ '' if faas_runner_index == 0 else '-' ~ (faas_runner_index + 1) }}"
+        faas_runner_name: "{{ inventory_hostname }}{{ faas_runner_suffix }}"
+        faas_runner_root: "/opt/actions-runner{{ faas_runner_suffix }}"
+        faas_runner_service: "faas-github-runner{{ faas_runner_suffix }}"
+      loop: "{{ range(faas_runner_instances | default(1) | int) | list }}"
+      loop_control:
+        loop_var: faas_runner_index

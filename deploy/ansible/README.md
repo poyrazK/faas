@@ -236,14 +236,30 @@ compute node therefore does not require changing a static first-node target.
 
 ### Bootstrap the deployment runner
 
-The provider-neutral GitHub Actions `cd-compute` workflow runs on a trusted
-repository-scoped runner labelled `faas-fleet`. Bootstrap it once on the
-control-plane host, or target a dedicated management host through a
-`fleet_runners` inventory group:
+The provider-neutral GitHub Actions `cd-compute` and `pki-renew` workflows run
+on a trusted repository-scoped runner labelled `faas-fleet`. Put it on a
+dedicated management host, not the control plane: the repository is public and
+a persistent self-hosted runner executes whatever a workflow carrying its label
+asks for, so it must not share a host with Postgres and the internal CA. The
+host needs private reachability to every compute node (SSH) and to the fleet
+database, and outbound HTTPS; it needs no cloud service account. Target it
+through a `fleet_runners` inventory group:
 
 ```sh
-make ANSIBLE_INVENTORY=deploy/ansible/inventory/hosts.ini bootstrap-fleet-runner
+ansible-playbook -i <inventory> deploy/ansible/fleet_runner.yml \
+  -e faas_runner_hosts=fleet_runners -e faas_runner_instances=2 \
+  -e '{"faas_runner_private_hosts": [{"address": "10.0.0.8", "names": ["fsn-3.example.dev"]}]}'
 ```
+
+`faas_runner_instances` installs that many runner processes, so independent
+rollout jobs (preparing two compute nodes) run in parallel instead of queueing
+on one runner. `faas_runner_private_hosts` pins each manifest host to its
+private address in a managed `/etc/hosts` block: cd-compute fails closed when a
+host resolves to a public or ambiguous address, and a dedicated host does not
+carry the control plane's manifest-managed aliases. `pki-renew` reaches the
+issuer over SSH (`CP_HOST` + `CP_SSH_KEY`), so it no longer requires the runner
+to be on the control plane. The `bootstrap-fleet-runner` Make target remains
+for the single-instance control-plane layout.
 
 The Make target obtains a short-lived repository registration token through an
 authenticated `gh` installation when `FAAS_RUNNER_REGISTRATION_TOKEN` is not

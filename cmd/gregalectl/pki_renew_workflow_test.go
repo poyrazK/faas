@@ -19,12 +19,20 @@ func TestPKIRenewWorkflowUsesRoleScopedSSHIdentities(t *testing.T) {
 	if strings.Contains(workflow, "sudo -n test -r /etc/faas/tls/ca/ca.key") {
 		t.Fatal("PKI renewal tries to sudo inside the hardened runner")
 	}
+	// The deployment runner is a dedicated host, not the issuer: renewal must
+	// not assume the CA, manifest or gregalectl are on the runner's machine.
+	if strings.Contains(workflow, "127.0.0.1") {
+		t.Fatal("PKI renewal assumes the runner is the control-plane host")
+	}
 	for _, want := range []string{
 		"gregalectl manifest ansible",
+		"CP_HOST: ${{ secrets.CP_HOST",
 		"CONTROL_PLANE_SSH_KEY:",
 		"pki-control-key",
-		"ssh-keyscan -H 127.0.0.1",
-		"root@127.0.0.1 test -r /etc/faas/tls/ca/ca.key",
+		`ssh-keyscan -H "$CP_HOST"`,
+		`"root@${CP_HOST}"`,
+		"test -r /etc/faas/tls/ca/ca.key",
+		"rendered inventory contains an unsafe archive path",
 		"control_vars=",
 		"ansible_user: faas-runner",
 		"ansible_user: root",

@@ -25,18 +25,17 @@ jobs:
       - name: Render the live fleet inventory
         shell: bash
         env:
+          CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
           CONTROL_PLANE_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+          [[ -n "$CP_HOST" ]] || {
+            echo "::error::CP_HOST is required to reach the internal CA" >&2
+            exit 1
+          }
           inventory_root="$RUNNER_TEMP/pki-live-inventory"
-          manifest="/opt/faas/current/production-manifest.yaml"
-          test -r "$manifest"
-          /usr/local/bin/gregalectl manifest ansible \
-            --manifest-file "$manifest" \
-            --output-dir "$inventory_root"
-
           install -m 0600 /dev/null "$RUNNER_TEMP/pki-deploy-key"
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$RUNNER_TEMP/pki-deploy-key"
           test -s "$RUNNER_TEMP/pki-deploy-key"
@@ -46,15 +45,32 @@ jobs:
           install -m 0600 /dev/null "$RUNNER_TEMP/pki-known-hosts"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$RUNNER_TEMP/pki-known-hosts"
           test -s "$RUNNER_TEMP/pki-known-hosts"
-          # The runner service is intentionally hardened with
-          # NoNewPrivileges, so even passwordless sudo cannot cross the local
-          # process boundary.  Reach the issuer through the already-provisioned
-          # root SSH key instead; loopback keeps this independent of public SSH.
-          ssh-keyscan -H 127.0.0.1 >> "$RUNNER_TEMP/pki-known-hosts" 2>/dev/null
-          ssh -i "$RUNNER_TEMP/pki-control-key" \
-            -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -o "UserKnownHostsFile=$RUNNER_TEMP/pki-known-hosts" \
-            root@127.0.0.1 test -r /etc/faas/tls/ca/ca.key
+          # The runner does not live on the issuer. Reach the control plane
+          # over SSH with the control-plane key, pinned the same way the CD
+          # workflows pin it, and render the inventory there: the installed
+          # release's manifest and gregalectl stay the source of truth.
+          ssh-keyscan -H "$CP_HOST" >> "$RUNNER_TEMP/pki-known-hosts" 2>/dev/null
+          cp_ssh=(ssh -i "$RUNNER_TEMP/pki-control-key"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/pki-known-hosts" "root@${CP_HOST}")
+          mkdir -p "$inventory_root"
+          "${cp_ssh[@]}" 'bash -s' > "$RUNNER_TEMP/pki-inventory.tar.gz" <<'REMOTE_RENDER'
+          set -euo pipefail
+          manifest=/opt/faas/current/production-manifest.yaml
+          test -r "$manifest"
+          test -r /etc/faas/tls/ca/ca.key
+          out="$(mktemp -d /var/tmp/gregale-pki-inventory.XXXXXXXX)"
+          [[ "$out" == /var/tmp/gregale-pki-inventory.* ]] || exit 1
+          trap 'rm -rf -- "$out"' EXIT
+          /usr/local/bin/gregalectl manifest ansible \
+            --manifest-file "$manifest" --output-dir "$out" >&2
+          tar -C "$out" -czf - .
+          REMOTE_RENDER
+          if tar -tzf "$RUNNER_TEMP/pki-inventory.tar.gz" | grep -Eq '(^/|(^|/)\.\./)'; then
+            echo "::error::rendered inventory contains an unsafe archive path" >&2
+            exit 1
+          fi
+          tar -xzf "$RUNNER_TEMP/pki-inventory.tar.gz" -C "$inventory_root"
           mkdir -p "$inventory_root/inventory/group_vars"
           cat >> "$inventory_root/inventory/group_vars/all.yml" <<'EOF'
           # The compute deployment key is bound to the dedicated fleet
@@ -77,11 +93,11 @@ jobs:
           test -n "$control_host"
           control_vars="$inventory_root/inventory/host_vars/${control_host}.yml"
           test -f "$control_vars"
-          sed -i 's|^ansible_host:.*|ansible_host: "127.0.0.1"|' "$control_vars"
+          sed -i "s|^ansible_host:.*|ansible_host: \"${CP_HOST}\"|" "$control_vars"
           cat >> "$control_vars" <<'EOF'
-          # The issuer is the self-hosted runner's machine, but the hardened
-          # runner process cannot sudo.  Cross sshd with the control-plane key
-          # while compute hosts retain the compute-only deployment key.
+          # The issuer is reached through the pinned control-plane address with
+          # the control-plane key, while compute hosts retain the compute-only
+          # deployment key.
           ansible_user: root
           ansible_ssh_private_key_file: __PKI_CONTROL_KEY__
           EOF
@@ -95,4 +111,4 @@ jobs:
 
       - name: Remove transient SSH material
         if: always()
-        run: rm -rf "$RUNNER_TEMP/pki-live-inventory" "$RUNNER_TEMP/pki-deploy-key" "$RUNNER_TEMP/pki-control-key" "$RUNNER_TEMP/pki-known-hosts"
+        run: rm -rf "$RUNNER_TEMP/pki-live-inventory" "$RUNNER_TEMP/pki-inventory.tar.gz" "$RUNNER_TEMP/pki-deploy-key" "$RUNNER_TEMP/pki-control-key" "$RUNNER_TEMP/pki-known-hosts"
