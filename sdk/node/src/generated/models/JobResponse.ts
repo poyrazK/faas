@@ -19,7 +19,7 @@ export type JobResponse = {
    * Canonical ext4 artifact key consumed by vmmd.
    */
   image_storage_key?: string;
-  image_materialization_status: 'pending' | 'ready' | 'failed';
+  image_materialization_status: 'pending' | 'verifying_legacy' | 'ready' | 'failed';
   /**
    * Actionable pull/build failure when materialization_status is failed.
    */
