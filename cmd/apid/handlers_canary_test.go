@@ -180,3 +180,57 @@ func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
 		t.Fatalf("recovered state = %q, want aborted", recovered.Deployment.RolloutState)
 	}
 }
+
+func TestInternalSafeDeployRollbackAcrossAccount(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	other, err := e.store.CreateAccount(ctx, "rollback-other@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: other.ID, Slug: "other-account-rollback"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.SetDeploymentRootfs(ctx, prior.ID, "/srv/fc/apps/"+app.Slug+"/"+prior.ID+".ext4", "apps/"+app.Slug+"/"+prior.ID+".ext4", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, prior.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:current"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, current.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentSuperseded(ctx, prior.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	const canaryToken = "canary-service-secret-0000000000000001"
+	const actionToken = "action-service-secret-0000000000000001"
+	mux := http.NewServeMux()
+	if err := e.s.mountInternalSafeDeploy(mux, "127.0.0.1:9101", canaryToken, actionToken); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := api.NewInternalSafeDeployClient(server.URL, canaryToken, actionToken)
+	queued, err := client.RollbackToWithRuleAndIdempotencyKey(ctx, app.Slug, prior.ID, "", "internal-cross-account-rollback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued.ID != prior.ID || queued.Status != string(state.DeploySnapshotting) {
+		t.Fatalf("rollback response = %+v, want prior deployment queued for snapshot validation", queued)
+	}
+	stillLive, err := e.store.DeploymentByID(ctx, current.ID)
+	if err != nil || stillLive.Status != state.DeployLive {
+		t.Fatalf("current deployment = %+v, err=%v; must stay live until rollback validates", stillLive, err)
+	}
+}
