@@ -86,6 +86,10 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// Host-specific tenant surface binding. Never store these in the shared
+	// app cache: one app can serve several independent customer hostnames.
+	RoutedSurfaceID  string
+	PlatformTenantID string
 	// SecurityQuarantined is set when the live deployment has a durable
 	// security_scan_regressed parking reason. The edge rejects requests before
 	// auth, wake, or proxy work so a stale target cannot serve after quarantine.
@@ -6539,6 +6543,7 @@ haveApp:
 	// the HTTP bytes to this exact instance. ApplyGuestHeaders first clears
 	// customer-supplied claims, then stamps the scheduler-selected identity.
 	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(r))
+	identity.PlatformTenantID = authenticatedFrom(r.Context()).PlatformTenantID
 	if identity.AppID == "" {
 		identity.AppID = app.ID
 	}

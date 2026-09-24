@@ -14,12 +14,13 @@ type consumerRowScanner interface {
 	Scan(dest ...any) error
 }
 
-const apiConsumerSelectCols = `id, account_id, app_id, external_ref, name, status, created_at, updated_at, revoked_at`
+const apiConsumerSelectCols = `id, account_id, app_id, external_ref, name, status, created_at, updated_at, revoked_at, platform_tenant_id`
 
 func scanAPIConsumerRow(row consumerRowScanner) (APIConsumer, error) {
 	var c APIConsumer
 	var status string
 	var revokedAt *time.Time
+	var platformTenantID *string
 	if err := row.Scan(
 		&c.ID,
 		&c.AccountID,
@@ -30,11 +31,15 @@ func scanAPIConsumerRow(row consumerRowScanner) (APIConsumer, error) {
 		&c.CreatedAt,
 		&c.UpdatedAt,
 		&revokedAt,
+		&platformTenantID,
 	); err != nil {
 		return APIConsumer{}, err
 	}
 	c.Status = APIConsumerStatus(status)
 	c.RevokedAt = revokedAt
+	if platformTenantID != nil {
+		c.PlatformTenantID = *platformTenantID
+	}
 	return c, nil
 }
 

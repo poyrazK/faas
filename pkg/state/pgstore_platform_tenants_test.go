@@ -39,8 +39,11 @@ func TestPgPlatformTenantCrossAppLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, consumer := range []state.APIConsumer{consumerA, consumerB} {
-		if _, err := store.LinkPlatformTenantConsumer(ctx, accountID, tenant.ID, consumer.ID); err != nil {
+		if linked, err := store.LinkPlatformTenantConsumer(ctx, accountID, tenant.ID, consumer.ID); err != nil || linked.PlatformTenantID != tenant.ID {
 			t.Fatalf("link consumer %s: %v", consumer.ID, err)
+		}
+		if loaded, err := store.GetAPIConsumerByID(ctx, accountID, consumer.ID); err != nil || loaded.PlatformTenantID != tenant.ID {
+			t.Fatalf("hydrate linked consumer %s: %+v, %v", consumer.ID, loaded, err)
 		}
 	}
 	_, prefix, hash, err := api.GenerateConsumerKey()

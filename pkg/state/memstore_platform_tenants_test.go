@@ -37,3 +37,31 @@ func TestMemPlatformTenantQuotaAndPaging(t *testing.T) {
 		t.Fatalf("empty second page = %+v, %v", page, err)
 	}
 }
+
+func TestMemPlatformTenantLinkHydratesConsumerIdentity(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "platform-tenant-link@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "platform-link", Type: state.AppTypeApp, RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := store.CreateAPIConsumer(ctx, account.ID, app.ID, "customer-a", "Customer A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := store.CreatePlatformTenant(ctx, account.ID, "customer-a", "Customer A", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linked, err := store.LinkPlatformTenantConsumer(ctx, account.ID, tenant.ID, consumer.ID); err != nil || linked.PlatformTenantID != tenant.ID {
+		t.Fatalf("link = %+v, %v", linked, err)
+	}
+	loaded, err := store.GetAPIConsumerByID(ctx, account.ID, consumer.ID)
+	if err != nil || loaded.PlatformTenantID != tenant.ID {
+		t.Fatalf("loaded consumer = %+v, %v", loaded, err)
+	}
+}

@@ -40,6 +40,48 @@ type pgRouter struct {
 var errPlatformTenantSuspended = errors.New("platform tenant suspended")
 
 var _ gateway.Router = pgRouter{}
+var _ gateway.PlatformTenantHostResolver = pgRouter{}
+
+func (r pgRouter) tenantSurfacesOn() bool {
+	if r.tenantSurfacesEnabled != nil {
+		return r.tenantSurfacesEnabled()
+	}
+	return api.TenantSurfacesEnabled()
+}
+
+// ResolvePlatformTenantHost is an authoritative, uncached guard for warm
+// custom-domain routes. It is deliberately not used for app or preview hosts.
+func (r pgRouter) ResolvePlatformTenantHost(ctx context.Context, host string) (gateway.PlatformTenantHostBinding, bool, error) {
+	if !r.tenantSurfacesOn() {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if _, ok := r.slugFor(host); ok {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if _, _, ok := gateway.DeploymentScopeFromHost(r.deploySuffix, host); ok {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if _, ok := r.deploymentAliasLabelForHost(host); ok {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	store, ok := r.store.(interface {
+		PlatformTenantHostBinding(context.Context, string) (state.PlatformTenantHostBinding, error)
+	})
+	if !ok {
+		return gateway.PlatformTenantHostBinding{}, false, errors.New("platform tenant host guard unavailable")
+	}
+	b, err := store.PlatformTenantHostBinding(ctx, host)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if err != nil {
+		return gateway.PlatformTenantHostBinding{}, false, err
+	}
+	return gateway.PlatformTenantHostBinding{
+		SurfaceID: b.SurfaceID, AppID: b.AppID, AccountID: b.AccountID,
+		TenantID: b.TenantID, Active: b.Active, Verified: b.Verified, Suspended: b.Suspended,
+	}, true, nil
+}
 
 // ResolveHost implements gateway.Router. A missing/unverified/deleted route is a
 // clean ok=false (404); only an actual store failure returns a non-nil error.
@@ -60,10 +102,7 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 	// surface miss falls through to the legacy custom_domains
 	// path. resolveTenantSurface owns the parser check + the
 	// routing so ResolveHost stays ≤ 50 lines.
-	enabled := api.TenantSurfacesEnabled()
-	if r.tenantSurfacesEnabled != nil {
-		enabled = r.tenantSurfacesEnabled()
-	}
+	enabled := r.tenantSurfacesOn()
 	if enabled {
 		app, ok, err := r.resolveTenantSurface(ctx, host)
 		if errors.Is(err, errPlatformTenantSuspended) {
@@ -241,16 +280,21 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if guard, ok := r.store.(interface {
-		PlatformTenantSurfaceSuspended(context.Context, string) (bool, error)
-	}); ok {
-		suspended, guardErr := guard.PlatformTenantSurfaceSuspended(ctx, surface.ID)
-		if guardErr != nil {
-			return gateway.App{}, false, guardErr
-		}
-		if suspended {
-			return gateway.App{}, false, errPlatformTenantSuspended
-		}
+	binding, bound, err := r.ResolvePlatformTenantHost(ctx, host)
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if bound && (binding.SurfaceID != surface.ID || binding.AppID != surface.AppID || binding.AccountID != surface.AccountID) {
+		return gateway.App{}, false, errors.New("platform tenant hostname binding changed during resolution")
+	}
+	if bound && binding.Suspended {
+		return gateway.App{}, false, errPlatformTenantSuspended
+	}
+	if !bound {
+		return gateway.App{}, false, errors.New("platform tenant hostname binding disappeared during resolution")
+	}
+	if !binding.Active || !binding.Verified {
+		return gateway.App{}, false, nil
 	}
 	if !surface.Active() {
 		// Soft-deleted / suspended surface: route-around, not 404.
@@ -292,7 +336,12 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 		return gateway.App{}, false, nil
 	}
-	return r.toApp(ctx, app)
+	routed, ok, err := r.toApp(ctx, app)
+	if err == nil && ok {
+		routed.RoutedSurfaceID = surface.ID
+		routed.PlatformTenantID = binding.TenantID
+	}
+	return routed, ok, err
 }
 
 // slugFor returns the app slug for a platform-subdomain host, or ok=false when

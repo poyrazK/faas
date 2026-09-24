@@ -87,6 +87,82 @@ func TestEnforceConsumerAuth_OptionalAnonymousPasses(t *testing.T) {
 	}
 }
 
+func TestEnforceConsumerAuthPlatformTenantBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name, consumerTenant, hostTenant string
+		wantStatus                       int
+	}{
+		{"matching", "customer-a", "customer-a", http.StatusOK},
+		{"different customer", "customer-a", "customer-b", http.StatusUnauthorized},
+		{"unlinked consumer", "", "customer-b", http.StatusOK},
+		{"no surface", "customer-a", "", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, token := consumerAuthFixture()
+			store.consumer.PlatformTenantID = tc.consumerTenant
+			h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
+			app := App{ID: "app-1", AccountID: "acct-1", PlatformTenantID: tc.hostTenant, ConsumerAuthMode: api.ConsumerAuthModeRequired}
+			rr, r, ok := runConsumerAuthGate(t, h, app, http.MethodGet, token)
+			if rr.Code != tc.wantStatus || ok != (tc.wantStatus == http.StatusOK) {
+				t.Fatalf("auth result ok=%v status=%d, want %d", ok, rr.Code, tc.wantStatus)
+			}
+			if ok && authenticatedFrom(r.Context()).PlatformTenantID != tc.consumerTenant {
+				t.Fatalf("tenant claim = %q, want %q", authenticatedFrom(r.Context()).PlatformTenantID, tc.consumerTenant)
+			}
+			if !ok && authenticatedFrom(r.Context()).PlatformTenantID != "" {
+				t.Fatal("rejected key stamped a tenant claim")
+			}
+		})
+	}
+}
+
+func TestEnforceConsumerAuthPlatformTenantSurvivesKeyRotation(t *testing.T) {
+	store, token := consumerAuthFixture()
+	store.consumer.PlatformTenantID = "customer-a"
+	h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
+	app := App{ID: "app-1", AccountID: "acct-1", PlatformTenantID: "customer-a", ConsumerAuthMode: api.ConsumerAuthModeRequired}
+	for _, keyID := range []string{"key-before", "key-after"} {
+		store.key.ID = keyID
+		rr, r, ok := runConsumerAuthGate(t, h, app, http.MethodGet, token)
+		if !ok || rr.Code != http.StatusOK || authenticatedFrom(r.Context()).PlatformTenantID != "customer-a" {
+			t.Fatalf("%s lost stable tenant identity: ok=%v status=%d identity=%+v", keyID, ok, rr.Code, authenticatedFrom(r.Context()))
+		}
+	}
+}
+
+func TestHandlerForwardsOnlyVerifiedPlatformTenantClaim(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get(api.TenantIDHeader) + "/" + r.Header.Get(api.PlatformTenantIDHeader)))
+	}))
+	t.Cleanup(upstream.Close)
+	store, token := consumerAuthFixture()
+	store.consumer.PlatformTenantID = "customer-a"
+	b := &fakeBackend{
+		app: App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro,
+			ConsumerAuthMode: api.ConsumerAuthModeOptional, PlatformTenantID: "customer-a"},
+		host: "customer.example", upstream: upstream.Listener.Addr().String(),
+	}
+	b.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "instance-1"})
+	h := NewHandlerWith(b, NewMetrics(), nil).WithConsumerAuth(store)
+	for _, tc := range []struct{ name, authorization, want string }{
+		{"verified key", "Bearer " + token, "acct-1/customer-a"},
+		{"anonymous spoof", "", "acct-1/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "http://customer.example/", nil)
+			r.Header.Set(api.PlatformTenantIDHeader, "forged")
+			if tc.authorization != "" {
+				r.Header.Set("Authorization", tc.authorization)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusOK || w.Body.String() != tc.want {
+				t.Fatalf("status=%d body=%q, want 200 %q", w.Code, w.Body.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestEnforceConsumerAuth_OptionalApplicationAuthorizationPasses(t *testing.T) {
 	store, _ := consumerAuthFixture()
 	h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
