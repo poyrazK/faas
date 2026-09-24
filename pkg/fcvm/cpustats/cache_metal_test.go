@@ -1,5 +1,7 @@
 //go:build metal
 
+// spec: §14
+
 // Metal-only tests for the vmmd-side cpustats.Cache
 // (issue #279 / PR-B). The cache wraps cgroupstats.Reader with
 // a per-instance previous-sample baseline and converts the raw
