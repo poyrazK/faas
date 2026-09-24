@@ -4311,6 +4311,9 @@ func cmdDomains(args []string) int {
 			if d.Default {
 				marker = " [default]"
 			}
+			if d.EnvironmentID != "" {
+				marker += " [environment:" + d.EnvironmentID + "]"
+			}
 			fmt.Printf("%-40s %-12s %s%s\n", d.Domain, verified, d.AppID, marker)
 		}
 		return 0
@@ -4318,6 +4321,7 @@ func cmdDomains(args []string) int {
 		fs := newFlagSet("domains-add", flag.ContinueOnError)
 		domain := fs.String("domain", "", "domain to attach (required)")
 		slug := fs.String("app", "", "app slug to attach to (required)")
+		environment := fs.String("environment", "", "project environment to bind to (optional)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
@@ -4325,14 +4329,14 @@ func cmdDomains(args []string) int {
 			return 1
 		}
 		if *domain == "" || *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale domains add --domain <d> --app <slug>", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domains add --domain <d> --app <slug> [--environment <slug>]", "domains")
 			return 1
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		d, err := client.CreateDomain(context.Background(), api.CreateCustomDomainRequest{Domain: *domain, AppID: *slug})
+		d, err := client.CreateDomain(context.Background(), api.CreateCustomDomainRequest{Domain: *domain, AppID: *slug, Environment: *environment})
 		if err != nil {
 			return printErr("Could not add domain", err)
 		}

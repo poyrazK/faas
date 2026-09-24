@@ -25816,6 +25816,7 @@ components:
       properties:
         domain: { type: string , example: "app.example.com"}
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        environment_id: { type: string, format: uuid, description: "Present only when this hostname follows a named project environment's live release." }
         challenge_token: { type: [string, "null"] }
         verified: { type: boolean }
         verified_at: { type: [string, "null"], format: date-time }
@@ -25829,12 +25830,13 @@ components:
         dns_last_checked_at: { type: [string, "null"], format: date-time, description: "Timestamp of the most recent DNS verification/doctor probe." }
 
     CreateCustomDomainRequest:
-      description: "Bind a custom domain to an app."
+      description: "Bind an exact custom domain to an app, optionally following one of its project environments."
       type: object
       required: [domain, app_id]
       properties:
         domain: { type: string , example: "app.example.com"}
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        environment: { type: string, description: "Optional project environment slug. Wildcard hostnames cannot be environment-bound." }
 
     DomainDoctorReport:
       description: "Per-domain doctor report (ADR-120). Carries 5 Render-style checks (dns_record, points_to_gregale, tls_certificate, caa_permits, ipv6_conflict) plus the durable row's app_id and observed_at. `stale:true` means the cached observation row was older than FAAS_DOMAIN_DOCTOR_TTL_SECONDS (default 300) when the handler ran a synchronous re-probe."
@@ -26950,7 +26952,7 @@ components:
     ProjectEnvironmentStateWorkloadResponse:
       description: Effective configuration and live release state for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies, routing_policies]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies, routing_policies]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -26964,9 +26966,21 @@ components:
         bindings:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
+        domains:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentDomainResponse' }
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
         policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
         routing_policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
+
+    ProjectEnvironmentDomainResponse:
+      description: Effective custom hostname and its ownership for one workload.
+      type: object
+      required: [domain, ownership, verified]
+      properties:
+        domain: { type: string }
+        ownership: { type: string, enum: [application, environment] }
+        verified: { type: boolean }
 
     ProjectEnvironmentEdgeRuleResponse:
       description: One environment-owned edge rule on a stable environment URL.
@@ -27124,7 +27138,7 @@ components:
     ProjectEnvironmentWorkloadDiffResponse:
       description: Release, variable, secret, and binding changes for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies, routing_policies]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies, routing_policies]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -27138,9 +27152,22 @@ components:
         bindings:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingChangeResponse' }
+        domains:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentDomainChangeResponse' }
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyDiffResponse' }
         policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyDiffResponse' }
         routing_policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyDiffResponse' }
+
+    ProjectEnvironmentDomainChangeResponse:
+      description: A hostname added to, removed from, or changed between two environments.
+      type: object
+      required: [domain, kind]
+      properties:
+        domain: { type: string }
+        kind: { type: string, enum: [added, removed, changed] }
+        before: { $ref: '#/components/schemas/ProjectEnvironmentDomainResponse' }
+        after: { $ref: '#/components/schemas/ProjectEnvironmentDomainResponse' }
 
     ProjectEnvironmentEdgePolicyDiffResponse:
       description: Difference in one environment edge-policy group or its ownership.

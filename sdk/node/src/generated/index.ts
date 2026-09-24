@@ -574,6 +574,8 @@ export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironment
 export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironmentConfigResponse.js';
 export type { ProjectEnvironmentDiffResponse } from './models/ProjectEnvironmentDiffResponse.js';
+export type { ProjectEnvironmentDomainChangeResponse } from './models/ProjectEnvironmentDomainChangeResponse.js';
+export type { ProjectEnvironmentDomainResponse } from './models/ProjectEnvironmentDomainResponse.js';
 export type { ProjectEnvironmentEdgePolicyDiffResponse } from './models/ProjectEnvironmentEdgePolicyDiffResponse.js';
 export type { ProjectEnvironmentEdgePolicyResponse } from './models/ProjectEnvironmentEdgePolicyResponse.js';
 export type { ProjectEnvironmentEdgeRuleResponse } from './models/ProjectEnvironmentEdgeRuleResponse.js';

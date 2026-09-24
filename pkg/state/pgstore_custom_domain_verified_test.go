@@ -87,6 +87,47 @@ func TestPgStoreCustomDomainVerificationState(t *testing.T) {
 	}
 }
 
+func TestPgStoreEnvironmentBoundCustomDomain(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	account, err := s.CreateAccount(ctx, "environment-domain-pg@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := s.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "environment-domain-pg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "environment-domain-pg-app", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := s.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain, err := s.CreateCustomDomainIfUnderQuota(ctx, "stage-pg.example.test", app.ID, "token", 10, 10, environment.ID)
+	if err != nil || domain.EnvironmentID != environment.ID {
+		t.Fatalf("created binding = %+v err=%v", domain, err)
+	}
+	byName, err := s.DomainByName(ctx, domain.Domain)
+	if err != nil || byName.EnvironmentID != environment.ID {
+		t.Fatalf("domain lookup = %+v err=%v", byName, err)
+	}
+	listed, err := s.ListDomainsForApp(ctx, app.ID)
+	if err != nil || len(listed) != 1 || listed[0].EnvironmentID != environment.ID {
+		t.Fatalf("domain list = %+v err=%v", listed, err)
+	}
+	if err := s.MarkDomainVerified(ctx, domain.Domain); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDefaultCustomDomain(ctx, app.ID, domain.Domain); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("environment domain became app default: %v", err)
+	}
+	if err := s.DeleteProjectEnvironment(ctx, account.ID, project.ID, environment.Slug); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("bound environment deletion error = %v", err)
+	}
+}
+
 func TestPgStoreCustomDomainExpiredClaimReclaim(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	firstAccount, err := s.CreateAccount(ctx, "domain-reclaim-first@example.com", api.PlanScale)

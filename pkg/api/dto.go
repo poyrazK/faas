@@ -3327,6 +3327,7 @@ type RotateOrgAPIKeyResponse struct {
 type CustomDomainResponse struct {
 	Domain         string   `json:"domain"`
 	AppID          string   `json:"app_id"`
+	EnvironmentID  string   `json:"environment_id,omitempty"`
 	ChallengeToken string   `json:"challenge_token,omitempty"`
 	Verified       bool     `json:"verified"`
 	VerifiedAt     string   `json:"verified_at,omitempty"`
@@ -3348,8 +3349,9 @@ type CustomDomainResponse struct {
 
 // CreateCustomDomainRequest accepts a domain to bind.
 type CreateCustomDomainRequest struct {
-	Domain string `json:"domain"`
-	AppID  string `json:"app_id"`
+	Domain      string `json:"domain"`
+	AppID       string `json:"app_id"`
+	Environment string `json:"environment,omitempty"`
 }
 
 // DomainDoctorReport (ADR-120) is the wire shape for

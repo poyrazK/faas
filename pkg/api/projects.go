@@ -150,9 +150,25 @@ type ProjectEnvironmentStateWorkloadResponse struct {
 	Variables       []ProjectEnvironmentVariableResponse      `json:"variables"`
 	Secrets         []ProjectEnvironmentSecretResponse        `json:"secrets"`
 	Bindings        []ProjectEnvironmentBindingResponse       `json:"bindings"`
+	Domains         []ProjectEnvironmentDomainResponse        `json:"domains"`
 	Routes          ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
 	Policies        ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
 	RoutingPolicies ProjectEnvironmentEdgePolicyResponse      `json:"routing_policies"`
+}
+
+// App-wide domains appear in every environment; bound domains appear only in
+// their selected environment. Clone never copies bound hostnames.
+type ProjectEnvironmentDomainResponse struct {
+	Domain    string `json:"domain"`
+	Ownership string `json:"ownership"`
+	Verified  bool   `json:"verified"`
+}
+
+type ProjectEnvironmentDomainChangeResponse struct {
+	Domain string                            `json:"domain"`
+	Kind   string                            `json:"kind"`
+	Before *ProjectEnvironmentDomainResponse `json:"before,omitempty"`
+	After  *ProjectEnvironmentDomainResponse `json:"after,omitempty"`
 }
 
 // ProjectEnvironmentEdgePolicyResponse describes one independent policy group.
@@ -200,9 +216,8 @@ type UpdateProjectEnvironmentRoutePolicyRequest struct {
 }
 
 // ProjectEnvironmentSharedResourceResponse documents resources that still
-// belong to the application rather than to an environment. They are surfaced
-// explicitly so callers do not mistake their absence from a clone or diff for
-// equality.
+// belong wholly or partly to the application. They are surfaced explicitly
+// so callers do not mistake their absence from a clone or diff for equality.
 type ProjectEnvironmentSharedResourceResponse struct {
 	Kind      string `json:"kind"`
 	Ownership string `json:"ownership"`
@@ -277,6 +292,7 @@ type ProjectEnvironmentWorkloadDiffResponse struct {
 	Variables       []ProjectEnvironmentVariableChangeResponse `json:"variables"`
 	Secrets         []ProjectEnvironmentSecretChangeResponse   `json:"secrets"`
 	Bindings        []ProjectEnvironmentBindingChangeResponse  `json:"bindings"`
+	Domains         []ProjectEnvironmentDomainChangeResponse   `json:"domains"`
 	Routes          ProjectEnvironmentRoutePolicyDiffResponse  `json:"routes"`
 	Policies        ProjectEnvironmentEdgePolicyDiffResponse   `json:"policies"`
 	RoutingPolicies ProjectEnvironmentEdgePolicyDiffResponse   `json:"routing_policies"`

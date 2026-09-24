@@ -561,7 +561,7 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 				"Project environment cannot be deleted",
-				"only unprotected, non-production environments without live releases can be deleted"))
+				"only unprotected, non-production environments without live releases or bound domains can be deleted"))
 		default:
 			api.WriteProblem(w, api.ErrCapacity("could not delete project environment"))
 		}

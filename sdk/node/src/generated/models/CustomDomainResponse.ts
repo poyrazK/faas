@@ -8,6 +8,10 @@
 export type CustomDomainResponse = {
   domain: string;
   app_id: string;
+  /**
+   * Present only when this hostname follows a named project environment's live release.
+   */
+  environment_id?: string;
   challenge_token?: string | null;
   verified: boolean;
   verified_at?: string | null;

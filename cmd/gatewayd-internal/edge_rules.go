@@ -380,7 +380,25 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host string, global []state.EdgeRule) ([]state.EdgeRule, error) {
 	environmentID, appID, matched := gateway.EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host)
 	if !matched {
-		return global, nil
+		// Exact custom domains can opt into a named environment. Wildcard and
+		// legacy app-wide domains keep the original rule selection.
+		domainLookup, ok := g.store.(interface {
+			DomainByName(context.Context, string) (state.CustomDomain, error)
+		})
+		if !ok {
+			return global, nil
+		}
+		domain, err := domainLookup.DomainByName(ctx, host)
+		if errors.Is(err, state.ErrNotFound) {
+			return global, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if domain.EnvironmentID == "" || !domain.Verified() {
+			return global, nil
+		}
+		environmentID, appID = domain.EnvironmentID, domain.AppID
 	}
 	lookup, ok := g.store.(interface {
 		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)

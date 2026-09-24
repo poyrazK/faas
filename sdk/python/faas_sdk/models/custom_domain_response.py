@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -23,6 +24,8 @@ class CustomDomainResponse:
     domain: str
     app_id: str
     verified: bool
+    environment_id: UUID | Unset = UNSET
+    """Present only when this hostname follows a named project environment's live release."""
     challenge_token: None | str | Unset = UNSET
     verified_at: datetime.datetime | None | Unset = UNSET
     txt_record: None | str | Unset = UNSET
@@ -53,6 +56,10 @@ class CustomDomainResponse:
         app_id = self.app_id
 
         verified = self.verified
+
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
 
         challenge_token: None | str | Unset
         if isinstance(self.challenge_token, Unset):
@@ -125,6 +132,8 @@ class CustomDomainResponse:
                 "verified": verified,
             }
         )
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
         if challenge_token is not UNSET:
             field_dict["challenge_token"] = challenge_token
         if verified_at is not UNSET:
@@ -156,6 +165,13 @@ class CustomDomainResponse:
         app_id = d.pop("app_id")
 
         verified = d.pop("verified")
+
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
 
         def _parse_challenge_token(data: object) -> None | str | Unset:
             if data is None:
@@ -269,6 +285,7 @@ class CustomDomainResponse:
             domain=domain,
             app_id=app_id,
             verified=verified,
+            environment_id=environment_id,
             challenge_token=challenge_token,
             verified_at=verified_at,
             txt_record=txt_record,

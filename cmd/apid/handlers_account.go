@@ -1060,6 +1060,7 @@ func listDomainsForAccountExport(ctx context.Context, st state.Store, accountID 
 		resp := api.CustomDomainResponse{
 			Domain:           d.Domain,
 			AppID:            d.AppID,
+			EnvironmentID:    d.EnvironmentID,
 			Verified:         d.Verified(),
 			VerifiedAt:       formatTimeOrEmpty(d.VerifiedAt),
 			CertStatus:       string(status),

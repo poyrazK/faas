@@ -28,15 +28,34 @@ func (e *CustomDomainQuotaError) Error() string {
 }
 func (e *CustomDomainQuotaError) Unwrap() error { return ErrCustomDomainQuotaExceeded }
 
-func (s *PgStore) CreateCustomDomainIfUnderQuota(ctx context.Context, domain, appID, token string, appLimit, accountLimit int) (CustomDomain, error) {
+func (s *PgStore) CreateCustomDomainIfUnderQuota(ctx context.Context, domain, appID, token string, appLimit, accountLimit int, environmentIDs ...string) (CustomDomain, error) {
+	if len(environmentIDs) > 1 {
+		return CustomDomain{}, ErrInvalidArgument
+	}
+	var environmentID string
+	if len(environmentIDs) == 1 {
+		environmentID = environmentIDs[0]
+	}
+	if environmentID != "" && IsWildcardCustomDomain(domain) {
+		return CustomDomain{}, ErrInvalidArgument
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CustomDomain{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var accountID string
-	if err = tx.QueryRow(ctx, `select account_id from apps where id=$1 and status <> 'deleted' for update`, appID).Scan(&accountID); err != nil {
+	var accountID, projectID string
+	if err = tx.QueryRow(ctx, `select account_id, coalesce(project_id::text, '') from apps where id=$1 and status <> 'deleted' for update`, appID).Scan(&accountID, &projectID); err != nil {
 		return CustomDomain{}, mapErr(err)
+	}
+	if environmentID != "" {
+		var valid bool
+		if err = tx.QueryRow(ctx, `select exists(select 1 from project_environments where id=$1 and account_id=$2 and project_id=$3)`, environmentID, accountID, projectID).Scan(&valid); err != nil {
+			return CustomDomain{}, mapErr(err)
+		}
+		if !valid {
+			return CustomDomain{}, ErrNotFound
+		}
 	}
 	var n int
 	if err = tx.QueryRow(ctx, `select count(*) from custom_domains where app_id=$1 and verified_at is null and verification_expires_at > now()`, appID).Scan(&n); err != nil {
@@ -60,10 +79,11 @@ func (s *PgStore) CreateCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 	// lock, so two accounts racing to reclaim an expired claim cannot both win.
 	// Verified and still-active pending rows fail closed and remain untouched.
 	row := tx.QueryRow(ctx, `
-		insert into custom_domains(domain,app_id,challenge_token)
-		values($1,$2,$3)
+		insert into custom_domains(domain,app_id,challenge_token,environment_id)
+		values($1,$2,$3,nullif($4,'')::uuid)
 		on conflict (domain) do update
 		set app_id = excluded.app_id,
+		    environment_id = excluded.environment_id,
 		    app_id_redirect = null,
 		    challenge_token = excluded.challenge_token,
 		    verified_at = null,
@@ -82,7 +102,7 @@ func (s *PgStore) CreateCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		          cert_status,coalesce(cert_expires_at,'epoch'),
 		          coalesce(cert_last_error,''),coalesce(dns_last_checked_at,'epoch'),
 		          coalesce(cert_failed_at,'epoch'),verification_next_check_at,
-		          verification_expires_at,verification_attempts`, domain, appID, token)
+		          verification_expires_at,verification_attempts,coalesce(environment_id::text,'')`, domain, appID, token, environmentID)
 	var d CustomDomain
 	if err = scanCustomDomain(row, &d); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -94,7 +114,7 @@ func (s *PgStore) CreateCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 }
 
 func (s *PgStore) ClaimCustomDomainsForVerification(ctx context.Context, limit int) ([]CustomDomain, error) {
-	rows, err := s.pool.Query(ctx, `with accounts_due as (select a.account_id,min(d.verification_next_check_at) oldest from custom_domains d join apps a on a.id=d.app_id where d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() group by a.account_id order by oldest limit $1), due as (select candidate.domain from accounts_due q cross join lateral (select d.domain from custom_domains d join apps a on a.id=d.app_id where a.account_id=q.account_id and d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() order by d.verification_next_check_at,d.domain limit 1 for update of d skip locked) candidate), bumped as (update custom_domains d set verification_attempts=d.verification_attempts+1, verification_next_check_at=now()+least(interval '1 hour',interval '30 seconds'*power(2,least(d.verification_attempts,7))) from due where d.domain=due.domain returning d.*) select domain,app_id,challenge_token,coalesce(verified_at,'epoch'),cert_status,coalesce(cert_expires_at,'epoch'),coalesce(cert_last_error,''),coalesce(dns_last_checked_at,'epoch'),coalesce(cert_failed_at,'epoch'),verification_next_check_at,verification_expires_at,verification_attempts from bumped`, limit)
+	rows, err := s.pool.Query(ctx, `with accounts_due as (select a.account_id,min(d.verification_next_check_at) oldest from custom_domains d join apps a on a.id=d.app_id where d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() group by a.account_id order by oldest limit $1), due as (select candidate.domain from accounts_due q cross join lateral (select d.domain from custom_domains d join apps a on a.id=d.app_id where a.account_id=q.account_id and d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() order by d.verification_next_check_at,d.domain limit 1 for update of d skip locked) candidate), bumped as (update custom_domains d set verification_attempts=d.verification_attempts+1, verification_next_check_at=now()+least(interval '1 hour',interval '30 seconds'*power(2,least(d.verification_attempts,7))) from due where d.domain=due.domain returning d.*) select domain,app_id,challenge_token,coalesce(verified_at,'epoch'),cert_status,coalesce(cert_expires_at,'epoch'),coalesce(cert_last_error,''),coalesce(dns_last_checked_at,'epoch'),coalesce(cert_failed_at,'epoch'),verification_next_check_at,verification_expires_at,verification_attempts,coalesce(environment_id::text,'') from bumped`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -132,12 +152,28 @@ func (s *PgStore) RetryCustomDomainVerification(ctx context.Context, domain stri
 	return nil
 }
 
-func (m *MemStore) CreateCustomDomainIfUnderQuota(_ context.Context, domain, appID, token string, appLimit, accountLimit int) (CustomDomain, error) {
+func (m *MemStore) CreateCustomDomainIfUnderQuota(_ context.Context, domain, appID, token string, appLimit, accountLimit int, environmentIDs ...string) (CustomDomain, error) {
+	if len(environmentIDs) > 1 {
+		return CustomDomain{}, ErrInvalidArgument
+	}
+	var environmentID string
+	if len(environmentIDs) == 1 {
+		environmentID = environmentIDs[0]
+	}
+	if environmentID != "" && IsWildcardCustomDomain(domain) {
+		return CustomDomain{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[appID]
 	if !ok {
 		return CustomDomain{}, ErrNotFound
+	}
+	if environmentID != "" {
+		environment, exists := m.projectEnvironments[environmentID]
+		if !exists || a.ProjectID == "" || environment.ProjectID != a.ProjectID || environment.AccountID != a.AccountID {
+			return CustomDomain{}, ErrNotFound
+		}
 	}
 	now := time.Now()
 	if current, exists := m.domains[domain]; exists {
@@ -163,7 +199,7 @@ func (m *MemStore) CreateCustomDomainIfUnderQuota(_ context.Context, domain, app
 	if ac >= accountLimit {
 		return CustomDomain{}, &CustomDomainQuotaError{"account", accountLimit}
 	}
-	d := CustomDomain{Domain: domain, AppID: appID, ChallengeToken: token, CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now, VerificationExpiresAt: now.Add(7 * 24 * time.Hour)}
+	d := CustomDomain{Domain: domain, AppID: appID, EnvironmentID: environmentID, ChallengeToken: token, CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now, VerificationExpiresAt: now.Add(7 * 24 * time.Hour)}
 	m.domains[domain] = d
 	return d, nil
 }

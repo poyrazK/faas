@@ -66,6 +66,43 @@ func TestPGBackendDynamicEnvironmentHostNeverServesCachedOrStaleRelease(t *testi
 	}
 }
 
+func TestPGBackendEnvironmentBoundDomainNeverServesCachedOrStaleRelease(t *testing.T) {
+	const host = "staging.example.test"
+	r := &fakeRouter{byID: map[string]gateway.App{host: {
+		ID: "app-1", PinnedDeploymentID: "deployment-1", PinnedDeploymentScope: "staging", DynamicRoute: true,
+	}}}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "deployment-1" {
+		t.Fatalf("initial route = %+v ok=%v", app, ok)
+	}
+	r.mu.Lock()
+	r.byID[host] = gateway.App{ID: "app-1", PinnedDeploymentID: "deployment-2", PinnedDeploymentScope: "staging", DynamicRoute: true}
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.PinnedDeploymentID != "deployment-2" {
+		t.Fatalf("promoted route = %+v ok=%v", app, ok)
+	}
+	r.mu.Lock()
+	r.err = errors.New("registry unavailable")
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("registry outage served stale release: %+v", app)
+	}
+	b.InvalidateRoutesForApp("app-1")
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("invalidated domain served stale release: %+v", app)
+	}
+	r.mu.Lock()
+	r.err = nil
+	delete(r.byID, host)
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("missing environment served cached release: %+v", app)
+	}
+	if calls := r.resolveCalls(); calls != 5 {
+		t.Fatalf("dynamic domain lookups = %d, want one per request", calls)
+	}
+}
+
 func (r *tenantBindingRouter) ResolvePlatformTenantHost(_ context.Context, host string) (gateway.PlatformTenantHostBinding, bool, error) {
 	if r.guardErr != nil {
 		return gateway.PlatformTenantHostBinding{}, false, r.guardErr
