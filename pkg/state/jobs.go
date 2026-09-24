@@ -247,9 +247,12 @@ type JobImageMaterializationClaimer interface {
 // apps/...ext4 references. Older imaged binaries only claim status=pending,
 // so migration can move falsely-ready legacy rows here before the new worker
 // starts without letting the old OCI parser consume them during a rollout.
+// A present legacy object must be copied to promotedKey (the job-owned
+// jobs/<id>.ext4 key) before the row can become ready: app layers have a
+// shorter GC lifetime than jobs.
 type JobLegacyArtifactVerificationStore interface {
 	JobClaimLegacyArtifactVerification(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
-	JobFinishLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner string, found bool, reason string) (Job, error)
+	JobFinishLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, promotedKey string, found bool, reason string) (Job, error)
 	JobRetryLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time) (Job, error)
 }
 

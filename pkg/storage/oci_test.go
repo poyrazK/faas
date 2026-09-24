@@ -714,6 +714,14 @@ func TestOCIArtifactCompressionScope(t *testing.T) {
 			wantEncoded: true,
 		},
 		{
+			name:        "job layer independent of snapshot setting",
+			backend:     f.client(t),
+			key:         "jobs/" + depID + ".ext4",
+			repo:        "faas/jobs",
+			tag:         depID,
+			wantEncoded: true,
+		},
+		{
 			name:        "snapshot private drive always compressed",
 			backend:     f.client(t),
 			key:         "snap/" + depID + "/captures/660e8400-e29b-41d4-a716-446655440001/v2/drive",
