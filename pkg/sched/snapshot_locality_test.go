@@ -105,6 +105,45 @@ func TestWakeSnapshotProducerLocality(t *testing.T) {
 	}
 }
 
+func TestDeploymentSmokeUsesSnapshotProducerDespiteCPUHeadroomSkew(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	producer, uncached := seedTwoNodes(t, store)
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 1)
+	for _, config := range []struct {
+		id    string
+		cores int
+	}{{producer, 4}, {uncached, 8}} {
+		node, err := store.ComputeNodeByID(ctx, config.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		node.VPCPUs = config.cores
+		if _, err := store.UpsertComputeNode(ctx, node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, err := store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID, Tier: state.SnapshotTierInit,
+		FCVersion: "1.10.0", MemBytes: 256 << 20,
+		StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "smoke-locality"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordSnapshotOrigin(ctx, snap.ID, producer); err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	got, err := e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, "", TriggerDeploymentSmoke)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AtCapacity || got.NodeID != producer {
+		t.Fatalf("smoke admission = %+v; want snapshot producer %q, not CPU-rich uncached node %q", got, producer, uncached)
+	}
+}
+
 type failedSnapshotLocalityStore struct{ state.Store }
 
 func (failedSnapshotLocalityStore) SnapshotLocalityFor(context.Context, string) (state.SnapshotLocality, error) {
@@ -114,8 +153,8 @@ func (failedSnapshotLocalityStore) SnapshotLocalityFor(context.Context, string) 
 func TestSnapshotLocalityReadFailurePreservesFallback(t *testing.T) {
 	store := failedSnapshotLocalityStore{Store: state.NewMemStore()}
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-	warm, replicas := e.snapshotPlacementHints(context.Background(), "snapshot", "last-warm-node")
-	if warm != "last-warm-node" || len(replicas) != 0 {
-		t.Fatalf("warm=%q replicas=%v", warm, replicas)
+	warm, replicas, known := e.snapshotPlacementHints(context.Background(), "snapshot", "last-warm-node")
+	if warm != "last-warm-node" || len(replicas) != 0 || known {
+		t.Fatalf("warm=%q replicas=%v known=%t", warm, replicas, known)
 	}
 }

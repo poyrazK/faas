@@ -2911,12 +2911,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// (cold boot must always work) is preserved: an empty hint
 	// behaves identically to a fresh install.
 	var warmHint string
+	var snapshotLocalityKnown bool
 	if !isPlacementSpread(ctx) {
 		warmHint, _ = e.warmAffinity.LastWarmNode(appID)
 	}
 	var snapshotNodes []string
 	if haveSnap {
-		warmHint, snapshotNodes = e.snapshotPlacementHints(ctx, snap.ID, warmHint)
+		warmHint, snapshotNodes, snapshotLocalityKnown = e.snapshotPlacementHints(ctx, snap.ID, warmHint)
 	}
 	// ADR-098 PR-D: connection-aware placement bias. Score is
 	// the synchronous read (per ADR §D2 — schedd does NOT
@@ -2946,9 +2947,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: appID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
-		PreferredNodeID:  warmHint,
-		PreferredNodeIDs: snapshotNodes,
-		PreferredRegion:  preferredRegion,
+		PreferredNodeID:            warmHint,
+		PreferredNodeIDs:           snapshotNodes,
+		PrioritizeSnapshotLocality: deploymentSmoke && snapshotLocalityKnown,
+		PreferredRegion:            preferredRegion,
 	})
 	if err != nil {
 		release()

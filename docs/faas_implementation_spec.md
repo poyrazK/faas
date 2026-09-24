@@ -983,6 +983,14 @@ stateDiagram-v2
 | `running → failed` | **schedd** | liveness/OOM/crash-loop event and instance terminal state | `DestroyForLivenessFailure` and OOM paths eagerly stale the latest snapshot; repeated failures may evict the app cold. |
 | current deployment → `superseded` | **apid** on the next deploy | `CreateDeployment` supersede update | The new deployment owns traffic; retained snapshot material is rollback/GC material, never the active source of truth. |
 
+For an authenticated post-readiness deployment smoke, placement first prefers
+a fitting known snapshot origin or ready replica, even when a peer has more
+spare CPU. The public verification deadline makes an uncached artifact pull a
+correctness risk for this one path. Node lifecycle, RAM, vCPU, and physical CPU
+guards remain mandatory; if no local node fits, normal fleet placement and
+shared-backend restore/cold-boot fallback still apply (ADR-063). Ordinary
+customer wakes retain CPU-first balancing.
+
 #### Snapshot invalidation and cold-boot contract
 
 Snapshots are disposable machine-state caches. A wake may use one only when
