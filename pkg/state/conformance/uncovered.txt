@@ -116,7 +116,6 @@ CreateAPIKeyWithExpiry
 CreateAPIKeyWithExpiryAndProvenance
 CreateAccountWithPersonalOrg
 CreateAlertRuleIfUnderQuota
-CreateAndClaimJobInstance
 CreateAppLogDrain
 CreateAppLogDrainIfUnderQuota
 CreateAppWebhookIfUnderQuota

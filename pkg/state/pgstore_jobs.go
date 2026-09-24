@@ -1050,6 +1050,10 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 	if errorMessage != "" {
 		errorMessageArg = errorMessage
 	}
+	var expectedInstanceArg any
+	if requireClaim {
+		expectedInstanceArg = expectedInstanceID
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update job_tasks set
 		   status        = $2,
@@ -1064,9 +1068,9 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		 where run_id = $1::uuid and task_index = $7
 		   and status in ('queued', 'claimed')
 		   and (not $11::boolean or (status = 'claimed'
-		        and instance_id = nullif($12::text, '')::uuid and lease_token = $13))`,
+		        and instance_id = $12::uuid and lease_token = $13))`,
 		runID, status, exitCode, errorClassArg, errorMessageArg, finishedAt.UTC(), taskIndex,
-		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceID, expectedLeaseToken)
+		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceArg, expectedLeaseToken)
 	if err != nil {
 		return fmt.Errorf("state: mark task (%s, %d) terminal: %w", runID, taskIndex, err)
 	}
@@ -1123,7 +1127,7 @@ func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex i
 		   status           = case when attempt <= $5 then 'queued' else 'failed' end,
 		   attempt          = case when attempt <= $5 then attempt + 1 else attempt end,
 		   instance_id      = case when attempt <= $5 then null else instance_id end,
-		   next_attempt_at  = case when attempt <= $5 then $6 else null end,
+		   next_attempt_at  = case when attempt <= $5 then $6::timestamptz else null end,
 		   started_at       = case when attempt <= $5 then null else started_at end,
 		   finished_at      = case when attempt <= $5 then null else now() end,
 		   exit_code        = case when attempt <= $5 then null else 1 end,

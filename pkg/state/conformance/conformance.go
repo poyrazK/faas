@@ -112,6 +112,7 @@ func Run(t *testing.T, open Open) {
 		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
+		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
@@ -1100,6 +1101,64 @@ func testJobTaskTerminalLogs(t *testing.T, fx *Fixture) {
 		"user_error", "late", "replacement", false, finished.Add(time.Second),
 	); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("terminal replay error = %v, want ErrNotFound", err)
+	}
+}
+
+// adr: 099 — a failed VM boot consumes the task's retry budget, and a late
+// guest exit cannot settle a replacement claim. Both stores must agree.
+func testJobBootFailureBudget(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "boot-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 0, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	parallelism := 1
+	run, tasks, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", &parallelism, nil, nil, nil, 1)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("JobRunCreate: tasks=%d err=%v", len(tasks), err)
+	}
+	claim := func() (string, string) {
+		t.Helper()
+		instanceID, leaseToken := uuid.NewString(), uuid.NewString()
+		_, err := fx.Store.CreateAndClaimJobInstance(fx.Ctx, instanceID, job.ID, run.ID, tasks[0].TaskIndex,
+			"cold_booting", 128, fx.Node.ID, instanceID, leaseToken, time.Now().Add(5*time.Minute), fx.Node.ID)
+		if err != nil {
+			t.Fatalf("CreateAndClaimJobInstance: %v", err)
+		}
+		return instanceID, leaseToken
+	}
+	firstID, firstToken := claim()
+	next := time.Now().Add(time.Minute)
+	retried, err := fx.Store.JobTaskFailBoot(fx.Ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, 1, next, "artifact unavailable")
+	if err != nil || !retried {
+		t.Fatalf("first JobTaskFailBoot: retried=%v err=%v", retried, err)
+	}
+	task, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.InstanceID != nil || task.NextAttemptAt == nil || task.ErrorClass == nil || *task.ErrorClass != "infra" {
+		t.Fatalf("retried task=%+v err=%v", task, err)
+	}
+	if err := fx.Store.JobTaskCompleteClaimedWithLogs(fx.Ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken,
+		"succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("late exit after retry: %v, want ErrNotFound", err)
+	}
+	secondID, secondToken := claim()
+	if _, err := fx.Store.JobTaskFailBoot(fx.Ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, 1, next, "stale boot"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old boot failure after replacement: %v, want ErrNotFound", err)
+	}
+	if err := fx.Store.JobTaskCompleteClaimedWithLogs(fx.Ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken,
+		"succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("old exit after replacement: %v, want ErrNotFound", err)
+	}
+	retried, err = fx.Store.JobTaskFailBoot(fx.Ctx, run.ID, tasks[0].TaskIndex, secondID, secondToken, 1, next, "artifact unavailable")
+	if err != nil || retried {
+		t.Fatalf("exhausted JobTaskFailBoot: retried=%v err=%v", retried, err)
+	}
+	task, err = fx.Store.JobTaskGet(fx.Ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil || task.Status != "failed" || task.Attempt != 2 || task.FinishedAt == nil || task.ErrorClass == nil || *task.ErrorClass != "infra" || task.ErrorMessage == nil || *task.ErrorMessage != "artifact unavailable" {
+		t.Fatalf("terminal task=%+v err=%v", task, err)
 	}
 }
 
