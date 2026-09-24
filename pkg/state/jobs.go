@@ -66,7 +66,9 @@ type Job struct {
 	// ImageStorageKey is the canonical ext4 artifact consumed by vmmd
 	// (jobs/<job-id>.ext4). It is populated atomically with a ready status.
 	ImageStorageKey string
-	// ImageMaterializationStatus is pending, ready, or failed.
+	// ImageMaterializationStatus is pending, verifying_legacy, ready, or
+	// failed. The verification state fences pre-OCI ext4 references until
+	// imaged confirms the canonical artifact still exists.
 	ImageMaterializationStatus string
 	ImageMaterializationError  string
 	ImageMaterializedAt        *time.Time
@@ -239,6 +241,16 @@ type JobImageMaterializationClaimer interface {
 	JobClaimImageMaterialization(ctx context.Context, id, owner string, lease time.Duration) (Job, error)
 	JobClaimPendingImageMaterialization(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
 	JobRecordImageMaterializationFailure(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time, maxAttempts int) (Job, error)
+}
+
+// JobLegacyArtifactVerificationStore is a separate lease queue for old
+// apps/...ext4 references. Older imaged binaries only claim status=pending,
+// so migration can move falsely-ready legacy rows here before the new worker
+// starts without letting the old OCI parser consume them during a rollout.
+type JobLegacyArtifactVerificationStore interface {
+	JobClaimLegacyArtifactVerification(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
+	JobFinishLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner string, found bool, reason string) (Job, error)
+	JobRetryLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time) (Job, error)
 }
 
 // JobRegistryCredentialStore is the optional persistence seam for private OCI
