@@ -74,6 +74,10 @@ type Authenticated struct {
 	// the stable attribution dimension.
 	ConsumerKeyID string
 
+	// PlatformTenantID is the account-level customer linked to the verified
+	// consumer identity. Never derive it from an incoming header or hostname.
+	PlatformTenantID string
+
 	// JWTSubject is the `sub` claim from a JWKS-verified token for
 	// requests that satisfied applyEdgeRuleJWT. Empty for traffic
 	// that did not hit a JWT edge rule (or whose JWT verification

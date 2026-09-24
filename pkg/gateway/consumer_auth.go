@@ -49,11 +49,12 @@ func (k ConsumerAuthKey) Active(now time.Time) bool {
 
 // ConsumerAuthConsumer is the stable customer identity associated with a key.
 type ConsumerAuthConsumer struct {
-	ID        string
-	AccountID string
-	AppID     string
-	Status    string
-	RevokedAt *time.Time
+	ID               string
+	AccountID        string
+	AppID            string
+	PlatformTenantID string
+	Status           string
+	RevokedAt        *time.Time
 }
 
 func (c ConsumerAuthConsumer) Active() bool {
@@ -230,6 +231,12 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
+	if consumer.PlatformTenantID != "" && app.PlatformTenantID != "" && consumer.PlatformTenantID != app.PlatformTenantID {
+		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
+		rec.status = http.StatusUnauthorized
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	if !consumerScopeAllows(key.Scopes, r.Method) {
 		api.WriteProblem(w, api.ErrConsumerScopeMissing(r.Method))
 		rec.status = http.StatusForbidden
@@ -240,6 +247,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	authenticated := authenticatedFrom(r.Context())
 	authenticated.ConsumerID = consumer.ID
 	authenticated.ConsumerKeyID = key.ID
+	authenticated.PlatformTenantID = consumer.PlatformTenantID
 	ctx := authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{
 		ID:     consumer.ID,
 		AppID:  app.ID,

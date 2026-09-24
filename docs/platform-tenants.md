@@ -17,6 +17,8 @@ Repeating that request with the same name returns the existing tenant. Link each
 
 To temporarily stop the linked credential and hostname paths, send `PATCH /v1/account/platform-tenants/{id}` with `{"status":"suspended"}`. New keys cannot be issued for its linked consumers while suspended. Linked hostnames are blocked when tenant-surface routing is enabled. Send `{"status":"active"}` to resume. Existing keys are not revoked or rotated by either transition.
 
+On requests authenticated with a linked consumer key, Gregale sends `X-Faas-Platform-Tenant-Id` to the guest and records `platform_tenant.id` on its request/forward traces. This is the stable account-level customer ID across apps and key rotations. It is distinct from `X-Faas-Tenant-Id`, which remains the app owner's account ID. Anonymous requests and unlinked consumers receive no platform-tenant claim; incoming copies of the header are stripped. A linked consumer key presented on a hostname bound to a different platform tenant is rejected with the same non-enumerating invalid-key response. Suspension is checked on cached hostname routes as well as cache misses; a custom-domain request may fail closed if the tenant guard's database read is unavailable.
+
 The CLI provides the same lifecycle with `gregale platform-tenants add|list|info|link-consumer|link-surface|usage|suspend|resume`.
 
 Suspension does not block anonymous traffic, independent JWT authentication, or domains and credentials that are not linked to the tenant. Configure those separately if you need a complete customer access ban. Reads and writes require the same MFA-gated account scopes as API consumer management; Free plans do not expose this feature.

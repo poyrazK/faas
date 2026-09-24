@@ -53,6 +53,23 @@ type Router interface {
 	ResolveHost(ctx context.Context, host string) (app App, ok bool, err error)
 }
 
+// PlatformTenantHostResolver rechecks current tenant-surface state on cached
+// custom-domain hits. Implemented by the production router; legacy test
+// routers without tenant surfaces keep the original cache behavior.
+type PlatformTenantHostResolver interface {
+	ResolvePlatformTenantHost(context.Context, string) (PlatformTenantHostBinding, bool, error)
+}
+
+type PlatformTenantHostBinding struct {
+	SurfaceID string
+	AppID     string
+	AccountID string
+	TenantID  string
+	Active    bool
+	Verified  bool
+	Suspended bool
+}
+
 // targetSet (issue #168, placement scheduler PR) is the per-deployment
 // instance cache the gateway holds. Members are unique by InstanceID; Pick
 // uses one global cursor across the currently routable subset, while unready
@@ -936,14 +953,25 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	// still invalidate the cache through the existing notifier path.
 	if target, ok := b.routes.PeekTarget(host); ok {
 		if app, ok := b.getApp(target.AppID); ok {
-			app.PinnedDeploymentID = target.PinnedDeploymentID
-			app.PinnedDeploymentScope = target.PinnedDeploymentScope
-			return app, true
+			valid, deny := b.cachedPlatformTenantRouteValid(ctx, host, target, &app)
+			if deny {
+				return App{}, false
+			}
+			if valid {
+				app.PinnedDeploymentID = target.PinnedDeploymentID
+				app.PinnedDeploymentScope = target.PinnedDeploymentScope
+				app.RoutedSurfaceID = target.RoutedSurfaceID
+				return app, true
+			}
+			// Route ownership changed. A later lookup error must not revive the
+			// old app from the last-known-good fallback.
+			b.routes.Invalidate(host)
+			b.stale.Delete(host)
 		}
 	}
 	app, ok, err := b.router.ResolveHost(ctx, host)
 	if err != nil {
-		return b.lookupStale(host, err)
+		return b.lookupStale(ctx, host, err)
 	}
 	if !ok {
 		// Positive "no such route": never serve it stale again.
@@ -952,22 +980,53 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	}
 	b.routes.PutTarget(host, RouteTarget{
 		AppID:                 app.ID,
+		RoutedSurfaceID:       app.RoutedSurfaceID,
 		PinnedDeploymentID:    app.PinnedDeploymentID,
 		PinnedDeploymentScope: app.PinnedDeploymentScope,
 	})
 	baseApp := app
 	baseApp.PinnedDeploymentID = ""
 	baseApp.PinnedDeploymentScope = ""
+	baseApp.RoutedSurfaceID = ""
+	baseApp.PlatformTenantID = ""
 	b.putApp(baseApp)
 	b.stale.Put(host, app)
 	return app, true
 }
 
+func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host string, target RouteTarget, app *App) (valid, deny bool) {
+	resolver, ok := b.router.(PlatformTenantHostResolver)
+	if !ok {
+		return true, false
+	}
+	binding, found, err := resolver.ResolvePlatformTenantHost(ctx, host)
+	if err != nil || (found && binding.Suspended) {
+		// A control-plane error cannot justify serving a possibly suspended
+		// customer. Do not enter the stale route tier for this host.
+		return false, true
+	}
+	if found && binding.Active && binding.Verified {
+		if binding.SurfaceID == target.RoutedSurfaceID && binding.AppID == app.ID && binding.AccountID == app.AccountID {
+			app.PlatformTenantID = binding.TenantID
+			return true, false
+		}
+		return false, false // newly linked or moved hostname: resolve afresh
+	}
+	return target.RoutedSurfaceID == "", false // deleted/inactive surface: resolve legacy route afresh
+}
+
 // lookupStale is the Router-error branch of Lookup (ADR-190).
-func (b *PGBackend) lookupStale(host string, err error) (App, bool) {
+func (b *PGBackend) lookupStale(ctx context.Context, host string, err error) (App, bool) {
 	app, ok, shouldLog := b.stale.Get(host)
 	if !ok {
 		b.log.Warn("gateway: route lookup failed", "host", host, "err", err)
+		return App{}, false
+	}
+	valid, _ := b.cachedPlatformTenantRouteValid(ctx, host,
+		RouteTarget{AppID: app.ID, RoutedSurfaceID: app.RoutedSurfaceID}, &app)
+	if !valid {
+		// A stale route cannot bypass a newly linked or suspended tenant
+		// surface while the authoritative router is unavailable.
 		return App{}, false
 	}
 	b.metrics.ObserveRouteLookupStaleServed()

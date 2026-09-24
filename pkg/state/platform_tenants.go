@@ -19,6 +19,18 @@ type PlatformTenant struct {
 	UpdatedAt   time.Time
 }
 
+// PlatformTenantHostBinding is the current, uncached ownership of one custom
+// hostname. A surface can be unlinked; an empty TenantID is not an identity.
+type PlatformTenantHostBinding struct {
+	SurfaceID string
+	AppID     string
+	AccountID string
+	TenantID  string
+	Active    bool
+	Verified  bool
+	Suspended bool
+}
+
 const (
 	PlatformTenantActive    = "active"
 	PlatformTenantSuspended = "suspended"

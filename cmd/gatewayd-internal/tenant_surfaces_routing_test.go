@@ -112,7 +112,7 @@ func TestPgRouter_PlatformTenantSuspensionClaimsHostname(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := pgRouter{store: store, appsSuffix: ".apps.gregale.dev"}
-	if got, ok, err := r.ResolveHost(ctx, "api.customer-platform.com"); err != nil || !ok || got.ID != app.ID {
+	if got, ok, err := r.ResolveHost(ctx, "api.customer-platform.com"); err != nil || !ok || got.ID != app.ID || got.PlatformTenantID != tenant.ID || got.RoutedSurfaceID != surface.ID {
 		t.Fatalf("active tenant route = %+v, %v, %v", got, ok, err)
 	}
 	if _, err := store.SetPlatformTenantStatus(ctx, app.AccountID, tenant.ID, state.PlatformTenantSuspended); err != nil {

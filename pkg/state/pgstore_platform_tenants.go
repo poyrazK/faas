@@ -247,3 +247,22 @@ func (s *PgStore) PlatformTenantSurfaceSuspended(ctx context.Context, surfaceID 
 	}
 	return suspended, err
 }
+
+// PlatformTenantHostBinding is a single indexed read used to revalidate warm
+// gateway routes. In particular, suspending a tenant must take effect without
+// waiting for a hostname cache eviction or an asynchronous notification.
+func (s *PgStore) PlatformTenantHostBinding(ctx context.Context, host string) (PlatformTenantHostBinding, error) {
+	var b PlatformTenantHostBinding
+	err := s.pool.QueryRow(ctx, `select s.id, s.app_id, s.account_id,
+		coalesce(s.platform_tenant_id::text, ''), s.status = 'active',
+		h.verified_at is not null, coalesce(t.status = 'suspended', false)
+		from tenant_hostnames h join tenant_surfaces s on s.id = h.surface_id
+		left join platform_tenants t on t.id = s.platform_tenant_id
+		where h.hostname = $1 and s.status <> 'deleted'`, host).Scan(
+		&b.SurfaceID, &b.AppID, &b.AccountID, &b.TenantID,
+		&b.Active, &b.Verified, &b.Suspended)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PlatformTenantHostBinding{}, ErrNotFound
+	}
+	return b, err
+}

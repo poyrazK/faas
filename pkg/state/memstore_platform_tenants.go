@@ -108,6 +108,8 @@ func (m *MemStore) LinkPlatformTenantConsumer(_ context.Context, accountID, tena
 		return APIConsumer{}, ErrConflict
 	}
 	m.platformTenantByConsumer[consumerID] = tenantID
+	consumer.PlatformTenantID = tenantID
+	m.apiConsumers[consumerID] = consumer
 	return consumer, nil
 }
 
@@ -229,4 +231,26 @@ func (m *MemStore) PlatformTenantSurfaceSuspended(_ context.Context, surfaceID s
 		return tenant.Status == PlatformTenantSuspended, nil
 	}
 	return false, nil
+}
+
+func (m *MemStore) PlatformTenantHostBinding(_ context.Context, host string) (PlatformTenantHostBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, hostname := range m.tenantHostnames {
+		if hostname.Hostname != host {
+			continue
+		}
+		surface, ok := m.tenantSurfaces[hostname.SurfaceID]
+		if !ok || surface.Status == SurfaceStatusDeleted {
+			return PlatformTenantHostBinding{}, ErrNotFound
+		}
+		tenantID := m.platformTenantBySurface[surface.ID]
+		tenant := m.platformTenants[tenantID]
+		return PlatformTenantHostBinding{
+			SurfaceID: surface.ID, AppID: surface.AppID, AccountID: surface.AccountID,
+			TenantID: tenantID, Active: surface.Active(), Verified: hostname.Verified(),
+			Suspended: tenant.Status == PlatformTenantSuspended,
+		}, nil
+	}
+	return PlatformTenantHostBinding{}, ErrNotFound
 }
