@@ -1,27 +1,38 @@
 # FaasSafeDeployRollout
 
-Safe Deploy is deliberately disabled when either service-account token is
+Safe Deploy is deliberately disabled when either internal service token is
 absent. `meterd` refuses to boot if only one token is present, because that
-would enable the rollout state machine without the APID action client (or the
-reverse) and could leave a canary in a partially automated state.
+would enable only half of the control loop. APID also refuses the pair if its
+operator listener is not bound to loopback. These are **not** API keys or
+customer-account tokens: one account-bound key cannot advance canaries for
+other tenants.
 
 ## Staging activation
 
-Provision both APID-issued service-account tokens in the meterd secret file:
+Generate two distinct random tokens of at least 32 bytes each. Provision the
+same pair in both `/etc/faas/sealed.env` (APID) and
+`/etc/faas/secrets/meterd/billing.env` (meterd):
 
 ```text
-FAAS_CANARY_PROGRESSION_TOKEN=<service-account-token>
-FAAS_SAFEDEPLOY_TOKEN=<service-account-token>
+FAAS_CANARY_PROGRESSION_TOKEN=<random-service-secret-1>
+FAAS_SAFEDEPLOY_TOKEN=<random-service-secret-2>
 ```
 
-The file is `/etc/faas/secrets/meterd/billing.env` on a deployed control-plane
-host. Keep the file mode and ownership managed by the normal secrets/deploy
-workflow; do not put either token in a unit file, TOML file, dashboard, or
-command line.
+Keep file modes and ownership managed by the normal secrets/deploy workflow;
+do not put either token in a unit file, TOML file, dashboard, issue, or command
+line. `FAAS_APID_INTERNAL_BASE_URL` defaults to `http://127.0.0.1:9101` and
+may only name a loopback HTTP origin. The three Safe Deploy mutation routes
+are mounted only on APID's loopback operator listener, never its public API
+listener; the canary token can only advance a step, and the action token can
+only recover or request rollback. Both routes resolve the actual deployment's
+account before applying the normal plan/state gates and audit write.
 
-Restart only meterd in staging and confirm the journal contains no
-`safe-deploy token pair incomplete` error. Confirm that the following metrics
-are present before creating a test rollout:
+Restart APID first in staging, confirm public readiness, then restart meterd.
+Confirm neither journal contains a Safe Deploy token/listener error. Test at
+least two different customer accounts: each canary must reach its terminal
+stage through the service loop, while a customer bearer from account A must
+still receive 404 for account B's deployment. Confirm that the following
+metrics are present before creating a test rollout:
 
 ```bash
 curl -fsS http://127.0.0.1:9091/metrics \
@@ -96,6 +107,8 @@ expected rollout duration.
 ## Kill switch and recovery
 
 Remove both Safe Deploy tokens from the meterd secret file and restart meterd.
+After meterd has stopped, remove the pair from APID's sealed environment and
+restart APID to unmount the operator mutations as well.
 This stops automatic progression and alert actions; it does not change the
 traffic already assigned to a deployment. Recover an in-flight rollout
 manually after inspecting its audit trail:

@@ -763,6 +763,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	); err != nil {
 		return err
 	}
+	if safeDeployToken(deps.getenv, "FAAS_CANARY_PROGRESSION_TOKEN") != "" {
+		if err := validateSafeDeployInternalBaseURL(safeDeployInternalBaseURL(deps.getenv)); err != nil {
+			return err
+		}
+	}
 	// Gate-B box-role gate. meterd is a control-plane daemon —
 	// it refuses to start under RoleComputeOnly. The role is
 	// set from TOML or FAAS_METERD_ROLE at deploy time; default
@@ -1537,29 +1542,24 @@ func buildUpstreamProbe(deps runDeps, store state.Store, ops *wire.OpsMetrics, l
 // OFF — the cluster outline's rollout gate flips the token
 // generation ON in a follow-up operator-config PR). When ON:
 //
-//   - FAAS_APID_BASE_URL points to the apid instance the tick
-//     drives (default http://localhost:8080 for the
-//     single-control-plane topology; the multi-host fleet reads
-//     it from the host-age identity file).
-//   - FAAS_CANARY_PROGRESSION_TOKEN is the apid-issued
-//     service-account bearer (NOT a customer token). APID stamps
-//     the trusted actor and account_id on the atomic audit row.
+//   - FAAS_APID_INTERNAL_BASE_URL points to APID's loopback-only
+//     operator listener (default http://127.0.0.1:9101).
+//   - FAAS_CANARY_PROGRESSION_TOKEN and FAAS_SAFEDEPLOY_TOKEN are
+//     distinct shared service secrets, not account-bound API keys.
+//     APID resolves each deployment's account for plan checks and
+//     the atomic audit row.
 //
 // Returns (nil, nil) when the token is missing — the
 // call sites nil-check the progression and skip the goroutine,
 // preserving the pre-PR meterd behaviour exactly.
-func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger) (*canary.Progression, *api.Client) {
+func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger) (*canary.Progression, *api.InternalSafeDeployClient) {
 	token := safeDeployToken(deps.getenv, "FAAS_CANARY_PROGRESSION_TOKEN")
 	if token == "" {
 		log.Info("meterd: canary_progression disabled — FAAS_CANARY_PROGRESSION_TOKEN unset; running without canary_progression tick")
 		return nil, nil
 	}
-	apidBase := deps.getenv("FAAS_APID_BASE_URL")
-	if apidBase == "" {
-		log.Warn("meterd: FAAS_CANARY_PROGRESSION_TOKEN set but FAAS_APID_BASE_URL empty; using http://localhost:8080 default")
-		apidBase = "http://localhost:8080"
-	}
-	apid := api.NewClient(apidBase, token)
+	apidBase := safeDeployInternalBaseURL(deps.getenv)
+	apid := api.NewInternalSafeDeployClient(apidBase, token, safeDeployToken(deps.getenv, "FAAS_SAFEDEPLOY_TOKEN"))
 	progression := canary.NewProgression(&canaryStoreAdapter{store: store}, apid, ops, log)
 	return progression, apid
 }
@@ -1570,11 +1570,10 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 // cluster outline's rollout gate flips the token generation ON in
 // a follow-up operator-config PR). When ON:
 //
-//   - FAAS_SAFEDEPLOY_TOKEN is the apid-issued service-account
-//     bearer that enables the rollout state machine and automatic
-//     stuck-recovery path.
-//   - FAAS_APID_BASE_URL is reused from the canary_progression
-//     configuration (the same apid instance serves both ticks). The
+//   - FAAS_SAFEDEPLOY_TOKEN is the action-class service secret that
+//     enables the rollout state machine and automatic recovery.
+//   - FAAS_APID_INTERNAL_BASE_URL is reused from the canary_progression
+//     configuration (the same loopback listener serves both ticks). The
 //     client is used for idempotent automatic aborts when a rollout
 //     remains stuck beyond the configured safety window.
 //
@@ -1587,7 +1586,7 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 // (the Evaluator doesn't know about pkg/safedeploy; pkg/safedeploy
 // doesn't know about pkg/alerts; the seam lives at
 // alerts.Evaluator.SetActionExec).
-func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, apidClient *api.Client, evaluator *alerts.Evaluator) *safedeploy.Orchestrator {
+func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, apidClient *api.InternalSafeDeployClient, evaluator *alerts.Evaluator) *safedeploy.Orchestrator {
 	token := safeDeployToken(deps.getenv, "FAAS_SAFEDEPLOY_TOKEN")
 	if token == "" {
 		log.Info("meterd: safedeploy disabled — FAAS_SAFEDEPLOY_TOKEN unset; running without safedeploy tick")
