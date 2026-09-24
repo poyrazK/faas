@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"google.golang.org/protobuf/proto"
 )
 
 type consumerTelemetryStore struct {
@@ -100,5 +101,54 @@ func TestRequestTelemetryReceiverRecordsDurableConsumerUsageBeforeTelemetryGate(
 	second := r.handleOne(context.Background(), req)
 	if second.GetOutcome() != rtOutcomeRateLimited || len(store.usage) != 1 {
 		t.Fatalf("retry outcome/usage = %q/%d, want rate_limited/1", second.GetOutcome(), len(store.usage))
+	}
+}
+
+func TestRequestTelemetryReceiverPreservesPlatformTenantSnapshot(t *testing.T) {
+	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanFree}}
+	r := newRequestTelemetryReceiver(store, nil, nil, true)
+	tenantID := uuid.NewString()
+	req := &apidpb.IncrementRequestTelemetryRequest{
+		AccountId: uuid.NewString(), AppId: uuid.NewString(), DeploymentId: uuid.NewString(),
+		ConsumerId: uuid.NewString(), PlatformTenantId: tenantID, EventId: uuid.NewString(),
+		RouteTemplate: "GET /", Method: "GET", HttpStatus: 200,
+		LatencyMs: 1, ReceivedAtUnixMs: time.Now().UnixMilli(),
+	}
+	if got := r.handleOne(context.Background(), req).GetOutcome(); got != rtOutcomeRateLimited {
+		t.Fatalf("outcome = %q, want rate_limited after durable usage", got)
+	}
+	if len(store.usage) != 1 || store.usage[0].PlatformTenantID != tenantID {
+		t.Fatalf("usage lost immutable tenant snapshot: %+v", store.usage)
+	}
+	for _, tc := range []struct{ name, consumerID, tenantID string }{
+		{"anonymous", "", uuid.NewString()},
+		{"malformed", uuid.NewString(), "not-a-uuid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invalid := proto.Clone(req).(*apidpb.IncrementRequestTelemetryRequest)
+			invalid.EventId = uuid.NewString()
+			invalid.ConsumerId, invalid.PlatformTenantId = tc.consumerID, tc.tenantID
+			if got := r.handleOne(context.Background(), invalid).GetOutcome(); got != rtOutcomeDBError || len(store.usage) != 1 {
+				t.Fatalf("invalid attribution outcome=%q usage=%+v", got, store.usage)
+			}
+		})
+	}
+}
+
+func TestRequestTelemetryLegacyEventIDSeparatesTenantTransition(t *testing.T) {
+	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanFree}}
+	r := newRequestTelemetryReceiver(store, nil, nil, true)
+	req := &apidpb.IncrementRequestTelemetryRequest{
+		AccountId: uuid.NewString(), AppId: uuid.NewString(), DeploymentId: uuid.NewString(),
+		ConsumerId: uuid.NewString(), RouteTemplate: "GET /", Method: "GET", HttpStatus: 200,
+		LatencyMs: 1, ReceivedAtUnixMs: time.Now().UnixMilli(),
+	}
+	_ = r.handleOne(context.Background(), req)
+	linked := proto.Clone(req).(*apidpb.IncrementRequestTelemetryRequest)
+	linked.PlatformTenantId = uuid.NewString()
+	_ = r.handleOne(context.Background(), linked)
+	if len(store.usage) != 2 || store.usage[0].EventID == store.usage[1].EventID ||
+		store.usage[0].PlatformTenantID != "" || store.usage[1].PlatformTenantID != linked.PlatformTenantId {
+		t.Fatalf("fallback event IDs conflated link transition: %+v", store.usage)
 	}
 }

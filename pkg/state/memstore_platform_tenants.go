@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -187,22 +188,19 @@ func (m *MemStore) ListPlatformTenantUsage(_ context.Context, accountID, tenantI
 		return nil, ErrNotFound
 	}
 	byDay := map[string]APIConsumerUsageBucket{}
-	for _, bucket := range m.apiConsumerUsage {
-		if bucket.AccountID != accountID || m.platformTenantByConsumer[bucket.ConsumerKey] != tenantID ||
+	for key, bucket := range m.platformTenantUsage {
+		if bucket.AccountID != accountID || !strings.HasPrefix(key, accountID+"\x00"+tenantID+"\x00") ||
 			bucket.WindowStart.Before(since) || !bucket.WindowStart.Before(until) {
 			continue
 		}
-		consumer, ok := m.apiConsumers[bucket.ConsumerKey]
-		if ok && consumer.AppID == bucket.AppID {
-			bucket.WindowStart = bucket.WindowStart.UTC().Truncate(24 * time.Hour)
-			key := bucket.AppID + "/" + bucket.ConsumerKey + "/" + bucket.WindowStart.Format(time.RFC3339)
-			day := byDay[key]
-			day.AccountID, day.AppID, day.ConsumerKey, day.WindowStart = bucket.AccountID, bucket.AppID, bucket.ConsumerKey, bucket.WindowStart
-			day.RequestCount += bucket.RequestCount
-			day.ErrorCount += bucket.ErrorCount
-			day.BillableUnits += bucket.BillableUnits
-			byDay[key] = day
-		}
+		bucket.WindowStart = bucket.WindowStart.UTC().Truncate(24 * time.Hour)
+		key := bucket.AppID + "/" + bucket.ConsumerKey + "/" + bucket.WindowStart.Format(time.RFC3339)
+		day := byDay[key]
+		day.AccountID, day.AppID, day.ConsumerKey, day.WindowStart = bucket.AccountID, bucket.AppID, bucket.ConsumerKey, bucket.WindowStart
+		day.RequestCount += bucket.RequestCount
+		day.ErrorCount += bucket.ErrorCount
+		day.BillableUnits += bucket.BillableUnits
+		byDay[key] = day
 	}
 	out := make([]APIConsumerUsageBucket, 0, len(byDay))
 	for _, day := range byDay {

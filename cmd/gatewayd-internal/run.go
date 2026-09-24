@@ -2694,6 +2694,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestOutcome:        row.GuestOutcome,
 					GuestErrorClass:     row.GuestErrorClass,
 					ConsumerId:          row.ConsumerID,
+					PlatformTenantId:    row.PlatformTenantID,
 					NodeId:              row.NodeID,
 					Region:              row.Region,
 					CommitSha:           row.CommitSHA,

@@ -212,9 +212,8 @@ func (s *PgStore) ListPlatformTenantUsage(ctx context.Context, accountID, tenant
 		select u.account_id, u.app_id, u.consumer_key,
 		       date_trunc('day', u.window_start, 'UTC') as usage_day,
 		       sum(u.request_count)::bigint, sum(u.error_count)::bigint, sum(u.billable_units)::bigint
-		from api_consumer_usage_minutes u
-		join api_consumers c on c.id::text = u.consumer_key and c.app_id = u.app_id and c.account_id = u.account_id
-		where c.platform_tenant_id = $2::uuid and u.account_id = $1::uuid
+		from platform_tenant_usage_minutes u
+		where u.platform_tenant_id = $2::uuid and u.account_id = $1::uuid
 		  and u.window_start >= $3 and u.window_start < $4
 		group by u.account_id, u.app_id, u.consumer_key, usage_day
 		order by usage_day, u.app_id, u.consumer_key`, accountID, tenantID, since.UTC(), until.UTC())

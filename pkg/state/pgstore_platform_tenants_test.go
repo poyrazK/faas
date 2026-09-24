@@ -38,6 +38,12 @@ func TestPgPlatformTenantCrossAppLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(24 * time.Hour).Add(12 * time.Hour)
+	preLink := state.APIConsumerUsageEvent{EventID: uuid.NewString(), AccountID: accountID, AppID: appA,
+		ConsumerKey: consumerA.ID, WindowStart: minute, RequestCount: 5, BillableUnits: 5}
+	if _, err := store.RecordAPIConsumerUsage(ctx, preLink); err != nil {
+		t.Fatal(err)
+	}
 	for _, consumer := range []state.APIConsumer{consumerA, consumerB} {
 		if linked, err := store.LinkPlatformTenantConsumer(ctx, accountID, tenant.ID, consumer.ID); err != nil || linked.PlatformTenantID != tenant.ID {
 			t.Fatalf("link consumer %s: %v", consumer.ID, err)
@@ -63,14 +69,13 @@ func TestPgPlatformTenantCrossAppLifecycle(t *testing.T) {
 	if _, err := store.LinkPlatformTenantSurface(ctx, accountID, tenant.ID, surface.ID); err != nil {
 		t.Fatalf("link surface: %v", err)
 	}
-	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(24 * time.Hour).Add(12 * time.Hour)
 	for _, event := range []state.APIConsumerUsageEvent{
 		{EventID: uuid.NewString(), AccountID: accountID, AppID: appA, ConsumerKey: consumerA.ID,
-			WindowStart: minute, RequestCount: 10, ErrorCount: 2, BillableUnits: 8},
+			PlatformTenantID: tenant.ID, WindowStart: minute, RequestCount: 10, ErrorCount: 2, BillableUnits: 8},
 		{EventID: uuid.NewString(), AccountID: accountID, AppID: appA, ConsumerKey: consumerA.ID,
-			WindowStart: minute.Add(time.Minute), RequestCount: 4, ErrorCount: 0, BillableUnits: 3},
+			PlatformTenantID: tenant.ID, WindowStart: minute.Add(time.Minute), RequestCount: 4, ErrorCount: 0, BillableUnits: 3},
 		{EventID: uuid.NewString(), AccountID: accountID, AppID: appB, ConsumerKey: consumerB.ID,
-			WindowStart: minute, RequestCount: 7, ErrorCount: 1, BillableUnits: 6},
+			PlatformTenantID: tenant.ID, WindowStart: minute, RequestCount: 7, ErrorCount: 1, BillableUnits: 6},
 	} {
 		if _, err := store.RecordAPIConsumerUsage(ctx, event); err != nil {
 			t.Fatal(err)
@@ -88,6 +93,10 @@ func TestPgPlatformTenantCrossAppLifecycle(t *testing.T) {
 	}
 	if dailyA.RequestCount != 14 || !dailyA.WindowStart.Equal(minute.Truncate(24*time.Hour)) {
 		t.Fatalf("daily consumer aggregation = %+v", dailyA)
+	}
+	appUsage, err := store.ListAPIConsumerUsage(ctx, accountID, appA, consumerA.ID, minute, minute.Add(time.Minute))
+	if err != nil || len(appUsage) != 1 || appUsage[0].RequestCount != 15 {
+		t.Fatalf("app-local ledger must retain pre-link traffic: %+v, %v", appUsage, err)
 	}
 	if _, err := store.SetPlatformTenantStatus(ctx, accountID, tenant.ID, state.PlatformTenantSuspended); err != nil {
 		t.Fatal(err)

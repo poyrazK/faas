@@ -688,14 +688,15 @@ type ConsumerKey struct {
 // follow-up, while this ledger preserves the raw facts needed to reconcile a
 // customer invoice.
 type APIConsumerUsageEvent struct {
-	EventID       string
-	AccountID     string
-	AppID         string
-	ConsumerKey   string
-	WindowStart   time.Time
-	RequestCount  int64
-	ErrorCount    int64
-	BillableUnits int64
+	EventID          string
+	AccountID        string
+	AppID            string
+	ConsumerKey      string
+	PlatformTenantID string // immutable at-request attribution; empty for pre-link traffic
+	WindowStart      time.Time
+	RequestCount     int64
+	ErrorCount       int64
+	BillableUnits    int64
 }
 
 // APIConsumerUsageBucket is the read-side aggregate for one app, consumer,

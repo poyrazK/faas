@@ -17,7 +17,11 @@ Suspension does **not** revoke or mutate the linked credentials. The gateway's c
 
 The runtime claim is sourced only from the verified consumer record, never from a request header or hostname. The gateway stamps it as `X-Faas-Platform-Tenant-Id` while retaining `X-Faas-Tenant-Id` for the owning account, and adds a `platform_tenant.id` trace attribute. A linked consumer key used on a different tenant's linked hostname is denied before wake. Route caches hold the surface ID separately from the app row, and cached custom-domain hits re-read current surface/tenant status so suspension and binding changes cannot be bypassed by a warm route. This adds an indexed read to cached custom-domain requests and fails closed if that guard is unavailable; stale-route fallback cannot revive a linked or suspended surface.
 
-Usage reads join the existing idempotent per-minute consumer ledger through linked consumer IDs and return raw counts grouped by UTC day, app, and consumer. They neither reprice app-specific rate cards nor create an invoice. The existing 90-day maximum usage window applies.
+The initial usage read joined the existing idempotent per-minute consumer ledger through linked consumer IDs and returned raw counts grouped by UTC day, app, and consumer. It neither repriced app-specific rate cards nor created an invoice. The existing 90-day maximum usage window applies. The amendment below replaces the mutable join.
+
+## Immutable metering amendment (2026-09-24)
+
+The original usage join above used the consumer's **current** tenant link, which retroactively assigned pre-link requests to a tenant. The runtime identity now makes a verified request-time snapshot available. Gateway telemetry carries that nullable tenant ID in its collapse key and gRPC payload; apid records it on the idempotent usage event and in a separate `(account, tenant, app, consumer, minute)` aggregate in the same transaction as the app-consumer aggregate. Tenant usage reads this immutable aggregate rather than joining the mutable consumer row. Legacy/pre-link events remain unassigned, including during a rolling gateway upgrade. We do not backfill from names, links, or timestamps. Per-app consumer usage remains unchanged. A cross-account tenant ID fails the composite foreign key and cannot contaminate another account's usage. This is raw attribution only, not cross-app pricing, invoicing, or a hard quota.
 
 ## Activation and compatibility
 

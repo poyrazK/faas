@@ -113,6 +113,22 @@ func TestCollapseRequestTelemetrySeparatesConsumers(t *testing.T) {
 	}
 }
 
+func TestCollapseRequestTelemetrySeparatesTenantLinkTransition(t *testing.T) {
+	accountID, appID, deploymentID := uuid.New(), uuid.New(), uuid.New()
+	minute := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	consumer := uuid.NewString()
+	rows := []RequestTelemetryRow{
+		makeCollapseRow(accountID, appID, deploymentID, "GET /v1/usage", "GET", 200, 20, false, "", minute),
+		makeCollapseRow(accountID, appID, deploymentID, "GET /v1/usage", "GET", 200, 20, false, "", minute.Add(time.Second)),
+	}
+	rows[0].ConsumerID, rows[1].ConsumerID = consumer, consumer
+	rows[1].PlatformTenantID = uuid.NewString()
+	got := collapseRequestTelemetry(rows)
+	if len(got) != 2 || got[0].Count != 1 || got[1].Count != 1 {
+		t.Fatalf("link transition collapsed across tenant boundary: %+v", got)
+	}
+}
+
 func TestCollapseRequestTelemetry_PreservesLatencyDistribution(t *testing.T) {
 	t.Parallel()
 	appID := uuid.New()
