@@ -61,6 +61,10 @@ type JailerVMM struct {
 	// and warms it ahead of the next wake (ADR-225). nil disables both the
 	// recording and the prefetch.
 	restorePrefetch *restorePrefetchStore
+	// preBoot tracks which pre-boot files each instance's drive and each
+	// captured drive already hold, so an unchanged restore skips the loop
+	// mount (see preboot_skip.go).
+	preBoot *preBootLedger
 	// storage is the artifact backend where snapshot blobs live per
 	// #96 / ADR-025 axis 2. Restore resolves StorageKey → local tmp;
 	// Snapshot Streams the produced mem blob back through Storage.Put.
@@ -518,6 +522,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		bindMounts:               make(map[string][]ephemeralBind),
 		bindSourceModes:          make(map[string]bindSourceMode),
 		restorePrefetch:          newRestorePrefetchStore(),
+		preBoot:                  newPreBootLedger(),
 	}
 }
 
@@ -985,18 +990,30 @@ func (v *JailerVMM) preparesWakeStateBeforeBoot() bool { return true }
 // per-file writers are shared with the public Stage* methods, which keep
 // their single-file mount for the legacy Manager path and for tests.
 func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) error {
-	writers, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
+	_, err := v.stagePreBootFilesUnless(instance, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
+	return err
+}
+
+// stagePreBootFilesUnless writes the pre-boot files, or skips the loop mount
+// when captureKey's drive is known to already hold byte-identical files
+// (restore only; cold boot passes ""). It reports whether it skipped.
+func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) (bool, error) {
+	writers, digest, err := preBootFileWriters(workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(writers) == 0 {
-		return nil
+		return false, nil
+	}
+	if v.preBoot.captureHas(captureKey, digest) {
+		v.preBoot.instanceHas(instance, digest)
+		return true, nil
 	}
 	drive1, err := v.resolveDriveImage(instance)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return loopMountSession(drive1, "faas-vmm-preboot-", func(mountRoot string) error {
+	err = loopMountSession(drive1, "faas-vmm-preboot-", func(mountRoot string) error {
 		for _, w := range writers {
 			if err := w.write(mountRoot); err != nil {
 				return fmt.Errorf("%s: %w", w.what, err)
@@ -1004,6 +1021,11 @@ func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec,
 		}
 		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	v.preBoot.instanceHas(instance, digest)
+	return false, nil
 }
 
 // preBootFileWriter is one deferred write against a mounted drive1. what is
@@ -1019,14 +1041,17 @@ type preBootFileWriter struct {
 // the individual Stage* methods always had. Order is preserved from the
 // previous implementation: secrets, API env, resolver, app-task marker,
 // sidecar env overrides, main manifest, roster.
-func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) ([]preBootFileWriter, error) {
+func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) ([]preBootFileWriter, string, error) {
 	var writers []preBootFileWriter
+	digest := newPreBootDigest()
 	if len(secretsEnvJSON) > 0 {
+		digest.add("secrets.env", secretsEnvJSON)
 		writers = append(writers, preBootFileWriter{what: "stage secrets.env", write: func(mp string) error {
 			return writeSecretsEnv(mp, secretsEnvJSON)
 		}})
 	}
 	if len(apiEnvJSON) > 0 {
+		digest.add("env.json", apiEnvJSON)
 		writers = append(writers, preBootFileWriter{what: "stage env.json", write: func(mp string) error {
 			return writeAPIEnv(mp, apiEnvJSON)
 		}})
@@ -1034,13 +1059,15 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 	if strings.TrimSpace(serviceDiscoveryIP) != "" {
 		ip, err := parseServiceDiscoveryIP(serviceDiscoveryIP)
 		if err != nil {
-			return nil, fmt.Errorf("stage service resolver: %w", err)
+			return nil, "", fmt.Errorf("stage service resolver: %w", err)
 		}
+		digest.add("resolv.conf", []byte(ip.String()))
 		writers = append(writers, preBootFileWriter{what: "stage service resolver", write: func(mp string) error {
 			return writeServiceDiscoveryResolver(mp, ip)
 		}})
 	}
 	if appTask {
+		digest.add("app-task.json", nil)
 		writers = append(writers, preBootFileWriter{what: "stage app task marker", write: func(mp string) error {
 			return writeDriveFile(mp, appTaskMarkerPath, []byte(`{"kind":"app_task","version":1}`), 0o400, "app-task.json")
 		}})
@@ -1055,29 +1082,32 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 				continue
 			}
 			if !validWorkloadName(workload.Name) {
-				return nil, fmt.Errorf("stage workload %s env: invalid workload name %q", workload.Name, workload.Name)
+				return nil, "", fmt.Errorf("stage workload %s env: invalid workload name %q", workload.Name, workload.Name)
 			}
 			name, blob := workload.Name, workload.preparedEnvJSON
+			digest.add("workload-env:"+name, blob)
 			writers = append(writers, preBootFileWriter{what: "stage workload " + name + " env", write: func(mp string) error {
 				return writeWorkloadEnv(mp, name, blob)
 			}})
 		}
 		manifest, err := marshalWorkloadManifest(workloads[0])
 		if err != nil {
-			return nil, fmt.Errorf("stage main workload manifest: %w", err)
+			return nil, "", fmt.Errorf("stage main workload manifest: %w", err)
 		}
+		digest.add("workload.json", manifest)
 		writers = append(writers, preBootFileWriter{what: "stage main workload manifest", write: func(mp string) error {
 			return writeDriveFile(mp, workloadManifestPath, manifest, 0o400, "workload.json")
 		}})
 		roster, err := marshalWorkloadRoster(workloads[0], workloads[1:])
 		if err != nil {
-			return nil, fmt.Errorf("stage workload roster: %w", err)
+			return nil, "", fmt.Errorf("stage workload roster: %w", err)
 		}
+		digest.add("workloads.json", roster)
 		writers = append(writers, preBootFileWriter{what: "stage workload roster", write: func(mp string) error {
 			return writeDriveFile(mp, workloadRosterPath, roster, 0o400, "workloads.json")
 		}})
 	}
-	return writers, nil
+	return writers, digest.sum(), nil
 }
 
 // loopMountSession loop-mounts an ext4 drive image read-write, runs fn
@@ -1388,7 +1418,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
-	if err := v.stagePreBootFiles(l.Instance, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false); err != nil {
+	preBootSkipped, err := v.stagePreBootFilesUnless(l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false)
+	if err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
 	tPreBootFiles := time.Now()
@@ -1548,6 +1579,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"stage_drives_ms", breakdown.StageDrivesMs,
 		"stage_writable_ms", tStageWritable.Sub(tStageWritableStart).Milliseconds(),
 		"stage_pre_boot_files_ms", breakdown.StagePreBootFilesMs,
+		"stage_pre_boot_files_skipped", preBootSkipped,
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
 		"helper_ms", breakdown.HelperMs,
 		"start_jailer_ms", breakdown.StartJailerMs,
@@ -2265,7 +2297,10 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	defer func() {
 		if retErr != nil {
 			v.cleanupFailedSnapshotCapture(ctx, spec)
+			return
 		}
+		// The captured drive holds this instance's pre-boot files.
+		v.preBoot.captured(l.Instance, spec.StorageKey)
 	}()
 	// Notify an optional in-guest extension before Firecracker is paused so it
 	// can flush state that belongs in the snapshot. Hook delivery is strictly
@@ -2708,6 +2743,7 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 		delete(v.recs, l.Instance)
 		v.mu.Unlock()
 	}
+	v.preBoot.forget(l.Instance)
 	v.closeClient(l.Instance)
 	v.unmountBindMounts(l.Instance)
 	// Chroot lives in tmpfs (spec §Gotchas); removing it frees the RAM it holds.
@@ -3001,6 +3037,7 @@ exited:
 	delete(v.recs, l.Instance)
 	delete(v.proc, l.Instance)
 	v.mu.Unlock()
+	v.preBoot.forget(l.Instance)
 	// Move 4 (issue #254): close the per-instance ring so subscribers
 	// see EOF and the byte budget is released. Done before the chroot
 	// wipe for the same reason as in Kill.

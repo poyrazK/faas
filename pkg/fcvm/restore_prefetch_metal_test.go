@@ -122,8 +122,17 @@ func (r *prefetchMetalRig) evict() {
 
 func (r *prefetchMetalRig) wake(t *testing.T) time.Duration {
 	t.Helper()
+	return r.wakeWith(t, nil)
+}
+
+// wakeWith is wake with a hook to adjust the request (e.g. API env).
+func (r *prefetchMetalRig) wakeWith(t *testing.T, mutate func(*WakeRequest)) time.Duration {
+	t.Helper()
 	req := WakeRequest{Instance: "prefetch-metal", Plan: "pro", BaseKey: r.base,
 		LayerKey: r.layer, VcpuCount: 2, MemSizeMiB: r.mem, Snapshot: r.snap, HealthcheckPath: r.health, StartupDeadlineS: 60}
+	if mutate != nil {
+		mutate(&req)
+	}
 	if r.prepared {
 		req.Plan, req.Port, req.EgressMbit = "scale", netns.AppPort, 250
 		waitPreparedBenchmarkNetwork(t, r.m, context.Background())
