@@ -20,7 +20,7 @@ import (
 func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 	falseValue := false
 	raw, err := json.Marshal(api.Sidecars{
-		{Name: "metrics", Image: "ghcr.io/org/metrics@sha256:01", Type: api.SidecarTypeSidecar, Port: 9090, CPUMillicores: 500, ScratchMB: 192, DiskIOProfile: string(api.SidecarDiskIOProfileHigh), StartupProbe: &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, TimeoutS: 2}, DependsOn: []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}}},
+		{Name: "metrics", Image: "ghcr.io/org/metrics@sha256:01", Type: api.SidecarTypeSidecar, Port: 9090, CPUMillicores: 500, ScratchMB: 192, DiskIOProfile: string(api.SidecarDiskIOProfileHigh), StartupProbe: &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, TimeoutS: 2}, LivenessProbe: &api.AppManifestHealthcheck{GRPC: &api.SidecarGRPCProbe{Port: 9090, Service: "grpc.health.v1.Health"}}, DependsOn: []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}}},
 		{Name: "migrate", Type: api.SidecarTypeInit, Essential: &falseValue, RamMB: 64},
 		{Name: "logger", Image: "ghcr.io/org/logger@sha256:02", Type: api.SidecarTypeSidecar, Port: 9091, RamMB: 32, DependsOn: []api.WorkloadDependency{{Name: "metrics", Condition: api.WorkloadDependencyHealthy}}},
 		{Name: "proxy", Image: "ghcr.io/org/proxy@sha256:03", Type: api.SidecarTypeSidecar, Port: 9092, RamMB: 48, DependsOn: []api.WorkloadDependency{{Name: "logger", Condition: api.WorkloadDependencyStarted}}},
@@ -47,8 +47,9 @@ func TestSidecarSpecsFromDeployment_UsesDeclarationOrder(t *testing.T) {
 		{
 			Name: "metrics", Type: "sidecar", Image: "ghcr.io/org/metrics@sha256:01", StorageKey: "apps/a/d-metrics.ext4",
 			DriveID: fcvm.DriveSidecarPrefix + "0", Port: 9090, CPUMillicores: 500, ScratchMB: 192, DiskIOProfile: string(api.SidecarDiskIOProfileHigh), Essential: true,
-			StartupProbe: &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, TimeoutS: 2},
-			DependsOn:    []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}},
+			StartupProbe:  &api.AppManifestHealthcheck{Test: []string{"CMD", "/ready"}, TimeoutS: 2},
+			LivenessProbe: &api.AppManifestHealthcheck{GRPC: &api.SidecarGRPCProbe{Port: 9090, Service: "grpc.health.v1.Health"}},
+			DependsOn:     []api.WorkloadDependency{{Name: "main", Condition: api.WorkloadDependencyHealthy}},
 		},
 		{
 			Name: "migrate", Type: "init", StorageKey: "apps/a/d-migrate.ext4",

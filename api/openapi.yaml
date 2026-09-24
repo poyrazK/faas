@@ -23286,6 +23286,9 @@ components:
           $ref: '#/components/schemas/SidecarHTTPGetProbe'
         tcp_socket:
           $ref: '#/components/schemas/SidecarTCPSocketProbe'
+        grpc:
+          $ref: '#/components/schemas/SidecarGRPCProbe'
+          description: "Companion-only probe action; rejected on the app's own healthcheck."
         period_s:
           type: integer
           minimum: 0
@@ -23354,12 +23357,26 @@ components:
           maximum: 65535
           description: "TCP container port; 0/omitted inherits the workload port."
 
+    SidecarGRPCProbe:
+      description: "Standard gRPC health Check RPC sent to the companion's loopback listener."
+      type: object
+      properties:
+        port:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          description: "gRPC container port; 0/omitted inherits the workload port."
+        service:
+          type: string
+          maxLength: 256
+          description: "Optional gRPC health service name; empty checks overall server health."
+
     SidecarProbe:
       description: |
         Container-local startup, liveness, or readiness probe for a companion. Specify
-        exactly one action: exec, http_get, tcp_socket, or the legacy OCI
-        test field. Port 0/omitted uses the workload's declared port, then
-        the image port, then the platform default.
+        exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
+        test field. Network probes use port 0/omitted to inherit the workload's
+        declared port, then the image port, then the platform default.
       type: object
       properties:
         test:
@@ -23372,6 +23389,8 @@ components:
           $ref: '#/components/schemas/SidecarHTTPGetProbe'
         tcp_socket:
           $ref: '#/components/schemas/SidecarTCPSocketProbe'
+        grpc:
+          $ref: '#/components/schemas/SidecarGRPCProbe'
         period_s:
           type: integer
           minimum: 0

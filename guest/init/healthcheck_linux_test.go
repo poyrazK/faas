@@ -6,11 +6,16 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"net"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 // TestParseHealthcheckTest_CMD pins the CMD argv shape: leading
@@ -23,6 +28,46 @@ func TestParseHealthcheckTest_CMD(t *testing.T) {
 	}
 	if len(argv) != 2 || argv[0] != "/bin/check" || argv[1] != "--flag" {
 		t.Errorf("argv = %v; want [/bin/check --flag]", argv)
+	}
+}
+
+func TestRunSidecarGRPCProbe(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	healthServer := health.NewServer()
+	healthpb.RegisterHealthServer(server, healthServer)
+	healthServer.SetServingStatus("ready.service", healthpb.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus("starting.service", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	cases := []struct {
+		name    string
+		service string
+		want    byte
+		output  string
+	}{
+		{name: "serving", service: "ready.service", want: healthcheckStatusPass},
+		{name: "overall-health", want: healthcheckStatusPass},
+		{name: "not-serving", service: "starting.service", want: healthcheckStatusFail, output: "NOT_SERVING"},
+		{name: "unknown-service", service: "missing.service", want: healthcheckStatusFail, output: "gRPC health check RPC failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := &api.SidecarProbe{GRPC: &api.SidecarGRPCProbe{Service: tc.service}}
+			got := runSidecarProbeOnce(context.Background(), probe, port, time.Second, nil, "", "", 0, nil, nil)
+			if got.Status != tc.want {
+				t.Fatalf("probe status = %d, want %d (output=%q)", got.Status, tc.want, got.Output)
+			}
+			if tc.output != "" && !strings.Contains(string(got.Output), tc.output) {
+				t.Errorf("probe output = %q, want substring %q", got.Output, tc.output)
+			}
+		})
 	}
 }
 

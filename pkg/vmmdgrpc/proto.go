@@ -635,6 +635,8 @@ func sidecarProbeFromProto(in *vmmdpb.SidecarProbeSpec) *api.SidecarProbe {
 		out.HTTPGet = &api.SidecarHTTPGetProbe{Path: in.GetPath(), Port: int(in.GetPort())}
 	case "tcp":
 		out.TCPSocket = &api.SidecarTCPSocketProbe{Port: int(in.GetPort())}
+	case "grpc":
+		out.GRPC = &api.SidecarGRPCProbe{Port: int(in.GetPort()), Service: in.GetGrpcService()}
 	}
 	return out
 }

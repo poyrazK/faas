@@ -6879,6 +6879,10 @@ func cloneWorkloadProbe(in *api.SidecarProbe) *api.SidecarProbe {
 		tcpProbe := *in.TCPSocket
 		out.TCPSocket = &tcpProbe
 	}
+	if in.GRPC != nil {
+		grpcProbe := *in.GRPC
+		out.GRPC = &grpcProbe
+	}
 	return &out
 }
 

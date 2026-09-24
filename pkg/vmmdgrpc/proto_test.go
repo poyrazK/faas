@@ -572,8 +572,9 @@ func TestSidecarsFromProto(t *testing.T) {
 		{
 			Name: "scraper", Image: "ghcr.io/org/s@sha256:01", Type: "sidecar",
 			RamMb: 128, Port: 9092, Essential: false,
-			StorageKey: "apps/foo/00000000-0000-0000-0000-aaaaaaaa-scraper.ext4",
-			DriveSlot:  "layer-sidecar-1",
+			StartupProbe: &vmmdpb.SidecarProbeSpec{ProbeType: "grpc", Port: 50051, GrpcService: "grpc.health.v1.Health"},
+			StorageKey:   "apps/foo/00000000-0000-0000-0000-aaaaaaaa-scraper.ext4",
+			DriveSlot:    "layer-sidecar-1",
 		},
 	}
 	got := sidecarsFromProto(pbs)
@@ -609,6 +610,9 @@ func TestSidecarsFromProto(t *testing.T) {
 	}
 	if got[1].Essential {
 		t.Errorf("entry 1 essential = true, want false")
+	}
+	if got[1].StartupProbe == nil || got[1].StartupProbe.GRPC == nil || got[1].StartupProbe.GRPC.Port != 50051 || got[1].StartupProbe.GRPC.Service != "grpc.health.v1.Health" {
+		t.Errorf("entry 1 startup gRPC probe wrong: %+v", got[1].StartupProbe)
 	}
 	if got[1].DriveID != "layer-sidecar-1" {
 		t.Errorf("entry 1 DriveID = %q, want layer-sidecar-1", got[1].DriveID)

@@ -1512,6 +1512,10 @@ func sidecarProbeToProto(in *api.SidecarProbe) *vmmdpb.SidecarProbeSpec {
 	case in.TCPSocket != nil:
 		out.ProbeType = "tcp"
 		out.Port = uint32(in.TCPSocket.Port)
+	case in.GRPC != nil:
+		out.ProbeType = "grpc"
+		out.Port = uint32(in.GRPC.Port)
+		out.GrpcService = in.GRPC.Service
 	case len(in.Test) > 0:
 		out.ProbeType = "exec"
 	}

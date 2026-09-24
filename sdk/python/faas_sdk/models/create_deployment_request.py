@@ -87,6 +87,8 @@ class CreateDeploymentRequest:
     rollback_on_5xx: bool | None | Unset = UNSET
     """Create-time opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to
     false."""
+    disable_startup_cpu_boost: bool | None | Unset = UNSET
+    """Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."""
     full_rootfs_allow_auto: bool | None | Unset = UNSET
     """Whether to auto-fallback to a self-contained rootfs for images without a Gregale runtime base. Omitted uses
     the plan default."""
@@ -194,6 +196,12 @@ class CreateDeploymentRequest:
         else:
             rollback_on_5xx = self.rollback_on_5xx
 
+        disable_startup_cpu_boost: bool | None | Unset
+        if isinstance(self.disable_startup_cpu_boost, Unset):
+            disable_startup_cpu_boost = UNSET
+        else:
+            disable_startup_cpu_boost = self.disable_startup_cpu_boost
+
         full_rootfs_allow_auto: bool | None | Unset
         if isinstance(self.full_rootfs_allow_auto, Unset):
             full_rootfs_allow_auto = UNSET
@@ -239,6 +247,8 @@ class CreateDeploymentRequest:
             field_dict["canary"] = canary
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if full_rootfs_allow_auto is not UNSET:
             field_dict["full_rootfs_allow_auto"] = full_rootfs_allow_auto
         if full_rootfs_override is not UNSET:
@@ -430,6 +440,15 @@ class CreateDeploymentRequest:
 
         rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
 
+        def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        disable_startup_cpu_boost = _parse_disable_startup_cpu_boost(d.pop("disable_startup_cpu_boost", UNSET))
+
         def _parse_full_rootfs_allow_auto(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -464,6 +483,7 @@ class CreateDeploymentRequest:
             pr_number=pr_number,
             canary=canary,
             rollback_on_5xx=rollback_on_5xx,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
             full_rootfs_allow_auto=full_rootfs_allow_auto,
             full_rootfs_override=full_rootfs_override,
         )

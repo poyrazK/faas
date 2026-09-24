@@ -712,7 +712,7 @@ message SidecarSpec {
 }
 
 // SidecarProbeSpec carries one container-local startup, liveness, or readiness probe.
-// probe_type is one of exec, http, tcp, or none. test plus the legacy timing
+// probe_type is one of exec, http, tcp, grpc, or none. test plus the legacy timing
 // aliases preserve the original OCI HEALTHCHECK-shaped sidecar override.
 message SidecarProbeSpec {
   string probe_type = 1;
@@ -728,6 +728,9 @@ message SidecarProbeSpec {
   int32 initial_delay_s = 11;
   int32 retries = 12;
   int32 start_period_s = 13;
+  // grpc_service is set when probe_type is "grpc". Port reuses the
+  // shared probe port field above; empty service checks overall health.
+  string grpc_service = 14;
 }
 
 // SealedSecret is one (key, ciphertext) pair from an app or sidecar env

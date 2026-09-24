@@ -3848,7 +3848,7 @@ func projectedWorkloadManifestBytes(w WorkloadSpec) int64 {
 	for _, dep := range w.DependsOn {
 		dependencyBytes += int64(len(dep.Name)+len(dep.Condition)) * 2
 	}
-	probeBytes := projectedSidecarProbeBytes(w.StartupProbe) + projectedSidecarProbeBytes(w.LivenessProbe)
+	probeBytes := projectedSidecarProbeBytes(w.StartupProbe) + projectedSidecarProbeBytes(w.LivenessProbe) + projectedSidecarProbeBytes(w.ReadinessProbe)
 	// Three int fields (port, ram_mb, cpu_millicores) and a bool + 2 array
 	// fields. 11 bytes per int is the worst case for a 32-bit
 	// value; 5 bytes for "false". The 5 quoted keys + 2 numeric
@@ -3874,6 +3874,9 @@ func projectedSidecarProbeBytes(probe *api.SidecarProbe) int64 {
 	}
 	if probe.HTTPGet != nil {
 		bytes += int64(len(probe.HTTPGet.Path)) * 2
+	}
+	if probe.GRPC != nil {
+		bytes += int64(len(probe.GRPC.Service)) * 2
 	}
 	return bytes
 }
