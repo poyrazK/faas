@@ -117,10 +117,12 @@ type ProjectEnvironmentVariableResponse struct {
 // ProjectEnvironmentSecretResponse is safe secret metadata for an effective
 // environment snapshot. Ciphertext, plaintext, and sealing key identifiers
 // are intentionally excluded. ValueHash supports equality checks without
-// unsealing; managed fields preserve resource-binding ownership.
+// unsealing; Version is absent for legacy rows with unknown history, while
+// managed fields preserve resource-binding ownership.
 type ProjectEnvironmentSecretResponse struct {
 	Key                  string `json:"key"`
 	ValueHash            string `json:"value_hash,omitempty"`
+	Version              int64  `json:"version,omitempty"`
 	ManagedBy            string `json:"managed_by,omitempty"`
 	BindingID            string `json:"binding_id,omitempty"`
 	CredentialGeneration int64  `json:"credential_generation,omitempty"`
@@ -209,6 +211,7 @@ type ProjectEnvironmentVariableChangeResponse struct {
 type ProjectEnvironmentSecretCellResponse struct {
 	Present              bool   `json:"present"`
 	ValueHash            string `json:"value_hash,omitempty"`
+	Version              int64  `json:"version,omitempty"`
 	ManagedBy            string `json:"managed_by,omitempty"`
 	BindingID            string `json:"binding_id,omitempty"`
 	CredentialGeneration int64  `json:"credential_generation,omitempty"`

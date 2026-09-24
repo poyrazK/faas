@@ -17,10 +17,11 @@ T = TypeVar("T", bound="ProjectEnvironmentSecretCellResponse")
 
 @_attrs_define
 class ProjectEnvironmentSecretCellResponse:
-    """One side of a secret comparison; never contains secret material."""
+    """One side of a secret comparison. Version is omitted when unknown; never contains secret material."""
 
     present: bool
     value_hash: str | Unset = UNSET
+    version: int | Unset = UNSET
     managed_by: ProjectEnvironmentSecretCellResponseManagedBy | Unset = UNSET
     binding_id: str | Unset = UNSET
     credential_generation: int | Unset = UNSET
@@ -30,6 +31,8 @@ class ProjectEnvironmentSecretCellResponse:
         present = self.present
 
         value_hash = self.value_hash
+
+        version = self.version
 
         managed_by: str | Unset = UNSET
         if not isinstance(self.managed_by, Unset):
@@ -48,6 +51,8 @@ class ProjectEnvironmentSecretCellResponse:
         )
         if value_hash is not UNSET:
             field_dict["value_hash"] = value_hash
+        if version is not UNSET:
+            field_dict["version"] = version
         if managed_by is not UNSET:
             field_dict["managed_by"] = managed_by
         if binding_id is not UNSET:
@@ -64,6 +69,8 @@ class ProjectEnvironmentSecretCellResponse:
 
         value_hash = d.pop("value_hash", UNSET)
 
+        version = d.pop("version", UNSET)
+
         _managed_by = d.pop("managed_by", UNSET)
         managed_by: ProjectEnvironmentSecretCellResponseManagedBy | Unset
         if isinstance(_managed_by, Unset):
@@ -78,6 +85,7 @@ class ProjectEnvironmentSecretCellResponse:
         project_environment_secret_cell_response = cls(
             present=present,
             value_hash=value_hash,
+            version=version,
             managed_by=managed_by,
             binding_id=binding_id,
             credential_generation=credential_generation,

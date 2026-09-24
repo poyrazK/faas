@@ -1,12 +1,13 @@
 from typing import Literal
 
-ProjectEnvironmentSecretChangeResponseKind = Literal["added", "changed", "removed", "unknown"]
+ProjectEnvironmentSecretChangeResponseKind = Literal["added", "changed", "removed", "unknown", "version_drift"]
 
 PROJECT_ENVIRONMENT_SECRET_CHANGE_RESPONSE_KIND_VALUES: set[ProjectEnvironmentSecretChangeResponseKind] = {
     "added",
     "changed",
     "removed",
     "unknown",
+    "version_drift",
 }
 
 

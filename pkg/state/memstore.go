@@ -17896,7 +17896,7 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 	if !ok {
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
-			Ciphertext: ciphertext, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
+			Ciphertext: ciphertext, SecretVersion: 1, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		return nil
@@ -17908,6 +17908,7 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 		return ErrConflict
 	}
 	existing.Ciphertext = ciphertext
+	existing.SecretVersion++
 	existing.DeliveryVersion++
 	existing.DeliveryStatus = SecretDeliveryPending
 	existing.LastDeliveryAttemptAt = nil
@@ -17930,7 +17931,7 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	if !ok {
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
-			Ciphertext: ciphertext, Kid: kid, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
+			Ciphertext: ciphertext, Kid: kid, SecretVersion: 1, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		return nil
@@ -17943,6 +17944,7 @@ func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, a
 	}
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
+	existing.SecretVersion++
 	existing.DeliveryVersion++
 	existing.DeliveryStatus = SecretDeliveryPending
 	existing.LastDeliveryAttemptAt = nil
@@ -17969,7 +17971,7 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 		m.secrets[k] = AppSecret{
 			AccountID: accountID, AppID: appID, Scope: scope, Key: key,
 			Ciphertext: ciphertext, Kid: kid, ValueHash: valueHash,
-			DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
+			SecretVersion: 1, DeliveryVersion: 1, DeliveryStatus: SecretDeliveryPending,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		return nil
@@ -17983,6 +17985,7 @@ func (m *MemStore) UpsertAppSecretWithKidAndValueHashInScope(_ context.Context, 
 	existing.Ciphertext = ciphertext
 	existing.Kid = kid
 	existing.ValueHash = valueHash
+	existing.SecretVersion++
 	existing.DeliveryVersion++
 	existing.DeliveryStatus = SecretDeliveryPending
 	existing.LastDeliveryAttemptAt = nil

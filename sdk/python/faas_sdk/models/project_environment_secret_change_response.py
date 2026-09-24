@@ -25,9 +25,9 @@ class ProjectEnvironmentSecretChangeResponse:
     key: str
     kind: ProjectEnvironmentSecretChangeResponseKind
     before: ProjectEnvironmentSecretCellResponse
-    """One side of a secret comparison; never contains secret material."""
+    """One side of a secret comparison. Version is omitted when unknown; never contains secret material."""
     after: ProjectEnvironmentSecretCellResponse
-    """One side of a secret comparison; never contains secret material."""
+    """One side of a secret comparison. Version is omitted when unknown; never contains secret material."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

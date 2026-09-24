@@ -3,11 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One side of a secret comparison; never contains secret material.
+ * One side of a secret comparison. Version is omitted when unknown; never contains secret material.
  */
 export type ProjectEnvironmentSecretCellResponse = {
   present: boolean;
   value_hash?: string;
+  version?: number;
   managed_by?: 'managed_postgres' | 'object_storage';
   binding_id?: string;
   credential_generation?: number;

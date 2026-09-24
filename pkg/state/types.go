@@ -5835,6 +5835,11 @@ type AppSecret struct {
 	// probabilistically non-deterministic, so a
 	// ciphertext-derived hash would diverge for every row).
 	ValueHash string
+	// SecretVersion counts customer writes since version tracking began.
+	// Zero means the row predates tracking and has not been rewritten; host-key
+	// reseals do not advance it. It is independent of DeliveryVersion, which
+	// fences runtime delivery and was backfilled to 1 for legacy rows.
+	SecretVersion int64
 	// ManagedPostgresBindingID and its opaque credential fields are populated
 	// only by the managed PostgreSQL credential sink. Customer writes cannot
 	// replace or delete an owned row while its binding is active.

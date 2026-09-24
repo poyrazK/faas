@@ -38,6 +38,9 @@ func TestProjectEnvironmentStateAndUnifiedDiff(t *testing.T) {
 	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, acct.ID, app.ID, "staging", "STRIPE_KEY", "age1-staging", "2222222222222222", []byte("sealed-staging")); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, acct.ID, app.ID, "staging", "STRIPE_KEY", "age1-staging", "2222222222222222", []byte("sealed-staging-new")); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{
 		AccountID: acct.ID, AppID: app.ID, Scope: "staging", Key: "DATABASE_URL",
 		Ciphertext: []byte("sealed-database"), ValueHash: "3333333333333333",
@@ -79,8 +82,11 @@ func TestProjectEnvironmentStateAndUnifiedDiff(t *testing.T) {
 	if len(workload.Variables) != 2 || len(workload.Secrets) != 2 || len(workload.Bindings) != 1 || workload.Bindings[0].CredentialGeneration != 7 {
 		t.Fatalf("workload state=%+v", workload)
 	}
+	if workload.Secrets[1].Key != "STRIPE_KEY" || workload.Secrets[1].Version != 2 {
+		t.Fatalf("customer secret version=%+v, want 2", workload.Secrets[1])
+	}
 	body := rec.Body.String()
-	for _, forbidden := range []string{"sealed-staging", "sealed-database", "age1-staging"} {
+	for _, forbidden := range []string{"sealed-staging", "sealed-staging-new", "sealed-database", "age1-staging"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("state response leaked %q: %s", forbidden, body)
 		}
@@ -107,6 +113,25 @@ func TestProjectEnvironmentStateAndUnifiedDiff(t *testing.T) {
 	}
 	if diff.Workloads[0].Secrets[0].Before.ValueHash != "" && diff.Workloads[0].Secrets[0].Key == "DATABASE_URL" {
 		t.Fatalf("missing secret unexpectedly has a fingerprint: %+v", diff.Workloads[0].Secrets[0])
+	}
+	if got := diff.Workloads[0].Secrets[1]; got.Key != "STRIPE_KEY" || got.Before.Version != 1 || got.After.Version != 2 {
+		t.Fatalf("secret versions in diff=%+v", got)
+	}
+}
+
+func TestProjectEnvironmentSecretVersionDriftAndLegacyUnknown(t *testing.T) {
+	const hash = "1111111111111111"
+	before := api.ProjectEnvironmentSecretResponse{Key: "TOKEN", ValueHash: hash, Version: 3}
+	after := api.ProjectEnvironmentSecretResponse{Key: "TOKEN", ValueHash: hash, Version: 4}
+	if got := projectEnvironmentSecretDiffKind(before, after, true, true); got != "version_drift" {
+		t.Fatalf("same value at different versions = %q, want version_drift", got)
+	}
+	before.Version = 0 // A legacy row has no trustworthy revision history.
+	if got := projectEnvironmentSecretDiffKind(before, after, true, true); got != "unchanged" {
+		t.Fatalf("legacy version with equal value = %q, want unchanged", got)
+	}
+	if got := projectEnvironmentSecretCell(before, true); got.Version != 0 {
+		t.Fatalf("legacy version cell = %+v, want unknown", got)
 	}
 }
 

@@ -8,7 +8,7 @@ import type { ProjectEnvironmentSecretCellResponse } from './ProjectEnvironmentS
  */
 export type ProjectEnvironmentSecretChangeResponse = {
   key: string;
-  kind: 'added' | 'removed' | 'changed' | 'unknown';
+  kind: 'added' | 'removed' | 'changed' | 'version_drift' | 'unknown';
   before: ProjectEnvironmentSecretCellResponse;
   after: ProjectEnvironmentSecretCellResponse;
 };

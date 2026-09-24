@@ -18,10 +18,14 @@ T = TypeVar("T", bound="ProjectEnvironmentSecretResponse")
 
 @_attrs_define
 class ProjectEnvironmentSecretResponse:
-    """Safe secret metadata. Secret values and ciphertext are never included."""
+    """Safe secret metadata. Version is omitted for legacy secrets with unknown history; secret values and ciphertext are
+    never included.
+
+    """
 
     key: str
     value_hash: str | Unset = UNSET
+    version: int | Unset = UNSET
     managed_by: ProjectEnvironmentSecretResponseManagedBy | Unset = UNSET
     binding_id: str | Unset = UNSET
     credential_generation: int | Unset = UNSET
@@ -32,6 +36,8 @@ class ProjectEnvironmentSecretResponse:
         key = self.key
 
         value_hash = self.value_hash
+
+        version = self.version
 
         managed_by: str | Unset = UNSET
         if not isinstance(self.managed_by, Unset):
@@ -54,6 +60,8 @@ class ProjectEnvironmentSecretResponse:
         )
         if value_hash is not UNSET:
             field_dict["value_hash"] = value_hash
+        if version is not UNSET:
+            field_dict["version"] = version
         if managed_by is not UNSET:
             field_dict["managed_by"] = managed_by
         if binding_id is not UNSET:
@@ -71,6 +79,8 @@ class ProjectEnvironmentSecretResponse:
         key = d.pop("key")
 
         value_hash = d.pop("value_hash", UNSET)
+
+        version = d.pop("version", UNSET)
 
         _managed_by = d.pop("managed_by", UNSET)
         managed_by: ProjectEnvironmentSecretResponseManagedBy | Unset
@@ -93,6 +103,7 @@ class ProjectEnvironmentSecretResponse:
         project_environment_secret_response = cls(
             key=key,
             value_hash=value_hash,
+            version=version,
             managed_by=managed_by,
             binding_id=binding_id,
             credential_generation=credential_generation,

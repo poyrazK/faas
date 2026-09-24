@@ -44,9 +44,9 @@
   isolation requires cross-bucket copy support and is not an atomic snapshot
   while the source is being written. Deleted environments durably queue managed
   resource cleanup and retry it after transient provider failures. Secret
-  versions for customer-managed secrets remain a
-  follow-up because the current schema stores fingerprints and update timestamps
-  but no monotonic version. This ADR adds no database migration.
+  versions for customer-managed secrets were deferred until a monotonic write
+  counter could be added; see the follow-up below. The initial ADR added no
+  database migration.
 - **Rejected alternatives:** Joining the existing config and per-app diff calls
   in the CLI would produce a torn snapshot and duplicate policy in every
   client. Comparing sealed ciphertext is invalid because age encryption is
@@ -66,3 +66,18 @@ OpenAPI document is not copied: when enforcement depends on one without an
 explicit route list, clone leaves routes shared and reports that limitation.
 Domains and edge rules remain application-scoped; they are not part of this
 route-policy follow-up.
+
+## Follow-up: customer-secret versions
+
+Environment state and diff expose an optional monotonic customer-secret
+`version` alongside the existing value fingerprint. Rows that predate version
+tracking remain unversioned rather than receiving a fabricated lifetime count.
+The first subsequent customer write starts them at version 1; later writes
+increment atomically. Host-key resealing preserves the version because it does
+not change the runtime value. Environment clone carries a known version and
+sealed value into the new scope, but resets runtime-delivery state: the new
+scope has not yet been delivered to an instance. Managed credentials continue
+to use their provider credential generation, not the customer-secret version.
+When fingerprints match but known versions differ, diff reports
+`version_drift` without claiming that the plaintext values differ. No secret
+material or sealing-key identifier enters the state/diff response.

@@ -21517,11 +21517,12 @@ func (s *PgStore) GetAppSecret(ctx context.Context, accountID, appID, key string
 // now a 3-column tuple.
 func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, scope, key string, ciphertext []byte) error {
 	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
-		`insert into app_secrets (account_id, app_id, scope, key, ciphertext)
-		 values ($1, $2, $3, $4, $5)
+		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, secret_version)
+		 values ($1, $2, $3, $4, $5, 1)
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       updated_at = now(),
+		       secret_version = coalesce(app_secrets.secret_version, 0) + 1,
 		       delivery_version = app_secrets.delivery_version + 1,
 		       delivery_status = 'pending',
 		       last_delivery_attempt_at = null,
@@ -21540,12 +21541,13 @@ func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, 
 // stamps kid alongside ciphertext.
 func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error {
 	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
-		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid)
-		 values ($1, $2, $3, $4, $5, $6)
+		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, secret_version)
+		 values ($1, $2, $3, $4, $5, $6, 1)
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
 		       updated_at = now(),
+		       secret_version = coalesce(app_secrets.secret_version, 0) + 1,
 		       delivery_version = app_secrets.delivery_version + 1,
 		       delivery_status = 'pending',
 		       last_delivery_attempt_at = null,
@@ -21577,13 +21579,14 @@ func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, 
 // so an unconfigured handler surface as NULL on the column.
 func (s *PgStore) UpsertAppSecretWithKidAndValueHashInScope(ctx context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
 	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
-		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash)
-		 values ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))
+		`insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version)
+		 values ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), 1)
 		 on conflict (app_id, scope, key) do update
 		   set ciphertext = excluded.ciphertext,
 		       kid = excluded.kid,
 		       value_hash = excluded.value_hash,
 		       updated_at = now(),
+		       secret_version = coalesce(app_secrets.secret_version, 0) + 1,
 		       delivery_version = app_secrets.delivery_version + 1,
 		       delivery_status = 'pending',
 		       last_delivery_attempt_at = null,
@@ -21796,7 +21799,7 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 		`select account_id, app_id, scope, key, ciphertext, COALESCE(kid, ''), COALESCE(value_hash, ''),
 		        COALESCE(managed_postgres_binding_id::text, ''), COALESCE(managed_credential_ref, ''),
 		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''),
-		        delivery_version, COALESCE(delivered_version, 0), delivery_status,
+		        COALESCE(secret_version, 0), delivery_version, COALESCE(delivered_version, 0), delivery_status,
 		        last_delivery_attempt_at, last_delivered_at, COALESCE(last_delivery_error_code, ''),
 		        COALESCE(last_delivered_wake_id, ''), COALESCE(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
@@ -21804,7 +21807,7 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 		accountID, appID, scope, key).Scan(
 		&out.AccountID, &out.AppID, &out.Scope, &out.Key, &out.Ciphertext, &out.Kid, &out.ValueHash,
 		&out.ManagedPostgresBindingID, &out.ManagedCredentialRef, &out.ManagedCredentialGeneration, &out.ManagedObjectStorageCredentialID,
-		&out.DeliveryVersion, &out.DeliveredVersion, &out.DeliveryStatus,
+		&out.SecretVersion, &out.DeliveryVersion, &out.DeliveredVersion, &out.DeliveryStatus,
 		&out.LastDeliveryAttemptAt, &out.LastDeliveredAt, &out.LastDeliveryErrorCode,
 		&out.LastDeliveredWakeID, &out.LastDeliveredInstanceID,
 		&out.CreatedAt, &out.UpdatedAt)
@@ -22013,7 +22016,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
 		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
-		        delivery_version, coalesce(delivered_version, 0), delivery_status,
+		        coalesce(secret_version, 0), delivery_version, coalesce(delivered_version, 0), delivery_status,
 		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
 		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
@@ -22030,7 +22033,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
 			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
-			&r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
+			&r.SecretVersion, &r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
 			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
 			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
@@ -22061,7 +22064,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
 		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
 		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
-		        delivery_version, coalesce(delivered_version, 0), delivery_status,
+		        coalesce(secret_version, 0), delivery_version, coalesce(delivered_version, 0), delivery_status,
 		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
 		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
 		 from app_secrets
@@ -22078,7 +22081,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		if err := rows.Scan(
 			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
 			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
-			&r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
+			&r.SecretVersion, &r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
 			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
 			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
