@@ -1894,7 +1894,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "webhooks",
 		DocSlug: "webhooks",
-		Short:   "Manage outbound webhooks (webhooks list|add|info|update|rm|deliveries|retry|rotate-secret)",
+		Short:   "Manage app and account release webhooks (webhooks account <verb>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List webhooks"},
 			{Name: "add", Short: "Add a webhook"},
@@ -1908,6 +1908,7 @@ var cliCommands = []cliCommand{
 				{Name: "secret", Short: "replacement HMAC-SHA256 secret", Value: "VALUE"},
 				{Name: "from-stdin", Short: "read the replacement secret from stdin"},
 			}},
+			{Name: "account", Short: "Manage one release receiver across all account apps"},
 		},
 	},
 	{

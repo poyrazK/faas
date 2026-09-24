@@ -2135,6 +2135,16 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAppWebhookSecret))))
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
+	// ADR-224: one account-owned release receiver covers current and future
+	// apps. Public writes are enabled only after transactional fan-out landed.
+	mux.HandleFunc("GET /v1/account/release-webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountReleaseWebhooks))))
+	mux.HandleFunc("POST /v1/account/release-webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAccountReleaseWebhook)))))
+	mux.HandleFunc("GET /v1/account/release-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountReleaseWebhook))))
+	mux.HandleFunc("PATCH /v1/account/release-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAccountReleaseWebhook))))
+	mux.HandleFunc("DELETE /v1/account/release-webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAccountReleaseWebhook))))
+	mux.HandleFunc("POST /v1/account/release-webhooks/{id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotateAccountReleaseWebhookSecret))))
+	mux.HandleFunc("GET /v1/account/release-webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountReleaseWebhookDeliveries))))
+	mux.HandleFunc("POST /v1/account/release-webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAccountReleaseWebhookDelivery))))
 	mux.HandleFunc("POST /v1/apps/{slug}/outbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deliverAppEvent)))))
 
 	// Durable inbound webhooks. Configuration is authenticated, while the

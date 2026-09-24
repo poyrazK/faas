@@ -59,6 +59,7 @@ func Run(t *testing.T, open Open) {
 		{"operator_intent_claim_is_exactly_once", testOperatorIntentClaimIsExactlyOnce},
 		{"cli_auth_code_claim_binds_one_account", testCliAuthCodeClaimBindsOneAccount},
 		{"due_webhook_delivery_claim_respects_schedule_and_limit", testDueWebhookDeliveryClaimRespectsScheduleAndLimit},
+		{"account_release_webhook_quota_and_cross_app_pagination", testAccountReleaseWebhookQuotaAndPagination},
 		{"fire_now_request_claim_is_exactly_once", testFireNowRequestClaimIsExactlyOnce},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},

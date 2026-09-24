@@ -14093,6 +14093,166 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/account/release-webhooks:
+    get:
+      tags: [webhooks]
+      operationId: listAccountReleaseWebhooks
+      summary: List release receivers owned by the active account.
+      responses:
+        '200':
+          description: Account-owned release receivers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AccountReleaseWebhookResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [webhooks]
+      operationId: createAccountReleaseWebhook
+      summary: Subscribe one receiver to release events from all current and future account apps.
+      description: The target is SSRF-guarded and the signing secret is sealed at rest; the response never exposes plaintext.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountReleaseWebhookRequest' }
+      responses:
+        '201':
+          description: Release receiver created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountReleaseWebhookResponse' }
+        '400': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '403': { $ref: '#/components/responses/PlanWebhookQuota' }
+        '409': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [webhooks]
+      operationId: getAccountReleaseWebhook
+      summary: Fetch one account release receiver.
+      responses:
+        '200':
+          description: The receiver.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountReleaseWebhookResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [webhooks]
+      operationId: updateAccountReleaseWebhook
+      summary: Update an account release receiver.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAccountReleaseWebhookRequest' }
+      responses:
+        '200':
+          description: The updated receiver.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountReleaseWebhookResponse' }
+        '400': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [webhooks]
+      operationId: deleteAccountReleaseWebhook
+      summary: Delete an account release receiver and its delivery history.
+      responses:
+        '204': { description: Receiver removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}/rotate-secret:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [webhooks]
+      operationId: rotateAccountReleaseWebhookSecret
+      summary: Replace a release receiver's HMAC signing secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateAppWebhookSecretRequest' }
+      responses:
+        '200':
+          description: Secret rotated; plaintext is never returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RotateAppWebhookSecretResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}/deliveries:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - in: query
+        name: page_size
+        description: Maximum number of deliveries returned in this page.
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - in: query
+        name: page_token
+        description: Opaque cursor from the preceding response.
+        schema: { type: string }
+    get:
+      tags: [webhooks]
+      operationId: listAccountReleaseWebhookDeliveries
+      summary: List release deliveries across all source apps, newest first.
+      responses:
+        '200':
+          description: Delivery page; each row includes its source app_id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/release-webhooks/{id}/deliveries/{did}/retry:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - in: path
+        name: did
+        required: true
+        description: Delivery identifier to re-arm.
+        schema: { type: string, pattern: '^[0-9a-f]{32}$' }
+    post:
+      tags: [webhooks]
+      operationId: retryAccountReleaseWebhookDelivery
+      summary: Re-arm one dead account release delivery.
+      responses:
+        '200':
+          description: The re-armed account release delivery.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookRetryDeliveryResponse' }
+        '400': { $ref: '#/components/responses/AppWebhookInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanWebhooksNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # ─── Durable inbound webhooks (ADR-212) ───────────────────────────────────
   /v1/apps/{slug}/inbound-webhooks:
     parameters:
@@ -34630,6 +34790,28 @@ components:
         created_at: "2026-08-06T10:00:00Z"
         updated_at: "2026-08-06T10:00:00Z"
 
+    AccountReleaseWebhookResponse:
+      type: object
+      description: Account-owned release receiver; no app_id because it follows all current and future apps.
+      required: [id, scope, account_id, target_url, webhook_secret_sealed_masked, event_filter, retry_policy, delivery_format, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        scope: { type: string, enum: [account] }
+        account_id: { type: string, format: uuid }
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        webhook_secret_sealed_masked: { type: string, enum: ["***"] }
+        event_filter:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+        retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format: { type: string, enum: [json, cloudevents] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
     ManagedRealtimeConnectionResponse:
       type: object
       description: Safe control-plane projection of one live managed realtime connection.
@@ -35041,6 +35223,30 @@ components:
         delivery_format: "json"
         enabled: true
 
+    CreateAccountReleaseWebhookRequest:
+      type: object
+      description: Subscribe a target to release events emitted by every app owned by the active account.
+      required: [target_url, webhook_secret, event_filter]
+      properties:
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+        event_filter:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+        retry_policy: { type: string, enum: [default, aggressive, none], default: default }
+        delivery_format: { type: string, enum: [json, cloudevents], default: json }
+        enabled: { type: boolean, default: true }
+      example:
+        target_url: "https://example.com/releases"
+        webhook_secret: "replace-with-random-secret"
+        event_filter: ["deployment.live", "deployment.failed"]
+        retry_policy: "default"
+        delivery_format: "cloudevents"
+        enabled: true
+
     DeliverAppEventRequest:
       description: Request to enqueue a signed webhook delivery owned by the source app.
       type: object
@@ -35093,6 +35299,22 @@ components:
         target_url: "https://example.com/hook2"
         delivery_format: "cloudevents"
         enabled: true
+
+    UpdateAccountReleaseWebhookRequest:
+      type: object
+      description: Partial update; omitted fields retain their current value.
+      properties:
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+        event_filter:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"] }
+        retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format: { type: string, enum: [json, cloudevents] }
+        enabled: { type: boolean }
 
     RotateAppWebhookSecretResponse:
       type: object

@@ -284,9 +284,21 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 		return AppWebhook{}, ErrNotFound
 	}
 	if p.TargetURL != nil {
+		for otherID, other := range m.appWebhooks {
+			if otherID == id || other.TargetURL != *p.TargetURL || other.Scope != w.Scope {
+				continue
+			}
+			if (w.Scope == AppWebhookScopeAccount && other.AccountID == w.AccountID) ||
+				(w.Scope != AppWebhookScopeAccount && other.AppID == w.AppID) {
+				return AppWebhook{}, ErrConflict
+			}
+		}
 		w.TargetURL = *p.TargetURL
 	}
 	if p.EventFilter != nil {
+		if w.Scope == AppWebhookScopeAccount && !validAccountReleaseWebhookFilter(*p.EventFilter) {
+			return AppWebhook{}, ErrInvalidAppWebhookScope
+		}
 		w.EventFilter = append([]string(nil), *p.EventFilter...)
 	}
 	if p.RetryPolicy != nil {

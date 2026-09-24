@@ -565,15 +565,23 @@ var methodRouteMap = map[string]string{
 	// placeholder concatenation, and the rotate-secret + retry
 	// routes need explicit pinning to drop the literal hyphen that
 	// the auto-derivation would preserve.
-	"GET /v1/apps/{slug}/webhooks":                              "ListAppWebhooks",
-	"POST /v1/apps/{slug}/webhooks":                             "CreateAppWebhook",
-	"GET /v1/apps/{slug}/webhooks/{id}":                         "GetAppWebhook",
-	"PATCH /v1/apps/{slug}/webhooks/{id}":                       "UpdateAppWebhook",
-	"DELETE /v1/apps/{slug}/webhooks/{id}":                      "DeleteAppWebhook",
-	"POST /v1/apps/{slug}/webhooks/{id}/rotate-secret":          "RotateAppWebhookSecret",
-	"GET /v1/apps/{slug}/webhooks/{id}/deliveries":              "ListAppWebhookDeliveries",
-	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry": "RetryAppWebhookDelivery",
-	"POST /v1/apps/{slug}/outbox":                               "DeliverAppEvent",
+	"GET /v1/apps/{slug}/webhooks":                                  "ListAppWebhooks",
+	"POST /v1/apps/{slug}/webhooks":                                 "CreateAppWebhook",
+	"GET /v1/apps/{slug}/webhooks/{id}":                             "GetAppWebhook",
+	"PATCH /v1/apps/{slug}/webhooks/{id}":                           "UpdateAppWebhook",
+	"DELETE /v1/apps/{slug}/webhooks/{id}":                          "DeleteAppWebhook",
+	"POST /v1/apps/{slug}/webhooks/{id}/rotate-secret":              "RotateAppWebhookSecret",
+	"GET /v1/apps/{slug}/webhooks/{id}/deliveries":                  "ListAppWebhookDeliveries",
+	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry":     "RetryAppWebhookDelivery",
+	"POST /v1/apps/{slug}/outbox":                                   "DeliverAppEvent",
+	"GET /v1/account/release-webhooks":                              "ListAccountReleaseWebhooks",
+	"POST /v1/account/release-webhooks":                             "CreateAccountReleaseWebhook",
+	"GET /v1/account/release-webhooks/{id}":                         "GetAccountReleaseWebhook",
+	"PATCH /v1/account/release-webhooks/{id}":                       "UpdateAccountReleaseWebhook",
+	"DELETE /v1/account/release-webhooks/{id}":                      "DeleteAccountReleaseWebhook",
+	"POST /v1/account/release-webhooks/{id}/rotate-secret":          "RotateAccountReleaseWebhookSecret",
+	"GET /v1/account/release-webhooks/{id}/deliveries":              "ListAccountReleaseWebhookDeliveries",
+	"POST /v1/account/release-webhooks/{id}/deliveries/{did}/retry": "RetryAccountReleaseWebhookDelivery",
 
 	// ADR-212 — signature-verified durable inbound webhook configuration.
 	// The provider-facing /v1/hooks route is excluded above because it is not
