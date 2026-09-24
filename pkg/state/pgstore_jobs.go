@@ -1024,17 +1024,21 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 // when the task is already terminal (the WHERE clause gates on
 // status IN ('queued','claimed')).
 func (s *PgStore) JobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage string, finishedAt time.Time) error {
-	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
 }
 
 // JobTaskMarkTerminalWithLogs settles a task and persists its retained output
 // in the same UPDATE. The log write is deliberately limited to the guest exit
 // path; reapers continue using JobTaskMarkTerminal and preserve empty output.
 func (s *PgStore) JobTaskMarkTerminalWithLogs(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
-	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
 }
 
-func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
+func (s *PgStore) JobTaskCompleteClaimedWithLogs(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, instanceID, leaseToken, true, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+}
+
+func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
 	// nullify error_class / error_message when the caller passes
 	// the empty string — the CHECK constraint on error_class has a
 	// closed vocabulary and "" isn't in it.
@@ -1058,9 +1062,11 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		   lease_token   = null,
 		   lease_expires_at = null
 		 where run_id = $1::uuid and task_index = $7
-		   and status in ('queued', 'claimed')`,
+		   and status in ('queued', 'claimed')
+		   and (not $11::boolean or (status = 'claimed'
+		        and instance_id = nullif($12::text, '')::uuid and lease_token = $13))`,
 		runID, status, exitCode, errorClassArg, errorMessageArg, finishedAt.UTC(), taskIndex,
-		persistLogs, logContent, logTruncated)
+		persistLogs, logContent, logTruncated, requireClaim, expectedInstanceID, expectedLeaseToken)
 	if err != nil {
 		return fmt.Errorf("state: mark task (%s, %d) terminal: %w", runID, taskIndex, err)
 	}
@@ -1106,13 +1112,46 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 	return nil
 }
 
+// JobTaskFailBoot is one fenced transition for a claimed, pre-execution boot
+// failure. A failed transport RPC must not produce an unlimited series of VMs
+// while the task remains at attempt 1, and a late boot failure must not touch
+// a replacement attempt or a task already settled by exit/cancellation.
+func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
+	var retryScheduled bool
+	err := s.pool.QueryRow(ctx,
+		`update job_tasks set
+		   status           = case when attempt <= $5 then 'queued' else 'failed' end,
+		   attempt          = case when attempt <= $5 then attempt + 1 else attempt end,
+		   instance_id      = case when attempt <= $5 then null else instance_id end,
+		   next_attempt_at  = case when attempt <= $5 then $6 else null end,
+		   started_at       = case when attempt <= $5 then null else started_at end,
+		   finished_at      = case when attempt <= $5 then null else now() end,
+		   exit_code        = case when attempt <= $5 then null else 1 end,
+		   error_class      = 'infra',
+		   error_message    = $7,
+		   lease_token      = null,
+		   lease_expires_at = null,
+		   last_lease_node  = null
+		 where run_id = $1::uuid and task_index = $2
+		   and status = 'claimed' and instance_id = $3::uuid and lease_token = $4
+		 returning status = 'queued'`,
+		runID, taskIndex, instanceID, leaseToken, retryMax, nextAttemptAt.UTC(), errorMessage).Scan(&retryScheduled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("state: fail boot for job task (%s, %d): %w", runID, taskIndex, err)
+	}
+	return retryScheduled, nil
+}
+
 // JobTaskRequeue reverses a CLAIMED-but-not-executed task back to
 // queued WITHOUT incrementing attempt. Mirrors JobTaskRetry's
 // column-reset contract (clears instance_id + lease columns +
 // started_at) but preserves the attempt counter — the customer's
 // retry budget is not consumed by transient dispatch-side failures
-// (admission denied, vmmd unreachable, run-lookup race, per-account
-// quota at cap). See CR-7 / code-review #7.
+// (admission denied, run-lookup race, per-account quota at cap).
+// Claimed vmmd boot failures use JobTaskFailBoot instead.
 func (s *PgStore) JobTaskRequeue(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
 	tag, err := s.pool.Exec(ctx,
 		`update job_tasks set
