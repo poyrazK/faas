@@ -12370,6 +12370,44 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project containing the environment-specific edge policy.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Registered environment whose headers/CORS policy is replaced.
+        schema: { type: string }
+      - name: workload
+        in: path
+        required: true
+        description: Workload slug whose environment-specific edge policy is replaced.
+        schema: { type: string }
+    put:
+      tags: [projects]
+      operationId: updateProjectEnvironmentPolicies
+      summary: Replace headers and CORS rules for a workload in one environment.
+      description: An explicit empty list disables inherited headers/CORS rules on the stable environment URL. Other edge-rule kinds and ordinary application hosts are unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentEdgePolicyRequest' }
+      responses:
+        '200':
+          description: Stored environment-owned headers/CORS policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/diff:
     parameters:
       - name: slug
@@ -26795,7 +26833,7 @@ components:
     ProjectEnvironmentCloneResponse:
       description: Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only after explicit opt-in.
       type: object
-      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, bindings_copied, routes_copied, shared_resources]
+      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, bindings_copied, routes_copied, policies_copied, shared_resources]
       properties:
         configuration_copied: { type: boolean }
         variables_copied: { type: integer, minimum: 0 }
@@ -26803,6 +26841,7 @@ components:
         workloads_copied: { type: integer, minimum: 0 }
         bindings_copied: { type: integer, minimum: 0 }
         routes_copied: { type: integer, minimum: 0 }
+        policies_copied: { type: integer, minimum: 0 }
         shared_resources:
           type: array
           items: { type: string, enum: [domains, policies, routes, managed_postgres_data, object_storage_bucket_data] }
@@ -26873,7 +26912,7 @@ components:
     ProjectEnvironmentStateWorkloadResponse:
       description: Effective configuration and live release state for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -26888,6 +26927,48 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
+        policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
+
+    ProjectEnvironmentEdgeRuleResponse:
+      description: One inline headers or CORS rule on a stable environment URL.
+      type: object
+      required: [kind, match_path, priority, enabled, action]
+      additionalProperties: false
+      properties:
+        kind: { type: string, enum: [headers, cors] }
+        match_path: { type: string }
+        match_methods:
+          type: array
+          items: { type: string }
+        match_headers:
+          type: object
+          additionalProperties: { type: string }
+        priority: { type: integer, minimum: 0, maximum: 10000 }
+        enabled: { type: boolean }
+        action:
+          type: object
+          additionalProperties: true
+
+    ProjectEnvironmentEdgePolicyResponse:
+      description: Headers/CORS policy ownership and rules. Other edge-rule kinds remain application-owned.
+      type: object
+      required: [ownership, rules]
+      properties:
+        ownership: { type: string, enum: [application, environment] }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentEdgeRuleResponse' }
+
+    UpdateProjectEnvironmentEdgePolicyRequest:
+      description: Complete replacement for an environment's headers/CORS rules. Inline CORS settings are required; shared presets are not accepted.
+      type: object
+      required: [rules]
+      additionalProperties: false
+      properties:
+        rules:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/ProjectEnvironmentEdgeRuleResponse' }
 
     ProjectEnvironmentRoutePolicyResponse:
       description: Effective declared-route contract and whether it is environment-owned.
@@ -26993,7 +27074,7 @@ components:
     ProjectEnvironmentWorkloadDiffResponse:
       description: Release, variable, secret, and binding changes for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -27008,6 +27089,16 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingChangeResponse' }
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyDiffResponse' }
+        policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyDiffResponse' }
+
+    ProjectEnvironmentEdgePolicyDiffResponse:
+      description: Difference in environment headers/CORS rules or ownership.
+      type: object
+      required: [kind, before, after]
+      properties:
+        kind: { type: string, enum: [unchanged, changed] }
+        before: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
+        after: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
 
     ProjectEnvironmentRoutePolicyDiffResponse:
       description: Difference in the effective declared-route contract or its ownership.

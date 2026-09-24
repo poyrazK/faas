@@ -245,6 +245,22 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 	if result.RoutesCopied < result.WorkloadsCopied {
 		result.SharedResources = append(result.SharedResources, "routes")
 	}
+	if err := tx.QueryRow(ctx, `
+		with copied as (
+			insert into project_environment_edge_policies
+			    (account_id, project_id, app_id, environment_slug, rules)
+			select p.account_id, p.project_id, p.app_id, $4, p.rules
+			  from project_environment_edge_policies p
+			  join apps a on a.id = p.app_id
+			 where p.account_id = $1 and p.project_id = $2 and p.environment_slug = $3
+			   and a.status <> 'deleted'
+			returning 1
+		)
+		select count(*) from copied
+	`, clone.AccountID, clone.ProjectID, clone.SourceSlug, clone.TargetSlug).Scan(&result.PoliciesCopied); err != nil {
+		return result, mapErr(err)
+	}
+	result.SharedResources = append(result.SharedResources, "policies")
 	return result, nil
 }
 

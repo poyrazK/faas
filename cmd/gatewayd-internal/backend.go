@@ -164,6 +164,11 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 		return gateway.App{}, false, nil
 	}
+	// Headers policies may carry security headers. A failed authoritative
+	// policy read must not let the request proceed with an empty matcher.
+	if _, err := r.store.GetProjectEnvironmentEdgePolicy(ctx, app.AccountID, app.ID, environment.Slug); err != nil && !errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, err
+	}
 	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
 	if errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, nil

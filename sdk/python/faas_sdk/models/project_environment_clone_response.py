@@ -27,6 +27,7 @@ class ProjectEnvironmentCloneResponse:
     workloads_copied: int
     bindings_copied: int
     routes_copied: int
+    policies_copied: int
     shared_resources: list[ProjectEnvironmentCloneResponseSharedResourcesItem]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -43,6 +44,8 @@ class ProjectEnvironmentCloneResponse:
 
         routes_copied = self.routes_copied
 
+        policies_copied = self.policies_copied
+
         shared_resources = []
         for shared_resources_item_data in self.shared_resources:
             shared_resources_item: str = shared_resources_item_data
@@ -58,6 +61,7 @@ class ProjectEnvironmentCloneResponse:
                 "workloads_copied": workloads_copied,
                 "bindings_copied": bindings_copied,
                 "routes_copied": routes_copied,
+                "policies_copied": policies_copied,
                 "shared_resources": shared_resources,
             }
         )
@@ -79,6 +83,8 @@ class ProjectEnvironmentCloneResponse:
 
         routes_copied = d.pop("routes_copied")
 
+        policies_copied = d.pop("policies_copied")
+
         shared_resources = []
         _shared_resources = d.pop("shared_resources")
         for shared_resources_item_data in _shared_resources:
@@ -95,6 +101,7 @@ class ProjectEnvironmentCloneResponse:
             workloads_copied=workloads_copied,
             bindings_copied=bindings_copied,
             routes_copied=routes_copied,
+            policies_copied=policies_copied,
             shared_resources=shared_resources,
         )
 

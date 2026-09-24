@@ -27,14 +27,18 @@ import (
 	"net"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // edgeRuleStore is the slice of state.Store the matcher needs.
@@ -248,6 +252,10 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	if err != nil {
 		return nil, err
 	}
+	storeRules, err = g.environmentEdgeRules(ctx, host, storeRules)
+	if err != nil {
+		return nil, err
+	}
 	route, routeErrs := compileRouteRules(storeRules)
 	rewrite, rewriteErrs := compileRewriteRules(storeRules)
 	redirect, redirectErrs := compileRedirectRules(storeRules)
@@ -362,6 +370,74 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	}
 	g.cache.PutIfGeneration(host, entry, generation)
 	return entry, nil
+}
+
+// environmentEdgeRules replaces just headers/CORS when a named environment
+// owns that policy. A missing row preserves application-wide fallback. The
+// existing edge-rule convergence protocol invalidates this host's cache on
+// writes; clone creates a new host with no prior cache entry.
+func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host string, global []state.EdgeRule) ([]state.EdgeRule, error) {
+	environmentID, appID, matched := gateway.EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host)
+	if !matched {
+		return global, nil
+	}
+	lookup, ok := g.store.(interface {
+		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
+		AppByID(context.Context, string) (state.App, error)
+		GetProjectEnvironmentEdgePolicy(context.Context, string, string, string) (state.ProjectEnvironmentEdgePolicy, error)
+	})
+	if !ok {
+		return nil, errors.New("environment edge policy lookup unavailable")
+	}
+	environment, err := lookup.ProjectEnvironmentByID(ctx, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	app, err := lookup.AppByID(ctx, appID)
+	if errors.Is(err, state.ErrNotFound) {
+		app, err = lookup.AppByID(ctx, strings.ReplaceAll(appID, "-", ""))
+	}
+	if err != nil {
+		return nil, err
+	}
+	if app.AccountID != environment.AccountID || app.ProjectID != environment.ProjectID || app.Status == state.AppDeleted {
+		return nil, state.ErrNotFound
+	}
+	// A stable environment host encodes one workload. The generic host
+	// matcher may also return wildcard rules owned by other applications;
+	// never let those rules act on this workload's environment URL.
+	scoped := make([]state.EdgeRule, 0, len(global))
+	for _, rule := range global {
+		if rule.AppID == app.ID {
+			scoped = append(scoped, rule)
+		}
+	}
+	policy, err := lookup.GetProjectEnvironmentEdgePolicy(ctx, environment.AccountID, app.ID, environment.Slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return scoped, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]state.EdgeRule, 0, len(scoped)+len(policy.Rules))
+	for _, rule := range scoped {
+		if rule.Kind != state.EdgeRuleKindHeaders && rule.Kind != state.EdgeRuleKindCORSA {
+			out = append(out, rule)
+		}
+	}
+	for i, rule := range policy.Rules {
+		if !rule.Enabled {
+			continue
+		}
+		id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(environment.ID+"/"+app.ID+"/"+strconv.Itoa(i)))
+		out = append(out, state.EdgeRule{
+			ID: id.String(), AccountID: app.AccountID, AppID: app.ID, MatchHost: host,
+			MatchPath: rule.MatchPath, MatchMethods: rule.MatchMethods, MatchHeaders: rule.MatchHeaders,
+			Priority: rule.Priority, Enabled: true, Kind: rule.Kind, Action: rule.Action,
+			CreatedAt: policy.CreatedAt, UpdatedAt: policy.UpdatedAt,
+		})
+	}
+	return out, nil
 }
 
 // MatchRoute returns the highest-priority `kind=route` rule whose

@@ -574,6 +574,9 @@ export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironment
 export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironmentConfigResponse.js';
 export type { ProjectEnvironmentDiffResponse } from './models/ProjectEnvironmentDiffResponse.js';
+export type { ProjectEnvironmentEdgePolicyDiffResponse } from './models/ProjectEnvironmentEdgePolicyDiffResponse.js';
+export type { ProjectEnvironmentEdgePolicyResponse } from './models/ProjectEnvironmentEdgePolicyResponse.js';
+export type { ProjectEnvironmentEdgeRuleResponse } from './models/ProjectEnvironmentEdgeRuleResponse.js';
 export type { ProjectEnvironmentPromotionChange } from './models/ProjectEnvironmentPromotionChange.js';
 export type { ProjectEnvironmentPromotionListResponse } from './models/ProjectEnvironmentPromotionListResponse.js';
 export type { ProjectEnvironmentPromotionPreviewResponse } from './models/ProjectEnvironmentPromotionPreviewResponse.js';
@@ -752,6 +755,7 @@ export type { UpdateManagedRealtimeEndpointRequest } from './models/UpdateManage
 export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.js';
 export type { UpdatePrivateNetworkPolicyRequest } from './models/UpdatePrivateNetworkPolicyRequest.js';
 export type { UpdateProjectEnvironmentConfigRequest } from './models/UpdateProjectEnvironmentConfigRequest.js';
+export type { UpdateProjectEnvironmentEdgePolicyRequest } from './models/UpdateProjectEnvironmentEdgePolicyRequest.js';
 export type { UpdateProjectEnvironmentRequest } from './models/UpdateProjectEnvironmentRequest.js';
 export type { UpdateProjectEnvironmentRoutePolicyRequest } from './models/UpdateProjectEnvironmentRoutePolicyRequest.js';
 export type { UpdateProjectRequest } from './models/UpdateProjectRequest.js';

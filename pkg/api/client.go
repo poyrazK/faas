@@ -1671,6 +1671,20 @@ func (c *Client) PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadRoutes(c
 	return c.UpdateProjectEnvironmentRoutes(ctx, projectSlug, environmentSlug, workloadSlug, req)
 }
 
+// UpdateProjectEnvironmentPolicies replaces headers/CORS rules for a stable
+// named-environment workload URL without changing app-wide edge rules.
+func (c *Client) UpdateProjectEnvironmentPolicies(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentEdgePolicyRequest) (ProjectEnvironmentEdgePolicyResponse, error) {
+	var out ProjectEnvironmentEdgePolicyResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/workloads/" + url.PathEscape(workloadSlug) + "/policies"
+	return out, c.do(ctx, http.MethodPut, path, req, &out)
+}
+
+// PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadPolicies is the
+// route-shaped SDK coverage alias. Prefer UpdateProjectEnvironmentPolicies.
+func (c *Client) PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadPolicies(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentEdgePolicyRequest) (ProjectEnvironmentEdgePolicyResponse, error) {
+	return c.UpdateProjectEnvironmentPolicies(ctx, projectSlug, environmentSlug, workloadSlug, req)
+}
+
 // GetProjectEnvironmentConfigDiff compares the latest snapshots in the
 // source environment and the requested target environment.
 func (c *Client) GetProjectEnvironmentConfigDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentConfigDiffResponse, error) {

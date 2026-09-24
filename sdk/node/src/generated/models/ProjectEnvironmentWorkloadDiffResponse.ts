@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProjectEnvironmentBindingChangeResponse } from './ProjectEnvironmentBindingChangeResponse.js';
+import type { ProjectEnvironmentEdgePolicyDiffResponse } from './ProjectEnvironmentEdgePolicyDiffResponse.js';
 import type { ProjectEnvironmentReleaseDiffResponse } from './ProjectEnvironmentReleaseDiffResponse.js';
 import type { ProjectEnvironmentRoutePolicyDiffResponse } from './ProjectEnvironmentRoutePolicyDiffResponse.js';
 import type { ProjectEnvironmentSecretChangeResponse } from './ProjectEnvironmentSecretChangeResponse.js';
@@ -18,5 +19,6 @@ export type ProjectEnvironmentWorkloadDiffResponse = {
   secrets: Array<ProjectEnvironmentSecretChangeResponse>;
   bindings: Array<ProjectEnvironmentBindingChangeResponse>;
   routes: ProjectEnvironmentRoutePolicyDiffResponse;
+  policies: ProjectEnvironmentEdgePolicyDiffResponse;
 };
 

@@ -2053,6 +2053,11 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, app *App) bool {
 	if h.edgeRules == nil || h.resolveTargetApp == nil {
 		return false
 	}
+	// A named-environment host must resolve its encoded app/environment pair
+	// before any application-wide route rule can substitute another target.
+	if _, _, ok := EnvironmentIDsFromHost(wire.DeployWildcardSuffix, hostname(r.Host)); ok {
+		return false
+	}
 	rule := h.edgeRules.MatchRoute(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
 	if rule == nil {
 		if h.metrics != nil {

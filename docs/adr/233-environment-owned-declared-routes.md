@@ -65,6 +65,28 @@ scope. It pins that deployment and scope, so the existing scoped declared-route
 contract applies. These mutable hostnames bypass the route and stale caches:
 promotion, deletion, and control-plane errors cannot leave an old release
 serving from a cached route. Ordinary app hostnames, exact deployment URLs,
-custom domains, and application-owned edge policies are unchanged. A later
-decision is still required before custom domains or edge rules can belong to
-an environment.
+custom domains, and application-owned edge policies were unchanged. The
+headers/CORS follow-up below addresses part of that policy limitation;
+custom domains and other edge-rule kinds still need separate decisions.
+
+## Follow-up: environment-owned headers and CORS policies
+
+A workload in a registered environment can now own an explicit replacement
+set of `headers` and inline `cors` edge rules for its stable environment URL.
+`PUT .../workloads/{workload}/policies` replaces the full list (including an
+empty list that disables application-level headers/CORS inheritance). The CLI
+exposes the same operation through `gregale projects environments policies
+set`. Rules use the existing edge action validation and a per-environment
+limit no larger than the account plan's app rule cap. CORS preset references
+are rejected because presets remain application/account-owned.
+
+The effective-state and diff APIs show these rules and their ownership. A
+clone copies an explicitly owned policy inside its transaction and reports a
+non-secret copy count. An environment without such a row retains the existing
+application-rule fallback and is reported as application-owned, not falsely
+equal to another environment. The edge-rule convergence fence invalidates the
+host cache on each replacement; the stable URL's route lookup also fails
+closed if its policy store is unavailable. Application-wide `route` rules may
+not substitute the stable URL's encoded workload before identity resolution.
+Other edge-rule kinds, ordinary app hostnames, and custom domains remain
+application-owned and are still listed as shared resources.

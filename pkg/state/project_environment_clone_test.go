@@ -63,7 +63,7 @@ func TestCloneProjectEnvironmentDoesNotClaimSharedOpenAPIRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.RoutesCopied != 0 || len(result.SharedResources) != 1 || result.SharedResources[0] != "routes" {
+	if result.RoutesCopied != 0 || len(result.SharedResources) != 2 || result.SharedResources[0] != "routes" || result.SharedResources[1] != "policies" {
 		t.Fatalf("clone claimed shared OpenAPI routes: %+v", result)
 	}
 	if _, err := store.GetProjectEnvironmentRoutePolicy(ctx, account.ID, app.ID, "staging"); !errors.Is(err, ErrNotFound) {
