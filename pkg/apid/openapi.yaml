@@ -3628,6 +3628,27 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantResponse' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/account/platform-tenants/apply:
+    post:
+      tags: [platform-tenants]
+      operationId: applyPlatformTenant
+      summary: Atomically reconcile an additive customer onboarding bundle.
+      description: Creates a missing platform tenant and app consumers, links requested existing surfaces, or previews the same checks with dry_run. Omitted resources are not detached; keys, hostnames and certificates are managed separately.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyPlatformTenantRequest' }
+      responses:
+        '200':
+          description: Applied or previewed onboarding plan and current surface states.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyPlatformTenantResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/account/platform-tenants/{id}:
     parameters:
       - name: id
@@ -21612,6 +21633,72 @@ components:
       properties:
         external_ref: { type: string, minLength: 1, maxLength: 256 }
         name: { type: string, minLength: 1, maxLength: 128 }
+
+    ApplyPlatformTenantConsumerRequest:
+      description: App-local customer identity to create or link by stable external reference.
+      type: object
+      required: [app_id, external_ref, name]
+      properties:
+        app_id: { type: string, format: uuid }
+        external_ref: { type: string, minLength: 1, maxLength: 256 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+
+    ApplyPlatformTenantRequest:
+      description: Additive, retry-safe onboarding; dry_run validates and previews without writes.
+      type: object
+      required: [external_ref, name]
+      properties:
+        external_ref: { type: string, minLength: 1, maxLength: 256 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        dry_run: { type: boolean, default: false }
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/ApplyPlatformTenantConsumerRequest' }
+        surface_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    ApplyPlatformTenantConsumerResponse:
+      description: Planned or applied app consumer with its reconciliation action.
+      type: object
+      required: [app_id, external_ref, name, status, action]
+      properties:
+        id: { type: string, format: uuid, description: Absent when a dry run would create this consumer. }
+        app_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active] }
+        action: { type: string, enum: [create, link, unchanged] }
+
+    ApplyPlatformTenantSurfaceResponse:
+      description: Existing tenant surface and its current certificate state.
+      type: object
+      required: [id, app_id, name, status, cert_state, action]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string, enum: [pending, active, suspended] }
+        cert_state: { type: string, enum: [none, pending, issued, failed] }
+        action: { type: string, enum: [link, unchanged] }
+
+    ApplyPlatformTenantResponse:
+      description: Tenant onboarding plan or applied result; omitted IDs in a dry run would be created.
+      type: object
+      required: [external_ref, name, status, action, dry_run, consumers, surfaces]
+      properties:
+        tenant_id: { type: string, format: uuid, description: Absent when a dry run would create this tenant. }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, suspended] }
+        action: { type: string, enum: [create, unchanged] }
+        dry_run: { type: boolean }
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/ApplyPlatformTenantConsumerResponse' }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/ApplyPlatformTenantSurfaceResponse' }
 
     SetPlatformTenantStatusRequest:
       description: Suspend or resume linked credential and hostname paths.

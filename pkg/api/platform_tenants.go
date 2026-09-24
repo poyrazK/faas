@@ -7,6 +7,52 @@ type CreatePlatformTenantRequest struct {
 	Name        string `json:"name"`
 }
 
+// ApplyPlatformTenantRequest adds missing consumers and links existing surfaces
+// without removing resources omitted from the bundle. Consumer keys and
+// hostname/certificate provisioning remain separate operations.
+type ApplyPlatformTenantRequest struct {
+	ExternalRef string                               `json:"external_ref"`
+	Name        string                               `json:"name"`
+	DryRun      bool                                 `json:"dry_run,omitempty"`
+	Consumers   []ApplyPlatformTenantConsumerRequest `json:"consumers,omitempty"`
+	SurfaceIDs  []string                             `json:"surface_ids,omitempty"`
+}
+
+type ApplyPlatformTenantConsumerRequest struct {
+	AppID       string `json:"app_id"`
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+}
+
+type ApplyPlatformTenantConsumerResponse struct {
+	ID          string `json:"id,omitempty"`
+	AppID       string `json:"app_id"`
+	ExternalRef string `json:"external_ref"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Action      string `json:"action"`
+}
+
+type ApplyPlatformTenantSurfaceResponse struct {
+	ID        string `json:"id"`
+	AppID     string `json:"app_id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	CertState string `json:"cert_state"`
+	Action    string `json:"action"`
+}
+
+type ApplyPlatformTenantResponse struct {
+	TenantID    string                                `json:"tenant_id,omitempty"`
+	ExternalRef string                                `json:"external_ref"`
+	Name        string                                `json:"name"`
+	Status      string                                `json:"status"`
+	Action      string                                `json:"action"`
+	DryRun      bool                                  `json:"dry_run"`
+	Consumers   []ApplyPlatformTenantConsumerResponse `json:"consumers"`
+	Surfaces    []ApplyPlatformTenantSurfaceResponse  `json:"surfaces"`
+}
+
 type SetPlatformTenantStatusRequest struct {
 	Status string `json:"status"`
 }

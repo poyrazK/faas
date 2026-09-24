@@ -1299,6 +1299,15 @@ List platform customers
 
 Register a customer by external reference
 
+### platform-tenants apply
+
+Preview or apply an onboarding bundle
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <path>` | JSON onboarding bundle |  |
+| `--dry-run` | Preview without changes |  |
+
 ### platform-tenants info
 
 Show linked consumers and surfaces

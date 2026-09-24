@@ -218,6 +218,18 @@ from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookRespons
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
+from .apply_platform_tenant_consumer_request import ApplyPlatformTenantConsumerRequest
+from .apply_platform_tenant_consumer_response import ApplyPlatformTenantConsumerResponse
+from .apply_platform_tenant_consumer_response_action import ApplyPlatformTenantConsumerResponseAction
+from .apply_platform_tenant_consumer_response_status import ApplyPlatformTenantConsumerResponseStatus
+from .apply_platform_tenant_request import ApplyPlatformTenantRequest
+from .apply_platform_tenant_response import ApplyPlatformTenantResponse
+from .apply_platform_tenant_response_action import ApplyPlatformTenantResponseAction
+from .apply_platform_tenant_response_status import ApplyPlatformTenantResponseStatus
+from .apply_platform_tenant_surface_response import ApplyPlatformTenantSurfaceResponse
+from .apply_platform_tenant_surface_response_action import ApplyPlatformTenantSurfaceResponseAction
+from .apply_platform_tenant_surface_response_cert_state import ApplyPlatformTenantSurfaceResponseCertState
+from .apply_platform_tenant_surface_response_status import ApplyPlatformTenantSurfaceResponseStatus
 from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
 from .apps_metrics_response import AppsMetricsResponse
@@ -1624,6 +1636,18 @@ __all__ = (
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
     "ApplyAppOpenAPIPolicyRequest",
+    "ApplyPlatformTenantConsumerRequest",
+    "ApplyPlatformTenantConsumerResponse",
+    "ApplyPlatformTenantConsumerResponseAction",
+    "ApplyPlatformTenantConsumerResponseStatus",
+    "ApplyPlatformTenantRequest",
+    "ApplyPlatformTenantResponse",
+    "ApplyPlatformTenantResponseAction",
+    "ApplyPlatformTenantResponseStatus",
+    "ApplyPlatformTenantSurfaceResponse",
+    "ApplyPlatformTenantSurfaceResponseAction",
+    "ApplyPlatformTenantSurfaceResponseCertState",
+    "ApplyPlatformTenantSurfaceResponseStatus",
     "ApplyResponse",
     "ApplyResponseAppsItem",
     "AppManifest",

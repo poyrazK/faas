@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -13,7 +14,7 @@ import (
 // cmdPlatformTenants manages one account customer across several apps.
 func cmdPlatformTenants(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|info|link-consumer|link-surface|usage|suspend|resume> [flags]", "platform-tenants")
+		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|info|link-consumer|link-surface|usage|suspend|resume> [flags]", "platform-tenants")
 		return 1
 	}
 	verb := args[0]
@@ -23,6 +24,8 @@ func cmdPlatformTenants(args []string) int {
 	name := fs.String("name", "", "customer display name")
 	consumerID := fs.String("consumer-id", "", "existing app consumer UUID")
 	surfaceID := fs.String("surface-id", "", "existing tenant surface UUID")
+	file := fs.String("file", "", "onboarding bundle JSON file (apply)")
+	dryRun := fs.Bool("dry-run", false, "preview onboarding without changes (apply)")
 	since := fs.String("since", "", "usage window start (RFC3339)")
 	until := fs.String("until", "", "usage window end (RFC3339)")
 	limit := fs.Int("limit", 100, "list page size (1..100)")
@@ -30,8 +33,14 @@ func cmdPlatformTenants(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 || !platformTenantFlagsValid(verb, *id, *externalRef, *name, *consumerID, *surfaceID, *limit, *offset) {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|info|link-consumer|link-surface|usage|suspend|resume> [--id UUID] [--external-ref REF] [--name NAME] [--consumer-id UUID] [--surface-id UUID]", "platform-tenants")
+	valid := platformTenantFlagsValid(verb, *id, *externalRef, *name, *consumerID, *surfaceID, *limit, *offset)
+	if verb == "apply" {
+		valid = *file != "" && *id == "" && *externalRef == "" && *name == "" && *consumerID == "" && *surfaceID == ""
+	} else if *file != "" || *dryRun {
+		valid = false
+	}
+	if fs.NArg() != 0 || !valid {
+		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|info|link-consumer|link-surface|usage|suspend|resume> [--file bundle.json] [--dry-run] [--id UUID] [--external-ref REF] [--name NAME]", "platform-tenants")
 		return 1
 	}
 	client, err := authedClient()
@@ -64,6 +73,36 @@ func cmdPlatformTenants(args []string) int {
 			return printErr("Create failed", err)
 		}
 		return platformTenantOutput(row, "Platform tenant registered")
+	case "apply":
+		body, err := os.ReadFile(*file)
+		if err != nil {
+			return printErr("Read onboarding bundle failed", err)
+		}
+		var req api.ApplyPlatformTenantRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			return printErr("Invalid onboarding bundle", err)
+		}
+		req.DryRun = req.DryRun || *dryRun
+		row, err := client.ApplyPlatformTenant(ctx, req)
+		if err != nil {
+			return printErr("Apply failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(row))
+		}
+		if _, err := fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", row.Action, row.TenantID, row.ExternalRef, row.Status); err != nil {
+			return printErr("Output failed", err)
+		}
+		for _, item := range row.Consumers {
+			if _, err := fmt.Fprintf(osStdout, "consumer\t%s\t%s\t%s\n", item.Action, item.AppID, item.ID); err != nil {
+				return printErr("Output failed", err)
+			}
+		}
+		for _, item := range row.Surfaces {
+			if _, err := fmt.Fprintf(osStdout, "surface\t%s\t%s\t%s\t%s\n", item.Action, item.ID, item.Status, item.CertState); err != nil {
+				return printErr("Output failed", err)
+			}
+		}
 	case "info":
 		row, err := client.GetPlatformTenant(ctx, *id)
 		if err != nil {

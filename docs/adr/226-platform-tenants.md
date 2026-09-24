@@ -25,4 +25,6 @@ The original usage join above used the consumer's **current** tenant link, which
 
 ## Activation and compatibility
 
+An additive onboarding apply operation may create the account tenant and its app-local consumers and link existing surfaces in one account-scoped transaction. Its dry run performs the same validation without writes. It never infers or removes omitted links, mints credentials, creates hostnames, or claims asynchronous certificate readiness. Reusing an existing consumer requires an exact name match and active status; conflicting ownership aborts the entire bundle. The account row serializes competing bundle creates, and each requested resource is locked before mutation. This preserves the explicit binding and fail-closed ownership decisions above while removing the customer's multi-call coordinator.
+
 The migration is additive and replay-safe if its schema is present but its goose ledger row is missing: existing consumers and surfaces have null `platform_tenant_id` and retain their present behavior. Public routes use the existing MFA-gated read and deploy-write scopes. The tenant feature is unavailable on plans that do not allow consumer keys. Platform tenant suspension requires both API and gateway binaries to understand the new schema before customers link resources; deployment must run migrations first.
