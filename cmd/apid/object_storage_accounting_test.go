@@ -23,6 +23,7 @@ func TestObjectStorageAccountingAPIGates(t *testing.T) {
 	setS3Flag(t, e, true)
 	path := "/v1/apps/accounting/buckets"
 	bucket := bucketResponse(t, e.do(t, "POST", path, map[string]any{"name": "assets"}, nil), 201)
+	e.s.objectStorage.Accounting = api.ObjectStoragePolicy{}
 	sign := path + "/" + bucket.ID + "/signed-url"
 	body := map[string]any{"method": "PUT", "key": "file", "size_bytes": 100}
 	if r := e.do(t, "POST", sign, body, nil); r.Code != 503 {
@@ -150,7 +151,8 @@ func TestObjectStorageInventoryPublishesOnlyCompleteScans(t *testing.T) {
 			e := setup(t, api.PlanPro)
 			createApp(t, e, "inventory")
 			p := &inventoryProvider{fail: mode == "failed", cycle: mode == "cycle"}
-			registry, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "external"}, Backends: []objectstorage.BackendConfig{{ID: "external", Driver: "fake", Region: "us-east-1", Namespace: "isolated", Endpoint: "https://s3.example.test", S3Region: "us-east-1"}}}, func(string) string { return "" }, map[string]objectstorage.Factory{"fake": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return p, nil }})
+			policy := api.ObjectStoragePolicy{MaxAccountBytes: 1000, MaxBucketBytes: 500, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 1000, MaxMonthlyRequests: 1000, MaxMonthlyEgressBytes: 1000, MaxMonthlyAuthorizations: 1000, MaxReportAgeSeconds: 3600}
+			registry, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "external"}, Backends: []objectstorage.BackendConfig{{ID: "external", Driver: "fake", Region: "us-east-1", Namespace: "isolated", Endpoint: "https://s3.example.test", S3Region: "us-east-1", UsageReportsPath: "/var/spool/faas/external-usage.json"}}}, func(string) string { return "" }, map[string]objectstorage.Factory{"fake": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return p, nil }})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -182,6 +182,10 @@ func (s *server) objectStorageEnabled() bool {
 	return s.objectStorage != nil && s.runtimeBool(runtimeConfigS3, false)
 }
 
+func (s *server) objectStorageProvisioningReady() bool {
+	return s.objectStorageEnabled() && s.objectStorage.CanProvisionAllRegions()
+}
+
 // bucketView deliberately excludes operator placement, credentials and leases.
 type bucketView = api.ObjectBucket
 
@@ -273,7 +277,7 @@ func (s *server) listBuckets(w http.ResponseWriter, r *http.Request, acct state.
 		regions, defaultRegion = s.objectStorage.Regions(), s.objectStorage.DefaultRegion
 		maxBytes, maxBuckets = s.objectStorage.MaxUploadBytes, s.objectStorage.MaxBucketsPerApp
 	}
-	writeJSON(w, 200, api.ObjectBucketList{Items: items, Enabled: s.objectStorageEnabled(), Regions: regions, DefaultRegion: defaultRegion, MaxUploadBytes: maxBytes, MaxBucketsPerApp: maxBuckets})
+	writeJSON(w, 200, api.ObjectBucketList{Items: items, Enabled: s.objectStorageProvisioningReady(), Regions: regions, DefaultRegion: defaultRegion, MaxUploadBytes: maxBytes, MaxBucketsPerApp: maxBuckets})
 }
 
 func apiKeyCarriesScope(key state.APIKey, want string) bool {
@@ -380,6 +384,9 @@ func (s *server) reserveBucket(ctx context.Context, st state.ObjectBucketStore, 
 	}
 	if req.Region == "" {
 		req.Region = s.objectStorage.DefaultRegion
+	}
+	if !s.objectStorage.CanProvisionAllRegions() {
+		return state.ObjectBucket{}, state.ErrObjectUsageStale
 	}
 	backend, err := s.objectStorage.Default(req.Region)
 	if err != nil {

@@ -34,7 +34,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		case disposableRunsCapabilityKey:
 			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.executionAPIEnabled
 		case "object-storage":
-			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.objectStorageEnabled()
+			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.objectStorageProvisioningReady()
 		case "github-deploys":
 			available := s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())
 			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && available

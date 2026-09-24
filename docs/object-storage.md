@@ -132,6 +132,13 @@ behavior. Those launch gates still require their own provider-specific checks.
 New signed URLs also require an explicit `accounting` policy, a complete
 inventory baseline, and fresh authoritative provider reports. See below;
 loading the registry and enabling the flag alone is no longer sufficient.
+The customer capability, bucket catalog `enabled` field, and dashboard remain
+disabled until the policy and a `usage_reports_path` for every advertised
+default backend are configured. New bucket creation then fails closed with
+`object_storage_usage_stale` if that configuration is incomplete; retries and
+cleanup of existing buckets remain available. This configuration check does
+not certify that reports are fresh: check `GET /v1/account/object-storage-usage`
+and complete provider/import qualification before enabling customer traffic.
 
 ## Hot enable / disable
 
