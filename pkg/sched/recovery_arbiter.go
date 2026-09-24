@@ -29,7 +29,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -100,6 +102,9 @@ type RecreateDispatcher interface {
 type Arbiter struct {
 	liveMig  MigrationDispatcher
 	recreate RecreateDispatcher
+	// liveMigConcurrency bounds the live migrations Tick runs at once
+	// for one node (api.MigrateLiveConcurrency).
+	liveMigConcurrency int
 }
 
 // NewArbiter wires the two dispatch targets. Either may be
@@ -107,7 +112,16 @@ type Arbiter struct {
 // arbiter still returns the right verdict; dispatch logs a
 // warn and moves on).
 func NewArbiter(lm MigrationDispatcher, rp RecreateDispatcher) *Arbiter {
-	return &Arbiter{liveMig: lm, recreate: rp}
+	return &Arbiter{liveMig: lm, recreate: rp, liveMigConcurrency: api.MigrateLiveConcurrency}
+}
+
+// WithLiveMigrationConcurrency overrides how many live migrations Tick runs
+// at once for one node. Values below 1 keep the current setting.
+func (a *Arbiter) WithLiveMigrationConcurrency(n int) *Arbiter {
+	if n >= 1 {
+		a.liveMigConcurrency = n
+	}
+	return a
 }
 
 // Decide returns the per-instance verdict. Pure function:
@@ -220,29 +234,17 @@ func (a *Arbiter) Tick(ctx context.Context, nodes []state.ComputeNode, instances
 			node.Lifecycle != state.NodeLifecycleRecovering {
 			continue
 		}
-		instances := instancesByNode[node.ID]
-		for _, instance := range instances {
-			verdict := a.Decide(node, instance)
-			switch verdict {
+		var migrate []string
+		for _, instance := range instancesByNode[node.ID] {
+			switch a.Decide(node, instance) {
 			case DecisionNone:
 				skipped++
 			case DecisionLiveMigrate:
-				if a.liveMig != nil {
-					if e := a.liveMig.Enqueue(ctx, instance.ID); e != nil {
-						if recoveryMigrationFallback(node, e, a.recreate) {
-							if fallbackErr := a.recreate.RecreateInstance(ctx, instance.ID); fallbackErr == nil {
-								recreate++
-								continue
-							} else {
-								err = errors.Join(e, fallbackErr)
-								continue
-							}
-						}
-						err = e
-						continue
-					}
+				if a.liveMig == nil {
+					liveMig++
+					continue
 				}
-				liveMig++
+				migrate = append(migrate, instance.ID)
 			case DecisionRecreate:
 				if a.recreate != nil {
 					if e := a.recreate.RecreateInstance(ctx, instance.ID); e != nil {
@@ -253,8 +255,64 @@ func (a *Arbiter) Tick(ctx context.Context, nodes []state.ComputeNode, instances
 				recreate++
 			}
 		}
+		migrated, fellBack, migErr := a.migrateNode(ctx, node, migrate)
+		liveMig += migrated
+		recreate += fellBack
+		if migErr != nil {
+			err = errors.Join(err, migErr)
+		}
 	}
 	return liveMig, recreate, skipped, err
+}
+
+// migrateNode runs one node's live migrations with at most liveMigConcurrency
+// in flight. A handoff is dominated by snapshot transfer (~85 s measured in
+// production), so dispatching them one by one made a drain take that long per
+// running instance. Recreates stay inline in Tick: they are row updates.
+func (a *Arbiter) migrateNode(ctx context.Context, node state.ComputeNode, ids []string) (migrated, fellBack int, err error) {
+	limit := a.liveMigConcurrency
+	if limit < 1 {
+		limit = 1
+	}
+	var (
+		mu   sync.Mutex
+		wg   sync.WaitGroup
+		errs []error
+	)
+	slots := make(chan struct{}, limit)
+	for _, id := range ids {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func(id string) {
+			defer func() { <-slots; wg.Done() }()
+			m, f, e := a.migrateOne(ctx, node, id)
+			mu.Lock()
+			defer mu.Unlock()
+			migrated += m
+			fellBack += f
+			if e != nil {
+				errs = append(errs, e)
+			}
+		}(id)
+	}
+	wg.Wait()
+	return migrated, fellBack, errors.Join(errs...)
+}
+
+// migrateOne dispatches one live migration, falling back to a recreate where
+// recoveryMigrationFallback allows it.
+func (a *Arbiter) migrateOne(ctx context.Context, node state.ComputeNode, id string) (migrated, fellBack int, err error) {
+	e := a.liveMig.Enqueue(ctx, id)
+	if e == nil {
+		return 1, 0, nil
+	}
+	if recoveryMigrationFallback(node, e, a.recreate) {
+		if fallbackErr := a.recreate.RecreateInstance(ctx, id); fallbackErr != nil {
+			return 0, 0, errors.Join(e, fallbackErr)
+		}
+		return 0, 1, nil
+	}
+	return 0, 0, e
 }
 
 // recoveryMigrationFallback reports whether a failed migration should be

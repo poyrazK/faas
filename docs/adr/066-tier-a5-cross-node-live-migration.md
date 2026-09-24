@@ -87,7 +87,8 @@ deleted.
    pool.
 
 3. **Lease window.** `MigrateLiveLeaseSeconds = 90`
-   (env-overridable). The dying vmmd mints the lease at
+   (env-overridable; raised to 180, see the 2026-09-24
+   amendment below). The dying vmmd mints the lease at
    Phase 1; the lease clock bounds the whole flow. On
    expiry, the dying vmmd's tracker drops the entry (the
    canonical snapshot stays in storage until the per-vmmd
@@ -289,7 +290,8 @@ inline:
 
 - `MigrateLiveMaxPerTick = 10` — per-drain-event cap
   on live-instance migrations.
-- `MigrateLiveLeaseSeconds = 90` — total window from
+- `MigrateLiveLeaseSeconds = 180` (was 90; 2026-09-24
+  amendment) — total window from
   Phase 1 mint to Phase 3.5 commit; on expiry the
   dying vmmd drops the lease and the orchestrator's
   Phase 4 returns "no lease".
@@ -469,3 +471,36 @@ PR that flips this ADR from `Proposed` to `Accepted`:
   `docs/adr/067-tier-a6-migrating-instance-watchdog.md`.
 - Issue #95 slice 5 — the multi-box slice this ADR
   closes.
+
+## Amendment 2026-09-24 — lease 180 s, handoffs dispatched in parallel
+
+Production rollouts drain each compute node through this handoff (the
+recovery arbiter, ADR-137, issues `DecisionLiveMigrate` for every running
+instance on a draining node). Measured on the two-node fleet (release
+d4bf70d9f):
+
+- A successful handoff took ~85 s: Phase 1 (keep-alive capture + registry
+  upload) ~38 s, Phase 3 (registry pull + restore) ~44 s. The 90 s lease left
+  ~5 s of headroom.
+- Every 1 GiB instance failed: Phase 1 alone took 41-82 s and Phase 3 was
+  cancelled mid-pull. Its VM kept running on the draining node and was then
+  reaped as an orphan when the node's new vmmd started, so the migration
+  bought nothing but a paused guest.
+- Handoffs ran one at a time, so a drain lasted ~88 s per running instance
+  whether they succeeded or not (279 s for three instances).
+
+Decisions:
+
+1. `MigrateLiveLeaseSeconds` = 180 (`pkg/api/limits.go`). vmmd mints the lease
+   from this constant; `FAAS_MIGRATE_LIVE_LEASE_SECONDS` still tunes schedd's
+   side only. The ADR-067 watchdog keys off each row's `lease_expires_at`, so it
+   follows automatically.
+2. The recovery arbiter runs one node's live migrations concurrently, at most
+   `MigrateLiveConcurrency` = 4 in flight. A drain now waits for its slowest
+   handoff instead of their sum. Four keeps the number of guests paused for a
+   capture, and sharing the node's registry bandwidth, small.
+
+Not addressed here: every byte still round-trips through the OCI registry
+even though source and destination share a private network. A direct
+node-to-node transfer is the structural fix for handoff latency.
+

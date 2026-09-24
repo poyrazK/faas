@@ -4225,18 +4225,32 @@ const (
 	// MigrateLiveLeaseSeconds is the upper bound on the four-phase
 	// handoff — Phase 1 mints a lease_token, Phase 3 commits or
 	// the lease expires. The dying vmmd resumes the VM on lease
-	// expiry (the snapshot stays). Tuned to comfortably exceed the
-	// snapshot-upload + restore round-trip on the OCIRegistry
-	// backend (latency dominated by the registry pull, not the
-	// local VM lifecycle). Defaults to 90s; tunable via
-	// FAAS_MIGRATE_LIVE_LEASE_SECONDS (env-overridable, see
-	// cmd/schedd/main.go::runWithDeps; propagated via
-	// Engine.WithMigrateLiveLeaseSeconds).
+	// expiry (the snapshot stays). It must exceed the snapshot
+	// capture + upload + registry pull + restore round-trip on the
+	// OCIRegistry backend. Production measured that round-trip at
+	// ~85 s for small apps (Phase 1 ~38 s, Phase 3 restore ~44 s),
+	// so the original 90 s barely fit them, and every 1 GiB app
+	// failed (Phase 1 alone took 41-82 s) and was then killed by
+	// the rollout anyway. 180 s gives 1 GiB instances room to land;
+	// with MigrateLiveConcurrency a drain waits for its slowest
+	// handoff, not the sum. vmmd reads this constant directly for
+	// the lease it mints; FAAS_MIGRATE_LIVE_LEASE_SECONDS tunes
+	// only schedd's side (cmd/schedd/main.go::runWithDeps;
+	// propagated via Engine.WithMigrateLiveLeaseSeconds).
+	//
+	// MigrateLiveConcurrency bounds the live migrations one
+	// recovery tick runs at once for a single draining node
+	// (pkg/sched/recovery_arbiter.go). Serially, a drain took ~88 s
+	// per running instance whether the handoff succeeded or not,
+	// which dominated every compute-node rollout. Kept small
+	// because each handoff pauses a guest for its capture and
+	// shares the node's registry bandwidth.
 	//
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
 	MigrateLiveMaxPerTick   = 10
-	MigrateLiveLeaseSeconds = 90
+	MigrateLiveLeaseSeconds = 180
+	MigrateLiveConcurrency  = 4
 
 	// Tier A6 (migrating-instance watchdog, ADR-067 follow-up to
 	// ADR-070): self-heal stuck state='migrating' rows that

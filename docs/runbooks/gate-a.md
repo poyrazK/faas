@@ -144,8 +144,9 @@ vmmd's lease entry is dropped.
 
 Per-drain-event cap: `MigrateLiveMaxPerTick = 10` (env-
 overridable via `FAAS_MIGRATE_LIVE_MAX_PER_TICK`). Lease
-window: `MigrateLiveLeaseSeconds = 90` (env-overridable via
-`FAAS_MIGRATE_LIVE_LEASE_SECONDS`). On lease expiry the
+window: `MigrateLiveLeaseSeconds = 180` (schedd side env-overridable
+via `FAAS_MIGRATE_LIVE_LEASE_SECONDS`). Up to `MigrateLiveConcurrency = 4`
+handoffs per draining node run at once. On lease expiry the
 dying vmmd drops the lease and the canonical snapshot stays
 in storage until the per-vmmd snapshot-drift sweep reaps it.
 
