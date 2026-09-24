@@ -30,6 +30,13 @@ on:
         description: "Existing pre-1.0 release tag published by release.yml"
         required: true
         type: string
+      hosted_runner:
+        description: >-
+          Run this workflow's coordination job on a GitHub-hosted runner
+          instead of the dedicated fleet runner. Escape hatch for when the
+          fleet runner host is unavailable; hosted jobs queue behind CI.
+        type: boolean
+        default: false
       maintenance_mode:
         description: "Planned window with legacy writers stopped before incompatible migrations"
         type: boolean
@@ -40,6 +47,13 @@ on:
         description: "Existing pre-1.0 release tag published by release.yml (for example v0.1.18-rc.1)"
         required: true
         type: string
+      hosted_runner:
+        description: >-
+          Run this workflow's coordination job on a GitHub-hosted runner
+          instead of the dedicated fleet runner. Escape hatch for when the
+          fleet runner host is unavailable; hosted jobs queue behind CI.
+        type: boolean
+        default: false
       maintenance_mode:
         description: "Planned window with legacy writers stopped before incompatible migrations"
         type: boolean
@@ -58,7 +72,9 @@ jobs:
   deploy:
     name: Deploy to Control Plane Host
     environment: production
-    runs-on: ubuntu-latest
+    # The dedicated fleet runner does not queue behind repository CI the way
+    # GitHub-hosted runners do (a busy CI day added 8-14 min per hosted job).
+    runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
@@ -118,8 +134,18 @@ jobs:
           # GitHub's by-tag response can lag asset uploads while the by-ID
           # response is current. Resolve the tag to an ID, then use the ID
           # response for the authoritative asset list.
-          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
-          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}")"
+          # Plain REST keeps this step independent of the gh CLI, which the
+          # dedicated fleet runner does not install.
+          github_api() {
+            curl --fail --silent --show-error --location \
+              --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              "https://api.github.com/$1"
+          }
+          release_id="$(github_api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" | jq -er '.id')"
+          release_json="$(github_api "repos/${GITHUB_REPOSITORY}/releases/${release_id}")"
           for asset in release.tar.gz release.cosign.bundle release.sbom.json \
             release-manifest.json production-manifest.yaml runtime-bases.env SHA256SUMS; do
             asset_url="$(jq -er --arg name "$asset" \
