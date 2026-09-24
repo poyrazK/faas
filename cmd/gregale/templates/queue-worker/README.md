@@ -24,7 +24,8 @@ gregale queue send orders-worker --payload '{"job_id":"order-123"}'
 gregale queue status orders-worker --json
 ```
 
-The handler receives the JSON payload as `event.body` and returns `202` after
+The handler receives the parsed JSON payload as `event.body` (or a raw JSON
+string) and returns `202` after
 accepting it. Keep the business operation idempotent because retries and
 redelivery are normal queue behavior. Exhausted messages are visible with
 `gregale dlq orders-worker` and can be replayed after the underlying error is

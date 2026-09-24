@@ -5,19 +5,23 @@
 // payload available to application code for its own processing.
 
 export async function handler(event, ctx) {
-  let envelope = {};
-  if (event && typeof event.body === "string" && event.body.length > 0) {
+  let envelope = event?.body;
+  if (typeof envelope === "string") {
     try {
-      envelope = JSON.parse(event.body);
+      envelope = JSON.parse(envelope);
     } catch {
       throw new Error("Gregale event body was not valid JSON");
     }
   }
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope) ||
+      ![envelope.id, envelope.source, envelope.type].every((value) => typeof value === "string" && value.length > 0)) {
+    throw new Error("Gregale event envelope is missing id, source, or type");
+  }
 
   ctx.log.info("event received", {
-    event_id: typeof envelope.id === "string" ? envelope.id : "unknown",
-    source: typeof envelope.source === "string" ? envelope.source : "unknown",
-    type: typeof envelope.type === "string" ? envelope.type : "unknown",
+    event_id: envelope.id,
+    source: envelope.source,
+    type: envelope.type,
   });
 
   return {
