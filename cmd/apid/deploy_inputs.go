@@ -119,29 +119,30 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	}
 
 	var (
-		sourcePath        string
-		sourceBytes       int64
-		dockerfile        bool
-		runtime           string
-		handler           string
-		sourceRoot        string
-		sourceURL         string
-		commitSHA         string
-		scope             string
-		environment       string
-		kind              state.DeploymentKind
-		sourceAccepted    bool
-		workflows         []api.WorkflowSpec
-		sidecars          api.Sidecars
-		companionField    string
-		devSource         devSourceMetadata
-		trafficPercent    *int
-		canarySpec        *api.CanaryPresetSpec
-		rollbackOn5xx     *bool
-		noTriggers        bool
-		ann               annotationForm
-		stagedManifest    sourceRefManifestStaged
-		manifestCommitted bool
+		sourcePath             string
+		sourceBytes            int64
+		dockerfile             bool
+		runtime                string
+		handler                string
+		sourceRoot             string
+		sourceURL              string
+		commitSHA              string
+		scope                  string
+		environment            string
+		kind                   state.DeploymentKind
+		sourceAccepted         bool
+		workflows              []api.WorkflowSpec
+		sidecars               api.Sidecars
+		companionField         string
+		devSource              devSourceMetadata
+		trafficPercent         *int
+		canarySpec             *api.CanaryPresetSpec
+		rollbackOn5xx          *bool
+		disableStartupCPUBoost *bool
+		noTriggers             bool
+		ann                    annotationForm
+		stagedManifest         sourceRefManifestStaged
+		manifestCommitted      bool
 	)
 	defer func() {
 		if sourcePath != "" && !sourceAccepted {
@@ -283,6 +284,14 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		case "rollback_on_5xx":
 			value := isFlagSet(part)
 			rollbackOn5xx = &value
+		case "disable_startup_cpu_boost":
+			b, readErr := io.ReadAll(io.LimitReader(part, 16))
+			value, parseErr := strconv.ParseBool(strings.TrimSpace(string(b)))
+			if readErr != nil || parseErr != nil {
+				api.WriteProblem(w, api.ErrValidation("disable_startup_cpu_boost must be a boolean"))
+				return
+			}
+			disableStartupCPUBoost = &value
 		case "no_triggers":
 			noTriggers = isFlagSet(part)
 		case "reason":
@@ -327,7 +336,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -501,6 +510,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			TrafficPercent:         rollout.TrafficPercent,
 			TrafficPercentExplicit: rollout.TrafficPercentExplicit,
 			RollbackOn5xx:          rollout.RollbackOn5xx,
+			DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
 			CanaryPreset:           rollout.CanaryPreset,
 			CanaryStep:             rollout.CanaryStep,
 			CanaryTotalSteps:       rollout.CanaryTotalSteps,

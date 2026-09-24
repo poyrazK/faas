@@ -1768,6 +1768,10 @@ type CreateDeploymentRequest struct {
 	// an explicit value preserves the caller's intent across every deploy
 	// transport. The feature is plan-gated to Pro and Scale.
 	RollbackOn5xx *bool `json:"rollback_on_5xx,omitempty"`
+	// DisableStartupCPUBoost opts this deployment out of the bounded CPU
+	// allowance used while a VM boots and becomes ready. Omitted preserves the
+	// existing boost; the setting applies to cold boots and snapshot restores.
+	DisableStartupCPUBoost *bool `json:"disable_startup_cpu_boost,omitempty"`
 	// Canary (issue #976 / ADR-122 / SAFE-RELEASES-A). Pointer
 	// so omitted == "no canary; server-default 'none' preset"
 	// (today's behaviour preserved exactly: 100% on the new
@@ -2526,6 +2530,9 @@ type DeploymentResponse struct {
 	// ensures the value is a valid slug; the handler validates
 	// scopeFromBody before storing via api.ValidateScope.
 	Scope string `json:"scope,omitempty"`
+	// DisableStartupCPUBoost records whether this deployment opted out of the
+	// temporary startup CPU allowance. Omitted means the existing boost policy.
+	DisableStartupCPUBoost bool `json:"disable_startup_cpu_boost,omitempty"`
 	// BuildPlan (issue #961 / zero-config profile PR) carries the
 	// compatibility framework family + runtime + version + effective
 	// entrypoint + port + health path + class
@@ -5799,13 +5806,14 @@ type SourceRefDeployRequest struct {
 	// defaults to ${{ github.event.pull_request.number }} on the
 	// Action side. All four are optional; the apid handler stamps
 	// them onto the deployment row + the audit data{} payload.
-	Reason         string            `json:"reason,omitempty"`
-	Tag            string            `json:"tag,omitempty"`
-	DeployedBy     string            `json:"deployed_by,omitempty"`
-	PRNumber       int               `json:"pr_number,omitempty"`
-	TrafficPercent *int              `json:"traffic_percent,omitempty"`
-	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
-	RollbackOn5xx  *bool             `json:"rollback_on_5xx,omitempty"`
+	Reason                 string            `json:"reason,omitempty"`
+	Tag                    string            `json:"tag,omitempty"`
+	DeployedBy             string            `json:"deployed_by,omitempty"`
+	PRNumber               int               `json:"pr_number,omitempty"`
+	TrafficPercent         *int              `json:"traffic_percent,omitempty"`
+	Canary                 *CanaryPresetSpec `json:"canary,omitempty"`
+	RollbackOn5xx          *bool             `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost *bool             `json:"disable_startup_cpu_boost,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -5827,13 +5835,14 @@ type SourceTarballDeployRequest struct {
 	// come from --reason / --tag; PRNumber is not normally
 	// supplied on a tarball deploy (it would be inferred from
 	// a paired GitHub Action, not the tarball CLI).
-	Reason         string            `json:"reason,omitempty"`
-	Tag            string            `json:"tag,omitempty"`
-	DeployedBy     string            `json:"deployed_by,omitempty"`
-	PRNumber       int               `json:"pr_number,omitempty"`
-	TrafficPercent *int              `json:"traffic_percent,omitempty"`
-	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
-	RollbackOn5xx  *bool             `json:"rollback_on_5xx,omitempty"`
+	Reason                 string            `json:"reason,omitempty"`
+	Tag                    string            `json:"tag,omitempty"`
+	DeployedBy             string            `json:"deployed_by,omitempty"`
+	PRNumber               int               `json:"pr_number,omitempty"`
+	TrafficPercent         *int              `json:"traffic_percent,omitempty"`
+	Canary                 *CanaryPresetSpec `json:"canary,omitempty"`
+	RollbackOn5xx          *bool             `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost *bool             `json:"disable_startup_cpu_boost,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).

@@ -23450,6 +23450,9 @@ components:
         rollback_on_5xx:
           type: [boolean, "null"]
           description: "Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false."
+        disable_startup_cpu_boost:
+          type: [boolean, "null"]
+          description: "Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost."
         no_triggers:
           type: boolean
           description: "Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."
@@ -23543,6 +23546,7 @@ components:
           pattern: '^[a-f0-9]{64}$'
           description: "SHA-256 digest of the exact source archive handed to the builder; stable identity for local-source revisions."
         has_overrides: { type: boolean, description: "True when this deployment carries a non-null override_* column set." }
+        disable_startup_cpu_boost: { type: boolean, description: "Whether the deployment opted out of the temporary startup CPU allowance; absent/false preserves the default boost." }
         override_entrypoint:
           type: array
           items: { type: string }
@@ -23877,6 +23881,9 @@ components:
         rollback_on_5xx:
           type: [boolean, "null"]
           description: "Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false."
+        disable_startup_cpu_boost:
+          type: [boolean, "null"]
+          description: "Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
 
     UpdateDeploymentRequest:
 
@@ -24968,6 +24975,9 @@ components:
         rollback_on_5xx:
           type: [boolean, "null"]
           description: "Create-time opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false."
+        disable_startup_cpu_boost:
+          type: [boolean, "null"]
+          description: "Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
         full_rootfs_allow_auto:
           type: [boolean, 'null']
           description: "Whether to auto-fallback to a self-contained rootfs for images without a Gregale runtime base. Omitted uses the plan default."
@@ -27391,6 +27401,9 @@ components:
         rollback_on_5xx:
           type: [boolean, "null"]
           description: "Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false."
+        disable_startup_cpu_boost:
+          type: [boolean, "null"]
+          description: "Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
 
     DiffRequest:
       description: |

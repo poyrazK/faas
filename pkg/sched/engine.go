@@ -372,6 +372,18 @@ func startupDeadlineForApp(app state.App, plan api.Plan) int32 {
 	return int32(limits.DefaultStartupDeadlineS)
 }
 
+// startupCPUBoostQuota mirrors VMMD's bounded startup profile so placement and
+// the node ledger reserve the same temporary peak that cpu.max will enforce.
+func startupCPUBoostQuota(plan api.Plan, configured int) int {
+	period := plan.CPUPeriodUS()
+	quota := plan.CPUQuotaUS()
+	if period <= 0 || quota <= 0 {
+		return configured
+	}
+	planCeiling := int(int64(quota) * 1000 / int64(period))
+	return max(configured, min(api.DefaultAppCPUMillicores, planCeiling))
+}
+
 // executionModeForApp resolves the manifest default before crossing the
 // scheduler/vmmd boundary. Unknown persisted values fail safe to request mode,
 // which still requires a listening server instead of bypassing readiness as a
@@ -2944,9 +2956,18 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", appID, "err", rerr)
 		}
 	}
+	configuredCPU := effectiveAppCPUMillicores(app)
+	startupCPU := configuredCPU
+	if !dep.DisableStartupCPUBoost {
+		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
+	}
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		AppID:                      appID,
+		Plan:                       acct.Plan,
+		RAMMB:                      app.RAMMB,
+		VCPU:                       limits.VCPU,
+		CPUMillicores:              startupCPU,
+		MaxConcurrency:             app.MaxConcurrency,
 		PreferredNodeID:            warmHint,
 		PreferredNodeIDs:           snapshotNodes,
 		PrioritizeSnapshotLocality: deploymentSmoke && snapshotLocalityKnown,
@@ -2967,6 +2988,22 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
 	}
+	var provisionalCPUBoostUntil time.Time
+	if startupCPU > configuredCPU {
+		startupDeadline := time.Duration(startupDeadlineForApp(app, acct.Plan)) * time.Second
+		if startupDeadline <= 0 {
+			startupDeadline = 30 * time.Second
+		}
+		// Keep the CPU peak reserved through the maximum readiness window,
+		// vmmd's post-ready tail, and scheduler/RPC recovery margin. Success
+		// replaces this conservative deadline with the observed ready window.
+		provisionalCPUBoostUntil = time.Now().Add(startupDeadline + fcvm.StartupCPUBoostTailDuration + 30*time.Second)
+		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, ins.ID, &provisionalCPUBoostUntil); err != nil {
+			_ = e.store.DeleteInstance(ctx, ins.ID)
+			release()
+			return WakeResult{}, fmt.Errorf("sched: wake: persist provisional startup CPU reservation: %w", err)
+		}
+	}
 	// Reserve declared listeners before the ledger and vmmd admission. The
 	// mapping is node-local and durable, so a failed boot can release it from
 	// the same state-transition path and a scheduler restart can recover the
@@ -2984,7 +3021,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
@@ -3150,9 +3187,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: resolve the optional app override against the account's
 		// plan before crossing the scheduler/vmmd boundary.
-		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
-		ExecutionMode:    executionModeForApp(app),
-		Plan:             acct.Plan, AccountID: acct.ID,
+		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
+		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
+		ExecutionMode:          executionModeForApp(app),
+		Plan:                   acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv.Entries,
 		Sidecars:  sidecars,
@@ -3534,6 +3572,25 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
 		return WakeResult{}, err
+	}
+	configuredBootCPU := int(bootInput.spec.CPUMillicores)
+	startupBootCPU := configuredBootCPU
+	if !bootInput.spec.DisableStartupCPUBoost {
+		startupBootCPU = startupCPUBoostQuota(bootInput.spec.Plan, configuredBootCPU)
+	}
+	if startupBootCPU > configuredBootCPU {
+		// vmmd's readiness boundary is inside the RPC; using response time plus
+		// the same tail interval is conservative by the small RPC-return delay.
+		// Persist before publishing so recovery and peer schedulers keep the
+		// temporary peak in their fleet-wide CPU aggregate.
+		boostUntil := time.Now().Add(fcvm.StartupCPUBoostTailDuration)
+		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, bootInput.insID, &boostUntil); err != nil {
+			e.ledger.Release(bootInput.insID)
+			e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
+			e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "startup_cpu_reservation_failed")
+			return WakeResult{}, fmt.Errorf("sched: wake: persist startup CPU boost tail deadline: %w", err)
+		}
+		e.ledger.SetCPUStartupBoostUntil(bootInput.insID, boostUntil)
 	}
 
 	// A restore that fell back to cold boot means the snapshot is bad:
@@ -4908,14 +4965,15 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		EgressMbit:    int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
-		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
-		ExecutionMode:    executionModeForApp(app),
-		Plan:             acct.Plan,
-		AccountID:        acct.ID,
-		AppID:            app.ID,
-		DeploymentID:     dep.ID,
-		SealedEnv:        sealedEnv,
-		Sidecars:         sidecars,
+		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
+		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
+		ExecutionMode:          executionModeForApp(app),
+		Plan:                   acct.Plan,
+		AccountID:              acct.ID,
+		AppID:                  app.ID,
+		DeploymentID:           dep.ID,
+		SealedEnv:              sealedEnv,
+		Sidecars:               sidecars,
 		// ADR-045: api_env plaintext layer; the loadAPIEnv
 		// helper already fail-softs on a lookup error and logs
 		// Warn (engine.go:2382-2396). A hiccup here ships an
@@ -5534,9 +5592,14 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// ceiling and there's no other active node.
 	// Keep the initial snapshot near the app's assigned node when it fits.
 	// The chooser still enforces liveness and CPU/RAM admission.
+	primeConfiguredCPU := effectiveAppCPUMillicores(app)
+	primeStartupCPU := primeConfiguredCPU
+	if !dep.DisableStartupCPUBoost {
+		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
+	}
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: appID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID,
 	})
 	if err != nil {
@@ -5568,11 +5631,23 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}
+	var provisionalPrimeCPUBoostUntil time.Time
+	if primeStartupCPU > primeConfiguredCPU {
+		startupDeadline := time.Duration(startupDeadlineForApp(app, acct.Plan)) * time.Second
+		if startupDeadline <= 0 {
+			startupDeadline = 30 * time.Second
+		}
+		provisionalPrimeCPUBoostUntil = time.Now().Add(startupDeadline + fcvm.StartupCPUBoostTailDuration + 30*time.Second)
+		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, ins.ID, &provisionalPrimeCPUBoostUntil); err != nil {
+			_ = e.store.DeleteInstance(ctx, ins.ID)
+			return fmt.Errorf("sched: prime: persist provisional startup CPU reservation: %w", err)
+		}
+	}
 	e.emitInstanceChanged(ctx, ins.ID, appID, state.StateColdBooting, primeWakeID)
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		Kind:                KindSnapshotPrime,
 		NodeID:              placement.NodeID,
 		NodeCeilingMB:       placement.CeilingMB,
@@ -5611,9 +5686,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
 		// as ordinary wakes, so first boot and later wakes agree.
-		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan),
-		ExecutionMode:    executionModeForApp(app),
-		Plan:             acct.Plan, AccountID: acct.ID,
+		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
+		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
+		ExecutionMode:          executionModeForApp(app),
+		Plan:                   acct.Plan, AccountID: acct.ID,
 		AppID: appID, DeploymentID: dep.ID,
 		SealedEnv: sealedEnv.Entries,
 		Sidecars:  sidecars,
@@ -5696,6 +5772,16 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
 		return fmt.Errorf("sched: prime: cold boot: %w", err)
+	}
+	if primeStartupCPU > primeConfiguredCPU {
+		boostUntil := time.Now().Add(fcvm.StartupCPUBoostTailDuration)
+		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, ins.ID, &boostUntil); err != nil {
+			e.ledger.Release(ins.ID)
+			e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
+			e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cpu_reservation_failed")
+			return fmt.Errorf("sched: prime: persist startup CPU boost tail deadline: %w", err)
+		}
+		e.ledger.SetCPUStartupBoostUntil(ins.ID, boostUntil)
 	}
 	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
@@ -6539,6 +6625,10 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sched: seed ledger: list apps: %w", err)
 	}
+	startupCPUBoosts, err := e.store.ListActiveInstanceStartupCPUBoosts(ctx, time.Now())
+	if err != nil {
+		return fmt.Errorf("sched: seed ledger: list active startup CPU boosts: %w", err)
+	}
 	// Per-node ceiling cache so we don't fire a ComputeNodeByID
 	// per instance row (PR scale-out readiness #4, this would
 	// otherwise be O(instances × nodes) on a busy fleet). The
@@ -6623,7 +6713,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				// their RAM accounting or count them toward max_concurrency.
 				kind = KindWarmPool
 			}
-			if err := e.ledger.Admit(Request{
+			request := Request{
 				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
 				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 				// Recovery must account for the one candidate/stable overlap
@@ -6637,7 +6727,12 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				CPUBudgetMillicores:        loadCPUBudgetMillicores(ctx, nodeID),
 				AllowCPUOvercommitRecovery: true,
 				Kind:                       kind,
-			}); err != nil {
+			}
+			if until, ok := startupCPUBoosts[ins.ID]; ok {
+				request.CPUStartupBoostMillicores = startupCPUBoostQuota(acct.Plan, request.CPUMillicores)
+				request.CPUStartupBoostUntil = until
+			}
+			if err := e.ledger.Admit(request); err != nil {
 				e.log.Warn("seed ledger: admit", "instance", ins.ID, "err", err)
 				continue
 			}

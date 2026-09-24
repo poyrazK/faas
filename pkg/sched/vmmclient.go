@@ -402,6 +402,9 @@ type AppSpec struct {
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
+	// DisableStartupCPUBoost opts out of the temporary startup CPU allowance.
+	// False preserves boost behavior for legacy callers.
+	DisableStartupCPUBoost bool
 	// ExecutionMode constrains vmmd's characterization result. Empty preserves
 	// legacy inference for callers predating ADR-137.
 	ExecutionMode string
@@ -1465,6 +1468,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// the default MASQUERADE.
 		StaticEgressIp:             a.StaticEgressIP,
 		StartupDeadlineS:           a.StartupDeadlineS,
+		DisableStartupCpuBoost:     a.DisableStartupCPUBoost,
 		ExecutionMode:              a.ExecutionMode,
 		PrivateNetworkCidrs:        a.PrivateNetworkCIDRs,
 		PrivateNetworkId:           a.PrivateNetworkID,

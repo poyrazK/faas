@@ -2918,9 +2918,20 @@ func TestEngineReportActivity(t *testing.T) {
 func TestEngineSeedLedger(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	configuredCPU := 250
+	app, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{CPUMillicores: &configuredCPU})
+	if err != nil {
+		t.Fatalf("UpdateApp(cpu_millicores): %v", err)
+	}
 	// A running instance survived a schedd restart.
-	ins, _ := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
-	_ = ins
+	ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	boostUntil := time.Now().Add(time.Minute)
+	if err := store.SetInstanceStartupCPUBoostUntil(context.Background(), ins.ID, &boostUntil); err != nil {
+		t.Fatalf("SetInstanceStartupCPUBoostUntil: %v", err)
+	}
 
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	if err := e.SeedLedger(context.Background()); err != nil {
@@ -2928,6 +2939,9 @@ func TestEngineSeedLedger(t *testing.T) {
 	}
 	if got := e.Ledger().ResidentRAM(); got != 512+api.PerVMOverheadMB {
 		t.Errorf("resident = %d, want %d (running instance re-accounted)", got, 512+api.PerVMOverheadMB)
+	}
+	if got := e.Ledger().UsedCPUMillicoresForNode(ins.NodeID); got != api.DefaultAppCPUMillicores {
+		t.Errorf("CPU reservation after restart = %d, want active startup peak %d", got, api.DefaultAppCPUMillicores)
 	}
 }
 

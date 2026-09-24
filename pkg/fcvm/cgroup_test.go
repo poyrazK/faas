@@ -1,10 +1,12 @@
 package fcvm
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -163,6 +165,72 @@ func TestStartupCPUProfileBoostsThenRestoresConfiguredQuota(t *testing.T) {
 	assertCPU(filepath.Join(parent, "cpu.max"), "250000 1000000\n")
 }
 
+func TestStartupCPUBoostTailRestoresConfiguredQuotaAsynchronously(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	inst := "startup-cpu-tail"
+	lease := Lease{Instance: inst, Plan: api.PlanPro, CPUMillicores: 250}
+	scope := filepath.Join(dir, ParentCgroupFor(lease.Plan), PerInstanceScope(inst))
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("setup scope: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), []byte("500000 500000\n"), 0o644); err != nil {
+		t.Fatalf("write startup quota: %v", err)
+	}
+
+	v := NewJailerVMM(t.TempDir(), time.Second)
+	readyAt := time.Now()
+	v.scheduleStartupCPUBoostTail(context.Background(), lease, nil,
+		startupCPUProfile{StartupMillicores: 1000, ConfiguredMillicores: 250},
+		readyAt, 10*time.Millisecond)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+		if err != nil {
+			t.Fatalf("read cpu.max: %v", err)
+		}
+		if string(body) == "125000 500000\n" {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("cpu.max was not restored and could not be read: %v", err)
+	}
+	t.Fatalf("cpu.max was not restored to the configured quota before timeout: got %q", body)
+}
+
+func TestCancelStartupCPUBoostTailStopsPendingRestore(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	inst := "startup-cpu-tail-canceled"
+	lease := Lease{Instance: inst, Plan: api.PlanPro, CPUMillicores: 250}
+	scope := filepath.Join(dir, ParentCgroupFor(lease.Plan), PerInstanceScope(inst))
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("setup scope: %v", err)
+	}
+	startupQuota := []byte("500000 500000\n")
+	if err := os.WriteFile(filepath.Join(scope, "cpu.max"), startupQuota, 0o644); err != nil {
+		t.Fatalf("write startup quota: %v", err)
+	}
+
+	v := NewJailerVMM(t.TempDir(), time.Second)
+	readyAt := time.Now()
+	v.scheduleStartupCPUBoostTail(context.Background(), lease, nil,
+		startupCPUProfile{StartupMillicores: 1000, ConfiguredMillicores: 250},
+		readyAt, 25*time.Millisecond)
+	v.cancelStartupCPUBoostTail(inst)
+	time.Sleep(40 * time.Millisecond)
+
+	body, err := os.ReadFile(filepath.Join(scope, "cpu.max"))
+	if err != nil {
+		t.Fatalf("read cpu.max: %v", err)
+	}
+	if string(body) != string(startupQuota) {
+		t.Fatalf("canceled tail changed cpu.max to %q, want startup quota %q", body, startupQuota)
+	}
+}
+
 func TestStartupCPUProfileResolvesLegacyZeroToPlanCeiling(t *testing.T) {
 	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
 		profile, err := resolveStartupCPUProfile(plan, 0)
@@ -172,6 +240,28 @@ func TestStartupCPUProfileResolvesLegacyZeroToPlanCeiling(t *testing.T) {
 		if profile.StartupMillicores != 1000 || profile.ConfiguredMillicores != 1000 {
 			t.Errorf("plan %s profile = %+v, want 1000/1000", plan, profile)
 		}
+	}
+}
+
+func TestShouldApplyStartupCPUBoost(t *testing.T) {
+	cases := []struct {
+		name     string
+		lease    Lease
+		eligible bool
+		want     bool
+	}{
+		{name: "default remains enabled", lease: Lease{Plan: api.PlanPro}, eligible: true, want: true},
+		{name: "deployment opt-out", lease: Lease{Plan: api.PlanPro, DisableStartupCPUBoost: true}, eligible: true},
+		{name: "builder is ineligible", lease: Lease{Plan: api.PlanPro, IsBuilder: true}, eligible: true},
+		{name: "caller skips readiness", lease: Lease{Plan: api.PlanPro}, eligible: false},
+		{name: "unknown plan is ineligible", lease: Lease{}, eligible: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldApplyStartupCPUBoost(tc.lease, tc.eligible); got != tc.want {
+				t.Fatalf("shouldApplyStartupCPUBoost() = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 

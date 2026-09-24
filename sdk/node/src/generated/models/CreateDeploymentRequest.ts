@@ -72,6 +72,10 @@ export type CreateDeploymentRequest = {
    */
   rollback_on_5xx?: boolean | null;
   /**
+   * Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
+   */
+  disable_startup_cpu_boost?: boolean | null;
+  /**
    * Whether to auto-fallback to a self-contained rootfs for images without a Gregale runtime base. Omitted uses the plan default.
    */
   full_rootfs_allow_auto?: boolean | null;

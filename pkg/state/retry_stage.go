@@ -113,6 +113,7 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 		DeployedBy:             src.DeployedBy,
 		PRNumber:               src.PRNumber,
 		RollbackOn5xx:          src.RollbackOn5xx,
+		DisableStartupCPUBoost: src.DisableStartupCPUBoost,
 		CanaryPreset:           canaryPreset,
 		CanaryStep:             0,
 		CanaryTotalSteps:       src.CanaryTotalSteps,

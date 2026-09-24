@@ -16,10 +16,9 @@ import (
 // the {slug} URL component. The dockerfile flag gates function-runner vs
 // Dockerfile builds (apid/dispatch).
 //
-// Annotation and source-provenance fields (issue #977 / ADR-116 and
-// issue #1182): when a field is non-zero on `a`, the corresponding
-// multipart form field is emitted. nil/zero values skip the field
-// entirely — the server defaults them to NULL on the row.
+// Annotation, source-provenance, and rollout fields are emitted when
+// supplied. Pointer booleans preserve an explicit false; nil skips the field
+// and lets the server apply its documented default.
 func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile bool, runtime, handler, sourceRoot string, a DeployAnnotations) *multipart.Writer {
 	w := multipart.NewWriter(dst)
 	// slug is redundant (URL has it too) but apid accepts it for log
@@ -73,6 +72,9 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if a.RollbackOn5xx != nil {
 		_ = w.WriteField("rollback_on_5xx", fmt.Sprintf("%t", *a.RollbackOn5xx))
 	}
+	if a.DisableStartupCPUBoost != nil {
+		_ = w.WriteField("disable_startup_cpu_boost", fmt.Sprintf("%t", *a.DisableStartupCPUBoost))
+	}
 	if a.NoTriggers {
 		_ = w.WriteField("no_triggers", "true")
 	}
@@ -115,11 +117,8 @@ func newDevSourceMultipartWriter(dst *bytes.Buffer, slug string, dockerfile bool
 
 // DeployAnnotations is the annotation surface shared by every
 // CLI-driven deploy path (issue #977 / ADR-116). Zero values mean
-// "no annotation"; the server treats them as NULL on the row.
-// Pointer fields are intentionally avoided so the multipart writer
-// (which has no notion of nil) stays a single seam; nil-vs-zero is
-// re-derived from the column scan via the coalesce-on-read pattern
-// at pkg/state/pgstore.go.
+// "no annotation"; the server treats them as NULL on the row. Optional
+// rollout policies use pointers so explicit false values can be preserved.
 type DeployAnnotations struct {
 	// Scope selects the named environment scope the deployment should read at
 	// wake time. Empty means the server's default scope. The CLI populates it
@@ -145,10 +144,11 @@ type DeployAnnotations struct {
 	// Rollout options share this transport envelope so local directory,
 	// tarball, developer-source, and source-ref deploys preserve the same
 	// semantics as image JSON deploys. The pointer preserves explicit zero.
-	TrafficPercent *int
-	Canary         *CanaryPresetSpec
-	RollbackOn5xx  *bool
-	NoTriggers     bool // skip manifest trigger reconciliation
+	TrafficPercent         *int
+	Canary                 *CanaryPresetSpec
+	RollbackOn5xx          *bool
+	DisableStartupCPUBoost *bool
+	NoTriggers             bool // skip manifest trigger reconciliation
 }
 
 func normalizeMultipartSourceRoot(raw string) (string, error) {

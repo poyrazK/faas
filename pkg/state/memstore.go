@@ -13216,6 +13216,39 @@ func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, 
 	return ins, nil
 }
 
+func (m *MemStore) SetInstanceStartupCPUBoostUntil(_ context.Context, id string, until *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if until == nil {
+		ins.StartupCPUBoostUntil = nil
+	} else {
+		stamp := until.UTC()
+		ins.StartupCPUBoostUntil = &stamp
+	}
+	m.instances[id] = ins
+	return nil
+}
+
+func (m *MemStore) ListActiveInstanceStartupCPUBoosts(_ context.Context, after time.Time) (map[string]time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active := make(map[string]time.Time)
+	for _, ins := range m.instances {
+		if ins.StartupCPUBoostUntil == nil || !ins.StartupCPUBoostUntil.After(after) {
+			continue
+		}
+		switch ins.State {
+		case "waking", "cold_booting", "running", "draining", "warm":
+			active[ins.ID] = *ins.StartupCPUBoostUntil
+		}
+	}
+	return active, nil
+}
+
 func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -13935,6 +13968,7 @@ func (m *MemStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string
 func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
 	used := make(map[string]int64, len(nodeIDs))
 	wanted := make(map[string]struct{}, len(nodeIDs))
 	for _, nodeID := range nodeIDs {
@@ -13953,6 +13987,9 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 			}
 			cpu := app.CPUMillicores
 			if cpu <= 0 {
+				cpu = api.DefaultAppCPUMillicores
+			}
+			if ins.StartupCPUBoostUntil != nil && ins.StartupCPUBoostUntil.After(now) && cpu < api.DefaultAppCPUMillicores {
 				cpu = api.DefaultAppCPUMillicores
 			}
 			used[ins.NodeID] += int64(cpu)

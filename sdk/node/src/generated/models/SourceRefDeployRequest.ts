@@ -66,5 +66,9 @@ export type SourceRefDeployRequest = {
    * Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
    */
   rollback_on_5xx?: boolean | null;
+  /**
+   * Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
+   */
+  disable_startup_cpu_boost?: boolean | null;
 };
 

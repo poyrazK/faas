@@ -110,18 +110,19 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 	}
 	appURL := canonicalAppURL(app)
 	req := api.SourceRefDeployRequest{
-		Repo:           repo,
-		Ref:            ref,
-		Format:         "tarball",
-		Environment:    ann.Environment,
-		Reason:         ann.Reason,
-		Tag:            ann.Tag,
-		DeployedBy:     ann.DeployedBy,
-		PRNumber:       ann.PRNumber,
-		TrafficPercent: ann.TrafficPercent,
-		Canary:         ann.Canary,
-		NoTriggers:     noTriggers,
-		RollbackOn5xx:  ann.RollbackOn5xx,
+		Repo:                   repo,
+		Ref:                    ref,
+		Format:                 "tarball",
+		Environment:            ann.Environment,
+		Reason:                 ann.Reason,
+		Tag:                    ann.Tag,
+		DeployedBy:             ann.DeployedBy,
+		PRNumber:               ann.PRNumber,
+		TrafficPercent:         ann.TrafficPercent,
+		Canary:                 ann.Canary,
+		NoTriggers:             noTriggers,
+		RollbackOn5xx:          ann.RollbackOn5xx,
+		DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
 	}
 	deployCtx := ctx
 	if idempotencyKey != "" {

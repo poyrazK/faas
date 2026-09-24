@@ -2334,6 +2334,10 @@ type Deployment struct {
 	// Default false; the column is BOOLEAN NOT NULL DEFAULT
 	// false (migration 00354).
 	RollbackOn5xx bool `json:"rollback_on_5xx,omitempty"`
+	// DisableStartupCPUBoost opts this deployment out of the bounded startup
+	// CPU allowance. False (including for rows predating the setting) keeps
+	// the existing boost enabled.
+	DisableStartupCPUBoost bool `json:"disable_startup_cpu_boost,omitempty"`
 	// FirstWakeAt + First5xxWindowEndsAt stamp the start of the
 	// first-wake window (anchored at the first
 	// wake.proxy_first_byte event). Both nullable; the window
@@ -3964,17 +3968,21 @@ type AccountFirstSuccess struct {
 
 // Instance mirrors the instances row; schedd is the sole writer (spec §6).
 type Instance struct {
-	ID            string
-	AppID         string
-	DeploymentID  string
-	State         string
-	Netns         string
-	GuestUID      int
-	HostIP        string
-	RAMMB         int
-	StartedAt     time.Time
-	LastRequestAt time.Time
-	ParkedAt      time.Time
+	ID           string
+	AppID        string
+	DeploymentID string
+	State        string
+	Netns        string
+	GuestUID     int
+	HostIP       string
+	RAMMB        int
+	StartedAt    time.Time
+	// StartupCPUBoostUntil persists the temporary CPU reservation deadline so
+	// schedulers rebuilding their local ledger after restart continue to account
+	// the post-readiness boost window.
+	StartupCPUBoostUntil *time.Time
+	LastRequestAt        time.Time
+	ParkedAt             time.Time
 	// TerminalAt is stamped by Engine.transition on the same UPDATE that
 	// writes state = 'stopped' or 'failed' (PR #74, spec §17 follow-up).
 	// It is the dedicated retention anchor: started_at means "row

@@ -41,7 +41,7 @@ func TestWakeMethodFrom(t *testing.T) {
 func TestToWakeRequest_Happy(t *testing.T) {
 	req := &vmmdpb.CreateFromSnapshotRequest{
 		Instance: "inst-1",
-		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256, CpuMillicores: 500},
+		App:      &vmmdpb.AppSpec{BaseKey: "/b", LayerKey: "/l", VcpuCount: 2, MemSizeMib: 256, CpuMillicores: 500, DisableStartupCpuBoost: true},
 		Snapshot: &vmmdpb.SnapshotRef{
 			VmstatePath:       "/v",
 			VmstateStorageKey: "snap/inst-1/vmstate",
@@ -59,6 +59,9 @@ func TestToWakeRequest_Happy(t *testing.T) {
 	}
 	if wr.VcpuCount != 2 || wr.MemSizeMiB != 256 || wr.CPUMillicores != 500 {
 		t.Errorf("int casts wrong: %+v", wr)
+	}
+	if !wr.DisableStartupCPUBoost {
+		t.Error("disable_startup_cpu_boost was not forwarded")
 	}
 	if wr.Snapshot == nil {
 		t.Fatal("Snapshot should be set")

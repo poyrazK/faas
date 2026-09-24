@@ -76,11 +76,13 @@ const (
 	// wait_ready_ms, quota_restore_ms, total_ms}.
 	WakeColdBootBreakdown = "wake.cold_boot_breakdown"
 	// WakeColdBootCPU — vmmd temporarily raised the host-side CPU allowance
-	// for an app cold boot, observed readiness, and restored the configured
-	// quota before returning success. Payload: {wake_id, app_id, instance_id,
-	// startup_cpu_millicores, configured_cpu_millicores, pre_ready_ms,
-	// wait_ready_ms, quota_restore_ms, total_ms}.
+	// for an app cold boot and observed readiness. Payload: {wake_id, app_id,
+	// instance_id, startup_cpu_millicores, configured_cpu_millicores,
+	// pre_ready_ms, wait_ready_ms, quota_restore_ms, total_ms}.
 	WakeColdBootCPU = "wake.cold_boot_cpu"
+	// WakeCPUBoostTail — vmmd restored the configured host CPU allowance
+	// after the bounded post-readiness startup boost window.
+	WakeCPUBoostTail = "wake.cpu_boost_tail"
 	// WakeBootCompleted — schedd post-RecordRuntime; the instance
 	// is now RUNNING. Sibling of the existing `app.characterized`
 	// audit row (different timings — `app.characterized` follows
@@ -500,9 +502,9 @@ func (e ColdBootBreakdown) Payload() map[string]any {
 	}
 }
 
-// ColdBootCPU is emitted after a successful app cold boot and after cpu.max
-// has been lowered to the sustained customer setting. PreReadyMs covers the
-// host boot path through readiness; TotalMs also includes the quota restore.
+// ColdBootCPU is emitted when a successful app cold boot reaches readiness.
+// PreReadyMs covers the host boot path through readiness; a later
+// CPUBoostTail row records restoration of the sustained quota.
 type ColdBootCPU struct {
 	EmitAt                  time.Time
 	WakeID                  string
@@ -514,6 +516,38 @@ type ColdBootCPU struct {
 	WaitReadyMs             int64
 	QuotaRestoreMs          int64
 	TotalMs                 int64
+}
+
+// CPUBoostTail records the post-readiness interval where vmmd kept the
+// startup CPU quota in place before returning the cgroup to its configured
+// steady-state value. The quota-millicore-ms field is incremental quota
+// exposure, not measured CPU consumption or a billing quantity.
+type CPUBoostTail struct {
+	EmitAt                        time.Time
+	WakeID                        string
+	AppID                         string
+	InstanceID                    string
+	StartupCPUMillicores          int
+	ConfiguredCPUMillicores       int
+	TailMs                        int64
+	AdditionalCPUQuotaMillicoreMs int64
+	RestoreError                  string
+}
+
+func (e CPUBoostTail) Kind() string     { return WakeCPUBoostTail }
+func (e CPUBoostTail) At() time.Time    { return e.EmitAt }
+func (e CPUBoostTail) Subject() *string { return nil }
+func (e CPUBoostTail) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":                           e.WakeID,
+		"app_id":                            e.AppID,
+		"instance_id":                       e.InstanceID,
+		"startup_cpu_millicores":            e.StartupCPUMillicores,
+		"configured_cpu_millicores":         e.ConfiguredCPUMillicores,
+		"boost_tail_ms":                     e.TailMs,
+		"additional_cpu_quota_millicore_ms": e.AdditionalCPUQuotaMillicoreMs,
+		"restore_error":                     e.RestoreError,
+	}
 }
 
 func (e ColdBootCPU) Kind() string     { return WakeColdBootCPU }

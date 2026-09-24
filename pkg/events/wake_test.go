@@ -121,6 +121,30 @@ func TestColdBootCPU_Shape(t *testing.T) {
 	}
 }
 
+func TestCPUBoostTail_Shape(t *testing.T) {
+	ev := CPUBoostTail{
+		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-tail", AppID: "a-tail", InstanceID: "i-tail",
+		StartupCPUMillicores: 1000, ConfiguredCPUMillicores: 250,
+		TailMs: 10_000, AdditionalCPUQuotaMillicoreMs: 7_500_000,
+	}
+	if got := ev.Kind(); got != WakeCPUBoostTail {
+		t.Fatalf("Kind = %q, want %q", got, WakeCPUBoostTail)
+	}
+	p := ev.Payload()
+	for key, want := range map[string]any{
+		"wake_id":                           "w-tail",
+		"startup_cpu_millicores":            1000,
+		"configured_cpu_millicores":         250,
+		"boost_tail_ms":                     int64(10_000),
+		"additional_cpu_quota_millicore_ms": int64(7_500_000),
+		"restore_error":                     "",
+	} {
+		if got := p[key]; got != want {
+			t.Errorf("payload[%q] = %v, want %v", key, got, want)
+		}
+	}
+}
+
 func TestColdBootBreakdown_Shape(t *testing.T) {
 	ev := ColdBootBreakdown{
 		EmitAt: time.Unix(0, 0).UTC(), WakeID: "w-cold", AppID: "a-cold", InstanceID: "i-cold",
