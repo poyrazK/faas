@@ -263,12 +263,12 @@ func enforceSignatureGate(ctxr context.Context, s *server, acct state.Account, a
 // override and the helper returns (nil, nil). A non-nil
 // req.Overrides that fails Validate returns (nil, problem) and the
 // caller short-circuits with a 400 — the override is NEVER silently
-// dropped (ADR-053 §Decision 2). Plan tier comes from the
-// authenticated account via the limits arg.
+// dropped (ADR-053 §Decision 2). Plan limits and the gRPC liveness
+// gate come from the authenticated account.
 //
 // Extracted from createDeployment (handlers.go) so the handler stays
 // under the CLAUDE.md 50-line cap.
-func validateOverrides(req *api.CreateDeploymentRequest, limits api.Limits) (*api.CreateDeploymentOverrides, *api.Problem) {
+func validateOverrides(req *api.CreateDeploymentRequest, limits api.Limits, plan api.Plan) (*api.CreateDeploymentOverrides, *api.Problem) {
 	if req.Overrides == nil {
 		return nil, nil
 	}
@@ -285,6 +285,12 @@ func validateOverrides(req *api.CreateDeploymentRequest, limits api.Limits) (*ap
 			api.CodePlanLivenessProbeNotAllowed,
 			"Liveness probes are not allowed on this plan",
 			"Free tier does not support per-deployment liveness probes; upgrade to Hobby or higher.")
+	}
+	if req.Overrides.LivenessProbe != nil && req.Overrides.LivenessProbe.GRPC != nil && !plan.GRPCLivenessAllowed() {
+		return nil, api.NewProblem(http.StatusForbidden,
+			api.CodePlanLivenessProbeNotAllowed,
+			"gRPC liveness probes are not allowed on this plan",
+			"Standard gRPC liveness probes require the Pro or Scale plan; HTTP liveness probes remain available on Hobby.")
 	}
 	if p := req.Overrides.Validate(limits); p != nil {
 		return nil, p

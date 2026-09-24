@@ -25407,7 +25407,8 @@ components:
             returns false; the apid handler rejects with
             `plan_liveness_probe_not_allowed` BEFORE the DB is touched); Hobby,
             Pro, Scale inherit the 5 s / 3 consecutive / 60 s cooldown / 3 in 300 s
-            defaults. v1 is HTTP-only; gRPC health checks are deferred to v2.
+            defaults. Pro and Scale may select standard gRPC health.v1 Check
+            on the runtime port; Free and Hobby remain HTTP-only for liveness.
         # ADR-091 / PR-D: per-deployment env scope on the override
         # object (alternative to the top-level `scope` field). Same
         # regex + behaviour as the top-level CreateDeploymentRequest.
@@ -25616,9 +25617,12 @@ components:
         that this primitive is designed to catch.
 
         Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
-        - `path` must start with `/`.
+        - Exactly one of `path` (HTTP) or `grpc` (standard gRPC health Check) must be set.
+          The server enforces this mutual-exclusion rule.
+        - `path`, when set, must start with `/`.
+        - `grpc.service` is optional and limited to 256 characters.
         - `interval_s` ∈ [0, 60] (0 = inherit per-plan default; Hobby/Pro/Scale → 5 s).
-        - `timeout_s` ∈ [0, 5] (0 = inherit 2 s).
+        - `timeout_s` ∈ [0, 5] (0 = inherit 2 s) for either probe action.
         - `consecutive_failures` ∈ [0, 10] (0 = inherit per-plan default; Hobby/Pro/Scale → 3).
         - `cooldown_s` ∈ [10, 600] (cooldown gate enforced by the vmmd-side
           probe loop after a destroy fires — see ADR-078; 0 = no cooldown, the
@@ -25631,13 +25635,19 @@ components:
         counter when a probe fires inside the previous destroy's window so the
         cold-boot replacement instance has a grace period to settle.
       type: object
-      required: [path]
       properties:
-        path: { type: string, pattern: '^/', description: "Path the probe requests from the guest; must start with `/` (e.g. `/healthz`). Reuses the runner's existing `:8080` listener — no runner changes (issue #554 §4)." }
+        path: { type: string, pattern: '^/', description: "HTTP path the probe requests from the guest; must start with `/` (e.g. `/healthz`). Reuses the runner's existing listener — no runner changes (issue #554 §4). Set exactly one of path or grpc." }
+        grpc: { $ref: '#/components/schemas/DeploymentGRPCLivenessProbe', description: "Use the standard gRPC health.v1 Check RPC. Set exactly one of path or grpc; Pro and Scale plans only." }
         interval_s: { type: integer, minimum: 0, maximum: 60, description: "Per-plan poll cadence in seconds; 0 = inherit per-plan default (Hobby/Pro/Scale → 5 s). Clamped to [MinLivenessPeriodSeconds=1, MaxLivenessPeriodSeconds=60]." }
-        timeout_s:  { type: integer, minimum: 0, maximum: 5, description: "Per-probe HTTP timeout in seconds; 0 = inherit 2 s default (VsockLivenessTimeoutMs). A timeout is treated identically to a non-2xx response by the failure counter." }
+        timeout_s:  { type: integer, minimum: 0, maximum: 5, description: "Per-probe HTTP or gRPC timeout in seconds; 0 = inherit 2 s default. A timeout is treated identically to a non-2xx response by the failure counter." }
         consecutive_failures: { type: integer, minimum: 0, maximum: 10, description: "N at which DestroyForLivenessFailure fires; 0 = inherit per-plan default (Hobby/Pro/Scale → 3). The counter is reset to 0 on the first 2xx and survives an intermittent 5xx across the consecutive window (AC #2 — flaky app does NOT oscillate)." }
         cooldown_s: { type: integer, minimum: 0, maximum: 600, description: "Cooldown window in seconds after a liveness-driven destroy fires. While inside the window the vmmd-side probe loop short-circuits the failure counter so the cold-boot replacement has time to settle (issue #554 closure / ADR-078). 0 = no cooldown (Free-plan / legacy behaviour); clamped to [MinLivenessCooldownSeconds=10, MaxLivenessCooldownSeconds=600] when the field is populated by a Pro/Scale deployment override." }
+
+    DeploymentGRPCLivenessProbe:
+      type: object
+      description: "Standard gRPC health.v1 liveness probe. An omitted or empty service checks overall server health."
+      properties:
+        service: { type: string, maxLength: 256, description: "Service passed to the health.v1 Check request; omit it to query overall server health." }
 
     ScanResult:
       description: |

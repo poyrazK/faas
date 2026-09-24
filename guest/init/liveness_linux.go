@@ -2,10 +2,10 @@
 
 // Liveness probe — guest-init vsock 1028 STREAM listener
 // (issue #554 / ADR-078). The host (cmd/vmmd) dials this port on every
-// `Period`; the guest-init watches the runner's existing :8080 listener
-// (no runner changes — `guest/runners/node22/main.go:65-68`,
-// `guest/runners/python312/main.go:65-68` already register /healthz
-// returning 200) and ships a 2xx-only response back to the host. After
+// `Period`; the guest-init probes the app's configured runtime port and
+// ships a result back to the host. HTTP probes request a path (the default
+// runner listener already registers /healthz); gRPC probes issue health.v1
+// Check. After
 // N consecutive failures (per-plan defaults: Hobby/Pro/Scale → 3), the
 // host declares the VM wedged and triggers DestroyForLivenessFailure,
 // which cold-boots from rootfs per ADR-005.
@@ -16,6 +16,7 @@
 //	4-byte big-endian msg-type   = VsockLivenessMsgProbe (10)
 //	4-byte big-endian body-len
 //	N-byte JSON body             = {"path":"/healthz", "timeout_ms":2000}
+//	  or {"grpc":true, "grpc_service":"catalog.v1.Catalog", "timeout_ms":2000}
 //
 //	(responding)
 //	4-byte big-endian msg-type   = VsockLivenessMsgAck (11)
@@ -39,6 +40,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -53,6 +55,11 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -98,9 +105,11 @@ const (
 
 // livenessReq is the inbound JSON body from the host's dial.
 type livenessReq struct {
-	Path      string `json:"path"`
-	Port      int    `json:"port,omitempty"`
-	TimeoutMs int    `json:"timeout_ms"`
+	Path        string `json:"path,omitempty"`
+	GRPC        bool   `json:"grpc,omitempty"`
+	GRPCService string `json:"grpc_service,omitempty"`
+	Port        int    `json:"port,omitempty"`
+	TimeoutMs   int    `json:"timeout_ms"`
 }
 
 // livenessResp is the outbound JSON body the guest-init writes
@@ -239,11 +248,16 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 		writeLivenessResp(f, livenessResp{Status: 0, Err: "conn_err"})
 		return
 	}
-	// Path must start with "/". The host-side Validate enforces
-	// this; we re-check here as a second-line defence against a
-	// host-side regression that ships an unsanitised path into
-	// the guest.
-	if !strings.HasPrefix(req.Path, "/") {
+	// Exactly one probe action must be present. The host-side Validate
+	// enforces this; repeat it here as a second-line defence against a
+	// malformed or stale vmmd sender.
+	pathSet := req.Path != ""
+	if req.GRPC == pathSet {
+		log.Warn("vsock liveness must set exactly one of path or grpc")
+		writeLivenessResp(f, livenessResp{Status: 0, Err: "conn_err"})
+		return
+	}
+	if pathSet && !strings.HasPrefix(req.Path, "/") {
 		log.Warn("vsock liveness path must start with /", "path", req.Path)
 		writeLivenessResp(f, livenessResp{Status: 0, Err: "conn_err"})
 		return
@@ -258,8 +272,46 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 	if timeoutMs > VsockLivenessHardTimeoutMs {
 		timeoutMs = VsockLivenessHardTimeoutMs
 	}
-	status, errStr, wwwAuth := runLivenessProbe(req.Path, timeoutMs, req.Port)
+	var status int
+	var errStr, wwwAuth string
+	if req.GRPC {
+		status, errStr = runGRPCLivenessProbe(req.GRPCService, timeoutMs, req.Port)
+	} else {
+		status, errStr, wwwAuth = runLivenessProbe(req.Path, timeoutMs, req.Port)
+	}
 	writeLivenessResp(f, livenessResp{Status: status, Err: errStr, WWWAuthenticate: wwwAuth})
+}
+
+// runGRPCLivenessProbe calls the standard gRPC health.v1 Check RPC on the
+// app's loopback listener. SERVING maps to 200 for the existing host-side
+// liveness counter; any other health status is a normal probe failure.
+func runGRPCLivenessProbe(service string, timeoutMs, port int) (int, string) {
+	if port < 1 || port > 65535 {
+		port = 8080
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+	target := "passthrough:///" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return 0, "conn_err"
+	}
+	defer func() { _ = conn.Close() }()
+	response, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{Service: service})
+	if err != nil {
+		switch status.Code(err) {
+		case codes.DeadlineExceeded:
+			return 0, "timeout"
+		case codes.Unavailable:
+			return 0, "conn_refused"
+		default:
+			return http.StatusServiceUnavailable, ""
+		}
+	}
+	if response.GetStatus() == healthpb.HealthCheckResponse_SERVING {
+		return http.StatusOK, ""
+	}
+	return http.StatusServiceUnavailable, ""
 }
 
 // runLivenessProbe hits the configured runtime port and returns the

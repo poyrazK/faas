@@ -1953,18 +1953,23 @@ type DeploymentGRPCHealthcheck struct {
 // then the runtime died" failure mode that the customer-facing
 // primitive on this shape is designed to catch.
 type DeploymentLivenessProbe struct {
-	// Path is the HTTP path the guest-init hits on the runner's
-	// :8080 (issue #554 §4: reuses the existing `:8080/healthz`
-	// surface, no runner changes). Required (must start with "/").
-	Path string `json:"path"`
+	// Path is the HTTP path the guest-init hits on the app's runtime
+	// port (issue #554 §4: default :8080 reuses the runner's existing
+	// `/healthz` surface). Required for HTTP probes (must
+	// start with "/"). Exactly one of Path or GRPC is required.
+	Path string `json:"path,omitempty"`
+	// GRPC selects the standard gRPC health.v1 Check action. An
+	// empty service checks overall server health. Pro and Scale
+	// plans may use gRPC liveness probes; Free and Hobby remain
+	// HTTP-only.
+	GRPC *DeploymentGRPCLivenessProbe `json:"grpc,omitempty"`
 	// IntervalS is the per-plan poll cadence. 0 = inherit from
 	// the parent app's per-plan default (Hobby/Pro/Scale → 5s).
 	// Clamped to [MinLivenessPeriodSeconds=1, MaxLivenessPeriodSeconds=60]
-	// by Validate. V1 is HTTP-only; GRPCLivenessAllowed() returns
-	// false across all plans (follow-up when v2 lands).
+	// by Validate.
 	IntervalS int `json:"interval_s,omitempty"`
-	// TimeoutS is the per-probe HTTP timeout. 0 = inherit from
-	// the runner-default 2s (VsockLivenessTimeoutMs). Clamped to
+	// TimeoutS is the per-probe HTTP or gRPC timeout. 0 = inherit the
+	// guest-init default of 2s. Clamped to
 	// [1, 5]. A timeout is treated identically to a non-2xx
 	// response by the failure counter.
 	TimeoutS int `json:"timeout_s,omitempty"`
@@ -1988,6 +1993,12 @@ type DeploymentLivenessProbe struct {
 	// "N restarts in W seconds → park deployment" gate (issue #554
 	// AC #3, pkg/sched/liveness_window.go).
 	CooldownS int `json:"cooldown_s,omitempty"`
+}
+
+// DeploymentGRPCLivenessProbe selects a service for the standard gRPC
+// health.v1 Check RPC. An empty service checks overall server health.
+type DeploymentGRPCLivenessProbe struct {
+	Service string `json:"service,omitempty"`
 }
 
 // SecretRefPrefix is the wire prefix on env_secrets values that flags the
@@ -2131,7 +2142,8 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 		}
 	}
 
-	// liveness_probe (issue #554 / ADR-078): path must start with "/";
+	// liveness_probe (issue #554 / ADR-078): exactly one HTTP path or
+	// standard gRPC health check must be configured;
 	// interval_s ∈ [MinLivenessPeriodSeconds, MaxLivenessPeriodSeconds]
 	// when explicit; timeout_s ∈ [1, 5]; consecutive_failures ∈ [1, 10].
 	// 0 = inherit from the per-plan default (the per-plan accessor
@@ -2140,11 +2152,23 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 	// upstream check; this Validate only enforces the per-field
 	// shape, NOT the per-plan gate.
 	if o.LivenessProbe != nil {
-		if !strings.HasPrefix(o.LivenessProbe.Path, "/") {
+		grpcSet := o.LivenessProbe.GRPC != nil
+		pathSet := o.LivenessProbe.Path != ""
+		if grpcSet == pathSet {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				"liveness_probe must set exactly one of path or grpc.")
+		}
+		if pathSet && !strings.HasPrefix(o.LivenessProbe.Path, "/") {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
 				"Invalid override",
 				fmt.Sprintf("liveness_probe.path must start with %q; got %q.",
 					"/", o.LivenessProbe.Path))
+		}
+		if grpcSet && utf8.RuneCountInString(o.LivenessProbe.GRPC.Service) > GRPCHealthcheckServiceMaxLength {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("liveness_probe.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
 		}
 		// IntervalS = 0 means "inherit per-plan default" — only
 		// reject values that are explicitly out of range. The

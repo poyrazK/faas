@@ -276,6 +276,7 @@ export type { DeploymentAuditResponse } from './DeploymentAuditResponse.js';
 export type { DeploymentChange } from './DeploymentChange.js';
 export type { DeploymentFailedWebhookPayload } from './DeploymentFailedWebhookPayload.js';
 export type { DeploymentGRPCHealthcheck } from './DeploymentGRPCHealthcheck.js';
+export type { DeploymentGRPCLivenessProbe } from './DeploymentGRPCLivenessProbe.js';
 export type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 export type { DeploymentListResponse } from './DeploymentListResponse.js';
 export type { DeploymentLiveWebhookPayload } from './DeploymentLiveWebhookPayload.js';

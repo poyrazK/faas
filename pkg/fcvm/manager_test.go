@@ -1239,6 +1239,41 @@ func TestLivenessLoopUsesInstanceRuntimePort(t *testing.T) {
 	}
 }
 
+func TestLivenessLoopMergesGRPCProbeOverride(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	registry := NewLivenessRegistry()
+	var got LivenessProbeConfig
+	m.WithLivenessProbes(registry, LivenessProbeConfig{
+		Path:                "/healthz",
+		TimeoutSeconds:      2,
+		PeriodSeconds:       5,
+		ConsecutiveFailures: 3,
+	}).WithLivenessProbeStarter(func(_ context.Context, _ string, _ int, _ string, cfg LivenessProbeConfig) context.CancelFunc {
+		got = cfg
+		return func() {}
+	})
+	probe, err := json.Marshal(api.DeploymentLivenessProbe{
+		GRPC:                &api.DeploymentGRPCLivenessProbe{Service: "catalog.v1.Catalog"},
+		IntervalS:           7,
+		TimeoutS:            3,
+		ConsecutiveFailures: 4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.live["i-grpc-probe"] = &Instance{Lease: Lease{Instance: "i-grpc-probe", Slot: 1}, Port: 9090}
+	m.mu.Unlock()
+	m.startLivenessLoop(context.Background(), "i-grpc-probe", 1, probe)
+	t.Cleanup(func() { m.cancelLivenessLoop("i-grpc-probe") })
+	if !got.GRPC || got.GRPCService != "catalog.v1.Catalog" || got.Path != "" {
+		t.Fatalf("gRPC probe action = grpc:%v service:%q path:%q", got.GRPC, got.GRPCService, got.Path)
+	}
+	if got.Port != 9090 || got.PeriodSeconds != 7 || got.TimeoutSeconds != 3 || got.ConsecutiveFailures != 4 {
+		t.Fatalf("resolved liveness config = %+v", got)
+	}
+}
+
 func TestParkCancelsLivenessLoop(t *testing.T) {
 	run, vmm := &fakeRunner{}, &fakeVMM{}
 	m := newTestManager(run, vmm)

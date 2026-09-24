@@ -2421,12 +2421,12 @@ func TestPlanLiveness(t *testing.T) {
 		}
 	}
 
-	// GRPCLivenessAllowed is hard-wired to false across the board
-	// in v1 (issue #554 / ADR-078 §"gRPC liveness"); the accessor
-	// exists so v2 can flip it without a DTO/SDK change.
-	for _, p := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale, Plan("unknown")} {
-		if p.GRPCLivenessAllowed() {
-			t.Errorf("%s.GRPCLivenessAllowed() = true, want false (v1 is HTTP-only; v2 PR will flip this without a DTO change)", p)
+	// gRPC liveness is Pro/Scale-only; Free and Hobby stay HTTP-only.
+	for p, want := range map[Plan]bool{
+		PlanFree: false, PlanHobby: false, PlanPro: true, PlanScale: true, Plan("unknown"): false,
+	} {
+		if got := p.GRPCLivenessAllowed(); got != want {
+			t.Errorf("%s.GRPCLivenessAllowed() = %v, want %v", p, got, want)
 		}
 	}
 }

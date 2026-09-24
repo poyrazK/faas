@@ -111,6 +111,7 @@ func newTestLoop(t *testing.T, instanceID string, consec int) (*livenessProbeLoo
 		deploymentID: "dep-" + instanceID, // mirrors startLivenessLoopHelper's signature
 		cfg: livenessProbeConfig{
 			Path:                "/healthz",
+			TimeoutSeconds:      2,
 			PeriodSeconds:       5,
 			ConsecutiveFailures: consec,
 			CooldownSeconds:     60,

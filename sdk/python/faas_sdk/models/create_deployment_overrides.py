@@ -65,7 +65,8 @@ class CreateDeploymentOverrides:
     returns false; the apid handler rejects with
     `plan_liveness_probe_not_allowed` BEFORE the DB is touched); Hobby,
     Pro, Scale inherit the 5 s / 3 consecutive / 60 s cooldown / 3 in 300 s
-    defaults. v1 is HTTP-only; gRPC health checks are deferred to v2.
+    defaults. Pro and Scale may select standard gRPC health.v1 Check
+    on the runtime port; Free and Hobby remain HTTP-only for liveness.
     """
     scope: None | str | Unset = UNSET
     """Override-object per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no

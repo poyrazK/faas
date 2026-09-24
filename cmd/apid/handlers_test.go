@@ -447,6 +447,27 @@ func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
 	}
 }
 
+func TestValidateOverrides_GRPCPrimaryLivenessPlanGate(t *testing.T) {
+	for plan, wantAllowed := range map[api.Plan]bool{
+		api.PlanFree: false, api.PlanHobby: false, api.PlanPro: true, api.PlanScale: true,
+	} {
+		t.Run(string(plan), func(t *testing.T) {
+			req := &api.CreateDeploymentRequest{Overrides: &api.CreateDeploymentOverrides{
+				LivenessProbe: &api.DeploymentLivenessProbe{
+					GRPC: &api.DeploymentGRPCLivenessProbe{Service: "catalog.v1.Catalog"},
+				},
+			}}
+			_, problem := validateOverrides(req, api.MustLimitsFor(plan), plan)
+			if wantAllowed && problem != nil {
+				t.Fatalf("gRPC liveness rejected on %s: %s", plan, problem.Detail)
+			}
+			if !wantAllowed && (problem == nil || problem.Status != http.StatusForbidden || problem.Code != api.CodePlanLivenessProbeNotAllowed) {
+				t.Fatalf("gRPC liveness gate on %s = %v, want 403 %s", plan, problem, api.CodePlanLivenessProbeNotAllowed)
+			}
+		})
+	}
+}
+
 // TestCreateDeployment_Overrides_RejectsInvalid pins the validation
 // 400 path: a malformed override never silently drops — the whole
 // request 400s with a code=validation_failed Problem (ADR-053
