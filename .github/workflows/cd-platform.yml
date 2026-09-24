@@ -317,7 +317,9 @@ jobs:
     needs: [control, compute-prepare, compute-prepare-compat, compute, plan]
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 45
+    # Initial parallel deploys, bounded serial coverage follow-ups, and the
+    # zero-downtime redeploy can exceed 45 minutes without any gate failing.
+    timeout-minutes: 90
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
