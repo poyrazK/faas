@@ -584,6 +584,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/account/release-webhooks/{id}/deliveries/{did}/retry": "RetryAccountReleaseWebhookDelivery",
 	"GET /v1/account/platform-tenants":                              "ListPlatformTenants",
 	"POST /v1/account/platform-tenants":                             "CreatePlatformTenant",
+	"POST /v1/account/platform-tenants/apply":                       "ApplyPlatformTenant",
 	"GET /v1/account/platform-tenants/{id}":                         "GetPlatformTenant",
 	"PATCH /v1/account/platform-tenants/{id}":                       "SetPlatformTenantStatus",
 	"POST /v1/account/platform-tenants/{id}/consumers":              "LinkPlatformTenantConsumer",
