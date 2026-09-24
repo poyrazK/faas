@@ -82,6 +82,7 @@ func Run(t *testing.T, open Open) {
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
 		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
+		{"project_environment_route_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutePolicy},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
@@ -588,6 +589,74 @@ func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
 	}
 	if _, err := fx.Store.ProjectEnvironmentBySlug(fx.Ctx, fx.Account.ID, project.ID, staging.Slug); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted environment lookup err = %v, want ErrNotFound", err)
+	}
+}
+
+func testProjectEnvironmentRoutePolicy(t *testing.T, fx *Fixture) {
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "routes-" + uuid.NewString()[:8],
+		ProductionBranch: "main", ScanSource: state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, ProjectID: project.ID,
+		Slug: "routes-api-" + uuid.NewString()[:8], WorkloadName: "api", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentRoutePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("missing route policy err = %v, want ErrNotFound", err)
+	}
+	policy := state.ProjectEnvironmentRoutePolicy{
+		AccountID: fx.Account.ID, ProjectID: project.ID, AppID: app.ID,
+		EnvironmentSlug: "staging", OnlyAllowDeclaredRoutes: true,
+		DeclaredRoutes: []state.DeclaredRoute{{Path: "/health", Methods: []string{"GET"}}},
+	}
+	if _, err := fx.Store.PutProjectEnvironmentRoutePolicy(fx.Ctx, state.ProjectEnvironmentRoutePolicy{
+		AccountID: fx.Account.ID, ProjectID: project.ID, AppID: app.ID,
+		EnvironmentSlug: "staging", OnlyAllowDeclaredRoutes: true,
+	}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("empty enforced route policy err = %v, want ErrInvalidArgument", err)
+	}
+	created, err := fx.Store.PutProjectEnvironmentRoutePolicy(fx.Ctx, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.OnlyAllowDeclaredRoutes || !reflect.DeepEqual(created.DeclaredRoutes, policy.DeclaredRoutes) || created.CreatedAt.IsZero() {
+		t.Fatalf("created route policy = %+v", created)
+	}
+	got, err := fx.Store.GetProjectEnvironmentRoutePolicy(fx.Ctx, fx.Account.ID, app.ID, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.OnlyAllowDeclaredRoutes || !reflect.DeepEqual(got.DeclaredRoutes, policy.DeclaredRoutes) {
+		t.Fatalf("stored route policy = %+v", got)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentRoutePolicy(fx.Ctx, uuid.NewString(), app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account route policy err = %v, want ErrNotFound", err)
+	}
+	policy.OnlyAllowDeclaredRoutes = false
+	policy.DeclaredRoutes = []state.DeclaredRoute{{Path: "/ready", Methods: []string{"HEAD"}}}
+	updated, err := fx.Store.PutProjectEnvironmentRoutePolicy(fx.Ctx, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.OnlyAllowDeclaredRoutes || !reflect.DeepEqual(updated.DeclaredRoutes, policy.DeclaredRoutes) || !updated.CreatedAt.Equal(created.CreatedAt) {
+		t.Fatalf("updated route policy = %+v", updated)
+	}
+	if _, err := fx.Store.PutProjectEnvironmentRoutePolicy(fx.Ctx, state.ProjectEnvironmentRoutePolicy{
+		AccountID: uuid.NewString(), ProjectID: project.ID, AppID: app.ID,
+		EnvironmentSlug: "staging", DeclaredRoutes: policy.DeclaredRoutes,
+	}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account route policy update err = %v, want ErrNotFound", err)
 	}
 }
 
