@@ -787,13 +787,18 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		}
 		planIdx := plan.PlanIndex()
 		if cap := api.JobConcurrentPerAccount[planIdx]; concurrent >= cap {
-			// Re-queue for the next tick (next_attempt_at = now()).
-			// JobTaskRequeue preserves attempt — the task never
-			// executed (CR-7 / code-review #7).
-			_ = e.store.JobTaskRequeue(ctx, t.RunID, t.TaskIndex, time.Now())
+			// Back off this queued task so other accounts and runs can use
+			// the next batch. The task has not consumed an attempt.
+			_ = e.store.JobTaskRequeue(ctx, t.RunID, t.TaskIndex, time.Now().Add(2*time.Second))
 			continue
 		}
 		if _, err := e.WakeJob(ctx, run.AccountID, t.RunID, t.TaskIndex); err != nil {
+			if errors.Is(err, state.ErrJobQuotaExceeded) {
+				// The transactional claim saw a concurrent schedd win the
+				// final account or per-run slot after the read-only fast path.
+				_ = e.store.JobTaskRequeue(ctx, t.RunID, t.TaskIndex, time.Now().Add(2*time.Second))
+				continue
+			}
 			e.log.Warn("sched: job dispatch failed", "run", t.RunID, "task", t.TaskIndex, "err", err)
 			// Best-effort retry: a transient admit / vmmd failure
 			// should not block other tasks. next_attempt_at = now()

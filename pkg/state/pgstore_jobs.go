@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // --- column-order contracts ----------------------------------------
@@ -541,9 +543,8 @@ func (s *PgStore) JobCountByAccount(ctx context.Context, accountID string) (int,
 // JobConcurrentByAccount counts the live job_task instances on the
 // account (instances.kind='job_task' AND state IN ('waking',
 // 'cold_booting','running')).
-// Used by apid's admission-control gate to enforce JobConcurrentPerAccount
-// before accepting a new run + by meterd's billing sweep for the live-pool
-// bill.
+// Used by dispatch as a read-only fast path; CreateAndClaimJobInstance is the
+// authoritative transactional cap check.
 func (s *PgStore) JobConcurrentByAccount(ctx context.Context, accountID string) (int, error) {
 	// job_task instances carry job_id (no app_id); we resolve the
 	// owning account via the FK to jobs. The state predicate
@@ -970,16 +971,57 @@ func (s *PgStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskInde
 	return nil
 }
 
-// CreateAndClaimJobInstance makes instance creation and queued-task ownership
-// one PostgreSQL transaction. In particular, the instance FK is satisfied
-// before job_tasks is updated, while a lost queued->claimed race rolls the
-// insert back instead of leaving an unbound billable row.
+// CreateAndClaimJobInstance makes capacity checking, instance creation and
+// queued-task ownership one PostgreSQL transaction. An account row lock
+// serializes claims across schedd replicas before counting live instances;
+// the run parallelism is checked in the same transaction. The instance FK is
+// satisfied before job_tasks is updated, while a lost queued->claimed race
+// rolls the insert back instead of leaving an unbound billable row.
 func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Instance{}, fmt.Errorf("state: begin create-and-claim job instance: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+
+	var accountID, planName string
+	var runParallelism int
+	if err := tx.QueryRow(ctx,
+		`select a.id::text, a.plan::text, r.parallelism
+		   from job_runs r
+		   join jobs j on j.id = r.job_id and j.account_id = r.account_id
+		   join accounts a on a.id = r.account_id
+		  where r.id = $1::uuid and j.id = $2::uuid
+		  for update of a`,
+		runID, jobID,
+	).Scan(&accountID, &planName, &runParallelism); err != nil {
+		return Instance{}, fmt.Errorf("state: lock account for job claim (run=%s): %w", runID, mapErr(err))
+	}
+	accountCap := jobLiveConcurrencyCap(api.Plan(planName))
+	var live int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from instances i
+		   join jobs j on j.id = i.job_id
+		  where j.account_id = $1::uuid and i.kind = 'job_task'
+		    and i.state in ('waking', 'cold_booting', 'running')`,
+		accountID,
+	).Scan(&live); err != nil {
+		return Instance{}, fmt.Errorf("state: count live job instances for account %s: %w", accountID, err)
+	}
+	if live >= accountCap {
+		return Instance{}, &JobQuotaError{Scope: JobQuotaScopeConcurrent, Limit: accountCap, Observed: live + 1}
+	}
+	runCap := runParallelism
+	var claimed int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from job_tasks where run_id = $1::uuid and status = 'claimed'`,
+		runID,
+	).Scan(&claimed); err != nil {
+		return Instance{}, fmt.Errorf("state: count claimed job tasks for run %s: %w", runID, err)
+	}
+	if claimed >= runCap {
+		return Instance{}, &JobQuotaError{Scope: JobQuotaScopeParallelism, Limit: runCap, Observed: claimed + 1}
+	}
 
 	row := tx.QueryRow(ctx,
 		`insert into instances (id, app_id, deployment_id, job_id, kind, state, ram_mb, node_id, wake_id, started_at, mode)

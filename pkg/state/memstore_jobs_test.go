@@ -198,7 +198,7 @@ func TestMemStoreJobs(t *testing.T) {
 		t.Fatalf("JobSoftDelete.hasLiveInstances (re-call) = true, want false")
 	}
 
-	// 10. JobConcurrentByAccount counts only live (queued + claimed)
+	// 10. JobConcurrentByAccount counts only live job-task instances.
 	//     tasks. With every task terminal, the count is 0.
 	concurrent, err := ms.JobConcurrentByAccount(ctx, created.AccountID)
 	if err != nil {

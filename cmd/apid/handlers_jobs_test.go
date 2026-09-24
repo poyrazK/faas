@@ -304,11 +304,8 @@ func TestDeleteJob_NoLiveInstances(t *testing.T) {
 	}
 }
 
-// TestCreateJobRun_HappyPath pins the fan-out shape. Hobby
-// caps concurrent jobs at 3, so tasks=3 (the per-run
-// JobMaxParallelism) is the largest value that fits in the
-// Hobby cap. Hobby also caps JobMaxTasksPerRun at 100, well
-// above this test's tasks value.
+// TestCreateJobRun_HappyPath pins the fan-out shape. Queued tasks are not
+// counted as live concurrency; the dispatcher applies that separate cap.
 func TestCreateJobRun_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	seedJob(t, e, "run-fanout-job", "ghcr.io/example/worker:v1")
@@ -331,6 +328,25 @@ func TestCreateJobRun_HappyPath(t *testing.T) {
 	// see "I just dispatched this" before the engine picks it up.
 	if resp.AggregateStatus != "queued" {
 		t.Errorf("aggregate_status = %q, want queued", resp.AggregateStatus)
+	}
+}
+
+func TestCreateJobRunAllowsBatchLargerThanLiveConcurrency(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	seedJob(t, e, "large-batch-job", "ghcr.io/example/worker:v1")
+	one := 1
+	rec := e.do(t, "POST", "/v1/jobs/large-batch-job/runs", api.CreateJobRunRequest{
+		Tasks: 33, Parallelism: &one,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("33 queued tasks with parallelism=1 = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.JobRunResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Tasks != 33 || resp.Parallelism != 1 || resp.AggregateStatus != "queued" {
+		t.Fatalf("run = %+v, want 33 queued tasks and parallelism=1", resp)
 	}
 }
 

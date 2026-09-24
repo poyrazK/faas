@@ -4726,7 +4726,7 @@ var (
 	JobMaxPerAccount = [4]int{0, 5, 25, 100}
 
 	// JobConcurrentPerAccount caps the live job-task instances
-	// (kind='job_task' AND status NOT IN ('parked','destroyed'))
+	// (kind='job_task' AND state IN ('waking','cold_booting','running'))
 	// belonging to any single account. Independent of the app-wake
 	// concurrency budget because jobs ride the tenant RAM ceiling
 	// (kind-of-but-not-the-same-thing as wakes).
@@ -4744,14 +4744,13 @@ var (
 
 	// JobMaxParallelismPerRun is the maximum concurrent task fan-out
 	// within a single run. Distinct from JobConcurrentPerAccount
-	// which caps the account-wide pool — a Pro account with 8
-	// concurrent can run one 25-parallel run if other accounts are
-	// idle, but the scheduler enforces parallelism at dispatch time.
+	// which caps the account-wide pool. An 8-concurrent Pro account
+	// may request 25-parallel, but at most 8 tasks run at once.
 	JobMaxParallelismPerRun = [4]int{0, 10, 25, 50}
 
 	// JobMaxTasksPerRun is the per-run fan-out ceiling (number of
 	// task rows a single run materialises). Hard cap, not a quota;
-	// counts against the account's JobConcurrentPerAccount live pool.
+	// Only live task instances count against JobConcurrentPerAccount.
 	JobMaxTasksPerRun = [4]int{0, 100, 1000, 5000}
 
 	// JobMaxRetries is the maximum retry count per task before

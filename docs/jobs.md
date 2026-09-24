@@ -27,6 +27,11 @@ gregale jobs retry nightly RUN_ID 0
 gregale jobs logs nightly RUN_ID 0 [--max-bytes N]
 ```
 
+`--tasks` is the total queued batch size; it may exceed `--parallelism` and
+the account live-job limit. Only claimed tasks create VMs. Each claim checks
+the run parallelism and account live limit atomically across scheduler replicas;
+remaining tasks stay queued until capacity opens.
+
 Keep tasks idempotent and write checkpoints outside the VM if a retry must
 resume work. Set a timeout and retry budget that match the downstream service,
 and use the job run id as the correlation id in application logs. Failed runs
