@@ -7254,9 +7254,11 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (
 }
 
 // GetDeploymentByIDScopedToSuperseded mirrors PgStore.GetDeploymentByIDScopedToSuperseded.
-// Returns the deployment only if it belongs to appID AND has status=DeploySuperseded.
+// Returns the deployment only if it belongs to appID and is superseded or
+// live with zero traffic.
 // Returns ErrNoRollbackTarget if the row is missing or belongs to a different app;
-// ErrRollbackTargetAlreadyLive if the row exists but is not superseded. SAFE-RELEASES-G.
+// ErrRollbackTargetAlreadyLive if the row exists but is still serving or
+// otherwise ineligible. SAFE-RELEASES-G.
 func (m *MemStore) GetDeploymentByIDScopedToSuperseded(_ context.Context, appID, deploymentID string) (Deployment, error) {
 	if appID == "" {
 		return Deployment{}, fmt.Errorf("state: get deployment by id scoped to superseded: empty appID")
@@ -7270,7 +7272,7 @@ func (m *MemStore) GetDeploymentByIDScopedToSuperseded(_ context.Context, appID,
 	if !ok || d.AppID != appID {
 		return Deployment{}, fmt.Errorf("state: rollback target %q for app %q: %w", deploymentID, appID, ErrNoRollbackTarget)
 	}
-	if d.Status != DeploySuperseded {
+	if d.Status != DeploySuperseded && (d.Status != DeployLive || d.TrafficPercent != 0) {
 		return Deployment{}, fmt.Errorf("state: rollback target %q for app %q has status %q: %w",
 			deploymentID, appID, d.Status, ErrRollbackTargetAlreadyLive)
 	}
@@ -8416,7 +8418,7 @@ func (m *MemStore) PrepareDeploymentRollback(_ context.Context, appID, targetDep
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
 	}
-	if target.Status != DeploySuperseded {
+	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
 	}
 	now := time.Now().UTC()

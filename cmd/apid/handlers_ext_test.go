@@ -1855,6 +1855,89 @@ func TestRollbackApp_ExplicitTarget_AlreadyLive(t *testing.T) {
 	assertProblem(t, rec, http.StatusConflict, api.CodeRollbackTargetAlreadyLive)
 }
 
+func TestRollbackApp_ExplicitTarget_ZeroTrafficLiveRevision(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	stable := mustSeedDeployment(t, e, "rb-zero-traffic")
+	if err := e.store.MarkDeploymentLive(ctx, stable.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(ctx, "rb-zero-traffic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("f", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+		CreatedAt: time.Now().UTC().Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateDeploymentTraffic(ctx, candidate.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+	before, err := e.store.DeploymentByID(ctx, stable.ID)
+	if err != nil || before.Status != state.DeployLive || before.TrafficPercent != 0 {
+		t.Fatalf("old revision before rollback = %+v, err=%v", before, err)
+	}
+
+	response := e.do(t, http.MethodPost, "/v1/apps/rb-zero-traffic/rollback", api.RollbackRequest{TargetDeploymentID: &stable.ID}, nil)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("rollback = %d %s", response.Code, response.Body.String())
+	}
+	prepared, err := e.store.DeploymentByID(ctx, stable.ID)
+	if err != nil || prepared.Status != state.DeploySnapshotting || prepared.TrafficPercent != 0 {
+		t.Fatalf("rollback target = %+v, err=%v", prepared, err)
+	}
+	serving, err := e.store.DeploymentByID(ctx, candidate.ID)
+	if err != nil || serving.Status != state.DeployLive || serving.TrafficPercent != 100 {
+		t.Fatalf("current serving revision changed before readiness = %+v, err=%v", serving, err)
+	}
+}
+
+func TestRollbackApp_ZeroTrafficLiveNotificationFailureRestoresTarget(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	target := mustSeedDeployment(t, e, "rb-zero-traffic-notify")
+	if err := e.store.MarkDeploymentLive(ctx, target.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(ctx, "rb-zero-traffic-notify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serving, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("f", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, serving.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateDeploymentTraffic(ctx, serving.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+	e.s.notif = &failingNotifier{err: errors.New("notification unavailable")}
+	response := e.do(t, http.MethodPost, "/v1/apps/rb-zero-traffic-notify/rollback", api.RollbackRequest{TargetDeploymentID: &target.ID}, nil)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("rollback = %d %s", response.Code, response.Body.String())
+	}
+	restored, err := e.store.DeploymentByID(ctx, target.ID)
+	if err != nil || restored.Status != state.DeployLive || restored.TrafficPercent != 0 {
+		t.Fatalf("zero-traffic target not restored = %+v, err=%v", restored, err)
+	}
+	current, err := e.store.DeploymentByID(ctx, serving.ID)
+	if err != nil || current.Status != state.DeployLive || current.TrafficPercent != 100 {
+		t.Fatalf("serving revision changed = %+v, err=%v", current, err)
+	}
+}
+
 func TestRollbackApp_ExplicitTarget_IneligibleStates(t *testing.T) {
 	for _, status := range []state.DeploymentStatus{
 		state.DeployBuilding,

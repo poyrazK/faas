@@ -6982,16 +6982,14 @@ func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) 
 }
 
 // GetDeploymentByIDScopedToSuperseded returns the deployment only if it
-// (a) belongs to appID and (b) has status='superseded'. Used by SAFE-RELEASES-G
+// (a) belongs to appID and (b) is superseded or live with zero traffic. Used by SAFE-RELEASES-G
 // (issue #976, PR-G) to let callers rollback to a specific historical
 // deployment rather than only the most-recent superseded one.
 //
 // Returns ErrNoRollbackTarget if no row matches (deployment missing or
 // belongs to a different app). Returns ErrRollbackTargetAlreadyLive if
-// the row exists and belongs to appID but its status is not 'superseded'
-// (e.g. status='live' means caller is asking to "rollback" to the
-// already-current deployment — rejected explicitly rather than silently
-// no-op'd, per the SAFE-RELEASES-G plan).
+// the row exists but is not eligible; a live revision still serving traffic
+// is already current and must not be prepared as a rollback target.
 //
 // Uses scanDeploymentWithRootfs (matches DeploymentByID) so the caller has
 // the rootfs_path/key/bytes needed for downstream wake and audit. The
@@ -7018,7 +7016,7 @@ func (s *PgStore) GetDeploymentByIDScopedToSuperseded(ctx context.Context, appID
 		}
 		return Deployment{}, fmt.Errorf("state: get deployment by id scoped to superseded: %w", scanErr)
 	}
-	if d.Status != DeploySuperseded {
+	if d.Status != DeploySuperseded && (d.Status != DeployLive || d.TrafficPercent != 0) {
 		return Deployment{}, fmt.Errorf("state: rollback target %q for app %q has status %q: %w",
 			deploymentID, appID, d.Status, ErrRollbackTargetAlreadyLive)
 	}
@@ -9761,7 +9759,7 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 		}
 		return Deployment{}, fmt.Errorf("state: prepare rollback load target: %w", err)
 	}
-	if target.Status != DeploySuperseded {
+	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
 	}
 
@@ -9787,7 +9785,8 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 		           'current_started_at', to_jsonb($3::timestamptz),
 		           'history', coalesce(stage_state->'history', '[]'::jsonb)
 		       )
-		 where id = $1 and app_id = $2 and status = 'superseded'
+		 where id = $1 and app_id = $2
+		   and (status = 'superseded' or (status = 'live' and traffic_percent = 0))
 		 returning `+deploymentSelectColumnsWithRootfs,
 		targetDeploymentID, appID, now))
 	if err != nil {

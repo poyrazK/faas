@@ -775,14 +775,14 @@ const (
 	// twice first". SAFE-RELEASES-G (issue #976).
 	CodeRollbackTargetNotFound = "rollback_target_not_found"
 	// CodeRollbackTargetAlreadyLive is returned when the caller passes
-	// an explicit target_deployment_id that exists but has status !=
-	// 'superseded' (e.g. status='live' — caller is asking to rollback
-	// to the already-current deployment). Rejected explicitly rather
+	// an explicit target_deployment_id that is currently serving live
+	// traffic (or otherwise ineligible). A live revision at zero traffic
+	// is eligible for readiness-gated rollback. Rejected explicitly rather
 	// than silently no-op'd. SAFE-RELEASES-G.
 	CodeRollbackTargetAlreadyLive = "rollback_target_already_live"
 	// CodeRollbackTargetIneligible is returned when an explicit rollback
 	// target exists but is cancelled, failed, or still progressing. Only a
-	// superseded deployment is a valid historical rollback target.
+	// superseded or zero-traffic live deployment is a valid rollback target.
 	CodeRollbackTargetIneligible = "rollback_target_ineligible"
 	// CodeRollbackTargetUnavailable means the historical release exists in
 	// state, but its immutable cold-boot artifact or attestation cannot be
@@ -4470,9 +4470,9 @@ func ErrRollbackTargetNotFound(detail string) *Problem {
 }
 
 // ErrRollbackTargetAlreadyLive is returned when the caller passes an
-// explicit target_deployment_id that exists but has status != 'superseded'
-// (most commonly status='live'). Caller asked to "rollback" to the
-// already-current deployment. Rejected explicitly rather than silently
+// explicit target_deployment_id that is still serving live traffic.
+// Caller asked to "rollback" to the already-current deployment. Rejected
+// explicitly rather than silently
 // no-op'd per the SAFE-RELEASES-G plan. 409 because the request is
 // well-formed but cannot proceed in current state.
 func ErrRollbackTargetAlreadyLive(detail string) *Problem {

@@ -2569,13 +2569,10 @@ type Store interface {
 	// a count(*) on a WHERE clause with no matching rows.
 	CountLiveInstancesByDeployment(ctx context.Context, deploymentID string) (int, error)
 	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
-	// GetDeploymentByIDScopedToSuperseded returns the deployment only if it
-	// belongs to appID AND has status='superseded'. SAFE-RELEASES-G (issue
-	// #976) — used by the rollback handler when the caller passes a
-	// specific deployment_id via POST /v1/apps/{slug}/rollback. Returns
-	// ErrNoRollbackTarget if no row matches and ErrRollbackTargetAlreadyLive
-	// if the row exists but its status is not 'superseded'. Both backends
-	// (PgStore + MemStore) must honour this contract.
+	// GetDeploymentByIDScopedToSuperseded keeps its historical name but also
+	// accepts a live revision with zero traffic: it is not the current serving
+	// release and is eligible for readiness-gated rollback. A serving live
+	// revision remains ineligible. The app ID fences cross-tenant lookups.
 	GetDeploymentByIDScopedToSuperseded(ctx context.Context, appID, deploymentID string) (Deployment, error)
 	// HasSnapshotHistory reports whether the deployment ever had a
 	// snapshot row (stale or not) in the snapshots table. Used by the
