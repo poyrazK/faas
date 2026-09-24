@@ -1,4 +1,4 @@
-# ADR-225: Configurable startup CPU boost
+# ADR-234: Configurable startup CPU boost
 
 Status: accepted
 
