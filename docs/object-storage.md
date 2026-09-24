@@ -593,7 +593,10 @@ stores an immutable per-account billing snapshot. Polar can publish that
 snapshot idempotently when its independent rollout gate is live; other billing
 providers retain the internal ledger only. A qualified provider usage exporter
 and live month-close verification remain required for paid launch; see
-[ADR-156](adr/156-object-storage-accounting.md).
+[ADR-156](adr/156-object-storage-accounting.md). The future provider-neutral
+customer-billing contract keeps direct transfers and requires qualified
+evidence for each charged dimension; it is not enabled by the current report
+format. See [ADR-237](adr/237-provider-neutral-object-storage-billing.md).
 
 ## Provider configuration
 

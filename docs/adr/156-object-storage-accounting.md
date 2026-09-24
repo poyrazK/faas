@@ -1,6 +1,6 @@
 # ADR-156 · Direct object storage accounting and safety budgets
 
-- **Status:** accepted; Polar month-close billing extension implemented, with paid launch still gated on live provider qualification.
+- **Status:** accepted; the safety-budget and default-off Polar month-close implementations remain. ADR-237 retains direct-provider transfers and defines a future customer-billing contract; paid launch remains gated on provider qualification.
 - **Date:** 2026-09-05
 - **Decision:** retain direct S3 transfers and the single hot `s3_enabled` flag; add durable capacity reservations, inventory observations, provider usage reports, and fail-closed URL admission.
 - **Why:** direct reusable URLs cannot enforce an instantaneous request/egress spending ceiling. The user accepted delayed budget cutoffs without introducing a Gregale transfer proxy.

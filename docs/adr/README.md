@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 237 | [Provider-neutral customer billing for direct object storage](237-provider-neutral-object-storage-billing.md) | accepted architecture; implementation pending | Keep direct signed URLs; versioned customer meter and rate card; provider cost is separate operator evidence |
 | 234 | [Durable consumer-usage delivery](234-durable-consumer-usage-delivery.md) | accepted | Separate fsynced gateway usage outbox and apid receipt from optional debugger; replay by event ID |
 | 233 | [Environment-owned declared route contracts](233-environment-owned-declared-routes.md) | accepted | Scoped route-policy replacement, atomic clone, effective diff, and deployment-URL enforcement; OpenAPI fallback remains shared |
 | 226 | [Account-level platform tenants](226-platform-tenants.md) | accepted | One end-customer identity across app consumers, hostnames, and raw usage; reversible linked-path suspension |
