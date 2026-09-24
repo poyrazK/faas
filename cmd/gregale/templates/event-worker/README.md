@@ -35,7 +35,9 @@ gregale invocations list --limit 10
 gregale events subscriptions invoice-worker
 ```
 
-The handler receives the full event envelope as its request body. Keep event
+The handler receives the full event envelope as its parsed JSON request body
+(`event.body`; a raw JSON string is accepted too). It rejects malformed
+envelopes instead of acknowledging and discarding them. Keep event
 processing idempotent: Gregale retries asynchronous deliveries and exposes
 terminal failures through `gregale dlq invoice-worker` for inspection and
 replay.
