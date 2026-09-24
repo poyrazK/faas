@@ -4111,7 +4111,14 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 				"placement: app %s is owned by node %s; this schedd owns %s",
 				r.AppID, app.NodeID, e.ownerNodeID))
 		}
-		r.PreferredNodeID = e.ownerNodeID
+		// Deployment smoke must restore the freshly captured snapshot before
+		// promotion. Its producer may differ from the app's owner (prime uses
+		// fleet-wide placement), and replacing that locality hint forces a
+		// large remote blob fetch on the first public probe. Keep owner affinity
+		// for ordinary wakes and for smokes with no usable locality hint.
+		if !r.PrioritizeSnapshotLocality || (r.PreferredNodeID == "" && len(r.PreferredNodeIDs) == 0) {
+			r.PreferredNodeID = e.ownerNodeID
+		}
 	}
 	var nodes []state.ComputeNode
 	var err error

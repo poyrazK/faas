@@ -110,6 +110,12 @@ func TestDeploymentSmokeUsesSnapshotProducerDespiteCPUHeadroomSkew(t *testing.T)
 	store := state.NewMemStore()
 	producer, uncached := seedTwoNodes(t, store)
 	_, app, dep := seedApp(t, store, api.PlanPro, 256, 1)
+	// Production routes smoke through the app's owner schedd. The prime
+	// snapshot may have been captured on a peer, so owner affinity must not
+	// override the producer locality needed for the first restore.
+	if err := store.SetAppNodeID(ctx, app.ID, uncached); err != nil {
+		t.Fatal(err)
+	}
 	for _, config := range []struct {
 		id    string
 		cores int
@@ -134,7 +140,7 @@ func TestDeploymentSmokeUsesSnapshotProducerDespiteCPUHeadroomSkew(t *testing.T)
 	if err := store.RecordSnapshotOrigin(ctx, snap.ID, producer); err != nil {
 		t.Fatal(err)
 	}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(uncached)
 	got, err := e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, "", TriggerDeploymentSmoke)
 	if err != nil {
 		t.Fatal(err)
