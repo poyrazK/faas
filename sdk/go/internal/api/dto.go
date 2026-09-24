@@ -1829,6 +1829,40 @@ type AppWebhookResponse struct {
 	UpdatedAt                 time.Time `json:"updated_at"`
 }
 
+// Account release subscriptions follow all current and future account apps.
+// The secret remains write-only and is masked in every read response.
+type CreateAccountReleaseWebhookRequest struct {
+	TargetURL      string   `json:"target_url"`
+	WebhookSecret  string   `json:"webhook_secret"`
+	EventFilter    []string `json:"event_filter"`
+	RetryPolicy    string   `json:"retry_policy,omitempty"`
+	DeliveryFormat string   `json:"delivery_format,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+}
+
+type UpdateAccountReleaseWebhookRequest struct {
+	TargetURL      *string   `json:"target_url,omitempty"`
+	WebhookSecret  *string   `json:"webhook_secret,omitempty"`
+	EventFilter    *[]string `json:"event_filter,omitempty"`
+	RetryPolicy    *string   `json:"retry_policy,omitempty"`
+	DeliveryFormat *string   `json:"delivery_format,omitempty"`
+	Enabled        *bool     `json:"enabled,omitempty"`
+}
+
+type AccountReleaseWebhookResponse struct {
+	ID                        string    `json:"id"`
+	Scope                     string    `json:"scope"`
+	AccountID                 string    `json:"account_id"`
+	TargetURL                 string    `json:"target_url"`
+	WebhookSecretSealedMasked string    `json:"webhook_secret_sealed_masked"`
+	EventFilter               []string  `json:"event_filter"`
+	RetryPolicy               string    `json:"retry_policy"`
+	DeliveryFormat            string    `json:"delivery_format"`
+	Enabled                   bool      `json:"enabled"`
+	CreatedAt                 time.Time `json:"created_at"`
+	UpdatedAt                 time.Time `json:"updated_at"`
+}
+
 // RotateAppWebhookSecretResponse is the body of POST
 // /v1/apps/{slug}/webhooks/{id}/rotate-secret. The wire carries only the
 // masked constant and the rotated_at timestamp.

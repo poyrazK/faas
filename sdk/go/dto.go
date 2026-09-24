@@ -158,20 +158,32 @@ type (
 	CliAuthExchangeResponse = api.CliAuthExchangeResponse
 
 	// Async + queues + delayed tasks.
-	AsyncInvokeResponse      = api.AsyncInvokeResponse
-	InvokeResponse           = api.InvokeResponse
-	InvokeRequest            = api.InvokeRequest
-	InvocationDestinations   = api.InvocationDestinations
-	QueueSendRequest         = api.QueueSendRequest
-	QueueSendResponse        = api.QueueSendResponse
-	QueueReceiveResponse     = api.QueueReceiveResponse
-	SendAppMessageRequest    = api.SendAppMessageRequest
-	SendAppMessageResponse   = api.SendAppMessageResponse
-	DeliverAppEventRequest   = api.DeliverAppEventRequest
-	DeliverAppEventResponse  = api.DeliverAppEventResponse
-	DelayedTaskRequest       = api.DelayedTaskRequest
-	DelayedTaskResponse      = api.DelayedTaskResponse
-	ListDelayedTasksResponse = api.ListDelayedTasksResponse
+	AsyncInvokeResponse                = api.AsyncInvokeResponse
+	InvokeResponse                     = api.InvokeResponse
+	InvokeRequest                      = api.InvokeRequest
+	InvocationDestinations             = api.InvocationDestinations
+	QueueSendRequest                   = api.QueueSendRequest
+	QueueSendResponse                  = api.QueueSendResponse
+	QueueReceiveResponse               = api.QueueReceiveResponse
+	SendAppMessageRequest              = api.SendAppMessageRequest
+	SendAppMessageResponse             = api.SendAppMessageResponse
+	DeliverAppEventRequest             = api.DeliverAppEventRequest
+	CreateAppWebhookRequest            = api.CreateAppWebhookRequest
+	UpdateAppWebhookRequest            = api.UpdateAppWebhookRequest
+	AppWebhookResponse                 = api.AppWebhookResponse
+	RotateAppWebhookSecretRequest      = api.RotateAppWebhookSecretRequest
+	RotateAppWebhookSecretResponse     = api.RotateAppWebhookSecretResponse
+	AppWebhookDeliveryResponse         = api.AppWebhookDeliveryResponse
+	AppWebhookDeliveryListResponse     = api.AppWebhookDeliveryListResponse
+	AppWebhookRetryDeliveryResponse    = api.AppWebhookRetryDeliveryResponse
+	ListAppWebhookDeliveriesOptions    = api.ListAppWebhookDeliveriesOptions
+	CreateAccountReleaseWebhookRequest = api.CreateAccountReleaseWebhookRequest
+	UpdateAccountReleaseWebhookRequest = api.UpdateAccountReleaseWebhookRequest
+	AccountReleaseWebhookResponse      = api.AccountReleaseWebhookResponse
+	DeliverAppEventResponse            = api.DeliverAppEventResponse
+	DelayedTaskRequest                 = api.DelayedTaskRequest
+	DelayedTaskResponse                = api.DelayedTaskResponse
+	ListDelayedTasksResponse           = api.ListDelayedTasksResponse
 
 	// Audit + invocations.
 	Invocation               = api.Invocation

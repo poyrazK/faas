@@ -5945,6 +5945,10 @@ type Store interface {
 	//   - (AppWebhook{}, ErrNotFound) when the app row is missing
 	//   - (AppWebhook{}, ErrConflict) on a duplicate (app_id, target_url)
 	CreateAppWebhookIfUnderQuota(ctx context.Context, w AppWebhook, limits api.Limits) (AppWebhook, error)
+	// CreateAccountReleaseWebhookIfUnderQuota creates one account-owned
+	// release receiver under the same account-row lock and shared quota as
+	// app webhook creation. It never consumes a per-app slot.
+	CreateAccountReleaseWebhookIfUnderQuota(ctx context.Context, w AppWebhook, limits api.Limits) (AppWebhook, error)
 	AppWebhookByID(ctx context.Context, id string) (AppWebhook, error)
 	// UpdateAppWebhook mutates the optional fields of a webhook row.
 	// See UpdateAppWebhookParams at types.go for the pointer-to-
@@ -6026,6 +6030,9 @@ type Store interface {
 	// The result is ordered by created_at DESC (most recent first)
 	// — the dashboard's "recent deliveries" pane orientation.
 	ListAppWebhookDeliveries(ctx context.Context, appID, webhookID string, pageSize int, pageToken string) ([]AppWebhookDelivery, string, error)
+	// ListAccountReleaseWebhookDeliveries reads one account receiver across
+	// all its source apps; both IDs are enforced in the store query.
+	ListAccountReleaseWebhookDeliveries(ctx context.Context, accountID, webhookID string, pageSize int, pageToken string) ([]AppWebhookDelivery, string, error)
 	// AppWebhookDeliveryByID backs the per-delivery retry path (POST
 	// /deliveries/{id}/retry) and the dispatcher-side audit
 	// emission that needs to read the row's account_id + app_id.

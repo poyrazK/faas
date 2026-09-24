@@ -234,6 +234,9 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 		string(current.DeliveryFormat), current.Enabled, current.SecretSealed)
 	w, err := scanAppWebhook(row)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return AppWebhook{}, ErrConflict
+		}
 		return AppWebhook{}, fmt.Errorf("state: update app_webhook: %w", err)
 	}
 	return w, nil

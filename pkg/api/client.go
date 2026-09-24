@@ -5185,6 +5185,58 @@ func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, delivery
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
 }
 
+// Account release receivers follow release events from every app owned by
+// the active account, including apps created after the receiver.
+func (c *Client) ListAccountReleaseWebhooks(ctx context.Context) ([]AccountReleaseWebhookResponse, error) {
+	var out []AccountReleaseWebhookResponse
+	return out, c.do(ctx, "GET", "/v1/account/release-webhooks", nil, &out)
+}
+
+func (c *Client) CreateAccountReleaseWebhook(ctx context.Context, req CreateAccountReleaseWebhookRequest) (AccountReleaseWebhookResponse, error) {
+	var out AccountReleaseWebhookResponse
+	return out, c.do(ctx, "POST", "/v1/account/release-webhooks", req, &out)
+}
+
+func (c *Client) GetAccountReleaseWebhook(ctx context.Context, id string) (AccountReleaseWebhookResponse, error) {
+	var out AccountReleaseWebhookResponse
+	return out, c.do(ctx, "GET", "/v1/account/release-webhooks/"+id, nil, &out)
+}
+
+func (c *Client) UpdateAccountReleaseWebhook(ctx context.Context, id string, req UpdateAccountReleaseWebhookRequest) (AccountReleaseWebhookResponse, error) {
+	var out AccountReleaseWebhookResponse
+	return out, c.do(ctx, "PATCH", "/v1/account/release-webhooks/"+id, req, &out)
+}
+
+func (c *Client) DeleteAccountReleaseWebhook(ctx context.Context, id string) error {
+	return c.do(ctx, "DELETE", "/v1/account/release-webhooks/"+id, nil, nil)
+}
+
+func (c *Client) RotateAccountReleaseWebhookSecret(ctx context.Context, id string, req RotateAppWebhookSecretRequest) (RotateAppWebhookSecretResponse, error) {
+	var out RotateAppWebhookSecretResponse
+	return out, c.do(ctx, "POST", "/v1/account/release-webhooks/"+id+"/rotate-secret", req, &out)
+}
+
+func (c *Client) ListAccountReleaseWebhookDeliveries(ctx context.Context, id string, opts ListAppWebhookDeliveriesOptions) (AppWebhookDeliveryListResponse, error) {
+	var out AppWebhookDeliveryListResponse
+	path := "/v1/account/release-webhooks/" + id + "/deliveries"
+	if opts.PageSize > 0 || opts.PageToken != "" {
+		q := url.Values{}
+		if opts.PageSize > 0 {
+			q.Set("page_size", strconv.Itoa(opts.PageSize))
+		}
+		if opts.PageToken != "" {
+			q.Set("page_token", opts.PageToken)
+		}
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) RetryAccountReleaseWebhookDelivery(ctx context.Context, id, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {
+	var out AppWebhookRetryDeliveryResponse
+	return out, c.do(ctx, "POST", "/v1/account/release-webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
+}
+
 // --- Durable inbound webhooks (ADR-212) ----------------------------------
 
 func (c *Client) ListInboundWebhookEndpoints(ctx context.Context, slug string) ([]InboundWebhookEndpointResponse, error) {

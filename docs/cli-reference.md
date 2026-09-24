@@ -89,7 +89,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained. |
 | [`cache`](#cache) | Declare or purge response caching (cache GET /path/:id for 30s) |
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
-| [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
+| [`webhooks`](#webhooks) | Manage app and account release webhooks (webhooks account &lt;verb&gt;) |
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
 | [`man`](#man) | Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg) |
@@ -2526,7 +2526,7 @@ Remove stale and excess state safely
 
 ## webhooks
 
-Manage outbound webhooks (webhooks list|add|info|update|rm|deliveries|retry|rotate-secret)
+Manage app and account release webhooks (webhooks account &lt;verb&gt;)
 
 `gregale webhooks [<subcommand>]`
 
@@ -2567,6 +2567,10 @@ Rotate the webhook signing secret
 | `--app <slug>` | app slug | required |
 | `--secret <VALUE>` | replacement HMAC-SHA256 secret |  |
 | `--from-stdin` | read the replacement secret from stdin |  |
+
+### webhooks account
+
+Manage one release receiver across all account apps
 
 
 ## whoami

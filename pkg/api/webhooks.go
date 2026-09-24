@@ -82,6 +82,12 @@ var AllowedAppWebhookEvents = []string{
 	"usage_statement.finalized",
 }
 
+// Account receivers intentionally cannot use the app-level all-events
+// wildcard. Their filter is a non-empty subset of these release events.
+var AllowedAccountReleaseWebhookEvents = []string{
+	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
+}
+
 // DeploymentLiveWebhookPayload is the payload stored for a deployment.live
 // delivery. The delivery id in the webhook envelope is stable across retries.
 type DeploymentLiveWebhookPayload struct {
@@ -220,6 +226,27 @@ type UpdateAppWebhookRequest struct {
 	Enabled        *bool     `json:"enabled,omitempty"`
 }
 
+// Account routes use the same write fields but require a non-empty subset of
+// release events. Keeping separate DTOs makes that contract explicit in the
+// OpenAPI and typed clients.
+type CreateAccountReleaseWebhookRequest struct {
+	TargetURL      string   `json:"target_url"`
+	WebhookSecret  string   `json:"webhook_secret"`
+	EventFilter    []string `json:"event_filter"`
+	RetryPolicy    string   `json:"retry_policy,omitempty"`
+	DeliveryFormat string   `json:"delivery_format,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+}
+
+type UpdateAccountReleaseWebhookRequest struct {
+	TargetURL      *string   `json:"target_url,omitempty"`
+	WebhookSecret  *string   `json:"webhook_secret,omitempty"`
+	EventFilter    *[]string `json:"event_filter,omitempty"`
+	RetryPolicy    *string   `json:"retry_policy,omitempty"`
+	DeliveryFormat *string   `json:"delivery_format,omitempty"`
+	Enabled        *bool     `json:"enabled,omitempty"`
+}
+
 // RotateAppWebhookSecretRequest is the rotate-secret body. The caller supplies
 // the replacement so the receiver and Gregale can be updated atomically. The
 // plaintext is accepted only on the write path and is never returned.
@@ -235,6 +262,22 @@ type RotateAppWebhookSecretRequest struct {
 type AppWebhookResponse struct {
 	ID                        string   `json:"id"`
 	AppID                     string   `json:"app_id"`
+	AccountID                 string   `json:"account_id"`
+	TargetURL                 string   `json:"target_url"`
+	WebhookSecretSealedMasked string   `json:"webhook_secret_sealed_masked"`
+	EventFilter               []string `json:"event_filter"`
+	RetryPolicy               string   `json:"retry_policy"`
+	DeliveryFormat            string   `json:"delivery_format"`
+	Enabled                   bool     `json:"enabled"`
+	CreatedAt                 string   `json:"created_at"`
+	UpdatedAt                 string   `json:"updated_at"`
+}
+
+// AccountReleaseWebhookResponse omits app_id: one subscription follows the
+// current and future apps owned by the account.
+type AccountReleaseWebhookResponse struct {
+	ID                        string   `json:"id"`
+	Scope                     string   `json:"scope"`
 	AccountID                 string   `json:"account_id"`
 	TargetURL                 string   `json:"target_url"`
 	WebhookSecretSealedMasked string   `json:"webhook_secret_sealed_masked"`
