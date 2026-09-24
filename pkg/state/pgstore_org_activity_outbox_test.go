@@ -133,14 +133,14 @@ func TestPgStoreOrgActivityDeploymentMutationAtomic(t *testing.T) {
 	bad := entry
 	bad.Data = []byte(`[]`)
 	badDeploymentID := uuid.NewString()
-	if _, _, err := s.CreateDeploymentWithActivity(ctx, state.Deployment{ID: badDeploymentID, AppID: appID}, bad); err == nil {
+	if _, _, err := s.CreateDeploymentWithActivity(ctx, state.Deployment{ID: badDeploymentID, AppID: appID, Kind: state.DeploymentKindImage}, bad); err == nil {
 		t.Fatal("deployment with invalid activity succeeded")
 	}
 	if _, err := s.DeploymentByID(ctx, badDeploymentID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deployment after rejected transaction = %v, want ErrNotFound", err)
 	}
 
-	created, outboxID, err := s.CreateDeploymentWithActivity(ctx, state.Deployment{AppID: appID}, entry)
+	created, outboxID, err := s.CreateDeploymentWithActivity(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindImage}, entry)
 	if err != nil || created.ID == "" || outboxID == 0 {
 		t.Fatalf("transactional deployment = (%+v, %d, %v)", created, outboxID, err)
 	}
@@ -157,7 +157,7 @@ func TestPgStoreOrgActivityDeploymentMutationAtomic(t *testing.T) {
 		t.Fatalf("projected deployment activity = (%#v, %v)", activity, err)
 	}
 
-	buildDeployment, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID})
+	buildDeployment, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindImage})
 	if err != nil {
 		t.Fatalf("create source deployment: %v", err)
 	}
