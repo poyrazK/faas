@@ -541,6 +541,10 @@ export type { PlatformTenantCredentialsResponse } from './models/PlatformTenantC
 export type { PlatformTenantDetailResponse } from './models/PlatformTenantDetailResponse.js';
 export type { PlatformTenantListResponse } from './models/PlatformTenantListResponse.js';
 export type { PlatformTenantResponse } from './models/PlatformTenantResponse.js';
+export type { PlatformTenantStatementHandoffResponse } from './models/PlatformTenantStatementHandoffResponse.js';
+export type { PlatformTenantStatementLineResponse } from './models/PlatformTenantStatementLineResponse.js';
+export type { PlatformTenantStatementListResponse } from './models/PlatformTenantStatementListResponse.js';
+export type { PlatformTenantStatementResponse } from './models/PlatformTenantStatementResponse.js';
 export type { PlatformTenantSurfaceResponse } from './models/PlatformTenantSurfaceResponse.js';
 export type { PlatformTenantUsageBucketResponse } from './models/PlatformTenantUsageBucketResponse.js';
 export type { PlatformTenantUsageResponse } from './models/PlatformTenantUsageResponse.js';

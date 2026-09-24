@@ -120,6 +120,24 @@ func (m *MemStore) CreateAPIConsumerUsageStatementHandoff(_ context.Context, inp
 		if existing.AccountID == input.AccountID && existing.ExternalInvoiceID == input.ExternalInvoiceID {
 			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
 		}
+		other := m.apiConsumerUsageStatements[existing.StatementID]
+		if other.AppID == statement.AppID && other.ConsumerID == statement.ConsumerID &&
+			windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) {
+			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+		}
+	}
+	for _, existing := range m.platformTenantStatementHandoffs {
+		if existing.AccountID != input.AccountID {
+			continue
+		}
+		if existing.ExternalInvoiceID == input.ExternalInvoiceID {
+			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+		}
+		other := m.platformTenantStatements[existing.StatementID]
+		if windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) &&
+			tenantStatementIncludesConsumer(other, statement.AppID, statement.ConsumerID) {
+			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+		}
 	}
 	handoff := APIConsumerUsageStatementHandoff{
 		ID: uuid.NewString(), AccountID: input.AccountID, AppID: input.AppID,

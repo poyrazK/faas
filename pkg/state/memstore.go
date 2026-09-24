@@ -589,6 +589,8 @@ type MemStore struct {
 	// can be handed off at most once, while the implementation also rejects
 	// reuse of an external invoice reference within an account.
 	apiConsumerUsageStatementHandoffs map[string]APIConsumerUsageStatementHandoff
+	platformTenantStatements          map[string]PlatformTenantStatement
+	platformTenantStatementHandoffs   map[string]PlatformTenantStatementHandoff
 	// networkUsageCheckpoints mirrors meter_network_checkpoints. Values are
 	// the last cumulative interface counters atomically reflected in usage.
 	networkUsageCheckpoints map[string]networkUsageCheckpoint
@@ -1094,6 +1096,8 @@ func NewMemStore() *MemStore {
 		apiConsumerRateCards:              map[string]APIConsumerRateCard{},
 		apiConsumerUsageStatements:        map[string]APIConsumerUsageStatement{},
 		apiConsumerUsageStatementHandoffs: map[string]APIConsumerUsageStatementHandoff{},
+		platformTenantStatements:          map[string]PlatformTenantStatement{},
+		platformTenantStatementHandoffs:   map[string]PlatformTenantStatementHandoff{},
 		networkUsageCheckpoints:           map[string]networkUsageCheckpoint{},
 		idem:                              map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID
@@ -19074,6 +19078,16 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for sid, handoff := range m.apiConsumerUsageStatementHandoffs {
 		if handoff.AccountID == id {
 			delete(m.apiConsumerUsageStatementHandoffs, sid)
+		}
+	}
+	for sid, statement := range m.platformTenantStatements {
+		if statement.AccountID == id {
+			delete(m.platformTenantStatements, sid)
+		}
+	}
+	for sid, handoff := range m.platformTenantStatementHandoffs {
+		if handoff.AccountID == id {
+			delete(m.platformTenantStatementHandoffs, sid)
 		}
 	}
 	for did, d := range m.deployments {

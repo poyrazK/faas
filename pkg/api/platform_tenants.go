@@ -145,3 +145,46 @@ type PlatformTenantUsageResponse struct {
 	Buckets       []PlatformTenantUsageBucketResponse `json:"buckets"`
 	AsOf          time.Time                           `json:"as_of"`
 }
+
+// Tenant statement revisions are additive. Revision 1 is the initial period
+// snapshot; later revisions contain only usage delivered after prior ones.
+type PlatformTenantStatementLineResponse struct {
+	AppID                  string    `json:"app_id"`
+	ConsumerID             string    `json:"consumer_id"`
+	WindowStart            time.Time `json:"window_start"`
+	BillableUnits          int64     `json:"billable_units"`
+	RateCardID             string    `json:"rate_card_id,omitempty"`
+	Currency               string    `json:"currency,omitempty"`
+	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
+	AmountMillicents       int64     `json:"amount_millicents"`
+}
+
+type PlatformTenantStatementResponse struct {
+	ID               string                                `json:"id"`
+	TenantID         string                                `json:"tenant_id"`
+	PeriodStart      time.Time                             `json:"period_start"`
+	PeriodEnd        time.Time                             `json:"period_end"`
+	Revision         int                                   `json:"revision"`
+	Status           string                                `json:"status"`
+	Currency         string                                `json:"currency,omitempty"`
+	BillableUnits    int64                                 `json:"billable_units"`
+	UnpricedUnits    int64                                 `json:"unpriced_units"`
+	AmountMillicents int64                                 `json:"amount_millicents"`
+	Lines            []PlatformTenantStatementLineResponse `json:"lines"`
+	AsOf             time.Time                             `json:"as_of"`
+	CreatedAt        time.Time                             `json:"created_at"`
+	FinalizedAt      *time.Time                            `json:"finalized_at,omitempty"`
+}
+
+type PlatformTenantStatementListResponse struct {
+	Statements []PlatformTenantStatementResponse `json:"statements"`
+}
+
+type PlatformTenantStatementHandoffResponse struct {
+	ID                string    `json:"id"`
+	StatementID       string    `json:"statement_id"`
+	ExternalInvoiceID string    `json:"external_invoice_id"`
+	Currency          string    `json:"currency"`
+	AmountMillicents  int64     `json:"amount_millicents"`
+	CreatedAt         time.Time `json:"created_at"`
+}
