@@ -407,6 +407,10 @@ func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
 			_, _ = fmt.Fprintf(osStdout, "  policies %-20s %s -> %s\n", workload.Policies.Kind,
 				edgePolicySummary(workload.Policies.Before), edgePolicySummary(workload.Policies.After))
 		}
+		if workload.RoutingPolicies.Kind != "unchanged" {
+			_, _ = fmt.Fprintf(osStdout, "  routing  %-20s %s -> %s\n", workload.RoutingPolicies.Kind,
+				edgePolicySummary(workload.RoutingPolicies.Before), edgePolicySummary(workload.RoutingPolicies.After))
+		}
 	}
 	_, _ = fmt.Fprintln(osStdout, "\nSHARED (not environment-scoped)")
 	for _, resource := range diff.SharedResources {

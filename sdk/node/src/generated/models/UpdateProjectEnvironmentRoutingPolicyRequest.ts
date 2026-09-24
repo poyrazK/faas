@@ -4,10 +4,9 @@
 /* eslint-disable */
 import type { ProjectEnvironmentEdgeRuleResponse } from './ProjectEnvironmentEdgeRuleResponse.js';
 /**
- * Ownership and rules for one independently replaceable edge-policy group.
+ * Complete replacement for environment redirect/rewrite rules, independently of headers/CORS rules.
  */
-export type ProjectEnvironmentEdgePolicyResponse = {
-  ownership: 'application' | 'environment';
+export type UpdateProjectEnvironmentRoutingPolicyRequest = {
   rules: Array<ProjectEnvironmentEdgeRuleResponse>;
 };
 

@@ -144,18 +144,19 @@ type ProjectEnvironmentBindingResponse struct {
 // ProjectEnvironmentStateWorkloadResponse is the effective state of one
 // project workload in a named environment.
 type ProjectEnvironmentStateWorkloadResponse struct {
-	WorkloadSlug string                                    `json:"workload_slug"`
-	WorkloadName string                                    `json:"workload_name"`
-	Release      ProjectEnvironmentReleaseWorkloadResponse `json:"release"`
-	Variables    []ProjectEnvironmentVariableResponse      `json:"variables"`
-	Secrets      []ProjectEnvironmentSecretResponse        `json:"secrets"`
-	Bindings     []ProjectEnvironmentBindingResponse       `json:"bindings"`
-	Routes       ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
-	Policies     ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
+	WorkloadSlug    string                                    `json:"workload_slug"`
+	WorkloadName    string                                    `json:"workload_name"`
+	Release         ProjectEnvironmentReleaseWorkloadResponse `json:"release"`
+	Variables       []ProjectEnvironmentVariableResponse      `json:"variables"`
+	Secrets         []ProjectEnvironmentSecretResponse        `json:"secrets"`
+	Bindings        []ProjectEnvironmentBindingResponse       `json:"bindings"`
+	Routes          ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
+	Policies        ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
+	RoutingPolicies ProjectEnvironmentEdgePolicyResponse      `json:"routing_policies"`
 }
 
-// ProjectEnvironmentEdgePolicyResponse covers headers and CORS rules only.
-// Other edge-rule kinds remain application-owned and are reported as shared.
+// ProjectEnvironmentEdgePolicyResponse describes one independent policy group.
+// The headers/CORS and redirect/rewrite groups report ownership separately.
 type ProjectEnvironmentEdgePolicyResponse struct {
 	Ownership string                               `json:"ownership"`
 	Rules     []ProjectEnvironmentEdgeRuleResponse `json:"rules"`
@@ -174,6 +175,12 @@ type ProjectEnvironmentEdgeRuleResponse struct {
 // UpdateProjectEnvironmentEdgePolicyRequest is a complete replacement.
 // An empty rules list explicitly disables inherited headers/CORS rules.
 type UpdateProjectEnvironmentEdgePolicyRequest struct {
+	Rules *[]ProjectEnvironmentEdgeRuleResponse `json:"rules"`
+}
+
+// UpdateProjectEnvironmentRoutingPolicyRequest is a complete replacement
+// for redirect/rewrite rules, independent of headers/CORS ownership.
+type UpdateProjectEnvironmentRoutingPolicyRequest struct {
 	Rules *[]ProjectEnvironmentEdgeRuleResponse `json:"rules"`
 }
 
@@ -264,14 +271,15 @@ type ProjectEnvironmentBindingChangeResponse struct {
 // ProjectEnvironmentWorkloadDiffResponse groups all effective-state changes
 // for one project workload.
 type ProjectEnvironmentWorkloadDiffResponse struct {
-	WorkloadSlug string                                     `json:"workload_slug"`
-	WorkloadName string                                     `json:"workload_name"`
-	Release      ProjectEnvironmentReleaseDiffResponse      `json:"release"`
-	Variables    []ProjectEnvironmentVariableChangeResponse `json:"variables"`
-	Secrets      []ProjectEnvironmentSecretChangeResponse   `json:"secrets"`
-	Bindings     []ProjectEnvironmentBindingChangeResponse  `json:"bindings"`
-	Routes       ProjectEnvironmentRoutePolicyDiffResponse  `json:"routes"`
-	Policies     ProjectEnvironmentEdgePolicyDiffResponse   `json:"policies"`
+	WorkloadSlug    string                                     `json:"workload_slug"`
+	WorkloadName    string                                     `json:"workload_name"`
+	Release         ProjectEnvironmentReleaseDiffResponse      `json:"release"`
+	Variables       []ProjectEnvironmentVariableChangeResponse `json:"variables"`
+	Secrets         []ProjectEnvironmentSecretChangeResponse   `json:"secrets"`
+	Bindings        []ProjectEnvironmentBindingChangeResponse  `json:"bindings"`
+	Routes          ProjectEnvironmentRoutePolicyDiffResponse  `json:"routes"`
+	Policies        ProjectEnvironmentEdgePolicyDiffResponse   `json:"policies"`
+	RoutingPolicies ProjectEnvironmentEdgePolicyDiffResponse   `json:"routing_policies"`
 }
 
 type ProjectEnvironmentEdgePolicyDiffResponse struct {

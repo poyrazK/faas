@@ -90,3 +90,21 @@ closed if its policy store is unavailable. Application-wide `route` rules may
 not substitute the stable URL's encoded workload before identity resolution.
 Other edge-rule kinds, ordinary app hostnames, and custom domains remain
 application-owned and are still listed as shared resources.
+
+## Follow-up: environment-owned redirect and rewrite policies
+
+Redirect and rewrite rules form a second, independently replaceable policy
+group on the stable environment URL. `PUT .../workloads/{workload}/routing-policies`
+accepts only those two kinds. An explicit empty list suppresses inherited
+redirects and rewrites there without changing headers/CORS or ordinary app
+hostnames. The CLI exposes `gregale projects environments policies routing set`.
+The separate record matters: an existing explicit headers/CORS policy must not
+silently disable application-owned redirects after this feature is deployed.
+
+The clone transaction copies an explicit routing policy and counts it with
+other copied policies. State and diff report its ownership and rules separately
+as `routing_policies`. The gateway filters wildcard rules to the workload
+encoded in the stable hostname, replaces only the redirect/rewrite kinds, and
+uses the existing convergence fence for cache invalidation. Route substitution,
+custom domains, and remaining edge-rule kinds are not made environment-owned
+by this decision.

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ProjectEnvironmentEdgePolicyResponse } from './ProjectEnvironmentEdgePolicyResponse.js';
 /**
- * Difference in environment headers/CORS rules or ownership.
+ * Difference in one environment edge-policy group or its ownership.
  */
 export type ProjectEnvironmentEdgePolicyDiffResponse = {
   kind: 'unchanged' | 'changed';

@@ -752,6 +752,7 @@ export type { UpdateProjectEnvironmentConfigRequest } from './UpdateProjectEnvir
 export type { UpdateProjectEnvironmentEdgePolicyRequest } from './UpdateProjectEnvironmentEdgePolicyRequest.js';
 export type { UpdateProjectEnvironmentRequest } from './UpdateProjectEnvironmentRequest.js';
 export type { UpdateProjectEnvironmentRoutePolicyRequest } from './UpdateProjectEnvironmentRoutePolicyRequest.js';
+export type { UpdateProjectEnvironmentRoutingPolicyRequest } from './UpdateProjectEnvironmentRoutingPolicyRequest.js';
 export type { UpdateProjectRequest } from './UpdateProjectRequest.js';
 export type { UpdateQueueBindingRequest } from './UpdateQueueBindingRequest.js';
 export type { UpdateTCPListenerRequest } from './UpdateTCPListenerRequest.js';

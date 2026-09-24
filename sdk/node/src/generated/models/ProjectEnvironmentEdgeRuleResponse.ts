@@ -3,10 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One inline headers or CORS rule on a stable environment URL.
+ * One environment-owned edge rule on a stable environment URL.
  */
 export type ProjectEnvironmentEdgeRuleResponse = {
-  kind: 'headers' | 'cors';
+  kind: 'headers' | 'cors' | 'redirect' | 'rewrite';
   match_path: string;
   match_methods?: Array<string>;
   match_headers?: Record<string, string>;

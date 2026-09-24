@@ -33,7 +33,9 @@ class ProjectEnvironmentStateWorkloadResponse:
     routes: ProjectEnvironmentRoutePolicyResponse
     """Effective declared-route contract and whether it is environment-owned."""
     policies: ProjectEnvironmentEdgePolicyResponse
-    """Headers/CORS policy ownership and rules. Other edge-rule kinds remain application-owned."""
+    """Ownership and rules for one independently replaceable edge-policy group."""
+    routing_policies: ProjectEnvironmentEdgePolicyResponse
+    """Ownership and rules for one independently replaceable edge-policy group."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +64,8 @@ class ProjectEnvironmentStateWorkloadResponse:
 
         policies = self.policies.to_dict()
 
+        routing_policies = self.routing_policies.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -74,6 +78,7 @@ class ProjectEnvironmentStateWorkloadResponse:
                 "bindings": bindings,
                 "routes": routes,
                 "policies": policies,
+                "routing_policies": routing_policies,
             }
         )
 
@@ -120,6 +125,8 @@ class ProjectEnvironmentStateWorkloadResponse:
 
         policies = ProjectEnvironmentEdgePolicyResponse.from_dict(d.pop("policies"))
 
+        routing_policies = ProjectEnvironmentEdgePolicyResponse.from_dict(d.pop("routing_policies"))
+
         project_environment_state_workload_response = cls(
             workload_slug=workload_slug,
             workload_name=workload_name,
@@ -129,6 +136,7 @@ class ProjectEnvironmentStateWorkloadResponse:
             bindings=bindings,
             routes=routes,
             policies=policies,
+            routing_policies=routing_policies,
         )
 
         project_environment_state_workload_response.additional_properties = d

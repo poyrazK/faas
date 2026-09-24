@@ -1415,8 +1415,9 @@ type ProjectEnvironmentRoutePolicy struct {
 	UpdatedAt               time.Time
 }
 
-// ProjectEnvironmentEdgePolicy replaces headers/CORS rules for one workload
-// on its stable named-environment URL. Other edge-rule kinds remain app-owned.
+// ProjectEnvironmentEdgePolicy stores one independently owned group of edge
+// rules for a workload on its stable named-environment URL. The store method
+// determines whether the group is headers/CORS or redirect/rewrite.
 type ProjectEnvironmentEdgePolicy struct {
 	AccountID       string
 	ProjectID       string

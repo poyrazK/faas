@@ -1685,6 +1685,14 @@ func (c *Client) PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadPolicies
 	return c.UpdateProjectEnvironmentPolicies(ctx, projectSlug, environmentSlug, workloadSlug, req)
 }
 
+// UpdateProjectEnvironmentRoutingPolicies replaces redirect/rewrite rules for
+// a stable named-environment workload URL, independently of headers/CORS.
+func (c *Client) UpdateProjectEnvironmentRoutingPolicies(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentRoutingPolicyRequest) (ProjectEnvironmentEdgePolicyResponse, error) {
+	var out ProjectEnvironmentEdgePolicyResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/workloads/" + url.PathEscape(workloadSlug) + "/routing-policies"
+	return out, c.do(ctx, http.MethodPut, path, req, &out)
+}
+
 // GetProjectEnvironmentConfigDiff compares the latest snapshots in the
 // source environment and the requested target environment.
 func (c *Client) GetProjectEnvironmentConfigDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentConfigDiffResponse, error) {

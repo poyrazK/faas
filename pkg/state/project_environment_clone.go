@@ -187,8 +187,17 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		m.projectEnvironmentEdgePolicies[projectEnvironmentRoutePolicyKey(appID, clone.TargetSlug)] = policy
 		result.PoliciesCopied++
 	}
-	// Only headers and CORS can be environment-owned in this slice. Other
-	// edge-rule kinds remain application-wide even after an explicit clone.
+	for appID := range apps {
+		policy, ok := m.projectEnvironmentRoutingPolicies[projectEnvironmentRoutePolicyKey(appID, clone.SourceSlug)]
+		if !ok {
+			continue
+		}
+		policy.EnvironmentSlug, policy.CreatedAt, policy.UpdatedAt = clone.TargetSlug, created.CreatedAt, created.CreatedAt
+		policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
+		m.projectEnvironmentRoutingPolicies[projectEnvironmentRoutePolicyKey(appID, clone.TargetSlug)] = policy
+		result.PoliciesCopied++
+	}
+	// Other edge-rule kinds remain application-wide even after an explicit clone.
 	result.SharedResources = append(result.SharedResources, "policies")
 	return created, result, nil
 }

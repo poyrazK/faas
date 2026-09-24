@@ -20,13 +20,13 @@ T = TypeVar("T", bound="ProjectEnvironmentEdgePolicyDiffResponse")
 
 @_attrs_define
 class ProjectEnvironmentEdgePolicyDiffResponse:
-    """Difference in environment headers/CORS rules or ownership."""
+    """Difference in one environment edge-policy group or its ownership."""
 
     kind: ProjectEnvironmentEdgePolicyDiffResponseKind
     before: ProjectEnvironmentEdgePolicyResponse
-    """Headers/CORS policy ownership and rules. Other edge-rule kinds remain application-owned."""
+    """Ownership and rules for one independently replaceable edge-policy group."""
     after: ProjectEnvironmentEdgePolicyResponse
-    """Headers/CORS policy ownership and rules. Other edge-rule kinds remain application-owned."""
+    """Ownership and rules for one independently replaceable edge-policy group."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

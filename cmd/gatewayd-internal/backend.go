@@ -169,6 +169,9 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	if _, err := r.store.GetProjectEnvironmentEdgePolicy(ctx, app.AccountID, app.ID, environment.Slug); err != nil && !errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, err
 	}
+	if _, err := r.store.GetProjectEnvironmentRoutingPolicy(ctx, app.AccountID, app.ID, environment.Slug); err != nil && !errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, err
+	}
 	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
 	if errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, nil

@@ -110,12 +110,20 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment policies")
 	}
+	routingPolicies := api.ProjectEnvironmentEdgePolicyResponse{Ownership: "application", Rules: []api.ProjectEnvironmentEdgeRuleResponse{}}
+	routingPolicy, err := s.store.GetProjectEnvironmentRoutingPolicy(ctx, accountID, app.ID, scope)
+	if err == nil {
+		routingPolicies = projectEnvironmentEdgePolicyResponse(routingPolicy)
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment routing policies")
+	}
 	return api.ProjectEnvironmentStateWorkloadResponse{
 		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Release: release,
 		Variables: projectEnvironmentVariables(variables), Secrets: projectEnvironmentSecrets(secrets),
-		Bindings: projectEnvironmentBindings(secrets),
-		Routes:   routes,
-		Policies: policies,
+		Bindings:        projectEnvironmentBindings(secrets),
+		Routes:          routes,
+		Policies:        policies,
+		RoutingPolicies: routingPolicies,
 	}, nil
 }
 
@@ -227,7 +235,7 @@ func projectEnvironmentSharedResources(workloads []api.ProjectEnvironmentStateWo
 	const note = "shared by all environments until this resource gains environment ownership"
 	out := []api.ProjectEnvironmentSharedResourceResponse{
 		{Kind: "domains", Ownership: "application", Note: note},
-		{Kind: "policies", Ownership: "application", Note: "edge-rule kinds other than headers and CORS remain application-owned"},
+		{Kind: "policies", Ownership: "application", Note: "other edge-rule kinds remain application-owned; route substitution is disabled on stable environment URLs"},
 	}
 	for _, workload := range workloads {
 		if workload.Routes.Ownership != "environment" {
@@ -272,12 +280,13 @@ func projectEnvironmentWorkloadDiffs(before, after []api.ProjectEnvironmentState
 		prior := beforeBySlug[next.WorkloadSlug]
 		out = append(out, api.ProjectEnvironmentWorkloadDiffResponse{
 			WorkloadSlug: next.WorkloadSlug, WorkloadName: next.WorkloadName,
-			Release:   projectEnvironmentReleaseDiff(prior.Release, next.Release),
-			Variables: projectEnvironmentVariableDiffs(prior.Variables, next.Variables),
-			Secrets:   projectEnvironmentSecretDiffs(prior.Secrets, next.Secrets),
-			Bindings:  projectEnvironmentBindingDiffs(prior.Bindings, next.Bindings),
-			Routes:    projectEnvironmentRoutePolicyDiff(prior.Routes, next.Routes),
-			Policies:  projectEnvironmentEdgePolicyDiff(prior.Policies, next.Policies),
+			Release:         projectEnvironmentReleaseDiff(prior.Release, next.Release),
+			Variables:       projectEnvironmentVariableDiffs(prior.Variables, next.Variables),
+			Secrets:         projectEnvironmentSecretDiffs(prior.Secrets, next.Secrets),
+			Bindings:        projectEnvironmentBindingDiffs(prior.Bindings, next.Bindings),
+			Routes:          projectEnvironmentRoutePolicyDiff(prior.Routes, next.Routes),
+			Policies:        projectEnvironmentEdgePolicyDiff(prior.Policies, next.Policies),
+			RoutingPolicies: projectEnvironmentEdgePolicyDiff(prior.RoutingPolicies, next.RoutingPolicies),
 		})
 	}
 	return out

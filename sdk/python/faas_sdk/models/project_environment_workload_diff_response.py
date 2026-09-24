@@ -32,7 +32,9 @@ class ProjectEnvironmentWorkloadDiffResponse:
     routes: ProjectEnvironmentRoutePolicyDiffResponse
     """Difference in the effective declared-route contract or its ownership."""
     policies: ProjectEnvironmentEdgePolicyDiffResponse
-    """Difference in environment headers/CORS rules or ownership."""
+    """Difference in one environment edge-policy group or its ownership."""
+    routing_policies: ProjectEnvironmentEdgePolicyDiffResponse
+    """Difference in one environment edge-policy group or its ownership."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +63,8 @@ class ProjectEnvironmentWorkloadDiffResponse:
 
         policies = self.policies.to_dict()
 
+        routing_policies = self.routing_policies.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -73,6 +77,7 @@ class ProjectEnvironmentWorkloadDiffResponse:
                 "bindings": bindings,
                 "routes": routes,
                 "policies": policies,
+                "routing_policies": routing_policies,
             }
         )
 
@@ -119,6 +124,8 @@ class ProjectEnvironmentWorkloadDiffResponse:
 
         policies = ProjectEnvironmentEdgePolicyDiffResponse.from_dict(d.pop("policies"))
 
+        routing_policies = ProjectEnvironmentEdgePolicyDiffResponse.from_dict(d.pop("routing_policies"))
+
         project_environment_workload_diff_response = cls(
             workload_slug=workload_slug,
             workload_name=workload_name,
@@ -128,6 +135,7 @@ class ProjectEnvironmentWorkloadDiffResponse:
             bindings=bindings,
             routes=routes,
             policies=policies,
+            routing_policies=routing_policies,
         )
 
         project_environment_workload_diff_response.additional_properties = d

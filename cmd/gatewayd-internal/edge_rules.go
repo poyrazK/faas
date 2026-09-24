@@ -372,8 +372,9 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	return entry, nil
 }
 
-// environmentEdgeRules replaces just headers/CORS when a named environment
-// owns that policy. A missing row preserves application-wide fallback. The
+// environmentEdgeRules replaces headers/CORS and redirect/rewrite independently
+// when a named environment owns either policy. A missing row preserves the
+// corresponding application-wide fallback. The
 // existing edge-rule convergence protocol invalidates this host's cache on
 // writes; clone creates a new host with no prior cache entry.
 func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host string, global []state.EdgeRule) ([]state.EdgeRule, error) {
@@ -385,6 +386,7 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
 		AppByID(context.Context, string) (state.App, error)
 		GetProjectEnvironmentEdgePolicy(context.Context, string, string, string) (state.ProjectEnvironmentEdgePolicy, error)
+		GetProjectEnvironmentRoutingPolicy(context.Context, string, string, string) (state.ProjectEnvironmentEdgePolicy, error)
 	})
 	if !ok {
 		return nil, errors.New("environment edge policy lookup unavailable")
@@ -413,15 +415,24 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 		}
 	}
 	policy, err := lookup.GetProjectEnvironmentEdgePolicy(ctx, environment.AccountID, app.ID, environment.Slug)
-	if errors.Is(err, state.ErrNotFound) {
-		return scoped, nil
-	}
-	if err != nil {
+	if err == nil {
+		scoped = replaceEnvironmentRuleGroup(scoped, policy, host, environment.ID, app, "headers-cors", state.EdgeRuleKindHeaders, state.EdgeRuleKindCORSA)
+	} else if !errors.Is(err, state.ErrNotFound) {
 		return nil, err
 	}
+	routing, err := lookup.GetProjectEnvironmentRoutingPolicy(ctx, environment.AccountID, app.ID, environment.Slug)
+	if err == nil {
+		scoped = replaceEnvironmentRuleGroup(scoped, routing, host, environment.ID, app, "routing", state.EdgeRuleKindRedirect, state.EdgeRuleKindRewrite)
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return nil, err
+	}
+	return scoped, nil
+}
+
+func replaceEnvironmentRuleGroup(scoped []state.EdgeRule, policy state.ProjectEnvironmentEdgePolicy, host, environmentID string, app state.App, group string, first, second state.EdgeRuleKind) []state.EdgeRule {
 	out := make([]state.EdgeRule, 0, len(scoped))
 	for _, rule := range scoped {
-		if rule.Kind != state.EdgeRuleKindHeaders && rule.Kind != state.EdgeRuleKindCORSA {
+		if rule.Kind != first && rule.Kind != second {
 			out = append(out, rule)
 		}
 	}
@@ -429,7 +440,11 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 		if !rule.Enabled {
 			continue
 		}
-		id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(environment.ID+"/"+app.ID+"/"+strconv.Itoa(i)))
+		idSeed := environmentID + "/" + app.ID + "/" + strconv.Itoa(i)
+		if group == "routing" {
+			idSeed = environmentID + "/" + app.ID + "/routing/" + strconv.Itoa(i)
+		}
+		id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(idSeed))
 		out = append(out, state.EdgeRule{
 			ID: id.String(), AccountID: app.AccountID, AppID: app.ID, MatchHost: host,
 			MatchPath: rule.MatchPath, MatchMethods: rule.MatchMethods, MatchHeaders: rule.MatchHeaders,
@@ -437,7 +452,7 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 			CreatedAt: policy.CreatedAt, UpdatedAt: policy.UpdatedAt,
 		})
 	}
-	return out, nil
+	return out
 }
 
 // MatchRoute returns the highest-priority `kind=route` rule whose
