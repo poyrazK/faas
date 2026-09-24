@@ -75,6 +75,7 @@ type ProjectEnvironmentCloneResponse struct {
 	WorkloadsCopied     int      `json:"workloads_copied"`
 	BindingsCopied      int      `json:"bindings_copied"`
 	RoutesCopied        int      `json:"routes_copied"`
+	PoliciesCopied      int      `json:"policies_copied"`
 	SharedResources     []string `json:"shared_resources"`
 }
 
@@ -94,6 +95,7 @@ type ProjectEnvironmentReleaseWorkloadResponse struct {
 	WorkloadSlug   string `json:"workload_slug"`
 	WorkloadName   string `json:"workload_name"`
 	Status         string `json:"status"`
+	URL            string `json:"url,omitempty"`
 	DeploymentID   string `json:"deployment_id,omitempty"`
 	BuildID        string `json:"build_id,omitempty"`
 	ImageDigest    string `json:"image_digest,omitempty"`
@@ -149,6 +151,30 @@ type ProjectEnvironmentStateWorkloadResponse struct {
 	Secrets      []ProjectEnvironmentSecretResponse        `json:"secrets"`
 	Bindings     []ProjectEnvironmentBindingResponse       `json:"bindings"`
 	Routes       ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
+	Policies     ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
+}
+
+// ProjectEnvironmentEdgePolicyResponse covers headers and CORS rules only.
+// Other edge-rule kinds remain application-owned and are reported as shared.
+type ProjectEnvironmentEdgePolicyResponse struct {
+	Ownership string                               `json:"ownership"`
+	Rules     []ProjectEnvironmentEdgeRuleResponse `json:"rules"`
+}
+
+type ProjectEnvironmentEdgeRuleResponse struct {
+	Kind         string            `json:"kind"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string `json:"match_headers,omitempty"`
+	Priority     int               `json:"priority"`
+	Enabled      bool              `json:"enabled"`
+	Action       json.RawMessage   `json:"action"`
+}
+
+// UpdateProjectEnvironmentEdgePolicyRequest is a complete replacement.
+// An empty rules list explicitly disables inherited headers/CORS rules.
+type UpdateProjectEnvironmentEdgePolicyRequest struct {
+	Rules *[]ProjectEnvironmentEdgeRuleResponse `json:"rules"`
 }
 
 // ProjectEnvironmentRoutePolicyResponse is the effective declared-route
@@ -245,6 +271,13 @@ type ProjectEnvironmentWorkloadDiffResponse struct {
 	Secrets      []ProjectEnvironmentSecretChangeResponse   `json:"secrets"`
 	Bindings     []ProjectEnvironmentBindingChangeResponse  `json:"bindings"`
 	Routes       ProjectEnvironmentRoutePolicyDiffResponse  `json:"routes"`
+	Policies     ProjectEnvironmentEdgePolicyDiffResponse   `json:"policies"`
+}
+
+type ProjectEnvironmentEdgePolicyDiffResponse struct {
+	Kind   string                               `json:"kind"`
+	Before ProjectEnvironmentEdgePolicyResponse `json:"before"`
+	After  ProjectEnvironmentEdgePolicyResponse `json:"after"`
 }
 
 type ProjectEnvironmentRoutePolicyDiffResponse struct {

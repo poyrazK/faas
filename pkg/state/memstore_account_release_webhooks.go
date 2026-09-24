@@ -73,10 +73,14 @@ func (m *MemStore) ListAccountReleaseWebhookDeliveries(_ context.Context, accoun
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+		// Page tokens carry wall-clock nanoseconds, not Go's monotonic
+		// component. Compare that same representation when ordering rows:
+		// rapid inserts can share a wall timestamp but differ monotonically.
+		left, right := out[i].CreatedAt.UTC(), out[j].CreatedAt.UTC()
+		if left.Equal(right) {
 			return out[i].ID > out[j].ID
 		}
-		return out[i].CreatedAt.After(out[j].CreatedAt)
+		return left.After(right)
 	})
 	if pageToken != "" {
 		ts, id, ok := decodePageToken(pageToken)

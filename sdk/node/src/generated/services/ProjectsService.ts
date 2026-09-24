@@ -13,6 +13,7 @@ import type { ProjectEnvironmentApprovalStatusResponse } from '../models/Project
 import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
 import type { ProjectEnvironmentDiffResponse } from '../models/ProjectEnvironmentDiffResponse.js';
+import type { ProjectEnvironmentEdgePolicyResponse } from '../models/ProjectEnvironmentEdgePolicyResponse.js';
 import type { ProjectEnvironmentPromotionListResponse } from '../models/ProjectEnvironmentPromotionListResponse.js';
 import type { ProjectEnvironmentPromotionPreviewResponse } from '../models/ProjectEnvironmentPromotionPreviewResponse.js';
 import type { ProjectEnvironmentPromotionResponse } from '../models/ProjectEnvironmentPromotionResponse.js';
@@ -27,6 +28,7 @@ import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScan
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
 import type { PromoteProjectEnvironmentRequest } from '../models/PromoteProjectEnvironmentRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
+import type { UpdateProjectEnvironmentEdgePolicyRequest } from '../models/UpdateProjectEnvironmentEdgePolicyRequest.js';
 import type { UpdateProjectEnvironmentRequest } from '../models/UpdateProjectEnvironmentRequest.js';
 import type { UpdateProjectEnvironmentRoutePolicyRequest } from '../models/UpdateProjectEnvironmentRoutePolicyRequest.js';
 import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
@@ -665,6 +667,53 @@ export class ProjectsService {
     return __request(OpenAPI, {
       method: 'PUT',
       url: '/v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'workload': workload,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace headers and CORS rules for a workload in one environment.
+   * An explicit empty list disables inherited headers/CORS rules on the stable environment URL. Other edge-rule kinds and ordinary application hosts are unchanged.
+   * @returns ProjectEnvironmentEdgePolicyResponse Stored environment-owned headers/CORS policy.
+   * @throws ApiError
+   */
+  public static updateProjectEnvironmentPolicies({
+    slug,
+    environment,
+    workload,
+    requestBody,
+  }: {
+    /**
+     * Project containing the environment-specific edge policy.
+     */
+    slug: string,
+    /**
+     * Registered environment whose headers/CORS policy is replaced.
+     */
+    environment: string,
+    /**
+     * Workload slug whose environment-specific edge policy is replaced.
+     */
+    workload: string,
+    requestBody: UpdateProjectEnvironmentEdgePolicyRequest,
+  }): CancelablePromise<ProjectEnvironmentEdgePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies',
       path: {
         'slug': slug,
         'environment': environment,

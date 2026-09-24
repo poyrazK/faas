@@ -1116,6 +1116,14 @@ from .project_environment_config_diff_response import ProjectEnvironmentConfigDi
 from .project_environment_config_response import ProjectEnvironmentConfigResponse
 from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
 from .project_environment_diff_response import ProjectEnvironmentDiffResponse
+from .project_environment_edge_policy_diff_response import ProjectEnvironmentEdgePolicyDiffResponse
+from .project_environment_edge_policy_diff_response_kind import ProjectEnvironmentEdgePolicyDiffResponseKind
+from .project_environment_edge_policy_response import ProjectEnvironmentEdgePolicyResponse
+from .project_environment_edge_policy_response_ownership import ProjectEnvironmentEdgePolicyResponseOwnership
+from .project_environment_edge_rule_response import ProjectEnvironmentEdgeRuleResponse
+from .project_environment_edge_rule_response_action import ProjectEnvironmentEdgeRuleResponseAction
+from .project_environment_edge_rule_response_kind import ProjectEnvironmentEdgeRuleResponseKind
+from .project_environment_edge_rule_response_match_headers import ProjectEnvironmentEdgeRuleResponseMatchHeaders
 from .project_environment_promotion_change import ProjectEnvironmentPromotionChange
 from .project_environment_promotion_change_kind import ProjectEnvironmentPromotionChangeKind
 from .project_environment_promotion_change_source_revision_kind import (
@@ -1475,6 +1483,7 @@ from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_private_network_policy_request import UpdatePrivateNetworkPolicyRequest
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
+from .update_project_environment_edge_policy_request import UpdateProjectEnvironmentEdgePolicyRequest
 from .update_project_environment_request import UpdateProjectEnvironmentRequest
 from .update_project_environment_route_policy_request import UpdateProjectEnvironmentRoutePolicyRequest
 from .update_project_request import UpdateProjectRequest
@@ -2634,6 +2643,14 @@ __all__ = (
     "ProjectEnvironmentConfigResponse",
     "ProjectEnvironmentConfigResponseValues",
     "ProjectEnvironmentDiffResponse",
+    "ProjectEnvironmentEdgePolicyDiffResponse",
+    "ProjectEnvironmentEdgePolicyDiffResponseKind",
+    "ProjectEnvironmentEdgePolicyResponse",
+    "ProjectEnvironmentEdgePolicyResponseOwnership",
+    "ProjectEnvironmentEdgeRuleResponse",
+    "ProjectEnvironmentEdgeRuleResponseAction",
+    "ProjectEnvironmentEdgeRuleResponseKind",
+    "ProjectEnvironmentEdgeRuleResponseMatchHeaders",
     "ProjectEnvironmentPromotionChange",
     "ProjectEnvironmentPromotionChangeKind",
     "ProjectEnvironmentPromotionChangeSourceRevisionKind",
@@ -2969,6 +2986,7 @@ __all__ = (
     "UpdatePrivateNetworkPolicyRequest",
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",
+    "UpdateProjectEnvironmentEdgePolicyRequest",
     "UpdateProjectEnvironmentRequest",
     "UpdateProjectEnvironmentRoutePolicyRequest",
     "UpdateProjectRequest",

@@ -736,6 +736,7 @@ type MemStore struct {
 	projectEnvironmentApprovals          map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
 	projectEnvironmentRoutePolicies      map[string]ProjectEnvironmentRoutePolicy
+	projectEnvironmentEdgePolicies       map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
 	projectEnvironmentPromotionWorkloads map[string][]ProjectEnvironmentPromotionWorkload
 	// githubDeployBranches stores the optional branch→scope rules keyed by
@@ -1174,6 +1175,7 @@ func NewMemStore() *MemStore {
 		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
 		projectEnvironmentRoutePolicies:      map[string]ProjectEnvironmentRoutePolicy{},
+		projectEnvironmentEdgePolicies:       map[string]ProjectEnvironmentEdgePolicy{},
 		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
 		projectEnvironmentPromotionWorkloads: map[string][]ProjectEnvironmentPromotionWorkload{},
 	}
@@ -2884,6 +2886,11 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			delete(m.projectEnvironmentRoutePolicies, key)
 		}
 	}
+	for key, policy := range m.projectEnvironmentEdgePolicies {
+		if policy.ProjectID == projectID {
+			delete(m.projectEnvironmentEdgePolicies, key)
+		}
+	}
 	return nil
 }
 
@@ -2919,6 +2926,21 @@ func (m *MemStore) ProjectEnvironmentBySlug(_ context.Context, accountID, projec
 		}
 	}
 	return ProjectEnvironment{}, ErrNotFound
+}
+
+func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (ProjectEnvironment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	environment, ok := m.projectEnvironments[id]
+	if !ok {
+		// MemStore's newID uses 32 hex characters; platform host decoding
+		// returns the canonical, hyphenated form of the same UUID bytes.
+		environment, ok = m.projectEnvironments[strings.ReplaceAll(id, "-", "")]
+	}
+	if !ok {
+		return ProjectEnvironment{}, ErrNotFound
+	}
+	return environment, nil
 }
 
 func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
@@ -3045,6 +3067,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentRoutePolicies, key)
+		}
+	}
+	for key, policy := range m.projectEnvironmentEdgePolicies {
+		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
+			delete(m.projectEnvironmentEdgePolicies, key)
 		}
 	}
 	for id, approval := range m.projectEnvironmentApprovals {
@@ -19074,6 +19101,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.AccountID == id {
 			delete(m.projectEnvironmentRoutePolicies, key)
+		}
+	}
+	for key, policy := range m.projectEnvironmentEdgePolicies {
+		if policy.AccountID == id {
+			delete(m.projectEnvironmentEdgePolicies, key)
 		}
 	}
 	for kid, k := range m.keys {

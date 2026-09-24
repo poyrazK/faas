@@ -50,12 +50,20 @@ func TestProjectsEnvironmentPromotionPreviewUsesTargetRoute(t *testing.T) {
 
 func TestProjectsEnvironmentReleasesUsesEnvironmentRoute(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"project_slug":"shop","environment":"staging","workloads":[{"workload_slug":"api","workload_name":"api","status":"live","deployment_id":"dep-1","build_id":"build-1","commit_sha":"abc123"}]}`, http.StatusOK)
+	const environmentURL = "https://env-stable.gregale.dev"
+	f := authedFakeAPI(t, `{"project_slug":"shop","environment":"staging","workloads":[{"workload_slug":"api","workload_name":"api","status":"live","url":"https://env-stable.gregale.dev","deployment_id":"dep-1","build_id":"build-1","commit_sha":"abc123"}]}`, http.StatusOK)
+	previousOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
 	if code := cmdProjectsEnvironmentReleases([]string{"shop", "staging"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/staging/releases" {
 		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+	if !strings.Contains(out.String(), environmentURL) {
+		t.Fatalf("release output did not show stable URL: %q", out.String())
 	}
 }
 

@@ -53,6 +53,14 @@ type Router interface {
 	ResolveHost(ctx context.Context, host string) (app App, ok bool, err error)
 }
 
+// DynamicRouteHostMatcher identifies a hostname whose target must be resolved
+// afresh on every request. Named-environment URLs follow a mutable live
+// release and must fail closed when their environment is removed, even if an
+// invalidation notification is lost.
+type DynamicRouteHostMatcher interface {
+	IsDynamicRouteHost(host string) bool
+}
+
 // PlatformTenantHostResolver rechecks current tenant-surface state on cached
 // custom-domain hits. Implemented by the production router; legacy test
 // routers without tenant surfaces keep the original cache behavior.
@@ -948,6 +956,16 @@ const RouteCacheCap = 10_000
 // routes that were invalidated or evicted; without a stale entry it is a
 // 404 as before.
 func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
+	if matcher, ok := b.router.(DynamicRouteHostMatcher); ok && matcher.IsDynamicRouteHost(host) {
+		app, found, err := b.router.ResolveHost(ctx, host)
+		if err != nil {
+			if b.log != nil {
+				b.log.Warn("gateway: dynamic environment route lookup failed", "host", host, "err", err)
+			}
+			return App{}, false
+		}
+		return app, found
+	}
 	// Lookup is on every request. Use the read-mostly cache operation so
 	// concurrent hits do not serialize behind LRU promotion; route changes
 	// still invalidate the cache through the existing notifier path.

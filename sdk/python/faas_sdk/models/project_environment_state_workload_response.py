@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
     from ..models.project_environment_binding_response import ProjectEnvironmentBindingResponse
+    from ..models.project_environment_edge_policy_response import ProjectEnvironmentEdgePolicyResponse
     from ..models.project_environment_release_workload_response import ProjectEnvironmentReleaseWorkloadResponse
     from ..models.project_environment_route_policy_response import ProjectEnvironmentRoutePolicyResponse
     from ..models.project_environment_secret_response import ProjectEnvironmentSecretResponse
@@ -24,12 +25,15 @@ class ProjectEnvironmentStateWorkloadResponse:
     workload_slug: str
     workload_name: str
     release: ProjectEnvironmentReleaseWorkloadResponse
-    """Current live deployment metadata for one project workload."""
+    """Current live deployment metadata for one project workload. The stable environment URL is present before the
+    first deployment but returns 404 until a live release exists."""
     variables: list[ProjectEnvironmentVariableResponse]
     secrets: list[ProjectEnvironmentSecretResponse]
     bindings: list[ProjectEnvironmentBindingResponse]
     routes: ProjectEnvironmentRoutePolicyResponse
     """Effective declared-route contract and whether it is environment-owned."""
+    policies: ProjectEnvironmentEdgePolicyResponse
+    """Headers/CORS policy ownership and rules. Other edge-rule kinds remain application-owned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +60,8 @@ class ProjectEnvironmentStateWorkloadResponse:
 
         routes = self.routes.to_dict()
 
+        policies = self.policies.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -67,6 +73,7 @@ class ProjectEnvironmentStateWorkloadResponse:
                 "secrets": secrets,
                 "bindings": bindings,
                 "routes": routes,
+                "policies": policies,
             }
         )
 
@@ -75,6 +82,7 @@ class ProjectEnvironmentStateWorkloadResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.project_environment_binding_response import ProjectEnvironmentBindingResponse
+        from ..models.project_environment_edge_policy_response import ProjectEnvironmentEdgePolicyResponse
         from ..models.project_environment_release_workload_response import ProjectEnvironmentReleaseWorkloadResponse
         from ..models.project_environment_route_policy_response import ProjectEnvironmentRoutePolicyResponse
         from ..models.project_environment_secret_response import ProjectEnvironmentSecretResponse
@@ -110,6 +118,8 @@ class ProjectEnvironmentStateWorkloadResponse:
 
         routes = ProjectEnvironmentRoutePolicyResponse.from_dict(d.pop("routes"))
 
+        policies = ProjectEnvironmentEdgePolicyResponse.from_dict(d.pop("policies"))
+
         project_environment_state_workload_response = cls(
             workload_slug=workload_slug,
             workload_name=workload_name,
@@ -118,6 +128,7 @@ class ProjectEnvironmentStateWorkloadResponse:
             secrets=secrets,
             bindings=bindings,
             routes=routes,
+            policies=policies,
         )
 
         project_environment_state_workload_response.additional_properties = d

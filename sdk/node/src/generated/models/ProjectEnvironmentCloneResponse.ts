@@ -12,6 +12,7 @@ export type ProjectEnvironmentCloneResponse = {
   workloads_copied: number;
   bindings_copied: number;
   routes_copied: number;
+  policies_copied: number;
   shared_resources: Array<'domains' | 'policies' | 'routes' | 'managed_postgres_data' | 'object_storage_bucket_data'>;
 };
 

@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|releases|history|config|routes|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|releases|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -62,6 +62,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentConfig(args[1:])
 	case "routes":
 		return cmdProjectsEnvironmentRoutes(args[1:])
+	case "policies":
+		return cmdProjectsEnvironmentPolicies(args[1:])
 	case "diff":
 		return cmdProjectsEnvironmentConfigDiff(args[1:])
 	case "preview", "promotion-preview":
@@ -94,9 +96,9 @@ func cmdProjectsEnvironmentReleases(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(releases))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Environment releases %s/%s\n%-24s %-14s %-36s %-18s %s\n", releases.ProjectSlug, releases.Environment, "WORKLOAD", "STATUS", "DEPLOYMENT", "BUILD", "COMMIT")
+	_, _ = fmt.Fprintf(osStdout, "Environment releases %s/%s\n%-24s %-14s %-36s %-18s %-18s %s\n", releases.ProjectSlug, releases.Environment, "WORKLOAD", "STATUS", "DEPLOYMENT", "BUILD", "COMMIT", "URL")
 	for _, workload := range releases.Workloads {
-		_, _ = fmt.Fprintf(osStdout, "%-24s %-14s %-36s %-18s %s\n", workload.WorkloadSlug, workload.Status, workload.DeploymentID, workload.BuildID, workload.CommitSHA)
+		_, _ = fmt.Fprintf(osStdout, "%-24s %-14s %-36s %-18s %-18s %s\n", workload.WorkloadSlug, workload.Status, workload.DeploymentID, workload.BuildID, workload.CommitSHA, workload.URL)
 	}
 	return 0
 }
@@ -401,11 +403,29 @@ func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
 			_, _ = fmt.Fprintf(osStdout, "  routes   %-20s %s -> %s\n", workload.Routes.Kind,
 				routePolicySummary(workload.Routes.Before), routePolicySummary(workload.Routes.After))
 		}
+		if workload.Policies.Kind != "unchanged" {
+			_, _ = fmt.Fprintf(osStdout, "  policies %-20s %s -> %s\n", workload.Policies.Kind,
+				edgePolicySummary(workload.Policies.Before), edgePolicySummary(workload.Policies.After))
+		}
 	}
 	_, _ = fmt.Fprintln(osStdout, "\nSHARED (not environment-scoped)")
 	for _, resource := range diff.SharedResources {
 		_, _ = fmt.Fprintf(osStdout, "  %s\n", resource.Kind)
 	}
+}
+
+func edgePolicySummary(policy api.ProjectEnvironmentEdgePolicyResponse) string {
+	if len(policy.Rules) == 0 {
+		return fmt.Sprintf("%s (0 rules)", policy.Ownership)
+	}
+	kinds := make([]string, 0, len(policy.Rules))
+	for _, rule := range policy.Rules {
+		kinds = append(kinds, rule.Kind+":"+rule.MatchPath)
+	}
+	encoded, _ := json.Marshal(policy.Rules)
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%s (%d rules: %s; sha256:%x)", policy.Ownership,
+		len(policy.Rules), strings.Join(kinds, ", "), digest[:4])
 }
 
 func routePolicySummary(policy api.ProjectEnvironmentRoutePolicyResponse) string {
@@ -754,9 +774,9 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  protected: %t\n  updated: %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
 	if environment.Clone != nil {
-		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d routes=%d\n  shared: %s\n",
+		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d routes=%d policies=%d\n  shared: %s\n",
 			environment.ClonedFrom, environment.Clone.ConfigurationCopied, environment.Clone.VariablesCopied,
-			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, environment.Clone.BindingsCopied, environment.Clone.RoutesCopied,
+			environment.Clone.SecretsCopied, environment.Clone.WorkloadsCopied, environment.Clone.BindingsCopied, environment.Clone.RoutesCopied, environment.Clone.PoliciesCopied,
 			strings.Join(environment.Clone.SharedResources, ", "))
 		if strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "managed_postgres_data") ||
 			strings.Contains(strings.Join(environment.Clone.SharedResources, ","), "object_storage_bucket_data") {

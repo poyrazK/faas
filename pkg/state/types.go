@@ -1415,6 +1415,28 @@ type ProjectEnvironmentRoutePolicy struct {
 	UpdatedAt               time.Time
 }
 
+// ProjectEnvironmentEdgePolicy replaces headers/CORS rules for one workload
+// on its stable named-environment URL. Other edge-rule kinds remain app-owned.
+type ProjectEnvironmentEdgePolicy struct {
+	AccountID       string
+	ProjectID       string
+	AppID           string
+	EnvironmentSlug string
+	Rules           []ProjectEnvironmentEdgeRule
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type ProjectEnvironmentEdgeRule struct {
+	Kind         EdgeRuleKind      `json:"kind"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string `json:"match_headers,omitempty"`
+	Priority     int               `json:"priority"`
+	Enabled      bool              `json:"enabled"`
+	Action       EdgeRuleAction    `json:"action"`
+}
+
 // IsDeveloperApp reports whether an app is the expiring environment created
 // by `gregale dev`. Developer sessions reuse preview storage, but PR previews
 // have a positive PR number and remain on the normal deployed-app quota.

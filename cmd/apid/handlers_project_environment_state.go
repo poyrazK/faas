@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func (s *server) getProjectEnvironmentState(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -60,7 +62,7 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 	sort.Slice(apps, func(i, j int) bool { return apps[i].Slug < apps[j].Slug })
 	workloads := make([]api.ProjectEnvironmentStateWorkloadResponse, 0, len(apps))
 	for _, app := range apps {
-		workload, problem := s.loadProjectEnvironmentWorkloadState(ctx, acct.ID, environment.Slug, app)
+		workload, problem := s.loadProjectEnvironmentWorkloadState(ctx, acct.ID, environment, app)
 		if problem != nil {
 			return api.ProjectEnvironmentStateResponse{}, problem
 		}
@@ -74,7 +76,8 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 	}, nil
 }
 
-func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accountID, scope string, app state.App) (api.ProjectEnvironmentStateWorkloadResponse, *api.Problem) {
+func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accountID string, environment state.ProjectEnvironment, app state.App) (api.ProjectEnvironmentStateWorkloadResponse, *api.Problem) {
+	scope := environment.Slug
 	variables, err := s.store.ListAppEnvInScope(ctx, accountID, app.ID, scope)
 	if err != nil {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment variables")
@@ -83,7 +86,7 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 	if err != nil {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment secrets")
 	}
-	release, problem := s.projectEnvironmentReleaseState(ctx, scope, app)
+	release, problem := s.projectEnvironmentReleaseState(ctx, environment, app)
 	if problem != nil {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, problem
 	}
@@ -100,11 +103,19 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment routes")
 	}
+	policies := api.ProjectEnvironmentEdgePolicyResponse{Ownership: "application", Rules: []api.ProjectEnvironmentEdgeRuleResponse{}}
+	edgePolicy, err := s.store.GetProjectEnvironmentEdgePolicy(ctx, accountID, app.ID, scope)
+	if err == nil {
+		policies = projectEnvironmentEdgePolicyResponse(edgePolicy)
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment policies")
+	}
 	return api.ProjectEnvironmentStateWorkloadResponse{
 		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Release: release,
 		Variables: projectEnvironmentVariables(variables), Secrets: projectEnvironmentSecrets(secrets),
 		Bindings: projectEnvironmentBindings(secrets),
 		Routes:   routes,
+		Policies: policies,
 	}, nil
 }
 
@@ -124,9 +135,12 @@ func projectEnvironmentDeclaredRoutes(rows []state.DeclaredRoute) []api.Declared
 	return out
 }
 
-func (s *server) projectEnvironmentReleaseState(ctx context.Context, scope string, app state.App) (api.ProjectEnvironmentReleaseWorkloadResponse, *api.Problem) {
-	out := api.ProjectEnvironmentReleaseWorkloadResponse{WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Status: "not_deployed"}
-	deployment, err := s.store.LiveDeploymentForScope(ctx, app.ID, scope)
+func (s *server) projectEnvironmentReleaseState(ctx context.Context, environment state.ProjectEnvironment, app state.App) (api.ProjectEnvironmentReleaseWorkloadResponse, *api.Problem) {
+	out := api.ProjectEnvironmentReleaseWorkloadResponse{
+		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Status: "not_deployed",
+		URL: projectEnvironmentWorkloadURL(environment.ID, app.ID),
+	}
+	deployment, err := s.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
 	if errors.Is(err, state.ErrNotFound) {
 		return out, nil
 	}
@@ -138,6 +152,14 @@ func (s *server) projectEnvironmentReleaseState(ctx context.Context, scope strin
 	out.SourceSHA256, out.TrafficPercent = deployment.SourceSHA256, deployment.TrafficPercent
 	out.CreatedAt = deployment.CreatedAt.UTC().Format(time.RFC3339Nano)
 	return out, nil
+}
+
+func projectEnvironmentWorkloadURL(environmentID, appID string) string {
+	host := gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, environmentID, appID)
+	if host == "" {
+		return ""
+	}
+	return wire.DeployPreviewURIScheme + "://" + host
 }
 
 func projectEnvironmentVariables(rows []state.AppEnv) []api.ProjectEnvironmentVariableResponse {
@@ -205,7 +227,7 @@ func projectEnvironmentSharedResources(workloads []api.ProjectEnvironmentStateWo
 	const note = "shared by all environments until this resource gains environment ownership"
 	out := []api.ProjectEnvironmentSharedResourceResponse{
 		{Kind: "domains", Ownership: "application", Note: note},
-		{Kind: "policies", Ownership: "application", Note: note},
+		{Kind: "policies", Ownership: "application", Note: "edge-rule kinds other than headers and CORS remain application-owned"},
 	}
 	for _, workload := range workloads {
 		if workload.Routes.Ownership != "environment" {
@@ -255,9 +277,18 @@ func projectEnvironmentWorkloadDiffs(before, after []api.ProjectEnvironmentState
 			Secrets:   projectEnvironmentSecretDiffs(prior.Secrets, next.Secrets),
 			Bindings:  projectEnvironmentBindingDiffs(prior.Bindings, next.Bindings),
 			Routes:    projectEnvironmentRoutePolicyDiff(prior.Routes, next.Routes),
+			Policies:  projectEnvironmentEdgePolicyDiff(prior.Policies, next.Policies),
 		})
 	}
 	return out
+}
+
+func projectEnvironmentEdgePolicyDiff(before, after api.ProjectEnvironmentEdgePolicyResponse) api.ProjectEnvironmentEdgePolicyDiffResponse {
+	kind := "unchanged"
+	if !reflect.DeepEqual(before, after) {
+		kind = "changed"
+	}
+	return api.ProjectEnvironmentEdgePolicyDiffResponse{Kind: kind, Before: before, After: after}
 }
 
 func projectEnvironmentRoutePolicyDiff(before, after api.ProjectEnvironmentRoutePolicyResponse) api.ProjectEnvironmentRoutePolicyDiffResponse {

@@ -113,6 +113,92 @@ func TestPgRouter_ResolveDeploymentPreviewPinsRevision(t *testing.T) {
 	}
 }
 
+func TestPgRouter_EnvironmentHostFollowsLiveScopeAndChecksOwnership(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "environment-host@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "shop", ScanSource: state.ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := pgRouter{store: store, appsSuffix: ".gregale.dev", deploySuffix: ".gregale.dev"}
+	host := gateway.BuildEnvironmentHost(".gregale.dev", environment.ID, app.ID)
+	if !router.IsDynamicRouteHost(host) {
+		t.Fatal("environment URL was not marked dynamic")
+	}
+	if _, ok, err := router.ResolveHost(ctx, host); err != nil || ok {
+		t.Fatalf("undeployed environment route = ok %v err %v, want 404", ok, err)
+	}
+	// The named URL must not inherit a different environment's sidecar
+	// ingress contract when both scopes have live releases.
+	if _, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Scope: "production", Status: state.DeployLive,
+		Sidecars: json.RawMessage(`[{"name":"proxy","type":"sidecar","port":8081,"primary_ingress":true}]`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err := router.ResolveHost(ctx, host)
+	if err != nil || !ok || resolved.PinnedDeploymentID != first.ID || resolved.PinnedDeploymentScope != "staging" {
+		t.Fatalf("first environment route = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	if _, err := store.PutProjectEnvironmentRoutePolicy(ctx, state.ProjectEnvironmentRoutePolicy{
+		AccountID: account.ID, ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
+		OnlyAllowDeclaredRoutes: true, DeclaredRoutes: []state.DeclaredRoute{{Path: "/staging", Methods: []string{"GET"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := newDeclaredRoutesMatcher(store).ResolveScopedRoutePolicy(ctx, resolved)
+	if err != nil || !scoped.OnlyAllowDeclaredRoutes || len(scoped.DeclaredRoutes) != 1 || scoped.DeclaredRoutes[0].Path != "/staging" {
+		t.Fatalf("environment URL did not select scoped routes: %+v err=%v", scoped, err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err = router.ResolveHost(ctx, host)
+	if err != nil || !ok || resolved.PinnedDeploymentID != second.ID {
+		t.Fatalf("promoted environment route = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	otherProject, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "other", ScanSource: state.ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherApp, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: otherProject.ID, Slug: "other-api", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, gateway.BuildEnvironmentHost(".gregale.dev", environment.ID, otherApp.ID)); err != nil || ok {
+		t.Fatalf("cross-project environment route = ok %v err %v, want 404", ok, err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteProjectEnvironment(ctx, account.ID, project.ID, "staging"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, host); err != nil || ok {
+		t.Fatalf("deleted environment route = ok %v err %v, want 404", ok, err)
+	}
+}
+
 func TestPgRouter_DeploymentPreviewRejectsInactiveRevision(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "orders-failed", api.PlanPro)
