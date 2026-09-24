@@ -29,6 +29,15 @@ func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	accountHook := seedMemAccountReleaseHook(m, account.ID,
+		[]string{string(AppWebhookEventRolloutCompleted), string(AppWebhookEventRolloutAborted)}, true)
+	completedOnlyAccountHook := seedMemAccountReleaseHook(m, account.ID,
+		[]string{string(AppWebhookEventRolloutCompleted)}, true)
+	disabledAccountHook := seedMemAccountReleaseHook(m, account.ID,
+		[]string{string(AppWebhookEventRolloutAborted)}, false)
+	foreignAccountHook := seedMemAccountReleaseHook(m, otherAccount.ID,
+		[]string{string(AppWebhookEventRolloutAborted)}, true)
+	emptyFilterAccountHook := seedMemAccountReleaseHook(m, account.ID, nil, true)
 
 	stable, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:stable"})
 	if err != nil {
@@ -60,6 +69,8 @@ func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
 		want int
 	}{
 		{completedHook, 1}, {allHook, 2}, {foreignHook, 0},
+		{accountHook, 2}, {completedOnlyAccountHook, 1},
+		{disabledAccountHook, 0}, {foreignAccountHook, 0}, {emptyFilterAccountHook, 0},
 	} {
 		got, _, err := m.ListAppWebhookDeliveries(ctx, app.ID, tc.hook.ID, 20, "")
 		if err != nil {
@@ -73,6 +84,15 @@ func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
 		}
 		if rolloutCount != tc.want {
 			t.Errorf("hook %s rollout deliveries = %d, want %d", tc.hook.ID, rolloutCount, tc.want)
+		}
+	}
+	accountDeliveries, _, err := m.ListAppWebhookDeliveries(ctx, app.ID, accountHook.ID, 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, delivery := range accountDeliveries {
+		if delivery.AppID != app.ID || delivery.AccountID != account.ID {
+			t.Errorf("account delivery has wrong source: %+v", delivery)
 		}
 	}
 

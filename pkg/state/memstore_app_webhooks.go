@@ -49,7 +49,7 @@ func (m *MemStore) enqueueDeploymentLifecycleWebhooksLocked(dep Deployment) {
 	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
 	now := time.Now().UTC()
 	for _, hook := range m.appWebhooks {
-		if !hook.Enabled || hook.AppID != dep.AppID || hook.AccountID != app.AccountID || !appWebhookMatches(hook.EventFilter, event) {
+		if !releaseWebhookMatchesSource(hook, app, event) {
 			continue
 		}
 		id := newID()
@@ -112,7 +112,7 @@ func (m *MemStore) enqueueRolloutOutcomeWebhooksLocked(before, after Deployment)
 	}
 	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
 	for _, hook := range m.appWebhooks {
-		if !hook.Enabled || hook.AppID != after.AppID || hook.AccountID != app.AccountID || !appWebhookMatches(hook.EventFilter, event) {
+		if !releaseWebhookMatchesSource(hook, app, event) {
 			continue
 		}
 		id := newID()
@@ -121,6 +121,23 @@ func (m *MemStore) enqueueRolloutOutcomeWebhooksLocked(before, after Deployment)
 			Event: event, Payload: json.RawMessage(body), Status: AppWebhookDeliveryPending,
 			NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
 		}
+	}
+}
+
+// releaseWebhookMatchesSource mirrors the SQL trigger's tenant join and scope
+// predicate. Account receivers have no app ID and must explicitly opt in to
+// each release event; only app receivers retain the empty-filter wildcard.
+func releaseWebhookMatchesSource(hook AppWebhook, app App, event AppWebhookEvent) bool {
+	if !hook.Enabled || hook.AccountID != app.AccountID {
+		return false
+	}
+	switch hook.Scope {
+	case "", AppWebhookScopeApp:
+		return hook.AppID == app.ID && appWebhookMatches(hook.EventFilter, event)
+	case AppWebhookScopeAccount:
+		return hook.AppID == "" && len(hook.EventFilter) > 0 && appWebhookMatches(hook.EventFilter, event)
+	default:
+		return false
 	}
 }
 
