@@ -49,10 +49,14 @@ func cmdPlatformTenants(args []string) int {
 			return jsonOut(writeJSON(page))
 		}
 		for _, row := range page.Tenants {
-			fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", row.ID, row.ExternalRef, row.Name, row.Status)
+			if _, err := fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", row.ID, row.ExternalRef, row.Name, row.Status); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 		if page.NextOffset != nil {
-			fmt.Fprintf(osStdout, "Next page: --offset %d\n", *page.NextOffset)
+			if _, err := fmt.Fprintf(osStdout, "Next page: --offset %d\n", *page.NextOffset); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 	case "add":
 		row, err := client.CreatePlatformTenant(ctx, api.CreatePlatformTenantRequest{ExternalRef: strings.TrimSpace(*externalRef), Name: strings.TrimSpace(*name)})
@@ -68,12 +72,18 @@ func cmdPlatformTenants(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(row))
 		}
-		fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", row.ID, row.ExternalRef, row.Name, row.Status)
+		if _, err := fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", row.ID, row.ExternalRef, row.Name, row.Status); err != nil {
+			return printErr("Output failed", err)
+		}
 		for _, consumer := range row.Consumers {
-			fmt.Fprintf(osStdout, "consumer\t%s\t%s\n", consumer.AppID, consumer.ID)
+			if _, err := fmt.Fprintf(osStdout, "consumer\t%s\t%s\n", consumer.AppID, consumer.ID); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 		for _, surface := range row.Surfaces {
-			fmt.Fprintf(osStdout, "surface\t%s\t%s\n", surface.AppID, surface.ID)
+			if _, err := fmt.Fprintf(osStdout, "surface\t%s\t%s\n", surface.AppID, surface.ID); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 	case "link-consumer":
 		row, err := client.LinkPlatformTenantConsumer(ctx, *id, api.LinkPlatformTenantConsumerRequest{ConsumerID: *consumerID})
@@ -101,7 +111,9 @@ func cmdPlatformTenants(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(row))
 		}
-		fmt.Fprintf(osStdout, "tenant %s: requests=%d errors=%d billable_units=%d\n", row.TenantID, row.RequestCount, row.ErrorCount, row.BillableUnits)
+		if _, err := fmt.Fprintf(osStdout, "tenant %s: requests=%d errors=%d billable_units=%d\n", row.TenantID, row.RequestCount, row.ErrorCount, row.BillableUnits); err != nil {
+			return printErr("Output failed", err)
+		}
 	case "suspend", "resume":
 		status := "suspended"
 		if verb == "resume" {
