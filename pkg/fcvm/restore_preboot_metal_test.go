@@ -61,6 +61,29 @@ func TestMetalRestoreSkipsUnchangedPreBootFiles(t *testing.T) {
 	}
 }
 
+// A vmmd restart forgets every capture, and parks reuse the snapshot rather
+// than capture again, so the capture-time record never returns. The first
+// restore of the capture mounts and finds the files already on its drive;
+// the next restore of the same capture — with no park or capture between —
+// skips the mount.
+func TestMetalRestoreLearnsReusedCaptureAfterRestart(t *testing.T) {
+	r := newPrefetchMetalRig(t, "", "", 256, "", false)
+	capture := newRestoreBreakdownCapture(t)
+	defer capture.restore()
+	ctx := context.Background()
+
+	r.vmm.preBoot = newPreBootLedger()
+	if row := preBootSkipRow(t, r, capture, nil); row["stage_pre_boot_files_skipped"] != 0 {
+		t.Fatalf("first restore after a restart skipped with no record: %v", row)
+	}
+	if err := r.m.Destroy(ctx, "prefetch-metal"); err != nil {
+		t.Fatal(err)
+	}
+	if row := preBootSkipRow(t, r, capture, nil); row["stage_pre_boot_files_skipped"] != 1 {
+		t.Fatalf("second restore of an unchanged, reused capture did not skip: %v", row)
+	}
+}
+
 // TestMetalPreBootSkipBench is the evidence run: interleaved restores of one
 // unchanged app with the skip enabled and disabled. Opt-in:
 //
@@ -81,8 +104,9 @@ func TestMetalPreBootSkipBench(t *testing.T) {
 	for i := 0; i < 2*cycles; i++ {
 		on := i%2 == 1
 		if !on {
-			// Forget this capture's record: the restore takes the write path,
-			// exactly as before this change, and re-records for the next arm.
+			// Forget this capture's record, as a vmmd restart does: the
+			// restore mounts, finds the files on the drive and re-learns the
+			// capture for the next arm.
 			ledger.mu.Lock()
 			delete(ledger.captures, r.snap.StorageKey)
 			ledger.mu.Unlock()
