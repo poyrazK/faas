@@ -67,6 +67,19 @@ exit 2
 	writeExecutable("curl", `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_CURL_LOG"
+if [[ "${TEST_REDEPLOY_503:-}" == 1 && "$*" == *"ra-"* ]]; then
+  headers=""; body=""
+  while (($#)); do
+    case "$1" in
+      --dump-header) headers="$2"; shift 2 ;;
+      --output) body="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf 'HTTP/2 503\r\nx-faas-request-id: failed-probe-1\r\n\r\n' >"$headers"
+  printf '{"code":"capacity","detail":"previous revision unavailable"}' >"$body"
+  exit 22
+fi
 `)
 	deployLog := filepath.Join(dir, "deploys")
 	curlLog := filepath.Join(dir, "curls")
@@ -102,6 +115,25 @@ printf '%s\n' "$*" >>"$TEST_CURL_LOG"
 	}
 	if _, err := os.Stat(revokeLog); err != nil {
 		t.Fatalf("acceptance token was not revoked: %v", err)
+	}
+
+	// A continuity failure stays a hard gate but leaves the exact response
+	// status, request id, and bounded problem body in the workflow log.
+	continuityCmd := exec.Command("bash", script)
+	continuityCmd.Env = append(os.Environ(),
+		"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
+		"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
+		"TEST_DEPLOY_LOG="+filepath.Join(dir, "continuity-deploys"),
+		"TEST_CURL_LOG="+filepath.Join(dir, "continuity-curls"),
+		"TEST_REVOKE_LOG="+filepath.Join(dir, "continuity-revokes"), "TEST_REDEPLOY_503=1",
+	)
+	continuityOutput, err := continuityCmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(continuityOutput), "previous serving revision became unavailable") ||
+		!strings.Contains(string(continuityOutput), "HTTP/2 503") ||
+		!strings.Contains(string(continuityOutput), "failed-probe-1") ||
+		!strings.Contains(string(continuityOutput), "previous revision unavailable") {
+		t.Fatalf("continuity failure lost its diagnostics: err=%v output=%s", err, continuityOutput)
 	}
 
 	// A persistently uncovered node must remain a release failure after the

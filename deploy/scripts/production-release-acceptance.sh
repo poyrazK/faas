@@ -161,14 +161,29 @@ redeploy_final="$workdir/redeploy-final.json"
 FAAS_JSON=1 "$GREGALE_BIN" deployment wait "$redeploy_id" \
 	--rollout --timeout "$DEPLOY_TIMEOUT_SECONDS" >"$redeploy_final" &
 wait_pid="$!"
+probe_headers="$workdir/redeploy-health-headers"
+probe_body="$workdir/redeploy-health-body"
 while kill -0 "$wait_pid" 2>/dev/null; do
-	curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
-		"https://${slugs[0]}.${FAAS_APPS_DOMAIN}/healthz" >/dev/null || {
-			kill "$wait_pid" 2>/dev/null || true
-			wait "$wait_pid" 2>/dev/null || true
-			echo "previous serving revision became unavailable during redeploy" >&2
-			exit 1
-		}
+	probe_rc=0
+	curl --fail-with-body --silent --show-error --connect-timeout 3 --max-time 10 \
+		--dump-header "$probe_headers" --output "$probe_body" \
+		"https://${slugs[0]}.${FAAS_APPS_DOMAIN}/healthz" || probe_rc=$?
+	if (( probe_rc != 0 )); then
+		kill "$wait_pid" 2>/dev/null || true
+		wait "$wait_pid" 2>/dev/null || true
+		echo "previous serving revision became unavailable during redeploy (curl exit ${probe_rc})" >&2
+		if [[ -s "$probe_headers" ]]; then
+			# Retain only response metadata. The request-id lets operators
+			# correlate this exact failed probe with edge and compute logs.
+			sed -n '1p' "$probe_headers" >&2
+			grep -i '^x-faas-request-id:' "$probe_headers" >&2 || true
+		fi
+		if [[ -s "$probe_body" ]]; then
+			head -c 2048 "$probe_body" >&2
+			echo >&2
+		fi
+		exit 1
+	fi
 	sleep 2
 done
 wait "$wait_pid"
