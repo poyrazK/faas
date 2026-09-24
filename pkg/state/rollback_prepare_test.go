@@ -53,3 +53,29 @@ func TestMemStore_PrepareDeploymentRollbackPreservesCurrentLive(t *testing.T) {
 		t.Fatalf("current deployment changed = %+v", gotCurrent)
 	}
 }
+
+func TestMemStore_PrepareDeploymentRollbackAcceptsZeroTrafficLive(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	account, err := m.CreateAccount(ctx, "prepare-zero-traffic@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, App{AccountID: account.ID, Slug: "prepare-zero-traffic", Type: AppTypeApp, Status: AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := Deployment{ID: uuid.NewString(), AppID: app.ID, Status: DeployLive, TrafficPercent: 0}
+	current := Deployment{ID: uuid.NewString(), AppID: app.ID, Status: DeployLive, TrafficPercent: 100}
+	m.deployments[target.ID], m.deployments[current.ID] = target, current
+	if _, err := m.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, target.ID); err != nil {
+		t.Fatalf("zero-traffic target lookup: %v", err)
+	}
+	prepared, err := m.PrepareDeploymentRollback(ctx, app.ID, target.ID)
+	if err != nil || prepared.Status != DeploySnapshotting || prepared.TrafficPercent != 0 {
+		t.Fatalf("prepare zero-traffic target = %+v, err=%v", prepared, err)
+	}
+	if got := m.deployments[current.ID]; got.Status != DeployLive || got.TrafficPercent != 100 {
+		t.Fatalf("current serving revision changed: %+v", got)
+	}
+}

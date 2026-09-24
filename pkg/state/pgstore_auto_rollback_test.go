@@ -111,3 +111,27 @@ func TestPg_PrepareDeploymentRollbackPreservesCurrentLive(t *testing.T) {
 		t.Fatalf("current deployment changed = %+v", gotCurrent)
 	}
 }
+
+func TestPg_PrepareDeploymentRollbackAcceptsZeroTrafficLive(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, app := seedPgAccountAndApp(t, s, ctx)
+	target := seedPgDeployment(t, s, ctx, app)
+	current := seedPgDeployment(t, s, ctx, app)
+	if _, err := pool.Exec(ctx, `update deployments set status = 'live', traffic_percent = 0 where id = $1`, target.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update deployments set status = 'live', traffic_percent = 100 where id = $1`, current.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, target.ID); err != nil {
+		t.Fatalf("zero-traffic target lookup: %v", err)
+	}
+	prepared, err := s.PrepareDeploymentRollback(ctx, app.ID, target.ID)
+	if err != nil || prepared.Status != state.DeploySnapshotting || prepared.TrafficPercent != 0 {
+		t.Fatalf("prepare zero-traffic target = %+v, err=%v", prepared, err)
+	}
+	serving, err := s.DeploymentByID(ctx, current.ID)
+	if err != nil || serving.Status != state.DeployLive || serving.TrafficPercent != 100 {
+		t.Fatalf("current serving revision changed = %+v, err=%v", serving, err)
+	}
+}

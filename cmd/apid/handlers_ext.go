@@ -1984,8 +1984,8 @@ func planMaxFor(acct state.Account) int {
 //
 // SAFE-RELEASES-G (issue #976) adds an optional request body field
 // target_deployment_id. When set, the handler validates that the named
-// deployment (a) belongs to this app and (b) has status='superseded', then
-// prepares it. When omitted, the platform chooses the most-recent superseded
+// deployment (a) belongs to this app and (b) is superseded or live with zero
+// traffic, then prepares it. When omitted, the platform chooses the most-recent superseded
 // deployment. The audit emit carries a `mode` field
 // so the dashboard can render "latest" vs "specific" differently.
 func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -2045,7 +2045,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		if err != nil {
 			switch {
 			case errors.Is(err, state.ErrNoRollbackTarget):
-				return state.Deployment{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no superseded deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
+				return state.Deployment{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
 			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
 				candidate, readErr := s.store.DeploymentByID(ctx, *req.TargetDeploymentID)
 				if readErr != nil {
@@ -2056,7 +2056,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 				if candidate.Status == state.DeployLive {
 					return state.Deployment{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
 				}
-				return state.Deployment{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
+				return state.Deployment{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
 			default:
 				return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
 					"Gregale could not load the rollback target right now.",
@@ -2089,6 +2089,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			return state.Deployment{}, problem
 		}
 	}
+	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
@@ -2100,14 +2101,14 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		"app_id": app.ID, "deployment_id": target.ID,
 	})
 	if marshalErr != nil {
-		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, state.DeploySuperseded, "")
+		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
 		return state.Deployment{}, api.ErrCapacity("could not encode rollback readiness request")
 	}
 	if err := s.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
 		// NotifySnapshotPrime is durable in production, so an error means no
 		// handoff committed. Restore eligibility while leaving the current live
 		// deployment untouched.
-		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, state.DeploySuperseded, "")
+		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
 		return state.Deployment{}, api.ErrCapacity("could not queue rollback readiness check")
 	}
 	s.log.Info("app rollback readiness requested", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
