@@ -109,18 +109,40 @@ func cmdReleaseAcceptanceVerifyPlacement(args []string) int {
 			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q is unavailable or not acceptance-owned: %v\n", slug, appErr)
 			return 1
 		}
-		covered, ok := byNode[app.NodeID]
-		if !ok {
-			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q is assigned to inactive node %q\n", slug, app.NodeID)
+		deployment, depErr := st.LiveDeployment(ctx, app.ID)
+		if depErr != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q has no live deployment: %v\n", slug, depErr)
 			return 1
 		}
-		switch app.Type {
-		case state.AppTypeApp:
-			covered.app = true
-		case state.AppTypeFunction:
-			covered.function = true
-		default:
+		if app.Type != state.AppTypeApp && app.Type != state.AppTypeFunction {
 			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q has unexpected type %q\n", slug, app.Type)
+			return 1
+		}
+		instances, instErr := st.ListInstancesForApp(ctx, app.ID)
+		if instErr != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q instances: %v\n", slug, instErr)
+			return 1
+		}
+		observed := false
+		for _, instance := range instances {
+			if instance.DeploymentID != deployment.ID ||
+				(instance.State != string(state.StateRunning) && instance.State != string(state.StateParked)) {
+				continue
+			}
+			covered, ok := byNode[instance.NodeID]
+			if !ok {
+				fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q ran on inactive node %q\n", slug, instance.NodeID)
+				return 1
+			}
+			observed = true
+			if app.Type == state.AppTypeApp {
+				covered.app = true
+			} else {
+				covered.function = true
+			}
+		}
+		if !observed {
+			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-placement: app %q live deployment %q has no running or parked instance\n", slug, deployment.ID)
 			return 1
 		}
 	}

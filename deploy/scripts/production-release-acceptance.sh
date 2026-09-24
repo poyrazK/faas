@@ -64,6 +64,7 @@ deploy_one() {
 verify_receipt() {
 	local output="$1"
 	jq -e '
+		(.id | type == "string" and length > 0) and
 		.status == "live" and
 		.rollout_state == "complete" and
 		.hosting_receipt.smoke.status == "verified" and
@@ -78,10 +79,8 @@ verify_receipt() {
 		--connect-timeout 3 --max-time 10 "${app_url}${health_path}" >/dev/null
 }
 
-# Submit both execution shapes with enough total deployments for every active
-# node. Ownership is claimed concurrently across node-local schedulers, so the
-# verifier requires node coverage plus both shapes fleet-wide; it must not
-# assume each random claim race produces one of each shape on every node.
+# Submit both execution shapes. Placement is capacity-ranked, not round-robin,
+# so this first wave proves both shapes but cannot guarantee node coverage.
 pids=()
 outputs=()
 for i in $(seq 1 "$ACTIVE_NODE_COUNT"); do
@@ -107,7 +106,46 @@ done
 
 slug_csv="$(IFS=,; echo "${slugs[*]}")"
 placement_file="$workdir/placement.json"
-"$GREGALECTL_BIN" release-acceptance verify-placement --slugs "$slug_csv" >"$placement_file"
+placement_ok=false
+if "$GREGALECTL_BIN" release-acceptance verify-placement --slugs "$slug_csv" >"$placement_file"; then
+	placement_ok=true
+else
+	placement_exit=$?
+	(( placement_exit == 3 )) || exit "$placement_exit"
+fi
+
+# If the capacity chooser placed the entire first wave on one node, submit
+# bounded, serial follow-ups until an actual running/parked instance covers
+# every active node. Every added deployment must pass the same receipt and
+# public smoke checks; this is not a placement-gate bypass. A saturated or
+# unreachable node remains a hard failure after the bounded budget.
+max_extra=$((ACTIVE_NODE_COUNT * 4))
+coverage_deadline=$((SECONDS + 25 * 60))
+for ((i=1; i<=max_extra; i++)); do
+	if [[ "$placement_ok" == true ]]; then
+		break
+	fi
+	if ((SECONDS >= coverage_deadline)); then
+		break
+	fi
+	extra_slug="ra-${short_sha}-${run_suffix}-x${i}"
+	extra_output="$workdir/${extra_slug}.json"
+	slugs+=("$extra_slug")
+	deploy_one hello-node "$extra_slug" "$extra_output"
+	verify_receipt "$extra_output"
+	slug_csv="$(IFS=,; echo "${slugs[*]}")"
+	if "$GREGALECTL_BIN" release-acceptance verify-placement --slugs "$slug_csv" >"$placement_file"; then
+		placement_ok=true
+	else
+		placement_exit=$?
+		(( placement_exit == 3 )) || exit "$placement_exit"
+	fi
+done
+if [[ "$placement_ok" != true ]]; then
+	echo "production acceptance placement did not cover every active node within ${max_extra} extra verified deployments and the 25-minute admission window" >&2
+	jq -c . "$placement_file" >&2
+	exit 1
+fi
 jq -e --argjson expected "$ACTIVE_NODE_COUNT" \
 	'.ready == true and ((.nodes | length) == $expected)' "$placement_file" >/dev/null
 
