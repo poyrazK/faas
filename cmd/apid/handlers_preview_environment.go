@@ -50,11 +50,13 @@ func (s *server) getPreviewEnvironmentStatus(w http.ResponseWriter, r *http.Requ
 		response.Summary = fmt.Sprintf("Preview PR #%d is closed.", environment.Set.PRNumber)
 	}
 	for _, member := range environment.Members {
-		response.Members = append(response.Members, api.PreviewEnvironmentMemberResponse{
-			AppID: member.AppID, Slug: member.Slug, WorkloadName: member.WorkloadName,
-			AppStatus: member.AppStatus, PreviewState: member.PreviewState,
-			DeploymentID: member.DeploymentID, DeploymentStatus: member.DeploymentStatus,
-		})
+		projected, err := s.previewEnvironmentMemberResponse(r.Context(), acct, environment.Set.PRNumber,
+			environment.Set.CommitSHA, member)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not load preview environment resources"))
+			return
+		}
+		response.Members = append(response.Members, projected)
 	}
 	writeJSON(w, http.StatusOK, response)
 }

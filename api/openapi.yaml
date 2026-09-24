@@ -22164,6 +22164,13 @@ components:
         preview_state: { type: string }
         deployment_id: { type: string, description: Empty until a deployment for the recorded commit exists. }
         deployment_status: { type: string, description: Missing until a deployment for the recorded commit exists. }
+        expires_at: { type: string, format: date-time, description: Preview workload expiration. }
+        changes_from_production:
+          description: Safe artifact and configuration-group comparison with the production parent; never includes secret values.
+          $ref: '#/components/schemas/PreviewProductionChangesResponse'
+        links:
+          description: URL and diagnostic links for this preview workload.
+          $ref: '#/components/schemas/PreviewResourceLinksResponse'
 
     CreatePreviewRequest:
       description: Pull-request preview provisioning payload. Source is deployed separately after the preview app is created.

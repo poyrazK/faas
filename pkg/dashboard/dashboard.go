@@ -198,6 +198,10 @@ type PRPreviewMemberView struct {
 	AppStatus        string
 	PreviewState     string
 	DeploymentStatus string
+	DeploymentID     string
+	ExpiresAt        *time.Time
+	Changes          *api.PreviewProductionChangesResponse
+	Links            *api.PreviewResourceLinksResponse
 }
 
 // DeveloperEnvironmentsData backs /dashboard/developers. It gives the

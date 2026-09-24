@@ -28,6 +28,13 @@ readiness, member statuses, the preview URL, expiry, timeout resume command,
 and the next diagnostic action. Developer and older PR previews without a
 recorded workload set retain app-level behavior.
 
+For recorded PR workload sets, `preview show` also includes each member's
+production comparison and its URL, logs, metrics, and configuration links.
+Artifact changes are compared only when both deployments are known; configuration
+differences are reported as categories such as `runtime`, `routing`, or `policies`.
+The comparison never includes secret values. The same per-workload summary is
+shown on the root preview's dashboard page.
+
 ## URL shape
 
 ```
@@ -106,7 +113,9 @@ updated on `opened`, `synchronize`, `reopened`, and `closed` events,
 and includes the preview URL, current lifecycle status, commit SHA,
 and one-click destroy link. A hidden marker makes webhook retries and
 repeated synchronize events idempotent instead of creating duplicate
-comments. The Check Run remains the source of build-stage status.
+comments. The comment links to the root preview's dashboard details page so
+reviewers can inspect the whole workload set, including per-workload production
+changes and diagnostics. The Check Run remains the source of build-stage status.
 
 Each preview deployment also appears in GitHub's Deployments timeline
 with a stable environment URL and deployment/log links. Status updates

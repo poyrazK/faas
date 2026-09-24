@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/previewset"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -15,7 +16,7 @@ import (
 // the customer API and GitHub check. The caller has already loaded app through
 // the account-scoped dashboard route, so no cross-account root can reach this
 // read. A legacy or sibling preview has no root set and keeps its normal page.
-func (s *server) dashboardPreviewEnvironment(ctx context.Context, log *slog.Logger, app state.App) *dashboard.PRPreviewEnvironmentView {
+func (s *server) dashboardPreviewEnvironment(ctx context.Context, log *slog.Logger, acct state.Account, app state.App) *dashboard.PRPreviewEnvironmentView {
 	if app.PreviewOfSlug == "" || app.PreviewPrNumber <= 0 {
 		return nil
 	}
@@ -50,10 +51,22 @@ func (s *server) dashboardPreviewEnvironment(ctx context.Context, log *slog.Logg
 		view.PRURL = fmt.Sprintf("https://github.com/%s/pull/%d", environment.Set.RepoFullName, environment.Set.PRNumber)
 	}
 	for _, member := range environment.Members {
+		projected, projectErr := s.previewEnvironmentMemberResponse(ctx, acct, environment.Set.PRNumber,
+			environment.Set.CommitSHA, member)
+		if projectErr != nil {
+			log.Warn("dashboard: load PR preview member resources", "app_id", member.AppID, "err", projectErr)
+			projected = api.PreviewEnvironmentMemberResponse{
+				AppID: member.AppID, Slug: member.Slug, WorkloadName: member.WorkloadName,
+				AppStatus: member.AppStatus, PreviewState: member.PreviewState,
+				DeploymentID: member.DeploymentID, DeploymentStatus: member.DeploymentStatus,
+			}
+		}
 		view.Members = append(view.Members, dashboard.PRPreviewMemberView{
-			WorkloadName: member.WorkloadName, Slug: member.Slug,
-			AppStatus: member.AppStatus, PreviewState: member.PreviewState,
-			DeploymentStatus: member.DeploymentStatus,
+			WorkloadName: projected.WorkloadName, Slug: projected.Slug,
+			AppStatus: projected.AppStatus, PreviewState: projected.PreviewState,
+			DeploymentStatus: projected.DeploymentStatus, DeploymentID: projected.DeploymentID,
+			ExpiresAt: projected.ExpiresAt,
+			Changes:   projected.Changes, Links: projected.Links,
 		})
 	}
 	return view

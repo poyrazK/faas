@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PreviewProductionChangesResponse } from './PreviewProductionChangesResponse.js';
+import type { PreviewResourceLinksResponse } from './PreviewResourceLinksResponse.js';
 /**
  * One expected preview workload and its latest deployment for the recorded commit.
  */
@@ -25,5 +27,17 @@ export type PreviewEnvironmentMemberResponse = {
    * Missing until a deployment for the recorded commit exists.
    */
   deployment_status: string;
+  /**
+   * Preview workload expiration.
+   */
+  expires_at?: string;
+  /**
+   * Safe artifact and configuration-group comparison with the production parent; never includes secret values.
+   */
+  changes_from_production?: PreviewProductionChangesResponse;
+  /**
+   * URL and diagnostic links for this preview workload.
+   */
+  links?: PreviewResourceLinksResponse;
 };
 

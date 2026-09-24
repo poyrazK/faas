@@ -71,8 +71,9 @@ func (s *server) previewDeployment(ctx context.Context, app state.App) (*api.Dep
 
 func previewProductionChanges(parent, preview state.App, production, candidate *api.DeploymentResponse) api.PreviewProductionChangesResponse {
 	before, after := previewArtifact(production), previewArtifact(candidate)
+	beforeIdentity, afterIdentity := previewArtifactIdentity(before), previewArtifactIdentity(after)
 	return api.PreviewProductionChangesResponse{
-		ArtifactChanged:            previewArtifactIdentity(before) != previewArtifactIdentity(after),
+		ArtifactChanged:            beforeIdentity != "" && afterIdentity != "" && beforeIdentity != afterIdentity,
 		PreviewArtifact:            after,
 		ProductionArtifact:         before,
 		ConfigurationChangedGroups: previewConfigurationChangedGroups(parent, preview),
