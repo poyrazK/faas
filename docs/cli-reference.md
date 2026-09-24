@@ -1312,6 +1312,16 @@ Preview or apply an onboarding bundle
 
 Show linked consumers and surfaces
 
+### platform-tenants activation
+
+Show or wait for customer hostname activation
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--wait` | poll until all surfaces are ready |  |
+| `--timeout <duration>` | maximum wait (default 10m) |  |
+
 ### platform-tenants link-consumer
 
 Attach an existing app consumer

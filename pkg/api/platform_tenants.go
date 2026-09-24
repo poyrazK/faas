@@ -8,14 +8,22 @@ type CreatePlatformTenantRequest struct {
 }
 
 // ApplyPlatformTenantRequest adds missing consumers and links existing surfaces
-// without removing resources omitted from the bundle. Consumer keys and
-// hostname/certificate provisioning remain separate operations.
+// without removing resources omitted from the bundle. Certificate issuance
+// remains asynchronous and consumer keys are separate operations.
 type ApplyPlatformTenantRequest struct {
 	ExternalRef string                               `json:"external_ref"`
 	Name        string                               `json:"name"`
 	DryRun      bool                                 `json:"dry_run,omitempty"`
 	Consumers   []ApplyPlatformTenantConsumerRequest `json:"consumers,omitempty"`
 	SurfaceIDs  []string                             `json:"surface_ids,omitempty"`
+	Surfaces    []ApplyPlatformTenantSurfaceRequest  `json:"surfaces,omitempty"`
+}
+
+type ApplyPlatformTenantSurfaceRequest struct {
+	AppID     string   `json:"app_id"`
+	Name      string   `json:"name"`
+	CertKind  string   `json:"cert_kind,omitempty"`
+	Hostnames []string `json:"hostnames"`
 }
 
 type ApplyPlatformTenantConsumerRequest struct {
@@ -34,12 +42,38 @@ type ApplyPlatformTenantConsumerResponse struct {
 }
 
 type ApplyPlatformTenantSurfaceResponse struct {
-	ID        string `json:"id"`
-	AppID     string `json:"app_id"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	CertState string `json:"cert_state"`
-	Action    string `json:"action"`
+	ID        string                                `json:"id,omitempty"`
+	AppID     string                                `json:"app_id"`
+	Name      string                                `json:"name"`
+	Status    string                                `json:"status"`
+	CertState string                                `json:"cert_state"`
+	Action    string                                `json:"action"`
+	Hostnames []ApplyPlatformTenantHostnameResponse `json:"hostnames,omitempty"`
+}
+
+type ApplyPlatformTenantHostnameResponse struct {
+	TenantHostnameResponse
+	Action string `json:"action"`
+}
+
+type PlatformTenantActivationSurfaceResponse struct {
+	ID            string                   `json:"id"`
+	AppID         string                   `json:"app_id"`
+	Name          string                   `json:"name"`
+	Status        string                   `json:"status"`
+	CertState     string                   `json:"cert_state"`
+	CertNotAfter  string                   `json:"cert_not_after,omitempty"`
+	CertLastError string                   `json:"cert_last_error,omitempty"`
+	Ready         bool                     `json:"ready"`
+	Hostnames     []TenantHostnameResponse `json:"hostnames"`
+}
+
+type PlatformTenantActivationResponse struct {
+	TenantID string                                    `json:"tenant_id"`
+	Status   string                                    `json:"status"`
+	Enabled  bool                                      `json:"enabled"`
+	Ready    bool                                      `json:"ready"`
+	Surfaces []PlatformTenantActivationSurfaceResponse `json:"surfaces"`
 }
 
 type ApplyPlatformTenantResponse struct {

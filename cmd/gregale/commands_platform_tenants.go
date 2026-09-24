@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -14,7 +15,7 @@ import (
 // cmdPlatformTenants manages one account customer across several apps.
 func cmdPlatformTenants(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|info|link-consumer|link-surface|usage|suspend|resume> [flags]", "platform-tenants")
+		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|info|activation|link-consumer|link-surface|usage|suspend|resume> [flags]", "platform-tenants")
 		return 1
 	}
 	verb := args[0]
@@ -26,6 +27,8 @@ func cmdPlatformTenants(args []string) int {
 	surfaceID := fs.String("surface-id", "", "existing tenant surface UUID")
 	file := fs.String("file", "", "onboarding bundle JSON file (apply)")
 	dryRun := fs.Bool("dry-run", false, "preview onboarding without changes (apply)")
+	wait := fs.Bool("wait", false, "wait for DNS, certificate, and routing readiness (activation)")
+	timeout := fs.Duration("timeout", 10*time.Minute, "maximum wait for activation")
 	since := fs.String("since", "", "usage window start (RFC3339)")
 	until := fs.String("until", "", "usage window end (RFC3339)")
 	limit := fs.Int("limit", 100, "list page size (1..100)")
@@ -39,8 +42,14 @@ func cmdPlatformTenants(args []string) int {
 	} else if *file != "" || *dryRun {
 		valid = false
 	}
+	if verb != "activation" && *wait {
+		valid = false
+	}
+	if *timeout <= 0 {
+		valid = false
+	}
 	if fs.NArg() != 0 || !valid {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|info|link-consumer|link-surface|usage|suspend|resume> [--file bundle.json] [--dry-run] [--id UUID] [--external-ref REF] [--name NAME]", "platform-tenants")
+		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|info|activation|link-consumer|link-surface|usage|suspend|resume> [--file bundle.json] [--dry-run] [--id UUID] [--wait] [--timeout 10m]", "platform-tenants")
 		return 1
 	}
 	client, err := authedClient()
@@ -124,6 +133,8 @@ func cmdPlatformTenants(args []string) int {
 				return printErr("Output failed", err)
 			}
 		}
+	case "activation":
+		return platformTenantActivationCommand(ctx, client, *id, *wait, *timeout)
 	case "link-consumer":
 		row, err := client.LinkPlatformTenantConsumer(ctx, *id, api.LinkPlatformTenantConsumerRequest{ConsumerID: *consumerID})
 		if err != nil {
@@ -173,7 +184,7 @@ func platformTenantFlagsValid(verb, id, externalRef, name, consumerID, surfaceID
 		return limit >= 1 && limit <= 100 && offset >= 0 && id == "" && externalRef == "" && name == "" && consumerID == "" && surfaceID == ""
 	case "add":
 		return externalRef != "" && name != "" && id == "" && consumerID == "" && surfaceID == ""
-	case "info", "usage", "suspend", "resume":
+	case "info", "activation", "usage", "suspend", "resume":
 		return id != "" && externalRef == "" && name == "" && consumerID == "" && surfaceID == ""
 	case "link-consumer":
 		return id != "" && consumerID != "" && externalRef == "" && name == "" && surfaceID == ""
@@ -181,6 +192,44 @@ func platformTenantFlagsValid(verb, id, externalRef, name, consumerID, surfaceID
 		return id != "" && surfaceID != "" && externalRef == "" && name == "" && consumerID == ""
 	default:
 		return false
+	}
+}
+
+func platformTenantActivationCommand(ctx context.Context, client *api.Client, id string, wait bool, timeout time.Duration) int {
+	if wait {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	for {
+		row, err := client.GetPlatformTenantActivation(ctx, id)
+		if err != nil {
+			return printErr("Activation fetch failed", err)
+		}
+		if !wait || row.Ready {
+			if jsonOutput {
+				return jsonOut(writeJSON(row))
+			}
+			if _, err := fmt.Fprintf(osStdout, "tenant %s: ready=%t enabled=%t status=%s\n", row.TenantID, row.Ready, row.Enabled, row.Status); err != nil {
+				return printErr("Output failed", err)
+			}
+			for _, surface := range row.Surfaces {
+				if _, err := fmt.Fprintf(osStdout, "surface %s: ready=%t status=%s cert=%s error=%s\n", surface.ID, surface.Ready, surface.Status, surface.CertState, surface.CertLastError); err != nil {
+					return printErr("Output failed", err)
+				}
+				for _, host := range surface.Hostnames {
+					if _, err := fmt.Fprintf(osStdout, "hostname %s: verified=%t txt=%s token=%s error=%s\n", host.Hostname, host.Verified, host.TXTRecord, host.ChallengeToken, host.LastError); err != nil {
+						return printErr("Output failed", err)
+					}
+				}
+			}
+			return 0
+		}
+		select {
+		case <-ctx.Done():
+			return printErr("Activation wait timed out", ctx.Err())
+		case <-time.After(5 * time.Second):
+		}
 	}
 }
 

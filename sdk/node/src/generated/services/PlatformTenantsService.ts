@@ -8,6 +8,7 @@ import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantR
 import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
+import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
@@ -70,7 +71,7 @@ export class PlatformTenantsService {
   }
   /**
    * Atomically reconcile an additive customer onboarding bundle.
-   * Creates a missing platform tenant and app consumers, links requested existing surfaces, or previews the same checks with dry_run. Omitted resources are not detached; keys, hostnames and certificates are managed separately.
+   * Atomically creates or reuses a platform tenant, app consumers, tenant surfaces, and hostname intent, or previews the same checks with dry_run. Existing surface IDs may also be linked. Omitted resources are not detached; keys are separate and DNS verification and certificate issuance remain asynchronous.
    * @returns ApplyPlatformTenantResponse Applied or previewed onboarding plan and current surface states.
    * @throws ApiError
    */
@@ -199,6 +200,31 @@ export class PlatformTenantsService {
       errors: {
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read customer DNS, certificate, and routing readiness.
+   * A read-only snapshot. Ready requires the tenant and every linked surface to be active, every hostname verified, a valid issued certificate, and tenant-surface routing enabled.
+   * @returns PlatformTenantActivationResponse Observed activation state and DNS TXT challenges.
+   * @throws ApiError
+   */
+  public static getPlatformTenantActivation({
+    id,
+  }: {
+    /**
+     * Customer whose domain activation is requested.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantActivationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/activation',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
       },
     });
   }

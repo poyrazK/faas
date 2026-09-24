@@ -1,8 +1,10 @@
 package state_test
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -71,5 +73,68 @@ func TestPgPlatformTenantApplyIsAtomicAndRetrySafe(t *testing.T) {
 	}
 	if tenants, err := store.ListPlatformTenants(ctx, accountID, 100, 0); err != nil || len(tenants) != 2 {
 		t.Fatalf("conflict wrote tenant: %+v, %v", tenants, err)
+	}
+}
+
+func TestPgPlatformTenantApplyCreatesHostnameIntentAtomically(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
+	hostname := "tenant-" + uuid.NewString()[:8] + ".example.test"
+	in := state.ApplyPlatformTenantParams{AccountID: accountID, ExternalRef: "domain-" + uuid.NewString(),
+		Name: "Domain Customer", TenantLimit: 250, Limits: api.MustLimitsFor(api.PlanPro), DryRun: true,
+		Surfaces: []state.ApplyPlatformTenantSurface{{AppID: appID, Name: "domain-" + uuid.NewString()[:8],
+			CertKind: state.CertKindPerHostSAN, Hostnames: []state.ApplyPlatformTenantHostname{{Hostname: hostname, ChallengeToken: "challenge-token"}}}}}
+	preview, err := store.ApplyPlatformTenant(ctx, in)
+	if err != nil || preview.Surfaces[0].Action != "create" || preview.Surfaces[0].Surface.ID != "" {
+		t.Fatalf("preview = %+v, %v", preview, err)
+	}
+	if count, err := store.CountTenantSurfacesForAccount(ctx, accountID); err != nil || count != 0 {
+		t.Fatalf("dry-run surface count = %d, %v", count, err)
+	}
+	in.DryRun = false
+	applied, err := store.ApplyPlatformTenant(ctx, in)
+	if err != nil || applied.Surfaces[0].Surface.ID == "" || applied.Surfaces[0].Hostnames[0].Hostname.ChallengeToken != "challenge-token" {
+		t.Fatalf("apply = %+v, %v", applied, err)
+	}
+	replay, err := store.ApplyPlatformTenant(ctx, in)
+	if err != nil || replay.Surfaces[0].Action != "unchanged" || replay.Surfaces[0].Hostnames[0].Action != "unchanged" ||
+		replay.Surfaces[0].Surface.ID != applied.Surfaces[0].Surface.ID {
+		t.Fatalf("replay = %+v, %v", replay, err)
+	}
+	if replay.Surfaces[0].Hostnames[0].Hostname.Verified() {
+		t.Fatal("unverified SQL hostname scanned as verified")
+	}
+	listener, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Release()
+	if _, err := listener.Exec(ctx, `listen tenant_surface_changed`); err != nil {
+		t.Fatal(err)
+	}
+	in.Surfaces[0].Hostnames = append(in.Surfaces[0].Hostnames,
+		state.ApplyPlatformTenantHostname{Hostname: "extra-" + uuid.NewString()[:8] + ".example.test", ChallengeToken: "extra-token"})
+	if _, err := store.ApplyPlatformTenant(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	listenCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	notice, err := listener.Conn().WaitForNotification(listenCtx)
+	if err != nil || notice == nil || notice.Payload != applied.Surfaces[0].Surface.ID {
+		t.Fatalf("hostname notify = %+v, %v; want surface ID", notice, err)
+	}
+	// A global hostname collision must leave neither the new tenant nor its surface.
+	failed := in
+	failed.ExternalRef = "domain-" + uuid.NewString()
+	failed.Surfaces = []state.ApplyPlatformTenantSurface{{AppID: appID, Name: "other-" + uuid.NewString()[:8],
+		CertKind: state.CertKindPerHostSAN, Hostnames: in.Surfaces[0].Hostnames}}
+	if _, err := store.ApplyPlatformTenant(ctx, failed); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("hostname collision = %v", err)
+	}
+	if count, err := store.CountTenantSurfacesForAccount(ctx, accountID); err != nil || count != 1 {
+		t.Fatalf("collision surface count = %d, %v", count, err)
+	}
+	if tenants, err := store.ListPlatformTenants(ctx, accountID, 100, 0); err != nil || len(tenants) != 1 {
+		t.Fatalf("collision tenants = %+v, %v", tenants, err)
 	}
 }

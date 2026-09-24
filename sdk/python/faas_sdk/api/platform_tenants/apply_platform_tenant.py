@@ -77,13 +77,14 @@ def sync_detailed(
 ) -> Response[ApplyPlatformTenantResponse | Problem]:
     """Atomically reconcile an additive customer onboarding bundle.
 
-     Creates a missing platform tenant and app consumers, links requested existing surfaces, or previews
-    the same checks with dry_run. Omitted resources are not detached; keys, hostnames and certificates
-    are managed separately.
+     Atomically creates or reuses a platform tenant, app consumers, tenant surfaces, and hostname intent,
+    or previews the same checks with dry_run. Existing surface IDs may also be linked. Omitted resources
+    are not detached; keys are separate and DNS verification and certificate issuance remain
+    asynchronous.
 
     Args:
-        body (ApplyPlatformTenantRequest): Additive, retry-safe onboarding; dry_run validates and
-            previews without writes.
+        body (ApplyPlatformTenantRequest): Additive, retry-safe onboarding of consumers and
+            declarative hostname surfaces; dry_run validates and previews without writes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -111,13 +112,14 @@ def sync(
 ) -> ApplyPlatformTenantResponse | Problem | None:
     """Atomically reconcile an additive customer onboarding bundle.
 
-     Creates a missing platform tenant and app consumers, links requested existing surfaces, or previews
-    the same checks with dry_run. Omitted resources are not detached; keys, hostnames and certificates
-    are managed separately.
+     Atomically creates or reuses a platform tenant, app consumers, tenant surfaces, and hostname intent,
+    or previews the same checks with dry_run. Existing surface IDs may also be linked. Omitted resources
+    are not detached; keys are separate and DNS verification and certificate issuance remain
+    asynchronous.
 
     Args:
-        body (ApplyPlatformTenantRequest): Additive, retry-safe onboarding; dry_run validates and
-            previews without writes.
+        body (ApplyPlatformTenantRequest): Additive, retry-safe onboarding of consumers and
+            declarative hostname surfaces; dry_run validates and previews without writes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,13 +142,14 @@ async def asyncio_detailed(
 ) -> Response[ApplyPlatformTenantResponse | Problem]:
     """Atomically reconcile an additive customer onboarding bundle.
 
-     Creates a missing platform tenant and app consumers, links requested existing surfaces, or previews
-    the same checks with dry_run. Omitted resources are not detached; keys, hostnames and certificates
-    are managed separately.
+     Atomically creates or reuses a platform tenant, app consumers, tenant surfaces, and hostname intent,
+    or previews the same checks with dry_run. Existing surface IDs may also be linked. Omitted resources
+    are not detached; keys are separate and DNS verification and certificate issuance remain
+    asynchronous.
 
     Args:
-        body (ApplyPlatformTenantRequest): Additive, retry-safe onboarding; dry_run validates and
-            previews without writes.
+        body (ApplyPlatformTenantRequest): Additive, retry-safe onboarding of consumers and
+            declarative hostname surfaces; dry_run validates and previews without writes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -172,13 +175,14 @@ async def asyncio(
 ) -> ApplyPlatformTenantResponse | Problem | None:
     """Atomically reconcile an additive customer onboarding bundle.
 
-     Creates a missing platform tenant and app consumers, links requested existing surfaces, or previews
-    the same checks with dry_run. Omitted resources are not detached; keys, hostnames and certificates
-    are managed separately.
+     Atomically creates or reuses a platform tenant, app consumers, tenant surfaces, and hostname intent,
+    or previews the same checks with dry_run. Existing surface IDs may also be linked. Omitted resources
+    are not detached; keys are separate and DNS verification and certificate issuance remain
+    asynchronous.
 
     Args:
-        body (ApplyPlatformTenantRequest): Additive, retry-safe onboarding; dry_run validates and
-            previews without writes.
+        body (ApplyPlatformTenantRequest): Additive, retry-safe onboarding of consumers and
+            declarative hostname surfaces; dry_run validates and previews without writes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

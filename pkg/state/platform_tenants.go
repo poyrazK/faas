@@ -3,10 +3,13 @@ package state
 import (
 	"context"
 	"fmt"
+	"net"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // PlatformTenant is one end customer of an account that operates multiple apps.
@@ -68,6 +71,25 @@ type ApplyPlatformTenantParams struct {
 	DryRun      bool
 	Consumers   []ApplyPlatformTenantConsumer
 	SurfaceIDs  []string
+	Surfaces    []ApplyPlatformTenantSurface
+	Limits      api.Limits
+}
+
+type ApplyPlatformTenantSurface struct {
+	AppID     string
+	Name      string
+	CertKind  CertKind
+	Hostnames []ApplyPlatformTenantHostname
+}
+
+type ApplyPlatformTenantHostname struct {
+	Hostname       string
+	ChallengeToken string
+}
+
+type ApplyPlatformTenantHostnameResult struct {
+	Hostname TenantHostname
+	Action   string // create, unchanged
 }
 
 type ApplyPlatformTenantConsumer struct {
@@ -82,8 +104,9 @@ type ApplyPlatformTenantConsumerResult struct {
 }
 
 type ApplyPlatformTenantSurfaceResult struct {
-	Surface TenantSurface
-	Action  string // link, unchanged
+	Surface   TenantSurface
+	Action    string // create, link, unchanged
+	Hostnames []ApplyPlatformTenantHostnameResult
 }
 
 type ApplyPlatformTenantResult struct {
@@ -139,7 +162,36 @@ func validatePlatformTenantApply(in ApplyPlatformTenantParams) error {
 		}
 		seenSurfaces[surfaceID.String()] = true
 	}
+	if len(in.Surfaces) > 0 && (!in.Limits.TenantSurfacesAllowed || in.Limits.TenantSurfacesPerAccount < 1) {
+		return ErrTenantSurfacesNotAllowed
+	}
+	seenNames := make(map[string]bool, len(in.Surfaces))
+	seenHosts := make(map[string]bool)
+	for _, surface := range in.Surfaces {
+		if _, err := uuid.Parse(surface.AppID); err != nil || strings.TrimSpace(surface.Name) == "" || len(surface.Name) > 128 ||
+			surface.CertKind != CertKindPerHostSAN || len(surface.Hostnames) == 0 ||
+			len(surface.Hostnames) > in.Limits.TenantHostnamesPerSurface {
+			return ErrInvalidArgument
+		}
+		name := strings.ToLower(surface.Name)
+		if seenNames[name] {
+			return ErrInvalidArgument
+		}
+		seenNames[name] = true
+		for _, host := range surface.Hostnames {
+			if !validPlatformTenantHostname(host.Hostname) || seenHosts[host.Hostname] || host.ChallengeToken == "" {
+				return ErrInvalidArgument
+			}
+			seenHosts[host.Hostname] = true
+		}
+	}
 	return nil
+}
+
+var platformTenantHostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
+
+func validPlatformTenantHostname(host string) bool {
+	return len(host) <= 253 && platformTenantHostnamePattern.MatchString(host) && net.ParseIP(host) == nil
 }
 
 func validatePlatformTenantInput(accountID, externalRef, name string) error {

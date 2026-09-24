@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,7 +19,7 @@ func (m *MemStore) ApplyPlatformTenant(_ context.Context, in ApplyPlatformTenant
 	}
 	result := ApplyPlatformTenantResult{
 		Consumers: make([]ApplyPlatformTenantConsumerResult, 0, len(in.Consumers)),
-		Surfaces:  make([]ApplyPlatformTenantSurfaceResult, 0, len(in.SurfaceIDs)),
+		Surfaces:  make([]ApplyPlatformTenantSurfaceResult, 0, len(in.SurfaceIDs)+len(in.Surfaces)),
 	}
 	count := 0
 	for _, tenant := range m.platformTenants {
@@ -88,6 +89,9 @@ func (m *MemStore) ApplyPlatformTenant(_ context.Context, in ApplyPlatformTenant
 		}
 		result.Surfaces = append(result.Surfaces, item)
 	}
+	if err := m.planPlatformTenantSurfaces(in, &result); err != nil {
+		return ApplyPlatformTenantResult{}, err
+	}
 	if in.DryRun {
 		return result, nil
 	}
@@ -109,10 +113,102 @@ func (m *MemStore) ApplyPlatformTenant(_ context.Context, in ApplyPlatformTenant
 			m.platformTenantByConsumer[item.Consumer.ID] = result.Tenant.ID
 		}
 	}
-	for _, item := range result.Surfaces {
-		if item.Action == "link" {
+	for i := range result.Surfaces {
+		item := &result.Surfaces[i]
+		if item.Action == "create" {
+			item.Surface.ID = uuid.NewString()
+			item.Surface.CreatedAt, item.Surface.UpdatedAt = now, now
+			m.tenantSurfaces[item.Surface.ID] = item.Surface
+		}
+		if item.Action == "link" || item.Action == "create" {
 			m.platformTenantBySurface[item.Surface.ID] = result.Tenant.ID
+		}
+		for j := range item.Hostnames {
+			host := &item.Hostnames[j]
+			if host.Action != "create" {
+				continue
+			}
+			host.Hostname.ID = uuid.NewString()
+			host.Hostname.SurfaceID = item.Surface.ID
+			host.Hostname.CreatedAt = now
+			m.tenantHostnames[host.Hostname.Hostname] = host.Hostname
 		}
 	}
 	return result, nil
+}
+
+func (m *MemStore) planPlatformTenantSurfaces(in ApplyPlatformTenantParams, result *ApplyPlatformTenantResult) error {
+	count := 0
+	for _, surface := range m.tenantSurfaces {
+		if surface.AccountID == in.AccountID && surface.Status != SurfaceStatusDeleted {
+			count++
+		}
+	}
+	for _, wanted := range in.Surfaces {
+		app, ok := m.apps[wanted.AppID]
+		if !ok || app.AccountID != in.AccountID {
+			return ErrNotFound
+		}
+		item := ApplyPlatformTenantSurfaceResult{Action: "create", Hostnames: make([]ApplyPlatformTenantHostnameResult, 0, len(wanted.Hostnames))}
+		for _, surface := range m.tenantSurfaces {
+			if surface.AccountID == in.AccountID && surface.Status != SurfaceStatusDeleted && strings.EqualFold(surface.Name, wanted.Name) {
+				item.Surface = surface
+				break
+			}
+		}
+		if item.Surface.ID == "" {
+			count++
+			if count > in.Limits.TenantSurfacesPerAccount {
+				return &TenantSurfaceQuotaError{Limit: in.Limits.TenantSurfacesPerAccount, Observed: count - 1}
+			}
+			item.Surface = TenantSurface{AccountID: in.AccountID, AppID: wanted.AppID, Name: wanted.Name,
+				CertKind: wanted.CertKind, Status: SurfaceStatusPending, CertState: CertStateNone}
+		} else {
+			if item.Surface.AppID != wanted.AppID || item.Surface.CertKind != wanted.CertKind {
+				return ErrConflict
+			}
+			for _, linked := range result.Surfaces {
+				if linked.Surface.ID == item.Surface.ID {
+					return ErrInvalidArgument
+				}
+			}
+			owner := m.platformTenantBySurface[item.Surface.ID]
+			if owner != "" && owner != result.Tenant.ID {
+				return ErrConflict
+			}
+			item.Action = "link"
+			if owner != "" {
+				item.Action = "unchanged"
+			}
+		}
+		existingCount := 0
+		for name, host := range m.tenantHostnames {
+			if name == host.Hostname && host.SurfaceID == item.Surface.ID {
+				existingCount++
+			}
+		}
+		for _, wantedHost := range wanted.Hostnames {
+			hostResult := ApplyPlatformTenantHostnameResult{Hostname: TenantHostname{
+				Hostname: wantedHost.Hostname, ChallengeToken: wantedHost.ChallengeToken}, Action: "create"}
+			for _, current := range m.tenantHostnames {
+				if !strings.EqualFold(current.Hostname, wantedHost.Hostname) {
+					continue
+				}
+				if item.Surface.ID == "" || current.SurfaceID != item.Surface.ID {
+					return ErrConflict
+				}
+				hostResult.Hostname, hostResult.Action = current, "unchanged"
+				break
+			}
+			if hostResult.Action == "create" {
+				existingCount++
+				if existingCount > in.Limits.TenantHostnamesPerSurface {
+					return &TenantHostnameQuotaError{Limit: in.Limits.TenantHostnamesPerSurface, Observed: existingCount - 1, SurfaceID: item.Surface.ID}
+				}
+			}
+			item.Hostnames = append(item.Hostnames, hostResult)
+		}
+		result.Surfaces = append(result.Surfaces, item)
+	}
+	return nil
 }

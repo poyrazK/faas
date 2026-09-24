@@ -2,15 +2,20 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApplyPlatformTenantHostnameResponse } from './ApplyPlatformTenantHostnameResponse.js';
 /**
- * Existing tenant surface and its current certificate state.
+ * Planned or applied tenant surface, hostname challenges, and current certificate state.
  */
 export type ApplyPlatformTenantSurfaceResponse = {
-  id: string;
+  /**
+   * Absent when a dry run would create the surface.
+   */
+  id?: string;
   app_id: string;
   name: string;
   status: 'pending' | 'active' | 'suspended';
   cert_state: 'none' | 'pending' | 'issued' | 'failed';
-  action: 'link' | 'unchanged';
+  action: 'create' | 'link' | 'unchanged';
+  hostnames?: Array<ApplyPlatformTenantHostnameResponse>;
 };
 

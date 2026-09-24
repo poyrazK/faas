@@ -116,6 +116,9 @@ class DeploymentResponse:
     revisions."""
     has_overrides: bool | Unset = UNSET
     """True when this deployment carries a non-null override_* column set."""
+    disable_startup_cpu_boost: bool | Unset = UNSET
+    """Whether the deployment opted out of the temporary startup CPU allowance; absent/false preserves the default
+    boost."""
     override_entrypoint: list[str] | Unset = UNSET
     """Entrypoint override echoed verbatim from the create request. nil when no override was supplied."""
     override_cmd: list[str] | Unset = UNSET
@@ -341,6 +344,8 @@ class DeploymentResponse:
         source_sha256 = self.source_sha256
 
         has_overrides = self.has_overrides
+
+        disable_startup_cpu_boost = self.disable_startup_cpu_boost
 
         override_entrypoint: list[str] | Unset = UNSET
         if not isinstance(self.override_entrypoint, Unset):
@@ -585,6 +590,8 @@ class DeploymentResponse:
             field_dict["source_sha256"] = source_sha256
         if has_overrides is not UNSET:
             field_dict["has_overrides"] = has_overrides
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if override_entrypoint is not UNSET:
             field_dict["override_entrypoint"] = override_entrypoint
         if override_cmd is not UNSET:
@@ -791,6 +798,8 @@ class DeploymentResponse:
         source_sha256 = d.pop("source_sha256", UNSET)
 
         has_overrides = d.pop("has_overrides", UNSET)
+
+        disable_startup_cpu_boost = d.pop("disable_startup_cpu_boost", UNSET)
 
         override_entrypoint = cast(list[str], d.pop("override_entrypoint", UNSET))
 
@@ -1212,6 +1221,7 @@ class DeploymentResponse:
             source_root=source_root,
             source_sha256=source_sha256,
             has_overrides=has_overrides,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
             override_entrypoint=override_entrypoint,
             override_cmd=override_cmd,
             override_env_keys=override_env_keys,

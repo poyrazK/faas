@@ -15,7 +15,7 @@ Repeating that request with the same name returns the existing tenant. Link each
 
 ## Onboard a customer across apps
 
-Use one additive, retry-safe operation to register a customer, create or reuse its app-local consumer identities, and attach already-created tenant surfaces:
+Use one additive, retry-safe operation to register a customer, create or reuse its app-local consumer identities, and create or attach its hostname surfaces:
 
 ```http
 POST /v1/account/platform-tenants/apply
@@ -29,13 +29,16 @@ Content-Type: application/json
     {"app_id": "<api-app-uuid>", "external_ref": "customer-42", "name": "Customer 42"},
     {"app_id": "<worker-app-uuid>", "external_ref": "customer-42", "name": "Customer 42"}
   ],
-  "surface_ids": ["<existing-surface-uuid>"]
+  "surfaces": [
+    {"app_id":"<api-app-uuid>", "name":"Customer 42 web", "hostnames":["customer42.example.com"]}
+  ],
+  "surface_ids": ["<optional-existing-surface-uuid>"]
 }
 ```
 
-The response reports `create`, `link`, or `unchanged` for each resource and includes each surface's current `status` and `cert_state`. A dry run checks ownership, quota, names, and conflicts without writes. Remove `dry_run` (or set it to `false`) to apply the entire local database bundle atomically; replaying it returns the same IDs with `unchanged` actions. A different name, revoked consumer, or resource already owned by another tenant returns 409 without partial writes. Missing or cross-account app/surface IDs return 404. Omitted resources are **not** detached or revoked, and a suspended tenant is not silently resumed.
+The response reports `create`, `link`, or `unchanged` for each resource, including hostnames. New hostnames return a TXT record name (`_faas-verify.<hostname>`) and challenge token to publish in DNS. A dry run checks ownership, quota, names, and conflicts without writes; a token for a planned hostname is withheld because it is not yet durable. Remove `dry_run` (or set it to `false`) to apply the entire local database bundle atomically; replaying it returns the same IDs and tokens with `unchanged` actions. A different name, revoked consumer, hostname already claimed by another surface, or resource owned by another tenant returns 409 without partial writes. Missing or cross-account app/surface IDs return 404. Omitted resources are **not** detached or revoked, and a suspended tenant is not silently resumed. Surface declarations require the tenant-surfaces feature flag and a plan that includes surfaces; this flow currently supports `per_host_san` certificates.
 
-Create tenant surfaces and their hostnames through the app-local surface API before linking them. DNS verification and certificate issuance are asynchronous; the apply operation does not claim they are ready or issue consumer keys. The CLI equivalent is `gregale platform-tenants apply --file customer.json --dry-run`, then repeat without `--dry-run` after inspecting the plan. Use `--json` for machine-readable output.
+DNS verification and certificate issuance are asynchronous; the apply operation does not claim they are ready or issue consumer keys. `GET /v1/account/platform-tenants/{id}/activation` reports whether routing is enabled, each hostname is verified, the certificate is issued and unexpired, and every linked surface is active. `ready` is true only when all these conditions hold for at least one surface and the platform tenant is active. Certificate and hostname errors remain visible for diagnosis. The CLI equivalent is `gregale platform-tenants apply --file customer.json --dry-run`, then repeat without `--dry-run` after inspecting the plan. Use `gregale platform-tenants activation --id <uuid>` for a snapshot or add `--wait --timeout 10m` to poll until ready. Use `--json` for machine-readable output.
 
 `GET /v1/account/platform-tenants/{id}` shows the linked consumers and surfaces. `GET /v1/account/platform-tenants?limit=100&offset=0` pages the registry. `GET /v1/account/platform-tenants/{id}/usage?since=…&until=…` sums durable request, error, and billable-unit facts attributed to that tenant **when each request occurred**, grouped by UTC day, app, and consumer. Linking a consumer later does not import its earlier traffic. Historical rows and requests from older gateways without a tenant claim remain unassigned; Gregale never guesses their owner from the current link. This is raw usage, not an invoice or a cross-app price quote.
 
@@ -45,6 +48,6 @@ To temporarily stop the linked credential and hostname paths, send `PATCH /v1/ac
 
 On requests authenticated with a linked consumer key, Gregale sends `X-Faas-Platform-Tenant-Id` to the guest and records `platform_tenant.id` on its request/forward traces. This is the stable account-level customer ID across apps and key rotations. It is distinct from `X-Faas-Tenant-Id`, which remains the app owner's account ID. Anonymous requests and unlinked consumers receive no platform-tenant claim; incoming copies of the header are stripped. A linked consumer key presented on a hostname bound to a different platform tenant is rejected with the same non-enumerating invalid-key response. Suspension is checked on cached hostname routes as well as cache misses; a custom-domain request may fail closed if the tenant guard's database read is unavailable.
 
-The CLI provides the same lifecycle with `gregale platform-tenants add|apply|list|info|link-consumer|link-surface|usage|suspend|resume`.
+The CLI provides the same lifecycle with `gregale platform-tenants add|apply|list|info|activation|link-consumer|link-surface|usage|suspend|resume`.
 
 Suspension does not block anonymous traffic, independent JWT authentication, or domains and credentials that are not linked to the tenant. Configure those separately if you need a complete customer access ban. Reads and writes require the same MFA-gated account scopes as API consumer management; Free plans do not expose this feature.

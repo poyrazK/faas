@@ -222,10 +222,14 @@ from .apply_platform_tenant_consumer_request import ApplyPlatformTenantConsumerR
 from .apply_platform_tenant_consumer_response import ApplyPlatformTenantConsumerResponse
 from .apply_platform_tenant_consumer_response_action import ApplyPlatformTenantConsumerResponseAction
 from .apply_platform_tenant_consumer_response_status import ApplyPlatformTenantConsumerResponseStatus
+from .apply_platform_tenant_hostname_response import ApplyPlatformTenantHostnameResponse
+from .apply_platform_tenant_hostname_response_action import ApplyPlatformTenantHostnameResponseAction
 from .apply_platform_tenant_request import ApplyPlatformTenantRequest
 from .apply_platform_tenant_response import ApplyPlatformTenantResponse
 from .apply_platform_tenant_response_action import ApplyPlatformTenantResponseAction
 from .apply_platform_tenant_response_status import ApplyPlatformTenantResponseStatus
+from .apply_platform_tenant_surface_request import ApplyPlatformTenantSurfaceRequest
+from .apply_platform_tenant_surface_request_cert_kind import ApplyPlatformTenantSurfaceRequestCertKind
 from .apply_platform_tenant_surface_response import ApplyPlatformTenantSurfaceResponse
 from .apply_platform_tenant_surface_response_action import ApplyPlatformTenantSurfaceResponseAction
 from .apply_platform_tenant_surface_response_cert_state import ApplyPlatformTenantSurfaceResponseCertState
@@ -1023,6 +1027,9 @@ from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_tier import PlanWorkloadTier
+from .platform_tenant_activation_response import PlatformTenantActivationResponse
+from .platform_tenant_activation_response_status import PlatformTenantActivationResponseStatus
+from .platform_tenant_activation_surface_response import PlatformTenantActivationSurfaceResponse
 from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
 from .platform_tenant_list_response import PlatformTenantListResponse
@@ -1640,10 +1647,14 @@ __all__ = (
     "ApplyPlatformTenantConsumerResponse",
     "ApplyPlatformTenantConsumerResponseAction",
     "ApplyPlatformTenantConsumerResponseStatus",
+    "ApplyPlatformTenantHostnameResponse",
+    "ApplyPlatformTenantHostnameResponseAction",
     "ApplyPlatformTenantRequest",
     "ApplyPlatformTenantResponse",
     "ApplyPlatformTenantResponseAction",
     "ApplyPlatformTenantResponseStatus",
+    "ApplyPlatformTenantSurfaceRequest",
+    "ApplyPlatformTenantSurfaceRequestCertKind",
     "ApplyPlatformTenantSurfaceResponse",
     "ApplyPlatformTenantSurfaceResponseAction",
     "ApplyPlatformTenantSurfaceResponseCertState",
@@ -2527,6 +2538,9 @@ __all__ = (
     "PlanWorkloadAction",
     "PlanWorkloadClass",
     "PlanWorkloadTier",
+    "PlatformTenantActivationResponse",
+    "PlatformTenantActivationResponseStatus",
+    "PlatformTenantActivationSurfaceResponse",
     "PlatformTenantDetailResponse",
     "PlatformTenantDetailResponseStatus",
     "PlatformTenantListResponse",

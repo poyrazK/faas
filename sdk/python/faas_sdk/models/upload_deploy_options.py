@@ -44,6 +44,8 @@ class UploadDeployOptions:
     rollback_on_5xx: bool | None | Unset = UNSET
     """Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
     while omitted or null keeps the default false."""
+    disable_startup_cpu_boost: bool | None | Unset = UNSET
+    """Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost."""
     no_triggers: bool | Unset = UNSET
     """Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."""
 
@@ -99,6 +101,12 @@ class UploadDeployOptions:
         else:
             rollback_on_5xx = self.rollback_on_5xx
 
+        disable_startup_cpu_boost: bool | None | Unset
+        if isinstance(self.disable_startup_cpu_boost, Unset):
+            disable_startup_cpu_boost = UNSET
+        else:
+            disable_startup_cpu_boost = self.disable_startup_cpu_boost
+
         no_triggers = self.no_triggers
 
         field_dict: dict[str, Any] = {}
@@ -136,6 +144,8 @@ class UploadDeployOptions:
             field_dict["sidecars"] = sidecars
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
 
@@ -207,6 +217,15 @@ class UploadDeployOptions:
 
         rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
 
+        def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        disable_startup_cpu_boost = _parse_disable_startup_cpu_boost(d.pop("disable_startup_cpu_boost", UNSET))
+
         no_triggers = d.pop("no_triggers", UNSET)
 
         upload_deploy_options = cls(
@@ -226,6 +245,7 @@ class UploadDeployOptions:
             companions=companions,
             sidecars=sidecars,
             rollback_on_5xx=rollback_on_5xx,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
             no_triggers=no_triggers,
         )
 

@@ -1409,6 +1409,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenant)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.applyPlatformTenant)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenant))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/activation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantActivation))))
 	mux.HandleFunc("PATCH /v1/account/platform-tenants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantStatus))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/consumers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.linkPlatformTenantConsumer)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/surfaces", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.linkPlatformTenantSurface)))))

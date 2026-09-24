@@ -3633,7 +3633,7 @@ paths:
       tags: [platform-tenants]
       operationId: applyPlatformTenant
       summary: Atomically reconcile an additive customer onboarding bundle.
-      description: Creates a missing platform tenant and app consumers, links requested existing surfaces, or previews the same checks with dry_run. Omitted resources are not detached; keys, hostnames and certificates are managed separately.
+      description: Atomically creates or reuses a platform tenant, app consumers, tenant surfaces, and hostname intent, or previews the same checks with dry_run. Existing surface IDs may also be linked. Omitted resources are not detached; keys are separate and DNS verification and certificate issuance remain asynchronous.
       requestBody:
         required: true
         content:
@@ -3734,6 +3734,26 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantSurfaceResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/activation:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer whose domain activation is requested.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantActivation
+      summary: Read customer DNS, certificate, and routing readiness.
+      description: A read-only snapshot. Ready requires the tenant and every linked surface to be active, every hostname verified, a valid issued certificate, and tenant-surface routing enabled.
+      responses:
+        '200':
+          description: Observed activation state and DNS TXT challenges.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantActivationResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/account/platform-tenants/{id}/usage:
     parameters:
@@ -21644,7 +21664,7 @@ components:
         name: { type: string, minLength: 1, maxLength: 128 }
 
     ApplyPlatformTenantRequest:
-      description: Additive, retry-safe onboarding; dry_run validates and previews without writes.
+      description: Additive, retry-safe onboarding of consumers and declarative hostname surfaces; dry_run validates and previews without writes.
       type: object
       required: [external_ref, name]
       properties:
@@ -21657,6 +21677,22 @@ components:
         surface_ids:
           type: array
           items: { type: string, format: uuid }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/ApplyPlatformTenantSurfaceRequest' }
+
+    ApplyPlatformTenantSurfaceRequest:
+      description: App-local surface to create or reuse by account-level name, with an additive set of hostnames.
+      type: object
+      required: [app_id, name, hostnames]
+      properties:
+        app_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        cert_kind: { type: string, enum: [per_host_san], default: per_host_san }
+        hostnames:
+          type: array
+          minItems: 1
+          items: { type: string, maxLength: 253 }
 
     ApplyPlatformTenantConsumerResponse:
       description: Planned or applied app consumer with its reconciliation action.
@@ -21671,16 +21707,62 @@ components:
         action: { type: string, enum: [create, link, unchanged] }
 
     ApplyPlatformTenantSurfaceResponse:
-      description: Existing tenant surface and its current certificate state.
+      description: Planned or applied tenant surface, hostname challenges, and current certificate state.
       type: object
-      required: [id, app_id, name, status, cert_state, action]
+      required: [app_id, name, status, cert_state, action]
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, format: uuid, description: Absent when a dry run would create the surface. }
         app_id: { type: string, format: uuid }
         name: { type: string }
         status: { type: string, enum: [pending, active, suspended] }
         cert_state: { type: string, enum: [none, pending, issued, failed] }
-        action: { type: string, enum: [link, unchanged] }
+        action: { type: string, enum: [create, link, unchanged] }
+        hostnames:
+          type: array
+          items: { $ref: '#/components/schemas/ApplyPlatformTenantHostnameResponse' }
+
+    ApplyPlatformTenantHostnameResponse:
+      description: Hostname reconciliation action and TXT challenge; new dry-run hostnames have no usable challenge token.
+      type: object
+      required: [hostname, verified, action]
+      properties:
+        hostname: { type: string }
+        challenge_token: { type: string }
+        verified: { type: boolean }
+        verified_at: { type: string, format: date-time }
+        last_error: { type: string }
+        txt_record: { type: string }
+        action: { type: string, enum: [create, unchanged] }
+
+    PlatformTenantActivationSurfaceResponse:
+      description: Observed routing and certificate readiness for one linked customer surface.
+      type: object
+      required: [id, app_id, name, status, cert_state, ready, hostnames]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string }
+        cert_state: { type: string }
+        cert_not_after: { type: string, format: date-time }
+        cert_last_error: { type: string }
+        ready: { type: boolean }
+        hostnames:
+          type: array
+          items: { $ref: '#/components/schemas/TenantHostnameResponse' }
+
+    PlatformTenantActivationResponse:
+      description: Account customer activation snapshot; ready is false until all linked hostname surfaces are serving.
+      type: object
+      required: [tenant_id, status, enabled, ready, surfaces]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        status: { type: string, enum: [active, suspended] }
+        enabled: { type: boolean }
+        ready: { type: boolean }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantActivationSurfaceResponse' }
 
     ApplyPlatformTenantResponse:
       description: Tenant onboarding plan or applied result; omitted IDs in a dry run would be created.
