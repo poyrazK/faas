@@ -1148,6 +1148,24 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 	return nil
 }
 
+// JobTaskDeferQueued only moves the due time of the same eligible queued
+// attempt. A concurrent claim or a newer retry cannot lose its lease/backoff.
+func (s *PgStore) JobTaskDeferQueued(ctx context.Context, runID string, taskIndex, expectedAttempt int, nextAttemptAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`update job_tasks set next_attempt_at = $4
+		 where run_id = $1::uuid and task_index = $2 and attempt = $3
+		   and status = 'queued' and instance_id is null and lease_token is null
+		   and (next_attempt_at is null or next_attempt_at <= now())`,
+		runID, taskIndex, expectedAttempt, nextAttemptAt.UTC())
+	if err != nil {
+		return fmt.Errorf("state: defer queued job task (%s, %d): %w", runID, taskIndex, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // JobTaskRequeue reverses a CLAIMED-but-not-executed task back to
 // queued WITHOUT incrementing attempt. Mirrors JobTaskRetry's
 // column-reset contract (clears instance_id + lease columns +

@@ -787,16 +787,20 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		}
 		planIdx := plan.PlanIndex()
 		if cap := api.JobConcurrentPerAccount[planIdx]; concurrent >= cap {
-			// Back off this queued task so other accounts and runs can use
-			// the next batch. The task has not consumed an attempt.
-			_ = e.store.JobTaskRequeue(ctx, t.RunID, t.TaskIndex, time.Now().Add(2*time.Second))
+			// Only defer the unchanged queued attempt: another schedd may
+			// have claimed it since ClaimBatch returned.
+			if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(2*time.Second)); err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("sched: defer account-capacity job task: %w", err)
+			}
 			continue
 		}
 		if _, err := e.WakeJob(ctx, run.AccountID, t.RunID, t.TaskIndex); err != nil {
 			if errors.Is(err, state.ErrJobQuotaExceeded) {
 				// The transactional claim saw a concurrent schedd win the
 				// final account or per-run slot after the read-only fast path.
-				_ = e.store.JobTaskRequeue(ctx, t.RunID, t.TaskIndex, time.Now().Add(2*time.Second))
+				if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(2*time.Second)); err != nil && !errors.Is(err, state.ErrNotFound) {
+					return fmt.Errorf("sched: defer claim-capacity job task: %w", err)
+				}
 				continue
 			}
 			e.log.Warn("sched: job dispatch failed", "run", t.RunID, "task", t.TaskIndex, "err", err)

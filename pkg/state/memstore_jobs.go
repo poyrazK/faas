@@ -961,6 +961,26 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 	return nil
 }
 
+// JobTaskDeferQueued only moves the due time of the same eligible queued
+// attempt. It cannot clear a lease or shorten a newer retry's backoff.
+func (m *MemStore) JobTaskDeferQueued(_ context.Context, runID string, taskIndex, expectedAttempt int, nextAttemptAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tasks, ok := m.jobTasks[runID]
+	if !ok {
+		return ErrNotFound
+	}
+	task, ok := tasks[taskIndex]
+	if !ok || task.Status != "queued" || task.Attempt != expectedAttempt || task.InstanceID != nil || task.LeaseToken != nil ||
+		(task.NextAttemptAt != nil && task.NextAttemptAt.After(time.Now().UTC())) {
+		return ErrNotFound
+	}
+	next := nextAttemptAt.UTC()
+	task.NextAttemptAt = &next
+	tasks[taskIndex] = task
+	return nil
+}
+
 // JobTaskRequeue reverses a CLAIMED-but-not-executed task back to
 // queued WITHOUT incrementing attempt. Mirrors JobTaskRetry's
 // column-reset contract (clears instance_id + lease columns +

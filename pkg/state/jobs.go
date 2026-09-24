@@ -512,6 +512,11 @@ type JobStore interface {
 	//
 	// Returns ErrNotFound when (run_id, task_index) does not resolve.
 	JobTaskRequeue(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error
+	// JobTaskDeferQueued postpones an eligible queued task without touching its
+	// lease or attempt. The expected attempt and due-time predicate fence a
+	// concurrent claim or a newer boot-failure retry. ErrNotFound means this
+	// candidate is no longer eligible; dispatch may continue safely.
+	JobTaskDeferQueued(ctx context.Context, runID string, taskIndex, expectedAttempt int, nextAttemptAt time.Time) error
 	// JobTaskCancel transitions a single task to status='cancelled'
 	// (called when the parent run is cancelled mid-flight, or when
 	// the job is paused). Idempotent on tasks already terminal.

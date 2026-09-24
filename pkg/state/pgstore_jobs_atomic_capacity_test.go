@@ -106,3 +106,46 @@ func TestPg_Jobs_RunParallelismOverrideCanExceedTemplateDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestPg_Jobs_DeferQueuedPreservesConcurrentClaimAndRetry(t *testing.T) {
+	store, _, ctx := pgJobsStoreWithPool(t)
+	job, run, _ := pgJobsSeed(t, store, ctx, "defer-capacity")
+	deferredUntil := time.Now().Add(2 * time.Minute).UTC()
+	if err := store.JobTaskDeferQueued(ctx, run.ID, 0, 1, deferredUntil); err != nil {
+		t.Fatalf("defer eligible task: %v", err)
+	}
+	if err := store.JobTaskDeferQueued(ctx, run.ID, 0, 1, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("shorten existing backoff = %v, want ErrNotFound", err)
+	}
+	deferred, err := store.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || deferred.Status != "queued" || deferred.NextAttemptAt == nil || deferred.NextAttemptAt.Before(time.Now().Add(time.Minute)) {
+		t.Fatalf("deferred task = %+v, %v", deferred, err)
+	}
+
+	nodeID, instanceID, lease := resolveDefaultLocal(t, ctx, store), uuid.NewString(), uuid.NewString()
+	if _, err := store.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 1,
+		"cold_booting", 128, nodeID, instanceID, lease, time.Now().Add(time.Minute), nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.JobTaskDeferQueued(ctx, run.ID, 1, 1, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("defer claimed task = %v, want ErrNotFound", err)
+	}
+	claimed, err := store.JobTaskGet(ctx, run.ID, 1)
+	if err != nil || claimed.Status != "claimed" || claimed.InstanceID == nil || *claimed.InstanceID != instanceID || claimed.LeaseToken == nil || *claimed.LeaseToken != lease {
+		t.Fatalf("claimed task lost ownership: %+v, %v", claimed, err)
+	}
+	if err := store.JobTaskMarkTerminal(ctx, run.ID, 1, "failed", 1, "infra", "boot failed", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	retryAt := time.Now().Add(10 * time.Minute).UTC()
+	if err := store.JobTaskRetry(ctx, run.ID, 1, retryAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.JobTaskDeferQueued(ctx, run.ID, 1, 1, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("defer stale attempt = %v, want ErrNotFound", err)
+	}
+	retried, err := store.JobTaskGet(ctx, run.ID, 1)
+	if err != nil || retried.Status != "queued" || retried.Attempt != 2 || retried.NextAttemptAt == nil || retried.NextAttemptAt.Before(time.Now().Add(9*time.Minute)) {
+		t.Fatalf("retry backoff changed: %+v, %v", retried, err)
+	}
+}
