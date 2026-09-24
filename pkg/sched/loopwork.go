@@ -48,11 +48,12 @@ const (
 	workAppReconcile        workKind = "app_reconcile"
 	workDeploymentReconcile workKind = "deployment_reconcile"
 	workJobCancel           workKind = "job_cancel"
+	workPrimeRecovery       workKind = "prime_recovery"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
 var workKinds = []workKind{
-	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel,
+	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workPrimeRecovery,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -84,12 +85,15 @@ type workSpec struct {
 // gateway-ack and request-drain barriers. It holds no database connection
 // while waiting, and the eight-slot cap prevents a fleet-wide gateway issue
 // from turning one stuck rollout into one unbounded goroutine.
+// The fleet-wide prime recovery sweep gets one slot: its constant key
+// coalesces ticks, and a dropped tick is retried the next minute.
 var workSpecs = map[workKind]workSpec{
 	workPrime:               {slots: maxConcurrentPrimes, overflow: overflowInline},
 	workRestart:             {slots: 8, overflow: overflowDrop},
 	workAppReconcile:        {slots: 8, overflow: overflowDrop},
 	workDeploymentReconcile: {slots: 8, overflow: overflowDrop},
 	workJobCancel:           {slots: 8, overflow: overflowDrop},
+	workPrimeRecovery:       {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.
