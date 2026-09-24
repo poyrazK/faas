@@ -1404,6 +1404,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsage))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createConsumerKey)))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeConsumerKey))))
+	// One account-level end customer may own consumers and hostnames across apps.
+	mux.HandleFunc("GET /v1/account/platform-tenants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenants))))
+	mux.HandleFunc("POST /v1/account/platform-tenants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenant)))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenant))))
+	mux.HandleFunc("PATCH /v1/account/platform-tenants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantStatus))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/consumers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.linkPlatformTenantConsumer)))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/surfaces", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.linkPlatformTenantSurface)))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantUsage))))
 	// API consumer monetization: rate cards are immutable versions, so
 	// publishing a new price is a POST rather than an in-place update.
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerRateCards))))

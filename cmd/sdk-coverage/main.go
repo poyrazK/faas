@@ -582,6 +582,13 @@ var methodRouteMap = map[string]string{
 	"POST /v1/account/release-webhooks/{id}/rotate-secret":          "RotateAccountReleaseWebhookSecret",
 	"GET /v1/account/release-webhooks/{id}/deliveries":              "ListAccountReleaseWebhookDeliveries",
 	"POST /v1/account/release-webhooks/{id}/deliveries/{did}/retry": "RetryAccountReleaseWebhookDelivery",
+	"GET /v1/account/platform-tenants":                              "ListPlatformTenants",
+	"POST /v1/account/platform-tenants":                             "CreatePlatformTenant",
+	"GET /v1/account/platform-tenants/{id}":                         "GetPlatformTenant",
+	"PATCH /v1/account/platform-tenants/{id}":                       "SetPlatformTenantStatus",
+	"POST /v1/account/platform-tenants/{id}/consumers":              "LinkPlatformTenantConsumer",
+	"POST /v1/account/platform-tenants/{id}/surfaces":               "LinkPlatformTenantSurface",
+	"GET /v1/account/platform-tenants/{id}/usage":                   "GetPlatformTenantUsage",
 
 	// ADR-212 — signature-verified durable inbound webhook configuration.
 	// The provider-facing /v1/hooks route is excluded above because it is not

@@ -37,6 +37,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment (name defaults to linked context) |
 | [`diff`](#diff) | Compare two named environments in the linked project |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
+| [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
@@ -1282,6 +1283,45 @@ Wait for a preview deployment to become ready
 ### preview destroy
 
 Tear down a preview app (POST /v1/preview/{slug}/destroy)
+
+
+## platform-tenants
+
+Manage one customer across app consumers and tenant hostnames
+
+`gregale platform-tenants [<subcommand>]`
+
+### platform-tenants list
+
+List platform customers
+
+### platform-tenants add
+
+Register a customer by external reference
+
+### platform-tenants info
+
+Show linked consumers and surfaces
+
+### platform-tenants link-consumer
+
+Attach an existing app consumer
+
+### platform-tenants link-surface
+
+Attach an existing tenant surface
+
+### platform-tenants usage
+
+Show cross-app raw usage
+
+### platform-tenants suspend
+
+Stop linked credentials and hostnames
+
+### platform-tenants resume
+
+Restore linked credentials and hostnames
 
 
 ## edge-rules

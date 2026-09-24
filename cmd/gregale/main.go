@@ -371,6 +371,8 @@ func run(args []string) (status int) {
 		return cmdDomains(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
+	case "platform-tenants":
+		return cmdPlatformTenants(args[1:])
 	case "edge-rules":
 		// PR 2 of Edge Rules rollout: customer CLI wrapper around the
 		// /v1/apps/{slug}/edge-rules CRUD surface (PR 1 #799). Sub-

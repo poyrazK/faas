@@ -29537,7 +29537,12 @@ func (s *PgStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appI
 		   from consumer_keys
 		  where app_id = $1::uuid
 		    and account_id = $2::uuid
-		    and prefix = $3`,
+		    and prefix = $3
+		    and not exists (
+		        select 1 from api_consumers c
+		        join platform_tenants t on t.id = c.platform_tenant_id
+		        where c.id = consumer_keys.consumer_id and t.status = 'suspended'
+		    )`,
 		appID, accountID, prefix)
 	k, err := scanConsumerKeyRow(row)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -162,6 +162,8 @@ func (s *PgStore) CreateConsumerKeyForConsumer(ctx context.Context, accountID, c
 		   from api_consumers c
 		  where c.id = $2::uuid and c.account_id = $1::uuid
 		    and c.status = 'active'
+		    and not exists (select 1 from platform_tenants t
+		                    where t.id = c.platform_tenant_id and t.status = 'suspended')
 		 returning `+consumerKeySelectCols,
 		accountID, consumerID, name, prefix, hash, scopes, expiresAt)
 	k, err := scanConsumerKeyRow(row)
@@ -176,6 +178,16 @@ func (s *PgStore) CreateConsumerKeyForConsumer(ctx context.Context, accountID, c
 		}
 		if getErr != nil {
 			return ConsumerKey{}, getErr
+		}
+		var suspended bool
+		if checkErr := s.pool.QueryRow(ctx, `select exists (
+			select 1 from api_consumers c join platform_tenants t on t.id = c.platform_tenant_id
+			where c.id = $1::uuid and c.account_id = $2::uuid and t.status = 'suspended'
+		)`, consumerID, accountID).Scan(&suspended); checkErr != nil {
+			return ConsumerKey{}, checkErr
+		}
+		if suspended {
+			return ConsumerKey{}, ErrConflict
 		}
 		return ConsumerKey{}, ErrNotFound
 	}
