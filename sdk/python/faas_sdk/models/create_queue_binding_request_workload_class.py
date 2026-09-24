@@ -1,8 +1,9 @@
 from typing import Literal
 
-CreateQueueBindingRequestWorkloadClass = Literal["job", "worker"]
+CreateQueueBindingRequestWorkloadClass = Literal["http", "job", "worker"]
 
 CREATE_QUEUE_BINDING_REQUEST_WORKLOAD_CLASS_VALUES: set[CreateQueueBindingRequestWorkloadClass] = {
+    "http",
     "job",
     "worker",
 }

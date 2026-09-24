@@ -177,14 +177,14 @@ func TestCmdInit_QueueWorkerQuickstartContract(t *testing.T) {
 		t.Fatalf("queue bindings = %d, want 1", len(manifest.QueueBindings))
 	}
 	binding := manifest.QueueBindings[0]
-	if binding.Name != "default" || binding.QueueName != "default" || binding.Mode != "push" || binding.WorkloadClass != "worker" || binding.MaxConcurrency != 1 {
-		t.Fatalf("queue binding = %+v, want default push worker binding", binding)
+	if binding.Name != "default" || binding.QueueName != "default" || binding.Mode != "push" || binding.WorkloadClass != "http" || binding.MaxConcurrency != 1 {
+		t.Fatalf("queue binding = %+v, want default push HTTP function binding", binding)
 	}
 	if binding.RetryPolicy == nil || binding.RetryPolicy.MaxAttempts != 3 || binding.RetryPolicy.BaseSeconds != 1 || binding.RetryPolicy.MaxSeconds != 30 || binding.RetryPolicy.JitterSeconds != 0.25 {
 		t.Fatalf("retry policy = %+v, want starter defaults", binding.RetryPolicy)
 	}
-	if manifest.Scaling == nil || manifest.Scaling.Target == nil || manifest.Scaling.Target.Metric != "queue_depth" || manifest.Scaling.Target.Value != 10 {
-		t.Fatalf("scaling = %+v, want queue_depth target 10", manifest.Scaling)
+	if manifest.Scaling != nil {
+		t.Fatalf("scaling = %+v, want no unsupported queue-depth scaling claim", manifest.Scaling)
 	}
 
 	readme, err := os.ReadFile(filepath.Join(dest, "README.md"))

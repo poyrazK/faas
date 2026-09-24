@@ -25,6 +25,23 @@ func TestLoad_NoManifest(t *testing.T) {
 	}
 }
 
+// adr: 231 — HTTP function queue bindings are push-only.
+func TestQueueBindingHTTPRequiresPush(t *testing.T) {
+	for _, tc := range []struct {
+		mode    string
+		wantErr bool
+	}{
+		{mode: "push"},
+		{mode: "pull", wantErr: true},
+	} {
+		binding := QueueBinding{Name: "default", QueueName: "default", Mode: tc.mode, WorkloadClass: "http"}
+		err := binding.Validate()
+		if (err != nil) != tc.wantErr {
+			t.Errorf("mode %q: Validate() = %v, want error = %t", tc.mode, err, tc.wantErr)
+		}
+	}
+}
+
 func TestLoad_YAMLPresent(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("triggers: []\n"), 0o644); err != nil {
