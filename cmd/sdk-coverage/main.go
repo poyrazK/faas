@@ -273,6 +273,9 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// The routing-policies path is hyphenated; the Go SDK uses a typed
+	// operation name instead of the fallback's literal hyphen spelling.
+	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routing-policies": "UpdateProjectEnvironmentRoutingPolicies",
 	// First-class queue bindings use a hyphenated path segment. Pin the
 	// noun-oriented Go SDK names instead of the fallback's literal
 	// "Queue-bindings" spelling.

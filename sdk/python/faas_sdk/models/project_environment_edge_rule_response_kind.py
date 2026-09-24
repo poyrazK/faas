@@ -1,10 +1,12 @@
 from typing import Literal
 
-ProjectEnvironmentEdgeRuleResponseKind = Literal["cors", "headers"]
+ProjectEnvironmentEdgeRuleResponseKind = Literal["cors", "headers", "redirect", "rewrite"]
 
 PROJECT_ENVIRONMENT_EDGE_RULE_RESPONSE_KIND_VALUES: set[ProjectEnvironmentEdgeRuleResponseKind] = {
     "cors",
     "headers",
+    "redirect",
+    "rewrite",
 }
 
 

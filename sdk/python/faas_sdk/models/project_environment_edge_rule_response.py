@@ -23,7 +23,7 @@ T = TypeVar("T", bound="ProjectEnvironmentEdgeRuleResponse")
 
 @_attrs_define
 class ProjectEnvironmentEdgeRuleResponse:
-    """One inline headers or CORS rule on a stable environment URL."""
+    """One environment-owned edge rule on a stable environment URL."""
 
     kind: ProjectEnvironmentEdgeRuleResponseKind
     match_path: str

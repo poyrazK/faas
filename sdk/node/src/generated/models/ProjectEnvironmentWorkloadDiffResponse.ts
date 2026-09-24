@@ -20,5 +20,6 @@ export type ProjectEnvironmentWorkloadDiffResponse = {
   bindings: Array<ProjectEnvironmentBindingChangeResponse>;
   routes: ProjectEnvironmentRoutePolicyDiffResponse;
   policies: ProjectEnvironmentEdgePolicyDiffResponse;
+  routing_policies: ProjectEnvironmentEdgePolicyDiffResponse;
 };
 

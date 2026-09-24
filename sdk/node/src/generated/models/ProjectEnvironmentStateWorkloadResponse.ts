@@ -20,5 +20,6 @@ export type ProjectEnvironmentStateWorkloadResponse = {
   bindings: Array<ProjectEnvironmentBindingResponse>;
   routes: ProjectEnvironmentRoutePolicyResponse;
   policies: ProjectEnvironmentEdgePolicyResponse;
+  routing_policies: ProjectEnvironmentEdgePolicyResponse;
 };
 

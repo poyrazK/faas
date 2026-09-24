@@ -12408,6 +12408,44 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routing-policies:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project containing the environment-specific redirect and rewrite policy.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Registered environment whose redirect and rewrite rules are replaced.
+        schema: { type: string }
+      - name: workload
+        in: path
+        required: true
+        description: Workload slug receiving the scoped routing-rule replacement.
+        schema: { type: string }
+    put:
+      tags: [projects]
+      operationId: updateProjectEnvironmentRoutingPolicies
+      summary: Replace redirect and rewrite rules for a workload in one environment.
+      description: An explicit empty list disables inherited redirects and rewrites on the stable environment URL. Headers, CORS, other rule kinds, and ordinary application hosts are unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentRoutingPolicyRequest' }
+      responses:
+        '200':
+          description: Stored environment-owned redirect and rewrite policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/diff:
     parameters:
       - name: slug
@@ -26912,7 +26950,7 @@ components:
     ProjectEnvironmentStateWorkloadResponse:
       description: Effective configuration and live release state for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies, routing_policies]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -26928,14 +26966,15 @@ components:
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
         policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
+        routing_policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
 
     ProjectEnvironmentEdgeRuleResponse:
-      description: One inline headers or CORS rule on a stable environment URL.
+      description: One environment-owned edge rule on a stable environment URL.
       type: object
       required: [kind, match_path, priority, enabled, action]
       additionalProperties: false
       properties:
-        kind: { type: string, enum: [headers, cors] }
+        kind: { type: string, enum: [headers, cors, redirect, rewrite] }
         match_path: { type: string }
         match_methods:
           type: array
@@ -26950,7 +26989,7 @@ components:
           additionalProperties: true
 
     ProjectEnvironmentEdgePolicyResponse:
-      description: Headers/CORS policy ownership and rules. Other edge-rule kinds remain application-owned.
+      description: Ownership and rules for one independently replaceable edge-policy group.
       type: object
       required: [ownership, rules]
       properties:
@@ -26961,6 +27000,17 @@ components:
 
     UpdateProjectEnvironmentEdgePolicyRequest:
       description: Complete replacement for an environment's headers/CORS rules. Inline CORS settings are required; shared presets are not accepted.
+      type: object
+      required: [rules]
+      additionalProperties: false
+      properties:
+        rules:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/ProjectEnvironmentEdgeRuleResponse' }
+
+    UpdateProjectEnvironmentRoutingPolicyRequest:
+      description: Complete replacement for environment redirect/rewrite rules, independently of headers/CORS rules.
       type: object
       required: [rules]
       additionalProperties: false
@@ -27074,7 +27124,7 @@ components:
     ProjectEnvironmentWorkloadDiffResponse:
       description: Release, variable, secret, and binding changes for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies, routing_policies]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -27090,9 +27140,10 @@ components:
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingChangeResponse' }
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyDiffResponse' }
         policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyDiffResponse' }
+        routing_policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyDiffResponse' }
 
     ProjectEnvironmentEdgePolicyDiffResponse:
-      description: Difference in environment headers/CORS rules or ownership.
+      description: Difference in one environment edge-policy group or its ownership.
       type: object
       required: [kind, before, after]
       properties:

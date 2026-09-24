@@ -20,7 +20,7 @@ T = TypeVar("T", bound="ProjectEnvironmentEdgePolicyResponse")
 
 @_attrs_define
 class ProjectEnvironmentEdgePolicyResponse:
-    """Headers/CORS policy ownership and rules. Other edge-rule kinds remain application-owned."""
+    """Ownership and rules for one independently replaceable edge-policy group."""
 
     ownership: ProjectEnvironmentEdgePolicyResponseOwnership
     rules: list[ProjectEnvironmentEdgeRuleResponse]

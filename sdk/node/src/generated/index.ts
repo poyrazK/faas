@@ -758,6 +758,7 @@ export type { UpdateProjectEnvironmentConfigRequest } from './models/UpdateProje
 export type { UpdateProjectEnvironmentEdgePolicyRequest } from './models/UpdateProjectEnvironmentEdgePolicyRequest.js';
 export type { UpdateProjectEnvironmentRequest } from './models/UpdateProjectEnvironmentRequest.js';
 export type { UpdateProjectEnvironmentRoutePolicyRequest } from './models/UpdateProjectEnvironmentRoutePolicyRequest.js';
+export type { UpdateProjectEnvironmentRoutingPolicyRequest } from './models/UpdateProjectEnvironmentRoutingPolicyRequest.js';
 export type { UpdateProjectRequest } from './models/UpdateProjectRequest.js';
 export type { UpdateQueueBindingRequest } from './models/UpdateQueueBindingRequest.js';
 export type { UpdateTCPListenerRequest } from './models/UpdateTCPListenerRequest.js';

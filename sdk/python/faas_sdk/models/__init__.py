@@ -1470,6 +1470,7 @@ from .update_project_environment_config_request_values import UpdateProjectEnvir
 from .update_project_environment_edge_policy_request import UpdateProjectEnvironmentEdgePolicyRequest
 from .update_project_environment_request import UpdateProjectEnvironmentRequest
 from .update_project_environment_route_policy_request import UpdateProjectEnvironmentRoutePolicyRequest
+from .update_project_environment_routing_policy_request import UpdateProjectEnvironmentRoutingPolicyRequest
 from .update_project_request import UpdateProjectRequest
 from .update_queue_binding_request import UpdateQueueBindingRequest
 from .update_queue_binding_request_mode import UpdateQueueBindingRequestMode
@@ -2957,6 +2958,7 @@ __all__ = (
     "UpdateProjectEnvironmentEdgePolicyRequest",
     "UpdateProjectEnvironmentRequest",
     "UpdateProjectEnvironmentRoutePolicyRequest",
+    "UpdateProjectEnvironmentRoutingPolicyRequest",
     "UpdateProjectRequest",
     "UpdateQueueBindingRequest",
     "UpdateQueueBindingRequestMode",

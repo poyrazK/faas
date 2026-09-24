@@ -737,6 +737,7 @@ type MemStore struct {
 	projectEnvironmentConfigs            map[string][]ProjectEnvironmentConfig
 	projectEnvironmentRoutePolicies      map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies       map[string]ProjectEnvironmentEdgePolicy
+	projectEnvironmentRoutingPolicies    map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
 	projectEnvironmentPromotionWorkloads map[string][]ProjectEnvironmentPromotionWorkload
 	// githubDeployBranches stores the optional branch→scope rules keyed by
@@ -1176,6 +1177,7 @@ func NewMemStore() *MemStore {
 		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
 		projectEnvironmentRoutePolicies:      map[string]ProjectEnvironmentRoutePolicy{},
 		projectEnvironmentEdgePolicies:       map[string]ProjectEnvironmentEdgePolicy{},
+		projectEnvironmentRoutingPolicies:    map[string]ProjectEnvironmentEdgePolicy{},
 		projectEnvironmentPromotions:         map[string]ProjectEnvironmentPromotion{},
 		projectEnvironmentPromotionWorkloads: map[string][]ProjectEnvironmentPromotionWorkload{},
 	}
@@ -2891,6 +2893,11 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			delete(m.projectEnvironmentEdgePolicies, key)
 		}
 	}
+	for key, policy := range m.projectEnvironmentRoutingPolicies {
+		if policy.ProjectID == projectID {
+			delete(m.projectEnvironmentRoutingPolicies, key)
+		}
+	}
 	return nil
 }
 
@@ -3072,6 +3079,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	for key, policy := range m.projectEnvironmentEdgePolicies {
 		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentEdgePolicies, key)
+		}
+	}
+	for key, policy := range m.projectEnvironmentRoutingPolicies {
+		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
+			delete(m.projectEnvironmentRoutingPolicies, key)
 		}
 	}
 	for id, approval := range m.projectEnvironmentApprovals {
@@ -19104,6 +19116,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key, policy := range m.projectEnvironmentEdgePolicies {
 		if policy.AccountID == id {
 			delete(m.projectEnvironmentEdgePolicies, key)
+		}
+	}
+	for key, policy := range m.projectEnvironmentRoutingPolicies {
+		if policy.AccountID == id {
+			delete(m.projectEnvironmentRoutingPolicies, key)
 		}
 	}
 	for kid, k := range m.keys {

@@ -31,6 +31,7 @@ import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProj
 import type { UpdateProjectEnvironmentEdgePolicyRequest } from '../models/UpdateProjectEnvironmentEdgePolicyRequest.js';
 import type { UpdateProjectEnvironmentRequest } from '../models/UpdateProjectEnvironmentRequest.js';
 import type { UpdateProjectEnvironmentRoutePolicyRequest } from '../models/UpdateProjectEnvironmentRoutePolicyRequest.js';
+import type { UpdateProjectEnvironmentRoutingPolicyRequest } from '../models/UpdateProjectEnvironmentRoutingPolicyRequest.js';
 import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -714,6 +715,53 @@ export class ProjectsService {
     return __request(OpenAPI, {
       method: 'PUT',
       url: '/v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'workload': workload,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace redirect and rewrite rules for a workload in one environment.
+   * An explicit empty list disables inherited redirects and rewrites on the stable environment URL. Headers, CORS, other rule kinds, and ordinary application hosts are unchanged.
+   * @returns ProjectEnvironmentEdgePolicyResponse Stored environment-owned redirect and rewrite policy.
+   * @throws ApiError
+   */
+  public static updateProjectEnvironmentRoutingPolicies({
+    slug,
+    environment,
+    workload,
+    requestBody,
+  }: {
+    /**
+     * Project containing the environment-specific redirect and rewrite policy.
+     */
+    slug: string,
+    /**
+     * Registered environment whose redirect and rewrite rules are replaced.
+     */
+    environment: string,
+    /**
+     * Workload slug receiving the scoped routing-rule replacement.
+     */
+    workload: string,
+    requestBody: UpdateProjectEnvironmentRoutingPolicyRequest,
+  }): CancelablePromise<ProjectEnvironmentEdgePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/workloads/{workload}/routing-policies',
       path: {
         'slug': slug,
         'environment': environment,
