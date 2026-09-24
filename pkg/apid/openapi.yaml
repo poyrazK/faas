@@ -32688,14 +32688,14 @@ components:
         created: { type: boolean, description: True when the default binding was created by this request. }
 
     CreateQueueBindingRequest:
-      description: Durable mapping from a logical queue to a worker/job workload.
+      description: Durable queue mapping. HTTP functions may use push mode; pull mode remains for worker/job workloads.
       type: object
       required: [name, queue_name]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push], default: pull }
-        workload_class: { type: string, enum: [worker, job], default: worker }
+        workload_class: { type: string, enum: [worker, job, http], default: worker }
         enabled: { type: boolean, default: true }
         max_concurrency: { type: integer, minimum: 1, maximum: 10000, default: 1 }
         retry_policy:
@@ -32709,7 +32709,7 @@ components:
       properties:
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push] }
-        workload_class: { type: string, enum: [worker, job] }
+        workload_class: { type: string, enum: [worker, job, http] }
         enabled: { type: boolean }
         max_concurrency: { type: integer, minimum: 1, maximum: 10000 }
         retry_policy:
@@ -32727,7 +32727,7 @@ components:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push] }
-        workload_class: { type: string, enum: [worker, job] }
+        workload_class: { type: string, enum: [worker, job, http] }
         enabled: { type: boolean }
         max_concurrency: { type: integer, minimum: 1, maximum: 10000 }
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
@@ -32744,7 +32744,7 @@ components:
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push] }
-        workload_class: { type: string, enum: [worker, job] }
+        workload_class: { type: string, enum: [worker, job, http] }
         enabled: { type: boolean }
         consumer_state: { type: string, enum: [active, paused, not_configured, external] }
         consumer_state_reason: { type: string }

@@ -69,6 +69,9 @@ class Sidecar:
       HTTP GET, and TCP probes. Omit it to use the image OCI `HEALTHCHECK`.
     - `liveness_probe` independently monitors a running sidecar; when
       omitted, the effective startup probe is reused for compatibility.
+    - `readiness_probe` is valid only on the `primary_ingress` sidecar. It
+      gates initial traffic and temporarily withdraws/resumes routing
+      without restarting the companion.
     - `depends_on` optionally gates this workload on `main` or
       another sidecar. Conditions are `started`, `healthy`, and
       `completed_successfully`; omitted condition means `started`.
@@ -105,13 +108,19 @@ class Sidecar:
     essential: bool | Unset = UNSET
     """Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."""
     startup_probe: SidecarProbe | Unset = UNSET
-    """Container-local startup or liveness probe for a companion. Specify
+    """Container-local startup, liveness, or readiness probe for a companion. Specify
     exactly one action: exec, http_get, tcp_socket, or the legacy OCI
     test field. Port 0/omitted uses the workload's declared port, then
     the image port, then the platform default.
     """
     liveness_probe: SidecarProbe | Unset = UNSET
-    """Container-local startup or liveness probe for a companion. Specify
+    """Container-local startup, liveness, or readiness probe for a companion. Specify
+    exactly one action: exec, http_get, tcp_socket, or the legacy OCI
+    test field. Port 0/omitted uses the workload's declared port, then
+    the image port, then the platform default.
+    """
+    readiness_probe: SidecarProbe | Unset = UNSET
+    """Container-local startup, liveness, or readiness probe for a companion. Specify
     exactly one action: exec, http_get, tcp_socket, or the legacy OCI
     test field. Port 0/omitted uses the workload's declared port, then
     the image port, then the platform default.
@@ -166,6 +175,10 @@ class Sidecar:
         if not isinstance(self.liveness_probe, Unset):
             liveness_probe = self.liveness_probe.to_dict()
 
+        readiness_probe: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.readiness_probe, Unset):
+            readiness_probe = self.readiness_probe.to_dict()
+
         depends_on: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
             depends_on = []
@@ -207,6 +220,8 @@ class Sidecar:
             field_dict["startup_probe"] = startup_probe
         if liveness_probe is not UNSET:
             field_dict["liveness_probe"] = liveness_probe
+        if readiness_probe is not UNSET:
+            field_dict["readiness_probe"] = readiness_probe
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
 
@@ -279,6 +294,13 @@ class Sidecar:
         else:
             liveness_probe = SidecarProbe.from_dict(_liveness_probe)
 
+        _readiness_probe = d.pop("readiness_probe", UNSET)
+        readiness_probe: SidecarProbe | Unset
+        if isinstance(_readiness_probe, Unset):
+            readiness_probe = UNSET
+        else:
+            readiness_probe = SidecarProbe.from_dict(_readiness_probe)
+
         _depends_on = d.pop("depends_on", UNSET)
         depends_on: list[WorkloadDependency] | Unset = UNSET
         if _depends_on is not UNSET:
@@ -304,6 +326,7 @@ class Sidecar:
             essential=essential,
             startup_probe=startup_probe,
             liveness_probe=liveness_probe,
+            readiness_probe=readiness_probe,
             depends_on=depends_on,
         )
 

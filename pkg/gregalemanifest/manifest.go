@@ -739,8 +739,11 @@ func (b QueueBinding) Validate() error {
 	if class == "" {
 		class = "worker"
 	}
-	if class != "worker" && class != "job" {
-		return fmt.Errorf("queue binding %q: workload_class must be worker or job", b.Name)
+	if class != "worker" && class != "job" && class != "http" {
+		return fmt.Errorf("queue binding %q: workload_class must be worker, job, or http", b.Name)
+	}
+	if class == "http" && mode != "push" {
+		return fmt.Errorf("queue binding %q: http workload_class requires push mode", b.Name)
 	}
 	if b.MaxConcurrency < 0 || b.MaxConcurrency > 10000 {
 		return fmt.Errorf("queue binding %q: max_concurrency must be between 0 and 10000", b.Name)

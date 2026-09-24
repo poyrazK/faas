@@ -1920,7 +1920,7 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
-	case "cron-worker", "event-worker":
+	case "cron-worker", "event-worker", "queue-worker":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
 		return "", "", false
