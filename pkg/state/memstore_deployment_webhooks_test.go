@@ -31,6 +31,15 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	accountHook := seedMemAccountReleaseHook(m, account.ID,
+		[]string{string(AppWebhookEventDeploymentLive), string(AppWebhookEventDeploymentFailed)}, true)
+	liveOnlyAccountHook := seedMemAccountReleaseHook(m, account.ID,
+		[]string{string(AppWebhookEventDeploymentLive)}, true)
+	disabledAccountHook := seedMemAccountReleaseHook(m, account.ID,
+		[]string{string(AppWebhookEventDeploymentLive)}, false)
+	foreignAccountHook := seedMemAccountReleaseHook(m, otherAccount.ID,
+		[]string{string(AppWebhookEventDeploymentLive)}, true)
+	emptyFilterAccountHook := seedMemAccountReleaseHook(m, account.ID, nil, true)
 
 	live, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:live"})
 	if err != nil {
@@ -60,7 +69,15 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 		return lifecycle
 	}
 	assertDeliveryCount(liveHook, 1)
-	assertDeliveryCount(allHook, 1)
+	appDeliveries := assertDeliveryCount(allHook, 1)
+	accountDeliveries := assertDeliveryCount(accountHook, 1)
+	if appDeliveries[0].ID == accountDeliveries[0].ID || accountDeliveries[0].AppID != app.ID || accountDeliveries[0].AccountID != account.ID {
+		t.Fatalf("app and account receivers must have separate, source-owned deliveries: app=%+v account=%+v", appDeliveries[0], accountDeliveries[0])
+	}
+	assertDeliveryCount(liveOnlyAccountHook, 1)
+	assertDeliveryCount(disabledAccountHook, 0)
+	assertDeliveryCount(foreignAccountHook, 0)
+	assertDeliveryCount(emptyFilterAccountHook, 0)
 	assertDeliveryCount(foreignHook, 0)
 
 	failed, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:failed"})
@@ -75,6 +92,11 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 	}
 	assertDeliveryCount(liveHook, 1)
 	deliveries := assertDeliveryCount(allHook, 2)
+	assertDeliveryCount(accountHook, 2)
+	assertDeliveryCount(liveOnlyAccountHook, 1)
+	assertDeliveryCount(disabledAccountHook, 0)
+	assertDeliveryCount(foreignAccountHook, 0)
+	assertDeliveryCount(emptyFilterAccountHook, 0)
 	assertDeliveryCount(foreignHook, 0)
 	for _, delivery := range deliveries {
 		var payload map[string]any
@@ -89,4 +111,23 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 			t.Fatalf("failed payload lacks explanation: %v", payload)
 		}
 	}
+
+	// A receiver registered before an app exists still sees that app's
+	// release transitions without copying the subscription to the app.
+	newApp, err := m.CreateApp(ctx, App{AccountID: account.ID, Slug: "later-webhook-app", RAMMB: 512, Status: AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDeployment, err := m.CreateDeployment(ctx, Deployment{AppID: newApp.ID, ImageDigest: "sha256:later"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkDeploymentLive(ctx, newDeployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	fromNewApp, _, err := m.ListAppWebhookDeliveries(ctx, newApp.ID, accountHook.ID, 20, "")
+	if err != nil || len(fromNewApp) != 1 || fromNewApp[0].AppID != newApp.ID || fromNewApp[0].Event != AppWebhookEventDeploymentLive {
+		t.Fatalf("new app release deliveries = %+v, %v", fromNewApp, err)
+	}
+	assertDeliveryCount(allHook, 2)
 }
