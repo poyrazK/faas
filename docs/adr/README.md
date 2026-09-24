@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 232 | [Loopback service authorization for Safe Deploy](232-loopback-safe-deploy-service-auth.md) | accepted | Separate canary and recovery credentials on APID's loopback operator listener; customer routes remain account-scoped |
 | 231 | [Queue push delivery to HTTP functions](231-http-function-queue-push.md) | accepted | Function-only HTTP push binding; serial delivery is explicit until a separate parallel-dispatch design lands |
 | 224 | [Account-scoped release webhooks](224-account-scoped-release-webhooks.md) | accepted | Account-owned release receiver over the existing signed delivery ledger; bounded event filter and tenant isolation |
 | 223 | [Multiple long-running application companions](223-multiple-long-running-companions.md) | proposed | Bounded helper cardinality with up to four long-running companions, existing dependency/probe gates, and additive resource accounting |
