@@ -10,6 +10,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -18,6 +20,61 @@ type consumerTelemetryStore struct {
 	inserted []sqlc.InsertRequestTelemetryParams
 	eventIDs []string
 	usage    []state.APIConsumerUsageEvent
+}
+
+func TestConsumerUsageReceiptIndependentOfDebuggerAndIdempotent(t *testing.T) {
+	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanFree}}
+	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	event := &apidpb.ConsumerUsageEvent{
+		EventId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
+		ConsumerId: uuid.NewString(), PlatformTenantId: uuid.NewString(),
+		WindowStartUnixMs: time.Date(2026, 9, 24, 12, 34, 0, 0, time.UTC).UnixMilli(),
+		RequestCount:      1, BillableUnits: 1,
+	}
+	first, err := receiver.RecordConsumerUsage(context.Background(), event)
+	if err != nil || !first.GetApplied() {
+		t.Fatalf("first receipt=%v err=%v", first, err)
+	}
+	second, err := receiver.RecordConsumerUsage(context.Background(), event)
+	if err != nil || second.GetApplied() {
+		t.Fatalf("duplicate receipt=%v err=%v", second, err)
+	}
+	if len(store.usage) != 1 || store.usage[0].PlatformTenantID != event.GetPlatformTenantId() {
+		t.Fatalf("usage=%+v", store.usage)
+	}
+}
+
+func TestConsumerUsageRejectsMalformedEventWithoutAcknowledgement(t *testing.T) {
+	store := &consumerTelemetryStore{}
+	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	_, err := receiver.RecordConsumerUsage(context.Background(), &apidpb.ConsumerUsageEvent{EventId: "not-a-uuid"})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code=%v err=%v", status.Code(err), err)
+	}
+	if len(store.usage) != 0 {
+		t.Fatal("malformed event was recorded")
+	}
+}
+
+func TestOutboxedDebuggerRowDoesNotWriteSecondUsageFact(t *testing.T) {
+	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
+	receiver := newRequestTelemetryReceiver(store, nil, nil, true)
+	req := &apidpb.IncrementRequestTelemetryRequest{
+		EventId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
+		DeploymentId: uuid.NewString(), RouteTemplate: "GET /v1/items", Method: "GET",
+		HttpStatus: 200, LatencyMs: 10, ReceivedAtUnixMs: time.Now().UTC().UnixMilli(),
+		Count: 2, UsageOutboxed: true,
+	}
+	out := receiver.handleOne(context.Background(), req)
+	if out.GetOutcome() != rtOutcomeInserted {
+		t.Fatalf("outcome=%q", out.GetOutcome())
+	}
+	if len(store.usage) != 0 {
+		t.Fatalf("debugger wrote usage=%+v", store.usage)
+	}
+	if len(store.inserted) != 1 {
+		t.Fatalf("debugger rows=%d", len(store.inserted))
+	}
 }
 
 func (s *consumerTelemetryStore) AccountByID(context.Context, string) (state.Account, error) {

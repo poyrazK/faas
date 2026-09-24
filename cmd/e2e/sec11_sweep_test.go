@@ -197,15 +197,20 @@ var vmmdBinary string
 func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 	t.Helper()
 	hostHMACPath := testHostHMACKeyFile(t)
+	telemetryDir, err := os.MkdirTemp("/tmp", "faas-e2e-rt-*")
+	if err != nil {
+		t.Fatalf("create request telemetry socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(telemetryDir) })
 	env := []string{
 		"DATABASE_URL=" + dbURL,
 		"FAAS_SKIP_SOCKET_GROUP=1",      // harness convention; see harness.go:498
 		"FAAS_APP_ERRORS_ENABLED=false", // harness convention; see pkg/e2etest/harness.go:804 — ADR-096 / PR-B default-on kill-switch probes `faas-apid` unix user (config.go:144-149) which doesn't exist in the CI runner, so the gRPC listener never boots. Production deploys run as `faas-apid` via systemd and remain default-on; reader-path handlers (cmd/apid/handlers_app_errors.go) read from the SQL store regardless of the listener state.
-		// The request-telemetry gRPC listener is independent from app
-		// errors. Keep this direct-apid helper on the same opt-out as the
-		// shared e2e harness; telemetry-specific tests can override it via
-		// extra after this base environment.
+		// Disable the optional recorder, but give the always-on listener a
+		// test-private socket for durable consumer usage. Telemetry-specific
+		// tests can override both entries via extra after this base environment.
 		"FAAS_REQUEST_TELEMETRY_ENABLED=false",
+		"FAAS_APID_REQUEST_TELEMETRY_SOCKET=" + filepath.Join(telemetryDir, "request_telemetry.sock"),
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 		"FAAS_APPS_DOMAIN=apps.test.example",

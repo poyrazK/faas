@@ -752,6 +752,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_APID_LISTEN="+addr,
 			"FAAS_APPS_DOMAIN="+testDomain,
 			"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
+			"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
 			"FAAS_SPOOL_ROOT="+spoolRoot,
 			"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 		)
@@ -855,6 +856,7 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 		// the other one, and smoke run 35220096082 still lost three
 		// tests to `bind: address already in use` on 9101.
 		"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
+		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
 		"FAAS_SPOOL_ROOT="+spoolRoot,
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
@@ -981,6 +983,8 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_GATEWAY_CONTROL_LISTEN="+controlAddr,
 		"FAAS_GATEWAY_SYNTH_SOCKET="+synthSock,
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
+		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(h.TmpDir, "consumer-usage"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
@@ -1037,6 +1041,8 @@ func (h *Harness) StartAdditionalGateway(nodeName string, extraEnv ...string) st
 		"FAAS_GATEWAY_CONTROL_LISTEN="+controlAddr,
 		"FAAS_GATEWAY_SYNTH_SOCKET="+filepath.Join(dir, "gatewayd-internal.sock"),
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
+		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(dir, "consumer-usage"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 		"FAAS_NODE_NAME="+nodeName,
 	)
@@ -1157,10 +1163,10 @@ func startGatewaySynthStub(t *testing.T, h *Harness) {
 //     and the main HTTP path boots cleanly. The reader-path handlers
 //     (cmd/apid/handlers_app_errors.go) are not affected — they read
 //     from the SQL store regardless of the gRPC listener state.
-//   - FAAS_REQUEST_TELEMETRY_ENABLED=false — the request-telemetry gRPC
-//     listener is opt-in for ordinary E2E fixtures because most tests do not
-//     provide a per-test Unix socket. Telemetry-specific fixtures override
-//     this after testEnvCommon and provide FAAS_APID_REQUEST_TELEMETRY_SOCKET.
+//   - FAAS_REQUEST_TELEMETRY_ENABLED=false — ordinary E2E fixtures disable
+//     the optional request-telemetry recorder. The listener still starts so
+//     durable consumer usage remains available; both APID launch paths set
+//     FAAS_APID_REQUEST_TELEMETRY_SOCKET to a per-test Unix socket.
 //   - FAAS_MFA_RECOVERY_HMAC_KEY=<per-test hex> — see Harness
 //     .RecoveryHMACKeyHex. apid refuses to boot without a recovery
 //     HMAC key (cmd/apid/main.go:loadOrGenerateRecoveryHMACKey); the

@@ -82,6 +82,9 @@ type RequestTelemetryRow struct {
 	// PlatformTenantID is the verified account-level customer at request
 	// time. The publisher must not merge rows across a link transition.
 	PlatformTenantID string
+	// UsageOutboxed prevents the debugger's collapsed row from writing a
+	// second financial increment when its original requests are in the outbox.
+	UsageOutboxed bool
 	// These dimensions are normalized at the edge. Raw User-Agent, referrer
 	// URLs, and IP addresses never enter this row or the gRPC payload.
 	UAFamily     string // normalized family, e.g. chrome, safari, bot

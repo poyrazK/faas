@@ -86,6 +86,17 @@ func TestCollapseRequestTelemetry_BulkFoldsIntoOneBucket(t *testing.T) {
 	}
 }
 
+func TestCollapseRequestTelemetrySeparatesOutboxedAndLegacyUsage(t *testing.T) {
+	row := makeCollapseRow(uuid.New(), uuid.New(), uuid.New(), "GET /v1/items", "GET", 200, 10, false, "", time.Now().UTC())
+	newRow := row
+	newRow.EventID = uuid.New()
+	newRow.UsageOutboxed = true
+	collapsed := collapseRequestTelemetry([]RequestTelemetryRow{row, newRow})
+	if len(collapsed) != 2 {
+		t.Fatalf("collapsed=%d, want separate accounting sources", len(collapsed))
+	}
+}
+
 func TestCollapseRequestTelemetrySeparatesConsumers(t *testing.T) {
 	t.Parallel()
 	accountID, appID, deploymentID := uuid.New(), uuid.New(), uuid.New()

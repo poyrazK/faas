@@ -2150,9 +2150,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance covers both IncrementRequestTelemetry and WriteSpansSummary
 	// paths so a customer's plan cap is enforced against one bucket pool.
 	sharedLimiter := peraccount.NewLimiter()
-	if deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false" {
+	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter)
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false")
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -2173,7 +2173,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2275,6 +2275,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			go wire.WatchTLSReload(ctx, log, bridgeHupCh, bridgeRotator, bridgeReload)
 		}
+	} else if target := cfg.GetAppErrorsTarget(deps.getenv); !isUnixSocketPath(target) {
+		// Split-box accounting shares the private mTLS listener. Disabling
+		// optional app errors must not disable financial usage receipts.
+		usageTLS, tlsErr := cfg.LoadAppErrorsTLSWithPrefixAndVerifierAndReload(nodeVerifier, nil)
+		if tlsErr != nil {
+			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
+		}
+		var listenErr error
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false)
+		if listenErr != nil {
+			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
+		}
+		go func() {
+			if err := appErrSrv.Serve(appErrLis); err != nil {
+				log.Error("apid consumer usage serve", "err", err)
+			}
+		}()
 	}
 
 	// systemd Type=notify must not promote apid until all startup work
@@ -2740,7 +2757,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -2759,18 +2776,18 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 		wire.ServerCredsOrEmpty(tlsCfg),
 		wire.TraceServerOptions()...,
 	)...)
-	registerAppErrorsReceiver(srv, store, ops, true)
+	registerAppErrorsReceiver(srv, store, ops, appErrorsEnabled)
 	// Split-box deployments reuse the same private mTLS listener for both
 	// gateway telemetry services. Single-box deployments use the dedicated
 	// request_telemetry.sock server below, preserving the separate DAC
 	// boundaries for the legacy Unix sockets.
-	if !isUnixSocketPath(target) && os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false" {
-		registerRequestTelemetryReceiver(srv, store, ops, limiter, true)
+	if !isUnixSocketPath(target) {
+		registerRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false")
 	}
 	// gatewayd-internal's platform-owned spans use the same private mTLS
 	// listener in split-box deployments. The dedicated Unix socket remains the
 	// single-box path and is registered by runSpansWriterServer.
-	if !isUnixSocketPath(target) && os.Getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
+	if appErrorsEnabled && !isUnixSocketPath(target) && os.Getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
 		registerSpansWriterReceiver(srv, store, ops, limiter, true)
 	}
 	return srv, lis, nil
@@ -2788,13 +2805,13 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, enabled bool) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	registerRequestTelemetryReceiver(srv, store, ops, limiter, true)
+	registerRequestTelemetryReceiver(srv, store, ops, limiter, enabled)
 	return srv, lis, nil
 }
 

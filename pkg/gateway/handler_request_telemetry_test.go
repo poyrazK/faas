@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -33,6 +34,46 @@ func makeTestRecorder() *requestTelemetryRecorder {
 		Enabled:  true,
 		RingSize: 64,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func TestHandlerObserveRecordsUsageWithDebuggerDisabled(t *testing.T) {
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{usageOutbox: q}
+	acct, app, consumer, tenant := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	r := httptest.NewRequest(http.MethodGet, "/items", nil)
+	r = withAppAndAccount(r, acct, app)
+	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: consumer.String(), AppID: app.String()}))
+	r = r.WithContext(withAuthenticated(r.Context(), Authenticated{ConsumerID: consumer.String(), PlatformTenantID: tenant.String()}))
+	h.observe(r, 503, app.String(), string(api.PlanPro), false, Target{})
+	item, ok, err := q.Next()
+	if err != nil || !ok {
+		t.Fatalf("usage item ok=%t err=%v", ok, err)
+	}
+	if item.Event.PlatformTenantID != tenant.String() || item.Event.ConsumerID != consumer.String() || item.Event.ErrorCount != 1 || item.Event.BillableUnits != 1 {
+		t.Fatalf("usage event=%+v", item.Event)
+	}
+}
+
+func TestHandlerObserveOutboxAndDebuggerShareEventIDWithoutDoubleUsage(t *testing.T) {
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{usageOutbox: q, requestTelemetry: makeTestRecorder()}
+	acct, app := uuid.New(), uuid.New()
+	r := withAppAndAccount(httptest.NewRequest(http.MethodGet, "/items", nil), acct, app)
+	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{})
+	item, ok, err := q.Next()
+	if err != nil || !ok {
+		t.Fatalf("usage item ok=%t err=%v", ok, err)
+	}
+	rows := h.requestTelemetry.DrainBatch(1)
+	if len(rows) != 1 || !rows[0].UsageOutboxed || rows[0].EventID.String() != item.Event.EventID {
+		t.Fatalf("debug row=%+v usage=%+v", rows, item.Event)
+	}
 }
 
 // TestHandlerObserveEnqueuesRow proves the wiring is end-to-end:

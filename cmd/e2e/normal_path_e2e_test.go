@@ -1563,9 +1563,10 @@ func TestE2E_NormalPath_GatewayRestartReloadsDurableRoute(t *testing.T) {
 
 	// Keep the fake bridge alive. The fresh gateway and schedd pair must
 	// rediscover the durable compute-node target and route without the old
-	// process-local cache.
+	// process-local cache. Apid is restarted too because a production gateway
+	// now verifies its durable usage receiver before serving traffic.
 	f.h.Stop()
-	h2 := e2etest.Start(t, f.h.Pool, e2etest.Schedd|e2etest.Gatewayd)
+	h2 := e2etest.Start(t, f.h.Pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
 	waitForNormalPathResponse(t, h2, f.host, "normal-path:v1\n", 10*time.Second)
 	if request := f.vmmd.LastRequest(); request == nil || request.Instance != instance.ID {
 		t.Fatalf("post-restart request instance=%q, want %q", requestInstance(request), instance.ID)
@@ -1654,7 +1655,7 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 		Status: http.StatusOK,
 		Body:   []byte("restart-recovered\n"),
 	})
-	h2 := e2etest.Start(t, f.h.Pool, e2etest.Schedd|e2etest.Gatewayd)
+	h2 := e2etest.Start(t, f.h.Pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
 	_, body, statusCode := doReqHeaders(t, h2, f.host, http.MethodGet, "/after-restart", nil)
 	if statusCode != http.StatusOK || string(body) != "restart-recovered\n" {
 		t.Fatalf("post-restart response: status=%d body=%q, want 200/restart-recovered", statusCode, body)
