@@ -1,3 +1,4 @@
+// adr: 099
 // memstore_jobs_coverage_test.go — pkg/state coverage pin for the
 // JobStore surface (Mega-1 jobs).
 //
@@ -733,6 +734,49 @@ func TestMemStoreJobs_JobTaskRequeue(t *testing.T) {
 
 	if err := ms.JobTaskRequeue(ctx, "missing", 0, next); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("JobTaskRequeue(missing): err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemStoreJobs_JobTaskFailBootConsumesBudgetAndFencesOldClaim(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	_, run, _ := newJobAndRun(t, ms, "acct-BF", "bf1")
+	expires := time.Now().Add(time.Minute)
+	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, "instance-1", "lease-1", expires, "node-1"); err != nil {
+		t.Fatal(err)
+	}
+	next := time.Now().Add(time.Minute)
+	retried, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "artifact unavailable")
+	if err != nil || !retried {
+		t.Fatalf("first boot failure: retried=%v err=%v", retried, err)
+	}
+	task, err := ms.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.InstanceID != nil || task.NextAttemptAt == nil || task.NextAttemptAt.Before(next.Add(-time.Second)) || task.ErrorClass == nil || *task.ErrorClass != "infra" {
+		t.Fatalf("first boot failure task=%+v err=%v", task, err)
+	}
+	if _, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "stale boot"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale claim error=%v, want ErrNotFound", err)
+	}
+	if err := ms.JobTaskCompleteClaimedWithLogs(ctx, run.ID, 0, "instance-1", "lease-1", "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("late exit after retry error=%v, want ErrNotFound", err)
+	}
+	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, "instance-2", "lease-2", expires, "node-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "stale boot"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("replaced claim error=%v, want ErrNotFound", err)
+	}
+	if err := ms.JobTaskCompleteClaimedWithLogs(ctx, run.ID, 0, "instance-1", "lease-1", "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("late exit after replacement error=%v, want ErrNotFound", err)
+	}
+	retried, err = ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-2", "lease-2", 1, next, "artifact unavailable")
+	if err != nil || retried {
+		t.Fatalf("exhausted boot failure: retried=%v err=%v", retried, err)
+	}
+	task, err = ms.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || task.Status != "failed" || task.Attempt != 2 || task.FinishedAt == nil || task.ErrorMessage == nil || *task.ErrorMessage != "artifact unavailable" {
+		t.Fatalf("terminal boot failure task=%+v err=%v", task, err)
 	}
 }
 

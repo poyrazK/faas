@@ -1912,6 +1912,16 @@ The Jobs feature ships as a post-M8 workstream rather than as part of M0–M8 be
 | **M14** | unit + metal e2e tests | 13 apid + 11 CLI + 11 metal-tagged jobs e2e tests; `cmd/e2e/jobs_metal_test.go` compiles under `-tags metal` (real impls land in follow-up commit) |
 | **M15** | docs: ADR-099 supplement + runbook + SPEC cross-link | this section; `docs/adr/099-supplement-jobs-mega1.md`; `docs/runbooks/FaasJobsQueueBacklog.md` |
 
+Job boot retry safety (issue #3052): a claimed pre-execution VM boot failure
+must consume an attempt with capped backoff, or persist a terminal `infra`
+error when `retry_max` is exhausted. The transition is fenced by both the
+claimed instance ID and lease token; a delayed guest exit cannot settle a
+newer attempt. Before-claim admission errors leave the queued task unchanged.
+The memstore/pgstore transition and scheduler dispatch regressions are the
+executable gate for this contract. vmmd in-flight cancellation, artifact
+existence repair, and cold-cache watchdog timing have separate acceptance
+gates in issue #3052.
+
 Canonical references (read in order):
 1. `docs/adr/099-jobs.md` — the v1 ADR (proposed).
 2. `docs/adr/099-supplement-jobs-mega1.md` — as-built deviations from v1 (Mega-1).

@@ -21,6 +21,19 @@ vmmd one round-trippable artifact contract. Materialization is lease-claimed,
 retry-safe, and gated before task dispatch; account-scoped private-registry
 credentials are sealed at rest and exposed through the Jobs API.
 
+## Boot-failure retry safety amendment (2026-09-24)
+
+A claimed task whose VM boot fails before customer code starts no longer
+returns immediately to attempt 1. The claim's instance ID and lease token
+fence an atomic task transition: if `attempt <= retry_max`, it increments the
+attempt and schedules the normal capped retry backoff; otherwise it records a
+terminal `infra` error and settles the run. A late exit can settle only the
+currently claimed instance and lease. Admission failures before a task claim
+leave the queued task unchanged. This bounds VM churn without assuming that a
+failed boot is cost-free or that an uncertain transport failure cannot race a
+guest exit. In-flight boot cancellation at vmmd and cold-cache watchdog
+qualification remain separate issue #3052 gates.
+
 ## Locked deviations
 
 1. **Slot bank 00517–00524 is fenced by ADR-134 PR-A.** Mega-1
