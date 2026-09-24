@@ -94,6 +94,7 @@ type ProjectEnvironmentReleaseWorkloadResponse struct {
 	WorkloadSlug   string `json:"workload_slug"`
 	WorkloadName   string `json:"workload_name"`
 	Status         string `json:"status"`
+	URL            string `json:"url,omitempty"`
 	DeploymentID   string `json:"deployment_id,omitempty"`
 	BuildID        string `json:"build_id,omitempty"`
 	ImageDigest    string `json:"image_digest,omitempty"`

@@ -40,6 +40,7 @@ type pgRouter struct {
 var errPlatformTenantSuspended = errors.New("platform tenant suspended")
 
 var _ gateway.Router = pgRouter{}
+var _ gateway.DynamicRouteHostMatcher = pgRouter{}
 var _ gateway.PlatformTenantHostResolver = pgRouter{}
 
 func (r pgRouter) tenantSurfacesOn() bool {
@@ -59,6 +60,9 @@ func (r pgRouter) ResolvePlatformTenantHost(ctx context.Context, host string) (g
 		return gateway.PlatformTenantHostBinding{}, false, nil
 	}
 	if _, _, ok := gateway.DeploymentScopeFromHost(r.deploySuffix, host); ok {
+		return gateway.PlatformTenantHostBinding{}, false, nil
+	}
+	if r.IsDynamicRouteHost(host) {
 		return gateway.PlatformTenantHostBinding{}, false, nil
 	}
 	if _, ok := r.deploymentAliasLabelForHost(host); ok {
@@ -86,6 +90,9 @@ func (r pgRouter) ResolvePlatformTenantHost(ctx context.Context, host string) (g
 // ResolveHost implements gateway.Router. A missing/unverified/deleted route is a
 // clean ok=false (404); only an actual store failure returns a non-nil error.
 func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bool, error) {
+	if environmentID, appID, matched := gateway.EnvironmentIDsFromHost(r.deploySuffix, host); matched {
+		return r.environmentHost(ctx, environmentID, appID)
+	}
 	if revision, slug, matched := gateway.DeploymentScopeFromHost(r.deploySuffix, host); matched {
 		return r.deploymentPreview(ctx, slug, revision)
 	}
@@ -116,6 +123,61 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 		}
 	}
 	return r.customDomain(ctx, host)
+}
+
+// IsDynamicRouteHost marks registered-environment URLs as uncached. Their
+// target moves on promotion and disappears on environment deletion; resolving
+// each request from the registry avoids serving a stale scope if a notifier is
+// delayed or lost. Ordinary and immutable-deployment hosts keep their caches.
+func (r pgRouter) IsDynamicRouteHost(host string) bool {
+	_, _, matched := gateway.EnvironmentIDsFromHost(r.deploySuffix, host)
+	return matched
+}
+
+func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID string) (gateway.App, bool, error) {
+	lookup, ok := r.store.(interface {
+		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
+	})
+	if !ok {
+		return gateway.App{}, false, errors.New("project environment identity lookup unavailable")
+	}
+	environment, err := lookup.ProjectEnvironmentByID(ctx, environmentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	app, err := r.store.AppByID(ctx, appID)
+	if errors.Is(err, state.ErrNotFound) {
+		// MemStore uses compact hexadecimal IDs while PostgreSQL returns
+		// canonical UUIDs. Both encode the same hostname identity.
+		app, err = r.store.AppByID(ctx, strings.ReplaceAll(appID, "-", ""))
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	if app.ProjectID == "" || app.ProjectID != environment.ProjectID || app.AccountID != environment.AccountID ||
+		api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
+	}
+	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return gateway.App{}, false, nil
+	}
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
+	if err != nil || !found {
+		return resolved, found, err
+	}
+	resolved.PinnedDeploymentID = deployment.ID
+	resolved.PinnedDeploymentScope = environment.Slug
+	return resolved, true, nil
 }
 
 func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
@@ -389,6 +451,10 @@ func (r pgRouter) previewScopeFromHost(host string) (number int, slug string, ok
 // ConsumerAuthMode (ADR-120) is likewise plumbed through so the public
 // edge can resolve app-scoped end-customer keys before downstream work.
 func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, error) {
+	return r.toAppWithDeployment(ctx, app, nil)
+}
+
+func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
 	if app.Status == state.AppDeleted {
 		return gateway.App{}, false, nil
 	}
@@ -398,16 +464,23 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 	}
 	securityQuarantined := false
 	var liveDeployments []state.Deployment
-	if deps, depErr := r.store.LiveDeployments(ctx, app.ID); depErr == nil {
-		liveDeployments = deps
-		for _, dep := range deps {
-			if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
-				securityQuarantined = true
-				break
-			}
+	if exact != nil {
+		// An environment URL serves one release, not the application's
+		// cross-environment live set. Sidecar ingress and quarantine state
+		// must come from that release even when production differs.
+		liveDeployments = []state.Deployment{*exact}
+	} else {
+		deps, depErr := r.store.LiveDeployments(ctx, app.ID)
+		if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
+			return gateway.App{}, false, depErr
 		}
-	} else if !errors.Is(depErr, state.ErrNotFound) {
-		return gateway.App{}, false, depErr
+		liveDeployments = deps
+	}
+	for _, dep := range liveDeployments {
+		if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+			securityQuarantined = true
+			break
+		}
 	}
 	companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
 	if err != nil {

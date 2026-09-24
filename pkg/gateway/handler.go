@@ -292,9 +292,9 @@ type App struct {
 	// existing route cache (apps_update / domain_changed wipes
 	// the route cache, and the next Lookup re-derives).
 	Scope string
-	// PinnedDeploymentID is set only for a deployment-preview hostname. It
-	// makes the public request path select the immutable deployment addressed
-	// by deploy-{revision}-{slug}, independent of customer traffic weights.
+	// PinnedDeploymentID is set for deployment-preview and named-environment
+	// hostnames. It makes the public request path select the exact deployment
+	// resolved for that hostname, independent of customer traffic weights.
 	// PinnedDeploymentScope is the deployment's environment scope and must be
 	// forwarded on a cold admission so the exact artifact receives the same
 	// scoped configuration it was built to serve.

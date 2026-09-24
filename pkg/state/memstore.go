@@ -2921,6 +2921,21 @@ func (m *MemStore) ProjectEnvironmentBySlug(_ context.Context, accountID, projec
 	return ProjectEnvironment{}, ErrNotFound
 }
 
+func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (ProjectEnvironment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	environment, ok := m.projectEnvironments[id]
+	if !ok {
+		// MemStore's newID uses 32 hex characters; platform host decoding
+		// returns the canonical, hyphenated form of the same UUID bytes.
+		environment, ok = m.projectEnvironments[strings.ReplaceAll(id, "-", "")]
+	}
+	if !ok {
+		return ProjectEnvironment{}, ErrNotFound
+	}
+	return environment, nil
+}
+
 func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

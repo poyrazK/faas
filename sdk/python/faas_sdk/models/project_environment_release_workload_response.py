@@ -18,11 +18,15 @@ T = TypeVar("T", bound="ProjectEnvironmentReleaseWorkloadResponse")
 
 @_attrs_define
 class ProjectEnvironmentReleaseWorkloadResponse:
-    """Current live deployment metadata for one project workload."""
+    """Current live deployment metadata for one project workload. The stable environment URL is present before the first
+    deployment but returns 404 until a live release exists.
+
+    """
 
     workload_slug: str
     workload_name: str
     status: ProjectEnvironmentReleaseWorkloadResponseStatus
+    url: str | Unset = UNSET
     deployment_id: str | Unset = UNSET
     build_id: str | Unset = UNSET
     image_digest: str | Unset = UNSET
@@ -39,6 +43,8 @@ class ProjectEnvironmentReleaseWorkloadResponse:
         workload_name = self.workload_name
 
         status: str = self.status
+
+        url = self.url
 
         deployment_id = self.deployment_id
 
@@ -67,6 +73,8 @@ class ProjectEnvironmentReleaseWorkloadResponse:
                 "status": status,
             }
         )
+        if url is not UNSET:
+            field_dict["url"] = url
         if deployment_id is not UNSET:
             field_dict["deployment_id"] = deployment_id
         if build_id is not UNSET:
@@ -95,6 +103,8 @@ class ProjectEnvironmentReleaseWorkloadResponse:
 
         status = check_project_environment_release_workload_response_status(d.pop("status"))
 
+        url = d.pop("url", UNSET)
+
         deployment_id = d.pop("deployment_id", UNSET)
 
         build_id = d.pop("build_id", UNSET)
@@ -120,6 +130,7 @@ class ProjectEnvironmentReleaseWorkloadResponse:
             workload_slug=workload_slug,
             workload_name=workload_name,
             status=status,
+            url=url,
             deployment_id=deployment_id,
             build_id=build_id,
             image_digest=image_digest,

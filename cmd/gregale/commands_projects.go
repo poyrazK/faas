@@ -94,9 +94,9 @@ func cmdProjectsEnvironmentReleases(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(releases))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Environment releases %s/%s\n%-24s %-14s %-36s %-18s %s\n", releases.ProjectSlug, releases.Environment, "WORKLOAD", "STATUS", "DEPLOYMENT", "BUILD", "COMMIT")
+	_, _ = fmt.Fprintf(osStdout, "Environment releases %s/%s\n%-24s %-14s %-36s %-18s %-18s %s\n", releases.ProjectSlug, releases.Environment, "WORKLOAD", "STATUS", "DEPLOYMENT", "BUILD", "COMMIT", "URL")
 	for _, workload := range releases.Workloads {
-		_, _ = fmt.Fprintf(osStdout, "%-24s %-14s %-36s %-18s %s\n", workload.WorkloadSlug, workload.Status, workload.DeploymentID, workload.BuildID, workload.CommitSHA)
+		_, _ = fmt.Fprintf(osStdout, "%-24s %-14s %-36s %-18s %-18s %s\n", workload.WorkloadSlug, workload.Status, workload.DeploymentID, workload.BuildID, workload.CommitSHA, workload.URL)
 	}
 	return 0
 }

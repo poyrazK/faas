@@ -24,7 +24,8 @@ class ProjectEnvironmentStateWorkloadResponse:
     workload_slug: str
     workload_name: str
     release: ProjectEnvironmentReleaseWorkloadResponse
-    """Current live deployment metadata for one project workload."""
+    """Current live deployment metadata for one project workload. The stable environment URL is present before the
+    first deployment but returns 404 until a live release exists."""
     variables: list[ProjectEnvironmentVariableResponse]
     secrets: list[ProjectEnvironmentSecretResponse]
     bindings: list[ProjectEnvironmentBindingResponse]

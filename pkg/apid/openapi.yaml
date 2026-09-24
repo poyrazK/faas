@@ -26819,13 +26819,14 @@ components:
           items: { $ref: '#/components/schemas/ProjectEnvironmentReleaseWorkloadResponse' }
 
     ProjectEnvironmentReleaseWorkloadResponse:
-      description: Current live deployment metadata for one project workload.
+      description: Current live deployment metadata for one project workload. The stable environment URL is present before the first deployment but returns 404 until a live release exists.
       type: object
       required: [workload_slug, workload_name, status]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
         status: { type: string, enum: [live, not_deployed] }
+        url: { type: string, format: uri }
         deployment_id: { type: string }
         build_id: { type: string }
         image_digest: { type: string }

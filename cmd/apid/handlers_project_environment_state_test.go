@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -77,6 +78,14 @@ func TestProjectEnvironmentStateAndUnifiedDiff(t *testing.T) {
 	}
 	if snapshot.Environment != "staging" || len(snapshot.Workloads) != 1 || snapshot.Workloads[0].Release.DeploymentID != staging.ID {
 		t.Fatalf("snapshot=%+v", snapshot)
+	}
+	environment, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantURL := "https://" + gateway.BuildEnvironmentHost(".gregale.dev", environment.ID, app.ID)
+	if snapshot.Workloads[0].Release.URL != wantURL {
+		t.Fatalf("environment URL = %q, want %q", snapshot.Workloads[0].Release.URL, wantURL)
 	}
 	workload := snapshot.Workloads[0]
 	if len(workload.Variables) != 2 || len(workload.Secrets) != 2 || len(workload.Bindings) != 1 || workload.Bindings[0].CredentialGeneration != 7 {

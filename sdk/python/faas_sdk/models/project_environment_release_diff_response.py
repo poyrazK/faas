@@ -24,9 +24,11 @@ class ProjectEnvironmentReleaseDiffResponse:
 
     kind: ProjectEnvironmentReleaseDiffResponseKind
     before: ProjectEnvironmentReleaseWorkloadResponse
-    """Current live deployment metadata for one project workload."""
+    """Current live deployment metadata for one project workload. The stable environment URL is present before the
+    first deployment but returns 404 until a live release exists."""
     after: ProjectEnvironmentReleaseWorkloadResponse
-    """Current live deployment metadata for one project workload."""
+    """Current live deployment metadata for one project workload. The stable environment URL is present before the
+    first deployment but returns 404 until a live release exists."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

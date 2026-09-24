@@ -4952,6 +4952,17 @@ func (s *PgStore) ProjectEnvironmentBySlug(ctx context.Context, accountID, proje
 	return scanProjectEnvironment(row)
 }
 
+// ProjectEnvironmentByID is the identity lookup for a platform-owned
+// environment hostname. The router separately verifies its account/project
+// association with the workload encoded in the same hostname.
+func (s *PgStore) ProjectEnvironmentByID(ctx context.Context, id string) (ProjectEnvironment, error) {
+	row := s.pool.QueryRow(ctx, `
+		select id, account_id, project_id, slug, protected, created_at, updated_at
+		  from project_environments where id = $1
+	`, id)
+	return scanProjectEnvironment(row)
+}
+
 func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
 	project, err := s.ProjectByID(ctx, env.ProjectID)
 	if err != nil || project.AccountID != env.AccountID {
