@@ -87,6 +87,13 @@ on:
         required: false
         default: false
         type: boolean
+      hosted_runner:
+        description: >-
+          Run this workflow's coordination job on a GitHub-hosted runner
+          instead of the dedicated fleet runner. Escape hatch for when the
+          fleet runner host is unavailable; hosted jobs queue behind CI.
+        type: boolean
+        default: false
       rollout_phase:
         description: "Rollout phase: full, prepare, or activate"
         required: false
@@ -168,6 +175,13 @@ on:
         required: false
         default: false
         type: boolean
+      hosted_runner:
+        description: >-
+          Run this workflow's coordination job on a GitHub-hosted runner
+          instead of the dedicated fleet runner. Escape hatch for when the
+          fleet runner host is unavailable; hosted jobs queue behind CI.
+        type: boolean
+        default: false
       rollout_phase:
         description: "Rollout phase: full, prepare, or activate"
         required: false
@@ -203,7 +217,7 @@ env:
 jobs:
   preflight:
     name: Validate compute deployment prerequisites
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}
     environment: production
     timeout-minutes: 5
     outputs:

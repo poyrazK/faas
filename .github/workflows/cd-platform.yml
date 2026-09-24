@@ -24,6 +24,15 @@ on:
           activation, so skip the healthy customer-path baseline gate.
         type: boolean
         default: false
+      hosted_runners:
+        description: >-
+          Run the coordination jobs (plan, control-plane deploy, compute
+          preflights, verify) on GitHub-hosted runners instead of the
+          dedicated fleet runner. Escape hatch for when the fleet runner host
+          is unavailable; hosted jobs queue behind CI. Compute node rollouts
+          always need the fleet runner.
+        type: boolean
+        default: false
       release_tag:
         description: "Existing signed pre-1.0 release tag"
         required: true
@@ -128,7 +137,7 @@ permissions:
 jobs:
   plan:
     name: Validate compute rollout targets
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.hosted_runners && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}
     outputs:
       targets: ${{ steps.matrix.outputs.targets }}
       batch_prepare: ${{ steps.matrix.outputs.batch_prepare }}
@@ -228,6 +237,7 @@ jobs:
     name: Control-plane stage
     uses: ./.github/workflows/cd-controlplane.yml
     with:
+      hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
       maintenance_mode: ${{ inputs.maintenance_mode }}
     secrets: inherit
@@ -238,6 +248,7 @@ jobs:
     if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true'
     uses: ./.github/workflows/cd-compute.yml
     with:
+      hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
       compute_targets: ${{ needs.plan.outputs.targets }}
       pki_source: ${{ inputs.compute_pki_source }}
@@ -260,6 +271,7 @@ jobs:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
     uses: ./.github/workflows/cd-compute.yml
     with:
+      hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
       pki_source: ${{ inputs.compute_pki_source }}
       claim_file: ${{ matrix.target.claim_file }}
@@ -290,6 +302,7 @@ jobs:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
     uses: ./.github/workflows/cd-compute.yml
     with:
+      hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
       pki_source: ${{ inputs.compute_pki_source }}
       claim_file: ${{ matrix.target.claim_file }}
@@ -311,7 +324,7 @@ jobs:
     name: Report fleet release convergence
     if: always()
     needs: [control, compute-prepare, compute-prepare-compat, compute, plan]
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.hosted_runners && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}
     environment: production
     # Initial parallel deploys, bounded serial coverage follow-ups, and the
     # zero-downtime redeploy can exceed 45 minutes without any gate failing.
