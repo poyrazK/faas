@@ -1266,14 +1266,14 @@ func (v *JailerVMM) scheduleStartupCPUBoostTail(
 	}
 	v.cpuBoostTails[l.Instance] = tail
 	tail.timer = time.AfterFunc(tailDuration, func() {
-		v.finishStartupCPUBoostTail(tail)
+		v.finishStartupCPUBoostTail(tail.ctx, tail)
 	})
 	v.mu.Unlock()
 }
 
 // finishStartupCPUBoostTail serializes quota restoration with Kill and a
 // replacement VM using the same instance id. A stale callback is ignored.
-func (v *JailerVMM) finishStartupCPUBoostTail(tail *startupCPUBoostTail) {
+func (v *JailerVMM) finishStartupCPUBoostTail(ctx context.Context, tail *startupCPUBoostTail) {
 	v.mu.Lock()
 	if v.cpuBoostTails[tail.lease.Instance] != tail {
 		v.mu.Unlock()
@@ -1294,13 +1294,13 @@ func (v *JailerVMM) finishStartupCPUBoostTail(tail *startupCPUBoostTail) {
 			"instance", tail.lease.Instance, "configured_millicores", tail.profile.ConfiguredMillicores, "err", err)
 		// Do not leave a live tenant VM with an allowance that could not be
 		// returned to its configured ceiling. Teardown is the fail-closed path.
-		if killErr := v.Kill(context.WithoutCancel(tail.ctx), tail.lease); killErr != nil {
+		if killErr := v.Kill(context.WithoutCancel(ctx), tail.lease); killErr != nil {
 			slog.Error("vmm: kill instance after startup CPU quota restore failure",
 				"instance", tail.lease.Instance, "err", killErr)
 		}
 	}
 	if tail.wakeID != "" && v.events != nil {
-		v.events.EmitAsync(tail.ctx, events.CPUBoostTail{
+		v.events.EmitAsync(ctx, events.CPUBoostTail{
 			EmitAt:                        quotaRestoredAt.UTC(),
 			WakeID:                        tail.wakeID,
 			AppID:                         tail.appID,

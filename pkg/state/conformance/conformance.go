@@ -877,7 +877,8 @@ func testStartupCPUBoostReservation(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
-	until := time.Now().UTC().Add(time.Minute)
+	// PostgreSQL stores timestamptz at microsecond precision.
+	until := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
 	if err := fx.Store.SetInstanceStartupCPUBoostUntil(fx.Ctx, instance.ID, &until); err != nil {
 		t.Fatalf("SetInstanceStartupCPUBoostUntil: %v", err)
 	}
