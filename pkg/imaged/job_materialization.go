@@ -176,6 +176,11 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 // remain pending with a durable backoff; after the bounded attempt budget the
 // row becomes failed for customer/operator visibility.
 func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
+	if verifier, ok := h.store.(state.JobLegacyArtifactVerificationStore); ok {
+		if err := h.verifyLegacyJobArtifacts(ctx, verifier); err != nil {
+			return err
+		}
+	}
 	images, ok := h.store.(state.JobImageMaterializationStore)
 	if !ok {
 		return fmt.Errorf("imaged: job image materialization store unavailable")
@@ -200,6 +205,50 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// verifyLegacyJobArtifacts checks the canonical storage backend before
+// releasing pre-OCI jobs to the scheduler. A failed or unsupported probe is
+// not proof of absence: retain the non-dispatchable state and retry later.
+func (h *Handler) verifyLegacyJobArtifacts(ctx context.Context, verifier state.JobLegacyArtifactVerificationStore) error {
+	jobs, err := verifier.JobClaimLegacyArtifactVerification(ctx, jobMaterializationBatchSize, h.jobMaterializationOwner(), jobMaterializationLease)
+	if err != nil {
+		return fmt.Errorf("imaged: claim legacy job artifacts: %w", err)
+	}
+	for _, job := range jobs {
+		backend, backendErr := h.storageFor()
+		if backendErr != nil {
+			h.retryLegacyJobArtifact(ctx, verifier, job, fmt.Sprintf("storage backend: %v", backendErr))
+			continue
+		}
+		found, supported, probeErr := storage.Exists(ctx, backend, job.ImageStorageKey)
+		if probeErr != nil {
+			h.retryLegacyJobArtifact(ctx, verifier, job, fmt.Sprintf("storage probe: %v", probeErr))
+			continue
+		}
+		if !supported {
+			h.retryLegacyJobArtifact(ctx, verifier, job, "storage backend does not support existence checks")
+			continue
+		}
+		reason := ""
+		if !found {
+			reason = "legacy job artifact is missing from canonical storage"
+		}
+		if _, err := verifier.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, h.jobMaterializationOwner(), found, reason); err != nil {
+			h.log.Warn("imaged: finish legacy job artifact verification", "job", job.ID, "err", err)
+			continue
+		}
+		h.log.Info("imaged: verified legacy job artifact", "job", job.ID, "found", found)
+	}
+	return nil
+}
+
+func (h *Handler) retryLegacyJobArtifact(ctx context.Context, verifier state.JobLegacyArtifactVerificationStore, job state.Job, reason string) {
+	if _, err := verifier.JobRetryLegacyArtifactVerification(ctx, job.ID, job.ImageRef, h.jobMaterializationOwner(), reason, time.Now().Add(jobMaterializationRetryDelay(job.ImageMaterializationAttempts))); err != nil {
+		h.log.Warn("imaged: retry legacy job artifact verification", "job", job.ID, "reason", reason, "err", err)
+		return
+	}
+	h.log.Warn("imaged: legacy job artifact verification deferred", "job", job.ID, "reason", reason)
 }
 
 func (h *Handler) failJobMaterialization(ctx context.Context, images state.JobImageMaterializationStore, job state.Job, reason string) error {

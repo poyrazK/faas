@@ -203,6 +203,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	// imaged conversion in this process, and deployment status deduplicates it.
 	buildTicker := time.NewTicker(2 * time.Second)
 	defer buildTicker.Stop()
+	jobMaterializationTicker := time.NewTicker(30 * time.Second)
+	defer jobMaterializationTicker.Stop()
 	staleDeploymentTicker := time.NewTicker(staleDeploymentSweepEvery)
 	defer staleDeploymentTicker.Stop()
 	securityScanEvery := l.securityScanEvery
@@ -304,6 +306,12 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
+		case <-jobMaterializationTicker.C:
+			if l.handler != nil {
+				if err := l.handler.MaterializePendingJobs(ctx); err != nil {
+					l.log.Warn("imaged: reconcile pending job images", "err", err)
+				}
+			}
 		case <-staleDeploymentTicker.C:
 			l.reconcileStaleDeployments(ctx)
 		case tick := <-l.securityScanCh:

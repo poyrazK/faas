@@ -12,6 +12,13 @@ Image pulls may use account-owned private-registry credentials configured with
 the API. Materialization is retry-safe across imaged workers, and schedd does
 not dispatch a task until the job's ext4 artifact is ready.
 
+Jobs created before OCI image materialization may still refer directly to an
+`apps/...ext4` artifact. During the upgrade, these rows briefly show
+`image_materialization_status=verifying_legacy` and cannot dispatch. imaged
+checks the canonical artifact store before returning a present artifact to
+`ready`. A missing artifact becomes `failed` with an explicit error; if the
+store cannot answer, the job remains non-dispatchable and the check retries.
+
 The first execution on a compute node can take longer while that artifact
 fills its local cache. Job tasks use their own timeout and lease reaper during
 this phase; the shorter HTTP-app cold-boot watchdog does not apply.

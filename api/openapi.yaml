@@ -25513,7 +25513,7 @@ components:
         image_ref: { type: string }
         image_resolved_digest: { type: string, description: "Immutable OCI manifest digest selected from image_ref." }
         image_storage_key: { type: string, description: "Canonical ext4 artifact key consumed by vmmd." }
-        image_materialization_status: { type: string, enum: [pending, ready, failed] }
+        image_materialization_status: { type: string, enum: [pending, verifying_legacy, ready, failed] }
         image_materialization_error: { type: string, description: "Actionable pull/build failure when materialization_status is failed." }
         image_materialized_at: { type: string, format: date-time }
         command:

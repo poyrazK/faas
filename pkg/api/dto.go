@@ -10105,7 +10105,7 @@ type JobResponse struct {
 	ImageResolvedDigest string `json:"image_resolved_digest,omitempty"`
 	// ImageStorageKey is the canonical ext4 artifact vmmd boots.
 	ImageStorageKey string `json:"image_storage_key,omitempty"`
-	// ImageMaterializationStatus is pending, ready, or failed.
+	// ImageMaterializationStatus is pending, verifying_legacy, ready, or failed.
 	ImageMaterializationStatus string            `json:"image_materialization_status"`
 	ImageMaterializationError  string            `json:"image_materialization_error,omitempty"`
 	ImageMaterializedAt        string            `json:"image_materialized_at,omitempty"`
