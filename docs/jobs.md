@@ -23,6 +23,10 @@ non-dispatchable and the check retries. OCI/GCS storage compresses newly
 published job rootfs objects; previously stored uncompressed objects remain
 readable.
 
+Cancelling a task while its job VM is still restoring an artifact also cancels
+that in-flight boot. The stop waits for vmmd to finish cleanup; a late boot
+result cannot publish a runnable VM after cancellation.
+
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
 gregale jobs run nightly --tasks 10 --parallelism 3
