@@ -96,6 +96,45 @@ func TestCmdPlatformTenantsApplyBundle(t *testing.T) {
 	}
 }
 
+func TestCmdPlatformTenantCredentialsApplyAndList(t *testing.T) {
+	var received api.ApplyPlatformTenantCredentialsRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v1/account/platform-tenants/tenant-id/credentials/apply":
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Error(err)
+			}
+			_ = json.NewEncoder(w).Encode(api.ApplyPlatformTenantCredentialsResponse{TenantID: "tenant-id", DryRun: received.DryRun,
+				Keys: []api.PlatformTenantCredentialResult{{PlatformTenantCredentialMetadata: api.PlatformTenantCredentialMetadata{ID: "key-id", Prefix: "cafebabe"}, Action: "create"}}})
+		case "GET /v1/account/platform-tenants/tenant-id/credentials":
+			_ = json.NewEncoder(w).Encode(api.PlatformTenantCredentialsResponse{Keys: []api.PlatformTenantCredentialMetadata{{ID: "key-id", Prefix: "cafebabe"}}})
+		default:
+			t.Errorf("unexpected route %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	path := filepath.Join(t.TempDir(), "keys.json")
+	if err := os.WriteFile(path, []byte(`{"keys":[{"consumer_id":"consumer-id","name":"v1","prefix":"cafebabe","hash":"001122","scopes":["read"]}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldOut, oldJSON := osStdout, jsonOutput
+	var stdout bytes.Buffer
+	osStdout, jsonOutput = &stdout, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	if code := cmdPlatformTenants([]string{"credentials-apply", "--id", "tenant-id", "--file", path, "--dry-run"}); code != 0 {
+		t.Fatalf("apply exit = %d", code)
+	}
+	if !received.DryRun || received.Keys[0].Prefix != "cafebabe" || !strings.Contains(stdout.String(), "create") {
+		t.Fatalf("apply = %+v, output=%q", received, stdout.String())
+	}
+	if code := cmdPlatformTenants([]string{"credentials-list", "--id", "tenant-id"}); code != 0 || !strings.Contains(stdout.String(), "cafebabe") {
+		t.Fatalf("list exit = %d, output=%q", code, stdout.String())
+	}
+}
+
 func TestCmdPlatformTenantsActivationSnapshotAndWait(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

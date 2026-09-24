@@ -27,48 +27,49 @@ import (
 )
 
 const (
-	serverSrcPath         = "server.go"
-	dtoFile               = "dto.go"
-	workflowFile          = "workflow_dag.go" // ADR-081 — workflow deployment DTOs and validation
-	secretsFile           = "secrets.go"
-	envFile               = "env.go"             // issue #395 / ADR-045
-	registryFile          = "registry_auth.go"   // issue #461 / ADR-062
-	alertsFile            = "alerts.go"          // issue #396 PR 3 / ADR-045
-	alertsDeliveryFile    = "alerts_delivery.go" // ADR-123 PR-D — AlertDeliveryResponse wire DTO
-	alertsPresetsFile     = "alerts_presets.go"  // ADR-123 / issue #1233 — alert-preset catalog DTOs
-	canaryCustomStageFile = "canary/dto.go"      // issue #976 / ADR-122 / production-leveling Stream F — CustomStage wire DTO
-	manifestFile          = "appmanifest.go"
-	cliauthFile           = "cliauth.go"
-	mfaFile               = "mfa.go"
-	sessionsFile          = "sessions.go" // IAM-3 (ADR-039)
-	errorsFile            = "errors.go"
-	wakeTLFile            = "wake_timeline.go"    // issue #517 PR-C / ADR-064
-	sidecarTimelineFile   = "sidecar_timeline.go" // issue #463 / ADR-069 — sidecar lifecycle timeline DTOs
-	orgsFile              = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
-	scanFile              = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
-	webhooksFile          = "webhooks.go"         // issue #476 / ADR-076
-	inboundWebhooksFile   = "inbound_webhooks.go" // ADR-212 — durable provider webhook ingress DTOs
-	realtimeFile          = "realtime.go"         // ADR-156 — managed realtime endpoint DTOs
-	logDrainsFile         = "logdrains.go"        // issue #1398 O4 — customer runtime log destinations
-	billingFile           = "billing.go"          // PR-P3 — admin reconcile + future billing DTOs
-	diffFile              = "diff.go"             // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
-	upstreamsFile         = "upstreams.go"        // ADR-098 §9.A PR-B
-	triggerFile           = "trigger.go"          // issue #757 / ADR-100 — trigger primitive wire DTOs
-	oidcFile              = "oidc.go"             // ADR-101 / PR-A — OIDC / keyless deploy auth DTOs
-	envDiffFile           = "env_diff.go"         // ADR-117 PR-C — EnvDiffResponse / EnvDiffRow / EnvDiffCell wire DTOs
-	operatorConfigFile    = "operator_config.go"  // ADR-132 — operator runtime configuration
-	obsFile               = "obs.go"              // Obs-Meta + Trace-IDs Mega-PR / C7 — operator obs backend DTOs + ObsHealthResponse
-	corsPresetsFile       = "cors_preset_dto.go"  // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
-	uploadSessionFile     = "upload_session.go"   // issue #1182 §P1 PR-1 — resumable upload session DTOs
-	managedPostgresFile   = "managed_postgres.go"
-	openapiContractFile   = "openapi_contract.go"
-	executionsFile        = "executions.go"       // ADR-171 — disposable one-shot execution DTOs
-	appTasksFile          = "app_tasks.go"        // ADR-230 — deployment-attached one-off command DTOs
-	projectsFile          = "projects.go"         // issue #2201 — durable project lifecycle and recovery DTOs
-	devSyncFile           = "dev_sync.go"         // developer edit-to-live history
-	privateNetworkFile    = "private_network.go"  // Gregale-owned private network fabric DTOs
-	queueBindingFile      = "queue_bindings.go"   // first-class queue binding DTOs
-	platformTenantsFile   = "platform_tenants.go" // ADR-226 account-level platform customers
+	serverSrcPath                 = "server.go"
+	dtoFile                       = "dto.go"
+	workflowFile                  = "workflow_dag.go" // ADR-081 — workflow deployment DTOs and validation
+	secretsFile                   = "secrets.go"
+	envFile                       = "env.go"             // issue #395 / ADR-045
+	registryFile                  = "registry_auth.go"   // issue #461 / ADR-062
+	alertsFile                    = "alerts.go"          // issue #396 PR 3 / ADR-045
+	alertsDeliveryFile            = "alerts_delivery.go" // ADR-123 PR-D — AlertDeliveryResponse wire DTO
+	alertsPresetsFile             = "alerts_presets.go"  // ADR-123 / issue #1233 — alert-preset catalog DTOs
+	canaryCustomStageFile         = "canary/dto.go"      // issue #976 / ADR-122 / production-leveling Stream F — CustomStage wire DTO
+	manifestFile                  = "appmanifest.go"
+	cliauthFile                   = "cliauth.go"
+	mfaFile                       = "mfa.go"
+	sessionsFile                  = "sessions.go" // IAM-3 (ADR-039)
+	errorsFile                    = "errors.go"
+	wakeTLFile                    = "wake_timeline.go"    // issue #517 PR-C / ADR-064
+	sidecarTimelineFile           = "sidecar_timeline.go" // issue #463 / ADR-069 — sidecar lifecycle timeline DTOs
+	orgsFile                      = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
+	scanFile                      = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
+	webhooksFile                  = "webhooks.go"         // issue #476 / ADR-076
+	inboundWebhooksFile           = "inbound_webhooks.go" // ADR-212 — durable provider webhook ingress DTOs
+	realtimeFile                  = "realtime.go"         // ADR-156 — managed realtime endpoint DTOs
+	logDrainsFile                 = "logdrains.go"        // issue #1398 O4 — customer runtime log destinations
+	billingFile                   = "billing.go"          // PR-P3 — admin reconcile + future billing DTOs
+	diffFile                      = "diff.go"             // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
+	upstreamsFile                 = "upstreams.go"        // ADR-098 §9.A PR-B
+	triggerFile                   = "trigger.go"          // issue #757 / ADR-100 — trigger primitive wire DTOs
+	oidcFile                      = "oidc.go"             // ADR-101 / PR-A — OIDC / keyless deploy auth DTOs
+	envDiffFile                   = "env_diff.go"         // ADR-117 PR-C — EnvDiffResponse / EnvDiffRow / EnvDiffCell wire DTOs
+	operatorConfigFile            = "operator_config.go"  // ADR-132 — operator runtime configuration
+	obsFile                       = "obs.go"              // Obs-Meta + Trace-IDs Mega-PR / C7 — operator obs backend DTOs + ObsHealthResponse
+	corsPresetsFile               = "cors_preset_dto.go"  // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
+	uploadSessionFile             = "upload_session.go"   // issue #1182 §P1 PR-1 — resumable upload session DTOs
+	managedPostgresFile           = "managed_postgres.go"
+	openapiContractFile           = "openapi_contract.go"
+	executionsFile                = "executions.go"                  // ADR-171 — disposable one-shot execution DTOs
+	appTasksFile                  = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
+	projectsFile                  = "projects.go"                    // issue #2201 — durable project lifecycle and recovery DTOs
+	devSyncFile                   = "dev_sync.go"                    // developer edit-to-live history
+	privateNetworkFile            = "private_network.go"             // Gregale-owned private network fabric DTOs
+	queueBindingFile              = "queue_bindings.go"              // first-class queue binding DTOs
+	platformTenantsFile           = "platform_tenants.go"            // ADR-226 account-level platform customers
+	platformTenantCredentialsFile = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -975,6 +976,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
+		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 	}

@@ -3,12 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { ApplyPlatformTenantCredentialsRequest } from '../models/ApplyPlatformTenantCredentialsRequest.js';
+import type { ApplyPlatformTenantCredentialsResponse } from '../models/ApplyPlatformTenantCredentialsResponse.js';
 import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRequest.js';
 import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
 import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
 import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
+import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
@@ -264,6 +267,74 @@ export class PlatformTenantsService {
       },
       errors: {
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List metadata for a customer's linked consumer keys across apps.
+   * @returns PlatformTenantCredentialsResponse Metadata only; plaintext credentials are never returned.
+   * @throws ApiError
+   */
+  public static listPlatformTenantCredentials({
+    id,
+    limit = 100,
+    offset,
+  }: {
+    /**
+     * Platform tenant whose credential metadata is requested.
+     */
+    id: string,
+    /**
+     * Maximum number of keys to return.
+     */
+    limit?: number,
+    /**
+     * Number of keys to skip.
+     */
+    offset?: number,
+  }): CancelablePromise<PlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/credentials',
+      path: {
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Atomically issue or rotate client-generated customer credentials across apps.
+   * Send only a random key's prefix and SHA-256 hash, never its plaintext. Save plaintext securely before submission. Replaying an identical bundle is safe; revocations and additions commit together. This endpoint never returns plaintext, even on creation.
+   * @returns ApplyPlatformTenantCredentialsResponse Planned or applied credential changes.
+   * @throws ApiError
+   */
+  public static applyPlatformTenantCredentials({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Platform tenant whose linked consumers receive credentials.
+     */
+    id: string,
+    requestBody: ApplyPlatformTenantCredentialsRequest,
+  }): CancelablePromise<ApplyPlatformTenantCredentialsResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/credentials/apply',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

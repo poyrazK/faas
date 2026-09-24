@@ -963,7 +963,7 @@ type Limits struct {
 	// ConsumerKeysPerApp's creator-side apid validator.
 	CorsPresetMaxNameLength int
 
-	// ConsumerKeysPerApp caps how many consumer_keys rows
+	// ConsumerKeysPerApp caps how many unrevoked consumer keys
 	// (ADR-120 / issue #975 item #5) one app may own. The cap
 	// defends against a customer pinning one consumer key per
 	// customer-of-customer and inflating the gateway-side
@@ -979,7 +979,7 @@ type Limits struct {
 	// CodePlanConsumerKeyQuotaReached when this trips (PR #5-B
 	// wires the writer).
 	ConsumerKeysPerApp int
-	// ConsumerKeysPerAccount caps how many consumer_keys rows
+	// ConsumerKeysPerAccount caps how many unrevoked consumer keys
 	// one account may own in total across all its apps.
 	// Independent of ConsumerKeysPerApp so a customer with N
 	// apps under one account can split the per-account cap.
