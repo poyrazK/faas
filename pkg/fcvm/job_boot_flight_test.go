@@ -1,3 +1,4 @@
+// adr: 099 — cancelling a job must stop its guest even when boot returns late.
 package fcvm
 
 import (
