@@ -27,6 +27,11 @@ func (c *Client) CreatePlatformTenant(ctx context.Context, req CreatePlatformTen
 	return out, c.do(ctx, "POST", "/v1/account/platform-tenants", req, &out)
 }
 
+func (c *Client) ApplyPlatformTenant(ctx context.Context, req ApplyPlatformTenantRequest) (ApplyPlatformTenantResponse, error) {
+	var out ApplyPlatformTenantResponse
+	return out, c.do(ctx, "POST", "/v1/account/platform-tenants/apply", req, &out)
+}
+
 func (c *Client) GetPlatformTenant(ctx context.Context, id string) (PlatformTenantDetailResponse, error) {
 	var out PlatformTenantDetailResponse
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id), nil, &out)

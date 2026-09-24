@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // PlatformTenant is one end customer of an account that operates multiple apps.
@@ -51,6 +53,46 @@ type PlatformTenantStore interface {
 	PlatformTenantSurfaceSuspended(context.Context, string) (bool, error)
 }
 
+// PlatformTenantApplyStore reconciles an additive onboarding bundle in one
+// transaction. A dry run performs the same ownership and conflict checks but
+// leaves no rows behind. Omitted resources are never detached or revoked.
+type PlatformTenantApplyStore interface {
+	ApplyPlatformTenant(context.Context, ApplyPlatformTenantParams) (ApplyPlatformTenantResult, error)
+}
+
+type ApplyPlatformTenantParams struct {
+	AccountID   string
+	ExternalRef string
+	Name        string
+	TenantLimit int
+	DryRun      bool
+	Consumers   []ApplyPlatformTenantConsumer
+	SurfaceIDs  []string
+}
+
+type ApplyPlatformTenantConsumer struct {
+	AppID       string
+	ExternalRef string
+	Name        string
+}
+
+type ApplyPlatformTenantConsumerResult struct {
+	Consumer APIConsumer
+	Action   string // create, link, unchanged
+}
+
+type ApplyPlatformTenantSurfaceResult struct {
+	Surface TenantSurface
+	Action  string // link, unchanged
+}
+
+type ApplyPlatformTenantResult struct {
+	Tenant    PlatformTenant
+	Action    string // create, unchanged
+	Consumers []ApplyPlatformTenantConsumerResult
+	Surfaces  []ApplyPlatformTenantSurfaceResult
+}
+
 type PlatformTenantQuotaError struct {
 	Limit    int
 	Observed int
@@ -61,9 +103,44 @@ func (e *PlatformTenantQuotaError) Error() string {
 }
 
 var (
-	_ PlatformTenantStore = (*PgStore)(nil)
-	_ PlatformTenantStore = (*MemStore)(nil)
+	_ PlatformTenantStore      = (*PgStore)(nil)
+	_ PlatformTenantStore      = (*MemStore)(nil)
+	_ PlatformTenantApplyStore = (*PgStore)(nil)
+	_ PlatformTenantApplyStore = (*MemStore)(nil)
 )
+
+func validatePlatformTenantApply(in ApplyPlatformTenantParams) error {
+	if err := validatePlatformTenantInput(in.AccountID, in.ExternalRef, in.Name); err != nil {
+		return err
+	}
+	if in.TenantLimit < 1 {
+		return ErrInvalidArgument
+	}
+	seenConsumers := make(map[string]bool, len(in.Consumers))
+	for _, consumer := range in.Consumers {
+		appID, err := uuid.Parse(consumer.AppID)
+		if err != nil {
+			return ErrInvalidArgument
+		}
+		if err := validateAPIConsumerPgInput("ApplyPlatformTenant", in.AccountID, consumer.AppID, consumer.ExternalRef, consumer.Name); err != nil {
+			return ErrInvalidArgument
+		}
+		key := appID.String() + "\x00" + consumer.ExternalRef
+		if seenConsumers[key] {
+			return ErrInvalidArgument
+		}
+		seenConsumers[key] = true
+	}
+	seenSurfaces := make(map[string]bool, len(in.SurfaceIDs))
+	for _, id := range in.SurfaceIDs {
+		surfaceID, err := uuid.Parse(id)
+		if err != nil || seenSurfaces[surfaceID.String()] {
+			return ErrInvalidArgument
+		}
+		seenSurfaces[surfaceID.String()] = true
+	}
+	return nil
+}
 
 func validatePlatformTenantInput(accountID, externalRef, name string) error {
 	externalRef = strings.TrimSpace(externalRef)

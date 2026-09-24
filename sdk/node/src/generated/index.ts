@@ -74,6 +74,11 @@ export type { AppLogDrainAnalyticsSummary } from './models/AppLogDrainAnalyticsS
 export type { AppLogDrainHealthResponse } from './models/AppLogDrainHealthResponse.js';
 export type { AppLogDrainResponse } from './models/AppLogDrainResponse.js';
 export type { ApplyAppOpenAPIPolicyRequest } from './models/ApplyAppOpenAPIPolicyRequest.js';
+export type { ApplyPlatformTenantConsumerRequest } from './models/ApplyPlatformTenantConsumerRequest.js';
+export type { ApplyPlatformTenantConsumerResponse } from './models/ApplyPlatformTenantConsumerResponse.js';
+export type { ApplyPlatformTenantRequest } from './models/ApplyPlatformTenantRequest.js';
+export type { ApplyPlatformTenantResponse } from './models/ApplyPlatformTenantResponse.js';
+export type { ApplyPlatformTenantSurfaceResponse } from './models/ApplyPlatformTenantSurfaceResponse.js';
 export type { ApplyResponse } from './models/ApplyResponse.js';
 export type { AppManifest } from './models/AppManifest.js';
 export type { AppManifestHealthcheck } from './models/AppManifestHealthcheck.js';

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,5 +57,41 @@ func TestCmdPlatformTenantsAddListAndSuspend(t *testing.T) {
 func TestCmdPlatformTenantsRejectsIncompleteLink(t *testing.T) {
 	if code := cmdPlatformTenants([]string{"link-consumer", "--id", "tenant-id"}); code == 0 {
 		t.Fatal("accepted missing consumer ID")
+	}
+}
+
+func TestCmdPlatformTenantsApplyBundle(t *testing.T) {
+	var received api.ApplyPlatformTenantRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/account/platform-tenants/apply" {
+			t.Errorf("unexpected route %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Error(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.ApplyPlatformTenantResponse{
+			ExternalRef: received.ExternalRef, Name: received.Name, Status: "active", Action: "create", DryRun: received.DryRun,
+			Consumers: []api.ApplyPlatformTenantConsumerResponse{{AppID: "app-id", Action: "create"}},
+			Surfaces:  []api.ApplyPlatformTenantSurfaceResponse{},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	path := filepath.Join(t.TempDir(), "customer.json")
+	if err := os.WriteFile(path, []byte(`{"external_ref":"customer-42","name":"Customer 42"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldOut, oldJSON := osStdout, jsonOutput
+	var stdout bytes.Buffer
+	osStdout, jsonOutput = &stdout, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	if code := cmdPlatformTenants([]string{"apply", "--file", path, "--dry-run"}); code != 0 {
+		t.Fatalf("apply exit = %d", code)
+	}
+	if !received.DryRun || received.ExternalRef != "customer-42" || !strings.Contains(stdout.String(), "create") {
+		t.Fatalf("apply request = %+v output=%q", received, stdout.String())
 	}
 }

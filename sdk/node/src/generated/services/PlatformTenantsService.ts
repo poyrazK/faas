@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRequest.js';
+import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
 import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
@@ -62,6 +64,29 @@ export class PlatformTenantsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Atomically reconcile an additive customer onboarding bundle.
+   * Creates a missing platform tenant and app consumers, links requested existing surfaces, or previews the same checks with dry_run. Omitted resources are not detached; keys, hostnames and certificates are managed separately.
+   * @returns ApplyPlatformTenantResponse Applied or previewed onboarding plan and current surface states.
+   * @throws ApiError
+   */
+  public static applyPlatformTenant({
+    requestBody,
+  }: {
+    requestBody: ApplyPlatformTenantRequest,
+  }): CancelablePromise<ApplyPlatformTenantResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/apply',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         409: `code: conflict`,
       },
     });

@@ -1054,6 +1054,10 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List platform customers"},
 			{Name: "add", Short: "Register a customer by external reference"},
+			{Name: "apply", Short: "Preview or apply an onboarding bundle", Flags: []cliFlag{
+				{Name: "file", Short: "JSON onboarding bundle", Value: "path"},
+				{Name: "dry-run", Short: "Preview without changes"},
+			}},
 			{Name: "info", Short: "Show linked consumers and surfaces"},
 			{Name: "link-consumer", Short: "Attach an existing app consumer"},
 			{Name: "link-surface", Short: "Attach an existing tenant surface"},
