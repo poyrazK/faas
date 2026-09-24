@@ -24121,13 +24121,13 @@ components:
           example: "42"
 
     RollbackRequest:
-      description: "Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G, issue #976). All fields optional. Without a body the handler falls back to rolling back to the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler validates that the named deployment belongs to this app AND has status='superseded'."
+      description: "Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G, issue #976). All fields optional. Without a body the handler falls back to rolling back to the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler validates that the named deployment belongs to this app and is superseded or live with zero traffic."
       type: object
       properties:
         target_deployment_id:
           type: string
           format: uuid
-          description: "The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and must have status='superseded'. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."
+          description: "The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."
           example: "0123456789abcdef0123456789abcdef"
         alert_rule_id:
           type: string
@@ -36809,7 +36809,7 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
     RollbackTargetAlreadyLive:
-      description: 'code: rollback_target_already_live — the named target_deployment_id exists but has status != superseded (typically status=live). Rolling back to the already-current deployment is rejected.'
+      description: 'code: rollback_target_already_live — the named target_deployment_id is already serving live traffic. Rolling back to the current serving deployment is rejected; a zero-traffic live revision is eligible.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

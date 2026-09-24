@@ -117,7 +117,9 @@ func TestPg_PrepareDeploymentRollbackAcceptsZeroTrafficLive(t *testing.T) {
 	_, app := seedPgAccountAndApp(t, s, ctx)
 	target := seedPgDeployment(t, s, ctx, app)
 	current := seedPgDeployment(t, s, ctx, app)
-	if _, err := pool.Exec(ctx, `update deployments set status = 'live', traffic_percent = 0 where id = $1`, target.ID); err != nil {
+	// Explicitly weighted revisions are excluded from the stable-row live
+	// uniqueness guard, as they are after a staged 0% promotion.
+	if _, err := pool.Exec(ctx, `update deployments set status = 'live', traffic_percent = 0, traffic_percent_explicit = true where id = $1`, target.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `update deployments set status = 'live', traffic_percent = 100 where id = $1`, current.ID); err != nil {

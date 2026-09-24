@@ -24127,7 +24127,7 @@ components:
         target_deployment_id:
           type: string
           format: uuid
-          description: "The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and must have status='superseded'. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."
+          description: "The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy behaviour)."
           example: "0123456789abcdef0123456789abcdef"
         alert_rule_id:
           type: string
