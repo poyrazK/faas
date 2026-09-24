@@ -1657,6 +1657,20 @@ func (c *Client) UpdateProjectEnvironmentConfig(ctx context.Context, projectSlug
 	return out, c.do(ctx, http.MethodPut, path, req, &out)
 }
 
+// UpdateProjectEnvironmentRoutes replaces a workload's declared-route contract
+// in one registered project environment.
+func (c *Client) UpdateProjectEnvironmentRoutes(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentRoutePolicyRequest) (ProjectEnvironmentRoutePolicyResponse, error) {
+	var out ProjectEnvironmentRoutePolicyResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/workloads/" + url.PathEscape(workloadSlug) + "/routes"
+	return out, c.do(ctx, http.MethodPut, path, req, &out)
+}
+
+// PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadRoutes is the
+// route-shaped SDK coverage alias. Prefer UpdateProjectEnvironmentRoutes.
+func (c *Client) PutProjectsSlugEnvironmentsEnvironmentWorkloadsWorkloadRoutes(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentRoutePolicyRequest) (ProjectEnvironmentRoutePolicyResponse, error) {
+	return c.UpdateProjectEnvironmentRoutes(ctx, projectSlug, environmentSlug, workloadSlug, req)
+}
+
 // GetProjectEnvironmentConfigDiff compares the latest snapshots in the
 // source environment and the requested target environment.
 func (c *Client) GetProjectEnvironmentConfigDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentConfigDiffResponse, error) {

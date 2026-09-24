@@ -2163,7 +2163,7 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|releases|history|config [set]|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]
+Manage project environments (list|create|protect|unprotect|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]
 
 ### projects update
 

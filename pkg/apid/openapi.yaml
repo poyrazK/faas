@@ -12311,6 +12311,44 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project owning the environment.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Registered environment whose route contract is replaced.
+        schema: { type: string }
+      - name: workload
+        in: path
+        required: true
+        description: Workload application slug in the project.
+        schema: { type: string }
+    put:
+      tags: [projects]
+      operationId: updateProjectEnvironmentRoutes
+      summary: Replace a workload's declared-route contract in one environment.
+      description: Scoped deployment URLs use this contract; the ordinary application hostname retains its application-wide contract.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentRoutePolicyRequest' }
+      responses:
+        '200':
+          description: Stored environment-owned route contract.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/diff:
     parameters:
       - name: slug
@@ -26660,13 +26698,14 @@ components:
     ProjectEnvironmentCloneResponse:
       description: Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only after explicit opt-in.
       type: object
-      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, bindings_copied, shared_resources]
+      required: [configuration_copied, variables_copied, secrets_copied, workloads_copied, bindings_copied, routes_copied, shared_resources]
       properties:
         configuration_copied: { type: boolean }
         variables_copied: { type: integer, minimum: 0 }
         secrets_copied: { type: integer, minimum: 0 }
         workloads_copied: { type: integer, minimum: 0 }
         bindings_copied: { type: integer, minimum: 0 }
+        routes_copied: { type: integer, minimum: 0 }
         shared_resources:
           type: array
           items: { type: string, enum: [domains, policies, routes, managed_postgres_data, object_storage_bucket_data] }
@@ -26735,7 +26774,7 @@ components:
     ProjectEnvironmentStateWorkloadResponse:
       description: Effective configuration and live release state for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -26749,6 +26788,30 @@ components:
         bindings:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingResponse' }
+        routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
+
+    ProjectEnvironmentRoutePolicyResponse:
+      description: Effective declared-route contract and whether it is environment-owned.
+      type: object
+      required: [ownership, only_allow_declared_routes, declared_routes]
+      properties:
+        ownership: { type: string, enum: [application, environment] }
+        only_allow_declared_routes: { type: boolean }
+        declared_routes:
+          type: array
+          items: { $ref: '#/components/schemas/DeclaredRoute' }
+
+    UpdateProjectEnvironmentRoutePolicyRequest:
+      description: Complete replacement for a workload's environment route contract. Enabling enforcement requires a non-empty explicit route list; application-wide OpenAPI documents are not cloned.
+      type: object
+      required: [only_allow_declared_routes, declared_routes]
+      additionalProperties: false
+      properties:
+        only_allow_declared_routes: { type: boolean }
+        declared_routes:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/DeclaredRoute' }
 
     ProjectEnvironmentSharedResourceResponse:
       description: Application-scoped resource that is shared by all environments.
@@ -26830,7 +26893,7 @@ components:
     ProjectEnvironmentWorkloadDiffResponse:
       description: Release, variable, secret, and binding changes for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, routes]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -26844,6 +26907,16 @@ components:
         bindings:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBindingChangeResponse' }
+        routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyDiffResponse' }
+
+    ProjectEnvironmentRoutePolicyDiffResponse:
+      description: Difference in the effective declared-route contract or its ownership.
+      type: object
+      required: [kind, before, after]
+      properties:
+        kind: { type: string, enum: [unchanged, changed] }
+        before: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
+        after: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
 
     ProjectEnvironmentDiffResponse:
       description: Effective-state comparison from one project environment to another.

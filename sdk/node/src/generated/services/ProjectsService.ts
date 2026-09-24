@@ -19,6 +19,7 @@ import type { ProjectEnvironmentPromotionResponse } from '../models/ProjectEnvir
 import type { ProjectEnvironmentPromotionStatusResponse } from '../models/ProjectEnvironmentPromotionStatusResponse.js';
 import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnvironmentReleaseListResponse.js';
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
+import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
@@ -27,6 +28,7 @@ import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js
 import type { PromoteProjectEnvironmentRequest } from '../models/PromoteProjectEnvironmentRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
 import type { UpdateProjectEnvironmentRequest } from '../models/UpdateProjectEnvironmentRequest.js';
+import type { UpdateProjectEnvironmentRoutePolicyRequest } from '../models/UpdateProjectEnvironmentRoutePolicyRequest.js';
 import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -625,6 +627,53 @@ export class ProjectsService {
         'environment': environment,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a workload's declared-route contract in one environment.
+   * Scoped deployment URLs use this contract; the ordinary application hostname retains its application-wide contract.
+   * @returns ProjectEnvironmentRoutePolicyResponse Stored environment-owned route contract.
+   * @throws ApiError
+   */
+  public static updateProjectEnvironmentRoutes({
+    slug,
+    environment,
+    workload,
+    requestBody,
+  }: {
+    /**
+     * Project owning the environment.
+     */
+    slug: string,
+    /**
+     * Registered environment whose route contract is replaced.
+     */
+    environment: string,
+    /**
+     * Workload application slug in the project.
+     */
+    workload: string,
+    requestBody: UpdateProjectEnvironmentRoutePolicyRequest,
+  }): CancelablePromise<ProjectEnvironmentRoutePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'workload': workload,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses

@@ -1402,6 +1402,19 @@ type DeclaredRoute struct {
 	Methods []string `json:"methods"`
 }
 
+// ProjectEnvironmentRoutePolicy overrides the application-wide declared-route
+// contract for one workload and one registered environment.
+type ProjectEnvironmentRoutePolicy struct {
+	AccountID               string
+	ProjectID               string
+	AppID                   string
+	EnvironmentSlug         string
+	OnlyAllowDeclaredRoutes bool
+	DeclaredRoutes          []DeclaredRoute
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
 // IsDeveloperApp reports whether an app is the expiring environment created
 // by `gregale dev`. Developer sessions reuse preview storage, but PR previews
 // have a positive PR number and remain on the normal deployed-app quota.

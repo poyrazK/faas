@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -68,7 +69,7 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 	return api.ProjectEnvironmentStateResponse{
 		ProjectSlug: project.Slug, Environment: environment.Slug, Protected: environment.Protected,
 		Configuration: projectEnvironmentConfigResponse(project.Slug, environment.Slug, config),
-		Workloads:     workloads, SharedResources: projectEnvironmentSharedResources(),
+		Workloads:     workloads, SharedResources: projectEnvironmentSharedResources(workloads),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
 }
@@ -86,11 +87,41 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 	if problem != nil {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, problem
 	}
+	routes := api.ProjectEnvironmentRoutePolicyResponse{
+		Ownership: "application", OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
+		DeclaredRoutes: projectEnvironmentDeclaredRoutes(app.DeclaredRoutes),
+	}
+	policy, err := s.store.GetProjectEnvironmentRoutePolicy(ctx, accountID, app.ID, scope)
+	if err == nil {
+		routes = api.ProjectEnvironmentRoutePolicyResponse{
+			Ownership: "environment", OnlyAllowDeclaredRoutes: policy.OnlyAllowDeclaredRoutes,
+			DeclaredRoutes: projectEnvironmentDeclaredRoutes(policy.DeclaredRoutes),
+		}
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment routes")
+	}
 	return api.ProjectEnvironmentStateWorkloadResponse{
 		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Release: release,
 		Variables: projectEnvironmentVariables(variables), Secrets: projectEnvironmentSecrets(secrets),
 		Bindings: projectEnvironmentBindings(secrets),
+		Routes:   routes,
 	}, nil
+}
+
+func projectEnvironmentDeclaredRoutes(rows []state.DeclaredRoute) []api.DeclaredRoute {
+	out := make([]api.DeclaredRoute, 0, len(rows))
+	for _, row := range rows {
+		methods := append([]string(nil), row.Methods...)
+		sort.Strings(methods)
+		out = append(out, api.DeclaredRoute{Path: row.Path, Methods: methods})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return strings.Join(out[i].Methods, ",") < strings.Join(out[j].Methods, ",")
+	})
+	return out
 }
 
 func (s *server) projectEnvironmentReleaseState(ctx context.Context, scope string, app state.App) (api.ProjectEnvironmentReleaseWorkloadResponse, *api.Problem) {
@@ -170,13 +201,21 @@ func projectEnvironmentBindings(rows []state.AppSecret) []api.ProjectEnvironment
 	return out
 }
 
-func projectEnvironmentSharedResources() []api.ProjectEnvironmentSharedResourceResponse {
+func projectEnvironmentSharedResources(workloads []api.ProjectEnvironmentStateWorkloadResponse) []api.ProjectEnvironmentSharedResourceResponse {
 	const note = "shared by all environments until this resource gains environment ownership"
-	return []api.ProjectEnvironmentSharedResourceResponse{
+	out := []api.ProjectEnvironmentSharedResourceResponse{
 		{Kind: "domains", Ownership: "application", Note: note},
 		{Kind: "policies", Ownership: "application", Note: note},
-		{Kind: "routes", Ownership: "application", Note: note},
 	}
+	for _, workload := range workloads {
+		if workload.Routes.Ownership != "environment" {
+			return append(out, api.ProjectEnvironmentSharedResourceResponse{
+				Kind: "routes", Ownership: "application",
+				Note: "at least one workload inherits its application-wide route contract",
+			})
+		}
+	}
+	return out
 }
 
 func buildProjectEnvironmentDiff(from, to api.ProjectEnvironmentStateResponse) (api.ProjectEnvironmentDiffResponse, error) {
@@ -192,8 +231,13 @@ func buildProjectEnvironmentDiff(from, to api.ProjectEnvironmentStateResponse) (
 	return api.ProjectEnvironmentDiffResponse{
 		ProjectSlug: to.ProjectSlug, FromEnvironment: from.Environment, ToEnvironment: to.Environment,
 		Configuration: config, Workloads: projectEnvironmentWorkloadDiffs(from.Workloads, to.Workloads),
-		SharedResources: projectEnvironmentSharedResources(), GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		SharedResources: projectEnvironmentDiffSharedResources(from.Workloads, to.Workloads), GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func projectEnvironmentDiffSharedResources(from, to []api.ProjectEnvironmentStateWorkloadResponse) []api.ProjectEnvironmentSharedResourceResponse {
+	combined := append(append([]api.ProjectEnvironmentStateWorkloadResponse(nil), from...), to...)
+	return projectEnvironmentSharedResources(combined)
 }
 
 func projectEnvironmentWorkloadDiffs(before, after []api.ProjectEnvironmentStateWorkloadResponse) []api.ProjectEnvironmentWorkloadDiffResponse {
@@ -210,9 +254,18 @@ func projectEnvironmentWorkloadDiffs(before, after []api.ProjectEnvironmentState
 			Variables: projectEnvironmentVariableDiffs(prior.Variables, next.Variables),
 			Secrets:   projectEnvironmentSecretDiffs(prior.Secrets, next.Secrets),
 			Bindings:  projectEnvironmentBindingDiffs(prior.Bindings, next.Bindings),
+			Routes:    projectEnvironmentRoutePolicyDiff(prior.Routes, next.Routes),
 		})
 	}
 	return out
+}
+
+func projectEnvironmentRoutePolicyDiff(before, after api.ProjectEnvironmentRoutePolicyResponse) api.ProjectEnvironmentRoutePolicyDiffResponse {
+	kind := "unchanged"
+	if !reflect.DeepEqual(before, after) {
+		kind = "changed"
+	}
+	return api.ProjectEnvironmentRoutePolicyDiffResponse{Kind: kind, Before: before, After: after}
 }
 
 func projectEnvironmentReleaseDiff(before, after api.ProjectEnvironmentReleaseWorkloadResponse) api.ProjectEnvironmentReleaseDiffResponse {
