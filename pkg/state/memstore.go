@@ -13133,9 +13133,9 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	return nil
 }
 
-// ListInstancesByStatesOlderThan is the watchdog's lookup (commit 3,
-// spec §6.1). Mirrors PgStore: coalesce started_at / parked_at on the
-// age comparison.
+// ListInstancesByStatesOlderThan is the app watchdog's lookup (spec §6.1).
+// Jobs have their own task lease/reaper deadline, which includes artifact
+// restoration; the fixed app cold-boot budget must not terminalize them.
 func (m *MemStore) ListInstancesByStatesOlderThan(_ context.Context, states []State, threshold time.Time) ([]Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -13146,6 +13146,9 @@ func (m *MemStore) ListInstancesByStatesOlderThan(_ context.Context, states []St
 	var out []Instance
 	for _, ins := range m.instances {
 		if !wanted[State(ins.State)] {
+			continue
+		}
+		if ins.Kind == "job_task" || ins.Mode == string(InstanceModeJob) {
 			continue
 		}
 		age := ins.StartedAt

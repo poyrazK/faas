@@ -31,8 +31,16 @@ terminal `infra` error and settles the run. A late exit can settle only the
 currently claimed instance and lease. Admission failures before a task claim
 leave the queued task unchanged. This bounds VM churn without assuming that a
 failed boot is cost-free or that an uncertain transport failure cannot race a
-guest exit. In-flight boot cancellation at vmmd and cold-cache watchdog
-qualification remain separate issue #3052 gates.
+guest exit.
+
+## Cold-cache watchdog correction (2026-09-24)
+
+The generic §6.1 app watchdog's 30-second `COLD_BOOTING` deadline does not
+apply to `kind=job_task` / `mode=job` instances. A job's first boot may restore
+a multi-gigabyte artifact before vmmd can finish its boot RPC. The task lease
+(`task_timeout_s + 90 s`) and stale-job reaper own that longer deadline;
+ordinary app cold boots retain the 30-second watchdog. This prevents a second
+schedd replica from falsely failing an active cold-cache job at 30 seconds.
 
 ## Locked deviations
 

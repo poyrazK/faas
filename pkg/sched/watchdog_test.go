@@ -1,3 +1,5 @@
+// adr: 099
+
 package sched
 
 import (
@@ -159,6 +161,25 @@ func TestColdBootWatchdogFailsDeploymentDuringInitialSnapshot(t *testing.T) {
 	}
 	if got.Status != state.DeployFailed || got.ErrorCode != api.CodeAppStartupTimeout {
 		t.Fatalf("deployment = status %q code %q, want failed/%s", got.Status, got.ErrorCode, api.CodeAppStartupTimeout)
+	}
+}
+
+func TestWatchdogDoesNotKillJobDuringColdCacheArtifactRestore(t *testing.T) {
+	store := state.NewMemStore()
+	_, job, run := seedJobRun(t, store, nil, nil)
+	ctx := context.Background()
+	instanceID := "job-cold-cache-watchdog"
+	if _, err := store.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 0,
+		string(state.StateColdBooting), job.RAMMB, state.DefaultLocalNodeName, instanceID,
+		"job-lease", time.Now().Add(2*time.Minute), state.DefaultLocalNodeName); err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	watchdog := NewWatchdog(store, e, nil).WithClock(func() time.Time { return time.Now().Add(31 * time.Second) })
+	watchdog.sweepRuns(ctx)
+	ins, err := store.InstanceByID(ctx, instanceID)
+	if err != nil || ins.State != string(state.StateColdBooting) {
+		t.Fatalf("job was killed by app cold-boot watchdog: instance=%+v err=%v", ins, err)
 	}
 }
 

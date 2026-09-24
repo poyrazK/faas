@@ -27,6 +27,10 @@ Cancelling a task while its job VM is still restoring an artifact also cancels
 that in-flight boot. The stop waits for vmmd to finish cleanup; a late boot
 result cannot publish a runnable VM after cancellation.
 
+The first execution on a compute node can take longer while that artifact
+fills its local cache. Job tasks use their own timeout and lease reaper during
+this phase; the shorter HTTP-app cold-boot watchdog does not apply.
+
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
 gregale jobs run nightly --tasks 10 --parallelism 3

@@ -543,6 +543,26 @@ func TestPg_Jobs_CreateAndClaimJobInstanceAllowsControlPlaneOwner(t *testing.T) 
 	}
 }
 
+func TestPg_Jobs_AppWatchdogExcludesColdBootingJob(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, tasks := pgJobsSeed(t, s, ctx, "watchdog")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	instanceID := uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 256, nodeID, instanceID, uuid.NewString(), time.Now().Add(time.Minute), nodeID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ListInstancesByStatesOlderThan(ctx, []state.State{state.StateColdBooting}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == instanceID {
+			t.Fatalf("job task entered app watchdog sweep: %+v", row)
+		}
+	}
+}
+
 func TestPg_Jobs_JobTaskMarkTerminal(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
 	_, run, fanned := pgJobsSeed(t, s, ctx, "task-3")

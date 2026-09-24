@@ -653,6 +653,28 @@ func TestMemStoreJobs_CreateAndClaimJobInstanceIsAtomic(t *testing.T) {
 	}
 }
 
+func TestMemStoreJobs_AppWatchdogExcludesColdBootingJob(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-WD", "watchdog")
+	instanceID := "job-watchdog-instance"
+	if _, err := ms.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 0,
+		"cold_booting", 256, DefaultLocalNodeName, instanceID, "lease-watchdog",
+		time.Now().Add(time.Minute), DefaultLocalNodeName); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ms.ListInstancesByStatesOlderThan(ctx, []State{StateColdBooting}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == instanceID {
+			t.Fatalf("job task entered app watchdog sweep: %+v", row)
+		}
+	}
+}
+
 // TestMemStoreJobs_JobTaskMarkTerminal — happy + ErrNotFound when
 // already terminal.
 func TestMemStoreJobs_JobTaskMarkTerminal(t *testing.T) {

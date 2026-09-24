@@ -1054,7 +1054,7 @@ defaults: Hobby/Pro/Scale → period 5 s, consecutive 3,
 cooldown 60 s, max restarts 3 in window 300 s. Free is gated
 off (LivenessAllowed() returns false).
 
-Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FAILED; SNAPSHOTTING ≤ 20 s then STOPPED. Every transition is an `events` row.
+App timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FAILED; SNAPSHOTTING ≤ 20 s then STOPPED. Job-task instances are excluded from this app watchdog: their cold boot can include a first-run artifact download, and the job-task lease/reaper owns its execution deadline (`task_timeout_s + 90 s` lease grace, then stale-lease detection). Every app watchdog transition is an `events` row.
 
 **Compute-node heartbeat (ADR-028):** schedd pings every active `compute_node` on a 30 s tick via `pkg/sched.Heartbeat`. The goroutine dials each row's `target_url` (Tailscale/Wireguard overlay in production; unix:///run/faas/vmmd.sock for default-local) and stamps `last_heartbeat_at = now()` on success. A row whose `last_heartbeat_at` ages past 90 s gets `active=false` via `SetComputeNodeActive`. The pg_notify `compute_node_changed` (migration 00026) fires on the UPDATE so `gatewayd-internal`'s `NodeClientCache` evicts the cached conn without polling. Re-activation is automatic on the next successful ping. Direction was chosen to invert vmmd-pushes: schedd is the admission authority and shouldn't trust inbound traffic from a box it may have already drained; outbound probing means schedd detects failure on its own clock.
 
