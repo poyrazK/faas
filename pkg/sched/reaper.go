@@ -171,11 +171,10 @@ type InstanceInfo struct {
 	// Mode (issue #72 / ADR-125) is the instance's mode — sourced
 	// from state.Instance.Mode. 'normal' (default) is the
 	// customer-facing wake; 'mirror' is the shadow VM a mirror
-	// goroutine woke for the comparison ledger. The reaper skips
-	// mode='mirror' rows because they self-park on request
-	// completion — there's no idle lifetime to reap, and pulling
-	// them into the candidate set would create a redundant park
-	// alongside the goroutine's deferred ParkInstance. The
+	// goroutine woke for the comparison ledger. The normal idle/floor
+	// calculation excludes mode='mirror' rows because dispatch parks
+	// them on completion. A separate one-minute orphan fallback reclaims
+	// an idle shadow VM if that cleanup was lost. The
 	// pkg/meter sampler also skips these rows so the customer is
 	// never billed for the shadow VM.
 	Mode string
@@ -276,6 +275,12 @@ func scaleInCooldownAnchor(in InstanceInfo) *time.Time {
 // runs independently — ReapAggressive will still emit when its
 // own metrics is non-nil even if idle didn't.
 func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics, cooldownHeldByApp map[string]struct{}) []string {
+	// A gateway crash, lost admission response, or failed cleanup RPC can
+	// strand a mirror VM because normal idle reaping excludes it. Give the
+	// gateway time to finish its bounded comparison and park, then reclaim
+	// only idle orphans. Shadow VMs do not satisfy the serving floor.
+	const mirrorOrphanAfter = time.Minute
+	var mirrorOrphans []InstanceInfo
 	// appGroup counts RUNNING instances per app and gathers idle
 	// candidates separately so we can trim the candidate list against
 	// the floor AFTER the G7 / idle-timeout filter has run.
@@ -302,6 +307,13 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 	byApp := map[string]*appGroup{}
 	for _, in := range instances {
 		if in.State != state.StateRunning && in.State != state.StateWarm {
+			continue
+		}
+		if state.InstanceMode(in.Mode) == state.InstanceModeMirror {
+			if !in.Started.IsZero() && now.Sub(in.Started) > mirrorOrphanAfter &&
+				in.InflightRequests == 0 && in.OpenConns == 0 && in.TailCount == 0 {
+				mirrorOrphans = append(mirrorOrphans, in)
+			}
 			continue
 		}
 		g, ok := byApp[in.AppID]
@@ -377,19 +389,6 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		// lifecycle_failure_reason.
 		switch state.InstanceMode(in.Mode) {
 		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob:
-			continue
-		}
-		// Issue #72 / ADR-125: mode='mirror' rows are
-		// reaper-exempt. The mirror goroutine parks the instance
-		// on request completion (or timeout), so there's no idle
-		// lifetime to reap — pulling it into the candidate set
-		// would create a redundant park alongside the goroutine's
-		// deferred ParkInstance. RAM pressure (SelectEvictions)
-		// still wins: if a node is over-budget, the mirror VM
-		// goes the same way as a normal one. Symmetric with the
-		// sampler skip — both predicates evaluate mode before any
-		// billing / reaping arithmetic.
-		if state.InstanceMode(in.Mode) == state.InstanceModeMirror {
 			continue
 		}
 		if in.State == state.StateRunning {
@@ -513,6 +512,15 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		for _, c := range g.warmCands {
 			park = append(park, c.Instance)
 		}
+	}
+	sort.Slice(mirrorOrphans, func(i, j int) bool {
+		if !mirrorOrphans[i].Started.Equal(mirrorOrphans[j].Started) {
+			return mirrorOrphans[i].Started.Before(mirrorOrphans[j].Started)
+		}
+		return mirrorOrphans[i].Instance < mirrorOrphans[j].Instance
+	})
+	for _, orphan := range mirrorOrphans {
+		park = append(park, orphan.Instance)
 	}
 	return park
 }

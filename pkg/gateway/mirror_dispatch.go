@@ -14,7 +14,9 @@
 // Detached-ctx discipline (ADR-098): the goroutine derives its
 // own bounded context with a MirrorMaxLifetimeSeconds timeout so
 // the customer's request cancellation never reaches the mirror —
-// while preserving request values and trace correlation.
+// while preserving request values and trace correlation. After an admission,
+// a separate bounded cleanup context parks the shadow VM even if dispatch
+// times out.
 //
 // No panic recovery (matches the WakeGate leader contract at
 // pkg/gateway/gate.go:172-175 — "ensure never panics"). A panic
@@ -61,6 +63,15 @@ type MirrorRoundTripper interface {
 type mirrorResultStore interface {
 	InsertMirrorResult(context.Context, state.MirrorInvocationResult) error
 }
+
+// mirrorInstanceParker is implemented by the production PGBackend. A mirror
+// instance is excluded from normal idle reaping, so dispatch must release it
+// even when forwarding or comparison fails.
+type mirrorInstanceParker interface {
+	ParkMirrorInstance(context.Context, string, string, string) error
+}
+
+const mirrorParkTimeout = 35 * time.Second
 
 // defaultMirrorRoundTripper (issue #72 / ADR-124 PR-A3) uses
 // http.Client.Do against the target URL. The mirror VM's
@@ -125,6 +136,8 @@ func (d *defaultMirrorRoundTripper) RoundTripMirror(ctx context.Context, target 
 //     + gateway_mirror_latency_seconds + gateway_mirror_body_diff_total).
 //  6. Append the comparison to mirror_invocation_results so the summary
 //     endpoint reflects live traffic rather than only debugger replays.
+//  7. Park an admitted mirror instance on every exit path. The slot remains
+//     held until cleanup finishes, bounding in-flight shadow VMs per rule.
 //
 // Snapshot discipline: requestBody is captured before fanout solely for
 // forwarding to v2. Source response status/body are captured independently by
@@ -208,6 +221,9 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		}
 		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture)
 		return
+	}
+	if instanceID != "" {
+		defer h.parkMirrorInstance(parentCtx, rule.AppID, instanceID)
 	}
 
 	// 2. Build the mirror request. We pass sourceBody directly (NOT
@@ -293,6 +309,23 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if bodyDiff {
 			h.metrics.ObserveMirrorBodyDiff(rule.AppID, rule.ID)
 		}
+	}
+}
+
+func (h *Handler) parkMirrorInstance(parentCtx context.Context, appID, instanceID string) {
+	parker, ok := h.backend.(mirrorInstanceParker)
+	if !ok {
+		if h.log != nil {
+			h.log.Error("mirror: backend cannot park admitted instance", "app_id", appID, "instance_id", instanceID)
+		}
+		return
+	}
+	// Dispatch's five-second deadline may already have expired. Give the
+	// scheduler's snapshot/park RPC a fresh, bounded cleanup deadline.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), mirrorParkTimeout)
+	defer cancel()
+	if err := parker.ParkMirrorInstance(ctx, appID, instanceID, traceIDForTelemetry(parentCtx)); err != nil && h.log != nil {
+		h.log.Error("mirror: park admitted instance failed", "app_id", appID, "instance_id", instanceID, "err", err)
 	}
 }
 
