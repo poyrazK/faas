@@ -35,6 +35,30 @@
     update_cache: true
     cache_valid_time: 3600
 
+- name: github_actions_runner — validate private fleet endpoints
+  ansible.builtin.assert:
+    that:
+      - item.address | default('') is match('^([0-9]{1,3}\\.){3}[0-9]{1,3}$')
+      - item.names | default([]) | length > 0
+      - item.names | select('match', '^[A-Za-z0-9.-]+$') | list | length == item.names | length
+    fail_msg: "faas_runner_private_hosts entry needs an IPv4 address and hostnames: {{ item }}"
+  loop: "{{ faas_runner_private_hosts }}"
+  loop_control:
+    label: "{{ item.names | default([]) | join(', ') }}"
+
+- name: github_actions_runner — pin private fleet endpoints
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} FAAS FLEET RUNNER PRIVATE ENDPOINTS"
+    block: |
+      {% for entry in faas_runner_private_hosts %}
+      {{ entry.address }} {{ entry.names | join(' ') }}
+      {% endfor %}
+    state: "{{ 'present' if faas_runner_private_hosts | length > 0 else 'absent' }}"
+
 - name: github_actions_runner — create service account group
   ansible.builtin.group:
     name: "{{ faas_runner_group }}"
