@@ -3181,6 +3181,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		return WakeResult{}, fmt.Errorf("sched: wake: load sidecars: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
+	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
@@ -3234,17 +3235,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// vmmd DNATs it to this guest port and the request bridge
 		// dials the same target.
 		Port: deploymentRuntimePort(dep),
-		// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment
-		// override readiness probe path. Empty = legacy TCP-accept
-		// on :8080 (pre-PR-D default). Non-empty → vmmd's
-		// waitReady does HTTP GET <HealthcheckPath> against
-		// <HostIP>:8080 and accepts 2xx as ready. The host probe
-		// target is always :8080 — ADR-009 + portnorm re-expose the
-		// customer bind on :8080 inside the guest, so the path is
-		// the customer's choice and the port is the host's choice.
-		// Mirror of `Port` above: empty OverrideHealthcheck
-		// (legacy / no-override) → empty path → legacy probe.
-		HealthcheckPath: healthcheckPathFromDep(dep),
+		// Per-deployment HTTP or gRPC readiness selection. Both probe
+		// modes target :8080 (ADR-009/portnorm); an empty override
+		// keeps the legacy TCP probe.
+		HealthcheckPath:        healthcheckPathFromDep(dep),
+		HealthcheckGRPC:        healthcheckGRPC,
+		HealthcheckGRPCService: healthcheckGRPCService,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -4956,6 +4952,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
+	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	return AppSpec{
 		BaseKey:       baseKey(app.Runtime),
 		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
@@ -5007,7 +5004,9 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		Port: deploymentRuntimePort(dep),
 		// Issue #460 / ADR-053, ADR-057 (PR-D): per-deployment
 		// override readiness probe path. "" = legacy TCP-accept.
-		HealthcheckPath: healthcheckPathFromDep(dep),
+		HealthcheckPath:        healthcheckPathFromDep(dep),
+		HealthcheckGRPC:        healthcheckGRPC,
+		HealthcheckGRPCService: healthcheckGRPCService,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto
@@ -5680,6 +5679,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return fmt.Errorf("sched: prime: load sidecars: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
+	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
@@ -5721,8 +5721,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// deployment, so it must use the same resolved guest port as later
 		// wakes. Without this field vmmd falls back to guest :8080 while the
 		// inferred profile starts Node/Python apps on their framework port.
-		Port:            deploymentRuntimePort(dep),
-		HealthcheckPath: healthcheckPathFromDep(dep),
+		Port:                   deploymentRuntimePort(dep),
+		HealthcheckPath:        healthcheckPathFromDep(dep),
+		HealthcheckGRPC:        healthcheckGRPC,
+		HealthcheckGRPCService: healthcheckGRPCService,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label

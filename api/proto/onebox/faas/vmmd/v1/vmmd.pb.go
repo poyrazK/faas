@@ -155,16 +155,19 @@ type AppSpec struct {
 	// this port to dial the guest. Additive per ADR-016.
 	Port uint32 `protobuf:"varint,10,opt,name=port,proto3" json:"port,omitempty"`
 	// healthcheck_path (issue #460 / ADR-053, ADR-057 / PR-D) is the
-	// per-deployment override readiness probe path. When empty,
-	// vmmd's waitReady keeps the legacy TCP-accept on :8080 (zero
-	// regression risk for pre-PR-D callers). When non-empty, vmmd
-	// issues an HTTP GET <healthcheck_path> against <HostIP>:8080
-	// and accepts 2xx as ready; non-2xx retries every 200ms until
-	// readyTimeout (default 30s). The host's probe target stays
-	// :8080 — ADR-009 + portnorm re-expose the customer bind on
-	// :8080 inside the guest, so the path is the customer's choice
-	// and the port is the host's choice. Additive per ADR-016.
+	// HTTP readiness path. When both it and healthcheck_grpc are unset,
+	// vmmd preserves legacy TCP-accept readiness. Set exactly one of
+	// healthcheck_path and healthcheck_grpc. The host target stays :8080;
+	// ADR-009 + portnorm re-expose the customer bind there. Additive per
+	// ADR-016.
 	HealthcheckPath string `protobuf:"bytes,11,opt,name=healthcheck_path,json=healthcheckPath,proto3" json:"healthcheck_path,omitempty"`
+	// healthcheck_grpc enables the standard gRPC health.v1 Check probe.
+	// A separate bool distinguishes an enabled probe with the default
+	// empty service (overall server health) from the disabled state.
+	HealthcheckGrpc bool `protobuf:"varint,25,opt,name=healthcheck_grpc,json=healthcheckGrpc,proto3" json:"healthcheck_grpc,omitempty"`
+	// healthcheck_grpc_service is the optional service name sent in the
+	// health.v1 Check request; empty checks overall server health.
+	HealthcheckGrpcService string `protobuf:"bytes,26,opt,name=healthcheck_grpc_service,json=healthcheckGrpcService,proto3" json:"healthcheck_grpc_service,omitempty"`
 	// runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312", "go124"). schedd
 	// sources it from the apps row at Wake time and the vmmd
@@ -360,6 +363,20 @@ func (x *AppSpec) GetPort() uint32 {
 func (x *AppSpec) GetHealthcheckPath() string {
 	if x != nil {
 		return x.HealthcheckPath
+	}
+	return ""
+}
+
+func (x *AppSpec) GetHealthcheckGrpc() bool {
+	if x != nil {
+		return x.HealthcheckGrpc
+	}
+	return false
+}
+
+func (x *AppSpec) GetHealthcheckGrpcService() string {
+	if x != nil {
+		return x.HealthcheckGrpcService
 	}
 	return ""
 }
@@ -7822,7 +7839,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xd0\b\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xb5\t\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
 	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
@@ -7839,7 +7856,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\aapi_env\x18\t \x03(\v2 .onebox.faas.vmmd.v1.APIEnvEntryR\x06apiEnv\x12\x12\n" +
 	"\x04port\x18\n" +
 	" \x01(\rR\x04port\x12)\n" +
-	"\x10healthcheck_path\x18\v \x01(\tR\x0fhealthcheckPath\x12\x18\n" +
+	"\x10healthcheck_path\x18\v \x01(\tR\x0fhealthcheckPath\x12)\n" +
+	"\x10healthcheck_grpc\x18\x19 \x01(\bR\x0fhealthcheckGrpc\x128\n" +
+	"\x18healthcheck_grpc_service\x18\x1a \x01(\tR\x16healthcheckGrpcService\x12\x18\n" +
 	"\aruntime\x18\f \x01(\tR\aruntime\x12<\n" +
 	"\bsidecars\x18\r \x03(\v2 .onebox.faas.vmmd.v1.SidecarSpecR\bsidecars\x12(\n" +
 	"\x10static_egress_ip\x18\x0e \x01(\tR\x0estaticEgressIp\x12,\n" +

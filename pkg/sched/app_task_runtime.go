@@ -63,6 +63,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
+	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: request.ArtifactKey,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB),
@@ -77,7 +78,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules, PrivateNetworkID: privateNetwork.NetworkID,
 		PrivateNetworkAddress: privateNetwork.Address, StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
 		Port: deploymentRuntimePort(dep), HealthcheckPath: healthcheckPathFromDep(dep),
-		Runtime: app.Runtime, AppProtocol: app.AppProtocol,
+		HealthcheckGRPC:        healthcheckGRPC,
+		HealthcheckGRPCService: healthcheckGRPCService,
+		Runtime:                app.Runtime, AppProtocol: app.AppProtocol,
 	}
 	if spec.BaseKey == "" || spec.LayerKey == "" || !spec.Plan.Valid() {
 		return ResolvedAppTaskRuntime{}, errors.New("sched: app task runtime projection is incomplete")
