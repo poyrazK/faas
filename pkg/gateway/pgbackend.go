@@ -2043,6 +2043,23 @@ func (b *PGBackend) ScheduleMirrorTarget(ctx context.Context, appID, mirrorDeplo
 	return target, nil
 }
 
+// ParkMirrorInstance releases the shadow VM after its comparison. Mirror
+// instances are deliberately absent from the normal request picker and idle
+// reaper calculation, so the gateway addresses the owning schedd directly.
+func (b *PGBackend) ParkMirrorInstance(ctx context.Context, appID, instanceID, traceID string) error {
+	sched, err := b.resolveSched(ctx, appID)
+	if err != nil {
+		return err
+	}
+	parker, ok := sched.(interface {
+		ParkInstance(context.Context, string, string, string) error
+	})
+	if !ok {
+		return errors.New("gateway: mirror scheduler does not support ParkInstance")
+	}
+	return parker.ParkInstance(ctx, instanceID, "mirror_dispatch_complete", traceID)
+}
+
 // buildDeploymentWeights filters rows to Percent > 0 and sorts
 // (Percent DESC, DeploymentID ASC) for stable tie-break on the
 // cumulative-weight binary search (PR-B / issue #556). A
