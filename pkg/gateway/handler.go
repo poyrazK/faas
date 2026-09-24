@@ -7186,6 +7186,12 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				}
 			}
 			requestTraceID := traceIDForTelemetry(r.Context())
+			platformTenantID := authenticatedFrom(r.Context()).PlatformTenantID
+			if parsed, err := uuid.Parse(platformTenantID); err == nil && consumerID != "" {
+				platformTenantID = parsed.String()
+			} else {
+				platformTenantID = ""
+			}
 			if requestTraceID == "" {
 				// Keep the legacy request-id fallback for deployments where the
 				// OTel provider is disabled. Traced requests always use the real
@@ -7213,6 +7219,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				GuestOutcome:        guestEvidence.Outcome,
 				GuestErrorClass:     guestEvidence.ErrorClass,
 				ConsumerID:          consumerID,
+				PlatformTenantID:    platformTenantID,
 				NodeID:              target.NodeID,
 				Region:              target.Region,
 				CommitSHA:           target.CommitSHA,

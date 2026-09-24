@@ -35,6 +35,14 @@ func validateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 			return fmt.Errorf("consumer usage: consumer_key must be a UUID or %q: %w", AnonymousConsumerKey, err)
 		}
 	}
+	if event.PlatformTenantID != "" {
+		if event.ConsumerKey == AnonymousConsumerKey {
+			return fmt.Errorf("consumer usage: anonymous traffic cannot have platform_tenant_id")
+		}
+		if _, err := uuid.Parse(event.PlatformTenantID); err != nil {
+			return fmt.Errorf("consumer usage: platform_tenant_id must be a UUID: %w", err)
+		}
+	}
 	if event.WindowStart.IsZero() {
 		return fmt.Errorf("consumer usage: window_start is required")
 	}
@@ -57,6 +65,10 @@ func consumerUsageBucketKey(accountID, appID, consumerKey string, minute time.Ti
 	return accountID + "\x00" + appID + "\x00" + consumerKey + "\x00" + minute.UTC().Format(time.RFC3339)
 }
 
+func platformTenantUsageBucketKey(accountID, tenantID, appID, consumerKey string, minute time.Time) string {
+	return accountID + "\x00" + tenantID + "\x00" + consumerUsageBucketKey(accountID, appID, consumerKey, minute)
+}
+
 // RecordAPIConsumerUsage applies one event exactly once and returns true when
 // the event changed the aggregate. The MemStore implementation mirrors the
 // Postgres event-ledger transaction and is used by handler tests.
@@ -68,6 +80,12 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	defer m.mu.Unlock()
 	if _, exists := m.apiConsumerUsageEvents[event.EventID]; exists {
 		return false, nil
+	}
+	if event.PlatformTenantID != "" {
+		tenant, ok := m.platformTenants[event.PlatformTenantID]
+		if !ok || tenant.AccountID != event.AccountID {
+			return false, ErrNotFound
+		}
 	}
 	key := consumerUsageBucketKey(event.AccountID, event.AppID, event.ConsumerKey, event.WindowStart)
 	bucket := m.apiConsumerUsage[key]
@@ -81,6 +99,18 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	bucket.ErrorCount += event.ErrorCount
 	bucket.BillableUnits += event.BillableUnits
 	m.apiConsumerUsage[key] = bucket
+	if event.PlatformTenantID != "" {
+		tenantKey := platformTenantUsageBucketKey(event.AccountID, event.PlatformTenantID, event.AppID, event.ConsumerKey, event.WindowStart)
+		tenantBucket := m.platformTenantUsage[tenantKey]
+		if tenantBucket.AppID == "" {
+			tenantBucket = APIConsumerUsageBucket{AccountID: event.AccountID, AppID: event.AppID,
+				ConsumerKey: event.ConsumerKey, WindowStart: event.WindowStart.UTC()}
+		}
+		tenantBucket.RequestCount += event.RequestCount
+		tenantBucket.ErrorCount += event.ErrorCount
+		tenantBucket.BillableUnits += event.BillableUnits
+		m.platformTenantUsage[tenantKey] = tenantBucket
+	}
 	m.apiConsumerUsageEvents[event.EventID] = struct{}{}
 	return true, nil
 }

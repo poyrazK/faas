@@ -95,11 +95,11 @@ func TestPlatformTenantCrossAppLifecycle(t *testing.T) {
 	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(24 * time.Hour).Add(12 * time.Hour)
 	for _, event := range []state.APIConsumerUsageEvent{
 		{EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appA, ConsumerKey: consumerA,
-			WindowStart: minute, RequestCount: 10, ErrorCount: 2, BillableUnits: 8},
+			PlatformTenantID: tenant.ID, WindowStart: minute, RequestCount: 10, ErrorCount: 2, BillableUnits: 8},
 		{EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appA, ConsumerKey: consumerA,
-			WindowStart: minute.Add(time.Minute), RequestCount: 4, ErrorCount: 0, BillableUnits: 3},
+			PlatformTenantID: tenant.ID, WindowStart: minute.Add(time.Minute), RequestCount: 4, ErrorCount: 0, BillableUnits: 3},
 		{EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appB, ConsumerKey: consumerB,
-			WindowStart: minute, RequestCount: 7, ErrorCount: 1, BillableUnits: 6},
+			PlatformTenantID: tenant.ID, WindowStart: minute, RequestCount: 7, ErrorCount: 1, BillableUnits: 6},
 	} {
 		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), event); err != nil {
 			t.Fatal(err)

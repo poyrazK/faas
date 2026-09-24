@@ -391,6 +391,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			GuestErrorClass:     row.GuestErrorClass,
 			GuestDurationBucket: row.GuestDurationMS,
 			ConsumerID:          row.ConsumerID,
+			PlatformTenantID:    row.PlatformTenantID,
 			NodeID:              row.NodeID,
 			Region:              row.Region,
 			CommitSHA:           row.CommitSHA,
@@ -446,6 +447,7 @@ type bucketKey struct {
 	GuestErrorClass     string
 	GuestDurationBucket int
 	ConsumerID          string
+	PlatformTenantID    string
 	NodeID              string
 	Region              string
 	CommitSHA           string
@@ -462,11 +464,11 @@ func (k bucketKey) String() string {
 	// encoding if the profiler flags it. (Profile showed < 1%
 	// of publisher CPU before the collapse; even at 2x with the
 	// canonical string we're well under 2%.)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%d|%d|%d",
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%d|%d|%d",
 		k.AccountID, k.AppID, k.DeploymentID,
 		k.Route, k.Method, k.Status, k.UAFamily, k.ReferrerHost,
 		k.Country, k.WakeID, k.GuestRuntime, k.GuestOutcome,
-		k.GuestErrorClass, k.ConsumerID, k.NodeID, k.Region, k.CommitSHA,
+		k.GuestErrorClass, k.ConsumerID, k.PlatformTenantID, k.NodeID, k.Region, k.CommitSHA,
 		k.DeploymentTag, k.DeploymentCreatedAt, k.ImageDigest,
 		k.GuestDurationBucket, k.LatencyBucket, k.bucket.Unix())
 }
