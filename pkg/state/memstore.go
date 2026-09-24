@@ -19584,6 +19584,14 @@ func (m *MemStore) NextDeploymentRouteGeneration(_ context.Context) (int64, erro
 	return m.deploymentRouteGeneration, nil
 }
 
+func cloneEdgeRuleMatchHeaders(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for name, value := range in {
+		out[name] = value
+	}
+	return out
+}
+
 func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -19598,6 +19606,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		MatchHost:    in.MatchHost,
 		MatchPath:    in.MatchPath,
 		MatchMethods: in.MatchMethods,
+		MatchHeaders: cloneEdgeRuleMatchHeaders(in.MatchHeaders),
 		Priority:     in.Priority,
 		Enabled:      in.Enabled,
 		Kind:         in.Kind,
@@ -19611,7 +19620,10 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	m.edgeRules[r.ID] = r
+	stored := r
+	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
+	m.edgeRules[r.ID] = stored
+	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
 
@@ -19711,6 +19723,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		MatchHost:    in.MatchHost,
 		MatchPath:    in.MatchPath,
 		MatchMethods: in.MatchMethods,
+		MatchHeaders: cloneEdgeRuleMatchHeaders(in.MatchHeaders),
 		Priority:     in.Priority,
 		Enabled:      in.Enabled,
 		Kind:         in.Kind,
@@ -19723,7 +19736,10 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	m.edgeRules[r.ID] = r
+	stored := r
+	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
+	m.edgeRules[r.ID] = stored
+	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
 
@@ -19733,6 +19749,7 @@ func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) 
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
 		if r.AccountID == accountID {
+			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
 	}
@@ -19751,6 +19768,7 @@ func (m *MemStore) ListEdgeRulesForApp(_ context.Context, appID string) ([]EdgeR
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
 		if r.AppID == appID {
+			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
 	}
@@ -19770,6 +19788,7 @@ func (m *MemStore) GetEdgeRuleByID(_ context.Context, id string) (EdgeRule, erro
 	if !ok {
 		return EdgeRule{}, ErrNotFound
 	}
+	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
 
@@ -20272,6 +20291,9 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 		copy(cp, *p.MatchMethods)
 		r.MatchMethods = cp
 	}
+	if p.MatchHeaders != nil {
+		r.MatchHeaders = cloneEdgeRuleMatchHeaders(*p.MatchHeaders)
+	}
 	if p.Priority != nil {
 		r.Priority = *p.Priority
 	}
@@ -20291,7 +20313,10 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 		r.ValidateMode = *p.ValidateMode
 	}
 	r.UpdatedAt = time.Now()
-	m.edgeRules[id] = r
+	stored := r
+	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
+	m.edgeRules[id] = stored
+	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
 
@@ -20352,6 +20377,7 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 			continue
 		}
 		if matchHostPattern(r.MatchHost, host) {
+			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
 	}

@@ -8539,19 +8539,20 @@ func isHeaderToken(s string) bool {
 // deprecated and will be dropped in the release after the
 // deprecation notice.
 type EdgeRuleResponse struct {
-	ID           string          `json:"id"`
-	AccountID    string          `json:"account_id"`
-	AppID        string          `json:"app_id"`
-	MatchHost    string          `json:"match_host"`
-	MatchPath    string          `json:"match_path"`
-	MatchMethods []string        `json:"match_methods"`
-	Priority     int             `json:"priority"`
-	Enabled      bool            `json:"enabled"`
-	Kind         string          `json:"kind"`
-	ValidateMode string          `json:"validate_mode,omitempty"`
-	Action       json.RawMessage `json:"action"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID           string            `json:"id"`
+	AccountID    string            `json:"account_id"`
+	AppID        string            `json:"app_id"`
+	MatchHost    string            `json:"match_host"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods"`
+	MatchHeaders map[string]string `json:"match_headers"`
+	Priority     int               `json:"priority"`
+	Enabled      bool              `json:"enabled"`
+	Kind         string            `json:"kind"`
+	ValidateMode string            `json:"validate_mode,omitempty"`
+	Action       json.RawMessage   `json:"action"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 // CreateEdgeRuleRequest is the wire shape for POST /v1/apps/{slug}/edge-rules.
@@ -8564,14 +8565,15 @@ type EdgeRuleResponse struct {
 // action-level `action.validate_mode` (deprecated). Empty == 'block'
 // (the SQL-side default; the column is NOT NULL).
 type CreateEdgeRuleRequest struct {
-	MatchHost    string          `json:"match_host"`
-	MatchPath    string          `json:"match_path"`
-	MatchMethods []string        `json:"match_methods,omitempty"`
-	Priority     *int            `json:"priority,omitempty"`
-	Enabled      *bool           `json:"enabled,omitempty"`
-	Kind         string          `json:"kind"`
-	ValidateMode string          `json:"validate_mode,omitempty"`
-	Action       json.RawMessage `json:"action"`
+	MatchHost    string            `json:"match_host"`
+	MatchPath    string            `json:"match_path"`
+	MatchMethods []string          `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string `json:"match_headers,omitempty"`
+	Priority     *int              `json:"priority,omitempty"`
+	Enabled      *bool             `json:"enabled,omitempty"`
+	Kind         string            `json:"kind"`
+	ValidateMode string            `json:"validate_mode,omitempty"`
+	Action       json.RawMessage   `json:"action"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -8583,13 +8585,91 @@ type CreateEdgeRuleRequest struct {
 // existing column value. Customers who want to reset to 'block'
 // must send the explicit string "block".
 type UpdateEdgeRuleRequest struct {
-	MatchHost    *string          `json:"match_host,omitempty"`
-	MatchPath    *string          `json:"match_path,omitempty"`
-	MatchMethods *[]string        `json:"match_methods,omitempty"`
-	Priority     *int             `json:"priority,omitempty"`
-	Enabled      *bool            `json:"enabled,omitempty"`
-	ValidateMode *string          `json:"validate_mode,omitempty"`
-	Action       *json.RawMessage `json:"action,omitempty"`
+	MatchHost    *string            `json:"match_host,omitempty"`
+	MatchPath    *string            `json:"match_path,omitempty"`
+	MatchMethods *[]string          `json:"match_methods,omitempty"`
+	MatchHeaders *map[string]string `json:"match_headers,omitempty"`
+	Priority     *int               `json:"priority,omitempty"`
+	Enabled      *bool              `json:"enabled,omitempty"`
+	ValidateMode *string            `json:"validate_mode,omitempty"`
+	Action       *json.RawMessage   `json:"action,omitempty"`
+}
+
+const (
+	EdgeRuleMatchHeadersMaxCount     = 10
+	EdgeRuleMatchHeaderMaxValueBytes = 1024
+)
+
+// NormalizeEdgeRuleMatchHeaders validates and lowercases exact-value request
+// header selectors. Header names are case-insensitive, so case-only duplicate
+// keys are rejected instead of leaving matching dependent on JSON map order.
+func NormalizeEdgeRuleMatchHeaders(headers map[string]string) (map[string]string, error) {
+	if len(headers) > EdgeRuleMatchHeadersMaxCount {
+		return nil, fmt.Errorf("match_headers may contain at most %d names", EdgeRuleMatchHeadersMaxCount)
+	}
+	out := make(map[string]string, len(headers))
+	for name, value := range headers {
+		if !isEdgeRuleMatchHeaderName(name) {
+			return nil, fmt.Errorf("match_headers contains invalid HTTP header name %q", name)
+		}
+		name = strings.ToLower(name)
+		if name == "host" {
+			return nil, fmt.Errorf("match_headers cannot include Host; use match_host")
+		}
+		if _, exists := out[name]; exists {
+			return nil, fmt.Errorf("match_headers contains duplicate header name %q (header names are case-insensitive)", name)
+		}
+		if len(value) > EdgeRuleMatchHeaderMaxValueBytes || strings.ContainsAny(value, "\r\n\x00") {
+			return nil, fmt.Errorf("match_headers value for %q must be at most %d bytes and contain no CR, LF, or NUL", name, EdgeRuleMatchHeaderMaxValueBytes)
+		}
+		out[name] = value
+	}
+	return out, nil
+}
+
+// EdgeRuleRequestHeadersMatch reports whether each configured selector has an
+// exact matching request-header value. Header names compare case-insensitively;
+// any one value satisfies a selector when the request repeats a header.
+func EdgeRuleRequestHeadersMatch(expected map[string]string, actual http.Header) bool {
+	for expectedName, expectedValue := range expected {
+		found := false
+		for actualName, values := range actual {
+			if !strings.EqualFold(expectedName, actualName) {
+				continue
+			}
+			for _, value := range values {
+				if value == expectedValue {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func isEdgeRuleMatchHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		switch c {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // RekeyProgress is the response body of
