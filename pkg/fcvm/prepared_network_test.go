@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/netip"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -123,11 +124,18 @@ func TestPreparedNetworkPolicyAndExpiry(t *testing.T) {
 	}
 	for _, req := range []WakeRequest{
 		{Plan: "scale", ExportDir: "/builder"}, {Plan: "scale", StaticEgressIP: "1.2.3.4"},
-		{Plan: "scale", EgressAllowlist: []string{"1.2.3.4/32"}}, {Plan: "scale", Port: 3000},
-		{Plan: "invalid"},
+		{Plan: "scale", EgressAllowlist: []string{"1.2.3.4/32"}}, {Plan: "scale", Port: -1},
+		{Plan: "scale", Port: 65536}, {Plan: "invalid"},
 	} {
 		if _, ok := m.preparedPolicy(req); ok {
 			t.Fatalf("unsupported policy eligible: %+v", req)
+		}
+	}
+	// The guest port is not part of the policy: every app port shares one pool.
+	want, _ := m.preparedPolicy(WakeRequest{Plan: "scale", EgressMbit: 250})
+	for _, port := range []int{0, netns.AppPort, 3000, 8000, 65535} {
+		if got, ok := m.preparedPolicy(WakeRequest{Plan: "scale", EgressMbit: 250, Port: port}); !ok || got != want {
+			t.Fatalf("port %d: policy=%+v ok=%v, want %+v", port, got, ok, want)
 		}
 	}
 }
@@ -222,8 +230,8 @@ func TestPreparedNetworkDefaultPortMatches(t *testing.T) {
 	}
 }
 
-func TestPreparedNetworkWakeWithExplicitDefaultPort(t *testing.T) {
-	for _, port := range []int{0, netns.AppPort} {
+func TestPreparedNetworkWakeKeepsNetworkForAnyPort(t *testing.T) {
+	for _, port := range []int{0, netns.AppPort, 3000, 8000} {
 		t.Run(fmt.Sprint(port), func(t *testing.T) {
 			m, p := testPreparedPool(t, 1)
 			fillTestPreparedPool(t, m, p, 250)
@@ -252,6 +260,101 @@ func TestPreparedNetworkWakeWithExplicitDefaultPort(t *testing.T) {
 			}
 			if m.LeasedCount() != 1 || len(p.ready) != 0 || len(m.alloc.reserved) != 0 {
 				t.Fatal("wake did not transfer the prepared reservation exactly once")
+			}
+			custom := port != 0 && port != netns.AppPort
+			if retargeted := run.ran("flush chain ip faas prerouting"); retargeted != custom {
+				t.Fatalf("port %d: DNAT retarget ran=%v", port, retargeted)
+			}
+			if custom && !run.ran(fmt.Sprintf("dnat to %s:%d", netns.GuestIP, port)) {
+				t.Fatalf("port %d: DNAT not retargeted to the guest port", port)
+			}
+		})
+	}
+}
+
+// A claimed namespace prepared for :8080 serves any valid guest port: only
+// the DNAT target changes, replaced in one nft transaction, and nothing else
+// runs. (ADR-149 amendment, 2026-09-24.)
+func TestPreparedNetworkRetargetsGuestPortInOneTransaction(t *testing.T) {
+	run := &fakeInputRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	prepared := netns.NewConfig("i", "fc-i", "vh0", "vp0", netip.MustParseAddr("10.100.0.2"))
+	for n, port := range []int{3000, 8000, 65535} {
+		requested := prepared
+		requested.GuestAppPort = port
+		hit, err := m.setupWakeNetwork(t.Context(), requested, &preparedNetworkEntry{config: prepared})
+		if err != nil || !hit {
+			t.Fatalf("port %d: hit=%v err=%v, want a retargeted hit", port, hit, err)
+		}
+		if run.inputRuns != n+1 || strings.Join(run.inputArgv, " ") != "ip netns exec fc-i nft -f -" {
+			t.Fatalf("port %d: nft runs=%d argv=%v, want one `nft -f -` transaction", port, run.inputRuns, run.inputArgv)
+		}
+		want := fmt.Sprintf("flush chain ip faas prerouting\nadd rule ip faas prerouting iifname vp0 tcp dport 8080 dnat to %s:%d\n", netns.GuestIP, port)
+		if string(run.input) != want {
+			t.Fatalf("port %d: transaction\n%s\nwant\n%s", port, run.input, want)
+		}
+		if len(run.commands) != 0 {
+			t.Fatalf("retarget ran commands outside the transaction: %v", run.commands)
+		}
+	}
+}
+
+// If the retarget fails the namespace is rebuilt through ordinary setup, as
+// any other mismatch is, before a VMM starts.
+func TestPreparedNetworkRetargetFailureRebuilds(t *testing.T) {
+	m, p := testPreparedPool(t, 1)
+	policy := fillTestPreparedPool(t, m, p, 250)
+	e := p.claim("retarget-fails", policy)
+	if e == nil {
+		t.Fatal("cache miss")
+	}
+	defer p.discard(*e)
+	run := m.run.(*fakeRunner)
+	run.failOn = "flush chain ip faas prerouting"
+	nc := e.config
+	nc.GuestAppPort = 3000
+	setupBefore := run.setupCount
+	hit, err := m.setupWakeNetwork(t.Context(), nc, e)
+	if hit || err != nil {
+		t.Fatalf("hit=%v err=%v, want a rebuild", hit, err)
+	}
+	if run.setupCount == setupBefore || !run.ran(fmt.Sprintf("dnat to %s:3000", netns.GuestIP)) {
+		t.Fatal("failed retarget did not rebuild the network for the requested port")
+	}
+}
+
+// Only the guest port may differ, and only to a valid port: every other
+// identity or policy change still rebuilds.
+func TestPreparedNetworkRetargetOnlyForPort(t *testing.T) {
+	prepared := netns.NewConfig("same", "fc-same", "vh0", "vp0", netip.MustParseAddr("10.100.0.2"))
+	for _, tc := range []struct {
+		name   string
+		change func(*netns.Config)
+		want   bool
+	}{
+		{"custom_port", func(c *netns.Config) { c.GuestAppPort = 3000 }, true},
+		{"max_port", func(c *netns.Config) { c.GuestAppPort = 65535 }, true},
+		{"negative_port", func(c *netns.Config) { c.GuestAppPort = -1 }, false},
+		{"overflow_port", func(c *netns.Config) { c.GuestAppPort = 65536 }, false},
+		{"port_and_instance", func(c *netns.Config) { c.GuestAppPort, c.Instance = 3000, "other" }, false},
+		{"port_and_tap_owner", func(c *netns.Config) { c.GuestAppPort = 3000; c.TapUID++ }, false},
+		{"port_and_egress_rate", func(c *netns.Config) { c.GuestAppPort = 3000; c.EgressMbit++ }, false},
+		{"port_and_conntrack_cap", func(c *netns.Config) { c.GuestAppPort = 3000; c.ConntrackCap++ }, false},
+		{"port_and_allowlist", func(c *netns.Config) {
+			c.GuestAppPort = 3000
+			c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.1.1.1/32")}
+		}, false},
+		{"port_and_private_network", func(c *netns.Config) {
+			c.GuestAppPort = 3000
+			c.PrivateNetworkCIDRs = []netip.Prefix{netip.MustParsePrefix("10.42.0.0/24")}
+		}, false},
+		{"port_and_egress_circuit", func(c *netns.Config) { c.GuestAppPort = 3000; c.EgressCircuitEnabled = true }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requested := prepared
+			tc.change(&requested)
+			if got := preparedNetworkDiffersOnlyInPort(prepared, requested); got != tc.want {
+				t.Fatalf("differs only in port = %v, want %v", got, tc.want)
 			}
 		})
 	}

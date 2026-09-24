@@ -30,12 +30,22 @@ type prefetchMetalRig struct {
 	statePath string
 	health    string
 	prepared  bool
+	port      int // guest app port; netns.AppPort unless a test says otherwise
+
+	lastNetnsTapMs int64
 }
 
 // newPrefetchMetalRig cold-boots one guest and parks it under a production v2
 // capture key (which also captures the writable drive). base/layer default to
 // the self-contained v6 fixture.
 func newPrefetchMetalRig(t *testing.T, base, layer string, memMiB int, health string, prepared bool) *prefetchMetalRig {
+	t.Helper()
+	return newPrefetchMetalRigPort(t, base, layer, memMiB, health, prepared, netns.AppPort)
+}
+
+// newPrefetchMetalRigPort is newPrefetchMetalRig for a guest app listening on
+// port. A custom port needs the default fixture (base == "").
+func newPrefetchMetalRigPort(t *testing.T, base, layer string, memMiB int, health string, prepared bool, port int) *prefetchMetalRig {
 	t.Helper()
 	kernel := os.Getenv("FAAS_TEST_KERNEL")
 	if kernel == "" {
@@ -47,7 +57,7 @@ func newPrefetchMetalRig(t *testing.T, base, layer string, memMiB int, health st
 	dir := benchFixtureDir(t)
 	if base == "" {
 		base, layer = filepath.Join(dir, "base.ext4"), filepath.Join(dir, "layer.ext4")
-		if err := buildV6BaseExt4(base, repoRoot(t)); err != nil {
+		if err := buildV6BaseExt4Port(base, repoRoot(t), port); err != nil {
 			t.Fatal(err)
 		}
 		if err := buildV6LayerExt4Size(layer, 64); err != nil {
@@ -80,7 +90,7 @@ func newPrefetchMetalRig(t *testing.T, base, layer string, memMiB int, health st
 	key := func(leaf string) string { return "snap/prefetch-metal/captures/c1/v2/" + leaf }
 	r := &prefetchMetalRig{
 		m:   NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, nil, nil),
-		vmm: vmm, base: base, layer: layer, mem: memMiB, health: health, prepared: prepared,
+		vmm: vmm, base: base, layer: layer, mem: memMiB, health: health, prepared: prepared, port: port,
 		memPath: filepath.Join(root, key("mem")), statePath: filepath.Join(root, key("vmstate")),
 	}
 	r.snap = &Snapshot{FCVersion: fcVersion, StorageKey: key("mem"), VMStateStorageKey: key("vmstate"),
@@ -97,7 +107,10 @@ func newPrefetchMetalRig(t *testing.T, base, layer string, memMiB int, health st
 	cold := ColdBootRequest{Instance: "prefetch-metal", Plan: "pro", BaseKey: base, LayerKey: layer,
 		VcpuCount: 2, MemSizeMiB: memMiB, HealthcheckPath: health, StartupDeadlineS: 60}
 	if prepared {
-		cold.Plan, cold.Port, cold.EgressMbit = "scale", netns.AppPort, 250
+		cold.Plan, cold.EgressMbit = "scale", 250
+	}
+	if prepared || port != netns.AppPort {
+		cold.Port = port
 	}
 	if _, err := r.m.ColdBoot(ctx, cold); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
@@ -134,8 +147,11 @@ func (r *prefetchMetalRig) wakeWith(t *testing.T, mutate func(*WakeRequest)) tim
 		mutate(&req)
 	}
 	if r.prepared {
-		req.Plan, req.Port, req.EgressMbit = "scale", netns.AppPort, 250
+		req.Plan, req.EgressMbit = "scale", 250
 		waitPreparedBenchmarkNetwork(t, r.m, context.Background())
+	}
+	if r.prepared || r.port != netns.AppPort {
+		req.Port = r.port
 	}
 	start := time.Now()
 	out, err := r.m.Wake(context.Background(), req)
@@ -145,9 +161,16 @@ func (r *prefetchMetalRig) wakeWith(t *testing.T, mutate func(*WakeRequest)) tim
 	if out.Method != WakeRestore {
 		t.Fatalf("wake method = %s, want restore", out.Method)
 	}
-	if r.prepared && out.NetnsTapMs > 5 {
+	// A hit costs nothing; a custom port adds one nft transaction to retarget
+	// the claimed namespace's DNAT. A rebuild costs tens of milliseconds.
+	limit := int64(5)
+	if r.port != netns.AppPort {
+		limit = 25
+	}
+	if r.prepared && out.NetnsTapMs > limit {
 		t.Fatalf("wake built its network inline (%d ms); the prepared pool missed", out.NetnsTapMs)
 	}
+	r.lastNetnsTapMs = out.NetnsTapMs
 	return time.Since(start)
 }
 
