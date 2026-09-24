@@ -13,7 +13,10 @@ BEGIN
     ) THEN
         ALTER TABLE edge_rules
             ADD CONSTRAINT edge_rules_match_headers_shape_chk
-            CHECK (jsonb_typeof(match_headers) = 'object' AND jsonb_object_length(match_headers) <= 10);
+            CHECK (
+                jsonb_typeof(match_headers) = 'object'
+                AND jsonb_array_length(jsonb_path_query_array(match_headers, '$.keyvalue()')) <= 10
+            );
     END IF;
 END
 $$;
