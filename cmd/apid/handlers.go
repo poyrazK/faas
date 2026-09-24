@@ -583,7 +583,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
-	overrides, p := validateOverrides(&req, limits)
+	overrides, p := validateOverrides(&req, limits, acct.Plan)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return

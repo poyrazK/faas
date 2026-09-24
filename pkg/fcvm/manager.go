@@ -1851,8 +1851,11 @@ func (m *Manager) ReportLivenessFailed(ctx context.Context, instanceID, reason s
 // without vmmd hard-coding it.
 type LivenessProbeConfig struct {
 	Path                string
+	GRPC                bool
+	GRPCService         string
 	Port                int
 	PeriodSeconds       int
+	TimeoutSeconds      int
 	ConsecutiveFailures int
 	CooldownSeconds     int
 	IdleResetOnDestroy  bool
@@ -2017,8 +2020,9 @@ func (r *LivenessRegistry) CancelProbeLoop(instance string) {
 //
 //	mgr.WithLivenessProbes(fcvm.NewLivenessRegistry(), defaultCfg)
 //
-// where defaultCfg is the per-plan Hobby/Pro/Scale default merged
-// into a per-deployment override by Manager.startLivenessLoop. nil
+// where defaultCfg is the per-plan Hobby/Pro/Scale default (5 s period,
+// 2 s timeout, 3 consecutive failures, 60 s cooldown) merged into a
+// per-deployment override by Manager.startLivenessLoop. nil
 // opts out (Manager constructed without a registry skips the
 // per-instance start/cancel calls; the cmd default-local vmmd that
 // doesn't wire the registry stays a no-op for AC #1 purposes).
@@ -2067,11 +2071,20 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 			m.log.Warn("liveness: malformed override, using plan defaults",
 				"instance", instance, "err", err)
 		} else {
-			if ov.Path != "" {
+			if ov.GRPC != nil {
+				cfg.Path = ""
+				cfg.GRPC = true
+				cfg.GRPCService = ov.GRPC.Service
+			} else if ov.Path != "" {
 				cfg.Path = ov.Path
+				cfg.GRPC = false
+				cfg.GRPCService = ""
 			}
 			if ov.IntervalS > 0 {
 				cfg.PeriodSeconds = ov.IntervalS
+			}
+			if ov.TimeoutS > 0 {
+				cfg.TimeoutSeconds = ov.TimeoutS
 			}
 			if ov.ConsecutiveFailures > 0 {
 				cfg.ConsecutiveFailures = ov.ConsecutiveFailures

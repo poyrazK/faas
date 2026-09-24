@@ -2825,10 +2825,8 @@ var planLimits = map[Plan]Limits{
 		ConcurrentTailsPerInstance: 64,
 		// Liveness (issue #554 / ADR-078): same defaults as Hobby —
 		// the §13 baseline is plan-tier-independent (5 s / 3 /
-		// 60 s / 3 / 300 s). The Pro tier is the unlock point for
-		// the gRPC liveness flavor (Plan.GRPCLivenessAllowed,
-		// v1 returns false because the runner shim only speaks
-		// HTTP — see ADR-078 §Rejected alternatives).
+		// 60 s / 3 / 300 s). gRPC liveness is Pro/Scale-only
+		// (Plan.GRPCLivenessAllowed); Hobby remains HTTP-only.
 		LivenessPeriodSeconds:       DefaultLivenessPeriodSeconds,
 		LivenessConsecutiveFailures: DefaultLivenessConsecutiveFailures,
 		LivenessCooldownSeconds:     DefaultLivenessCooldownSeconds,
@@ -4054,11 +4052,9 @@ const (
 	//                              a single tick; >1 h loses the
 	//                              "5 min" AC verbatim.
 	//
-	// gRPC liveness (Pro+) is deferred to v2 — the v1 path is HTTP
-	// only, mirroring the existing readiness probe on `healthcheck_path`.
-	// Plan.GRPCLivenessAllowed() returns false in v1 and exists in
-	// the API surface so v2 can flip it without a DTO change.
+	// Probe timeout defaults to 2 s on every liveness-enabled plan.
 	DefaultLivenessPeriodSeconds       = 5
+	DefaultLivenessTimeoutSeconds      = 2
 	DefaultLivenessConsecutiveFailures = 3
 	DefaultLivenessCooldownSeconds     = 60
 	DefaultLivenessMaxRestarts         = 3
@@ -5708,16 +5704,10 @@ func (p Plan) LivenessWindowSeconds() int {
 }
 
 // GRPCLivenessAllowed (issue #554 / ADR-078 §"gRPC liveness") reports
-// whether the plan may opt-in to gRPC health-check probes (the
-// gRPC ServiceConfig.health_check protocol). v1 returns false across
-// the board — the existing readiness probe on `healthcheck_path` is
-// HTTP-only and vmmd's liveness receiver dials vsock 1028 STREAM
-// which the runner exposes over HTTP GET semantics. The accessor
-// exists in the API surface so a v2 PR can flip it without a
-// DTO/SDK change. Pro + Scale are the unlock point when v2 lands
-// (mirrors the GRPCAllowed gate). Free + Hobby stay off.
+// whether the plan may opt in to standard gRPC health.v1 Check liveness
+// probes. Pro and Scale are enabled; Free and Hobby remain HTTP-only.
 func (p Plan) GRPCLivenessAllowed() bool {
-	return false
+	return p == PlanPro || p == PlanScale
 }
 
 // StreamingEnabled reports whether the plan defaults the per-app

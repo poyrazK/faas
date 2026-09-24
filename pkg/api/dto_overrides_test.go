@@ -361,6 +361,35 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 			wantInBody: `liveness_probe.path must start with "/"`,
 		},
 		{
+			name: "liveness-probe-requires-exactly-one-action",
+			overrides: &CreateDeploymentOverrides{
+				LivenessProbe: &DeploymentLivenessProbe{},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "liveness_probe must set exactly one of path or grpc",
+		},
+		{
+			name: "liveness-probe-rejects-both-actions",
+			overrides: &CreateDeploymentOverrides{
+				LivenessProbe: &DeploymentLivenessProbe{
+					Path: "/healthz",
+					GRPC: &DeploymentGRPCLivenessProbe{Service: "catalog.v1.Catalog"},
+				},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "liveness_probe must set exactly one of path or grpc",
+		},
+		{
+			name: "liveness-probe-grpc-service-length-is-bounded-by-runes",
+			overrides: &CreateDeploymentOverrides{
+				LivenessProbe: &DeploymentLivenessProbe{
+					GRPC: &DeploymentGRPCLivenessProbe{Service: strings.Repeat("界", GRPCHealthcheckServiceMaxLength+1)},
+				},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "liveness_probe.grpc.service must be at most 256 characters",
+		},
+		{
 			name: "liveness-probe-negative-interval",
 			overrides: &CreateDeploymentOverrides{
 				LivenessProbe: &DeploymentLivenessProbe{
@@ -503,6 +532,14 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 					Path: "/healthz",
 					// interval/timeout/consecutive default to 0 → inherit
 					// per-plan defaults (Hobby/Pro/Scale → 5 / 3 / 60s).
+				},
+			},
+		},
+		{
+			name: "liveness-probe-minimal-grpc-only",
+			overrides: &CreateDeploymentOverrides{
+				LivenessProbe: &DeploymentLivenessProbe{
+					GRPC: &DeploymentGRPCLivenessProbe{},
 				},
 			},
 		},

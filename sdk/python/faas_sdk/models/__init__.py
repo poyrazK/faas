@@ -539,6 +539,7 @@ from .deployment_change_field import DeploymentChangeField
 from .deployment_failed_webhook_payload import DeploymentFailedWebhookPayload
 from .deployment_failed_webhook_payload_status import DeploymentFailedWebhookPayloadStatus
 from .deployment_grpc_healthcheck import DeploymentGRPCHealthcheck
+from .deployment_grpc_liveness_probe import DeploymentGRPCLivenessProbe
 from .deployment_healthcheck import DeploymentHealthcheck
 from .deployment_list_response import DeploymentListResponse
 from .deployment_live_webhook_payload import DeploymentLiveWebhookPayload
@@ -2071,6 +2072,7 @@ __all__ = (
     "DeploymentFailedWebhookPayload",
     "DeploymentFailedWebhookPayloadStatus",
     "DeploymentGRPCHealthcheck",
+    "DeploymentGRPCLivenessProbe",
     "DeploymentHealthcheck",
     "DeploymentListResponse",
     "DeploymentLivenessProbe",

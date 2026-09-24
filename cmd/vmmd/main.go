@@ -956,7 +956,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// liveness probe registry + starter so the Manager's bringUp /
 	// Park hooks actually launch + cancel the probe loops. The
 	// defaultCfg carries the per-plan Hobby/Pro/Scale defaults
-	// (5 s period, 3 consecutive, 60 s cooldown) merged into
+	// (5 s period, 2 s timeout, 3 consecutive, 60 s cooldown) merged into
 	// per-deployment overrides at Wake time. The starter closure
 	// builds the cmd-side loop body via startLivenessLoopHelper
 	// (cmd/vmmd/liveness_recv.go). sink is wired below after
@@ -965,6 +965,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		fcvm.NewLivenessRegistry(),
 		fcvm.LivenessProbeConfig{
 			Path:                "/healthz",
+			TimeoutSeconds:      api.DefaultLivenessTimeoutSeconds,
 			PeriodSeconds:       api.DefaultLivenessPeriodSeconds,
 			ConsecutiveFailures: api.DefaultLivenessConsecutiveFailures,
 			CooldownSeconds:     api.DefaultLivenessCooldownSeconds,
