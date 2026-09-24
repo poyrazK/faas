@@ -101,6 +101,37 @@ func newRequestTelemetryReceiver(store requestTelemetryStore, ops *wire.OpsMetri
 	return &requestTelemetryReceiver{store: store, ops: ops, limiter: limiter, enabled: enabled}
 }
 
+// RecordConsumerUsage acknowledges only after the idempotent event and both
+// minute aggregates commit. It intentionally ignores the debugger kill switch
+// and its plan/rate gates; accounting must not depend on debug entitlement.
+func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req *apidpb.ConsumerUsageEvent) (*apidpb.ConsumerUsageReceipt, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "consumer usage event is required")
+	}
+	consumerKey := req.GetConsumerId()
+	if consumerKey == "" {
+		consumerKey = state.AnonymousConsumerKey
+	}
+	event := state.APIConsumerUsageEvent{
+		EventID: req.GetEventId(), AccountID: req.GetAccountId(), AppID: req.GetAppId(),
+		ConsumerKey: consumerKey, PlatformTenantID: req.GetPlatformTenantId(),
+		WindowStart:  time.UnixMilli(req.GetWindowStartUnixMs()).UTC(),
+		RequestCount: req.GetRequestCount(), ErrorCount: req.GetErrorCount(), BillableUnits: req.GetBillableUnits(),
+	}
+	if err := state.ValidateAPIConsumerUsageEvent(event); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid consumer usage event: %v", err)
+	}
+	usageStore, ok := r.store.(consumerUsageStore)
+	if !ok {
+		return nil, status.Error(codes.Unavailable, "consumer usage store unavailable")
+	}
+	applied, err := usageStore.RecordAPIConsumerUsage(ctx, event)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "record consumer usage: %v", err)
+	}
+	return &apidpb.ConsumerUsageReceipt{Applied: applied}, nil
+}
+
 // IncrementRequestTelemetry streams per-record telemetry rows
 // from the gateway edge. The server commits each record inside
 // its own transaction (per-record commit; load-bearing for the
@@ -203,22 +234,24 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 	if req.GetHttpStatus() >= 400 {
 		errorCount = int64(count)
 	}
-	usageStore, ok := r.store.(consumerUsageStore)
-	if !ok {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out
-	}
-	_, usageErr := usageStore.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
-		EventID: eventID, AccountID: accountID.String(), AppID: appID.String(),
-		ConsumerKey: consumerKey, WindowStart: windowStart,
-		PlatformTenantID: platformTenantID,
-		RequestCount:     int64(count), ErrorCount: errorCount, BillableUnits: int64(count),
-	})
-	if usageErr != nil {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out
+	if !req.GetUsageOutboxed() {
+		usageStore, ok := r.store.(consumerUsageStore)
+		if !ok {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
+		_, usageErr := usageStore.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
+			EventID: eventID, AccountID: accountID.String(), AppID: appID.String(),
+			ConsumerKey: consumerKey, WindowStart: windowStart,
+			PlatformTenantID: platformTenantID,
+			RequestCount:     int64(count), ErrorCount: errorCount, BillableUnits: int64(count),
+		})
+		if usageErr != nil {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
 	}
 
 	// ---- 2. Resolve per-account rate cap ----

@@ -79,6 +79,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -2622,6 +2623,26 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
+	// Financial usage has a separate, fsynced gateway outbox. Open it before
+	// accepting traffic even when the optional request debugger is disabled.
+	usageRoot := envOrGateway("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", usageoutbox.DefaultRoot)
+	usageQueue, usageErr := usageoutbox.Open(usageRoot, usageoutbox.DefaultMaxBytes)
+	if usageErr != nil {
+		return fmt.Errorf("gatewayd: open consumer usage outbox: %w", usageErr)
+	}
+	usageTarget := cfg.GetRequestTelemetryTarget(osGetenv)
+	usageTLS, usageTLSErr := cfg.LoadAppErrorsTLS()
+	if usageTLSErr != nil {
+		return fmt.Errorf("gatewayd: load consumer usage TLS: %w", usageTLSErr)
+	}
+	if deps.pgStore != nil {
+		if err := confirmConsumerUsageReceiver(ctx, usageTarget, usageTLS); err != nil {
+			return fmt.Errorf("gatewayd: apid must support durable consumer usage before gateway upgrade: %w", err)
+		}
+	}
+	handler.WithUsageOutbox(usageQueue)
+	go deliverConsumerUsage(ctx, usageQueue, usageTarget, usageTLS, log, handler.Metrics())
+
 	// ADR-127 production debugger — request_telemetry data plane.
 	// Wires the recorder into Handler.observe + launches the
 	// publisher goroutine. Single-box deployments use the dedicated
@@ -2695,6 +2716,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestErrorClass:     row.GuestErrorClass,
 					ConsumerId:          row.ConsumerID,
 					PlatformTenantId:    row.PlatformTenantID,
+					UsageOutboxed:       row.UsageOutboxed,
 					NodeId:              row.NodeID,
 					Region:              row.Region,
 					CommitSha:           row.CommitSHA,
@@ -3116,6 +3138,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Production paths with deps.pool != nil, deps.scheddRouter != nil,
 	// deps.warmHints != nil, deps.nodeCache != nil flip true here.
 	readyProbe := &gateway.ReadyzProbe{}
+	usageReady := readyProbe.Register()
+	go monitorConsumerUsage(ctx, usageQueue, usageReady, handler.Metrics())
 	// PG ping — only constructed if a pool is wired. The helper
 	// goroutine pings every 5s and flips true on success; it also
 	// kicks one ping immediately so the bit flips to ready as fast

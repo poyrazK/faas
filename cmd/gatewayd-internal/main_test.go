@@ -94,6 +94,7 @@ func TestUnwiredBackendReturnsNotFound(t *testing.T) {
 }
 
 func TestRunWithDeps_ServesAndShutsDown(t *testing.T) {
+	t.Setenv("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", t.TempDir())
 	deps := defaultDeps()
 	deps.capCheck = func() error { return nil }
 	deps.backend = &fixedBackend{}
@@ -187,6 +188,7 @@ func TestListenAddr_OffSentinelIsHandled(t *testing.T) {
 }
 
 func TestRunWithDeps_ListenErrorReturns(t *testing.T) {
+	t.Setenv("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", t.TempDir())
 	deps := defaultDeps()
 	deps.capCheck = func() error { return nil }
 	deps.listen = func(_, _ string) (net.Listener, error) {
@@ -202,6 +204,7 @@ func TestRunWithDeps_ListenErrorReturns(t *testing.T) {
 }
 
 func TestRunWithDeps_ServeError(t *testing.T) {
+	t.Setenv("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", t.TempDir())
 	// Use a listener we close immediately, then have the server try to Serve
 	// on it. The close races with Serve so we observe either an immediate
 	// Serve error or a successful Shutdown — both are acceptable termination

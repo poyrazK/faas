@@ -116,6 +116,11 @@ type Metrics struct {
 	requestTelemetryDropped     prometheus.Counter
 	requestTelemetryShipped     prometheus.Counter
 	requestTelemetryOverwritten prometheus.Counter
+	usageOutboxPending          prometheus.Gauge
+	usageOutboxBytes            prometheus.Gauge
+	usageOutboxFailures         prometheus.Counter
+	usageDelivered              prometheus.Counter
+	usageDeliveryFailures       prometheus.Counter
 	wakeLatency                 prometheus.Histogram
 	// platformWakeLatency is the public-beta restore gate: gateway
 	// capacity-admission start through the first upstream byte. It excludes
@@ -896,6 +901,11 @@ func NewMetrics() *Metrics {
 			Name: "gateway_request_telemetry_overwritten_total",
 			Help: "Telemetry rows evicted from the gateway ring because it was full before the publisher drained them.",
 		}),
+		usageOutboxPending:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_records", Help: "Unacknowledged financial usage events on local disk."}),
+		usageOutboxBytes:      prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_bytes", Help: "Unacknowledged financial usage bytes on local disk."}),
+		usageOutboxFailures:   prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_outbox_failures_total", Help: "Financial usage events that could not be appended to the durable outbox."}),
+		usageDelivered:        prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivered_total", Help: "Financial usage events acknowledged by apid."}),
+		usageDeliveryFailures: prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivery_failures_total", Help: "Failed financial usage delivery attempts retained for replay."}),
 		// ADR-089 PR 3 — kind=route substitution outcomes.
 		// Pre-instantiated below so the §12 panel surfaces from
 		// first scrape; PR 4-7 add (kind=rewrite, ...), (kind=jwt, ...).
@@ -1796,6 +1806,7 @@ func NewMetrics() *Metrics {
 	}
 	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceWakeLatency)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
+	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -3412,6 +3423,31 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 		return
 	}
 	m.requestTelemetryShipped.Add(float64(n))
+}
+
+func (m *Metrics) IncUsageOutboxFailure() {
+	if m != nil {
+		m.usageOutboxFailures.Inc()
+	}
+}
+
+func (m *Metrics) SetUsageOutboxPending(records, bytes int64) {
+	if m != nil {
+		m.usageOutboxPending.Set(float64(records))
+		m.usageOutboxBytes.Set(float64(bytes))
+	}
+}
+
+func (m *Metrics) IncUsageDelivered() {
+	if m != nil {
+		m.usageDelivered.Inc()
+	}
+}
+
+func (m *Metrics) IncUsageDeliveryFailure() {
+	if m != nil {
+		m.usageDeliveryFailures.Inc()
+	}
 }
 
 // IncRetryAttempt records one attempt observed by the ADR-201 §1 retry loop.

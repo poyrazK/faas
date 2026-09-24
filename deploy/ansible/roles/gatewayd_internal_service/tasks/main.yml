@@ -81,6 +81,14 @@
     group: faas
     mode: "0750"
 
+- name: gatewayd_internal_service — create consumer usage outbox root
+  ansible.builtin.file:
+    path: /var/lib/faas/consumer-usage
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0750"
+
 # ADR-093 — drop the per-cluster operator kill-switch. Mirrors the
 # alertmanager role's `alertmanager.yml.j2` template drop (tasks/
 # main.yml:126-134). A toml key change restarts the daemon so the

@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -1008,6 +1009,7 @@ type Handler struct {
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
 	requestTelemetry *requestTelemetryRecorder
+	usageOutbox      *usageoutbox.Outbox
 
 	// streamingEnabled gates the per-app streaming response path
 	// (issue #471 / ADR-047). When false (the default), every app is
@@ -5350,6 +5352,10 @@ func (h *Handler) WithRequestTelemetryRecorder(r *requestTelemetryRecorder) {
 	h.requestTelemetry = r
 }
 
+// WithUsageOutbox enables the durable financial fact independently of debug
+// telemetry. It must be opened before the gateway accepts requests.
+func (h *Handler) WithUsageOutbox(q *usageoutbox.Outbox) { h.usageOutbox = q }
+
 // Metrics exposes the Prometheus bundle (used by the control listener to mount
 // /metrics). May be nil if NewHandler was used and nothing initialized one.
 func (h *Handler) Metrics() *Metrics { return h.metrics }
@@ -5625,7 +5631,7 @@ haveApp:
 	// gateway can't resolve an account for an app that was
 	// substituted by an edge rule without an owner — those rows
 	// are pre-picker and observe drops them).
-	if h.requestTelemetry != nil {
+	if h.requestTelemetry != nil || h.usageOutbox != nil {
 		var accountUUID, appUUID uuid.UUID
 		if app.AccountID != "" {
 			if u, err := uuid.Parse(app.AccountID); err == nil {
@@ -7161,7 +7167,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// legacy single-targetSet behavior (Target.DeploymentID ""
 	// — see handler.go:407-410). The Publisher's dedupe
 	// (request_telemetry_publisher.go) collapses the burst later.
-	if h.requestTelemetry != nil {
+	if h.requestTelemetry != nil || h.usageOutbox != nil {
 		acctUUID := accountIDFromContext(r.Context())
 		appUUID := appIDFromContext(r.Context())
 		if acctUUID != uuid.Nil && appUUID != uuid.Nil {
@@ -7174,8 +7180,12 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				// Route metrics are optional; the telemetry schema requires a label.
 				telemetryRoute = otherRouteLabel
 			}
-			uaFamily, referrerHost, country := h.requestTelemetryDimensions(r)
-			guestEvidence, _ := guestExecutionEvidenceFromContext(r.Context())
+			var uaFamily, referrerHost, country string
+			var guestEvidence guestExecutionEvidenceSnapshot
+			if h.requestTelemetry != nil {
+				uaFamily, referrerHost, country = h.requestTelemetryDimensions(r)
+				guestEvidence, _ = guestExecutionEvidenceFromContext(r.Context())
+			}
 			var consumerID string
 			if identity, ok := authmw.ConsumerFromContext(r); ok {
 				// Consumer IDs are UUIDs in the control-plane store. Keep
@@ -7185,20 +7195,24 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 					consumerID = parsed.String()
 				}
 			}
-			requestTraceID := traceIDForTelemetry(r.Context())
+			requestTraceID := ""
+			if h.requestTelemetry != nil {
+				requestTraceID = traceIDForTelemetry(r.Context())
+			}
 			platformTenantID := authenticatedFrom(r.Context()).PlatformTenantID
 			if parsed, err := uuid.Parse(platformTenantID); err == nil && consumerID != "" {
 				platformTenantID = parsed.String()
 			} else {
 				platformTenantID = ""
 			}
-			if requestTraceID == "" {
+			if h.requestTelemetry != nil && requestTraceID == "" {
 				// Keep the legacy request-id fallback for deployments where the
 				// OTel provider is disabled. Traced requests always use the real
 				// W3C trace id so cross-service lookup is unambiguous.
 				requestTraceID = telemetryTraceID(requestID)
 			}
-			h.requestTelemetry.RecordFromObserve(RequestTelemetryRow{
+			row := RequestTelemetryRow{
+				EventID:             uuid.New(),
 				AccountID:           acctUUID,
 				AppID:               appUUID,
 				DeploymentID:        deploymentUUID,
@@ -7226,7 +7240,28 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentTag:       target.DeploymentTag,
 				DeploymentCreatedAt: target.DeploymentCreatedAt,
 				ImageDigest:         target.ImageDigest,
-			})
+			}
+			if h.usageOutbox != nil {
+				errorCount := int64(0)
+				if status >= 400 {
+					errorCount = 1
+				}
+				err := h.usageOutbox.Enqueue(usageoutbox.Event{
+					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
+					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
+					WindowStart:  row.ReceivedAt.UTC().Truncate(time.Minute),
+					RequestCount: 1, ErrorCount: errorCount, BillableUnits: 1,
+				})
+				if err != nil {
+					h.metrics.IncUsageOutboxFailure()
+					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
+				} else {
+					row.UsageOutboxed = true
+				}
+			}
+			if h.requestTelemetry != nil {
+				h.requestTelemetry.RecordFromObserve(row)
+			}
 		}
 	}
 }

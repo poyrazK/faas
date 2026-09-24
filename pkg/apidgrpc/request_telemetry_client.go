@@ -112,6 +112,16 @@ func (c *RequestTelemetryClientImpl) IncrementRequestTelemetry(ctx context.Conte
 	return &requestTelemetryStream{stream: stream}, nil
 }
 
+// RecordConsumerUsage is the durable accounting RPC. It is available even
+// when the optional request debugger is disabled at the receiver.
+func (c *RequestTelemetryClientImpl) RecordConsumerUsage(ctx context.Context, event *apidpb.ConsumerUsageEvent) (*apidpb.ConsumerUsageReceipt, error) {
+	receipt, err := c.cli.RecordConsumerUsage(ctx, event)
+	if err != nil {
+		return nil, fmt.Errorf("apidgrpc: RecordConsumerUsage: %w", err)
+	}
+	return receipt, nil
+}
+
 // Close shuts down the underlying gRPC connection. Safe to call
 // multiple times; subsequent calls are no-ops.
 func (c *RequestTelemetryClientImpl) Close() error {

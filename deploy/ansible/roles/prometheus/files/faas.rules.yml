@@ -20,6 +20,45 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: faas_consumer_usage_delivery
+    interval: 30s
+    rules:
+      - alert: FaasConsumerUsageOutboxAppendFailed
+        expr: increase(gateway_consumer_usage_outbox_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: consumer_usage_delivery
+        annotations:
+          summary: "Financial usage event could not be journaled"
+          description: "The gateway served a request whose usage fact could not be appended to its local durable outbox. Preserve the spool and inspect disk health and capacity before trusting usage totals."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
+      - alert: FaasConsumerUsageOutboxNearCapacity
+        expr: gateway_consumer_usage_outbox_pending_bytes > 53687091
+        for: 2m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: consumer_usage_delivery
+        annotations:
+          summary: "Financial usage outbox is near capacity"
+          description: "The gateway has more than 80% of its 64 MiB durable usage outbox pending. It will leave rotation at 90%; restore apid delivery before the journal fills."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
+      - alert: FaasConsumerUsageDeliveryStalled
+        expr: gateway_consumer_usage_outbox_pending_records > 0 and increase(gateway_consumer_usage_delivered_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: consumer_usage_delivery
+        annotations:
+          summary: "Financial usage delivery has stalled"
+          description: "Unacknowledged usage events remain on the gateway but apid has accepted none for at least ten minutes. Check the private gRPC listener, database writes, and delivery-failure counter."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
   - name: durable_background_workers
     interval: 30s
     rules:

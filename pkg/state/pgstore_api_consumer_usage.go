@@ -13,7 +13,7 @@ import (
 // aggregate in one transaction. A retried event returns applied=false and
 // does not increment the aggregate a second time.
 func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerUsageEvent) (bool, error) {
-	if err := validateAPIConsumerUsageEvent(event); err != nil {
+	if err := ValidateAPIConsumerUsageEvent(event); err != nil {
 		return false, err
 	}
 	tx, err := s.pool.Begin(ctx)

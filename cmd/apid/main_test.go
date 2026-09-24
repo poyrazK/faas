@@ -197,6 +197,7 @@ func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
 		nil,
 		nil,
 		discardLogger(),
+		true,
 	)
 	if err == nil {
 		t.Fatal("remote AppErrors target without TLS should be rejected")
@@ -303,6 +304,13 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 	withTestHMACFiles(t)
 	withBillingKeysForTest(t)
 	withTestMailTransport(t)
+	t.Setenv("FAAS_SKIP_SOCKET_GROUP", "1")
+	socketDir, err := os.MkdirTemp("/tmp", "faas-rt-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	t.Setenv("FAAS_APID_REQUEST_TELEMETRY_SOCKET", filepath.Join(socketDir, "usage.sock"))
 	deps := defaultDeps()
 	// Let runWithDeps own the listener (more realistic).
 	var capturedAddr atomic.Value
@@ -388,7 +396,12 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+tok)
 	resp, err := cli.Do(req)
 	if err != nil {
-		t.Fatalf("GET /v1/account: %v", err)
+		select {
+		case runErr := <-done:
+			t.Fatalf("GET /v1/account: %v; runWithDeps: %v", err, runErr)
+		default:
+			t.Fatalf("GET /v1/account: %v", err)
+		}
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != 200 {

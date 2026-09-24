@@ -42,6 +42,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	RequestTelemetry_IncrementRequestTelemetry_FullMethodName = "/onebox.faas.apid.v1.RequestTelemetry/IncrementRequestTelemetry"
+	RequestTelemetry_RecordConsumerUsage_FullMethodName       = "/onebox.faas.apid.v1.RequestTelemetry/RecordConsumerUsage"
 )
 
 // RequestTelemetryClient is the client API for RequestTelemetry service.
@@ -68,6 +69,9 @@ type RequestTelemetryClient interface {
 	// error). A rate-limit hit on one record returns RATE_LIMITED
 	// for that single response — the stream continues.
 	IncrementRequestTelemetry(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[IncrementRequestTelemetryRequest, IncrementRequestTelemetryResponse], error)
+	// RecordConsumerUsage is independent of the optional debugger. A gateway
+	// replays the same event_id until apid acknowledges the ledger transaction.
+	RecordConsumerUsage(ctx context.Context, in *ConsumerUsageEvent, opts ...grpc.CallOption) (*ConsumerUsageReceipt, error)
 }
 
 type requestTelemetryClient struct {
@@ -90,6 +94,16 @@ func (c *requestTelemetryClient) IncrementRequestTelemetry(ctx context.Context, 
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RequestTelemetry_IncrementRequestTelemetryClient = grpc.BidiStreamingClient[IncrementRequestTelemetryRequest, IncrementRequestTelemetryResponse]
+
+func (c *requestTelemetryClient) RecordConsumerUsage(ctx context.Context, in *ConsumerUsageEvent, opts ...grpc.CallOption) (*ConsumerUsageReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConsumerUsageReceipt)
+	err := c.cc.Invoke(ctx, RequestTelemetry_RecordConsumerUsage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 // RequestTelemetryServer is the server API for RequestTelemetry service.
 // All implementations must embed UnimplementedRequestTelemetryServer
@@ -115,6 +129,9 @@ type RequestTelemetryServer interface {
 	// error). A rate-limit hit on one record returns RATE_LIMITED
 	// for that single response — the stream continues.
 	IncrementRequestTelemetry(grpc.BidiStreamingServer[IncrementRequestTelemetryRequest, IncrementRequestTelemetryResponse]) error
+	// RecordConsumerUsage is independent of the optional debugger. A gateway
+	// replays the same event_id until apid acknowledges the ledger transaction.
+	RecordConsumerUsage(context.Context, *ConsumerUsageEvent) (*ConsumerUsageReceipt, error)
 	mustEmbedUnimplementedRequestTelemetryServer()
 }
 
@@ -127,6 +144,9 @@ type UnimplementedRequestTelemetryServer struct{}
 
 func (UnimplementedRequestTelemetryServer) IncrementRequestTelemetry(grpc.BidiStreamingServer[IncrementRequestTelemetryRequest, IncrementRequestTelemetryResponse]) error {
 	return status.Error(codes.Unimplemented, "method IncrementRequestTelemetry not implemented")
+}
+func (UnimplementedRequestTelemetryServer) RecordConsumerUsage(context.Context, *ConsumerUsageEvent) (*ConsumerUsageReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method RecordConsumerUsage not implemented")
 }
 func (UnimplementedRequestTelemetryServer) mustEmbedUnimplementedRequestTelemetryServer() {}
 func (UnimplementedRequestTelemetryServer) testEmbeddedByValue()                          {}
@@ -156,13 +176,36 @@ func _RequestTelemetry_IncrementRequestTelemetry_Handler(srv interface{}, stream
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RequestTelemetry_IncrementRequestTelemetryServer = grpc.BidiStreamingServer[IncrementRequestTelemetryRequest, IncrementRequestTelemetryResponse]
 
+func _RequestTelemetry_RecordConsumerUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConsumerUsageEvent)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RequestTelemetryServer).RecordConsumerUsage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RequestTelemetry_RecordConsumerUsage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RequestTelemetryServer).RecordConsumerUsage(ctx, req.(*ConsumerUsageEvent))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RequestTelemetry_ServiceDesc is the grpc.ServiceDesc for RequestTelemetry service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var RequestTelemetry_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "onebox.faas.apid.v1.RequestTelemetry",
 	HandlerType: (*RequestTelemetryServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "RecordConsumerUsage",
+			Handler:    _RequestTelemetry_RecordConsumerUsage_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "IncrementRequestTelemetry",

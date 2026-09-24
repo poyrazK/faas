@@ -20,7 +20,10 @@ type ConsumerUsageStore interface {
 	ListAPIConsumerUsage(context.Context, string, string, string, time.Time, time.Time) ([]APIConsumerUsageBucket, error)
 }
 
-func validateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
+// ValidateAPIConsumerUsageEvent checks the wire-independent financial fact.
+// The apid receiver uses it to reject malformed replay records permanently,
+// while storage failures remain retryable.
+func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 	if _, err := uuid.Parse(event.EventID); err != nil {
 		return fmt.Errorf("consumer usage: event_id must be a UUID: %w", err)
 	}
@@ -73,7 +76,7 @@ func platformTenantUsageBucketKey(accountID, tenantID, appID, consumerKey string
 // the event changed the aggregate. The MemStore implementation mirrors the
 // Postgres event-ledger transaction and is used by handler tests.
 func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUsageEvent) (bool, error) {
-	if err := validateAPIConsumerUsageEvent(event); err != nil {
+	if err := ValidateAPIConsumerUsageEvent(event); err != nil {
 		return false, err
 	}
 	m.mu.Lock()
