@@ -15,9 +15,17 @@ not dispatch a task until the job's ext4 artifact is ready.
 Jobs created before OCI image materialization may still refer directly to an
 `apps/...ext4` artifact. During the upgrade, these rows briefly show
 `image_materialization_status=verifying_legacy` and cannot dispatch. imaged
-checks the canonical artifact store before returning a present artifact to
-`ready`. A missing artifact becomes `failed` with an explicit error; if the
-store cannot answer, the job remains non-dispatchable and the check retries.
+copies a readable legacy layer to the job-owned `jobs/<job-id>.ext4` key
+before setting `ready`, so app-layer garbage collection cannot remove a
+running job's image. A missing artifact becomes `failed` with an explicit
+error; if the store cannot answer or the copy fails, the job remains
+non-dispatchable and the check retries. OCI/GCS storage compresses newly
+published job rootfs objects; previously stored uncompressed objects remain
+readable.
+
+Cancelling a task while its job VM is still restoring an artifact also cancels
+that in-flight boot. The stop waits for vmmd to finish cleanup; a late boot
+result cannot publish a runnable VM after cancellation.
 
 The first execution on a compute node can take longer while that artifact
 fills its local cache. Job tasks use their own timeout and lease reaper during
