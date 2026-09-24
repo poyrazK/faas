@@ -4849,7 +4849,7 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 		if connErr != nil {
 			return fmt.Errorf("vmm: create gRPC readiness client: %w", connErr)
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		responseCount := 0
 		for {
 			if ctxErr := ctx.Err(); ctxErr != nil {

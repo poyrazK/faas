@@ -1,3 +1,4 @@
+// adr: 057 — readiness probe configuration is forwarded to the VM runtime.
 package sched
 
 import "testing"

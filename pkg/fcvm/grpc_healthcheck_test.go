@@ -1,3 +1,4 @@
+// adr: 057 — runtime application health probes gate guest readiness.
 package fcvm
 
 import (
