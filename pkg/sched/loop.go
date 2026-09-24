@@ -1083,6 +1083,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	l.runEventFanoutSweep(ctx)
 	serviceRolloutRecoveryT := time.NewTicker(time.Duration(api.ServiceRolloutRecoveryIntervalSeconds) * time.Second)
 	defer serviceRolloutRecoveryT.Stop()
+	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
+	defer primeRecoveryT.Stop()
+	l.dispatchPrimeRecovery(ctx)
 
 	// Make sure the triggerWakeup channel exists before any
 	// wakeup can race the first select iteration. WakeupTriggers
@@ -1227,6 +1230,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runEventFanoutSweep(ctx)
 		case <-serviceRolloutRecoveryT.C:
 			l.runServiceRolloutRecovery(ctx)
+		case <-primeRecoveryT.C:
+			l.dispatchPrimeRecovery(ctx)
 		case <-l.triggerWakeup:
 			// Same arm as the 1s ticker. The wake channel is
 			// buffered-size-1 so a burst of broker deliveries
