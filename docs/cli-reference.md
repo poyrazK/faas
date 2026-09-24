@@ -1308,6 +1308,26 @@ Preview or apply an onboarding bundle
 | `--file <path>` | JSON onboarding bundle |  |
 | `--dry-run` | Preview without changes |  |
 
+### platform-tenants credentials-list
+
+List metadata for a customer&#39;s cross-app keys
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--limit <number>` | page size (1..100) |  |
+| `--offset <number>` | page offset |  |
+
+### platform-tenants credentials-apply
+
+Preview or apply hash-only key issuance and rotation
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--file <path>` | hash-only credential bundle | required |
+| `--dry-run` | preview without changes |  |
+
 ### platform-tenants info
 
 Show linked consumers and surfaces

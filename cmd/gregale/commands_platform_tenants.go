@@ -15,7 +15,7 @@ import (
 // cmdPlatformTenants manages one account customer across several apps.
 func cmdPlatformTenants(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|info|activation|link-consumer|link-surface|usage|suspend|resume> [flags]", "platform-tenants")
+		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|suspend|resume> [flags]", "platform-tenants")
 		return 1
 	}
 	verb := args[0]
@@ -25,8 +25,8 @@ func cmdPlatformTenants(args []string) int {
 	name := fs.String("name", "", "customer display name")
 	consumerID := fs.String("consumer-id", "", "existing app consumer UUID")
 	surfaceID := fs.String("surface-id", "", "existing tenant surface UUID")
-	file := fs.String("file", "", "onboarding bundle JSON file (apply)")
-	dryRun := fs.Bool("dry-run", false, "preview onboarding without changes (apply)")
+	file := fs.String("file", "", "onboarding or hash-only credential bundle JSON file (apply)")
+	dryRun := fs.Bool("dry-run", false, "preview bundle without changes (apply)")
 	wait := fs.Bool("wait", false, "wait for DNS, certificate, and routing readiness (activation)")
 	timeout := fs.Duration("timeout", 10*time.Minute, "maximum wait for activation")
 	since := fs.String("since", "", "usage window start (RFC3339)")
@@ -37,8 +37,9 @@ func cmdPlatformTenants(args []string) int {
 		return 1
 	}
 	valid := platformTenantFlagsValid(verb, *id, *externalRef, *name, *consumerID, *surfaceID, *limit, *offset)
-	if verb == "apply" {
-		valid = *file != "" && *id == "" && *externalRef == "" && *name == "" && *consumerID == "" && *surfaceID == ""
+	if verb == "apply" || verb == "credentials-apply" {
+		valid = *file != "" && *externalRef == "" && *name == "" && *consumerID == "" && *surfaceID == "" &&
+			((verb == "apply" && *id == "") || (verb == "credentials-apply" && *id != ""))
 	} else if *file != "" || *dryRun {
 		valid = false
 	}
@@ -49,7 +50,7 @@ func cmdPlatformTenants(args []string) int {
 		valid = false
 	}
 	if fs.NArg() != 0 || !valid {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|info|activation|link-consumer|link-surface|usage|suspend|resume> [--file bundle.json] [--dry-run] [--id UUID] [--wait] [--timeout 10m]", "platform-tenants")
+		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|suspend|resume> [--file bundle.json] [--dry-run] [--id UUID] [--wait] [--timeout 10m]", "platform-tenants")
 		return 1
 	}
 	client, err := authedClient()
@@ -112,6 +113,10 @@ func cmdPlatformTenants(args []string) int {
 				return printErr("Output failed", err)
 			}
 		}
+	case "credentials-apply":
+		return platformTenantCredentialApplyCommand(ctx, client, *id, *file, *dryRun)
+	case "credentials-list":
+		return platformTenantCredentialListCommand(ctx, client, *id, *limit, *offset)
 	case "info":
 		row, err := client.GetPlatformTenant(ctx, *id)
 		if err != nil {
@@ -184,6 +189,8 @@ func platformTenantFlagsValid(verb, id, externalRef, name, consumerID, surfaceID
 		return limit >= 1 && limit <= 100 && offset >= 0 && id == "" && externalRef == "" && name == "" && consumerID == "" && surfaceID == ""
 	case "add":
 		return externalRef != "" && name != "" && id == "" && consumerID == "" && surfaceID == ""
+	case "credentials-list":
+		return limit >= 1 && limit <= 100 && offset >= 0 && id != "" && externalRef == "" && name == "" && consumerID == "" && surfaceID == ""
 	case "info", "activation", "usage", "suspend", "resume":
 		return id != "" && externalRef == "" && name == "" && consumerID == "" && surfaceID == ""
 	case "link-consumer":

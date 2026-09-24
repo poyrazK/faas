@@ -587,6 +587,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/account/platform-tenants/apply":                       "ApplyPlatformTenant",
 	"GET /v1/account/platform-tenants/{id}":                         "GetPlatformTenant",
 	"GET /v1/account/platform-tenants/{id}/activation":              "GetPlatformTenantActivation",
+	"GET /v1/account/platform-tenants/{id}/credentials":             "ListPlatformTenantCredentials",
+	"POST /v1/account/platform-tenants/{id}/credentials/apply":      "ApplyPlatformTenantCredentials",
 	"PATCH /v1/account/platform-tenants/{id}":                       "SetPlatformTenantStatus",
 	"POST /v1/account/platform-tenants/{id}/consumers":              "LinkPlatformTenantConsumer",
 	"POST /v1/account/platform-tenants/{id}/surfaces":               "LinkPlatformTenantSurface",

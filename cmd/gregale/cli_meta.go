@@ -1058,6 +1058,16 @@ var cliCommands = []cliCommand{
 				{Name: "file", Short: "JSON onboarding bundle", Value: "path"},
 				{Name: "dry-run", Short: "Preview without changes"},
 			}},
+			{Name: "credentials-list", Short: "List metadata for a customer's cross-app keys", Flags: []cliFlag{
+				{Name: "id", Short: "platform tenant UUID", Value: "UUID", Req: true},
+				{Name: "limit", Short: "page size (1..100)", Value: "number"},
+				{Name: "offset", Short: "page offset", Value: "number"},
+			}},
+			{Name: "credentials-apply", Short: "Preview or apply hash-only key issuance and rotation", Flags: []cliFlag{
+				{Name: "id", Short: "platform tenant UUID", Value: "UUID", Req: true},
+				{Name: "file", Short: "hash-only credential bundle", Value: "path", Req: true},
+				{Name: "dry-run", Short: "preview without changes"},
+			}},
 			{Name: "info", Short: "Show linked consumers and surfaces"},
 			{Name: "activation", Short: "Show or wait for customer hostname activation", Flags: []cliFlag{
 				{Name: "id", Short: "platform tenant UUID", Value: "UUID", Req: true},

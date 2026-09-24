@@ -1402,7 +1402,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeAPIConsumer))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listConsumerKeys))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsage))))
-	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createConsumerKey)))))
+	// This endpoint returns plaintext once; generic idempotency storage must not cache it.
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/keys", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createConsumerKey))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeConsumerKey))))
 	// One account-level end customer may own consumers and hostnames across apps.
 	mux.HandleFunc("GET /v1/account/platform-tenants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenants))))
@@ -1410,6 +1411,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.applyPlatformTenant)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenant))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/activation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantActivation))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantCredentials))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/credentials/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.applyPlatformTenantCredentials))))
 	mux.HandleFunc("PATCH /v1/account/platform-tenants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantStatus))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/consumers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.linkPlatformTenantConsumer)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/surfaces", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.linkPlatformTenantSurface)))))

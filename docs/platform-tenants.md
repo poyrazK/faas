@@ -40,6 +40,24 @@ The response reports `create`, `link`, or `unchanged` for each resource, includi
 
 DNS verification and certificate issuance are asynchronous; the apply operation does not claim they are ready or issue consumer keys. `GET /v1/account/platform-tenants/{id}/activation` reports whether routing is enabled, each hostname is verified, the certificate is issued and unexpired, and every linked surface is active. `ready` is true only when all these conditions hold for at least one surface and the platform tenant is active. Certificate and hostname errors remain visible for diagnosis. The CLI equivalent is `gregale platform-tenants apply --file customer.json --dry-run`, then repeat without `--dry-run` after inspecting the plan. Use `gregale platform-tenants activation --id <uuid>` for a snapshot or add `--wait --timeout 10m` to poll until ready. Use `--json` for machine-readable output.
 
+## Issue and rotate customer credentials
+
+After onboarding, use `POST /v1/account/platform-tenants/{id}/credentials/apply` to issue keys to linked consumers across apps. Generate each `ck_` credential locally with a cryptographically secure generator (or `api.PreparePlatformTenantCredential` in the Go client), save its plaintext in your secret store **before** calling Gregale, and submit only its eight-character prefix and hex SHA-256 digest. Gregale never receives or returns the plaintext in this flow. For example:
+
+```json
+{
+  "dry_run": true,
+  "keys": [{"consumer_id":"<linked-consumer-uuid>","name":"customer-42-v1","prefix":"d34db33f","hash":"<64-hex-character-sha256>","scopes":["read"]}],
+  "revoke_key_ids": []
+}
+```
+
+Preview with `dry_run`, then submit the same bundle without it. Replaying an identical bundle returns `unchanged` and the same key ID. To rotate, use a new name and key, and put the old key ID in `revoke_key_ids`; both changes commit together. If clients need an overlap window, issue the new key first and revoke the old key in a later call. Omitted keys remain active. A conflicting name/hash or inactive linked consumer returns 409; cross-account or unlinked IDs are not accepted. `GET /v1/account/platform-tenants/{id}/credentials?limit=100&offset=0` lists metadata, including revoked keys, but never plaintext. If you lose the local secret, rotate it—Gregale cannot recover it. See [ADR-236](adr/236-platform-tenant-credential-reconciliation.md) for the security and retry model.
+
+The CLI exposes the hash-only bundle with `gregale platform-tenants credentials-apply --id <uuid> --file keys.json --dry-run` and then without `--dry-run`, and metadata with `credentials-list --id <uuid>`. The file must contain only the request fields shown above; keep plaintext in your own secret store, not in the bundle.
+
+The older app-local key-create endpoint still returns plaintext once, but no longer caches that response for `Idempotency-Key` retries. Repeating that creation with the same name conflicts; use the hash-only tenant flow for retryable multi-app issuance.
+
 `GET /v1/account/platform-tenants/{id}` shows the linked consumers and surfaces. `GET /v1/account/platform-tenants?limit=100&offset=0` pages the registry. `GET /v1/account/platform-tenants/{id}/usage?since=…&until=…` sums durable request, error, and billable-unit facts attributed to that tenant **when each request occurred**, grouped by UTC day, app, and consumer. Linking a consumer later does not import its earlier traffic. Historical rows and requests from older gateways without a tenant claim remain unassigned; Gregale never guesses their owner from the current link. This is raw usage, not an invoice or a cross-app price quote.
 
 New gateways keep unacknowledged usage in a local fsynced outbox and replay it after apid outages or restarts; disabling the optional request debugger no longer disables usage recording. Operators should monitor `gateway_consumer_usage_outbox_pending_records`, `_pending_bytes`, `_failures_total`, and `gateway_consumer_usage_delivery_failures_total`. Do not remove the spool to clear a backlog. This improves delivery after an event reaches the gateway exit funnel, but a crash before that event is fsynced can still miss a served request; see [ADR-234](adr/234-durable-consumer-usage-delivery.md) before using totals for customer invoices.

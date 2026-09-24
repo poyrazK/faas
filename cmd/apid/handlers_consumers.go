@@ -171,7 +171,13 @@ func (s *server) countConsumerKeys(ctx context.Context, acctID, appID string) (i
 	if err != nil {
 		return 0, err
 	}
-	return len(rows), nil
+	count := 0
+	for _, row := range rows {
+		if row.RevokedAt == nil {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *server) countAccountConsumerKeys(ctx context.Context, acctID string) (int, error) {
@@ -185,7 +191,11 @@ func (s *server) countAccountConsumerKeys(ctx context.Context, acctID string) (i
 		if err != nil {
 			return 0, err
 		}
-		count += len(rows)
+		for _, row := range rows {
+			if row.RevokedAt == nil {
+				count++
+			}
+		}
 	}
 	return count, nil
 }
@@ -275,6 +285,7 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 		"app_id": app.ID, "consumer_id": c.ID, "key_id": k.ID, "name": k.Name,
 		"scopes": k.Scopes,
 	})
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, consumerKeyResponse(k, plaintext))
 }
 

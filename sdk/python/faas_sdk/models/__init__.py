@@ -222,6 +222,8 @@ from .apply_platform_tenant_consumer_request import ApplyPlatformTenantConsumerR
 from .apply_platform_tenant_consumer_response import ApplyPlatformTenantConsumerResponse
 from .apply_platform_tenant_consumer_response_action import ApplyPlatformTenantConsumerResponseAction
 from .apply_platform_tenant_consumer_response_status import ApplyPlatformTenantConsumerResponseStatus
+from .apply_platform_tenant_credentials_request import ApplyPlatformTenantCredentialsRequest
+from .apply_platform_tenant_credentials_response import ApplyPlatformTenantCredentialsResponse
 from .apply_platform_tenant_hostname_response import ApplyPlatformTenantHostnameResponse
 from .apply_platform_tenant_hostname_response_action import ApplyPlatformTenantHostnameResponseAction
 from .apply_platform_tenant_request import ApplyPlatformTenantRequest
@@ -1030,6 +1032,13 @@ from .plan_workload_tier import PlanWorkloadTier
 from .platform_tenant_activation_response import PlatformTenantActivationResponse
 from .platform_tenant_activation_response_status import PlatformTenantActivationResponseStatus
 from .platform_tenant_activation_surface_response import PlatformTenantActivationSurfaceResponse
+from .platform_tenant_credential_intent import PlatformTenantCredentialIntent
+from .platform_tenant_credential_intent_scopes_item import PlatformTenantCredentialIntentScopesItem
+from .platform_tenant_credential_metadata import PlatformTenantCredentialMetadata
+from .platform_tenant_credential_metadata_scopes_item import PlatformTenantCredentialMetadataScopesItem
+from .platform_tenant_credential_result import PlatformTenantCredentialResult
+from .platform_tenant_credential_result_action import PlatformTenantCredentialResultAction
+from .platform_tenant_credentials_response import PlatformTenantCredentialsResponse
 from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
 from .platform_tenant_list_response import PlatformTenantListResponse
@@ -1647,6 +1656,8 @@ __all__ = (
     "ApplyPlatformTenantConsumerResponse",
     "ApplyPlatformTenantConsumerResponseAction",
     "ApplyPlatformTenantConsumerResponseStatus",
+    "ApplyPlatformTenantCredentialsRequest",
+    "ApplyPlatformTenantCredentialsResponse",
     "ApplyPlatformTenantHostnameResponse",
     "ApplyPlatformTenantHostnameResponseAction",
     "ApplyPlatformTenantRequest",
@@ -2541,6 +2552,13 @@ __all__ = (
     "PlatformTenantActivationResponse",
     "PlatformTenantActivationResponseStatus",
     "PlatformTenantActivationSurfaceResponse",
+    "PlatformTenantCredentialIntent",
+    "PlatformTenantCredentialIntentScopesItem",
+    "PlatformTenantCredentialMetadata",
+    "PlatformTenantCredentialMetadataScopesItem",
+    "PlatformTenantCredentialResult",
+    "PlatformTenantCredentialResultAction",
+    "PlatformTenantCredentialsResponse",
     "PlatformTenantDetailResponse",
     "PlatformTenantDetailResponseStatus",
     "PlatformTenantListResponse",
