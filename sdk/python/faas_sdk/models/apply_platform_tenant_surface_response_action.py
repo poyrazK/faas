@@ -1,8 +1,9 @@
 from typing import Literal
 
-ApplyPlatformTenantSurfaceResponseAction = Literal["link", "unchanged"]
+ApplyPlatformTenantSurfaceResponseAction = Literal["create", "link", "unchanged"]
 
 APPLY_PLATFORM_TENANT_SURFACE_RESPONSE_ACTION_VALUES: set[ApplyPlatformTenantSurfaceResponseAction] = {
+    "create",
     "link",
     "unchanged",
 }

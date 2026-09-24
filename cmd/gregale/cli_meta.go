@@ -1059,6 +1059,11 @@ var cliCommands = []cliCommand{
 				{Name: "dry-run", Short: "Preview without changes"},
 			}},
 			{Name: "info", Short: "Show linked consumers and surfaces"},
+			{Name: "activation", Short: "Show or wait for customer hostname activation", Flags: []cliFlag{
+				{Name: "id", Short: "platform tenant UUID", Value: "UUID", Req: true},
+				{Name: "wait", Short: "poll until all surfaces are ready"},
+				{Name: "timeout", Short: "maximum wait (default 10m)", Value: "duration"},
+			}},
 			{Name: "link-consumer", Short: "Attach an existing app consumer"},
 			{Name: "link-surface", Short: "Attach an existing tenant surface"},
 			{Name: "usage", Short: "Show cross-app raw usage"},

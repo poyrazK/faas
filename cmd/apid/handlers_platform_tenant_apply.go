@@ -25,6 +25,10 @@ func (s *server) applyPlatformTenant(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	in, valid := platformTenantApplyInput(acct, req)
+	if len(req.Surfaces) > 0 && !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
+		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
+		return
+	}
 	if !valid {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid onboarding bundle", "customer and consumer names/references, app UUIDs, and surface UUIDs must be valid and unique"))
@@ -32,7 +36,7 @@ func (s *server) applyPlatformTenant(w http.ResponseWriter, r *http.Request, acc
 	}
 	result, err := store.ApplyPlatformTenant(r.Context(), in)
 	if err != nil {
-		s.platformTenantApplyError(w, err)
+		s.platformTenantApplyError(w, err, acct.Plan)
 		return
 	}
 	if !req.DryRun && platformTenantApplyChanged(result) {
@@ -48,6 +52,7 @@ func platformTenantApplyInput(acct state.Account, req api.ApplyPlatformTenantReq
 	in := state.ApplyPlatformTenantParams{AccountID: acct.ID, ExternalRef: strings.TrimSpace(req.ExternalRef),
 		Name: strings.TrimSpace(req.Name), DryRun: req.DryRun,
 		TenantLimit: acct.Plan.ConsumerKeysPerAccount(), SurfaceIDs: req.SurfaceIDs}
+	in.Limits, _ = api.LimitsFor(acct.Plan)
 	if in.ExternalRef == "" || len(in.ExternalRef) > 256 || in.Name == "" || len(in.Name) > 128 {
 		return in, false
 	}
@@ -75,12 +80,32 @@ func platformTenantApplyInput(acct state.Account, req api.ApplyPlatformTenantReq
 		}
 		seenSurfaces[surfaceID.String()] = true
 	}
+	for _, wanted := range req.Surfaces {
+		certKind := state.CertKind(wanted.CertKind)
+		if certKind == "" {
+			certKind = state.CertKindPerHostSAN
+		}
+		surface := state.ApplyPlatformTenantSurface{AppID: wanted.AppID, Name: strings.TrimSpace(wanted.Name), CertKind: certKind}
+		for _, host := range wanted.Hostnames {
+			surface.Hostnames = append(surface.Hostnames, state.ApplyPlatformTenantHostname{
+				Hostname: strings.ToLower(strings.TrimSpace(host)), ChallengeToken: randomToken(16)})
+		}
+		in.Surfaces = append(in.Surfaces, surface)
+	}
 	return in, true
 }
 
-func (s *server) platformTenantApplyError(w http.ResponseWriter, err error) {
+func (s *server) platformTenantApplyError(w http.ResponseWriter, err error, plan api.Plan) {
 	var quota *state.PlatformTenantQuotaError
+	var surfaceQuota *state.TenantSurfaceQuotaError
+	var hostnameQuota *state.TenantHostnameQuotaError
 	switch {
+	case errors.As(err, &surfaceQuota):
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "tenant_surface_quota", "Tenant surface quota reached", "this account has reached its plan's tenant surface limit"))
+	case errors.As(err, &hostnameQuota):
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "tenant_hostname_quota", "Tenant hostname quota reached", "this surface has reached its plan's hostname limit"))
+	case errors.Is(err, state.ErrTenantSurfacesNotAllowed):
+		api.WriteProblem(w, api.ErrTenantSurfacesNotAllowed(plan))
 	case errors.As(err, &quota):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "platform_tenant_quota",
 			"Platform tenant quota reached", "this account has reached its plan's platform tenant limit"))
@@ -91,7 +116,7 @@ func (s *server) platformTenantApplyError(w http.ResponseWriter, err error) {
 			"Onboarding conflict", "a customer or resource has a different name, is revoked, or belongs to another platform tenant"))
 	case errors.Is(err, state.ErrInvalidArgument):
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid onboarding bundle", "consumer and surface references must be unique and valid"))
+			"Invalid onboarding bundle", "consumer and surface references, surface names, and hostnames must be unique and valid"))
 	default:
 		api.WriteProblem(w, api.ErrInternal("could not apply platform tenant onboarding"))
 	}
@@ -110,6 +135,11 @@ func platformTenantApplyChanged(result state.ApplyPlatformTenantResult) bool {
 		if item.Action != "unchanged" {
 			return true
 		}
+		for _, host := range item.Hostnames {
+			if host.Action != "unchanged" {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -127,9 +157,17 @@ func platformTenantApplyResponse(result state.ApplyPlatformTenantResult, dryRun 
 	}
 	for _, item := range result.Surfaces {
 		s := item.Surface
-		out.Surfaces = append(out.Surfaces, api.ApplyPlatformTenantSurfaceResponse{
+		row := api.ApplyPlatformTenantSurfaceResponse{
 			ID: s.ID, AppID: s.AppID, Name: s.Name, Status: string(s.Status),
-			CertState: string(s.CertState), Action: item.Action})
+			CertState: string(s.CertState), Action: item.Action}
+		for _, host := range item.Hostnames {
+			response := hostnameResponse(host.Hostname)
+			if dryRun && host.Action == "create" {
+				response.ChallengeToken = ""
+			}
+			row.Hostnames = append(row.Hostnames, api.ApplyPlatformTenantHostnameResponse{TenantHostnameResponse: response, Action: host.Action})
+		}
+		out.Surfaces = append(out.Surfaces, row)
 	}
 	return out
 }

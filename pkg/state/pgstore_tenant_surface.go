@@ -38,8 +38,7 @@ const tenantSurfaceColsQ = `s.id, s.account_id, s.app_id, s.name, s.cert_kind, s
 // tenantHostnameCols — single column order used everywhere a hostname
 // row scans. The zero-value sentinel for verified_at / last_check_at
 // is 'epoch' (mirrors custom_domains.verified_at treatment at
-// pgstore.go:5236); the Go-side .Verified() / .LastCheckAt.IsZero()
-// accessor compensates.
+// pgstore.go:5236); scanTenantHostname restores that sentinel to Go zero.
 const tenantHostnameCols = `id, surface_id, hostname, challenge_token,
 	coalesce(verified_at, 'epoch'::timestamptz),
 	coalesce(last_check_at, 'epoch'::timestamptz),
@@ -71,6 +70,9 @@ func scanTenantSurface(row pgx.Row) (TenantSurface, error) {
 	s.CertKind = CertKind(certKindRaw)
 	s.Status = SurfaceStatus(statusRaw)
 	s.CertState = CertState(certStateRaw)
+	if s.CertNotAfter.Equal(time.Unix(0, 0).UTC()) {
+		s.CertNotAfter = time.Time{}
+	}
 	if !s.CertKind.Valid() {
 		return TenantSurface{}, fmt.Errorf("state: tenant_surfaces row %s has invalid cert_kind %q", s.ID, s.CertKind)
 	}
@@ -107,6 +109,14 @@ func scanTenantHostname(row pgx.Row) (TenantHostname, error) {
 		&h.VerifiedAt, &h.LastCheckAt, &h.LastError,
 	); err != nil {
 		return TenantHostname{}, mapErr(err)
+	}
+	// SQL uses epoch for NULL to keep scans non-nullable. Restore the Go
+	// zero value so Verified() cannot treat an unverified host as verified.
+	if h.VerifiedAt.Equal(time.Unix(0, 0).UTC()) {
+		h.VerifiedAt = time.Time{}
+	}
+	if h.LastCheckAt.Equal(time.Unix(0, 0).UTC()) {
+		h.LastCheckAt = time.Time{}
 	}
 	return h, nil
 }

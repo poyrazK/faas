@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -40,7 +41,7 @@ func (s *PgStore) ApplyPlatformTenant(ctx context.Context, in ApplyPlatformTenan
 func planPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformTenantParams) (ApplyPlatformTenantResult, error) {
 	result := ApplyPlatformTenantResult{
 		Consumers: make([]ApplyPlatformTenantConsumerResult, 0, len(in.Consumers)),
-		Surfaces:  make([]ApplyPlatformTenantSurfaceResult, 0, len(in.SurfaceIDs)),
+		Surfaces:  make([]ApplyPlatformTenantSurfaceResult, 0, len(in.SurfaceIDs)+len(in.Surfaces)),
 	}
 	var err error
 	result.Tenant, err = scanPlatformTenant(tx.QueryRow(ctx, `select `+platformTenantCols+`
@@ -113,7 +114,105 @@ func planPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformTen
 		}
 		result.Surfaces = append(result.Surfaces, item)
 	}
+	if err := planPlatformTenantSurfaces(ctx, tx, in, &result); err != nil {
+		return ApplyPlatformTenantResult{}, err
+	}
 	return result, nil
+}
+
+func planPlatformTenantSurfaces(ctx context.Context, tx pgx.Tx, in ApplyPlatformTenantParams, result *ApplyPlatformTenantResult) error {
+	if len(in.Surfaces) == 0 {
+		return nil
+	}
+	var surfaceCount int
+	if err := tx.QueryRow(ctx, `select count(*) from tenant_surfaces where account_id = $1::uuid and status <> 'deleted'`, in.AccountID).Scan(&surfaceCount); err != nil {
+		return err
+	}
+	for _, wanted := range in.Surfaces {
+		var appExists bool
+		if err := tx.QueryRow(ctx, `select exists(select 1 from apps where id = $1::uuid and account_id = $2::uuid)`, wanted.AppID, in.AccountID).Scan(&appExists); err != nil {
+			return err
+		}
+		if !appExists {
+			return ErrNotFound
+		}
+		item := ApplyPlatformTenantSurfaceResult{Action: "create", Hostnames: make([]ApplyPlatformTenantHostnameResult, 0, len(wanted.Hostnames))}
+		current, err := scanTenantSurface(tx.QueryRow(ctx, `select `+tenantSurfaceCols+` from tenant_surfaces
+			where account_id = $1::uuid and name = $2 and status <> 'deleted' for update`, in.AccountID, wanted.Name))
+		if errors.Is(err, ErrNotFound) {
+			surfaceCount++
+			if surfaceCount > in.Limits.TenantSurfacesPerAccount {
+				return &TenantSurfaceQuotaError{Limit: in.Limits.TenantSurfacesPerAccount, Observed: surfaceCount - 1}
+			}
+			item.Surface = TenantSurface{AccountID: in.AccountID, AppID: wanted.AppID, Name: wanted.Name,
+				CertKind: wanted.CertKind, Status: SurfaceStatusPending, CertState: CertStateNone}
+		} else if err != nil {
+			return err
+		} else {
+			if current.AppID != wanted.AppID || current.CertKind != wanted.CertKind {
+				return ErrConflict
+			}
+			for _, linked := range result.Surfaces {
+				if linked.Surface.ID == current.ID {
+					return ErrInvalidArgument
+				}
+			}
+			var linkedID *string
+			if err := tx.QueryRow(ctx, `select platform_tenant_id from tenant_surfaces where id = $1::uuid`, current.ID).Scan(&linkedID); err != nil {
+				return err
+			}
+			if linkedID != nil && *linkedID != result.Tenant.ID {
+				return ErrConflict
+			}
+			item.Surface = current
+			item.Action = "link"
+			if linkedID != nil {
+				item.Action = "unchanged"
+			}
+		}
+		var existingCount int
+		if item.Surface.ID != "" {
+			if err := tx.QueryRow(ctx, `select count(*) from tenant_hostnames where surface_id = $1::uuid`, item.Surface.ID).Scan(&existingCount); err != nil {
+				return err
+			}
+		}
+		for _, host := range wanted.Hostnames {
+			var id, ownerID, hostname, challenge string
+			var verifiedAt, lastCheckAt *time.Time
+			var lastError *string
+			err := tx.QueryRow(ctx, `select id, surface_id, hostname, challenge_token, verified_at, last_check_at, last_error
+				from tenant_hostnames where hostname = $1 for update`, host.Hostname).
+				Scan(&id, &ownerID, &hostname, &challenge, &verifiedAt, &lastCheckAt, &lastError)
+			hostResult := ApplyPlatformTenantHostnameResult{Action: "create", Hostname: TenantHostname{
+				Hostname: host.Hostname, ChallengeToken: host.ChallengeToken}}
+			if errors.Is(err, pgx.ErrNoRows) {
+				existingCount++
+				if existingCount > in.Limits.TenantHostnamesPerSurface {
+					return &TenantHostnameQuotaError{Limit: in.Limits.TenantHostnamesPerSurface, Observed: existingCount - 1, SurfaceID: item.Surface.ID}
+				}
+			} else if err != nil {
+				return err
+			} else {
+				if ownerID != item.Surface.ID || item.Surface.ID == "" {
+					return ErrConflict
+				}
+				hostResult.Action = "unchanged"
+				hostResult.Hostname = TenantHostname{ID: id, SurfaceID: ownerID, Hostname: hostname, ChallengeToken: challenge}
+				if verifiedAt != nil {
+					hostResult.Hostname.VerifiedAt = *verifiedAt
+				}
+				if lastCheckAt != nil {
+					hostResult.Hostname.LastCheckAt = *lastCheckAt
+				}
+				if lastError != nil {
+					hostResult.Hostname.LastError = *lastError
+				}
+			}
+			item.Hostnames = append(item.Hostnames, hostResult)
+		}
+		result.Surfaces = append(result.Surfaces, item)
+	}
+	return nil
 }
 
 func commitPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformTenantParams, result *ApplyPlatformTenantResult) error {
@@ -147,12 +246,35 @@ func commitPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformT
 			item.Consumer = consumer
 		}
 	}
-	for _, item := range result.Surfaces {
-		if item.Action == "link" {
+	for i := range result.Surfaces {
+		item := &result.Surfaces[i]
+		if item.Action == "create" {
+			surface, err := scanTenantSurface(tx.QueryRow(ctx, `insert into tenant_surfaces (account_id, app_id, name, cert_kind)
+				values ($1::uuid, $2::uuid, $3, $4) returning `+tenantSurfaceCols,
+				in.AccountID, item.Surface.AppID, item.Surface.Name, item.Surface.CertKind))
+			if err != nil {
+				return applyWriteError(err)
+			}
+			item.Surface = surface
+		}
+		if item.Action == "link" || item.Action == "create" {
 			if _, err := tx.Exec(ctx, `update tenant_surfaces set platform_tenant_id = $2::uuid
 				where id = $1::uuid`, item.Surface.ID, result.Tenant.ID); err != nil {
 				return applyWriteError(err)
 			}
+		}
+		for j := range item.Hostnames {
+			host := &item.Hostnames[j]
+			if host.Action != "create" {
+				continue
+			}
+			created, err := scanTenantHostname(tx.QueryRow(ctx, `insert into tenant_hostnames (surface_id, hostname, challenge_token)
+				values ($1::uuid, $2, $3) returning `+tenantHostnameCols,
+				item.Surface.ID, host.Hostname.Hostname, host.Hostname.ChallengeToken))
+			if err != nil {
+				return applyWriteError(err)
+			}
+			host.Hostname = created
 		}
 	}
 	return nil

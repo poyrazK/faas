@@ -95,3 +95,31 @@ func TestCmdPlatformTenantsApplyBundle(t *testing.T) {
 		t.Fatalf("apply request = %+v output=%q", received, stdout.String())
 	}
 }
+
+func TestCmdPlatformTenantsActivationSnapshotAndWait(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/account/platform-tenants/tenant-id/activation" {
+			t.Errorf("unexpected route %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		calls++
+		_ = json.NewEncoder(w).Encode(api.PlatformTenantActivationResponse{TenantID: "tenant-id", Status: "active", Enabled: true, Ready: true,
+			Surfaces: []api.PlatformTenantActivationSurfaceResponse{{ID: "surface-id", Status: "active", CertState: "issued", Ready: true,
+				Hostnames: []api.TenantHostnameResponse{{Hostname: "customer.example", Verified: true}}}}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	oldOut, oldJSON := osStdout, jsonOutput
+	var stdout bytes.Buffer
+	osStdout, jsonOutput = &stdout, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	if code := cmdPlatformTenants([]string{"activation", "--id", "tenant-id", "--wait", "--timeout", "1s"}); code != 0 {
+		t.Fatalf("activation exit = %d", code)
+	}
+	if calls != 1 || !strings.Contains(stdout.String(), "ready=true") || !strings.Contains(stdout.String(), "customer.example") {
+		t.Fatalf("activation calls=%d output=%q", calls, stdout.String())
+	}
+}

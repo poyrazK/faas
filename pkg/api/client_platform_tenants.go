@@ -37,6 +37,11 @@ func (c *Client) GetPlatformTenant(ctx context.Context, id string) (PlatformTena
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id), nil, &out)
 }
 
+func (c *Client) GetPlatformTenantActivation(ctx context.Context, id string) (PlatformTenantActivationResponse, error) {
+	var out PlatformTenantActivationResponse
+	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+url.PathEscape(id)+"/activation", nil, &out)
+}
+
 func (c *Client) SetPlatformTenantStatus(ctx context.Context, id string, req SetPlatformTenantStatusRequest) (PlatformTenantResponse, error) {
 	var out PlatformTenantResponse
 	return out, c.do(ctx, "PATCH", "/v1/account/platform-tenants/"+url.PathEscape(id), req, &out)

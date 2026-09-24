@@ -64,6 +64,9 @@ class SourceRefDeployRequest:
     rollback_on_5xx: bool | None | Unset = UNSET
     """Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
     defaulting to false."""
+    disable_startup_cpu_boost: bool | None | Unset = UNSET
+    """Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default
+    boost."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -111,6 +114,12 @@ class SourceRefDeployRequest:
         else:
             rollback_on_5xx = self.rollback_on_5xx
 
+        disable_startup_cpu_boost: bool | None | Unset
+        if isinstance(self.disable_startup_cpu_boost, Unset):
+            disable_startup_cpu_boost = UNSET
+        else:
+            disable_startup_cpu_boost = self.disable_startup_cpu_boost
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -139,6 +148,8 @@ class SourceRefDeployRequest:
             field_dict["canary"] = canary
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
 
         return field_dict
 
@@ -210,6 +221,15 @@ class SourceRefDeployRequest:
 
         rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
 
+        def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        disable_startup_cpu_boost = _parse_disable_startup_cpu_boost(d.pop("disable_startup_cpu_boost", UNSET))
+
         source_ref_deploy_request = cls(
             repo=repo,
             ref=ref,
@@ -223,6 +243,7 @@ class SourceRefDeployRequest:
             traffic_percent=traffic_percent,
             canary=canary,
             rollback_on_5xx=rollback_on_5xx,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
         )
 
         source_ref_deploy_request.additional_properties = d

@@ -3,8 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApplyPlatformTenantConsumerRequest } from './ApplyPlatformTenantConsumerRequest.js';
+import type { ApplyPlatformTenantSurfaceRequest } from './ApplyPlatformTenantSurfaceRequest.js';
 /**
- * Additive, retry-safe onboarding; dry_run validates and previews without writes.
+ * Additive, retry-safe onboarding of consumers and declarative hostname surfaces; dry_run validates and previews without writes.
  */
 export type ApplyPlatformTenantRequest = {
   external_ref: string;
@@ -12,5 +13,6 @@ export type ApplyPlatformTenantRequest = {
   dry_run?: boolean;
   consumers?: Array<ApplyPlatformTenantConsumerRequest>;
   surface_ids?: Array<string>;
+  surfaces?: Array<ApplyPlatformTenantSurfaceRequest>;
 };
 
