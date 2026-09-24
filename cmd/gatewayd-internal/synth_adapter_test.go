@@ -102,6 +102,48 @@ func TestSynthAdapterForwardInvocationStampsPlatformHeaders(t *testing.T) {
 	}
 }
 
+func TestSynthAdapterDefaultsJSONContentTypeOnlyForGeneratedPayloads(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		source  state.InvocationSource
+		payload string
+		headers string
+		want    string
+	}{
+		{name: "sync and async invoke", source: state.InvocationAsyncInvoke, payload: `{"value":1}`, want: "application/json"},
+		{name: "application message and queue", source: state.InvocationQueue, payload: `{"value":1}`, want: "application/json"},
+		{name: "delayed task", source: state.InvocationDelayedTask, payload: `{"value":1}`, want: "application/json"},
+		{name: "cron", source: state.InvocationCron, payload: `{"value":1}`, want: "application/json"},
+		{name: "explicit text media type", source: state.InvocationAsyncInvoke, payload: `{"value":1}`, headers: `{"content-type":"text/plain"}`, want: "text/plain"},
+		{name: "explicit empty media type", source: state.InvocationAsyncInvoke, payload: `{"value":1}`, headers: `{"Content-Type":""}`},
+		{name: "no payload", source: state.InvocationAsyncInvoke},
+		{name: "non JSON payload", source: state.InvocationAsyncInvoke, payload: `raw`},
+		{name: "inbound webhook", source: state.InvocationInboundWebhook, payload: `{"value":1}`},
+		{name: "replayed request", source: state.InvocationReplay, payload: `{"value":1}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &synthAdapter{forward: func(gateway.Target) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if got := r.Header.Get("Content-Type"); got != tc.want {
+						t.Errorf("Content-Type = %q, want %q", got, tc.want)
+					}
+					body, err := io.ReadAll(r.Body)
+					if err != nil || string(body) != tc.payload {
+						t.Errorf("body = %q, err = %v, want %q", body, err, tc.payload)
+					}
+					_, _ = w.Write([]byte(`{"ok":true}`))
+				})
+			}}
+			_, err := a.forwardInvocation(context.Background(), gateway.Target{InstanceID: "instance-1", NodeID: "node-1"}, state.Invocation{
+				ID: "inv-1", AppID: "app-1", Source: tc.source, Payload: []byte(tc.payload), Headers: []byte(tc.headers),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestSynthAdapterForwardInvocationMarksHandlerErrorFailed(t *testing.T) {
 	a := &synthAdapter{forward: func(gateway.Target) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

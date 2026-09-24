@@ -754,6 +754,15 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 			req.Header.Set(key, value)
 		}
 	}
+	// CLI invoke, queue, task, and cron payloads are JSON values, but their
+	// persisted envelopes need not carry HTTP headers. Common guest frameworks
+	// will otherwise ignore the body. Preserve an explicit customer media type
+	// and never reinterpret webhook or replay traffic from an original request.
+	if defaultsSyntheticJSONContentType(inv.Source) && len(inv.Payload) > 0 && json.Valid(inv.Payload) {
+		if _, explicit := req.Header[http.CanonicalHeaderKey("Content-Type")]; !explicit {
+			req.Header.Set("Content-Type", "application/json")
+		}
+	}
 	// These headers are platform-owned context. Apply the shared identity
 	// renderer after customer headers so a queued envelope cannot spoof its
 	// invocation identity (or any deployment claim).
@@ -798,6 +807,15 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 		inv.State = state.InvocationDispatching
 	}
 	return inv, rec.Code, append([]byte(nil), body...), nil
+}
+
+func defaultsSyntheticJSONContentType(source state.InvocationSource) bool {
+	switch source {
+	case state.InvocationAsyncInvoke, state.InvocationQueue, state.InvocationDelayedTask, state.InvocationCron:
+		return true
+	default:
+		return false
+	}
 }
 
 func isHandlerErrorResult(body []byte) bool {
