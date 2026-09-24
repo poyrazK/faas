@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_route_action import EdgeRuleRouteAction
     from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
     from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+    from ..models.update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 
 
 T = TypeVar("T", bound="UpdateEdgeRuleRequest")
@@ -42,6 +43,9 @@ class UpdateEdgeRuleRequest:
     match_host: str | Unset = UNSET
     match_path: str | Unset = UNSET
     match_methods: list[str] | Unset = UNSET
+    match_headers: UpdateEdgeRuleRequestMatchHeaders | Unset = UNSET
+    """Replacing this map changes the request-header selectors. Header names compare case-insensitively and values
+    compare exactly; use an empty object to remove all header conditions."""
     priority: int | Unset = UNSET
     enabled: bool | Unset = UNSET
     validate_mode: UpdateEdgeRuleRequestValidateMode | Unset = UNSET
@@ -96,6 +100,10 @@ class UpdateEdgeRuleRequest:
         match_methods: list[str] | Unset = UNSET
         if not isinstance(self.match_methods, Unset):
             match_methods = self.match_methods
+
+        match_headers: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.match_headers, Unset):
+            match_headers = self.match_headers.to_dict()
 
         priority = self.priority
 
@@ -152,6 +160,8 @@ class UpdateEdgeRuleRequest:
             field_dict["match_path"] = match_path
         if match_methods is not UNSET:
             field_dict["match_methods"] = match_methods
+        if match_headers is not UNSET:
+            field_dict["match_headers"] = match_headers
         if priority is not UNSET:
             field_dict["priority"] = priority
         if enabled is not UNSET:
@@ -182,6 +192,7 @@ class UpdateEdgeRuleRequest:
         from ..models.edge_rule_route_action import EdgeRuleRouteAction
         from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
         from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+        from ..models.update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 
         d = dict(src_dict)
         match_host = d.pop("match_host", UNSET)
@@ -189,6 +200,13 @@ class UpdateEdgeRuleRequest:
         match_path = d.pop("match_path", UNSET)
 
         match_methods = cast(list[str], d.pop("match_methods", UNSET))
+
+        _match_headers = d.pop("match_headers", UNSET)
+        match_headers: UpdateEdgeRuleRequestMatchHeaders | Unset
+        if isinstance(_match_headers, Unset):
+            match_headers = UNSET
+        else:
+            match_headers = UpdateEdgeRuleRequestMatchHeaders.from_dict(_match_headers)
 
         priority = d.pop("priority", UNSET)
 
@@ -365,6 +383,7 @@ class UpdateEdgeRuleRequest:
             match_host=match_host,
             match_path=match_path,
             match_methods=match_methods,
+            match_headers=match_headers,
             priority=priority,
             enabled=enabled,
             validate_mode=validate_mode,

@@ -34,6 +34,26 @@ func TestBuildJobColdBootConfigUsesPrivateWritableDrive(t *testing.T) {
 	}
 }
 
+func TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		seconds int
+		want    time.Duration
+	}{
+		{name: "hobby", seconds: 300, want: 390 * time.Second},
+		{name: "pro", seconds: 1800, want: 1890 * time.Second},
+		{name: "scale", seconds: 3600, want: 3690 * time.Second},
+		{name: "host ceiling", seconds: JobMaxTaskTimeoutSec, want: JobDestroyWaitDefault},
+		{name: "invalid oversized timeout", seconds: JobMaxTaskTimeoutSec + 1, want: JobDestroyWaitDefault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EffectiveDestroyWait(tc.seconds); got != tc.want {
+				t.Fatalf("EffectiveDestroyWait(%d) = %s, want %s", tc.seconds, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWaitJobExitAcceptsGuestInitiatedStream(t *testing.T) {
 	base, err := os.MkdirTemp("/tmp", "fj-")
 	if err != nil {

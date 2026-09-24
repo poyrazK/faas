@@ -60,6 +60,10 @@ const (
 // same value.
 func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 	actionBytes, _ := json.Marshal(r.Action)
+	matchHeaders := r.MatchHeaders
+	if matchHeaders == nil {
+		matchHeaders = map[string]string{}
+	}
 	mode := r.ValidateMode
 	if mode == "" {
 		mode = api.ValidateModeBlock
@@ -71,6 +75,7 @@ func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		MatchHost:    r.MatchHost,
 		MatchPath:    r.MatchPath,
 		MatchMethods: r.MatchMethods,
+		MatchHeaders: matchHeaders,
 		Priority:     r.Priority,
 		Enabled:      r.Enabled,
 		Kind:         string(r.Kind),
@@ -375,6 +380,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		MatchHost:    strings.ToLower(req.MatchHost),
 		MatchPath:    matchPath,
 		MatchMethods: req.MatchMethods,
+		MatchHeaders: req.MatchHeaders,
 		Priority:     priority,
 		Enabled:      enabled,
 		Kind:         state.EdgeRuleKind(req.Kind),
@@ -441,6 +447,11 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 // (rps ≤ plan.RateLimitRPS, burst ≤ plan.RateLimitBurst). Returns
 // the first *Problem it finds.
 func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Problem {
+	matchHeaders, headerErr := api.NormalizeEdgeRuleMatchHeaders(req.MatchHeaders)
+	if headerErr != nil {
+		return api.ErrValidation(headerErr.Error())
+	}
+	req.MatchHeaders = matchHeaders
 	if req.MatchHost == "" {
 		return api.ErrValidation("match_host is required")
 	}
@@ -763,6 +774,14 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			return
 		}
 	}
+	if req.MatchHeaders != nil {
+		matchHeaders, headerErr := api.NormalizeEdgeRuleMatchHeaders(*req.MatchHeaders)
+		if headerErr != nil {
+			api.WriteProblem(w, api.ErrValidation(headerErr.Error()))
+			return
+		}
+		req.MatchHeaders = &matchHeaders
+	}
 	if req.Priority != nil {
 		if *req.Priority < 0 || *req.Priority > 10000 {
 			api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("priority must be in 0..10000 (got %d)", *req.Priority)))
@@ -851,6 +870,7 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 		MatchHost:    req.MatchHost,
 		MatchPath:    req.MatchPath,
 		MatchMethods: req.MatchMethods,
+		MatchHeaders: req.MatchHeaders,
 		Priority:     req.Priority,
 		Enabled:      req.Enabled,
 	}

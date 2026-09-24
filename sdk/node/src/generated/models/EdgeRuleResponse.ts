@@ -41,6 +41,10 @@ export type EdgeRuleResponse = {
    * Empty array = match any method.
    */
   match_methods: Array<string>;
+  /**
+   * Request headers required to match this rule. Names are case-insensitive; every configured name must have an exact value present, and any repeated request-header value may satisfy it.
+   */
+  match_headers: Record<string, string>;
   priority: number;
   enabled: boolean;
   kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async';

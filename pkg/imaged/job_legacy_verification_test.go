@@ -3,6 +3,7 @@ package imaged
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 type legacyArtifactDecision struct {
 	found  bool
+	key    string
 	reason string
 }
 
@@ -36,8 +38,8 @@ func (s *legacyVerificationTestStore) JobClaimLegacyArtifactVerification(context
 	return s.jobs, nil
 }
 
-func (s *legacyVerificationTestStore) JobFinishLegacyArtifactVerification(_ context.Context, _, _, _ string, found bool, reason string) (state.Job, error) {
-	s.finished = append(s.finished, legacyArtifactDecision{found: found, reason: reason})
+func (s *legacyVerificationTestStore) JobFinishLegacyArtifactVerification(_ context.Context, _, _, _, key string, found bool, reason string) (state.Job, error) {
+	s.finished = append(s.finished, legacyArtifactDecision{found: found, key: key, reason: reason})
 	return state.Job{}, nil
 }
 
@@ -54,6 +56,36 @@ func (legacyProbeErrorBackend) Exists(context.Context, string) (bool, error) {
 	return false, errors.New("remote storage unavailable")
 }
 
+type legacyReadErrorBackend struct{ storage.StorageBackend }
+
+func (b legacyReadErrorBackend) Exists(ctx context.Context, key string) (bool, error) {
+	return b.StorageBackend.(storage.ExistenceChecker).Exists(ctx, key)
+}
+
+func (legacyReadErrorBackend) Get(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("legacy source read unavailable")
+}
+
+type legacyCopyErrorBackend struct{ storage.StorageBackend }
+
+func (b legacyCopyErrorBackend) Exists(ctx context.Context, key string) (bool, error) {
+	return b.StorageBackend.(storage.ExistenceChecker).Exists(ctx, key)
+}
+
+func (legacyCopyErrorBackend) Put(context.Context, string, io.Reader) error {
+	return errors.New("job artifact upload unavailable")
+}
+
+type legacyDisappearingBackend struct{ storage.StorageBackend }
+
+func (legacyDisappearingBackend) Exists(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func (legacyDisappearingBackend) Get(context.Context, string) (io.ReadCloser, error) {
+	return nil, storage.ErrNotFound
+}
+
 func TestVerifyLegacyJobArtifacts(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -64,8 +96,11 @@ func TestVerifyLegacyJobArtifacts(t *testing.T) {
 	}{
 		{name: "present", present: true, wantReady: true},
 		{name: "missing", wantReady: false},
-		{name: "unsupported", wrap: func(b storage.StorageBackend) storage.StorageBackend { return legacyNoProbeBackend{b} }, wantRetry: "does not support"},
+		{name: "no existence probe", present: true, wrap: func(b storage.StorageBackend) storage.StorageBackend { return legacyNoProbeBackend{b} }, wantRetry: "does not support"},
 		{name: "probe error", wrap: func(b storage.StorageBackend) storage.StorageBackend { return legacyProbeErrorBackend{b} }, wantRetry: "remote storage unavailable"},
+		{name: "disappeared after probe", present: true, wrap: func(b storage.StorageBackend) storage.StorageBackend { return legacyDisappearingBackend{b} }},
+		{name: "read error", present: true, wrap: func(b storage.StorageBackend) storage.StorageBackend { return legacyReadErrorBackend{b} }, wantRetry: "legacy source read unavailable"},
+		{name: "copy error", present: true, wrap: func(b storage.StorageBackend) storage.StorageBackend { return legacyCopyErrorBackend{b} }, wantRetry: "job artifact upload unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -97,8 +132,26 @@ func TestVerifyLegacyJobArtifacts(t *testing.T) {
 			if len(store.retried) != 0 || len(store.finished) != 1 || store.finished[0].found != tc.wantReady {
 				t.Fatalf("finished=%+v retried=%+v, want found=%v", store.finished, store.retried, tc.wantReady)
 			}
+			if tc.wantReady {
+				const promoted = "jobs/legacy-job.ext4"
+				if store.finished[0].key != promoted {
+					t.Fatalf("published key = %q, want %q", store.finished[0].key, promoted)
+				}
+				copy, err := backend.Get(ctx, promoted)
+				if err != nil {
+					t.Fatalf("read promoted artifact: %v", err)
+				}
+				buf, err := io.ReadAll(copy)
+				_ = copy.Close()
+				if err != nil || string(buf) != "ext4 contents" {
+					t.Fatalf("promoted artifact = %q, %v", buf, err)
+				}
+			}
 			if !tc.wantReady && store.finished[0].reason == "" {
 				t.Fatal("missing artifact did not record a reason")
+			}
+			if !tc.wantReady && store.finished[0].key != "" {
+				t.Fatalf("missing artifact published key %q", store.finished[0].key)
 			}
 		})
 	}

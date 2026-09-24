@@ -15,9 +15,17 @@ not dispatch a task until the job's ext4 artifact is ready.
 Jobs created before OCI image materialization may still refer directly to an
 `apps/...ext4` artifact. During the upgrade, these rows briefly show
 `image_materialization_status=verifying_legacy` and cannot dispatch. imaged
-checks the canonical artifact store before returning a present artifact to
-`ready`. A missing artifact becomes `failed` with an explicit error; if the
-store cannot answer, the job remains non-dispatchable and the check retries.
+copies a readable legacy layer to the job-owned `jobs/<job-id>.ext4` key
+before setting `ready`, so app-layer garbage collection cannot remove a
+running job's image. A missing artifact becomes `failed` with an explicit
+error; if the store cannot answer or the copy fails, the job remains
+non-dispatchable and the check retries. OCI/GCS storage compresses newly
+published job rootfs objects; previously stored uncompressed objects remain
+readable.
+
+Cancelling a task while its job VM is still restoring an artifact also cancels
+that in-flight boot. The stop waits for vmmd to finish cleanup; a late boot
+result cannot publish a runnable VM after cancellation.
 
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
@@ -38,6 +46,12 @@ and use the job run id as the correlation id in application logs. Failed runs
 remain inspectable; `jobs retry` re-queues one failed task while its retry
 budget remains, preserving the run history and applying capped backoff. Cancel
 a run when its work is no longer useful.
+
+A VM boot failure before your command starts also consumes one configured
+retry. The next attempt waits for the same capped backoff; when retries are
+exhausted, the task records an `infra` error explaining that the image
+artifact or VM boot path needs attention. A task with `--retries 0` therefore
+fails after its first unsuccessful boot instead of creating VMs indefinitely.
 
 `jobs logs` returns a 64 KiB tail by default. Pass `--max-bytes N` (up to
 1 MiB) to retrieve a larger tail when the response is truncated.

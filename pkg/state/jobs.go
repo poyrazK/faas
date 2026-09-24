@@ -257,9 +257,12 @@ type JobImageMaterializationClaimer interface {
 // apps/...ext4 references. Older imaged binaries only claim status=pending,
 // so migration can move falsely-ready legacy rows here before the new worker
 // starts without letting the old OCI parser consume them during a rollout.
+// A present legacy object must be copied to promotedKey (the job-owned
+// jobs/<id>.ext4 key) before the row can become ready: app layers have a
+// shorter GC lifetime than jobs.
 type JobLegacyArtifactVerificationStore interface {
 	JobClaimLegacyArtifactVerification(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
-	JobFinishLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner string, found bool, reason string) (Job, error)
+	JobFinishLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, promotedKey string, found bool, reason string) (Job, error)
 	JobRetryLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time) (Job, error)
 }
 
@@ -484,6 +487,10 @@ type JobStore interface {
 	// both writes in one transaction prevents cleanup from destroying the only
 	// copy of successful job output before it is durable.
 	JobTaskMarkTerminalWithLogs(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error
+	// JobTaskCompleteClaimedWithLogs is the guest-exit variant: it only
+	// accepts the currently claimed instance and lease. This prevents a
+	// delayed exit from settling a task that was already retried or cancelled.
+	JobTaskCompleteClaimedWithLogs(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error
 	// JobTaskRetry reverses a failed/timeout/oom/cancelled transition back to
 	// queued and stamps next_attempt_at with the per-attempt backoff
 	// (JobBackoffBaseSeconds * 2^(attempt-1), capped at
@@ -493,10 +500,17 @@ type JobStore interface {
 	//
 	// Returns ErrNotFound when (run_id, task_index) does not resolve.
 	JobTaskRetry(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error
+	// JobTaskFailBoot settles a claimed task whose VM did not boot. The
+	// instance ID and lease token fence a late failure from a newer attempt
+	// or a concurrent exit/cancellation. A retry consumes one attempt and
+	// respects nextAttemptAt; an exhausted task becomes a terminal failure
+	// with a customer-visible infrastructure error. Returns ErrNotFound if
+	// the claim no longer belongs to this boot.
+	JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (retryScheduled bool, err error)
 	// JobTaskRequeue reverses a CLAIMED-but-not-yet-executed task
 	// back to 'queued' WITHOUT incrementing the attempt counter.
-	// Used by the dispatch tick when admission / quota / vmmd
-	// bootstrapping fails before the customer's code runs (CR-7 /
+	// Used by the dispatch tick when admission / quota fails before
+	// the customer's code runs (CR-7 /
 	// code-review #7 — the previous code path called JobTaskRetry
 	// for transient rejections, which silently consumed the
 	// customer's retry budget for failures that were never the

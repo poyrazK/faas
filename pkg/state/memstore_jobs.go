@@ -880,16 +880,20 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 // Returns ErrNotFound when (run_id, task_index) does not resolve OR
 // when the task is already terminal.
 func (m *MemStore) JobTaskMarkTerminal(_ context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage string, finishedAt time.Time) error {
-	return m.jobTaskMarkTerminal(runID, taskIndex, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
+	return m.jobTaskMarkTerminal(runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
 }
 
 // JobTaskMarkTerminalWithLogs is the in-memory mirror of the PostgreSQL
 // atomic terminal transition and log persistence operation.
 func (m *MemStore) JobTaskMarkTerminalWithLogs(_ context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
-	return m.jobTaskMarkTerminal(runID, taskIndex, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+	return m.jobTaskMarkTerminal(runID, taskIndex, "", "", false, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
 }
 
-func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
+func (m *MemStore) JobTaskCompleteClaimedWithLogs(_ context.Context, runID string, taskIndex int, instanceID, leaseToken, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
+	return m.jobTaskMarkTerminal(runID, taskIndex, instanceID, leaseToken, true, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+}
+
+func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, expectedInstanceID, expectedLeaseToken string, requireClaim bool, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	tasks, ok := m.jobTasks[runID]
@@ -903,8 +907,13 @@ func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, status strin
 	if t.Status != "queued" && t.Status != "claimed" {
 		return ErrNotFound
 	}
+	if requireClaim && (t.Status != "claimed" || t.InstanceID == nil || *t.InstanceID != expectedInstanceID || t.LeaseToken == nil || *t.LeaseToken != expectedLeaseToken) {
+		return ErrNotFound
+	}
 	t.Status = status
 	t.ExitCode = &exitCode
+	t.ErrorClass = nil
+	t.ErrorMessage = nil
 	if errorClass != "" {
 		t.ErrorClass = &errorClass
 	}
@@ -961,6 +970,47 @@ func (m *MemStore) JobTaskRetry(_ context.Context, runID string, taskIndex int, 
 	return nil
 }
 
+// JobTaskFailBoot atomically fences and accounts for a pre-execution VM boot
+// failure. Unlike JobTaskRequeue, this consumes the configured retry budget.
+func (m *MemStore) JobTaskFailBoot(_ context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tasks, ok := m.jobTasks[runID]
+	if !ok {
+		return false, ErrNotFound
+	}
+	t, ok := tasks[taskIndex]
+	if !ok || t.Status != "claimed" || t.InstanceID == nil || *t.InstanceID != instanceID || t.LeaseToken == nil || *t.LeaseToken != leaseToken {
+		return false, ErrNotFound
+	}
+	class := "infra"
+	t.ErrorClass = &class
+	t.ErrorMessage = &errorMessage
+	t.LeaseToken = nil
+	t.LeaseExpiresAt = nil
+	t.LastLeaseNode = nil
+	if t.Attempt <= retryMax {
+		t.Status = "queued"
+		t.Attempt++
+		t.InstanceID = nil
+		t.StartedAt = nil
+		t.FinishedAt = nil
+		t.ExitCode = nil
+		next := nextAttemptAt.UTC()
+		t.NextAttemptAt = &next
+		tasks[taskIndex] = t
+		return true, nil
+	}
+	t.Status = "failed"
+	code := 1
+	t.ExitCode = &code
+	finished := time.Now().UTC()
+	t.FinishedAt = &finished
+	t.NextAttemptAt = nil
+	tasks[taskIndex] = t
+	return false, nil
+}
+
 // JobTaskDeferQueued only moves the due time of the same eligible queued
 // attempt. It cannot clear a lease or shorten a newer retry's backoff.
 func (m *MemStore) JobTaskDeferQueued(_ context.Context, runID string, taskIndex, expectedAttempt int, nextAttemptAt time.Time) error {
@@ -986,7 +1036,8 @@ func (m *MemStore) JobTaskDeferQueued(_ context.Context, runID string, taskIndex
 // column-reset contract (clears instance_id + lease columns +
 // started_at) but preserves the attempt counter — the customer's
 // retry budget is not consumed by transient dispatch-side failures
-// (admission denied, vmmd unreachable, run-lookup race).
+// (admission denied, run-lookup race). A claimed vmmd boot failure is
+// accounted by JobTaskFailBoot instead.
 func (m *MemStore) JobTaskRequeue(_ context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

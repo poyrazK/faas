@@ -33,10 +33,14 @@ func TestMemStoreLegacyJobArtifactVerification(t *testing.T) {
 	if another, err := store.JobClaimLegacyArtifactVerification(ctx, 1, "node-b", time.Minute); err != nil || len(another) != 0 {
 		t.Fatalf("duplicate claim = %+v, %v", another, err)
 	}
-	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-b", true, ""); !errors.Is(err, ErrConflict) {
+	promotedKey := "jobs/" + job.ID + ".ext4"
+	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-a", job.ImageRef, true, ""); err == nil {
+		t.Fatal("legacy app key accepted as promoted job key")
+	}
+	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-b", promotedKey, true, ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("other owner finish error = %v, want conflict", err)
 	}
-	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, "apps/other/artifact.ext4", "node-a", true, ""); !errors.Is(err, ErrConflict) {
+	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, "apps/other/artifact.ext4", "node-a", promotedKey, true, ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("other ref finish error = %v, want conflict", err)
 	}
 	deferred, err := store.JobRetryLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-a", "backend unavailable", time.Now().Add(time.Hour))
@@ -54,19 +58,20 @@ func TestMemStoreLegacyJobArtifactVerification(t *testing.T) {
 	if err != nil || len(claimed) != 1 || claimed[0].ImageMaterializationAttempts != 2 {
 		t.Fatalf("reclaim = %+v, %v", claimed, err)
 	}
-	ready, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-b", true, "")
-	if err != nil || ready.ImageMaterializationStatus != "ready" || ready.ImageStorageKey != job.ImageRef || ready.ImageResolvedDigest != "" {
+	ready, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-b", promotedKey, true, "")
+	if err != nil || ready.ImageMaterializationStatus != "ready" || ready.ImageStorageKey != promotedKey || ready.ImageResolvedDigest != "" {
 		t.Fatalf("found artifact = %+v, %v", ready, err)
 	}
 	store.mu.Lock()
 	ready.ImageMaterializationStatus = "verifying_legacy"
+	ready.ImageStorageKey = job.ImageRef
 	store.jobs[job.ID] = ready
 	store.mu.Unlock()
 	claimed, err = store.JobClaimLegacyArtifactVerification(ctx, 1, "node-c", time.Minute)
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("missing claim = %+v, %v", claimed, err)
 	}
-	failed, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-c", false, "artifact absent")
+	failed, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-c", "", false, "artifact absent")
 	if err != nil || failed.ImageMaterializationStatus != "failed" || failed.ImageStorageKey != "" || failed.ImageMaterializationError != "artifact absent" {
 		t.Fatalf("missing artifact = %+v, %v", failed, err)
 	}

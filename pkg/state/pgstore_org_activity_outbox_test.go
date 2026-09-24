@@ -2,6 +2,7 @@ package state_test
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -115,5 +116,62 @@ func TestPgStoreOrgActivityOutboxEnvMutationAndDelivery(t *testing.T) {
 	activity, err = s.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgID, Limit: 10})
 	if err != nil || len(activity) != 2 {
 		t.Fatalf("activity after external delivery = %#v, err=%v; want two projected events", activity, err)
+	}
+}
+
+func TestPgStoreOrgActivityDeploymentMutationAtomic(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "org-activity-deploy-outbox", "org-activity-deploy-outbox")
+	orgID, appUUID, actorID := uuid.New(), uuid.MustParse(appID), uuid.MustParse(accountID)
+	entry := state.OrgActivity{
+		OrgID: orgID, Kind: "app.deployed", ActorType: state.OrgActivityActorUser,
+		ActorAccountID: &actorID, ActorLabel: "person@example.com",
+		ResourceType: "app", ResourceID: appID, ResourceLabel: "org-activity-deploy-outbox",
+		AppID: &appUUID, SourceType: "deployment", Data: []byte(`{"source":"image"}`),
+	}
+
+	bad := entry
+	bad.Data = []byte(`[]`)
+	badDeploymentID := uuid.NewString()
+	if _, _, err := s.CreateDeploymentWithActivity(ctx, state.Deployment{ID: badDeploymentID, AppID: appID, Kind: state.DeploymentKindImage}, bad); err == nil {
+		t.Fatal("deployment with invalid activity succeeded")
+	}
+	if _, err := s.DeploymentByID(ctx, badDeploymentID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("deployment after rejected transaction = %v, want ErrNotFound", err)
+	}
+
+	created, outboxID, err := s.CreateDeploymentWithActivity(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindImage}, entry)
+	if err != nil || created.ID == "" || outboxID == 0 {
+		t.Fatalf("transactional deployment = (%+v, %d, %v)", created, outboxID, err)
+	}
+	claimed, err := s.ClaimOrgActivityOutbox(ctx, "deployment-test", time.Minute)
+	if err != nil || claimed.ID != outboxID || claimed.Activity.SourceID != created.ID ||
+		claimed.Activity.DeploymentID == nil || claimed.Activity.DeploymentID.String() != created.ID {
+		t.Fatalf("deployment activity claim = (%+v, %v), want source/deployment %s", claimed, err, created.ID)
+	}
+	if delivered, err := s.DeliverOrgActivityOutbox(ctx, outboxID); err != nil || !delivered {
+		t.Fatalf("deployment activity delivery = (%v, %v), want true", delivered, err)
+	}
+	activity, err := s.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgID, Limit: 10})
+	if err != nil || len(activity) != 1 || activity[0].DeploymentID == nil || activity[0].DeploymentID.String() != created.ID {
+		t.Fatalf("projected deployment activity = (%#v, %v)", activity, err)
+	}
+
+	buildDeployment, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatalf("create source deployment: %v", err)
+	}
+	buildEntry := entry
+	buildDeploymentUUID := uuid.MustParse(buildDeployment.ID)
+	buildEntry.DeploymentID = &buildDeploymentUUID
+	buildEntry.SourceID = buildDeployment.ID
+	buildID := uuid.NewString()
+	build, buildOutboxID, err := s.CreateBuildWithIDAndActivity(ctx, buildID, buildDeployment.ID, state.DeploymentKindTarball, 100, "build.log", buildEntry)
+	if err != nil || build.ID != buildID || buildOutboxID == 0 {
+		t.Fatalf("transactional build = (%+v, %d, %v)", build, buildOutboxID, err)
+	}
+	queued, err := s.ClaimOrgActivityOutbox(ctx, "deployment-test", time.Minute)
+	if err != nil || queued.ID != buildOutboxID || queued.Activity.SourceID != buildDeployment.ID {
+		t.Fatalf("build activity claim = (%+v, %v), want source %s", queued, err, buildDeployment.ID)
 	}
 }

@@ -708,6 +708,10 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// jobBoots covers the artifact restore and VMM boot interval before a job
+	// enters live. Destroy/Stop must cancel and join this interval; otherwise a
+	// late boot can publish a VM after its task was already cancelled.
+	jobBoots map[string]*jobBootFlight
 	// pendingProcessExits closes the small hand-off race between
 	// JailerVMM reporting a child exit and Wake publishing the
 	// instance into live. A process can pass readiness and exit
@@ -1080,6 +1084,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		fcVersion:           fcVersion,
 		log:                 log,
 		live:                make(map[string]*Instance),
+		jobBoots:            make(map[string]*jobBootFlight),
 		pendingProcessExits: make(map[string]int),
 		waking:              make(map[string]struct{}),
 		exportDirs:          make(map[string]string),
@@ -3411,6 +3416,14 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
 	}
+	bootCtx, flight, err := m.beginJobBoot(ctx, req.Instance)
+	if err != nil {
+		return nil, err
+	}
+	defer m.finishJobBoot(req.Instance, flight)
+	if err = bootCtx.Err(); err != nil {
+		return nil, fmt.Errorf("manager: BootJob %s: cancelled before lease: %w", req.Instance, err)
+	}
 	lease, err := m.alloc.Acquire(req.Instance)
 	if err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: acquire lease: %w", req.Instance, err)
@@ -3457,8 +3470,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// (ADR-009, identical inner network world).
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	nc.TapUID = lease.UID
-	if err = m.setupNetwork(ctx, nc); err != nil {
+	if err = m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: network setup: %w", req.Instance, err)
+	}
+	if err = bootCtx.Err(); err != nil {
+		return nil, fmt.Errorf("manager: BootJob %s: cancelled before VMM boot: %w", req.Instance, err)
 	}
 
 	// Fire the cold-boot through the VMM. The vmm owns the
@@ -3480,7 +3496,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		RunID:          req.RunID,
 		TaskIndex:      req.TaskIndex,
 	}
-	if err = m.vmm.BootColdBootForJob(ctx, lease, spec); err != nil {
+	if err = m.vmm.BootColdBootForJob(bootCtx, lease, spec); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: vmm boot: %w", req.Instance, err)
 	}
 
@@ -3500,6 +3516,10 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		HealthcheckPath: "", // no readiness probe
 	}
 	m.mu.Lock()
+	if flight.cancelled || bootCtx.Err() != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("manager: BootJob %s: cancelled before publication: %w", req.Instance, context.Canceled)
+	}
 	m.live[req.Instance] = inst
 	m.cidToID[GuestVsockCID(lease.Slot)] = req.Instance
 	m.mu.Unlock()
@@ -4913,6 +4933,9 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 // Returns (false, 0, nil) when the instance is unknown to the
 // Manager — same idempotent-on-unknown contract as Destroy.
 func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
+	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
+		return false, 0, err
+	}
 	m.cancelFrameworkReadyLoop(instance)
 	m.mu.Lock()
 	// Builder Destroy removes live before waiting. Keep its export registration
@@ -4969,6 +4992,9 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 }
 
 func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
+	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
+		return 0, err
+	}
 	// Stop background liveness work before removing the live entry or
 	// waiting on the VMM. A liveness report can race this destroy path;
 	// cancelling first prevents the loop from probing an instance whose

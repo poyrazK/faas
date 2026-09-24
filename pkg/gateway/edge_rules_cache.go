@@ -1,6 +1,10 @@
 package gateway
 
-import "github.com/onebox-faas/faas/pkg/state"
+import (
+	"net/http"
+
+	"github.com/onebox-faas/faas/pkg/state"
+)
 
 // Edge rule kind=cache subset (ADR-122 §Decision, see
 // migrations/00321_edge_rules_kind_cache.sql).
@@ -60,10 +64,11 @@ type EdgeRuleCacheResolved struct {
 	Priority                    int
 	PathGlob                    string          // "" = any path
 	Methods                     map[string]bool // nil = any method
-	MaxAgeSeconds               int             // fresh window; 0 = no fresh hits
-	StaleWhileRevalidateSeconds int             // serve stale immediately while refreshing; 0 = disabled
-	StaleIfErrorSeconds         int             // post-fresh window; 0 = no stale-on-error
-	VaryOn                      []string        // closed subset of {Accept-Language, Accept-Encoding}
+	MatchHeaders                map[string]string
+	MaxAgeSeconds               int      // fresh window; 0 = no fresh hits
+	StaleWhileRevalidateSeconds int      // serve stale immediately while refreshing; 0 = disabled
+	StaleIfErrorSeconds         int      // post-fresh window; 0 = no stale-on-error
+	VaryOn                      []string // closed subset of {Accept-Language, Accept-Encoding}
 }
 
 // PickFirstCacheMatch is the priority-ASC + methods + path-glob
@@ -83,9 +88,12 @@ type EdgeRuleCacheResolved struct {
 // path glob: passed through stdlib path.Match; "" = match all;
 // "*" = match all; "/catalog/*" = prefix-wildcard on the
 // second segment.
-func PickFirstCacheMatch(rules []EdgeRuleCacheResolved, requestPath, method string) *EdgeRuleCacheResolved {
+func PickFirstCacheMatch(rules []EdgeRuleCacheResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleCacheResolved {
 	for i := range rules {
 		r := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if r.Methods != nil && !r.Methods[method] {
 			continue
 		}

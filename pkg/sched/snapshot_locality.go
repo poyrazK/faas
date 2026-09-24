@@ -10,7 +10,7 @@ import (
 // producer for the first wake. The producer has no fan-out replica row, so
 // checking only ready replicas used to discard its locality. ChoosePlacement
 // still checks liveness and capacity and can fall back to another node.
-func (e *Engine) snapshotPlacementHints(ctx context.Context, snapshotID, warmHint string) (string, []string) {
+func (e *Engine) snapshotPlacementHints(ctx context.Context, snapshotID, warmHint string) (string, []string, bool) {
 	var locality state.SnapshotLocality
 	var err error
 	switch store := e.store.(type) {
@@ -21,9 +21,10 @@ func (e *Engine) snapshotPlacementHints(ctx context.Context, snapshotID, warmHin
 	}
 	if err != nil {
 		e.log.Debug("snapshot locality lookup failed; using normal placement", "snapshot_id", snapshotID, "err", err)
-		return warmHint, nil
+		return warmHint, nil, false
 	}
-	if (locality.OriginNodeID != "" || len(locality.ReadyNodeIDs) > 0) &&
+	known := locality.OriginNodeID != "" || len(locality.ReadyNodeIDs) > 0
+	if known &&
 		warmHint != locality.OriginNodeID && !containsNodeID(locality.ReadyNodeIDs, warmHint) {
 		warmHint = ""
 	}
@@ -31,5 +32,5 @@ func (e *Engine) snapshotPlacementHints(ctx context.Context, snapshotID, warmHin
 	if warmHint == "" && !isPlacementSpread(ctx) {
 		warmHint = locality.OriginNodeID
 	}
-	return warmHint, locality.ReadyNodeIDs
+	return warmHint, locality.ReadyNodeIDs, known
 }

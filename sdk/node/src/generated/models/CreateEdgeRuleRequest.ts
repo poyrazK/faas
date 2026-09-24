@@ -26,6 +26,10 @@ export type CreateEdgeRuleRequest = {
   match_host: string;
   match_path?: string;
   match_methods?: Array<string>;
+  /**
+   * Optional exact-value request-header selectors. Header names compare case-insensitively; every configured name must match, with any repeated request-header value eligible to satisfy it.
+   */
+  match_headers?: Record<string, string>;
   priority?: number;
   enabled?: boolean;
   kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async';

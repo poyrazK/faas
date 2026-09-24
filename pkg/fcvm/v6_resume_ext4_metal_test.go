@@ -179,10 +179,16 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "usr/local/bin", "tmp", "overlay", "cgi-bin"} {
+	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "usr/local/bin", "tmp", "var/tmp", "overlay", "cgi-bin"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			return err
 		}
+	}
+	// The CGI runs as the default app UID (1000), not root. Keep the capacity
+	// probe on drive1's overlay rather than the separately mounted /tmp tmpfs,
+	// and make its parent writable by that unprivileged process.
+	if err := os.Chmod(filepath.Join(work, "var/tmp"), 0o1777); err != nil {
+		return err
 	}
 
 	// Build guest-init. CGO_ENABLED=0 keeps it a pure-Go static binary so
@@ -228,21 +234,21 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 printf 'Content-Type: text/plain\r\n\r\n'
 case "$QUERY_STRING" in
   action=small)
-    if /bin/busybox dd if=/dev/zero of=/capacity-small bs=1048576 count=16 conv=fsync 2>/dev/null; then
+    if /bin/busybox dd if=/dev/zero of=/var/tmp/capacity-small bs=1048576 count=16 conv=fsync 2>/dev/null; then
       echo write=ok
     else
       echo write=failed
     fi
     ;;
   action=fill)
-    if /bin/busybox dd if=/dev/zero of=/capacity-full bs=1048576 2>/dev/null; then
+    if /bin/busybox dd if=/dev/zero of=/var/tmp/capacity-full bs=1048576 2>/dev/null; then
       echo limit=missed
     else
       echo limit=hit
     fi
     ;;
   *)
-    if [ -f /capacity-small ]; then echo small=present; else echo small=absent; fi
+    if [ -f /var/tmp/capacity-small ]; then echo small=present; else echo small=absent; fi
     /bin/busybox df -k /
     ;;
 esac

@@ -23,8 +23,9 @@ The existing `WebhookPerAccount` plan limit is the total budget for both scopes.
 ## Staging
 
 1. This PR establishes the replay-safe storage shape, constraints, and nullable-app read compatibility. It exposes no public creation route and does not fan out to account rows.
-2. A follow-up adds account-owned CRUD and release-event fan-out, with account isolation, quota, filter, disabled-subscription, and duplicate-transition tests. The four release producers retain their transactional enqueue behavior.
-3. Client surfaces and an end-to-end signed receiver test complete the feature. The public route must not be exposed before fan-out works.
+2. This follow-up adds release-event fan-out, with account isolation, filter, disabled-subscription, and duplicate-transition tests. The four release producers retain their transactional enqueue behavior; no public route is exposed yet.
+3. A follow-up adds account-owned CRUD and enforces the shared quota on account-scoped creation. The public route is exposed only after fan-out works.
+4. Client surfaces and an end-to-end signed receiver test complete the feature.
 
 ## Consequences
 

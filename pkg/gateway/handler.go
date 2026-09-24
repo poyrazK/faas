@@ -5472,6 +5472,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
+	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
 	r = r.WithContext(requestCtx)
 	defer func() {
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))

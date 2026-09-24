@@ -46,17 +46,23 @@ func (s *PgStore) JobClaimLegacyArtifactVerification(ctx context.Context, limit 
 	return scanJobs(rows)
 }
 
-// JobFinishLegacyArtifactVerification publishes readiness only after an
-// authoritative storage existence probe. A missing object is terminally
-// failed and loses its stale storage key; neither path invents an OCI digest.
-func (s *PgStore) JobFinishLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner string, found bool, reason string) (Job, error) {
+// JobFinishLegacyArtifactVerification publishes readiness only after imaged
+// copies a readable legacy object to the job-owned key. A missing object is
+// terminally failed and loses its stale key; neither path invents a digest.
+func (s *PgStore) JobFinishLegacyArtifactVerification(ctx context.Context, id, sourceRef, owner, promotedKey string, found bool, reason string) (Job, error) {
+	if found && promotedKey != "jobs/"+id+".ext4" {
+		return Job{}, fmt.Errorf("state: legacy job artifact requires its job-owned key")
+	}
+	if !found && promotedKey != "" {
+		return Job{}, fmt.Errorf("state: missing legacy job artifact cannot have a promoted key")
+	}
 	if !found && reason == "" {
 		return Job{}, fmt.Errorf("state: missing legacy job artifact requires a reason")
 	}
 	row := s.pool.QueryRow(ctx,
 		`update jobs set
 		   image_materialization_status = case when $4::boolean then 'ready' else 'failed' end,
-		   image_storage_key = case when $4::boolean then image_storage_key else null end,
+		   image_storage_key = case when $4::boolean then $6::text else null end,
 		   image_materialization_error = case when $4::boolean then null else $5::text end,
 		   image_materialized_at = case when $4::boolean then now() else null end,
 		   image_materialization_next_attempt_at = null,
@@ -68,7 +74,7 @@ func (s *PgStore) JobFinishLegacyArtifactVerification(ctx context.Context, id, s
 		   and image_materialization_lease_owner = $3
 		   and image_materialization_lease_until > now()
 		 returning `+jobSelectCols,
-		id, sourceRef, owner, found, reason)
+		id, sourceRef, owner, found, reason, promotedKey)
 	job, err := scanJob(row)
 	if err != nil {
 		return Job{}, fmt.Errorf("state: finish legacy job artifact verification %s: %w", id, err)

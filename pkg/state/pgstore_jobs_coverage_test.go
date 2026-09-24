@@ -1,3 +1,4 @@
+// adr: 099
 // pgstore_jobs_coverage_test.go — pgstore coverage pin for the
 // JobStore surface (Mega-1 jobs). Mirrors the pattern at
 // pgstore_alert_presets_test.go: pgtest.Open + db.MigrateUp +
@@ -595,6 +596,48 @@ func TestPg_Jobs_JobTaskRequeue(t *testing.T) {
 	got, _ := s.JobTaskGet(ctx, run.ID, task.TaskIndex)
 	if got.Status != "queued" || got.NextAttemptAt == nil {
 		t.Errorf("JobTaskRequeue: status=%q next=%v, want queued/non-nil", got.Status, got.NextAttemptAt)
+	}
+}
+
+func TestPg_Jobs_JobTaskFailBootConsumesBudgetAndFencesOldClaim(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, tasks := pgJobsSeed(t, s, ctx, "task-boot-failure")
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	firstID, firstToken := uuid.NewString(), uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, firstID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 128, nodeID, firstID, firstToken, time.Now().Add(5*time.Minute), nodeID); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	next := time.Now().Add(time.Minute)
+	retried, err := s.JobTaskFailBoot(ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, 1, next, "artifact unavailable")
+	if err != nil || !retried {
+		t.Fatalf("first boot failure: retried=%v err=%v", retried, err)
+	}
+	task, err := s.JobTaskGet(ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.InstanceID != nil || task.NextAttemptAt == nil || task.ErrorClass == nil || *task.ErrorClass != "infra" {
+		t.Fatalf("first boot failure task=%+v err=%v", task, err)
+	}
+	if err := s.JobTaskCompleteClaimedWithLogs(ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("late exit after retry error=%v, want ErrNotFound", err)
+	}
+	secondID, secondToken := uuid.NewString(), uuid.NewString()
+	if _, err := s.CreateAndClaimJobInstance(ctx, secondID, job.ID, run.ID, tasks[0].TaskIndex,
+		"cold_booting", 128, nodeID, secondID, secondToken, time.Now().Add(5*time.Minute), nodeID); err != nil {
+		t.Fatalf("second claim: %v", err)
+	}
+	if _, err := s.JobTaskFailBoot(ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, 1, next, "stale boot"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("stale claim error=%v, want ErrNotFound", err)
+	}
+	if err := s.JobTaskCompleteClaimedWithLogs(ctx, run.ID, tasks[0].TaskIndex, firstID, firstToken, "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("late exit after replacement error=%v, want ErrNotFound", err)
+	}
+	retried, err = s.JobTaskFailBoot(ctx, run.ID, tasks[0].TaskIndex, secondID, secondToken, 1, next, "artifact unavailable")
+	if err != nil || retried {
+		t.Fatalf("exhausted boot failure: retried=%v err=%v", retried, err)
+	}
+	task, err = s.JobTaskGet(ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil || task.Status != "failed" || task.Attempt != 2 || task.FinishedAt == nil || task.ErrorMessage == nil || *task.ErrorMessage != "artifact unavailable" {
+		t.Fatalf("terminal boot failure task=%+v err=%v", task, err)
 	}
 }
 

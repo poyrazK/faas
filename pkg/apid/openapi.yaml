@@ -27842,6 +27842,7 @@ components:
         - match_host
         - match_path
         - match_methods
+        - match_headers
         - priority
         - enabled
         - kind
@@ -27867,6 +27868,11 @@ components:
           items: { type: string }
           description: 'Empty array = match any method.'
           example: [GET, POST]
+        match_headers:
+          type: object
+          maxProperties: 10
+          additionalProperties: { type: string, maxLength: 1024 }
+          description: 'Request headers required to match this rule. Names are case-insensitive; every configured name must have an exact value present, and any repeated request-header value may satisfy it.'
         priority:
           type: integer
           minimum: 0
@@ -27917,6 +27923,11 @@ components:
         match_methods:
           type: array
           items: { type: string }
+        match_headers:
+          type: object
+          maxProperties: 10
+          additionalProperties: { type: string, maxLength: 1024 }
+          description: 'Optional exact-value request-header selectors. Header names compare case-insensitively; every configured name must match, with any repeated request-header value eligible to satisfy it.'
         priority: { type: integer, minimum: 0, maximum: 10000, default: 100 }
         enabled: { type: boolean, default: true }
         kind:
@@ -27959,6 +27970,11 @@ components:
         match_methods:
           type: array
           items: { type: string }
+        match_headers:
+          type: object
+          maxProperties: 10
+          additionalProperties: { type: string, maxLength: 1024 }
+          description: 'Replacing this map changes the request-header selectors. Header names compare case-insensitively and values compare exactly; use an empty object to remove all header conditions.'
         priority: { type: integer, minimum: 0, maximum: 10000 }
         enabled: { type: boolean }
         validate_mode:

@@ -983,6 +983,14 @@ stateDiagram-v2
 | `running → failed` | **schedd** | liveness/OOM/crash-loop event and instance terminal state | `DestroyForLivenessFailure` and OOM paths eagerly stale the latest snapshot; repeated failures may evict the app cold. |
 | current deployment → `superseded` | **apid** on the next deploy | `CreateDeployment` supersede update | The new deployment owns traffic; retained snapshot material is rollback/GC material, never the active source of truth. |
 
+For an authenticated post-readiness deployment smoke, placement first prefers
+a fitting known snapshot origin or ready replica, even when a peer has more
+spare CPU. The public verification deadline makes an uncached artifact pull a
+correctness risk for this one path. Node lifecycle, RAM, vCPU, and physical CPU
+guards remain mandatory; if no local node fits, normal fleet placement and
+shared-backend restore/cold-boot fallback still apply (ADR-063). Ordinary
+customer wakes retain CPU-first balancing.
+
 #### Snapshot invalidation and cold-boot contract
 
 Snapshots are disposable machine-state caches. A wake may use one only when
@@ -1903,6 +1911,16 @@ The Jobs feature ships as a post-M8 workstream rather than as part of M0–M8 be
 | **M13** | OpenAPI 12 paths + 11 schemas + SDK regen | `make sdk-check` green; Node, Python, and Go SDKs expose the explicit task-retry route |
 | **M14** | unit + metal e2e tests | 13 apid + 11 CLI + 11 metal-tagged jobs e2e tests; `cmd/e2e/jobs_metal_test.go` compiles under `-tags metal` (real impls land in follow-up commit) |
 | **M15** | docs: ADR-099 supplement + runbook + SPEC cross-link | this section; `docs/adr/099-supplement-jobs-mega1.md`; `docs/runbooks/FaasJobsQueueBacklog.md` |
+
+Job boot retry safety (issue #3052): a claimed pre-execution VM boot failure
+must consume an attempt with capped backoff, or persist a terminal `infra`
+error when `retry_max` is exhausted. The transition is fenced by both the
+claimed instance ID and lease token; a delayed guest exit cannot settle a
+newer attempt. Before-claim admission errors leave the queued task unchanged.
+The memstore/pgstore transition and scheduler dispatch regressions are the
+executable gate for this contract. vmmd in-flight cancellation, artifact
+existence repair, and cold-cache watchdog timing have separate acceptance
+gates in issue #3052.
 
 Canonical references (read in order):
 1. `docs/adr/099-jobs.md` — the v1 ADR (proposed).

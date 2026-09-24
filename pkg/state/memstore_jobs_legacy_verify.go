@@ -54,9 +54,15 @@ func (m *MemStore) JobClaimLegacyArtifactVerification(_ context.Context, limit i
 	return eligible, nil
 }
 
-func (m *MemStore) JobFinishLegacyArtifactVerification(_ context.Context, id, sourceRef, owner string, found bool, reason string) (Job, error) {
+func (m *MemStore) JobFinishLegacyArtifactVerification(_ context.Context, id, sourceRef, owner, promotedKey string, found bool, reason string) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if found && promotedKey != "jobs/"+id+".ext4" {
+		return Job{}, fmt.Errorf("state: legacy job artifact requires its job-owned key")
+	}
+	if !found && promotedKey != "" {
+		return Job{}, fmt.Errorf("state: missing legacy job artifact cannot have a promoted key")
+	}
 	if !found && reason == "" {
 		return Job{}, fmt.Errorf("state: missing legacy job artifact requires a reason")
 	}
@@ -70,6 +76,7 @@ func (m *MemStore) JobFinishLegacyArtifactVerification(_ context.Context, id, so
 	job.ImageMaterializedAt = nil
 	if found {
 		job.ImageMaterializationStatus = "ready"
+		job.ImageStorageKey = promotedKey
 		job.ImageMaterializedAt = &now
 	} else {
 		job.ImageMaterializationStatus = "failed"
