@@ -124,7 +124,7 @@ func cliHelpGroup(command cliCommand) string {
 	switch command.Name {
 	case "account", "billing", "capabilities", "context", "dashboard", "doctor", "invitations", "invoices", "keys", "link", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "unlink", "upload-cache", "usage", "version", "completion", "man", "whoami":
 		return "Core"
-	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
+	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "platform-tenants", "trusted-publishers":
 		return "API"
 	case "add", "bindings", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
@@ -1045,6 +1045,21 @@ var cliCommands = []cliCommand{
 		},
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Value: "slug"},
+		},
+	},
+	{
+		Name:    "platform-tenants",
+		DocSlug: "platform-tenants",
+		Short:   "Manage one customer across app consumers and tenant hostnames",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List platform customers"},
+			{Name: "add", Short: "Register a customer by external reference"},
+			{Name: "info", Short: "Show linked consumers and surfaces"},
+			{Name: "link-consumer", Short: "Attach an existing app consumer"},
+			{Name: "link-surface", Short: "Attach an existing tenant surface"},
+			{Name: "usage", Short: "Show cross-app raw usage"},
+			{Name: "suspend", Short: "Stop linked credentials and hostnames"},
+			{Name: "resume", Short: "Restore linked credentials and hostnames"},
 		},
 	},
 	{

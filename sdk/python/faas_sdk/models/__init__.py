@@ -368,6 +368,7 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
@@ -784,6 +785,8 @@ from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
+from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
+from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -1008,6 +1011,14 @@ from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_tier import PlanWorkloadTier
+from .platform_tenant_detail_response import PlatformTenantDetailResponse
+from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
+from .platform_tenant_list_response import PlatformTenantListResponse
+from .platform_tenant_response import PlatformTenantResponse
+from .platform_tenant_response_status import PlatformTenantResponseStatus
+from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
+from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
+from .platform_tenant_usage_response import PlatformTenantUsageResponse
 from .post_account_sessions_revoke_all_body import PostAccountSessionsRevokeAllBody
 from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
@@ -1297,6 +1308,8 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
+from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
+from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -1850,6 +1863,7 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreatePlatformTenantRequest",
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
     "CreatePrivateNetworkRequest",
@@ -2262,6 +2276,8 @@ __all__ = (
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
     "LatestDeploymentsByAppResponse",
+    "LinkPlatformTenantConsumerRequest",
+    "LinkPlatformTenantSurfaceRequest",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -2482,6 +2498,14 @@ __all__ = (
     "PlanWorkloadAction",
     "PlanWorkloadClass",
     "PlanWorkloadTier",
+    "PlatformTenantDetailResponse",
+    "PlatformTenantDetailResponseStatus",
+    "PlatformTenantListResponse",
+    "PlatformTenantResponse",
+    "PlatformTenantResponseStatus",
+    "PlatformTenantSurfaceResponse",
+    "PlatformTenantUsageBucketResponse",
+    "PlatformTenantUsageResponse",
     "PostAccountSessionsRevokeAllBody",
     "PostForceColdBootAppConfirm",
     "PostForceParkInstanceConfirm",
@@ -2749,6 +2773,8 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
+    "SetPlatformTenantStatusRequest",
+    "SetPlatformTenantStatusRequestStatus",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",

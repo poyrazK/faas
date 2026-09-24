@@ -181,7 +181,10 @@ type MemStore struct {
 	consumerKeys map[string]ConsumerKey
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
-	apiConsumers map[string]APIConsumer
+	apiConsumers             map[string]APIConsumer
+	platformTenants          map[string]PlatformTenant
+	platformTenantByConsumer map[string]string
+	platformTenantBySurface  map[string]string
 	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
 	// Keyed by (accountID, customerIP) — the same composite PK
 	// as the Postgres table. Test fixture only.
@@ -1032,9 +1035,12 @@ func NewMemStore() *MemStore {
 		// ADR-120 / issue #975 item #5 — consumer keys. The map is
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
 		// enforced at the read methods (same as the pg path).
-		consumerKeys:     map[string]ConsumerKey{},
-		apiConsumers:     map[string]APIConsumer{},
-		openAPISnapshots: map[string]OpenAPISnapshot{},
+		consumerKeys:             map[string]ConsumerKey{},
+		apiConsumers:             map[string]APIConsumer{},
+		platformTenants:          map[string]PlatformTenant{},
+		platformTenantByConsumer: map[string]string{},
+		platformTenantBySurface:  map[string]string{},
+		openAPISnapshots:         map[string]OpenAPISnapshot{},
 		// ADR-119 redesign: empty gate (no provisioned IPs in
 		// unit tests unless a test explicitly seeds them).
 		provisionedStaticEgressIPs: map[string]map[string]netip.Addr{},
@@ -18964,6 +18970,17 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for cid, c := range m.apiConsumers {
 		if c.AccountID == id {
 			delete(m.apiConsumers, cid)
+			delete(m.platformTenantByConsumer, cid)
+		}
+	}
+	for tid, tenant := range m.platformTenants {
+		if tenant.AccountID == id {
+			delete(m.platformTenants, tid)
+		}
+	}
+	for surfaceID, tenantID := range m.platformTenantBySurface {
+		if _, exists := m.platformTenants[tenantID]; !exists {
+			delete(m.platformTenantBySurface, surfaceID)
 		}
 	}
 	for sid, statement := range m.apiConsumerUsageStatements {
@@ -22565,6 +22582,11 @@ func (m *MemStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, app
 	defer m.mu.Unlock()
 	for _, k := range m.consumerKeys {
 		if k.AccountID == accountID && k.AppID == appID && k.Prefix == prefix {
+			if tenantID := m.platformTenantByConsumer[k.ConsumerID]; tenantID != "" {
+				if tenant, ok := m.platformTenants[tenantID]; ok && tenant.Status == PlatformTenantSuspended {
+					return ConsumerKey{}, ErrNotFound
+				}
+			}
 			return k, nil
 		}
 	}

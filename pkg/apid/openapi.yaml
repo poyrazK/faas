@@ -50,6 +50,8 @@ tags:
     description: Effective app networking and provider-neutral private-network attachment intent.
   - name: consumers
     description: Stable end-customer identities and credentials for monetized APIs (ADR-120).
+  - name: platform-tenants
+    description: Account-level end customers spanning app consumers and tenant surfaces.
   - name: debugger
     description: Customer production debugger request evidence and safe replay.
   - name: uploads
@@ -3582,6 +3584,164 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/platform-tenants:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenants
+      summary: List account-level platform customers.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of platform tenants in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+        - name: offset
+          in: query
+          description: Zero-based offset for the account's tenant list.
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: One page of platform customers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenant
+      summary: Register an account-level end customer idempotently by external_ref.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantRequest' }
+      responses:
+        '200':
+          description: Existing customer with the same external_ref and name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantResponse' }
+        '201':
+          description: New platform customer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant UUID in the authenticated account.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenant
+      summary: Read one customer and its linked app consumers and tenant surfaces.
+      responses:
+        '200':
+          description: Customer with current resource links.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantDetailResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantStatus
+      summary: Suspend or resume linked consumer credentials and hostnames.
+      description: Anonymous traffic, independent JWT auth, and unrelated app domains keep their own access policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantStatusRequest' }
+      responses:
+        '200':
+          description: Updated platform customer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/consumers:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer receiving the app-consumer link.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [platform-tenants]
+      operationId: linkPlatformTenantConsumer
+      summary: Link an existing same-account app consumer to this customer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkPlatformTenantConsumerRequest' }
+      responses:
+        '200':
+          description: Linked consumer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/surfaces:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer receiving the hostname-surface link.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [platform-tenants]
+      operationId: linkPlatformTenantSurface
+      summary: Link an existing same-account tenant surface to this customer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkPlatformTenantSurfaceRequest' }
+      responses:
+        '200':
+          description: Linked surface.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSurfaceResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/usage:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer whose linked app usage is requested.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantUsage
+      summary: Read durable cross-app usage for linked consumers.
+      description: Raw usage only; app-specific rate cards and invoices are not aggregated.
+      parameters:
+        - name: since
+          in: query
+          description: Inclusive UTC start of the usage window, snapped to midnight.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Exclusive UTC end of the usage window, snapped to midnight.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Usage for the requested bounded UTC window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantUsageResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/consumers:
     parameters:
@@ -21406,6 +21566,113 @@ components:
           type: string
           enum: [http1, http2, grpc]
           example: http1
+
+    CreatePlatformTenantRequest:
+      description: Register a stable external customer reference under this account.
+      type: object
+      required: [external_ref, name]
+      properties:
+        external_ref: { type: string, minLength: 1, maxLength: 256 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+
+    SetPlatformTenantStatusRequest:
+      description: Suspend or resume linked credential and hostname paths.
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [active, suspended] }
+
+    LinkPlatformTenantConsumerRequest:
+      description: Attach an existing app-local API consumer to one platform customer.
+      type: object
+      required: [consumer_id]
+      properties:
+        consumer_id: { type: string, format: uuid }
+
+    LinkPlatformTenantSurfaceRequest:
+      description: Attach an existing tenant surface to one platform customer.
+      type: object
+      required: [surface_id]
+      properties:
+        surface_id: { type: string, format: uuid }
+
+    PlatformTenantResponse:
+      description: Account-level end customer; links and credentials are separate resources.
+      type: object
+      required: [id, external_ref, name, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, suspended] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PlatformTenantListResponse:
+      description: A bounded page of account-level customers.
+      type: object
+      required: [tenants]
+      properties:
+        tenants:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantResponse' }
+        next_offset: { type: integer, minimum: 0 }
+
+    PlatformTenantSurfaceResponse:
+      description: A linked tenant surface summary; use the app endpoint for hostnames.
+      type: object
+      required: [id, app_id, name, status]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string }
+
+    PlatformTenantDetailResponse:
+      description: One customer and its current app-local consumer and surface links.
+      type: object
+      required: [id, external_ref, name, status, created_at, updated_at, consumers, surfaces]
+      properties:
+        id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, suspended] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerResponse' }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantSurfaceResponse' }
+
+    PlatformTenantUsageBucketResponse:
+      description: One UTC day of app-consumer usage from the durable raw usage ledger.
+      type: object
+      required: [app_id, consumer_id, window_start, request_count, error_count, billable_units]
+      properties:
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        window_start: { type: string, format: date-time }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        error_count: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+
+    PlatformTenantUsageResponse:
+      description: Cross-app raw usage totals with app and consumer attribution.
+      type: object
+      required: [tenant_id, period_start, period_end, request_count, error_count, billable_units, buckets, as_of]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        error_count: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantUsageBucketResponse' }
+        as_of: { type: string, format: date-time }
 
     CreateAPIConsumerRequest:
       description: "Stable customer identity to which consumer credentials can be attached."

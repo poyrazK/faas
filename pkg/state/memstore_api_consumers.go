@@ -151,6 +151,11 @@ func (m *MemStore) CreateConsumerKeyForConsumer(_ context.Context, accountID, co
 	if !c.Active() {
 		return ConsumerKey{}, ErrConflict
 	}
+	if tenantID := m.platformTenantByConsumer[consumerID]; tenantID != "" {
+		if tenant, ok := m.platformTenants[tenantID]; ok && tenant.Status == PlatformTenantSuspended {
+			return ConsumerKey{}, ErrConflict
+		}
+	}
 	for _, k := range m.consumerKeys {
 		if k.AccountID == c.AccountID && k.AppID == c.AppID && k.Name == name {
 			return ConsumerKey{}, ErrConflict

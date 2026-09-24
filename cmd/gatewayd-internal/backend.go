@@ -37,6 +37,8 @@ type pgRouter struct {
 	tenantSurfacesEnabled func() bool
 }
 
+var errPlatformTenantSuspended = errors.New("platform tenant suspended")
+
 var _ gateway.Router = pgRouter{}
 
 // ResolveHost implements gateway.Router. A missing/unverified/deleted route is a
@@ -64,6 +66,9 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 	}
 	if enabled {
 		app, ok, err := r.resolveTenantSurface(ctx, host)
+		if errors.Is(err, errPlatformTenantSuspended) {
+			return gateway.App{}, false, nil // claimed hostname: never fall through
+		}
 		if err != nil {
 			return gateway.App{}, false, err
 		}
@@ -235,6 +240,17 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 	}
 	if err != nil {
 		return gateway.App{}, false, err
+	}
+	if guard, ok := r.store.(interface {
+		PlatformTenantSurfaceSuspended(context.Context, string) (bool, error)
+	}); ok {
+		suspended, guardErr := guard.PlatformTenantSurfaceSuspended(ctx, surface.ID)
+		if guardErr != nil {
+			return gateway.App{}, false, guardErr
+		}
+		if suspended {
+			return gateway.App{}, false, errPlatformTenantSuspended
+		}
 	}
 	if !surface.Active() {
 		// Soft-deleted / suspended surface: route-around, not 404.
