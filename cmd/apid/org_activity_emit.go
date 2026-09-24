@@ -153,10 +153,11 @@ func (s *server) recordDomainTLSIssuedActivity(ctx context.Context, domain state
 }
 
 func (s *server) recordDeploymentActivity(ctx context.Context, r *http.Request, acct state.Account, app state.App, deployment state.Deployment, data map[string]any) {
-	entry := state.OrgActivity{
-		Kind: "app.deployed", SourceType: "deployment", SourceID: deployment.ID,
-		Data: activityData(data),
+	entry := s.newDeploymentActivity(ctx, r, acct, app, data)
+	if entry == nil {
+		return
 	}
+	entry.SourceID = deployment.ID
 	if deploymentID, err := uuid.Parse(deployment.ID); err == nil {
 		entry.DeploymentID = &deploymentID
 	}
@@ -164,5 +165,18 @@ func (s *server) recordDeploymentActivity(ctx context.Context, r *http.Request, 
 		entry.ActorType = state.OrgActivityActorGitHub
 		entry.ActorLabel = "GitHub Actions"
 	}
-	s.recordAppActivity(ctx, r, acct, app, entry)
+	s.recordAppActivity(ctx, r, acct, app, *entry)
+}
+
+func (s *server) newDeploymentActivity(ctx context.Context, r *http.Request, acct state.Account, app state.App, data map[string]any) *state.OrgActivity {
+	entry, err := s.prepareAppActivity(ctx, r, acct, app, state.OrgActivity{
+		Kind: "app.deployed", SourceType: "deployment", Data: activityData(data),
+	})
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("activity: prepare deployment failed", "app", app.ID, "err", err)
+		}
+		return nil
+	}
+	return &entry
 }

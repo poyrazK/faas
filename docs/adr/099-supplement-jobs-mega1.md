@@ -21,6 +21,18 @@ vmmd one round-trippable artifact contract. Materialization is lease-claimed,
 retry-safe, and gated before task dispatch; account-scoped private-registry
 credentials are sealed at rest and exposed through the Jobs API.
 
+## Boot-failure retry safety amendment (2026-09-24)
+
+A claimed task whose VM boot fails before customer code starts no longer
+returns immediately to attempt 1. The claim's instance ID and lease token
+fence an atomic task transition: if `attempt <= retry_max`, it increments the
+attempt and schedules the normal capped retry backoff; otherwise it records a
+terminal `infra` error and settles the run. A late exit can settle only the
+currently claimed instance and lease. Admission failures before a task claim
+leave the queued task unchanged. This bounds VM churn without assuming that a
+failed boot is cost-free or that an uncertain transport failure cannot race a
+guest exit.
+
 ## Cold-cache watchdog correction (2026-09-24)
 
 The generic §6.1 app watchdog's 30-second `COLD_BOOTING` deadline does not
@@ -29,8 +41,6 @@ a multi-gigabyte artifact before vmmd can finish its boot RPC. The task lease
 (`task_timeout_s + 90 s`) and stale-job reaper own that longer deadline;
 ordinary app cold boots retain the 30-second watchdog. This prevents a second
 schedd replica from falsely failing an active cold-cache job at 30 seconds.
-In-flight vmmd boot cancellation and late-exit fencing remain separate issue
-#3052 gates.
 
 ## Locked deviations
 

@@ -2911,12 +2911,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// (cold boot must always work) is preserved: an empty hint
 	// behaves identically to a fresh install.
 	var warmHint string
+	var snapshotLocalityKnown bool
 	if !isPlacementSpread(ctx) {
 		warmHint, _ = e.warmAffinity.LastWarmNode(appID)
 	}
 	var snapshotNodes []string
 	if haveSnap {
-		warmHint, snapshotNodes = e.snapshotPlacementHints(ctx, snap.ID, warmHint)
+		warmHint, snapshotNodes, snapshotLocalityKnown = e.snapshotPlacementHints(ctx, snap.ID, warmHint)
 	}
 	// ADR-098 PR-D: connection-aware placement bias. Score is
 	// the synchronous read (per ADR §D2 — schedd does NOT
@@ -2946,9 +2947,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: appID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
-		PreferredNodeID:  warmHint,
-		PreferredNodeIDs: snapshotNodes,
-		PreferredRegion:  preferredRegion,
+		PreferredNodeID:            warmHint,
+		PreferredNodeIDs:           snapshotNodes,
+		PrioritizeSnapshotLocality: deploymentSmoke && snapshotLocalityKnown,
+		PreferredRegion:            preferredRegion,
 	})
 	if err != nil {
 		release()
@@ -5715,7 +5717,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 
 	// Request/service boot succeeded; capture the reusable init snapshot and
 	// park the prime. Non-snapshot modes returned above.
-	return e.snapshotAndPark(ctx, ins)
+	return e.snapshotAndParkPrime(ctx, ins)
 }
 
 // markPrimeFailed closes the deployment lifecycle when the scheduler cannot
@@ -6697,6 +6699,17 @@ func (e *Engine) vmstateStorageKeyFor(nodeID, depID string) string {
 // walks RUNNING → SNAPSHOTTING → PARKED, writing the snapshot blob via vmmd and
 // emitting snapshot_written for imaged to record the row.
 func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error {
+	return e.snapshotAndParkMode(ctx, ins, true)
+}
+
+// Prime must publish a capture from this readiness attempt, even when an
+// earlier snapshot of the same deployment remains usable. Reusing that older
+// row would suppress snapshot_written and leave a rollback in snapshot_prepare.
+func (e *Engine) snapshotAndParkPrime(ctx context.Context, ins state.Instance) error {
+	return e.snapshotAndParkMode(ctx, ins, false)
+}
+
+func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, allowReuse bool) error {
 	// Issue #667 / ADR-078 — waitUntil drain watchdog. If the instance
 	// has active waitUntil tasks (ins.TailCount > 0), the runner is
 	// still draining them in-process after the response was flushed.
@@ -6903,7 +6916,13 @@ func (e *Engine) snapshotAndPark(ctx context.Context, ins state.Instance) error 
 	snapBudget := SnapshotBudgetFor(ins.RAMMB)
 	snapCtx, snapCancel := context.WithTimeout(ctx, snapBudget)
 	snapStart := time.Now()
-	b, reused, err := e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey)
+	var b SnapshotBytes
+	var reused *state.Snapshot
+	if allowReuse {
+		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey)
+	} else {
+		b, err = e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey)
+	}
 	if reused != nil {
 		storageKey = reused.StorageKey
 	}

@@ -208,13 +208,10 @@ const (
 // the cap is min(task_timeout_s + 90s, JobDestroyWaitDefault). The
 // +90s covers the SIGTERM→30s grace→SIGKILL cleanup budget. For
 // the typical Hobby 300s task, that's 390s < 11min — so most jobs
-// use the smaller cap and destroy faster on timeout.
-//
-// Picked at 30 minutes (vs the app-VM 11m) so a Scale 3600s task
-// fits: 3600 + 90 = 3690s ≈ 61.5min — well above 30m. The engine
-// uses EffectiveDestroyWait(taskTimeoutSec) at job.VMM call time
-// rather than this constant; this is the upper bound only.
-const JobDestroyWaitDefault = 30 * time.Minute
+// use the smaller cap and destroy faster on timeout. Bound the wait by
+// the host's accepted task timeout plus cleanup grace, not 30 minutes:
+// the old ceiling ended a valid Scale 3600s task 30 minutes early.
+const JobDestroyWaitDefault = time.Duration(JobMaxTaskTimeoutSec+90) * time.Second
 
 // EffectiveDestroyWait returns the destroy timeout the engine
 // should pass to vmmdgrpc at job wake time. Mirrors
@@ -226,9 +223,9 @@ const JobDestroyWaitDefault = 30 * time.Minute
 //   - 30s firecracker /snapshot/create or clean Kill teardown
 //   - 30s buffer for slow disks / cgroup writes
 //
-// Cap at JobDestroyWaitDefault (30m) so a misconfigured huge
-// task_timeout_s doesn't pin a jail slot for hours. Production
-// Scale cap = 3600s → 3690s; comfortably below the 30m ceiling.
+// Cap at JobDestroyWaitDefault so an invalid oversized timeout cannot
+// pin a jail slot beyond the host's accepted maximum. Production Scale
+// cap = 3600s → 3690s, below the 5490s host ceiling.
 func EffectiveDestroyWait(taskTimeoutSec int) time.Duration {
 	d := time.Duration(taskTimeoutSec+90) * time.Second
 	if d > JobDestroyWaitDefault {

@@ -38,5 +38,11 @@ remain inspectable; `jobs retry` re-queues one failed task while its retry
 budget remains, preserving the run history and applying capped backoff. Cancel
 a run when its work is no longer useful.
 
+A VM boot failure before your command starts also consumes one configured
+retry. The next attempt waits for the same capped backoff; when retries are
+exhausted, the task records an `infra` error explaining that the image
+artifact or VM boot path needs attention. A task with `--retries 0` therefore
+fails after its first unsuccessful boot instead of creating VMs indefinitely.
+
 `jobs logs` returns a 64 KiB tail by default. Pass `--max-bytes N` (up to
 1 MiB) to retrieve a larger tail when the response is truncated.

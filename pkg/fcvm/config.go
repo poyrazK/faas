@@ -259,7 +259,8 @@ type ColdBootSpec struct {
 // EffectiveDestroyWait is min(task_timeout_s + 90s,
 // JobDestroyWaitDefault) so a long-running job's cleanup phase
 // (SIGTERM → 30s grace → SIGKILL → poweroff) fits inside the
-// firecracker destroy budget. See pkg/fcvm/vmm.go::JobDestroyWaitDefault.
+// firecracker destroy budget. The ceiling covers every host-accepted
+// task timeout. See pkg/fcvm/job_vmm.go::JobDestroyWaitDefault.
 type JobColdBootSpec struct {
 	KernelKey  string
 	BaseKey    string

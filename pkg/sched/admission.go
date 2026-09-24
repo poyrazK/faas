@@ -195,6 +195,13 @@ type Request struct {
 	// through to the normal fleet chooser and the shared backend remains the
 	// cold-restore fallback.
 	PreferredNodeIDs []string
+	// PrioritizeSnapshotLocality is reserved for an authenticated deployment
+	// smoke. The candidate's first public request must use a fitting node
+	// already holding its snapshot when one is known; choosing an empty node
+	// for extra CPU headroom can exhaust the smoke deadline on artifact pull.
+	// Ordinary customer wakes retain CPU-first balancing. This never bypasses
+	// RAM, vCPU, physical CPU, or node-lifecycle admission guards.
+	PrioritizeSnapshotLocality bool
 	// PreferredRegion (ADR-098 PR-D + amendment issue #954) is
 	// the connection-aware placement bias, scoped to a single
 	// deployment. The Engine populates this from

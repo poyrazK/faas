@@ -263,7 +263,7 @@ func TestEngineWakeJobFleetSchedulerChoosesActiveComputeNode(t *testing.T) {
 	}
 }
 
-func TestEngineWakeJobFailureRequeuesAndReleases(t *testing.T) {
+func TestEngineWakeJobBootFailureSchedulesBoundedRetryAndReleases(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
 	lease := NewMemLeaser(nil)
@@ -287,6 +287,9 @@ func TestEngineWakeJobFailureRequeuesAndReleases(t *testing.T) {
 	if task.Status != "queued" || task.InstanceID != nil || task.LeaseToken != nil {
 		t.Fatalf("task after rollback = %+v, want queued without execution lease", task)
 	}
+	if task.Attempt != 2 || task.NextAttemptAt == nil || !task.NextAttemptAt.After(time.Now()) || task.ErrorClass == nil || *task.ErrorClass != "infra" || task.ErrorMessage == nil {
+		t.Fatalf("boot failure did not consume a retry with backoff/error: %+v", task)
+	}
 	instances, err := store.ListJobInstances(context.Background())
 	if err != nil {
 		t.Fatalf("ListJobInstances: %v", err)
@@ -300,6 +303,52 @@ func TestEngineWakeJobFailureRequeuesAndReleases(t *testing.T) {
 	}
 	if failed.State != string(state.StateFailed) {
 		t.Fatalf("failed job instance = %+v, want terminal failed state", failed)
+	}
+}
+
+func TestDispatchJobsTickKeepsBootFailureBackoffAndTerminatesAfterBudget(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	vmm := &recordingJobVMM{err: errors.New("vmmd unavailable")}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	ctx := context.Background()
+	if err := e.DispatchJobsTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || first.Attempt != 2 || first.Status != "queued" || first.NextAttemptAt == nil {
+		t.Fatalf("first dispatch task=%+v err=%v", first, err)
+	}
+	if err := e.DispatchJobsTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := store.JobTaskGet(ctx, run.ID, 0)
+	if vmm.calls != 1 || !second.NextAttemptAt.Equal(*first.NextAttemptAt) {
+		t.Fatalf("backoff bypassed: calls=%d first=%+v second=%+v", vmm.calls, first, second)
+	}
+	if _, err := e.WakeJob(ctx, acct.ID, run.ID, 0); !errors.Is(err, ErrJobRetryBackoff) {
+		t.Fatalf("direct WakeJob during backoff err=%v", err)
+	}
+	if err := store.JobTaskRequeue(ctx, run.ID, 0, time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.DispatchJobsTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := store.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || terminal.Status != "failed" || terminal.Attempt != 2 || terminal.ErrorMessage == nil || terminal.FinishedAt == nil || vmm.calls != 2 {
+		t.Fatalf("exhausted task=%+v calls=%d err=%v", terminal, vmm.calls, err)
+	}
+	result, err := store.JobRunGetByID(ctx, run.ID)
+	if err != nil || result.AggregateStatus != "dead_letter" {
+		t.Fatalf("exhausted run=%+v err=%v", result, err)
+	}
+	if err := e.DispatchJobsTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if vmm.calls != 2 {
+		t.Fatalf("terminal task booted again: calls=%d", vmm.calls)
 	}
 }
 
@@ -440,5 +489,49 @@ func TestEngineWakeJobSupervisesExitAndCleansUp(t *testing.T) {
 	}
 	if task.Status != "succeeded" {
 		t.Fatalf("task after exit = %q, want succeeded", task.Status)
+	}
+}
+
+func TestLateJobExitAfterBootFailureCannotSettleQueuedRetry(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	waiter := &blockingJobExitWaiter{started: make(chan struct{}), release: make(chan struct{})}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).
+		WithJobVmmClient(&recordingJobVMM{}).
+		WithJobExitWaiter(waiter)
+	ctx := context.Background()
+	result, err := e.WakeJob(ctx, acct.ID, run.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-waiter.started:
+	case <-time.After(time.Second):
+		t.Fatal("job exit waiter did not start")
+	}
+	retried, err := store.JobTaskFailBoot(ctx, run.ID, 0, result.InstanceID, string(result.LeaseToken), 1, time.Now().Add(time.Minute), "uncertain boot")
+	if err != nil || !retried {
+		t.Fatalf("record uncertain boot: retried=%v err=%v", retried, err)
+	}
+	if err := e.jobLeaser.Release(ctx, result.LeaseToken, e.ownerNodeID); err != nil {
+		t.Fatal(err)
+	}
+	close(waiter.release)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		ins, err := store.InstanceByID(ctx, result.InstanceID)
+		if err == nil && ins.State == string(state.StateStopped) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	task, err := store.JobTaskGet(ctx, run.ID, 0)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.ErrorMessage == nil || *task.ErrorMessage != "uncertain boot" {
+		t.Fatalf("late exit overwrote retry task=%+v err=%v", task, err)
+	}
+	ins, err := store.InstanceByID(ctx, result.InstanceID)
+	if err != nil || ins.State != string(state.StateStopped) {
+		t.Fatalf("stale VM not cleaned up: instance=%+v err=%v", ins, err)
 	}
 }

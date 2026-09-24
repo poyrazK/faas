@@ -13,19 +13,23 @@ import (
 // EdgeRuleAsyncResolved is the compiled kind=async matcher payload. The action
 // itself is empty; delivery policy comes from the existing invocation system.
 type EdgeRuleAsyncResolved struct {
-	ID        string
-	AccountID string
-	AppID     string
-	Priority  int
-	PathGlob  string
-	Methods   map[string]bool
+	ID           string
+	AccountID    string
+	AppID        string
+	Priority     int
+	PathGlob     string
+	Methods      map[string]bool
+	MatchHeaders map[string]string
 }
 
 // PickFirstAsyncMatch returns the first priority-ordered async rule matching
 // the public request path and method.
-func PickFirstAsyncMatch(rules []EdgeRuleAsyncResolved, requestPath, method string) *EdgeRuleAsyncResolved {
+func PickFirstAsyncMatch(rules []EdgeRuleAsyncResolved, requestPath, method string, requestHeaders ...http.Header) *EdgeRuleAsyncResolved {
 	for i := range rules {
 		rule := &rules[i]
+		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(rule.MatchHeaders, requestHeaders[0]) {
+			continue
+		}
 		if rule.Methods != nil && !rule.Methods[method] {
 			continue
 		}

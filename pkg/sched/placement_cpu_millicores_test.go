@@ -62,6 +62,64 @@ func TestChoosePlacementWithCPU_CPUHeadroomOutranksWarmAffinity(t *testing.T) {
 	}
 }
 
+func TestChoosePlacementWithCPU_DeploymentSmokePrefersFittingSnapshotNode(t *testing.T) {
+	t.Parallel()
+	nodes := []state.ComputeNode{cpuPlacementNode("cached"), cpuPlacementNode("uncached")}
+	usedCPU := map[string]int64{"cached": 1000, "uncached": 0}
+	request := Request{
+		RAMMB: 128, VCPU: 4, CPUMillicores: 1000,
+		PreferredNodeID: "cached", PrioritizeSnapshotLocality: true,
+	}
+	got, err := choosePlacementWithCPU(nodes, nil, nil, usedCPU, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NodeID != "cached" {
+		t.Fatalf("smoke node = %q, want artifact-local cached node", got.NodeID)
+	}
+	request.PrioritizeSnapshotLocality = false
+	got, err = choosePlacementWithCPU(nodes, nil, nil, usedCPU, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NodeID != "uncached" {
+		t.Fatalf("ordinary wake node = %q, want CPU-first uncached node", got.NodeID)
+	}
+	request.PrioritizeSnapshotLocality = true
+	usedCPU["cached"] = cpuSaturated()
+	got, err = choosePlacementWithCPU(nodes, nil, nil, usedCPU, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NodeID != "uncached" {
+		t.Fatalf("saturated snapshot node selected: %q, want safe fallback", got.NodeID)
+	}
+}
+
+func TestChoosePlacementWithCPU_DeploymentSmokePrefersReadyReplica(t *testing.T) {
+	t.Parallel()
+	nodes := []state.ComputeNode{cpuPlacementNode("replica"), cpuPlacementNode("uncached")}
+	request := Request{
+		RAMMB: 128, VCPU: 4, CPUMillicores: 1000,
+		PreferredNodeIDs: []string{"replica"}, PrioritizeSnapshotLocality: true,
+	}
+	got, err := choosePlacementWithCPU(nodes, nil, nil, map[string]int64{"replica": 1000}, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NodeID != "replica" {
+		t.Fatalf("smoke node = %q, want ready replica", got.NodeID)
+	}
+	request.PrioritizeSnapshotLocality = false
+	got, err = choosePlacementWithCPU(nodes, nil, nil, map[string]int64{"replica": 1000}, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NodeID != "uncached" {
+		t.Fatalf("ordinary wake node = %q, want CPU-first uncached node", got.NodeID)
+	}
+}
+
 func TestChoosePlacementWithCPU_WarmAffinityWinsOnEqualCPUHeadroom(t *testing.T) {
 	t.Parallel()
 	nodes := []state.ComputeNode{cpuPlacementNode("a"), cpuPlacementNode("b")}

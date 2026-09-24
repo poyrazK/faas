@@ -98,6 +98,11 @@ type Placement struct {
 // / ADR-070 §Decision 6); a no-sidecar request collapses to the
 // legacy single-arg form (r.SidecarMBs nil/empty).
 //
+// Authenticated deployment smokes with known snapshot locality choose a
+// fitting artifact-local node before CPU headroom, so the first public probe
+// does not depend on pulling a large snapshot onto an empty peer. All resource
+// guards still run first. Ordinary wakes remain CPU-first.
+//
 // Sticky-warm affinity (r.PreferredNodeID): legacy requests return a fitting
 // preferred node directly. CPU-aware requests retain affinity only when that
 // node is tied for the most physical CPU headroom, preventing locality from
@@ -210,7 +215,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 	// only while the preferred node is tied for the most physical CPU
 	// headroom; otherwise affinity would pack a single host until it was
 	// saturated while an idle peer existed.
-	if warmFit != nil && (r.CPUMillicores <= 0 ||
+	if warmFit != nil && (r.PrioritizeSnapshotLocality || r.CPUMillicores <= 0 ||
 		cpuHeadroomMillicores(*warmFit, usedCPUMillicores[warmFit.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores)) {
 		return Placement{
 			NodeID:              warmFit.ID,
@@ -235,7 +240,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 				best = n
 			}
 		}
-		if r.CPUMillicores <= 0 ||
+		if r.PrioritizeSnapshotLocality || r.CPUMillicores <= 0 ||
 			cpuHeadroomMillicores(best, usedCPUMillicores[best.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores) {
 			return placementForNode(best, usedMB[best.ID]), nil
 		}

@@ -1306,7 +1306,7 @@ List edge rules
 
 ### edge-rules trace
 
-Preview matching edge rules and simulate IP/geo decisions
+Preview matching edge rules and simulate request headers and IP/geo decisions
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1315,6 +1315,7 @@ Preview matching edge rules and simulate IP/geo decisions
 | `--method <method>` | request method (default GET) |  |
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
+| `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
 
 ### edge-rules create
 

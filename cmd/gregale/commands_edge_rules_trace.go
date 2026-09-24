@@ -20,31 +20,33 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleTraceScope = "Host/method/path matching is simulated. IP and geo allow/deny decisions use supplied --client-ip/--country directly; trusted-proxy validation and live geo lookup are not performed. Other runtime gates, actions, rewrites, and the final response are not simulated. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+const edgeRuleTraceScope = "Host/method/path/header matching is simulated. Header names are case-insensitive and values compare exactly; repeated request-header values are preserved. IP and geo allow/deny decisions use supplied --client-ip/--country directly; trusted-proxy validation and live geo lookup are not performed. Other runtime gates, actions, rewrites, and the final response are not simulated. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 
 type edgeRuleTraceResult struct {
-	App      string             `json:"app"`
-	Host     string             `json:"host"`
-	Path     string             `json:"path"`
-	Method   string             `json:"method"`
-	ClientIP string             `json:"client_ip,omitempty"`
-	Country  string             `json:"country,omitempty"`
-	Scope    string             `json:"scope"`
-	Rules    []edgeRuleTraceRow `json:"rules"`
+	App      string              `json:"app"`
+	Host     string              `json:"host"`
+	Path     string              `json:"path"`
+	Method   string              `json:"method"`
+	ClientIP string              `json:"client_ip,omitempty"`
+	Country  string              `json:"country,omitempty"`
+	Headers  map[string][]string `json:"headers,omitempty"`
+	Scope    string              `json:"scope"`
+	Rules    []edgeRuleTraceRow  `json:"rules"`
 }
 
 type edgeRuleTraceRow struct {
-	ID            string   `json:"id"`
-	Kind          string   `json:"kind"`
-	Priority      int      `json:"priority"`
-	MatchHost     string   `json:"match_host"`
-	MatchPath     string   `json:"match_path"`
-	MatchMethods  []string `json:"match_methods"`
-	Status        string   `json:"status"`
-	Reason        string   `json:"reason"`
-	Outcome       string   `json:"outcome"`
-	OutcomeReason string   `json:"outcome_reason"`
-	PrecededBy    string   `json:"preceded_by,omitempty"`
+	ID            string            `json:"id"`
+	Kind          string            `json:"kind"`
+	Priority      int               `json:"priority"`
+	MatchHost     string            `json:"match_host"`
+	MatchPath     string            `json:"match_path"`
+	MatchMethods  []string          `json:"match_methods"`
+	MatchHeaders  map[string]string `json:"match_headers,omitempty"`
+	Status        string            `json:"status"`
+	Reason        string            `json:"reason"`
+	Outcome       string            `json:"outcome"`
+	OutcomeReason string            `json:"outcome_reason"`
+	PrecededBy    string            `json:"preceded_by,omitempty"`
 }
 
 func cmdEdgeRulesTrace(args []string) int {
@@ -54,6 +56,8 @@ func cmdEdgeRulesTrace(args []string) int {
 	method := fs.String("method", http.MethodGet, "request method (default GET)")
 	clientIPArg := fs.String("client-ip", "", "simulated client IP for kind=ip rules")
 	countryArg := fs.String("country", "", "simulated ISO 3166-1 alpha-2 country for kind=geo rules")
+	var headerArgs multiFlag
+	fs.Var(&headerArgs, "header", "simulated request header (Name:Value; repeat; values compare exactly)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -61,7 +65,7 @@ func cmdEdgeRulesTrace(args []string) int {
 		return 1
 	}
 	if *slug == "" || *rawURL == "" {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules trace --app <slug> --url <http(s)://host/path> [--method GET] [--client-ip IP] [--country CC]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules trace --app <slug> --url <http(s)://host/path> [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC]", "edge-rules")
 		return 1
 	}
 	u, err := url.Parse(*rawURL)
@@ -88,6 +92,10 @@ func cmdEdgeRulesTrace(args []string) int {
 	if country != "" && !validTraceCountry(country) {
 		return printErr("Invalid --country", fmt.Errorf("expected a two-letter ISO country code"))
 	}
+	requestHeaders, err := parseTraceRequestHeaders(headerArgs)
+	if err != nil {
+		return printErr("Invalid --header", err)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -96,13 +104,24 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
-	result := previewEdgeRules(*slug, strings.ToLower(u.Hostname()), requestPath, requestMethod, clientIP, country, rules)
+	result := previewEdgeRules(*slug, strings.ToLower(u.Hostname()), requestPath, requestMethod, clientIP, country, rules, requestHeaders)
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s %s%s (app %s)\n", result.Method, result.Host, result.Path, result.App)
 	if result.ClientIP != "" || result.Country != "" {
 		_, _ = fmt.Fprintf(osStdout, "simulated context: client_ip=%s country=%s\n", emptyAsDash(result.ClientIP), emptyAsDash(result.Country))
+	}
+	headerNames := make([]string, 0, len(result.Headers))
+	for name := range result.Headers {
+		headerNames = append(headerNames, name)
+	}
+	sort.Strings(headerNames)
+	for _, name := range headerNames {
+		values := result.Headers[name]
+		for _, value := range values {
+			_, _ = fmt.Fprintf(osStdout, "header: %s=%q\n", name, value)
+		}
 	}
 	if len(result.Rules) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no edge rules for this app)")
@@ -119,7 +138,11 @@ func cmdEdgeRulesTrace(args []string) int {
 // gateway's path.Match / method filters. The app-list API sorts equal
 // priorities newest-first, while the gateway host read sorts oldest-first;
 // re-sort before identifying the first candidate per kind.
-func previewEdgeRules(app, host, requestPath, method, clientIP, country string, rules []api.EdgeRuleResponse) edgeRuleTraceResult {
+func previewEdgeRules(app, host, requestPath, method, clientIP, country string, rules []api.EdgeRuleResponse, suppliedHeaders ...http.Header) edgeRuleTraceResult {
+	var requestHeaders http.Header
+	if len(suppliedHeaders) > 0 {
+		requestHeaders = suppliedHeaders[0]
+	}
 	sorted := append([]api.EdgeRuleResponse(nil), rules...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if sorted[i].Priority != sorted[j].Priority {
@@ -127,12 +150,12 @@ func previewEdgeRules(app, host, requestPath, method, clientIP, country string, 
 		}
 		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
 	})
-	result := edgeRuleTraceResult{App: app, Host: host, Path: requestPath, Method: method, ClientIP: clientIP, Country: country, Scope: edgeRuleTraceScope, Rules: make([]edgeRuleTraceRow, 0, len(sorted))}
+	result := edgeRuleTraceResult{App: app, Host: host, Path: requestPath, Method: method, ClientIP: clientIP, Country: country, Headers: traceHeaderSnapshot(requestHeaders), Scope: edgeRuleTraceScope, Rules: make([]edgeRuleTraceRow, 0, len(sorted))}
 	firstByKind := make(map[string]int)
 	for _, rule := range sorted {
 		row := edgeRuleTraceRow{
 			ID: rule.ID, Kind: rule.Kind, Priority: rule.Priority,
-			MatchHost: rule.MatchHost, MatchPath: rule.MatchPath, MatchMethods: rule.MatchMethods,
+			MatchHost: rule.MatchHost, MatchPath: rule.MatchPath, MatchMethods: rule.MatchMethods, MatchHeaders: rule.MatchHeaders,
 		}
 		switch {
 		case !rule.Enabled:
@@ -141,6 +164,8 @@ func previewEdgeRules(app, host, requestPath, method, clientIP, country string, 
 			row.Status, row.Reason = "skipped", fmt.Sprintf("host %q does not match %q", host, rule.MatchHost)
 		case !traceMethodMatches(rule.MatchMethods, method):
 			row.Status, row.Reason = "skipped", fmt.Sprintf("method %q is not in %s", method, strings.Join(rule.MatchMethods, ", "))
+		case !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, requestHeaders):
+			row.Status, row.Reason = "skipped", traceHeaderMismatch(rule.MatchHeaders, requestHeaders)
 		default:
 			matched := true
 			var err error
@@ -300,7 +325,66 @@ func traceMatchedSelectors(rule api.EdgeRuleResponse) string {
 	if matchPath == "" {
 		matchPath = "*"
 	}
-	return fmt.Sprintf("host %q, method %q, path %q match", rule.MatchHost, methods, matchPath)
+	selectors := fmt.Sprintf("host %q, method %q, path %q", rule.MatchHost, methods, matchPath)
+	if len(rule.MatchHeaders) > 0 {
+		headerNames := make([]string, 0, len(rule.MatchHeaders))
+		for name := range rule.MatchHeaders {
+			headerNames = append(headerNames, name)
+		}
+		sort.Strings(headerNames)
+		var conditions []string
+		for _, name := range headerNames {
+			conditions = append(conditions, fmt.Sprintf("%s=%q", name, rule.MatchHeaders[name]))
+		}
+		selectors += ", headers [" + strings.Join(conditions, ", ") + "]"
+	}
+	return selectors + " match"
+}
+
+func parseTraceRequestHeaders(items []string) (http.Header, error) {
+	headers := make(http.Header)
+	for _, raw := range items {
+		index := strings.IndexByte(raw, ':')
+		if index < 1 {
+			return nil, fmt.Errorf("%q: expected Name:Value", raw)
+		}
+		name, value := raw[:index], raw[index+1:]
+		normalized, err := api.NormalizeEdgeRuleMatchHeaders(map[string]string{name: value})
+		if err != nil {
+			return nil, err
+		}
+		for headerName := range normalized {
+			headers.Add(headerName, value)
+		}
+	}
+	return headers, nil
+}
+
+func traceHeaderSnapshot(headers http.Header) map[string][]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(headers))
+	for name, values := range headers {
+		key := strings.ToLower(name)
+		out[key] = append(out[key], values...)
+	}
+	return out
+}
+
+func traceHeaderMismatch(expected map[string]string, actual http.Header) string {
+	names := make([]string, 0, len(expected))
+	for name := range expected {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		value := expected[name]
+		if !api.EdgeRuleRequestHeadersMatch(map[string]string{name: value}, actual) {
+			return fmt.Sprintf("request header %q has no value equal to %q", name, value)
+		}
+	}
+	return "request headers do not match"
 }
 
 // Store.MatchEdgeRulesForHost accepts only exact hosts, '*', or a
