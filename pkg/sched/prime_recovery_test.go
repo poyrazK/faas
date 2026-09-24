@@ -1,5 +1,8 @@
 package sched
 
+// adr: 191 — bounded scheduler work dispatch must not lose a prime handoff;
+// recovery rechecks the durable deployment state without duplicating work.
+
 import (
 	"context"
 	"testing"
