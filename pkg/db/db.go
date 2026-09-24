@@ -175,7 +175,7 @@ func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, erro
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName
 	}
 	// Safe under a transaction-mode pooler; a no-op without one.
-	applyPooledExecMode(cfg)
+	applyPooledExecMode(cfg, dsn)
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -188,9 +188,9 @@ func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, erro
 		return nil, fmt.Errorf("db: ping: %w", err)
 	}
 	// Session-scoped work (LISTEN, session advisory locks) resolves through
-	// DirectPool to this sibling. Unset FAAS_DATABASE_URL_DIRECT leaves it
-	// nil, and DirectPool then returns the ordinary pool — today's behaviour.
-	direct, err := openDirect(ctx, appName)
+	// DirectPool to this sibling. imaged always gets a separate session pool
+	// so its LISTEN and deployment locks cannot exhaust ordinary queries.
+	direct, err := openDirect(ctx, appName, dsn)
 	if err != nil {
 		pool.Close()
 		return nil, err
