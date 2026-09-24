@@ -38,3 +38,35 @@ func TestCloneProjectEnvironmentQuotaFailureLeavesNoTarget(t *testing.T) {
 		t.Fatalf("quota failure created target: %v", err)
 	}
 }
+
+func TestCloneProjectEnvironmentDoesNotClaimSharedOpenAPIRoutes(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	account, err := store.CreateAccount(ctx, "shared-openapi-routes@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, Project{AccountID: account.ID, Slug: "shop", ScanSource: ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, App{
+		AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api", Status: AppActive,
+		OnlyAllowDeclaredRoutes: true, // An app-wide OpenAPI document supplies the routes.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := store.CloneProjectEnvironment(ctx, ProjectEnvironmentClone{
+		AccountID: account.ID, ProjectID: project.ID, SourceSlug: "production", TargetSlug: "staging",
+	}, api.Limits{SecretCountMax: 10, EnvVarsMax: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RoutesCopied != 0 || len(result.SharedResources) != 1 || result.SharedResources[0] != "routes" {
+		t.Fatalf("clone claimed shared OpenAPI routes: %+v", result)
+	}
+	if _, err := store.GetProjectEnvironmentRoutePolicy(ctx, account.ID, app.ID, "staging"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unsnapshotted route policy = %v, want ErrNotFound", err)
+	}
+}

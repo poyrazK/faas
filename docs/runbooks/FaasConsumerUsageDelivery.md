@@ -8,4 +8,4 @@ The gateway journals request usage under `/var/lib/faas/consumer-usage` and repl
 4. If one event repeatedly returns a validation or foreign-key error, preserve a copy of the spool and investigate the referenced account/app/tenant lifecycle before any manual repair. FIFO delivery intentionally stops rather than silently discarding that event.
 5. If `_failures_total` increased, treat raw usage for the affected interval as potentially incomplete. The post-response append and any local disk failure before fsync cannot be repaired from this journal alone; reconcile with independent request logs before invoicing.
 
-Deploy apid before gatewayd-internal. A new production gateway checks for `RecordConsumerUsage` at startup and refuses to run against an older apid, preventing duplicate ledger increments from collapsed debugger rows. See [ADR-233](../adr/233-durable-consumer-usage-delivery.md).
+Deploy apid before gatewayd-internal. A new production gateway checks for `RecordConsumerUsage` at startup and refuses to run against an older apid, preventing duplicate ledger increments from collapsed debugger rows. See [ADR-234](../adr/234-durable-consumer-usage-delivery.md).

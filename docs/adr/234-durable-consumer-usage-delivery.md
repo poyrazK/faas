@@ -1,4 +1,4 @@
-# ADR-233 · Durable consumer-usage delivery
+# ADR-234 · Durable consumer-usage delivery
 
 - **Status:** accepted
 - **Date:** 2026-09-24

@@ -1746,6 +1746,20 @@ func (h *Handler) WithDeclaredRouteMatcher(matcher DeclaredRouteMatcher) *Handle
 // wake/admission path. The original public path is supplied by ServeHTTP so a
 // rewrite cannot accidentally broaden or narrow the OpenAPI contract.
 func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, app App, requestPath, requestMethod string) bool {
+	if app.PinnedDeploymentScope != "" && h.declaredRoutes != nil {
+		if resolver, ok := h.declaredRoutes.(interface {
+			ResolveScopedRoutePolicy(context.Context, App) (App, error)
+		}); ok {
+			resolved, err := resolver.ResolveScopedRoutePolicy(r.Context(), app)
+			if err != nil {
+				w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
+					"Declared route policy unavailable", "the environment route policy could not be loaded"))
+				return true
+			}
+			app = resolved
+		}
+	}
 	if !app.OnlyAllowDeclaredRoutes {
 		return false
 	}

@@ -59,6 +59,11 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 	}
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	for key, policy := range m.projectEnvironmentRoutePolicies {
+		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
+			delete(m.projectEnvironmentRoutePolicies, key)
+		}
+	}
 	for id, approval := range m.projectEnvironmentApprovals {
 		if approval.AccountID == accountID && approval.ProjectSlug == project.Slug && approval.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentApprovals, id)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -55,6 +56,32 @@ func watchDeclaredRouteInvalidations(ctx context.Context, pool *pgxpool.Pool, ma
 // of a pkg/state dependency.
 type declaredRouteDocStore interface {
 	GetAppOpenAPIDoc(ctx context.Context, appID, accountID string) ([]byte, state.AppOpenAPIDocMeta, error)
+}
+
+// ResolveScopedRoutePolicy overlays an environment-owned contract only for
+// exact deployment URLs. The ordinary application hostname keeps its legacy
+// application-wide contract. An absent scoped row is a backwards-compatible
+// fallback; a storage error fails closed at the handler boundary.
+func (m *declaredRoutesMatcher) ResolveScopedRoutePolicy(ctx context.Context, app gateway.App) (gateway.App, error) {
+	if app.PinnedDeploymentScope == "" || m == nil || m.store == nil {
+		return app, nil
+	}
+	store, ok := m.store.(interface {
+		GetProjectEnvironmentRoutePolicy(context.Context, string, string, string) (state.ProjectEnvironmentRoutePolicy, error)
+	})
+	if !ok {
+		return app, nil
+	}
+	policy, err := store.GetProjectEnvironmentRoutePolicy(ctx, app.AccountID, app.ID, app.PinnedDeploymentScope)
+	if errors.Is(err, state.ErrNotFound) {
+		return app, nil
+	}
+	if err != nil {
+		return gateway.App{}, err
+	}
+	app.OnlyAllowDeclaredRoutes = policy.OnlyAllowDeclaredRoutes
+	app.DeclaredRoutes = gatewayDeclaredRoutes(policy.DeclaredRoutes)
+	return app, nil
 }
 
 type compiledDeclaredRoute struct {

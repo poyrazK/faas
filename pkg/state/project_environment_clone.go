@@ -35,6 +35,7 @@ type ProjectEnvironmentCloneResult struct {
 	SecretsCopied       int
 	WorkloadsCopied     int
 	BindingsCopied      int
+	RoutesCopied        int
 	SharedResources     []string
 }
 
@@ -154,6 +155,27 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	result.WorkloadsCopied = len(apps)
 	result.VariablesCopied = m.copyProjectEnvironmentVariablesLocked(apps, clone.SourceSlug, clone.TargetSlug, created.CreatedAt)
 	result.SecretsCopied = m.copyProjectEnvironmentSecretsLocked(apps, clone.SourceSlug, clone.TargetSlug, created.CreatedAt)
+	for appID := range apps {
+		app := m.apps[appID]
+		policy, ok := m.projectEnvironmentRoutePolicies[projectEnvironmentRoutePolicyKey(appID, clone.SourceSlug)]
+		if !ok {
+			policy = ProjectEnvironmentRoutePolicy{
+				AccountID: app.AccountID, ProjectID: app.ProjectID, AppID: app.ID,
+				OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
+				DeclaredRoutes:          cloneDeclaredRoutes(app.DeclaredRoutes),
+			}
+		}
+		if policy.OnlyAllowDeclaredRoutes && len(policy.DeclaredRoutes) == 0 {
+			continue // The app-wide OpenAPI document is not cloneable route structure.
+		}
+		policy.EnvironmentSlug, policy.CreatedAt, policy.UpdatedAt = clone.TargetSlug, created.CreatedAt, created.CreatedAt
+		policy.DeclaredRoutes = cloneDeclaredRoutes(policy.DeclaredRoutes)
+		m.projectEnvironmentRoutePolicies[projectEnvironmentRoutePolicyKey(appID, clone.TargetSlug)] = policy
+		result.RoutesCopied++
+	}
+	if result.RoutesCopied < result.WorkloadsCopied {
+		result.SharedResources = append(result.SharedResources, "routes")
+	}
 	return created, result, nil
 }
 

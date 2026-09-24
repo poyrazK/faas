@@ -1133,6 +1133,10 @@ from .project_environment_release_list_response import ProjectEnvironmentRelease
 from .project_environment_release_workload_response import ProjectEnvironmentReleaseWorkloadResponse
 from .project_environment_release_workload_response_status import ProjectEnvironmentReleaseWorkloadResponseStatus
 from .project_environment_response import ProjectEnvironmentResponse
+from .project_environment_route_policy_diff_response import ProjectEnvironmentRoutePolicyDiffResponse
+from .project_environment_route_policy_diff_response_kind import ProjectEnvironmentRoutePolicyDiffResponseKind
+from .project_environment_route_policy_response import ProjectEnvironmentRoutePolicyResponse
+from .project_environment_route_policy_response_ownership import ProjectEnvironmentRoutePolicyResponseOwnership
 from .project_environment_secret_cell_response import ProjectEnvironmentSecretCellResponse
 from .project_environment_secret_cell_response_managed_by import ProjectEnvironmentSecretCellResponseManagedBy
 from .project_environment_secret_change_response import ProjectEnvironmentSecretChangeResponse
@@ -1444,6 +1448,7 @@ from .update_private_network_policy_request import UpdatePrivateNetworkPolicyReq
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_environment_request import UpdateProjectEnvironmentRequest
+from .update_project_environment_route_policy_request import UpdateProjectEnvironmentRoutePolicyRequest
 from .update_project_request import UpdateProjectRequest
 from .update_queue_binding_request import UpdateQueueBindingRequest
 from .update_queue_binding_request_mode import UpdateQueueBindingRequestMode
@@ -2600,6 +2605,10 @@ __all__ = (
     "ProjectEnvironmentReleaseWorkloadResponse",
     "ProjectEnvironmentReleaseWorkloadResponseStatus",
     "ProjectEnvironmentResponse",
+    "ProjectEnvironmentRoutePolicyDiffResponse",
+    "ProjectEnvironmentRoutePolicyDiffResponseKind",
+    "ProjectEnvironmentRoutePolicyResponse",
+    "ProjectEnvironmentRoutePolicyResponseOwnership",
     "ProjectEnvironmentSecretCellResponse",
     "ProjectEnvironmentSecretCellResponseManagedBy",
     "ProjectEnvironmentSecretChangeResponse",
@@ -2905,6 +2914,7 @@ __all__ = (
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectEnvironmentRequest",
+    "UpdateProjectEnvironmentRoutePolicyRequest",
     "UpdateProjectRequest",
     "UpdateQueueBindingRequest",
     "UpdateQueueBindingRequestMode",

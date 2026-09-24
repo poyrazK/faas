@@ -581,6 +581,8 @@ export type { ProjectEnvironmentReleaseDiffResponse } from './models/ProjectEnvi
 export type { ProjectEnvironmentReleaseListResponse } from './models/ProjectEnvironmentReleaseListResponse.js';
 export type { ProjectEnvironmentReleaseWorkloadResponse } from './models/ProjectEnvironmentReleaseWorkloadResponse.js';
 export type { ProjectEnvironmentResponse } from './models/ProjectEnvironmentResponse.js';
+export type { ProjectEnvironmentRoutePolicyDiffResponse } from './models/ProjectEnvironmentRoutePolicyDiffResponse.js';
+export type { ProjectEnvironmentRoutePolicyResponse } from './models/ProjectEnvironmentRoutePolicyResponse.js';
 export type { ProjectEnvironmentSecretCellResponse } from './models/ProjectEnvironmentSecretCellResponse.js';
 export type { ProjectEnvironmentSecretChangeResponse } from './models/ProjectEnvironmentSecretChangeResponse.js';
 export type { ProjectEnvironmentSecretResponse } from './models/ProjectEnvironmentSecretResponse.js';
@@ -746,6 +748,7 @@ export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.j
 export type { UpdatePrivateNetworkPolicyRequest } from './models/UpdatePrivateNetworkPolicyRequest.js';
 export type { UpdateProjectEnvironmentConfigRequest } from './models/UpdateProjectEnvironmentConfigRequest.js';
 export type { UpdateProjectEnvironmentRequest } from './models/UpdateProjectEnvironmentRequest.js';
+export type { UpdateProjectEnvironmentRoutePolicyRequest } from './models/UpdateProjectEnvironmentRoutePolicyRequest.js';
 export type { UpdateProjectRequest } from './models/UpdateProjectRequest.js';
 export type { UpdateQueueBindingRequest } from './models/UpdateQueueBindingRequest.js';
 export type { UpdateTCPListenerRequest } from './models/UpdateTCPListenerRequest.js';
