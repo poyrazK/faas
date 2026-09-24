@@ -82,8 +82,10 @@ used before the next observation; no instantaneous monetary cap is promised.
 
 ## Activation sequence
 
-1. Land a versioned report and schema migration with dual-read compatibility
-   for existing reports and immutable billing periods. Keep billing off.
+1. Land an additive versioned customer-report schema and shadow-only store
+   alongside the unchanged legacy admission/month-close reports. Then add
+   separately qualified dual-read cutover logic; keep billing off until it is
+   proven to preserve existing safety checks and immutable periods.
 2. Implement a backend adapter and prove physical-bucket/account attribution,
    complete operation-class and storage evidence, error handling, and
    month-end coverage with real direct-provider traffic. If any priced
