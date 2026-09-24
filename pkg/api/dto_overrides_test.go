@@ -37,8 +37,9 @@ func decodeForTest(body []byte, dst any) error {
 //     match ^[A-Z][A-Z0-9_]*$.
 //   - env_secrets per-value byte cap (the ref string length).
 //   - port: 0 means absent; 1..65535 valid; anything else 400.
-//   - healthcheck: path must start with "/"; interval/timeout/retries
-//     must be >= 0.
+//   - healthcheck: exactly one of HTTP path or gRPC mode; HTTP path
+//     starts with "/" and gRPC service names are bounded.
+//   - healthcheck interval/timeout/retries must be >= 0.
 func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 	// Free plan env caps: EnvVarsMax=16, EnvValueMaxBytes=4KiB.
 	free := MustLimitsFor(Plan("free"))
@@ -311,6 +312,42 @@ func TestCreateDeploymentOverrides_Validate(t *testing.T) {
 					// interval/timeout/retries default to 0 → still valid.
 				},
 			},
+		},
+		{
+			name: "healthcheck-grpc-overall-service",
+			overrides: &CreateDeploymentOverrides{
+				Healthcheck: &DeploymentHealthcheck{GRPC: &DeploymentGRPCHealthcheck{}},
+			},
+		},
+		{
+			name: "healthcheck-grpc-named-service",
+			overrides: &CreateDeploymentOverrides{
+				Healthcheck: &DeploymentHealthcheck{GRPC: &DeploymentGRPCHealthcheck{Service: "catalog.v1.Catalog"}},
+			},
+		},
+		{
+			name: "healthcheck-path-and-grpc-are-mutually-exclusive",
+			overrides: &CreateDeploymentOverrides{
+				Healthcheck: &DeploymentHealthcheck{Path: "/healthz", GRPC: &DeploymentGRPCHealthcheck{}},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "healthcheck must set exactly one of path or grpc",
+		},
+		{
+			name: "healthcheck-requires-a-probe-action",
+			overrides: &CreateDeploymentOverrides{
+				Healthcheck: &DeploymentHealthcheck{},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "healthcheck must set exactly one of path or grpc",
+		},
+		{
+			name: "healthcheck-grpc-service-length-is-bounded-by-runes",
+			overrides: &CreateDeploymentOverrides{
+				Healthcheck: &DeploymentHealthcheck{GRPC: &DeploymentGRPCHealthcheck{Service: strings.Repeat("界", GRPCHealthcheckServiceMaxLength+1)}},
+			},
+			wantStatus: http.StatusBadRequest,
+			wantInBody: "healthcheck.grpc.service must be at most 256 characters",
 		},
 		// Issue #554 / ADR-078: liveness_probe validation.
 		{

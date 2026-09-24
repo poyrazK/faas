@@ -506,14 +506,10 @@ type Instance struct {
 	// dial-able on 8080.
 	Port int
 
-	// HealthcheckPath (issue #460 / ADR-053, ADR-057 / PR-D) is the
-	// per-deployment override readiness probe path copied from
-	// WakeRequest.HealthcheckPath. "" = legacy TCP-accept on :8080
-	// (pre-PR-D default). Non-empty → vmmd's waitReady does HTTP GET
-	// <HealthcheckPath> against <HostIP>:8080 and accepts 2xx as
-	// ready. Stamped onto the live Instance so server-side readers
-	// can resolve Instance.HealthcheckPath without a second request
-	// lookup (PR-C mirror).
+	// HealthcheckPath is the optional HTTP readiness path copied from
+	// WakeRequest. It remains empty for either gRPC readiness or legacy
+	// TCP readiness. Stamped on Instance for readers that resolve it
+	// without a second request lookup (PR-C mirror).
 	HealthcheckPath string
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
@@ -3016,17 +3012,16 @@ type WakeRequest struct {
 	// live Instance so vmmdgrpc forwarder callers can resolve
 	// LiveFor(instance).Port without a second request lookup.
 	Port int
-	// HealthcheckPath (issue #460 / ADR-053, ADR-057 / PR-D) is the
-	// per-deployment override readiness probe path. "" = legacy
-	// TCP-accept on :8080 (pre-PR-D default). Non-empty → vmmd's
-	// waitReady does HTTP GET <HealthcheckPath> against <HostIP>:8080
-	// and accepts 2xx as ready. The host probe target is always :8080
-	// — ADR-009 + portnorm re-expose the customer bind on :8080 inside
-	// the guest, so the path is the customer's choice and the port is
-	// the host's choice. Stamped onto the live Instance so server-side
-	// readers can resolve LiveFor(instance).HealthcheckPath without a
-	// second request lookup.
+	// HealthcheckPath is the HTTP readiness path. Empty path and
+	// HealthcheckGRPC=false preserve legacy TCP readiness. Both HTTP and
+	// gRPC probe targets stay on :8080 — ADR-009 + portnorm re-expose the
+	// customer bind there. The path is stamped on Instance for readers
+	// that resolve it without a second request lookup.
 	HealthcheckPath string
+	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
+	// empty service checks overall server health.
+	HealthcheckGRPC        bool
+	HealthcheckGRPCService string
 	// StartupDeadlineS is the per-app readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -3325,6 +3320,10 @@ type ColdBootRequest struct {
 	// that wants to invoke ColdBoot without going through WakeRequest
 	// shouldn't have to drop a field.
 	HealthcheckPath string
+	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
+	// empty service checks overall server health.
+	HealthcheckGRPC        bool
+	HealthcheckGRPCService string
 	// StartupDeadlineS is the per-app readiness budget forwarded to
 	// WakeRequest. 0 preserves the vmmd default for legacy callers.
 	StartupDeadlineS int
@@ -3377,6 +3376,8 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		// readiness probe path so Wake stamps it onto the live
 		// Instance. Empty = legacy TCP-accept on :8080.
 		HealthcheckPath:        req.HealthcheckPath,
+		HealthcheckGRPC:        req.HealthcheckGRPC,
+		HealthcheckGRPCService: req.HealthcheckGRPCService,
 		StartupDeadlineS:       req.StartupDeadlineS,
 		DisableStartupCPUBoost: req.DisableStartupCPUBoost,
 		ExecutionMode:          req.ExecutionMode,
@@ -4345,13 +4346,12 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// from the lease's slot so the guest's listener is reachable at a
 			// globally unique guest_cid.
 			VsockDevice: NewVsockDevice(lease.Slot),
-			// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment
-			// override readiness probe path. Empty keeps the legacy
-			// TCP-accept on :8080 (pre-PR-D default). Non-empty →
-			// waitReady does HTTP GET <HealthcheckPath> against
-			// <HostIP>:8080 and accepts 2xx as ready.
-			HealthcheckPath:  req.HealthcheckPath,
-			StartupDeadlineS: req.StartupDeadlineS,
+			// Per-deployment readiness action. The HTTP path and gRPC
+			// mode/service are forwarded together; both target :8080.
+			HealthcheckPath:        req.HealthcheckPath,
+			HealthcheckGRPC:        req.HealthcheckGRPC,
+			HealthcheckGRPCService: req.HealthcheckGRPCService,
+			StartupDeadlineS:       req.StartupDeadlineS,
 			// One-shot guests use a vsock dispatch protocol rather than the app
 			// HTTP listener. App tasks remain networked; executions do not.
 			SkipReady:         req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,
@@ -4449,14 +4449,13 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		VcpuCount:  req.VcpuCount,
 		MemSizeMiB: req.MemSizeMiB,
 		Tap:        nc.Tap,
-		// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment
-		// override readiness probe path. Empty keeps the legacy
-		// TCP-accept on :8080 (pre-PR-D default). Non-empty →
-		// waitReady does HTTP GET <HealthcheckPath> against
-		// <HostIP>:8080 and accepts 2xx as ready.
-		HealthcheckPath:  req.HealthcheckPath,
-		StartupDeadlineS: req.StartupDeadlineS,
-		ExecutionMode:    req.ExecutionMode,
+		// Per-deployment readiness action. The HTTP path and gRPC
+		// mode/service are forwarded together; both target :8080.
+		HealthcheckPath:        req.HealthcheckPath,
+		HealthcheckGRPC:        req.HealthcheckGRPC,
+		HealthcheckGRPCService: req.HealthcheckGRPCService,
+		StartupDeadlineS:       req.StartupDeadlineS,
+		ExecutionMode:          req.ExecutionMode,
 		// One-shot guests use a vsock dispatch protocol rather than the app
 		// HTTP listener. App tasks remain networked; executions do not.
 		SkipReady: req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,

@@ -25,8 +25,13 @@ func deploymentRuntimePort(dep state.Deployment) int {
 func healthcheckPathFromDep(dep state.Deployment) string {
 	if len(dep.OverrideHealthcheck) > 0 {
 		var hc api.DeploymentHealthcheck
-		if err := json.Unmarshal(dep.OverrideHealthcheck, &hc); err == nil && validRuntimeHealthPath(hc.Path) {
-			return hc.Path
+		if err := json.Unmarshal(dep.OverrideHealthcheck, &hc); err == nil {
+			if hc.GRPC != nil {
+				return ""
+			}
+			if validRuntimeHealthPath(hc.Path) {
+				return hc.Path
+			}
 		}
 	}
 	if len(dep.APIHostingReceipt) > 0 {
@@ -56,6 +61,19 @@ func healthcheckPathFromDep(dep state.Deployment) string {
 		}
 	}
 	return ""
+}
+
+// healthcheckGRPCFromDep resolves the explicit primary-app gRPC readiness
+// override. Inferred profiles currently describe HTTP paths only.
+func healthcheckGRPCFromDep(dep state.Deployment) (bool, string) {
+	if len(dep.OverrideHealthcheck) == 0 {
+		return false, ""
+	}
+	var hc api.DeploymentHealthcheck
+	if err := json.Unmarshal(dep.OverrideHealthcheck, &hc); err != nil || hc.GRPC == nil {
+		return false, ""
+	}
+	return true, hc.GRPC.Service
 }
 
 func validRuntimeHealthPath(path string) bool {

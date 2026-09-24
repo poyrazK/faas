@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.deployment_grpc_healthcheck import DeploymentGRPCHealthcheck
+
 
 T = TypeVar("T", bound="DeploymentHealthcheck")
 
@@ -14,23 +18,28 @@ T = TypeVar("T", bound="DeploymentHealthcheck")
 @_attrs_define
 class DeploymentHealthcheck:
     """Readiness-probe shape on the deploy-time override object (issue #460 /
-    ADR-053). Today the probe stays a bare TCP accept — `path`, `interval_s`,
-    `timeout_s`, `retries` are persisted but not yet exercised by `vmm.waitReady`.
+    ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
+    Check) selects the readiness action. The gRPC probe uses the app's
+    published port; an empty service checks overall server health.
 
     Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
-    - `path` must start with `/`.
+    - Exactly one of `path` and `grpc` must be set.
+    - `path`, when set, must start with `/`.
+    - `grpc.service` is optional and limited to 256 characters.
     - `interval_s`, `timeout_s`, `retries` must be `>= 0`.
-    - Missing fields default to 0 (interpreted as "use image default" by the
-      future probe implementation).
+    - Missing tuning fields default to 0; the host readiness deadline is
+      resolved separately from the app's plan and startup policy.
 
-    M-1 (ADR-136) widens additively with `test` (argv of the OCI HEALTHCHECK
-    command) and `start_period_s` (Docker 17.05+ startup grace). Runtime
-    wiring lands in M-2 (ADR-X5).
+    OCI `test` argv and `start_period_s` remain deploy metadata; the host
+    readiness gate uses only the selected HTTP path or gRPC health RPC.
 
     """
 
-    path: str
-    """Path the probe requests from the guest; must start with `/` (e.g. `/healthz`)."""
+    path: str | Unset = UNSET
+    """HTTP readiness path requested from the guest; must start with `/` (e.g. `/healthz`). Set exactly one of path
+    or grpc."""
+    grpc: DeploymentGRPCHealthcheck | Unset = UNSET
+    """Standard gRPC health.v1 readiness probe. An omitted or empty service checks overall server health."""
     interval_s: int | Unset = UNSET
     """Probe interval in seconds; 0 = use image default."""
     timeout_s: int | Unset = UNSET
@@ -48,6 +57,10 @@ class DeploymentHealthcheck:
     def to_dict(self) -> dict[str, Any]:
         path = self.path
 
+        grpc: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.grpc, Unset):
+            grpc = self.grpc.to_dict()
+
         interval_s = self.interval_s
 
         timeout_s = self.timeout_s
@@ -62,11 +75,11 @@ class DeploymentHealthcheck:
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "path": path,
-            }
-        )
+        field_dict.update({})
+        if path is not UNSET:
+            field_dict["path"] = path
+        if grpc is not UNSET:
+            field_dict["grpc"] = grpc
         if interval_s is not UNSET:
             field_dict["interval_s"] = interval_s
         if timeout_s is not UNSET:
@@ -82,8 +95,17 @@ class DeploymentHealthcheck:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.deployment_grpc_healthcheck import DeploymentGRPCHealthcheck
+
         d = dict(src_dict)
-        path = d.pop("path")
+        path = d.pop("path", UNSET)
+
+        _grpc = d.pop("grpc", UNSET)
+        grpc: DeploymentGRPCHealthcheck | Unset
+        if isinstance(_grpc, Unset):
+            grpc = UNSET
+        else:
+            grpc = DeploymentGRPCHealthcheck.from_dict(_grpc)
 
         interval_s = d.pop("interval_s", UNSET)
 
@@ -97,6 +119,7 @@ class DeploymentHealthcheck:
 
         deployment_healthcheck = cls(
             path=path,
+            grpc=grpc,
             interval_s=interval_s,
             timeout_s=timeout_s,
             retries=retries,

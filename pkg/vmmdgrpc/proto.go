@@ -7,6 +7,7 @@ package vmmdgrpc
 import (
 	"context"
 	"net/netip"
+	"unicode/utf8"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -250,6 +251,9 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 			api.CodeValidation, "Missing app", "AppSpec is required").
 			WithDocs(wire.DocsBaseURL + "/vmmd#appspec")
 	}
+	if problem := validateAppHealthcheck(app); problem != nil {
+		return fcvm.WakeRequest{}, problem
+	}
 	snap := req.GetSnapshot()
 	wr := fcvm.WakeRequest{
 		Instance:   req.GetInstance(),
@@ -307,16 +311,11 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// this port to dial the guest. 0 = legacy 8080 default
 		// at the buildBridgeScript boundary.
 		Port: int(app.GetPort()),
-		// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment
-		// override readiness probe path. "" = legacy TCP-accept
-		// on :8080 (pre-PR-D default). Non-empty → vmmd's
-		// waitReady does HTTP GET <HealthcheckPath> against
-		// <HostIP>:8080 and accepts 2xx as ready. The host
-		// probe target is always :8080 — ADR-009 + portnorm
-		// re-expose the customer bind on :8080 inside the guest,
-		// so the path is the customer's choice and the port is
-		// the host's choice.
-		HealthcheckPath: app.GetHealthcheckPath(),
+		// Per-deployment HTTP or gRPC readiness selection. Both
+		// probe modes target <HostIP>:8080.
+		HealthcheckPath:        app.GetHealthcheckPath(),
+		HealthcheckGRPC:        app.GetHealthcheckGrpc(),
+		HealthcheckGRPCService: app.GetHealthcheckGrpcService(),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
@@ -419,6 +418,9 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 			api.CodeValidation, "Missing app", "AppSpec is required").
 			WithDocs(wire.DocsBaseURL + "/vmmd#appspec")
 	}
+	if problem := validateAppHealthcheck(app); problem != nil {
+		return fcvm.WakeRequest{}, problem
+	}
 	return fcvm.WakeRequest{
 		Instance: req.GetInstance(),
 		// issue #463 / ADR-069 / PR-B AC #1 — see toWakeRequest's
@@ -467,7 +469,9 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// toWakeRequest. Cold-boot mirrors the healthcheck
 		// path so deploy's first boot primes the same probe
 		// semantics on the freshly-deployed app.
-		HealthcheckPath: app.GetHealthcheckPath(),
+		HealthcheckPath:        app.GetHealthcheckPath(),
+		HealthcheckGRPC:        app.GetHealthcheckGrpc(),
+		HealthcheckGRPCService: app.GetHealthcheckGrpcService(),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
 		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),
@@ -491,6 +495,22 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		ExportDir:       buildSpecExportDir(req.GetBuild()),
 		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
 	}, nil
+}
+
+func validateAppHealthcheck(app *vmmdpb.AppSpec) *api.Problem {
+	if app.GetHealthcheckGrpc() && app.GetHealthcheckPath() != "" {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid readiness probe", "healthcheck_path and healthcheck_grpc are mutually exclusive")
+	}
+	if !app.GetHealthcheckGrpc() && app.GetHealthcheckGrpcService() != "" {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid readiness probe", "healthcheck_grpc_service requires healthcheck_grpc")
+	}
+	if utf8.RuneCountInString(app.GetHealthcheckGrpcService()) > api.GRPCHealthcheckServiceMaxLength {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid readiness probe", "healthcheck_grpc_service exceeds the 256 character limit")
+	}
+	return nil
 }
 
 // buildSpecExportDir extracts the export dir from an optional

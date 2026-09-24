@@ -34,6 +34,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 // JailerVMM is the production VMM. It provisions a jail chroot, launches
@@ -785,14 +788,13 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// caller (Manager) before Boot runs.
 	spec.KernelKey = kernelSrc
 	spec.BaseKey = baseSrc
-	// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment override
-	// readiness probe path. Empty keeps the legacy TCP-accept on :8080
-	// (pre-PR-D default). Non-empty → waitReady does HTTP GET
-	// <HealthcheckPath> against <HostIP>:8080 and accepts 2xx as ready.
+	// Issue #460 / ADR-053, ADR-057 / PR-D: per-deployment readiness
+	// override. Empty path + disabled gRPC keeps legacy TCP readiness;
+	// otherwise waitReady uses the selected HTTP or gRPC probe on :8080.
 	if spec.SkipReady {
 		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil)
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.StartupDeadlineS, spec.ExecutionMode, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
+	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, spec.ExecutionMode, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -802,7 +804,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 }
 
 func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest) error {
-	return v.boot(ctx, l, cfg, true, "", 0, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, nil)
+	return v.boot(ctx, l, cfg, true, "", false, "", 0, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, nil)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -824,10 +826,10 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
-	return v.boot(ctx, l, cfg, false, healthcheckPath, 0, "", nil, nil, nil, "", false, nil, nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, false, "", 0, "", nil, nil, nil, "", false, nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
 	v.cancelStartupCPUBoostTail(l.Instance)
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
@@ -948,9 +950,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		}
 		readinessStartedAt := time.Now()
 		if characterization != nil {
-			err = v.waitReadyOrCharacterized(ctx, l, healthcheckPath, startupDeadlineS, executionMode, characterization)
+			err = v.waitReadyOrCharacterized(ctx, l, healthcheckPath, healthcheckGRPC, healthcheckGRPCService, startupDeadlineS, executionMode, characterization)
 		} else {
-			err = v.waitReady(ctx, l, healthcheckPath, startupDeadlineS)
+			err = v.waitReadyWithProbe(ctx, l, healthcheckPath, healthcheckGRPC, healthcheckGRPCService, startupDeadlineS)
 		}
 		if err != nil {
 			return fmt.Errorf("vmm: readiness: %w", err)
@@ -1667,7 +1669,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	tResume := time.Now()
 	if !spec.KeepPaused && !spec.SkipReady {
-		if err = v.waitReady(ctx, l, spec.HealthcheckPath, spec.StartupDeadlineS); err != nil {
+		if err = v.waitReadyWithProbe(ctx, l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS); err != nil {
 			return fmt.Errorf("vmm: readiness after restore: %w", err)
 		}
 	}
@@ -4813,13 +4815,18 @@ func readyTimeoutFor(defaultTimeout time.Duration, startupDeadlineS ...int) time
 	return defaultTimeout
 }
 
-func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath string, startupDeadlineS ...int) (err error) {
+func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath string, startupDeadlineS ...int) error {
+	return v.waitReadyWithProbe(ctx, l, healthcheckPath, false, "", startupDeadlineS...)
+}
+
+func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS ...int) (err error) {
 	readyTimeout := readyTimeoutFor(v.readyTimeout, startupDeadlineS...)
 	deadline := time.Now().Add(readyTimeout)
 	addr := net.JoinHostPort(l.HostIP.String(), "8080")
 	ctx, readinessSpan := pkgtrace.StartSpan(ctx, "guest.readiness",
 		attribute.String("instance_id", l.Instance),
-		attribute.Bool("healthcheck_configured", healthcheckPath != ""),
+		attribute.Bool("healthcheck_configured", healthcheckPath != "" || healthcheckGRPC),
+		attribute.Bool("healthcheck_grpc", healthcheckGRPC),
 	)
 	probeCount := 0
 	defer func() {
@@ -4836,6 +4843,45 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 	// so the wake.readiness_200 emit can carry the elapsed_ms
 	// field. Keep it local: one JailerVMM serves many concurrent instances.
 	readinessStartedAt := time.Now()
+
+	if healthcheckGRPC {
+		conn, connErr := grpc.NewClient("passthrough:///"+addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if connErr != nil {
+			return fmt.Errorf("vmm: create gRPC readiness client: %w", connErr)
+		}
+		defer conn.Close()
+		responseCount := 0
+		for {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				if errors.Is(ctxErr, context.DeadlineExceeded) {
+					return grpcHealthcheckNotReadyProblem(l, healthcheckGRPCService, responseCount, readyTimeout)
+				}
+				return ctxErr
+			}
+			if time.Now().After(deadline) {
+				return grpcHealthcheckNotReadyProblem(l, healthcheckGRPCService, responseCount, readyTimeout)
+			}
+			probeCount++
+			probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			serving, probeErr := grpcHealthcheckProbe(probeCtx, conn, healthcheckGRPCService)
+			cancel()
+			if probeErr == nil {
+				responseCount++
+				if serving {
+					v.emitReadiness200(ctx, l, "", probeCount, readinessStartedAt)
+					return nil
+				}
+			}
+			select {
+			case <-ctx.Done():
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					return grpcHealthcheckNotReadyProblem(l, healthcheckGRPCService, responseCount, readyTimeout)
+				}
+				return ctx.Err()
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
 
 	// Legacy TCP-accept — pre-PR-D contract. Byte-identical to the
 	// pre-PR-D loop.
@@ -4911,18 +4957,43 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 	}
 }
 
-// waitReadyOrCharacterized races the legacy :8080 readiness probe with the
+func grpcHealthcheckProbe(ctx context.Context, conn *grpc.ClientConn, service string) (bool, error) {
+	response, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{Service: service})
+	if err != nil {
+		return false, err
+	}
+	return response.GetStatus() == healthpb.HealthCheckResponse_SERVING, nil
+}
+
+func grpcHealthcheckNotReadyProblem(l Lease, service string, responseCount int, readyTimeout time.Duration) *api.Problem {
+	serviceLabel := "overall server health"
+	if service != "" {
+		serviceLabel = fmt.Sprintf("service %q", service)
+	}
+	if responseCount > 0 {
+		return api.NewProblem(422, api.CodeAppStartupTimeout,
+			"app gRPC healthcheck did not become ready in time",
+			fmt.Sprintf("startup_phase=handler_healthcheck: guest %s answered %d gRPC health probes for %s without SERVING before %s",
+				l.Instance, responseCount, serviceLabel, readyTimeout))
+	}
+	return api.NewProblem(422, api.CodeAppStartupTimeout,
+		"app did not become ready in time",
+		fmt.Sprintf("startup_phase=guest_startup: guest %s never returned a SERVING status for gRPC health probe %s before %s",
+			l.Instance, serviceLabel, readyTimeout))
+}
+
+// waitReadyOrCharacterized races the configured :8080 readiness probe with the
 // guest's observed workload outcome. Bound server classes still have to pass
 // the host probe. Declared jobs and workers may use a matching no-bind report
 // as readiness; request and service modes may not. A terminal startup exit
 // fails fast with the captured log tail instead of waiting for a misleading
 // TCP timeout.
-func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healthcheckPath string, startupDeadlineS int, executionMode string, receipt *characterizationReceipt) error {
+func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS int, executionMode string, receipt *characterizationReceipt) error {
 	readyCtx, cancelReady := context.WithCancel(ctx)
 	defer cancelReady()
 	readyCh := make(chan error, 1)
 	go func() {
-		readyCh <- v.waitReady(readyCtx, l, healthcheckPath, startupDeadlineS)
+		readyCh <- v.waitReadyWithProbe(readyCtx, l, healthcheckPath, healthcheckGRPC, healthcheckGRPCService, startupDeadlineS)
 	}()
 
 	receiptDone := receipt.done

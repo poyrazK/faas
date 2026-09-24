@@ -183,13 +183,15 @@ type RestoreSpec struct {
 	// restore source for vmstate specifically. When empty, Restore
 	// falls back to VMStatePath (default-local behaviour).
 	VMStateStorageKey string
-	// HealthcheckPath (issue #460 / ADR-053, ADR-057 / PR-D) is the
-	// per-deployment override readiness probe path. Empty = legacy
-	// TCP-accept on :8080 (pre-PR-D default). Non-empty → waitReady
-	// does HTTP GET <HealthcheckPath> against <HostIP>:8080 and
-	// accepts 2xx as ready. Forwarded from WakeRequest.HealthcheckPath
-	// by Manager.bringUp.
+	// HealthcheckPath is the HTTP readiness path. Empty preserves the
+	// legacy TCP probe unless HealthcheckGRPC selects the standard gRPC
+	// health.v1 Check action. Both probe types target <HostIP>:8080.
+	// Forwarded from WakeRequest by Manager.bringUp.
 	HealthcheckPath string
+	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
+	// empty service checks overall server health.
+	HealthcheckGRPC        bool
+	HealthcheckGRPCService string
 	// StartupDeadlineS is the per-app readiness budget. 0 means use the
 	// vmmd default, preserving restores from pre-M3 callers.
 	StartupDeadlineS int

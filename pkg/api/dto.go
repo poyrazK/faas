@@ -1910,23 +1910,26 @@ type CreateDeploymentOverrides struct {
 }
 
 // DeploymentHealthcheck is the readiness-probe shape on the
-// override object. Defaults: interval 5s, timeout 2s, retries 3.
-// Path is required (and must start with "/") when the parent
-// healthcheck is set.
+// override object. Exactly one of Path or GRPC must be configured.
+// Defaults: interval 5s, timeout 2s, retries 3.
 //
-// M-1 (ADR-136) extended the surface additively with OCI HEALTHCHECK
-// fields so a registry image's HEALTHCHECK CMD semantics flow through
-// to AppManifest.Healthcheck (workstream A.4 / issue #1186). The
-// `Test` argv is the canonical OCI shape — when set, runtime polling
-// in M-2 will prefer Test over Path; until then Path is what
-// guest-init probes (backward-compat preserved).
+// OCI HEALTHCHECK metadata remains available through Test and
+// StartPeriodS. Readiness selection is explicitly HTTP (Path) or
+// standard gRPC (GRPC); the host does not execute Test argv.
 type DeploymentHealthcheck struct {
-	Path         string   `json:"path"`
-	IntervalS    int      `json:"interval_s,omitempty"`
-	TimeoutS     int      `json:"timeout_s,omitempty"`
-	Retries      int      `json:"retries,omitempty"`
-	Test         []string `json:"test,omitempty"`
-	StartPeriodS int      `json:"start_period_s,omitempty"`
+	Path         string                     `json:"path"`
+	GRPC         *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
+	IntervalS    int                        `json:"interval_s,omitempty"`
+	TimeoutS     int                        `json:"timeout_s,omitempty"`
+	Retries      int                        `json:"retries,omitempty"`
+	Test         []string                   `json:"test,omitempty"`
+	StartPeriodS int                        `json:"start_period_s,omitempty"`
+}
+
+// DeploymentGRPCHealthcheck selects the standard gRPC health service for
+// primary-app readiness. An empty service checks the overall server health.
+type DeploymentGRPCHealthcheck struct {
+	Service string `json:"service,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
@@ -2088,14 +2091,28 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 			fmt.Sprintf("port %d out of range; must be 0 (absent) or 1..65535.", o.Port))
 	}
 
-	// healthcheck: path must start with "/" if set; defaults
-	// applied on Persist side (the column shape is the raw shape).
+	// healthcheck: exactly one readiness action is required. The gRPC
+	// action uses the standard health.v1 Check RPC against the app's
+	// published port; an empty service checks overall server health.
+	// Defaults are applied on Persist side (the column shape is raw).
 	if o.Healthcheck != nil {
-		if !strings.HasPrefix(o.Healthcheck.Path, "/") {
+		pathSet := o.Healthcheck.Path != ""
+		grpcSet := o.Healthcheck.GRPC != nil
+		if pathSet == grpcSet {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				"healthcheck must set exactly one of path or grpc.")
+		}
+		if pathSet && !strings.HasPrefix(o.Healthcheck.Path, "/") {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
 				"Invalid override",
 				fmt.Sprintf("healthcheck.path must start with %q; got %q.",
 					"/", o.Healthcheck.Path))
+		}
+		if grpcSet && utf8.RuneCountInString(o.Healthcheck.GRPC.Service) > GRPCHealthcheckServiceMaxLength {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid override",
+				fmt.Sprintf("healthcheck.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
 		}
 		if o.Healthcheck.IntervalS < 0 {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
