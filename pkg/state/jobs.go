@@ -214,6 +214,16 @@ func (e *JobQuotaError) Is(target error) bool {
 // (ErrJobQuota) consumes Scope / Limit / Observed.
 var ErrJobQuotaExceeded = errors.New("state: job quota exceeded")
 
+// jobLiveConcurrencyCap applies the production dispatch fallback for a Free
+// or malformed plan row. Free cannot create jobs through the API, but an old
+// queued row must not bypass the Hobby floor by indexing a zero cap.
+func jobLiveConcurrencyCap(plan api.Plan) int {
+	if !plan.Valid() || plan == api.PlanFree {
+		plan = api.PlanHobby
+	}
+	return api.JobConcurrentPerAccount[plan.PlanIndex()]
+}
+
 // JobQuotaCreator is the optional atomic job-template admission seam. The
 // caller supplies the already-resolved plan cap; implementations serialize
 // the count and insert so concurrent POST /v1/jobs requests cannot overshoot
@@ -369,9 +379,8 @@ type JobStore interface {
 	JobCountByAccount(ctx context.Context, accountID string) (int, error)
 	// JobConcurrentByAccount counts the live job_task instances on
 	// the account (instances.kind='job_task' AND state IN
-	// ('waking','cold_booting','running')). Used by the apid admission-control
-	// gate to enforce JobConcurrentPerAccount before accepting a
-	// new run + by meterd's billing sweep for the live-pool bill.
+	// ('waking','cold_booting','running')). Dispatch uses this read as a
+	// fast path; CreateAndClaimJobInstance enforces the cap atomically.
 	JobConcurrentByAccount(ctx context.Context, accountID string) (int, error)
 
 	// --- job_runs ---
@@ -459,10 +468,9 @@ type JobStore interface {
 	// OR when the task is no longer status='queued' (e.g. a parallel
 	// dispatcher claimed it first; lost the race).
 	JobTaskMarkClaimed(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) error
-	// CreateAndClaimJobInstance atomically creates the job-task instance row
-	// and attaches it to a still-queued task. The transaction rolls back the
-	// instance insert when another dispatcher has already won the task, so a
-	// losing scheduler can never leave an unowned job VM row behind.
+	// CreateAndClaimJobInstance atomically checks account live concurrency and
+	// run parallelism, creates the job-task instance row, and attaches it to a
+	// still-queued task. A rejected claim leaves no unowned job VM row behind.
 	CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error)
 	// JobTaskMarkTerminal transitions a single task to a terminal
 	// status ('succeeded' | 'failed' | 'timeout' | 'cancelled' |
@@ -518,6 +526,11 @@ type JobStore interface {
 	//
 	// Returns ErrNotFound when (run_id, task_index) does not resolve.
 	JobTaskRequeue(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error
+	// JobTaskDeferQueued postpones an eligible queued task without touching its
+	// lease or attempt. The expected attempt and due-time predicate fence a
+	// concurrent claim or a newer boot-failure retry. ErrNotFound means this
+	// candidate is no longer eligible; dispatch may continue safely.
+	JobTaskDeferQueued(ctx context.Context, runID string, taskIndex, expectedAttempt int, nextAttemptAt time.Time) error
 	// JobTaskCancel transitions a single task to status='cancelled'
 	// (called when the parent run is cancelled mid-flight, or when
 	// the job is paused). Idempotent on tasks already terminal.

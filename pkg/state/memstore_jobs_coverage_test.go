@@ -938,24 +938,33 @@ func TestMemStoreJobs_JobTaskList(t *testing.T) {
 	}
 }
 
-// TestMemStoreJobs_JobConcurrentByAccount — counts queued + claimed
-// only; terminal statuses are excluded.
+// TestMemStoreJobs_JobConcurrentByAccount counts live job VMs, not queued
+// tasks. This matches the PostgreSQL admission and billing predicate.
 func TestMemStoreJobs_JobConcurrentByAccount(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	ms := NewMemStore()
-	_, run, _ := newJobAndRun(t, ms, "acct-CC", "cc1")
+	job, run, _ := newJobAndRun(t, ms, "acct-CC", "cc1")
 
 	before, _ := ms.JobConcurrentByAccount(ctx, "acct-CC")
-	if before != 3 {
-		t.Fatalf("JobConcurrentByAccount(3 queued) = %d, want 3", before)
+	if before != 0 {
+		t.Fatalf("JobConcurrentByAccount(3 queued) = %d, want 0", before)
 	}
 
-	// Mark task 0 succeeded → concurrent count drops to 2.
+	instanceID := newUUIDString()
+	if _, err := ms.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 0,
+		"cold_booting", 128, DefaultLocalNodeName, instanceID, newUUIDString(), time.Now().Add(time.Minute), DefaultLocalNodeName); err != nil {
+		t.Fatal(err)
+	}
+	active, _ := ms.JobConcurrentByAccount(ctx, "acct-CC")
+	if active != 1 {
+		t.Fatalf("JobConcurrentByAccount(1 live) = %d, want 1", active)
+	}
 	_ = ms.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", time.Now().UTC())
+	_ = ms.UpdateInstanceState(ctx, instanceID, string(StateStopped))
 	after, _ := ms.JobConcurrentByAccount(ctx, "acct-CC")
-	if after != 2 {
-		t.Fatalf("JobConcurrentByAccount(after 1 terminal) = %d, want 2", after)
+	if after != 0 {
+		t.Fatalf("JobConcurrentByAccount(after terminal) = %d, want 0", after)
 	}
 }
 

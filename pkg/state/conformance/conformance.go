@@ -113,6 +113,7 @@ func Run(t *testing.T, open Open) {
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
+		{"queued_job_capacity_deferral_preserves_retry", testJobTaskDeferQueued},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
@@ -1159,6 +1160,35 @@ func testJobBootFailureBudget(t *testing.T, fx *Fixture) {
 	task, err = fx.Store.JobTaskGet(fx.Ctx, run.ID, tasks[0].TaskIndex)
 	if err != nil || task.Status != "failed" || task.Attempt != 2 || task.FinishedAt == nil || task.ErrorClass == nil || *task.ErrorClass != "infra" || task.ErrorMessage == nil || *task.ErrorMessage != "artifact unavailable" {
 		t.Fatalf("terminal task=%+v err=%v", task, err)
+	}
+}
+
+func testJobTaskDeferQueued(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "defer-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 0, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	run, tasks, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", nil, nil, nil, nil, 1)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("JobRunCreate = %+v, %v", tasks, err)
+	}
+	until := time.Now().UTC().Add(2 * time.Minute)
+	if err := fx.Store.JobTaskDeferQueued(fx.Ctx, run.ID, 0, 1, until); err != nil {
+		t.Fatalf("JobTaskDeferQueued: %v", err)
+	}
+	got, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, 0)
+	if err != nil || got.Status != "queued" || got.Attempt != 1 || got.NextAttemptAt == nil || got.NextAttemptAt.Before(time.Now().Add(time.Minute)) {
+		t.Fatalf("deferred task = %+v, %v", got, err)
+	}
+	if err := fx.Store.JobTaskDeferQueued(fx.Ctx, run.ID, 0, 1, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("shorten deferred task = %v, want ErrNotFound", err)
+	}
+	if err := fx.Store.JobTaskDeferQueued(fx.Ctx, run.ID, 0, 2, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("stale attempt = %v, want ErrNotFound", err)
 	}
 }
 
