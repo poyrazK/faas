@@ -8437,6 +8437,25 @@ func (m *MemStore) SetDeploymentRootfsIfActive(_ context.Context, id, path, key 
 	return nil
 }
 
+func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, profile []byte) error {
+	if !json.Valid(profile) {
+		return errors.New("state: deployment runtime profile must be valid JSON")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if d.Kind != DeploymentKindImage ||
+		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
+		return ErrInvalidStateTransition
+	}
+	d.InferredProfile = append(json.RawMessage(nil), profile...)
+	m.deployments[id] = d
+	return nil
+}
+
 // UpsertDeploymentScanResult mirrors PgStore.UpsertDeploymentScanResult
 // (issue #464 / ADR-055 / PR-3). Stamps the per-deploy grype scan on
 // the in-memory deployments row. The Deployment struct's scan fields
