@@ -480,7 +480,7 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 	var layerAnnotations map[string]string
 	var tmpPath, digestHex string
 	var ownsTmp bool
-	if (o.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key)) || isSnapshotDriveKey(key) || isAppFilesystemKey(key) {
+	if (o.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key)) || isSnapshotDriveKey(key) || isRootfsFilesystemKey(key) {
 		var uncompressedSize int64
 		tmpPath, digestHex, uncompressedSize, err = o.compressArtifact(ctx, key, r)
 		ownsTmp = true
@@ -1234,16 +1234,16 @@ func isSnapshotDriveKey(key string) bool {
 	return strings.HasPrefix(key, "snap/") && strings.HasSuffix(key, "/v2/drive")
 }
 
-func isAppFilesystemKey(key string) bool {
-	return strings.HasPrefix(key, "apps/") && strings.HasSuffix(key, ".ext4")
+func isRootfsFilesystemKey(key string) bool {
+	return (strings.HasPrefix(key, "apps/") || strings.HasPrefix(key, "jobs/")) && strings.HasSuffix(key, ".ext4")
 }
 
 // compressArtifact writes one fast Zstandard frame to a temporary file while
 // hashing the compressed representation that the registry stores. Compression
 // concurrency is deliberately one per artifact: concurrent parks and builds
 // must not each consume every host CPU. Snapshot memory and provisioned app
-// filesystems are mostly zero pages, so the fastest level removes nearly all
-// upload bytes.
+// and job filesystems are mostly zero pages, so the fastest level removes
+// nearly all upload bytes.
 func (o *OCIRegistryStorageBackend) compressArtifact(
 	ctx context.Context,
 	key string,
