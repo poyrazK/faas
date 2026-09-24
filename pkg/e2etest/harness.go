@@ -983,6 +983,8 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_GATEWAY_CONTROL_LISTEN="+controlAddr,
 		"FAAS_GATEWAY_SYNTH_SOCKET="+synthSock,
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
+		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(h.TmpDir, "consumer-usage"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
@@ -1039,6 +1041,8 @@ func (h *Harness) StartAdditionalGateway(nodeName string, extraEnv ...string) st
 		"FAAS_GATEWAY_CONTROL_LISTEN="+controlAddr,
 		"FAAS_GATEWAY_SYNTH_SOCKET="+filepath.Join(dir, "gatewayd-internal.sock"),
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
+		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(dir, "consumer-usage"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 		"FAAS_NODE_NAME="+nodeName,
 	)
