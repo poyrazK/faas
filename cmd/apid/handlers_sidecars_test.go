@@ -6,9 +6,21 @@ import (
 	"strings"
 	"testing"
 
+	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func withTestSidecarRecipient(t *testing.T) {
+	t.Helper()
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("GenerateX25519Identity: %v", err)
+	}
+	previousRecipient := setSidecarRecipient
+	setSidecarRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	t.Cleanup(func() { setSidecarRecipient = previousRecipient })
+}
 
 // goodSidecarImage is a placeholder valid image
 // (sha256-pinned digest form, matches Sidecar.Validate's

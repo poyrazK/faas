@@ -85,6 +85,48 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	return m, nil
 }
 
+// applyManifestWorkloads carries manifest companions and primary-workload
+// startup gates into the deployment request shared by source deploy paths.
+// The bool reports whether the caller must rebuild its deployment row after
+// applying the manifest fields.
+func (s *server) applyManifestWorkloads(
+	req *api.CreateDeploymentRequest,
+	manifest *gregalemanifest.Manifest,
+	acct state.Account,
+	limits api.Limits,
+) (*api.CreateDeploymentOverrides, bool, *api.Problem) {
+	if manifest == nil {
+		return nil, false, nil
+	}
+	dependencies := manifest.MainWorkloadDependencies()
+	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 {
+		return nil, false, nil
+	}
+	if problem := req.NormalizeCompanions(); problem != nil {
+		return nil, false, problem
+	}
+	if len(manifest.Companions) > 0 || len(manifest.Extensions) > 0 {
+		sidecars, err := manifest.ToSidecars()
+		if err != nil {
+			return nil, false, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
+		}
+		if len(req.Sidecars) == 0 {
+			req.Sidecars = sidecars
+		}
+	}
+	if len(dependencies) > 0 {
+		req.Overrides = &api.CreateDeploymentOverrides{MainDependsOn: dependencies}
+	}
+	overrides, problem := validateOverrides(req, limits, acct.Plan)
+	if problem != nil {
+		return nil, false, problem
+	}
+	if problem := s.validateAndPlanSidecars(req, acct, limits); problem != nil {
+		return nil, false, problem
+	}
+	return overrides, true, nil
+}
+
 // resolveSourceReleaseCommand applies the declaration precedence for source
 // deployments: an explicit gregale.yaml release.command wins, otherwise the
 // selected source root's Procfile release: process is used. Both forms are

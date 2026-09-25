@@ -209,6 +209,7 @@ type EnqueueParams struct {
 	// deployment validator. Source builds use the same immutable deployment
 	// shape as image deploys.
 	Sidecars               json.RawMessage
+	OverrideMainDependsOn  json.RawMessage
 	TrafficPercent         int
 	TrafficPercentExplicit bool
 	RollbackOn5xx          bool
@@ -480,6 +481,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		PRNumber:               p.PRNumber,
 		Workflows:              append(json.RawMessage(nil), p.Workflows...),
 		Sidecars:               append(json.RawMessage(nil), p.Sidecars...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), p.OverrideMainDependsOn...),
 		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:         p.TrafficPercent,
 		TrafficPercentExplicit: p.TrafficPercentExplicit,
