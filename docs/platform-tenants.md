@@ -104,7 +104,18 @@ The equivalent CLI is `gregale platform-tenants activity --id <tenant-uuid> --si
 
 ## Consolidate usage across apps
 
-Create a statement for an explicit UTC-minute period after configuring each app's versioned API-consumer rate cards:
+Set an optional customer-specific request price that applies across every app attributed to one platform tenant:
+
+```http
+POST /v1/account/platform-tenants/{id}/rate-cards
+Content-Type: application/json
+
+{"currency":"EUR","price_millicents_per_unit":1500,"effective_from":"2026-10-01T00:00:00Z"}
+```
+
+`GET .../{id}/rate-cards` lists the immutable versions in effective-time order. If `effective_from` is omitted, Gregale uses the next UTC minute. Each tenant uses one currency; a new card conflicts if that customer already has a different currency. From the effective minute onward, the tenant price overrides each app's rate card for this customer's billable request units. Earlier minutes continue using their app's rate card, so a period spanning two currencies cannot be finalized. Customers without a tenant rate card keep the existing per-app pricing behavior. Statement lines record either `platform_tenant_rate_card_id` or `rate_card_id` as the exact price source; finalized revisions are never rewritten, and late usage remains an additive adjustment. This prices the amount your customer is charged, not Gregale's compute or infrastructure cost.
+
+Create a statement for an explicit UTC-minute period; when no tenant rate card is effective for a minute, its app's versioned API-consumer rate card is used:
 
 ```http
 POST /v1/account/platform-tenants/{id}/usage-statements

@@ -4025,6 +4025,46 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/account/platform-tenants/{id}/rate-cards:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer whose cross-app commercial tariff is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantRateCards
+      summary: List immutable customer prices applied across linked apps.
+      responses:
+        '200':
+          description: Tenant tariff history ordered by effective minute.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantRateCardListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantRateCard
+      summary: Set an immutable cross-app customer price.
+      description: Appends a version that overrides app-level prices for this tenant from its effective UTC minute. Before the first tenant version takes effect, statement pricing falls back to each app's rate card. A tenant can use only one currency; finalized statement revisions are never rewritten.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantRateCardRequest' }
+      responses:
+        '201':
+          description: New immutable tenant rate-card version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantRateCardResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/account/platform-tenants/{id}/usage:
     parameters:
       - name: id
@@ -4130,7 +4170,7 @@ paths:
       tags: [platform-tenants]
       operationId: createPlatformTenantStatement
       summary: Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
-      description: A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed currencies are rejected.
+      description: For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card; before the tenant's first effective card, app pricing remains the fallback. A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed effective currencies are rejected.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -22926,6 +22966,37 @@ components:
         day_resets_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
+    CreatePlatformTenantRateCardRequest:
+      description: Immutable tenant-wide price per attributed request unit. Currency defaults to EUR and effective_from defaults to the next UTC minute.
+      type: object
+      required: [price_millicents_per_unit]
+      properties:
+        currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1500 }
+        effective_from: { type: [string, "null"], format: date-time, description: UTC minute at which the version starts; omitted means the next UTC minute. }
+
+    PlatformTenantRateCardResponse:
+      description: Immutable, versioned customer price shared across every app attributed to one platform tenant.
+      type: object
+      required: [id, tenant_id, currency, unit, price_millicents_per_unit, effective_from, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        unit: { type: string, enum: [request] }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        effective_from: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    PlatformTenantRateCardListResponse:
+      description: Chronological immutable tariff versions for one customer.
+      type: object
+      required: [rate_cards]
+      properties:
+        rate_cards:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantRateCardResponse' }
+
     LinkPlatformTenantConsumerRequest:
       description: Attach an existing app-local API consumer to one platform customer.
       type: object
@@ -23114,7 +23185,7 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantActivityItem' }
 
     PlatformTenantStatementLineResponse:
-      description: Immutable tenant-attributed UTC minute priced with one app's rate-card version. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
+      description: Immutable tenant-attributed UTC minute priced with either an app rate-card version or a tenant-wide rate-card version. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
       type: object
       required: [app_id, window_start, billable_units, amount_millicents]
       properties:
@@ -23125,6 +23196,7 @@ components:
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
+        platform_tenant_rate_card_id: { type: string, format: uuid, description: Tenant-wide price source; mutually exclusive with rate_card_id. }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64, minimum: 0 }

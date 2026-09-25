@@ -108,6 +108,30 @@ type PlatformTenantRequestBudgetResponse struct {
 	UpdatedAt            *time.Time `json:"updated_at,omitempty"`
 }
 
+// CreatePlatformTenantRateCardRequest appends an immutable tenant-wide
+// customer price. If omitted, effective_from defaults to the next UTC minute.
+type CreatePlatformTenantRateCardRequest struct {
+	Currency               string     `json:"currency"`
+	PriceMillicentsPerUnit int64      `json:"price_millicents_per_unit"`
+	EffectiveFrom          *time.Time `json:"effective_from,omitempty"`
+}
+
+// PlatformTenantRateCardResponse is one immutable tenant-wide request price.
+type PlatformTenantRateCardResponse struct {
+	ID                     string    `json:"id"`
+	TenantID               string    `json:"tenant_id"`
+	Currency               string    `json:"currency"`
+	Unit                   string    `json:"unit"`
+	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
+	EffectiveFrom          time.Time `json:"effective_from"`
+	CreatedAt              time.Time `json:"created_at"`
+}
+
+// PlatformTenantRateCardListResponse wraps a tenant's chronological tariff history.
+type PlatformTenantRateCardListResponse struct {
+	RateCards []PlatformTenantRateCardResponse `json:"rate_cards"`
+}
+
 type LinkPlatformTenantConsumerRequest struct {
 	ConsumerID string `json:"consumer_id"`
 }
@@ -244,16 +268,17 @@ type PlatformTenantActivityOptions struct {
 // Tenant statement revisions are additive. Revision 1 is the initial period
 // snapshot; later revisions contain only usage delivered after prior ones.
 type PlatformTenantStatementLineResponse struct {
-	AppID                  string    `json:"app_id"`
-	ConsumerID             string    `json:"consumer_id,omitempty"`
-	SurfaceID              string    `json:"surface_id,omitempty"`
-	JWTAuthorizationRuleID string    `json:"jwt_authorization_rule_id,omitempty"`
-	WindowStart            time.Time `json:"window_start"`
-	BillableUnits          int64     `json:"billable_units"`
-	RateCardID             string    `json:"rate_card_id,omitempty"`
-	Currency               string    `json:"currency,omitempty"`
-	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	AppID                    string    `json:"app_id"`
+	ConsumerID               string    `json:"consumer_id,omitempty"`
+	SurfaceID                string    `json:"surface_id,omitempty"`
+	JWTAuthorizationRuleID   string    `json:"jwt_authorization_rule_id,omitempty"`
+	WindowStart              time.Time `json:"window_start"`
+	BillableUnits            int64     `json:"billable_units"`
+	RateCardID               string    `json:"rate_card_id,omitempty"`
+	PlatformTenantRateCardID string    `json:"platform_tenant_rate_card_id,omitempty"`
+	Currency                 string    `json:"currency,omitempty"`
+	PriceMillicentsPerUnit   int64     `json:"price_millicents_per_unit,omitempty"`
+	AmountMillicents         int64     `json:"amount_millicents"`
 }
 
 type PlatformTenantStatementResponse struct {

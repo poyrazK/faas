@@ -21,7 +21,7 @@ var (
 // events become a new adjustment rather than editing an earlier statement.
 func BuildPlatformTenantStatement(accountID, tenantID string, start, end, asOf time.Time,
 	usage []state.APIConsumerUsageBucket, cardsByApp map[string][]state.APIConsumerRateCard,
-	previous []state.PlatformTenantStatement) (state.PlatformTenantStatementInput, error) {
+	tenantCards []state.PlatformTenantRateCard, previous []state.PlatformTenantStatement) (state.PlatformTenantStatementInput, error) {
 	in := state.PlatformTenantStatementInput{AccountID: accountID, TenantID: tenantID,
 		PeriodStart: start, PeriodEnd: end, AsOf: asOf, Revision: len(previous) + 1}
 	if len(previous) > 0 {
@@ -72,7 +72,7 @@ func BuildPlatformTenantStatement(accountID, tenantID string, start, end, asOf t
 		buckets := bySubject[key]
 		sort.Slice(buckets, func(i, j int) bool { return buckets[i].WindowStart.Before(buckets[j].WindowStart) })
 		appID, consumerID, surfaceID, jwtRuleID := buckets[0].AppID, buckets[0].ConsumerKey, buckets[0].SurfaceID, buckets[0].JWTAuthorizationRuleID
-		quote, err := QuoteAPIConsumerUsage(cardsByApp[appID], buckets)
+		quote, err := QuotePlatformTenantUsage(cardsByApp[appID], tenantCards, buckets)
 		if err != nil {
 			if errors.Is(err, ErrMixedAPIConsumerRateCardCurrency) {
 				return in, ErrMixedTenantCurrency
@@ -95,7 +95,7 @@ func BuildPlatformTenantStatement(accountID, tenantID string, start, end, asOf t
 		for _, priced := range quote.Buckets {
 			in.Lines = append(in.Lines, state.PlatformTenantStatementLine{
 				AppID: appID, ConsumerID: consumerID, SurfaceID: surfaceID, JWTAuthorizationRuleID: jwtRuleID, WindowStart: priced.WindowStart,
-				BillableUnits: priced.BillableUnits, RateCardID: priced.RateCardID,
+				BillableUnits: priced.BillableUnits, RateCardID: priced.RateCardID, PlatformTenantRateCardID: priced.PlatformTenantRateCardID,
 				Currency: priced.Currency, PriceMillicentsPerUnit: priced.PriceMillicentsPerUnit,
 				AmountMillicents: priced.AmountMillicents,
 			})

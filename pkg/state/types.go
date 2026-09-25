@@ -735,6 +735,20 @@ type APIConsumerRateCard struct {
 	CreatedAt              time.Time
 }
 
+// PlatformTenantRateCard is an immutable, versioned customer-facing request
+// price shared by every app attributed to one platform tenant. An effective
+// tenant card overrides an app card for that tenant's usage minute.
+type PlatformTenantRateCard struct {
+	ID                     string
+	AccountID              string
+	TenantID               string
+	Currency               string
+	Unit                   string
+	PriceMillicentsPerUnit int64
+	EffectiveFrom          time.Time
+	CreatedAt              time.Time
+}
+
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
 // snapshot. Draft statements can be finalized once all usage is priced.
 type APIConsumerUsageStatementStatus string

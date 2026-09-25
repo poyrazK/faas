@@ -1425,6 +1425,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantActivity))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/request-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantRequestBudget))))
 	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/request-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantRequestBudget))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantRateCards))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantRateCard)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantStatements))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantStatement)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantStatement))))
