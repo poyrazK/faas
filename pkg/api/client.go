@@ -1366,10 +1366,10 @@ func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug, nil, &out)
 }
 
-// GetRuntimePolicyStatus reports gateway application of app-cache changes and
+// GetAppsSlugPolicyStatus reports gateway application of app-cache changes and
 // traffic weights. wait may be zero for a snapshot or up to 10 seconds for a
 // bounded server-side wait; a pending result remains possible on timeout.
-func (c *Client) GetRuntimePolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
+func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
 	var out RuntimePolicyStatusResponse
 	if wait < 0 || wait > 10*time.Second {
 		return out, fmt.Errorf("runtime policy wait must be between 0 and 10 seconds")

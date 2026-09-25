@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestClientGetRuntimePolicyStatus(t *testing.T) {
+func TestClientGetAppsSlugPolicyStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/policy/status" || r.URL.Query().Get("wait") != "2s" {
 			t.Errorf("request = %s %s, want GET /v1/apps/demo/policy/status?wait=2s", r.Method, r.URL.String())
@@ -20,14 +20,14 @@ func TestClientGetRuntimePolicyStatus(t *testing.T) {
 	defer server.Close()
 	client := NewClient(server.URL, "test-token")
 	client.SetCompletionCache(nil)
-	status, err := client.GetRuntimePolicyStatus(context.Background(), "demo", 2*time.Second)
+	status, err := client.GetAppsSlugPolicyStatus(context.Background(), "demo", 2*time.Second)
 	if err != nil {
-		t.Fatalf("GetRuntimePolicyStatus: %v", err)
+		t.Fatalf("GetAppsSlugPolicyStatus: %v", err)
 	}
 	if status.DesiredRevision != 42 || status.State != "active" || status.AppliedGateways != 1 {
 		t.Fatalf("status = %+v, want active revision 42", status)
 	}
-	if _, err := client.GetRuntimePolicyStatus(context.Background(), "demo", 11*time.Second); err == nil {
+	if _, err := client.GetAppsSlugPolicyStatus(context.Background(), "demo", 11*time.Second); err == nil {
 		t.Fatal("wait above server maximum was accepted")
 	}
 }

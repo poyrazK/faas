@@ -43,6 +43,7 @@ import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsRespons
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
+import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
@@ -199,6 +200,52 @@ export class AppsService {
         'slug': slug,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Check whether serving gateways have applied app-cache and traffic changes.
+   * Reports the latest durable app/traffic change and the serving gateway
+   * fleet's applied position. `active` requires every registered serving
+   * gateway to have a fresh observation at or beyond that revision. This
+   * attests gateway cache invalidation and traffic weights, not scheduler,
+   * VM, or guest-side policy convergence.
+   * `unverified` means no revision or no serving fleet can be observed.
+   * Other policy kinds are not yet included in this status.
+   *
+   * @returns RuntimePolicyStatusResponse Current application state; pending remains possible after wait expires.
+   * @throws ApiError
+   */
+  public static getRuntimePolicyStatus({
+    slug,
+    wait,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional bounded wait for active state, up to 10s.
+     */
+    wait?: string,
+  }): CancelablePromise<RuntimePolicyStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/policy/status',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'wait': wait,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
