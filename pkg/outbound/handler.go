@@ -170,7 +170,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
 		return
 	}
-	if !integration.AllowsRequest(r.Method, path) || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
+	if !integration.AllowsAppRequest(appID, r.Method, path) || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
 		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
 		return
 	}

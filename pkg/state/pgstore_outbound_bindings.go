@@ -2,9 +2,11 @@ package state
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/outbound/routepolicy"
 )
 
 var _ OutboundBindingStore = (*PgStore)(nil)
@@ -25,10 +27,15 @@ func scanOutboundBinding(row pgx.Row) (OutboundAppBinding, error) {
 	var binding OutboundAppBinding
 	if err := row.Scan(&id, &accountID, &appID, &binding.Name, &binding.Origin,
 		&binding.AllowedMethods, &binding.AllowedPathPrefixes, &binding.Enabled,
-		&binding.CredentialSource, &binding.CredentialConfigured, &binding.CreatedAt); err != nil {
+		&binding.CredentialSource, &binding.CredentialConfigured, &binding.CreatedAt,
+		&binding.RouteMethods, &binding.RoutePathPrefixes); err != nil {
 		return OutboundAppBinding{}, mapErr(err)
 	}
 	binding.ID, binding.AccountID, binding.AppID = pgUUIDString(id), pgUUIDString(accountID), pgUUIDString(appID)
+	if binding.RouteMethods == nil && binding.RoutePathPrefixes == nil {
+		binding.RouteMethods = append([]string(nil), binding.AllowedMethods...)
+		binding.RoutePathPrefixes = append([]string(nil), binding.AllowedPathPrefixes...)
+	}
 	return binding, nil
 }
 
@@ -67,7 +74,7 @@ func (s *PgStore) ListOutboundAppBindings(ctx context.Context, accountID, appID 
 		        AND cardinality(integration.allowed_methods) > 0
 		        AND cardinality(integration.allowed_path_prefixes) > 0), integration.credential_source,
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
-		       binding.created_at
+		       binding.created_at, binding.allowed_methods, binding.allowed_path_prefixes
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
 		  JOIN apps app ON app.id = binding.app_id
@@ -112,7 +119,7 @@ func (s *PgStore) BindOutboundIntegration(ctx context.Context, accountID, appID,
 		       integration.origin, integration.allowed_methods, integration.allowed_path_prefixes,
 		       integration.enabled, integration.credential_source,
 		       (integration.credential_source = 'operator_env' OR credential.integration_id IS NOT NULL),
-		       binding.created_at
+		       binding.created_at, binding.allowed_methods, binding.allowed_path_prefixes
 		  FROM outbound_app_bindings binding
 		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
 		  LEFT JOIN outbound_integration_credentials credential
@@ -130,6 +137,45 @@ func (s *PgStore) UnbindOutboundIntegration(ctx context.Context, accountID, appI
 		 WHERE account_id = $1 AND app_id = $2 AND integration_id = $3`,
 		mustPgUUID(accountID), mustPgUUID(appID), mustPgUUID(integrationID))
 	return mapErr(err)
+}
+
+func (s *PgStore) UpdateOutboundBindingPolicy(ctx context.Context, accountID, appID, integrationID string, methods, paths []string) error {
+	account, app, integration := mustPgUUID(accountID), mustPgUUID(appID), mustPgUUID(integrationID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var ceilingMethods, ceilingPaths []string
+	err = tx.QueryRow(ctx, `
+		SELECT integration.allowed_methods, integration.allowed_path_prefixes
+		  FROM outbound_app_bindings binding
+		  JOIN outbound_integrations integration ON integration.id = binding.integration_id
+		  JOIN apps app ON app.id = binding.app_id
+		 WHERE binding.account_id = $1 AND binding.app_id = $2 AND binding.integration_id = $3
+		   AND integration.account_id = $1 AND integration.enabled
+		   AND integration.provider_auth_mode = 'managed'
+		   AND app.account_id = $1 AND app.status <> 'deleted'
+		 FOR UPDATE OF binding, integration`, account, app, integration).Scan(&ceilingMethods, &ceilingPaths)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	if err := routepolicy.ValidateSubset(
+		routepolicy.Policy{AllowedMethods: ceilingMethods, AllowedPathPrefixes: ceilingPaths},
+		routepolicy.Policy{AllowedMethods: methods, AllowedPathPrefixes: paths}); err != nil {
+		return ErrInvalidArgument
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE outbound_app_bindings SET allowed_methods = $4, allowed_path_prefixes = $5
+		 WHERE account_id = $1 AND app_id = $2 AND integration_id = $3`,
+		account, app, integration, methods, paths)
+	if err != nil {
+		return mapErr(err)
+	}
+	return mapErr(tx.Commit(ctx))
 }
 
 func (s *PgStore) SetOutboundCredential(ctx context.Context, accountID, integrationID string, sealed []byte) error {

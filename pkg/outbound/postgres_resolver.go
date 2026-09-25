@@ -63,12 +63,12 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var hash [sha256.Size]byte
 	copy(hash[:], tokenHash)
 	rows, err := r.pool.Query(ctx, `
-		SELECT attachment.app_id::text
+		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true
 		  FROM outbound_integration_apps attachment
 		  JOIN apps app ON app.id = attachment.app_id
 		 WHERE attachment.integration_id = $1 AND app.account_id = $3 AND app.status <> 'deleted'
-		UNION
-		SELECT binding.app_id::text
+		UNION ALL
+		SELECT binding.app_id::text, binding.allowed_methods, binding.allowed_path_prefixes, false
 		  FROM outbound_app_bindings binding
 		  JOIN apps app ON app.id = binding.app_id
 		 WHERE binding.integration_id = $1 AND binding.account_id = $3
@@ -79,17 +79,27 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	}
 	defer rows.Close()
 	apps := make(map[string]struct{})
+	operatorApps := make(map[string]struct{})
+	customerRoutes := make(map[string]RoutePolicy)
 	for rows.Next() {
 		var appID string
-		if err := rows.Scan(&appID); err != nil {
+		var methods, paths []string
+		var operator bool
+		if err := rows.Scan(&appID, &methods, &paths, &operator); err != nil {
 			return Integration{}, err
 		}
 		apps[appID] = struct{}{}
+		if operator {
+			operatorApps[appID] = struct{}{}
+		} else if methods != nil || paths != nil {
+			customerRoutes[appID] = RoutePolicy{AllowedMethods: methods, AllowedPathPrefixes: paths}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return Integration{}, err
 	}
 	i := Integration{ID: id, Origin: u, TokenHash: hash, AppIDs: apps,
+		OperatorAppIDs: operatorApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
 		RequestTimeout:   time.Duration(timeoutMS) * time.Millisecond,
 		ProviderAuthMode: providerAuthMode, CredentialSource: credentialSource, AllowedMethods: allowedMethods,

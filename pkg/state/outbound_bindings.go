@@ -21,8 +21,10 @@ type OutboundIntegrationOffer struct {
 
 type OutboundAppBinding struct {
 	OutboundIntegrationOffer
-	AppID     string
-	CreatedAt time.Time
+	AppID             string
+	RouteMethods      []string
+	RoutePathPrefixes []string
+	CreatedAt         time.Time
 }
 
 // OutboundBindingStore owns customer app-binding and sealed-credential intent.
@@ -32,6 +34,7 @@ type OutboundBindingStore interface {
 	ListOutboundAppBindings(context.Context, string, string) ([]OutboundAppBinding, error)
 	BindOutboundIntegration(context.Context, string, string, string) (OutboundAppBinding, error)
 	UnbindOutboundIntegration(context.Context, string, string, string) error
+	UpdateOutboundBindingPolicy(context.Context, string, string, string, []string, []string) error
 	SetOutboundCredential(context.Context, string, string, []byte) error
 	DeleteOutboundCredential(context.Context, string, string) error
 }

@@ -39,6 +39,8 @@ type Integration struct {
 	Origin              *url.URL
 	TokenHash           [32]byte
 	AppIDs              map[string]struct{}
+	OperatorAppIDs      map[string]struct{}
+	CustomerAppRoutes   map[string]RoutePolicy
 	RatePerSecond       float64
 	Burst               int
 	MaxInFlight         int
@@ -171,6 +173,8 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 		for appID := range item.AppIDs {
 			copyItem.AppIDs[appID] = struct{}{}
 		}
+		copyItem.OperatorAppIDs = copyStringSet(item.OperatorAppIDs)
+		copyItem.CustomerAppRoutes = copyRoutePolicies(item.CustomerAppRoutes)
 		copyItem.AllowedMethods = append([]string(nil), item.AllowedMethods...)
 		copyItem.AllowedPathPrefixes = append([]string(nil), item.AllowedPathPrefixes...)
 		r.items[item.ID] = copyItem
@@ -191,6 +195,8 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	}
 	i.Origin = cloneURL(i.Origin)
 	i.AppIDs = copyStringSet(i.AppIDs)
+	i.OperatorAppIDs = copyStringSet(i.OperatorAppIDs)
+	i.CustomerAppRoutes = copyRoutePolicies(i.CustomerAppRoutes)
 	i.AllowedMethods = append([]string(nil), i.AllowedMethods...)
 	i.AllowedPathPrefixes = append([]string(nil), i.AllowedPathPrefixes...)
 	return i, nil
@@ -208,6 +214,17 @@ func copyStringSet(in map[string]struct{}) map[string]struct{} {
 	out := make(map[string]struct{}, len(in))
 	for key := range in {
 		out[key] = struct{}{}
+	}
+	return out
+}
+
+func copyRoutePolicies(in map[string]RoutePolicy) map[string]RoutePolicy {
+	out := make(map[string]RoutePolicy, len(in))
+	for appID, policy := range in {
+		out[appID] = RoutePolicy{
+			AllowedMethods:      append([]string(nil), policy.AllowedMethods...),
+			AllowedPathPrefixes: append([]string(nil), policy.AllowedPathPrefixes...),
+		}
 	}
 	return out
 }

@@ -156,3 +156,42 @@ func TestStaticResolverCopiesRoutePermissions(t *testing.T) {
 		t.Fatal("returned slices changed stored route policy")
 	}
 }
+
+func TestBindingRoutePolicyIsNarrowerThanOperatorCeiling(t *testing.T) {
+	ceiling := RoutePolicy{AllowedMethods: []string{"GET", "POST"}, AllowedPathPrefixes: []string{"/v1"}}
+	good := RoutePolicy{AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/customers"}}
+	if err := ValidateBindingRoutePolicy(ceiling, good); err != nil {
+		t.Fatal(err)
+	}
+	for name, policy := range map[string]RoutePolicy{
+		"wider method":   {AllowedMethods: []string{"DELETE"}, AllowedPathPrefixes: []string{"/v1"}},
+		"wider path":     {AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/admin"}},
+		"sibling path":   {AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v10"}},
+		"encoded path":   {AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/%63ustomers"}},
+		"empty methods":  {AllowedPathPrefixes: []string{"/v1"}},
+		"duplicate path": {AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1", "/v1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateBindingRoutePolicy(ceiling, policy); err == nil {
+				t.Fatal("accepted invalid customer route policy")
+			}
+		})
+	}
+}
+
+func TestAppRoutePolicyIntersectsCeilingAndCustomerNarrowing(t *testing.T) {
+	i := managedRouteIntegration(t, "https://api.example.test")
+	i.AppIDs = map[string]struct{}{"customer": {}, "operator": {}}
+	i.OperatorAppIDs = map[string]struct{}{"operator": {}}
+	i.CustomerAppRoutes = map[string]RoutePolicy{
+		"customer": {AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/customers/safe"}},
+		"operator": {AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/customers/safe"}},
+	}
+	if !i.AllowsAppRequest("customer", "GET", "/v1/customers/safe/123") ||
+		i.AllowsAppRequest("customer", "GET", "/v1/customers/unsafe") ||
+		!i.AllowsAppRequest("operator", "GET", "/v1/customers/unsafe") ||
+		i.AllowsAppRequest("operator", "GET", "/admin") ||
+		i.AllowsAppRequest("unbound", "GET", "/v1/customers/safe") {
+		t.Fatal("operator ceiling or customer route intersection incorrect")
+	}
+}

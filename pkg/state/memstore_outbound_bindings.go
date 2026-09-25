@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/outbound/routepolicy"
 )
 
 var _ OutboundBindingStore = (*MemStore)(nil)
@@ -82,6 +84,8 @@ func (m *MemStore) ListOutboundAppBindings(_ context.Context, accountID, appID s
 		if offer, ok := m.outboundIntegrationOffers[binding.ID]; ok && offer.AccountID == accountID {
 			binding.OutboundIntegrationOffer = copyOutboundOffer(offer)
 			binding.Enabled = offer.Enabled && len(offer.AllowedMethods) > 0 && len(offer.AllowedPathPrefixes) > 0
+			binding.RouteMethods = append([]string(nil), binding.RouteMethods...)
+			binding.RoutePathPrefixes = append([]string(nil), binding.RoutePathPrefixes...)
 			out = append(out, binding)
 		}
 	}
@@ -105,11 +109,36 @@ func (m *MemStore) BindOutboundIntegration(_ context.Context, accountID, appID, 
 	key := appID + "|" + integrationID
 	if existing, ok := m.outboundAppBindings[key]; ok {
 		existing.OutboundIntegrationOffer = copyOutboundOffer(offer)
+		existing.RouteMethods = append([]string(nil), existing.RouteMethods...)
+		existing.RoutePathPrefixes = append([]string(nil), existing.RoutePathPrefixes...)
 		return existing, nil
 	}
-	binding := OutboundAppBinding{OutboundIntegrationOffer: copyOutboundOffer(offer), AppID: appID, CreatedAt: time.Now()}
+	binding := OutboundAppBinding{OutboundIntegrationOffer: copyOutboundOffer(offer), AppID: appID,
+		RouteMethods: append([]string(nil), offer.AllowedMethods...), RoutePathPrefixes: append([]string(nil), offer.AllowedPathPrefixes...), CreatedAt: time.Now()}
 	m.outboundAppBindings[key] = binding
 	return binding, nil
+}
+
+func (m *MemStore) UpdateOutboundBindingPolicy(_ context.Context, accountID, appID, integrationID string, methods, paths []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := appID + "|" + integrationID
+	binding, ok := m.outboundAppBindings[key]
+	app, appOK := m.apps[appID]
+	offer, offerOK := m.outboundIntegrationOffers[integrationID]
+	if !ok || !appOK || app.AccountID != accountID || app.Status == AppDeleted ||
+		!offerOK || offer.AccountID != accountID || !offer.Enabled {
+		return ErrNotFound
+	}
+	if err := routepolicy.ValidateSubset(
+		routepolicy.Policy{AllowedMethods: offer.AllowedMethods, AllowedPathPrefixes: offer.AllowedPathPrefixes},
+		routepolicy.Policy{AllowedMethods: methods, AllowedPathPrefixes: paths}); err != nil {
+		return ErrInvalidArgument
+	}
+	binding.RouteMethods = append([]string(nil), methods...)
+	binding.RoutePathPrefixes = append([]string(nil), paths...)
+	m.outboundAppBindings[key] = binding
+	return nil
 }
 
 func (m *MemStore) UnbindOutboundIntegration(_ context.Context, accountID, appID, integrationID string) error {

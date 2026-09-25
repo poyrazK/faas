@@ -276,6 +276,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/outbound/integrations":                             "ListOutboundIntegrationOffers",
 	"GET /v1/apps/{slug}/outbound-bindings":                     "ListOutboundAppBindings",
 	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":       "BindOutboundIntegration",
+	"PATCH /v1/apps/{slug}/outbound-bindings/{integration}":     "UpdateOutboundBindingPolicy",
 	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":    "UnbindOutboundIntegration",
 	"PUT /v1/outbound/integrations/{integration}/credential":    "PutOutboundCredential",
 	"DELETE /v1/outbound/integrations/{integration}/credential": "DeleteOutboundCredential",

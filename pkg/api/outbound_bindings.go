@@ -26,9 +26,18 @@ type OutboundIntegrationOfferList struct {
 }
 
 type OutboundAppBinding struct {
-	Integration OutboundIntegrationOffer `json:"integration"`
-	AppID       string                   `json:"app_id"`
-	CreatedAt   time.Time                `json:"created_at"`
+	Integration         OutboundIntegrationOffer `json:"integration"`
+	AppID               string                   `json:"app_id"`
+	AllowedMethods      []string                 `json:"allowed_methods"`
+	AllowedPathPrefixes []string                 `json:"allowed_path_prefixes"`
+	CreatedAt           time.Time                `json:"created_at"`
+}
+
+// UpdateOutboundBindingPolicyRequest narrows an app's route access within
+// the integration policy. It cannot change the provider origin or widen it.
+type UpdateOutboundBindingPolicyRequest struct {
+	AllowedMethods      []string `json:"allowed_methods"`
+	AllowedPathPrefixes []string `json:"allowed_path_prefixes"`
 }
 
 type OutboundAppBindingList struct {

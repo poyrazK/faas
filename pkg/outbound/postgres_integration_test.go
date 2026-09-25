@@ -296,6 +296,19 @@ func TestCustomerBindingControlsManagedIntegrationAttachment(t *testing.T) {
 	if err != nil || !after.AllowsApp(app.ID) || !after.AllowsRequest(http.MethodGet, "/v1/widgets") {
 		t.Fatalf("after binding: allows=%t err=%v", after.AllowsApp(app.ID), err)
 	}
+	if err := store.UpdateOutboundBindingPolicy(ctx, account.ID, app.ID, integration.ID,
+		[]string{http.MethodGet}, []string{"/v1/widgets/safe"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateOutboundBindingPolicy(ctx, account.ID, app.ID, integration.ID,
+		[]string{http.MethodGet}, []string{"/v1/widgets-extra"}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("wider route policy error = %v; want invalid argument", err)
+	}
+	narrowed, err := resolver.Integration(ctx, integration.ID)
+	if err != nil || !narrowed.AllowsAppRequest(app.ID, http.MethodGet, "/v1/widgets/safe/123") ||
+		narrowed.AllowsAppRequest(app.ID, http.MethodGet, "/v1/widgets/unsafe") {
+		t.Fatalf("gateway customer route policy = %+v, err=%v", narrowed.CustomerAppRoutes, err)
+	}
 	if err := store.UnbindOutboundIntegration(ctx, account.ID, app.ID, integration.ID); err != nil {
 		t.Fatal(err)
 	}

@@ -31,6 +31,8 @@ func outboundBindingResponse(binding state.OutboundAppBinding) api.OutboundAppBi
 	return api.OutboundAppBinding{
 		Integration: outboundOfferResponse(binding.OutboundIntegrationOffer),
 		AppID:       binding.AppID, CreatedAt: binding.CreatedAt,
+		AllowedMethods:      append([]string{}, binding.RouteMethods...),
+		AllowedPathPrefixes: append([]string{}, binding.RoutePathPrefixes...),
 	}
 }
 
@@ -132,6 +134,39 @@ func (s *server) deleteOutboundAppBinding(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) updateOutboundBindingPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	integrationID := r.PathValue("integration")
+	if _, err := uuid.Parse(integrationID); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Integration ID must be a UUID")
+		return
+	}
+	var req api.UpdateOutboundBindingPolicyRequest
+	if err := decodeJSONSized(r, &req, 32<<10); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "A valid binding policy is required")
+		return
+	}
+	store, ok := s.outboundBindingStore(w)
+	if !ok {
+		return
+	}
+	err := store.UpdateOutboundBindingPolicy(r.Context(), acct.ID, app.ID, integrationID, req.AllowedMethods, req.AllowedPathPrefixes)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		s.notFound(w, "outbound binding not found")
+	case errors.Is(err, state.ErrInvalidArgument):
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Binding policy must narrow the integration's methods and paths")
+	case err != nil:
+		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_binding_unavailable", "Outbound binding policy could not be updated")
+	default:
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func (s *server) putOutboundCredential(w http.ResponseWriter, r *http.Request, acct state.Account) {

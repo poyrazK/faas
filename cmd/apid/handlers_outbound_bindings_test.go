@@ -19,8 +19,8 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 	integrationID := uuid.NewString()
 	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
 		ID: integrationID, AccountID: e.acct.ID, Name: "stripe-production",
-		Origin: "https://api.stripe.com", AllowedMethods: []string{"GET"},
-		AllowedPathPrefixes: []string{"/v1/customers"}, Enabled: true,
+		Origin: "https://api.stripe.com", AllowedMethods: []string{"GET", "POST"},
+		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
 	})
 	other, err := e.store.CreateAccount(context.Background(), "other-outbound@example.com", api.PlanPro)
 	if err != nil {
@@ -52,6 +52,9 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &binding); err != nil || binding.AppID != app.ID || binding.Integration.ID != integrationID || binding.CreatedAt.IsZero() {
 		t.Fatalf("binding = %+v, %v", binding, err)
 	}
+	if len(binding.AllowedMethods) != 2 || len(binding.AllowedPathPrefixes) != 1 || binding.AllowedPathPrefixes[0] != "/v1" {
+		t.Fatalf("initial binding policy = %+v", binding)
+	}
 	if strings.Contains(created.Body.String(), "sk_") || strings.Contains(created.Body.String(), "gateway-token") {
 		t.Fatal("binding response contains credential material")
 	}
@@ -60,10 +63,33 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 	if repeated.Code != http.StatusOK || json.Unmarshal(repeated.Body.Bytes(), &repeatedBinding) != nil || !repeatedBinding.CreatedAt.Equal(binding.CreatedAt) {
 		t.Fatalf("idempotent bind = %d %s", repeated.Code, repeated.Body.String())
 	}
+	policy := api.UpdateOutboundBindingPolicyRequest{AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/customers"}}
+	updated := e.do(t, http.MethodPatch, path, policy, nil)
+	if updated.Code != http.StatusNoContent {
+		t.Fatalf("update binding policy = %d %s", updated.Code, updated.Body.String())
+	}
+	for _, invalid := range []api.UpdateOutboundBindingPolicyRequest{
+		{AllowedMethods: []string{"DELETE"}, AllowedPathPrefixes: []string{"/v1"}},
+		{AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/admin"}},
+		{AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/%63ustomers"}},
+		{AllowedMethods: []string{"GET", "GET"}, AllowedPathPrefixes: []string{"/v1"}},
+	} {
+		assertProblem(t, e.do(t, http.MethodPatch, path, invalid, nil), http.StatusBadRequest, api.CodeValidation)
+	}
+	assertProblem(t, e.do(t, http.MethodPatch, "/v1/apps/"+app.Slug+"/outbound-bindings/"+otherID, policy, nil), http.StatusNotFound, api.CodeNotFound)
 	list := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/outbound-bindings", nil, nil)
 	var bindings api.OutboundAppBindingList
 	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &bindings) != nil || len(bindings.Items) != 1 {
 		t.Fatalf("binding list = %d %s", list.Code, list.Body.String())
+	}
+	if len(bindings.Items[0].AllowedMethods) != 1 || bindings.Items[0].AllowedMethods[0] != "GET" ||
+		len(bindings.Items[0].AllowedPathPrefixes) != 1 || bindings.Items[0].AllowedPathPrefixes[0] != "/v1/customers" {
+		t.Fatalf("binding route narrowing not returned: %+v", bindings.Items[0])
+	}
+	repeated = e.do(t, http.MethodPut, path, nil, nil)
+	if repeated.Code != http.StatusOK || json.Unmarshal(repeated.Body.Bytes(), &repeatedBinding) != nil ||
+		len(repeatedBinding.AllowedPathPrefixes) != 1 || repeatedBinding.AllowedPathPrefixes[0] != "/v1/customers" {
+		t.Fatalf("idempotent bind widened policy = %d %s", repeated.Code, repeated.Body.String())
 	}
 	deleted := e.do(t, http.MethodDelete, path, nil, nil)
 	if deleted.Code != http.StatusNoContent {

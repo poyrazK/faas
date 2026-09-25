@@ -56,6 +56,24 @@ or unbind needs no daemon restart. A customer unbind does not remove an
 operator attachment. The account must own both app and managed integration.
 See [ADR-242](../adr/242-customer-outbound-binding-intent.md).
 
+After binding, an account can narrow that app's HTTP routes with
+`PATCH /v1/apps/{slug}/outbound-bindings/{integration_id}`:
+
+```json
+{"allowed_methods":["GET"],"allowed_path_prefixes":["/v1/customers"]}
+```
+
+Both arrays are required and nonempty. Each method and whole-segment path
+prefix must be contained in the operator-configured integration allowlist.
+The binding initially inherits the full operator policy, and a repeated `PUT`
+does not reset a narrowed binding. `GET` on the app's bindings reports both
+the integration ceiling and the app-specific route policy. The gateway
+intersects them on every request, so later operator tightening takes effect
+without editing the customer binding. An explicit operator `app_ids` attachment
+continues to grant the full operator ceiling even if a customer binding for
+the same app is narrower. The PATCH route requires MFA and deploy-write scope.
+See [ADR-244](../adr/244-customer-outbound-binding-route-policy.md).
+
 For a customer-held provider credential, provision the managed integration with
 `credential_source = "customer_sealed"` and **omit** `provider_authorization_env`.
 Keep the explicit method/path allowlist, workload-identity JWKS, and gateway
@@ -103,7 +121,10 @@ remove the old key after all assertions signed with it have expired. Drain
 older gateway binaries before exposing a managed integration: they may still
 accept the legacy shared token.
 
-Origins and route policy remain operator-configured. A bound app can use the provider
+Origins and the maximum route policy remain operator-configured. Customers
+cannot create arbitrary origins yet: outboundd does not enforce the public
+destination and DNS/rebinding protections required before exposing that
+capability. A bound app can use the provider
 credential through the gateway within its configured HTTP routes, but an
 external provider could echo a credential in its own response. Scope provider
 keys accordingly. See [ADR-239](../adr/239-platform-held-outbound-provider-authorization.md)
