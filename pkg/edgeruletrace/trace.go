@@ -21,7 +21,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance, ingress/auth policy, target-app rules after routing, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Ingress/auth policy, target-app rules after routing, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 // Input is the request context that can be simulated without contacting the
@@ -46,6 +46,12 @@ type Input struct {
 	AppCORSDefaultsLoaded bool
 	CORSDefaultEnabled    *bool
 	CORSDefaultOrigins    []string
+	// AppMaintenanceLoaded distinguishes a known-disabled maintenance gate
+	// from app metadata that was not available to the caller. Unlike CORS, this
+	// app-wide gate applies to every request and is evaluated before edge-rule
+	// maintenance and later edge-rule phases.
+	AppMaintenanceLoaded bool
+	AppMaintenanceMode   bool
 	// BodyProvided distinguishes an intentionally empty body from omitted
 	// request-body context. Validate rules remain incomplete when omitted.
 	BodyProvided bool
@@ -72,6 +78,7 @@ type Result struct {
 type Simulation struct {
 	Status            string                 `json:"status"`
 	Outcome           string                 `json:"outcome"`
+	ProblemCode       string                 `json:"problem_code,omitempty"`
 	FinalPath         string                 `json:"final_path"`
 	RequestHeaders    map[string][]string    `json:"request_headers,omitempty"`
 	ResponseHeaderOps []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
@@ -95,6 +102,7 @@ type SimulationStep struct {
 	PathBefore        string                 `json:"path_before,omitempty"`
 	PathAfter         string                 `json:"path_after,omitempty"`
 	StatusCode        int                    `json:"status_code,omitempty"`
+	ProblemCode       string                 `json:"problem_code,omitempty"`
 	Location          string                 `json:"location,omitempty"`
 	RedirectHeaders   map[string]string      `json:"redirect_headers,omitempty"`
 	RetryAfterSeconds int                    `json:"retry_after_seconds,omitempty"`
@@ -345,8 +353,35 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
-	phases := []string{"route", "maintenance", "redirect", "rewrite", "headers", "cors", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
+	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
 	for _, phase := range phases {
+		if phase == "app_maintenance" {
+			if !input.AppMaintenanceLoaded {
+				stopped := stop("incomplete", "needs_app_maintenance", phase, "app maintenance settings were not loaded, so the gateway-wide gate cannot be evaluated", nil)
+				stopped.Steps[len(stopped.Steps)-1].Kind = phase
+				return stopped
+			}
+			if input.AppMaintenanceMode {
+				retryAfter := api.EdgeRuleMaintenanceRetryAfterSeconds
+				problem := api.ErrAppMaintenanceMode(retryAfter, input.App)
+				message := problem.Detail
+				reason := fmt.Sprintf("when this gate is reached after earlier routing and gateway gates, app-wide maintenance would return HTTP %d with Retry-After: %d before per-rule maintenance and later edge-rule phases", problem.Status, retryAfter)
+				step := SimulationStep{
+					Phase: phase, Kind: phase, Outcome: phase,
+					PathBefore: requestPath, PathAfter: requestPath,
+					StatusCode: problem.Status, ProblemCode: problem.Code,
+					RetryAfterSeconds: retryAfter, Message: message, Reason: reason,
+				}
+				simulation.Status, simulation.Outcome = "complete", phase
+				simulation.ProblemCode = problem.Code
+				simulation.StatusCode, simulation.RetryAfterSeconds = problem.Status, retryAfter
+				simulation.Message, simulation.StoppedAt, simulation.Reason = message, phase, reason
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			}
+			continue
+		}
 		matchMethod := input.Method
 		if phase == "cors" {
 			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)

@@ -73,21 +73,21 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if input.BodyProvided || edgeruletrace.RequiresAppCORSDefaultData(input.Headers) {
-		app, appErr := client.GetApp(context.Background(), input.App)
-		if appErr != nil {
-			return printErr("App lookup failed", appErr)
-		}
-		input.AppCORSDefaultsLoaded = true
-		input.CORSDefaultEnabled = app.CORSDefaultEnabled
-		input.CORSDefaultOrigins = append([]string(nil), app.CORSDefaultOrigins...)
-		if input.BodyProvided {
-			input.RequestBodyMaxBytes = app.EffectiveLimits.RequestBodyMaxBytes
-		}
-		input, err = edgeruletrace.NormalizeInput(input)
-		if err != nil {
-			return printErr("Invalid trace input", err)
-		}
+	app, appErr := client.GetApp(context.Background(), input.App)
+	if appErr != nil {
+		return printErr("App lookup failed", appErr)
+	}
+	input.AppMaintenanceLoaded = true
+	input.AppMaintenanceMode = app.MaintenanceMode
+	input.AppCORSDefaultsLoaded = true
+	input.CORSDefaultEnabled = app.CORSDefaultEnabled
+	input.CORSDefaultOrigins = append([]string(nil), app.CORSDefaultOrigins...)
+	if input.BodyProvided {
+		input.RequestBodyMaxBytes = app.EffectiveLimits.RequestBodyMaxBytes
+	}
+	input, err = edgeruletrace.NormalizeInput(input)
+	if err != nil {
+		return printErr("Invalid trace input", err)
 	}
 	rules, err := client.ListEdgeRulesForApp(context.Background(), input.App)
 	if err != nil {
@@ -142,6 +142,9 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 	}
 	if result.Simulation.StatusCode != 0 {
 		_, _ = fmt.Fprintf(osStdout, "  response: status=%d", result.Simulation.StatusCode)
+		if result.Simulation.ProblemCode != "" {
+			_, _ = fmt.Fprintf(osStdout, " problem_code=%s", result.Simulation.ProblemCode)
+		}
 		if result.Simulation.Location != "" {
 			_, _ = fmt.Fprintf(osStdout, " location=%q", result.Simulation.Location)
 		}
@@ -221,7 +224,7 @@ func previewEdgeRules(app, host, requestPath, method, clientIP, country string, 
 		headers = suppliedHeaders[0]
 	}
 	result, _ := edgeruletrace.Simulate(edgeruletrace.Input{
-		App: app, Host: host, Path: requestPath, Method: method, ClientIP: clientIP, Country: country, Headers: headers,
+		App: app, Host: host, Path: requestPath, Method: method, ClientIP: clientIP, Country: country, Headers: headers, AppMaintenanceLoaded: true,
 	}, rules)
 	return result
 }

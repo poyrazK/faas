@@ -152,6 +152,48 @@ func TestDashboardEdgeRuleTraceIsReadOnlyAndRequiresNamedCSRF(t *testing.T) {
 	}
 }
 
+func TestDashboardEdgeRuleTraceSimulatesAppMaintenance(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{
+		AccountID: acct.ID, Slug: "edge-trace-maintenance", Type: state.AppTypeApp,
+		Runtime: "node22", Status: state.AppActive, MaintenanceMode: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	_, err = store.CreateEdgeRule(t.Context(), state.CreateEdgeRuleParams{
+		AccountID: acct.ID, AppID: app.ID, MatchHost: "edge.example.com", MatchPath: "/", Priority: 10, Enabled: true,
+		Kind:   state.EdgeRuleKindMaintenance,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindMaintenance, Maintenance: &state.EdgeRuleMaintenanceAction{Message: "route maintenance"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-maintenance/edge-rules/trace", map[string]string{
+		middleware.FormFieldName: token,
+		"trace_host":             "edge.example.com", "trace_path": "/", "trace_method": "GET",
+	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"Simulation: complete · app_maintenance", "Response status: <strong>503</strong>", api.CodeAppMaintenance,
+		"Retry-After 60s", "app-wide maintenance would return HTTP 503",
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("trace response missing %q\n%s", want, rec.Body.String())
+		}
+	}
+}
+
 func TestDashboardEdgeRuleTraceResolvesCORSPreset(t *testing.T) {
 	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")

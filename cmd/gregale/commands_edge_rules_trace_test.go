@@ -308,13 +308,21 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 	jsonOutput = true
 	defer resetJSONEnv(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/edge-rules" {
+		if r.Method != http.MethodGet {
 			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
-			ID: "match", Enabled: true, Kind: "redirect", MatchHost: "example.com", MatchPath: "/api/*",
-			Action: json.RawMessage(`{"redirect":{"to":"/elsewhere"}}`),
-		}})
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "match", Enabled: true, Kind: "redirect", MatchHost: "example.com", MatchPath: "/api/*",
+				Action: json.RawMessage(`{"redirect":{"to":"/elsewhere"}}`),
+			}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
@@ -335,6 +343,47 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "private") {
 		t.Fatal("query string leaked into trace output")
+	}
+}
+
+func TestCmdEdgeRulesTraceSimulatesAppMaintenance(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{MaintenanceMode: true})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "redirect", Enabled: true, Kind: "redirect", MatchHost: "example.com", MatchPath: "*",
+				Action: json.RawMessage(`{"redirect":{"to":"/new"}}`),
+			}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/"}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Simulation.Outcome != "app_maintenance" || result.Simulation.StatusCode != http.StatusServiceUnavailable || result.Simulation.ProblemCode != api.CodeAppMaintenance || result.Simulation.RetryAfterSeconds != api.EdgeRuleMaintenanceRetryAfterSeconds {
+		t.Fatalf("app maintenance trace = %#v", result.Simulation)
 	}
 }
 

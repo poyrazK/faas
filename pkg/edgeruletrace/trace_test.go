@@ -164,7 +164,7 @@ func TestSimulateInlineCORSRuleAppliesResponseHeaders(t *testing.T) {
 		AllowHeaders: []string{"Content-Type", "X-Request-ID"}, ExposeHeaders: []string{"X-Request-ID"},
 		AllowCredentials: true, MaxAgeSeconds: 600,
 	})
-	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, Headers: http.Header{"Origin": []string{"https://app.example.com"}}}
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, Headers: http.Header{"Origin": []string{"https://app.example.com"}}, AppMaintenanceLoaded: true}
 	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
 	if err != nil {
 		t.Fatalf("Simulate: %v", err)
@@ -190,6 +190,68 @@ func TestSimulateInlineCORSRuleAppliesResponseHeaders(t *testing.T) {
 	}
 }
 
+func TestSimulateAppMaintenanceGatePrecedesEdgeRulePhases(t *testing.T) {
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
+		AppMaintenanceLoaded: true, AppMaintenanceMode: true,
+	}
+	rules := []api.EdgeRuleResponse{
+		{ID: "maintenance-rule", Enabled: true, Kind: "maintenance", MatchHost: "*", MatchPath: "*", Priority: 10,
+			Action: json.RawMessage(`{"maintenance":{"message":"route maintenance","retry_after_seconds":120}}`)},
+		{ID: "redirect-rule", Enabled: true, Kind: "redirect", MatchHost: "*", MatchPath: "*", Priority: 10,
+			Action: json.RawMessage(`{"redirect":{"to":"/new"}}`)},
+	}
+	result, err := edgeruletrace.Simulate(input, rules)
+	if err != nil {
+		t.Fatalf("Simulate app maintenance: %v", err)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "app_maintenance" || result.Simulation.StoppedAt != "app_maintenance" || result.Simulation.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("app maintenance simulation = %#v", result.Simulation)
+	}
+	if result.Simulation.ProblemCode != api.CodeAppMaintenance || result.Simulation.RetryAfterSeconds != api.EdgeRuleMaintenanceRetryAfterSeconds || result.Simulation.Message != `App "demo" is in maintenance mode` {
+		t.Fatalf("app maintenance response = %#v", result.Simulation)
+	}
+	if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Kind != "app_maintenance" || result.Simulation.Steps[0].ProblemCode != api.CodeAppMaintenance {
+		t.Fatalf("app maintenance steps = %#v", result.Simulation.Steps)
+	}
+
+	input.AppMaintenanceMode = false
+	result, err = edgeruletrace.Simulate(input, rules)
+	if err != nil {
+		t.Fatalf("Simulate disabled app maintenance: %v", err)
+	}
+	if result.Simulation.Outcome != "maintenance" || result.Simulation.RetryAfterSeconds != 120 || len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].RuleID != "maintenance-rule" {
+		t.Fatalf("edge-rule maintenance did not run after disabled app gate: %#v", result.Simulation)
+	}
+}
+
+func TestSimulateAppMaintenanceRequiresMetadataAndFollowsRouting(t *testing.T) {
+	rule := api.EdgeRuleResponse{ID: "maintenance", Enabled: true, Kind: "maintenance", MatchHost: "*", MatchPath: "*",
+		Action: json.RawMessage(`{"maintenance":{"message":"down"}}`)}
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate without app metadata: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_app_maintenance" || result.Simulation.StoppedAt != "app_maintenance" {
+		t.Fatalf("missing metadata simulation = %#v", result.Simulation)
+	}
+	if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Kind != "app_maintenance" {
+		t.Fatalf("missing metadata steps = %#v", result.Simulation.Steps)
+	}
+
+	route := api.EdgeRuleResponse{ID: "route", Enabled: true, Kind: "route", MatchHost: "*", MatchPath: "*",
+		Action: json.RawMessage(`{"route":{"target_app_slug":"other-app"}}`)}
+	input.AppMaintenanceLoaded, input.AppMaintenanceMode = true, true
+	result, err = edgeruletrace.Simulate(input, []api.EdgeRuleResponse{route})
+	if err != nil {
+		t.Fatalf("Simulate route before app maintenance: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "route" || result.Simulation.TargetApp != "other-app" {
+		t.Fatalf("route should precede target-app maintenance metadata: %#v", result.Simulation)
+	}
+}
+
 func TestSimulateAppCORSDefaultFallback(t *testing.T) {
 	enabled := true
 	for _, tc := range []struct {
@@ -206,6 +268,7 @@ func TestSimulateAppCORSDefaultFallback(t *testing.T) {
 			}
 			input := edgeruletrace.Input{
 				App: "demo", Host: "example.com", Path: "/", Method: tc.method, Headers: headers,
+				AppMaintenanceLoaded:  true,
 				AppCORSDefaultsLoaded: true, CORSDefaultEnabled: &enabled,
 				CORSDefaultOrigins: []string{"https://app.example.com"},
 			}
@@ -244,7 +307,8 @@ func TestSimulateAppCORSDefaultFallback(t *testing.T) {
 func TestSimulateAppCORSDefaultIncompleteWithoutAppMetadata(t *testing.T) {
 	input := edgeruletrace.Input{
 		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
-		Headers: http.Header{"Origin": []string{"https://app.example.com"}},
+		Headers:              http.Header{"Origin": []string{"https://app.example.com"}},
+		AppMaintenanceLoaded: true,
 	}
 	result, err := edgeruletrace.Simulate(input, nil)
 	if err != nil {
@@ -272,6 +336,7 @@ func TestSimulateAppCORSDefaultMissesAndEdgeRulePrecedence(t *testing.T) {
 			input := edgeruletrace.Input{
 				App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
 				Headers:               http.Header{"Origin": []string{tc.origin}},
+				AppMaintenanceLoaded:  true,
 				AppCORSDefaultsLoaded: true, CORSDefaultEnabled: tc.enabled, CORSDefaultOrigins: tc.origins,
 			}
 			result, err := edgeruletrace.Simulate(input, nil)
@@ -287,6 +352,7 @@ func TestSimulateAppCORSDefaultMissesAndEdgeRulePrecedence(t *testing.T) {
 	input := edgeruletrace.Input{
 		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
 		Headers:               http.Header{"Origin": []string{"https://app.example.com"}},
+		AppMaintenanceLoaded:  true,
 		AppCORSDefaultsLoaded: true, CORSDefaultEnabled: &allowed,
 		CORSDefaultOrigins: []string{"https://app.example.com"},
 	}
@@ -317,7 +383,7 @@ func TestSimulateCORSPreflightUsesRequestedMethodToSelectRule(t *testing.T) {
 	})
 	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodOptions, Headers: http.Header{
 		"Origin": []string{"https://app.example.com"}, "Access-Control-Request-Method": []string{"GET"},
-	}}
+	}, AppMaintenanceLoaded: true}
 	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
 	if err != nil {
 		t.Fatalf("Simulate: %v", err)
@@ -340,6 +406,7 @@ func TestSimulateCORSPreflightMethodSelectorRemainsCaseSensitive(t *testing.T) {
 	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodOptions, Headers: http.Header{
 		"Origin": []string{"https://app.example.com"}, "Access-Control-Request-Method": []string{"get"},
 	}, AppCORSDefaultsLoaded: true}
+	input.AppMaintenanceLoaded = true
 	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
 	if err != nil {
 		t.Fatalf("Simulate: %v", err)
@@ -370,7 +437,7 @@ func TestSimulateCORSDeniedMethodAndOriginContinueWithoutHeaders(t *testing.T) {
 			if tc.requestMethod != "" {
 				headers.Set("Access-Control-Request-Method", tc.requestMethod)
 			}
-			result, err := edgeruletrace.Simulate(edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: tc.method, Headers: headers}, []api.EdgeRuleResponse{rule})
+			result, err := edgeruletrace.Simulate(edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: tc.method, Headers: headers, AppMaintenanceLoaded: true}, []api.EdgeRuleResponse{rule})
 			if err != nil {
 				t.Fatalf("Simulate: %v", err)
 			}
@@ -385,7 +452,7 @@ func TestSimulateCORSOptionsWithoutOriginShortCircuitsWithoutHeaders(t *testing.
 	rule := corsTraceRule(t, "cors-options", []string{"OPTIONS"}, api.EdgeRuleCORSAction{
 		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"},
 	})
-	result, err := edgeruletrace.Simulate(edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodOptions}, []api.EdgeRuleResponse{rule})
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodOptions, AppMaintenanceLoaded: true}, []api.EdgeRuleResponse{rule})
 	if err != nil {
 		t.Fatalf("Simulate: %v", err)
 	}
@@ -397,7 +464,7 @@ func TestSimulateCORSOptionsWithoutOriginShortCircuitsWithoutHeaders(t *testing.
 func TestSimulateCORSPresetIsIncomplete(t *testing.T) {
 	presetID := "preset-1"
 	rule := corsTraceRule(t, "cors-preset", []string{"GET"}, api.EdgeRuleCORSAction{CorsPresetID: &presetID})
-	result, err := edgeruletrace.Simulate(edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet}, []api.EdgeRuleResponse{rule})
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, AppMaintenanceLoaded: true}, []api.EdgeRuleResponse{rule})
 	if err != nil {
 		t.Fatalf("Simulate: %v", err)
 	}
@@ -412,7 +479,8 @@ func TestSimulateCORSPresetUsesResolvedSettings(t *testing.T) {
 	rule.AccountID = "acct-1"
 	input := edgeruletrace.Input{
 		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
-		Headers: http.Header{"Origin": []string{"https://app.example.com"}},
+		Headers:              http.Header{"Origin": []string{"https://app.example.com"}},
+		AppMaintenanceLoaded: true,
 		CorsPresets: []api.CorsPresetResponse{{
 			ID: presetID, AccountID: "acct-1", AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET", "POST"},
 			AllowHeaders: []string{"Content-Type"}, ExposeHeaders: []string{"X-Request-ID"}, AllowCredentials: true, MaxAgeSeconds: 600,
@@ -451,7 +519,8 @@ func TestSimulateCORSPresetMergesRuleOverridesAndChecksAccount(t *testing.T) {
 	rule.AccountID = "acct-1"
 	input := edgeruletrace.Input{
 		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
-		Headers: http.Header{"Origin": []string{"https://app.example.com"}},
+		Headers:              http.Header{"Origin": []string{"https://app.example.com"}},
+		AppMaintenanceLoaded: true,
 		CorsPresets: []api.CorsPresetResponse{{
 			ID: presetID, AccountID: "acct-1", AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"},
 			AllowHeaders: []string{"Content-Type"}, AllowCredentials: true, MaxAgeSeconds: 600,
@@ -480,7 +549,7 @@ func TestSimulateCORSPresetRejectsWildcardCredentialsMerge(t *testing.T) {
 	presetID := "preset-1"
 	rule := corsTraceRule(t, "cors-preset", []string{"GET"}, api.EdgeRuleCORSAction{CorsPresetID: &presetID})
 	rule.AccountID = "acct-1"
-	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, CorsPresets: []api.CorsPresetResponse{{
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, AppMaintenanceLoaded: true, CorsPresets: []api.CorsPresetResponse{{
 		ID: presetID, AccountID: "acct-1", AllowOrigins: []string{"*"}, AllowMethods: []string{"GET"}, AllowCredentials: true,
 	}}}
 	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
@@ -582,7 +651,7 @@ func validateTraceInput(body string) edgeruletrace.Input {
 	return edgeruletrace.Input{
 		App: "demo", Host: "example.com", Path: "/", Method: http.MethodPost,
 		Headers: http.Header{"Content-Type": []string{"application/json"}},
-		Body:    []byte(body), BodyProvided: true, RequestBodyMaxBytes: 1 << 20,
+		Body:    []byte(body), BodyProvided: true, RequestBodyMaxBytes: 1 << 20, AppMaintenanceLoaded: true,
 	}
 }
 
