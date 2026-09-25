@@ -111,3 +111,17 @@ func TestRequestAuditRejectsMalformedSourceIP(t *testing.T) {
 		t.Fatal("malformed source IP accepted")
 	}
 }
+
+func TestRequestAuditRejectsNULRoute(t *testing.T) {
+	now := time.Now().UTC()
+	event := APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(),
+		ConsumerKey: AnonymousConsumerKey, WindowStart: now.Truncate(time.Minute),
+		RequestCount: 1, BillableUnits: 1,
+		Audit: &RequestAuditEvidence{RouteTemplate: "GET /profile/name\x00other", Method: "GET", HTTPStatus: 200,
+			OccurredAt: now},
+	}
+	if err := ValidateAPIConsumerUsageEvent(event); err == nil {
+		t.Fatal("NUL-containing audit route accepted")
+	}
+}

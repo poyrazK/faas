@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,7 +67,7 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 		if event.RequestCount != 1 {
 			return fmt.Errorf("request audit: one event must describe exactly one request")
 		}
-		if audit.RouteTemplate == "" || len(audit.RouteTemplate) > 256 || audit.Method == "" || len(audit.Method) > 16 || audit.HTTPStatus < 100 || audit.HTTPStatus > 599 {
+		if audit.RouteTemplate == "" || len(audit.RouteTemplate) > 256 || strings.ContainsAny(audit.RouteTemplate, "?#\x00\r\n\t") || audit.Method == "" || len(audit.Method) > 16 || audit.HTTPStatus < 100 || audit.HTTPStatus > 599 {
 			return fmt.Errorf("request audit: invalid route, method, or status")
 		}
 		if audit.LatencyMS < 0 || audit.LatencyMS > 86_400_000 || audit.OccurredAt.IsZero() || audit.OccurredAt.After(time.Now().Add(5*time.Minute)) {

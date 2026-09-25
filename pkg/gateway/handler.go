@@ -5727,7 +5727,7 @@ haveApp:
 			}
 		}
 		preLabel := otherRouteLabel
-		if path != otherRouteLabel && len(r.Method)+1+len(path) <= 256 {
+		if path != otherRouteLabel && len(r.Method)+1+len(path) <= 256 && !strings.ContainsAny(path, "?#\x00\r\n\t") {
 			preLabel = r.Method + " " + path
 		}
 		if h.requestAuditEnabled {
