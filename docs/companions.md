@@ -145,6 +145,38 @@ Each companion retains its own memory, CPU, scratch, and I/O limits. The
 instance admission and billing reservation includes the RAM configured for
 every companion; dependency ordering does not change resource accounting.
 
+The primary application starts independently of long-running companions by
+default. Add top-level `main_depends_on` entries when it needs a helper first;
+conditions are `started`, `healthy`, or `completed_successfully`. `healthy`
+waits for that companion's startup probe, while an omitted condition defaults
+to `started`:
+
+```yaml
+main_depends_on:
+  - name: proxy
+    condition: healthy
+
+companions:
+  - name: proxy
+    image: registry.example.com/proxy@sha256:<64-hex-digest>
+    startup_probe:
+      http_get: {path: /ready, port: 8081}
+```
+
+The equivalent `gregale.toml` declaration uses an inline dependency array and
+the usual companion tables:
+
+```toml
+main_depends_on = [{ name = "proxy", condition = "healthy" }]
+
+[[companions]]
+name = "proxy"
+image = "registry.example.com/proxy@sha256:<64-hex-digest>"
+```
+
+Each dependency must name a declared long-running companion. Init companions
+already gate the primary application implicitly and cannot be named here.
+
 ## Limits and lifecycle
 
 - A deployment accepts at most five helper entries: one one-shot setup helper
