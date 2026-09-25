@@ -27658,12 +27658,14 @@ components:
     # + docs/runbook/jobs.md.
 
     CreateJobRequest:
-      description: "Job creation payload — name + image + command + caps."
+      description: "Job creation payload — name + image + command + caps; schedule enables recurring runs."
       type: object
       required: [name, image_ref, command]
       properties:
         name: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$', example: "nightly-export" }
         kind: { type: string, enum: [batch, recurring], default: batch }
+        schedule: { type: string, description: "Optional five-field cron expression. When present, the job becomes recurring and schedd creates one single-task run per occurrence.", example: "0 3 * * *" }
+        timezone: { type: string, description: "IANA timezone for schedule; defaults to UTC.", example: "Europe/Istanbul" }
         image_ref: { type: string, example: "ghcr.io/acme/etl:v1.2.3" }
         command:
           type: array
@@ -27695,6 +27697,8 @@ components:
         max_parallelism: { type: integer, minimum: 0 }
         retry_max: { type: integer, minimum: 0 }
         status: { type: string, enum: [active, paused] }
+        schedule: { type: string, description: "Replace the cron expression; an empty string removes the schedule." }
+        timezone: { type: string, description: "Replace the schedule IANA timezone." }
 
     CreateJobRunRequest:
       description: |
@@ -27723,6 +27727,9 @@ components:
         account_id: { type: string, format: uuid }
         name: { type: string, example: "nightly-export" }
         kind: { type: string, enum: [batch, recurring] }
+        schedule: { type: string, description: "Recurring five-field cron expression, when configured." }
+        timezone: { type: string, description: "IANA timezone used to evaluate the recurring schedule." }
+        last_scheduled_at: { type: string, format: date-time, description: "Most recent scheduled occurrence that created a run." }
         image_ref: { type: string }
         image_resolved_digest: { type: string, description: "Immutable OCI manifest digest selected from image_ref." }
         image_storage_key: { type: string, description: "Canonical ext4 artifact key consumed by vmmd." }

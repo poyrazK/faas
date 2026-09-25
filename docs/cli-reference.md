@@ -796,6 +796,12 @@ List jobs in this account
 
 Create a new job
 
+| Flag | Meaning | |
+|---|---|---|
+| `--image <REF>` | OCI image (required) | required |
+| `--schedule <EXPR>` | recurring five-field cron schedule |  |
+| `--timezone <TZ>` | IANA timezone for the recurring schedule |  |
+
 ### jobs info
 
 Show one job
@@ -803,6 +809,12 @@ Show one job
 ### jobs update
 
 Update one job
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schedule <EXPR>` | replace recurring cron schedule |  |
+| `--timezone <TZ>` | replace schedule IANA timezone |  |
+| `--unschedule` | remove recurring schedule |  |
 
 ### jobs rm
 
