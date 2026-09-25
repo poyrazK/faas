@@ -3917,7 +3917,28 @@ SELECT DISTINCT ON (CAST(data->>'instance_id' AS text))
        at,
        id
 FROM events
-WHERE kind = 'wake.sidecar_health'
+WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND data->>'status' IN ('ready', 'unready')
   AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
 ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC;
+
+-- name: LatestInstanceReadinessBySource :many
+-- Gateway hydration keeps each required readiness source independent so one
+-- recovered probe cannot override another probe that is still unready.
+SELECT DISTINCT ON (
+           CAST(data->>'instance_id' AS text),
+           CAST(CASE WHEN kind = 'wake.app_readiness' THEN 'primary_app'
+                ELSE 'sidecar:' || CAST(data->>'sidecar_name' AS text) END AS text)
+       )
+       CAST(data->>'instance_id' AS text) AS instance_id,
+       CAST(CASE WHEN kind = 'wake.app_readiness' THEN 'primary_app'
+            ELSE 'sidecar:' || CAST(data->>'sidecar_name' AS text) END AS text) AS source,
+       CAST(data->>'status' AS text) AS status,
+       at,
+       id
+FROM events
+WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
+  AND data->>'status' IN ('ready', 'unready')
+  AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
+  AND (kind <> 'wake.sidecar_health' OR COALESCE(data->>'sidecar_name', '') <> '')
+ORDER BY CAST(data->>'instance_id' AS text), source, at DESC, id DESC;

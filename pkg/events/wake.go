@@ -211,6 +211,10 @@ const (
 	// transition (starting, healthy, unhealthy, restarting, failed, ready, or unready).
 	// Payload: {wake_id, app_id, instance_id, sidecar_name, status, reason}.
 	WakeSidecarHealth = "wake.sidecar_health"
+	// WakeAppReadiness records the primary app's reversible steady-state
+	// traffic-gate transition. Payload: {app_id, instance_id, source, status,
+	// reason}. It is distinct from the startup wake.readiness_200 event.
+	WakeAppReadiness = "wake.app_readiness"
 )
 
 // WakeEvent is the contract pkg/events.Platform.Emit consumes. The
@@ -1221,5 +1225,29 @@ func (e SidecarHealth) Payload() map[string]any {
 		"sidecar_name": e.SidecarName,
 		"status":       e.Status,
 		"reason":       e.Reason,
+	}
+}
+
+// AppReadiness records a continuous readiness transition for the primary app.
+// It is emitted independently of a wake so routing state can be hydrated after
+// a gateway restart and updated while an instance remains running.
+type AppReadiness struct {
+	EmitAt     time.Time
+	AppID      string
+	InstanceID string
+	Status     string
+	Reason     string
+}
+
+func (e AppReadiness) Kind() string     { return WakeAppReadiness }
+func (e AppReadiness) At() time.Time    { return e.EmitAt }
+func (e AppReadiness) Subject() *string { return nil }
+func (e AppReadiness) Payload() map[string]any {
+	return map[string]any{
+		"app_id":      e.AppID,
+		"instance_id": e.InstanceID,
+		"source":      "primary_app",
+		"status":      e.Status,
+		"reason":      e.Reason,
 	}
 }

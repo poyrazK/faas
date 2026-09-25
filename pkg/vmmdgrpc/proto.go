@@ -6,6 +6,7 @@ package vmmdgrpc
 
 import (
 	"context"
+	"encoding/json"
 	"net/netip"
 	"unicode/utf8"
 
@@ -316,6 +317,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		HealthcheckPath:        app.GetHealthcheckPath(),
 		HealthcheckGRPC:        app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService: app.GetHealthcheckGrpcService(),
+		ReadinessProbe:         json.RawMessage(app.GetReadinessProbeJson()),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
@@ -472,6 +474,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		HealthcheckPath:        app.GetHealthcheckPath(),
 		HealthcheckGRPC:        app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService: app.GetHealthcheckGrpcService(),
+		ReadinessProbe:         json.RawMessage(app.GetReadinessProbeJson()),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
 		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),

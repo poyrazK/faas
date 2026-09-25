@@ -468,6 +468,9 @@ type Instance struct {
 	// migration pause/resume cycle. It is copied from WakeRequest so ResumeVM
 	// can restart the monitor with the same configuration.
 	LivenessProbe json.RawMessage
+	// ReadinessProbe preserves the continuous primary-app traffic policy across
+	// migration pause/resume so the replacement monitor uses the same config.
+	ReadinessProbe json.RawMessage
 
 	// AllowlistHandleV4 / V6 are the nft handles of the
 	// per-netns allowlist accept rules captured at Wake time (or
@@ -856,6 +859,10 @@ type Manager struct {
 	// local vmmd run, or a unit test); startLivenessLoop logs
 	// Warn and returns.
 	livenessStarter LivenessProbeStarter
+	// readinessStarter launches the reversible per-instance traffic probe.
+	readinessStarter ReadinessProbeStarter
+	// readinessLoopCancels is guarded by mu and owns each app probe's lifecycle.
+	readinessLoopCancels map[string]context.CancelFunc
 	// lifecycleCtx is vmmd's daemon context. Per-instance liveness loops
 	// must be children of this context, not of the short-lived Wake RPC
 	// context; the latter is normally canceled as soon as Wake returns.
@@ -1073,17 +1080,18 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		log = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
 	return &Manager{
-		alloc:               NewAllocator(),
-		run:                 run,
-		vmm:                 vmm,
-		paths:               paths,
-		fcVersion:           fcVersion,
-		log:                 log,
-		live:                make(map[string]*Instance),
-		jobBoots:            make(map[string]*jobBootFlight),
-		pendingProcessExits: make(map[string]int),
-		waking:              make(map[string]struct{}),
-		exportDirs:          make(map[string]string),
+		alloc:                NewAllocator(),
+		run:                  run,
+		vmm:                  vmm,
+		paths:                paths,
+		fcVersion:            fcVersion,
+		log:                  log,
+		live:                 make(map[string]*Instance),
+		readinessLoopCancels: make(map[string]context.CancelFunc),
+		jobBoots:             make(map[string]*jobBootFlight),
+		pendingProcessExits:  make(map[string]int),
+		waking:               make(map[string]struct{}),
+		exportDirs:           make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
 		// for the framework_ready DGRAM receipt path. See the
 		// cidToID field comment for the lifecycle.
@@ -1660,6 +1668,7 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 	// the first destroy is still in flight.
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
 	if lifecycle == nil {
@@ -3051,6 +3060,9 @@ type WakeRequest struct {
 	// plan defaults are used (fail-soft, matching the HealthcheckPath
 	// pattern at engine.go:3360).
 	LivenessProbe json.RawMessage
+	// ReadinessProbe is the optional continuous primary-app traffic probe,
+	// independent from the startup healthcheck and liveness restart policy.
+	ReadinessProbe json.RawMessage
 	// Runtime (issue #470 / PR #470-FU-B) is the runtime id
 	// ("node22", "python312", etc.) the app was woken for. Stored
 	// on the live Instance so the framework-ready receipt handler
@@ -4170,7 +4182,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			"observed_port", report.ObservedPort, "exit", report.ExitCode,
 			"port_norm_mode", report.PortNormalizationMode)
 	}
-	inst := &Instance{Lease: lease, Net: nc, Method: method, ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
+	inst := &Instance{Lease: lease, Net: nc, Method: method, ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, LivenessProbe: append(json.RawMessage(nil), req.LivenessProbe...), ReadinessProbe: append(json.RawMessage(nil), req.ReadinessProbe...), StartupDeadlineS: req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars), Characterization: report, Runtime: req.Runtime, RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs, RestoreError: timings.restoreError}
 	// ADR-098 C11: emit the three vmmd-side wake phases onto the
 	// dedicated histogram. nil-receiver safe. RestoreMs is 0 on
 	// cold boot (no /snapshot/load ran) — the histogram's
@@ -4295,6 +4307,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// or explicit instance teardown.
 	if !req.ExecutionOnly && !req.AppTaskOnly && !lease.IsBuilder && !req.KeepPaused {
 		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
+		m.startReadinessLoop(ctx, req.Instance, lease.Slot, req.ReadinessProbe)
 		m.startFrameworkReadyLoop(ctx, req.Instance)
 	}
 	return inst, nil
@@ -4712,6 +4725,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	// race this teardown and report a second failure for the same instance.
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
 	info, err := m.vmm.Snapshot(ctx, inst.Lease, spec)
@@ -4848,6 +4862,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	}
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err == nil {
@@ -4861,6 +4876,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 			errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", resumeErr)))
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
+	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
 	return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: snapshot: %w", instance, err)
 }
@@ -4910,6 +4926,7 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
+	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
 	return nil
 }
@@ -5020,6 +5037,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 	// branch so an idempotent destroy also cleans up a stale registration.
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
+	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
 	m.mu.Lock()
