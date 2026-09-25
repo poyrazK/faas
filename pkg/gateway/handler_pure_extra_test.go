@@ -105,7 +105,7 @@ func TestSingleSlash(t *testing.T) {
 		"/a/b/": "/a/b",
 	}
 	for in, want := range cases {
-		if got := singleSlash(in); got != want {
+		if got := api.NormalizeEdgeRuleRewriteTarget(in); got != want {
 			t.Errorf("singleSlash(%q) = %q, want %q", in, got, want)
 		}
 	}

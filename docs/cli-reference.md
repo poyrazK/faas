@@ -1385,7 +1385,7 @@ List edge rules
 
 ### edge-rules trace
 
-Preview matching edge rules and simulate request headers and IP/geo decisions
+Preview edge-rule matches and deterministic action outcomes
 
 | Flag | Meaning | |
 |---|---|---|

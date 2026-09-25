@@ -20,7 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleTraceScope = "Host/method/path/header matching is simulated. Header names are case-insensitive and values compare exactly; repeated request-header values are preserved. IP and geo allow/deny decisions use supplied --client-ip/--country directly; trusted-proxy validation and live geo lookup are not performed. Other runtime gates, actions, rewrites, and the final response are not simulated. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+const edgeRuleTraceScope = "Host/method/path/header matching is simulated. Header names are case-insensitive and values compare exactly; repeated request-header values are preserved. Per-rule previews cover route, rewrite, redirect, header operations, maintenance, fixed responses, and IP/geo decisions. Previews are not combined into a final gateway response: runtime phase ordering, cross-kind short-circuits, auth, stateful gates, CORS, validation, cache, retry, circuit-breaker, and async behavior are not simulated. IP and geo use supplied --client-ip/--country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 
 type edgeRuleTraceResult struct {
 	App      string              `json:"app"`
@@ -35,18 +35,37 @@ type edgeRuleTraceResult struct {
 }
 
 type edgeRuleTraceRow struct {
-	ID            string            `json:"id"`
-	Kind          string            `json:"kind"`
-	Priority      int               `json:"priority"`
-	MatchHost     string            `json:"match_host"`
-	MatchPath     string            `json:"match_path"`
-	MatchMethods  []string          `json:"match_methods"`
-	MatchHeaders  map[string]string `json:"match_headers,omitempty"`
-	Status        string            `json:"status"`
-	Reason        string            `json:"reason"`
-	Outcome       string            `json:"outcome"`
-	OutcomeReason string            `json:"outcome_reason"`
-	PrecededBy    string            `json:"preceded_by,omitempty"`
+	ID            string                      `json:"id"`
+	Kind          string                      `json:"kind"`
+	Priority      int                         `json:"priority"`
+	MatchHost     string                      `json:"match_host"`
+	MatchPath     string                      `json:"match_path"`
+	MatchMethods  []string                    `json:"match_methods"`
+	MatchHeaders  map[string]string           `json:"match_headers,omitempty"`
+	Status        string                      `json:"status"`
+	Reason        string                      `json:"reason"`
+	Outcome       string                      `json:"outcome"`
+	OutcomeReason string                      `json:"outcome_reason"`
+	ActionPreview *edgeRuleTraceActionPreview `json:"action_preview,omitempty"`
+	PrecededBy    string                      `json:"preceded_by,omitempty"`
+}
+
+// edgeRuleTraceActionPreview reports a single candidate's deterministic
+// effect. It intentionally does not combine effects across kinds because
+// runtime phase ordering and short-circuit gates are outside this client-side
+// preview.
+type edgeRuleTraceActionPreview struct {
+	Type              string                 `json:"type"`
+	TargetApp         string                 `json:"target_app,omitempty"`
+	Path              string                 `json:"path,omitempty"`
+	StatusCode        int                    `json:"status_code,omitempty"`
+	Location          string                 `json:"location,omitempty"`
+	RedirectHeaders   map[string]string      `json:"redirect_headers,omitempty"`
+	RequestHeaderOps  []api.EdgeRuleHeaderOp `json:"request_header_ops,omitempty"`
+	ResponseHeaderOps []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
+	RetryAfterSeconds int                    `json:"retry_after_seconds,omitempty"`
+	Message           string                 `json:"message,omitempty"`
+	Body              json.RawMessage        `json:"body,omitempty"`
 }
 
 func cmdEdgeRulesTrace(args []string) int {
@@ -196,51 +215,141 @@ func previewEdgeRules(app, host, requestPath, method, clientIP, country string, 
 				}
 			}
 		}
-		row.Outcome, row.OutcomeReason = previewEdgeRuleOutcome(rule, row, clientIP, country)
+		row.Outcome, row.OutcomeReason, row.ActionPreview = previewEdgeRuleOutcome(rule, row, clientIP, country, requestPath)
 		result.Rules = append(result.Rules, row)
 	}
 	return result
 }
 
-func previewEdgeRuleOutcome(rule api.EdgeRuleResponse, row edgeRuleTraceRow, clientIP, country string) (string, string) {
+func previewEdgeRuleOutcome(rule api.EdgeRuleResponse, row edgeRuleTraceRow, clientIP, country, requestPath string) (string, string, *edgeRuleTraceActionPreview) {
 	switch row.Status {
 	case "skipped":
-		return "not_applicable", "static selectors did not match"
+		return "not_applicable", "static selectors did not match", nil
 	case "later_candidate":
-		return "not_evaluated", "a higher-priority matching candidate is considered first"
+		return "not_evaluated", "a higher-priority matching candidate is considered first", nil
 	case "tied_candidate":
-		return "ambiguous", "equal-priority rules have no guaranteed evaluation order"
+		return "ambiguous", "equal-priority rules have no guaranteed evaluation order", nil
 	case "first_candidate":
 	default:
-		return "unknown", "unrecognized trace status"
+		return "unknown", "unrecognized trace status", nil
 	}
 
 	switch rule.Kind {
+	case "route":
+		action, ok := decodeEdgeRuleTraceAction[api.EdgeRuleRouteAction](rule.Action, "route")
+		if !ok || action.TargetAppSlug == "" {
+			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
+		}
+		preview := &edgeRuleTraceActionPreview{Type: "route", TargetApp: action.TargetAppSlug}
+		return "route", fmt.Sprintf("would route to app %q", action.TargetAppSlug), preview
+	case "rewrite":
+		action, ok := decodeEdgeRuleTraceAction[api.EdgeRuleRewriteAction](rule.Action, "rewrite")
+		if !ok {
+			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
+		}
+		preview := &edgeRuleTraceActionPreview{Type: "rewrite", Path: requestPath}
+		rewritten, applies := traceRewritePath(requestPath, *action)
+		if !applies {
+			return "not_applied", fmt.Sprintf("rewrite prefix %q does not match request path %q", action.From, requestPath), preview
+		}
+		preview.Path = rewritten
+		if rewritten == requestPath {
+			return "rewrite", fmt.Sprintf("rewrite leaves request path at %q", rewritten), preview
+		}
+		return "rewrite", fmt.Sprintf("would rewrite request path to %q", rewritten), preview
+	case "redirect":
+		action, ok := decodeEdgeRuleTraceAction[api.EdgeRuleRedirectAction](rule.Action, "redirect")
+		if !ok || action.To == "" {
+			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
+		}
+		status := action.StatusCode
+		switch status {
+		case 301, 302, 307, 308:
+		default:
+			status = http.StatusFound
+		}
+		preview := &edgeRuleTraceActionPreview{Type: "redirect", StatusCode: status, Location: action.To, RedirectHeaders: action.Headers}
+		return "redirect", fmt.Sprintf("would return HTTP %d redirect to %q", status, action.To), preview
+	case "headers":
+		action, ok := decodeEdgeRuleTraceAction[api.EdgeRuleHeadersAction](rule.Action, "headers")
+		if !ok {
+			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
+		}
+		preview := &edgeRuleTraceActionPreview{
+			Type:              "headers",
+			RequestHeaderOps:  append([]api.EdgeRuleHeaderOp(nil), action.RequestHeaders...),
+			ResponseHeaderOps: append([]api.EdgeRuleHeaderOp(nil), action.ResponseHeaders...),
+		}
+		return "headers", fmt.Sprintf("would apply %d request-header and %d response-header operation(s)", len(action.RequestHeaders), len(action.ResponseHeaders)), preview
+	case "maintenance":
+		action, ok := decodeEdgeRuleTraceAction[api.EdgeRuleMaintenanceAction](rule.Action, "maintenance")
+		if !ok {
+			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
+		}
+		retryAfter := action.RetryAfterSeconds
+		if retryAfter <= 0 {
+			retryAfter = api.EdgeRuleMaintenanceRetryAfterSeconds
+		}
+		preview := &edgeRuleTraceActionPreview{Type: "maintenance", StatusCode: http.StatusServiceUnavailable, RetryAfterSeconds: retryAfter, Message: action.Message}
+		return "maintenance", fmt.Sprintf("would return HTTP 503 maintenance response (Retry-After %d)", retryAfter), preview
+	case "respond":
+		action, ok := decodeEdgeRuleTraceAction[api.EdgeRuleRespondAction](rule.Action, "respond")
+		if !ok || action.StatusCode < http.StatusOK || action.StatusCode > 599 {
+			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
+		}
+		body := append(json.RawMessage(nil), action.Body...)
+		preview := &edgeRuleTraceActionPreview{Type: "respond", StatusCode: action.StatusCode, Body: body}
+		return "fixed_response", fmt.Sprintf("would return fixed HTTP %d response", action.StatusCode), preview
 	case "ip":
 		if clientIP == "" {
-			return "needs_context", "supply --client-ip to evaluate this rule"
+			return "needs_context", "supply --client-ip to evaluate this rule", nil
 		}
 		var envelope struct {
 			IP *api.EdgeRuleIPAction `json:"ip"`
 		}
 		if err := json.Unmarshal(rule.Action, &envelope); err != nil || envelope.IP == nil {
-			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it"
+			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
 		}
-		return evaluateIPTrace(*envelope.IP, net.ParseIP(clientIP))
+		outcome, reason := evaluateIPTrace(*envelope.IP, net.ParseIP(clientIP))
+		return outcome, reason, nil
 	case "geo":
 		if country == "" {
-			return "needs_context", "supply --country; trace does not consult the live geo database"
+			return "needs_context", "supply --country; trace does not consult the live geo database", nil
 		}
 		var envelope struct {
 			Geo *api.EdgeRuleGeoAction `json:"geo"`
 		}
 		if err := json.Unmarshal(rule.Action, &envelope); err != nil || envelope.Geo == nil {
-			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it"
+			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
 		}
-		return evaluateGeoTrace(*envelope.Geo, country)
+		outcome, reason := evaluateGeoTrace(*envelope.Geo, country)
+		return outcome, reason, nil
 	default:
-		return "not_simulated", "this rule kind has runtime behavior outside the IP/geo preview"
+		return "not_simulated", "this rule kind has runtime behavior outside the action preview", nil
 	}
+}
+
+func decodeEdgeRuleTraceAction[T any](raw json.RawMessage, kind string) (*T, bool) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, false
+	}
+	encoded, ok := envelope[kind]
+	if !ok {
+		return nil, false
+	}
+	var action T
+	if err := json.Unmarshal(encoded, &action); err != nil {
+		return nil, false
+	}
+	return &action, true
+}
+
+// traceRewritePath mirrors the gateway's prefix-strip + replacement rules.
+// It returns false when the selectors matched but the configured From prefix
+// does not actually match the request path, which the gateway treats as a miss.
+func traceRewritePath(requestPath string, action api.EdgeRuleRewriteAction) (string, bool) {
+	return api.ApplyEdgeRuleRewritePath(requestPath, action.From, action.To)
 }
 
 func evaluateIPTrace(action api.EdgeRuleIPAction, clientIP net.IP) (string, string) {

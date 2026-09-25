@@ -66,6 +66,103 @@ func TestPreviewEdgeRules_EqualPriorityIsAmbiguous(t *testing.T) {
 	}
 }
 
+func TestPreviewEdgeRules_DeterministicActionPreviews(t *testing.T) {
+	cases := []struct {
+		name          string
+		kind          string
+		action        string
+		requestPath   string
+		wantOutcome   string
+		wantType      string
+		wantPath      string
+		wantStatus    int
+		wantRetry     int
+		wantTargetApp string
+	}{
+		{
+			name: "route target", kind: "route",
+			action:      `{"route":{"target_app_slug":"legacy-api"}}`,
+			wantOutcome: "route", wantType: "route", wantTargetApp: "legacy-api",
+		},
+		{
+			name: "rewrite path", kind: "rewrite", requestPath: "/api/items",
+			action:      `{"rewrite":{"from":"/api","to":"/v1"}}`,
+			wantOutcome: "rewrite", wantType: "rewrite", wantPath: "/v1/items",
+		},
+		{
+			name: "rewrite prefix mismatch", kind: "rewrite", requestPath: "/api/items",
+			action:      `{"rewrite":{"from":"/v2","to":"/v1"}}`,
+			wantOutcome: "not_applied", wantType: "rewrite", wantPath: "/api/items",
+		},
+		{
+			name: "redirect", kind: "redirect",
+			action:      `{"redirect":{"status_code":307,"to":"/new-path","headers":{"X-Redirect":"yes"}}}`,
+			wantOutcome: "redirect", wantType: "redirect", wantStatus: 307,
+		},
+		{
+			name: "headers", kind: "headers",
+			action:      `{"headers":{"request_headers":[{"name":"X-Request","action":"set","value":"yes"}],"response_headers":[{"name":"X-Response","action":"add","value":"yes"}]}}`,
+			wantOutcome: "headers", wantType: "headers",
+		},
+		{
+			name: "maintenance default", kind: "maintenance",
+			action:      `{"maintenance":{"message":"back soon"}}`,
+			wantOutcome: "maintenance", wantType: "maintenance", wantStatus: http.StatusServiceUnavailable, wantRetry: api.EdgeRuleMaintenanceRetryAfterSeconds,
+		},
+		{
+			name: "fixed response", kind: "respond",
+			action:      `{"respond":{"status_code":201,"body":{"ok":true}}}`,
+			wantOutcome: "fixed_response", wantType: "respond", wantStatus: 201,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requestPath := tc.requestPath
+			if requestPath == "" {
+				requestPath = "/"
+			}
+			rule := api.EdgeRuleResponse{
+				ID: "rule", Enabled: true, Kind: tc.kind, MatchHost: "*", MatchPath: "*",
+				Action: json.RawMessage(tc.action),
+			}
+			got := previewEdgeRules("demo", "example.com", requestPath, "GET", "", "", []api.EdgeRuleResponse{rule})
+			if len(got.Rules) != 1 {
+				t.Fatalf("got %d rows, want 1", len(got.Rules))
+			}
+			row := got.Rules[0]
+			if row.Outcome != tc.wantOutcome || row.ActionPreview == nil || row.ActionPreview.Type != tc.wantType {
+				t.Fatalf("row = %#v, want outcome %q and preview type %q", row, tc.wantOutcome, tc.wantType)
+			}
+			if tc.wantPath != "" && row.ActionPreview.Path != tc.wantPath {
+				t.Errorf("preview path = %q, want %q", row.ActionPreview.Path, tc.wantPath)
+			}
+			if tc.wantStatus != 0 && row.ActionPreview.StatusCode != tc.wantStatus {
+				t.Errorf("preview status = %d, want %d", row.ActionPreview.StatusCode, tc.wantStatus)
+			}
+			if tc.wantRetry != 0 && row.ActionPreview.RetryAfterSeconds != tc.wantRetry {
+				t.Errorf("preview retry-after = %d, want %d", row.ActionPreview.RetryAfterSeconds, tc.wantRetry)
+			}
+			if tc.wantTargetApp != "" && row.ActionPreview.TargetApp != tc.wantTargetApp {
+				t.Errorf("preview target app = %q, want %q", row.ActionPreview.TargetApp, tc.wantTargetApp)
+			}
+		})
+	}
+}
+
+func TestPreviewEdgeRules_DeterministicActionPreviewIsExplicitlyPerRule(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "respond", Enabled: true, Kind: "respond", MatchHost: "*", MatchPath: "*",
+		Action: json.RawMessage(`{"respond":{"status_code":200,"body":{"ok":true}}}`),
+	}
+	got := previewEdgeRules("demo", "example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule})
+	if !strings.Contains(got.Scope, "not combined into a final gateway response") {
+		t.Fatalf("scope does not disclaim combined execution: %q", got.Scope)
+	}
+	if got.Rules[0].Outcome != "fixed_response" || got.Rules[0].ActionPreview == nil || got.Rules[0].ActionPreview.StatusCode != 200 {
+		t.Fatalf("respond preview = %#v", got.Rules[0])
+	}
+}
+
 func TestTraceHostAndPathSemantics(t *testing.T) {
 	for _, tc := range []struct {
 		pattern, host string

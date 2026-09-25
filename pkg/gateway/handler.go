@@ -2160,34 +2160,14 @@ func (h *Handler) matchAndApplyRewrite(r *http.Request, app App) bool {
 		}
 		return false
 	}
-	// Apply the prefix-strip + replacement. From="" means
-	// "match-any path" (the path-glob filter passed); we still
-	// need a non-empty To to actually mutate. A rule with From=""
-	// but To="/v1" effectively prefixes every request — the spec
-	// §4.1.2 documents this. From="*" is treated identically.
+	// Apply the shared pure rewrite function so the trace preview and live
+	// gateway cannot diverge on prefix and slash semantics.
 	from := rule.From
 	if from == "*" {
 		from = ""
 	}
-	if from == "" {
-		// Pure prefix-add: prepend To to the existing path. Both
-		// singleSlash(To) and r.URL.Path start with "/" so we can't
-		// just concatenate — that produces "//api/x" (double slash)
-		// when To="/" (valid per apid EdgeRuleRewriteAction.Validate
-		// — non-empty is the only check). We special-case To="/"
-		// (degenerate rewrite, leave path alone) and otherwise
-		// concatenate the single-slashed To with r.URL.Path as-is.
-		// For To="/v1" + /api/x → "/v1/api/x".
-		to := singleSlash(rule.To)
-		if to == "/" {
-			// Degenerate rewrite (from="", To="/") — leave
-			// r.URL.Path unchanged.
-		} else {
-			r.URL.Path = to + r.URL.Path
-		}
-	} else if strings.HasPrefix(r.URL.Path, from) {
-		r.URL.Path = singleSlash(rule.To) + r.URL.Path[len(from):]
-	} else {
+	rewrittenPath, applied := api.ApplyEdgeRuleRewritePath(r.URL.Path, rule.From, rule.To)
+	if !applied {
 		// The path-glob filter matched but the From prefix
 		// doesn't actually prefix the path (e.g. glob="/api/*"
 		// matched "/api/v1" but From="/v1/"). Treat as miss —
@@ -2197,6 +2177,7 @@ func (h *Handler) matchAndApplyRewrite(r *http.Request, app App) bool {
 		}
 		return false
 	}
+	r.URL.Path = rewrittenPath
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.rewrite_matched", nil, map[string]any{
 			"rule_id":   rule.ID,
@@ -4479,22 +4460,6 @@ func stampTrustedClientIP(r *http.Request) {
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
 		r.Header.Set(wire.ClientIPHeader, ip.String())
 	}
-}
-
-// singleSlash collapses a path to the canonical slash form (no
-// double slashes from `To: "/v1"` + `/api/...`). Helper for
-// matchAndApplyRewrite's prefix-add and replace branches.
-func singleSlash(p string) string {
-	if p == "" {
-		return "/"
-	}
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	if len(p) > 1 && strings.HasSuffix(p, "/") {
-		p = p[:len(p)-1]
-	}
-	return p
 }
 
 // applyHeaderOp applies one EdgeRuleHeaderOp mutation to a header
