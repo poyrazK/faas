@@ -10,6 +10,85 @@ import (
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 )
 
+func TestParseScenarioConfig(t *testing.T) {
+	config := `{"version":1,"app":"demo","request":{"url":"https://EXAMPLE.com/submit?ignored=yes","method":"post","headers":["Content-Type: application/json","X-Region: east","X-Region: west","Authorization: Bearer config-secret-123"],"client_ip":"203.0.113.7","country":"us","body":"{\"count\":3}"}}`
+	input, err := edgeruletrace.ParseScenarioConfig([]byte(config))
+	if err != nil {
+		t.Fatalf("ParseScenarioConfig: %v", err)
+	}
+	if input.App != "demo" || input.Host != "example.com" || input.Path != "/submit" || input.Method != http.MethodPost {
+		t.Fatalf("request identity = %#v", input)
+	}
+	if input.ClientIP != "203.0.113.7" || input.Country != "US" || string(input.Body) != `{"count":3}` || !input.BodyProvided {
+		t.Fatalf("request context = %#v", input)
+	}
+	if got := input.Headers.Values("X-Region"); len(got) != 2 || got[0] != "east" || got[1] != "west" {
+		t.Fatalf("repeated headers = %#v", got)
+	}
+	if got := input.Headers.Get("Authorization"); got != "Bearer config-secret-123" {
+		t.Fatalf("scenario input was redacted before evaluation: %q", got)
+	}
+}
+
+func TestParseScenarioConfigSupportsBase64AndExplicitEmptyBody(t *testing.T) {
+	for _, config := range []string{
+		`{"version":1,"app":"demo","request":{"url":"https://example.com","body":""}}`,
+		`{"version":1,"app":"demo","request":{"url":"https://example.com","body_base64":"AAEC/w=="}}`,
+	} {
+		input, err := edgeruletrace.ParseScenarioConfig([]byte(config))
+		if err != nil {
+			t.Fatalf("ParseScenarioConfig(%s): %v", config, err)
+		}
+		if !input.BodyProvided {
+			t.Errorf("body was not marked as supplied for config %s", config)
+		}
+	}
+	input, err := edgeruletrace.ParseScenarioConfig([]byte(`{"version":1,"app":"demo","request":{"url":"https://example.com","body_base64":"AAEC/w=="}}`))
+	if err != nil {
+		t.Fatalf("ParseScenarioConfig base64: %v", err)
+	}
+	if string(input.Body) != string([]byte{0, 1, 2, 255}) {
+		t.Fatalf("decoded body = %v", input.Body)
+	}
+}
+
+func TestParseScenarioConfigRejectsInvalidConfigurations(t *testing.T) {
+	tooLargeBody, err := json.Marshal(edgeruletrace.ScenarioConfig{
+		Version: edgeruletrace.ScenarioConfigVersion, App: "demo",
+		Request: edgeruletrace.ScenarioRequestConfig{URL: "https://example.com", Body: stringPointer(strings.Repeat("x", edgeruletrace.MaxTraceBodyBytes+1))},
+	})
+	if err != nil {
+		t.Fatalf("Marshal oversized scenario: %v", err)
+	}
+	cases := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{"unsupported version", `{"version":2,"app":"demo","request":{"url":"https://example.com"}}`, "unsupported trace scenario config version"},
+		{"unknown field", `{"version":1,"app":"demo","request":{"url":"https://example.com","region":"west"}}`, "unknown field"},
+		{"trailing JSON", `{"version":1,"app":"demo","request":{"url":"https://example.com"}} {}`, "one JSON object"},
+		{"credentials in URL", `{"version":1,"app":"demo","request":{"url":"https://user:password@example.com"}}`, "without credentials"},
+		{"both body encodings", `{"version":1,"app":"demo","request":{"url":"https://example.com","body":"x","body_base64":"eA=="}}`, "only one of body or body_base64"},
+		{"invalid base64", `{"version":1,"app":"demo","request":{"url":"https://example.com","body_base64":"%%%"}}`, "valid standard base64"},
+		{"malformed headers", `{"version":1,"app":"demo","request":{"url":"https://example.com","headers":["Authorization secret-value"]}}`, "valid Name:Value pairs"},
+		{"oversized body", string(tooLargeBody), "request body must not exceed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := edgeruletrace.ParseScenarioConfig([]byte(tc.config))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ParseScenarioConfig error = %v, want substring %q", err, tc.want)
+			}
+			if tc.name == "malformed headers" && strings.Contains(err.Error(), "secret-value") {
+				t.Fatalf("header value leaked through config error: %v", err)
+			}
+		})
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
 func TestSimulateValidateRuleWithRequestBody(t *testing.T) {
 	rule := validateTraceRule(t, "validate", api.ValidateModeBlock, `{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]}`, nil, 0)
 	input := validateTraceInput(`{"count":3}`)
