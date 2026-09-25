@@ -3094,6 +3094,9 @@ func (s *server) handler() http.Handler {
 	// edge-rule handler, preserving ownership, validation, quotas, and
 	// RFC7807 problem responses.
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateEdgeRule))))
+	// Request tracing is account-scoped and read-only, but uses the same
+	// named CSRF envelope as the other edge-rule forms.
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/trace", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTraceEdgeRules))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/toggle", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardToggleEdgeRule))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEdgeRule))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/security-headers", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSecurityHeaders))))
