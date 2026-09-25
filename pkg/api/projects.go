@@ -55,16 +55,18 @@ type ProjectDeletePreviewResponse struct {
 
 // ProjectEnvironmentResponse is one durable environment registry entry.
 type ProjectEnvironmentResponse struct {
-	ID              string                           `json:"id"`
-	ProjectID       string                           `json:"project_id"`
-	Slug            string                           `json:"slug"`
-	Protected       bool                             `json:"protected"`
-	PreviewPRNumber int                              `json:"preview_pr_number,omitempty"`
-	PreviewHeadSHA  string                           `json:"preview_head_sha,omitempty"`
-	CreatedAt       string                           `json:"created_at"`
-	UpdatedAt       string                           `json:"updated_at"`
-	ClonedFrom      string                           `json:"cloned_from,omitempty"`
-	Clone           *ProjectEnvironmentCloneResponse `json:"clone,omitempty"`
+	ID               string                           `json:"id"`
+	ProjectID        string                           `json:"project_id"`
+	Slug             string                           `json:"slug"`
+	Protected        bool                             `json:"protected"`
+	PreviewPRNumber  int                              `json:"preview_pr_number,omitempty"`
+	PreviewHeadSHA   string                           `json:"preview_head_sha,omitempty"`
+	PreviewState     string                           `json:"preview_state,omitempty"`
+	PreviewExpiresAt string                           `json:"preview_expires_at,omitempty"`
+	CreatedAt        string                           `json:"created_at"`
+	UpdatedAt        string                           `json:"updated_at"`
+	ClonedFrom       string                           `json:"cloned_from,omitempty"`
+	Clone            *ProjectEnvironmentCloneResponse `json:"clone,omitempty"`
 }
 
 // ProjectEnvironmentCloneResponse reports non-secret counts copied by an

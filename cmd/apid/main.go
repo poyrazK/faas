@@ -702,6 +702,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
+		go srv.runProjectEnvironmentPreviewJanitor(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedRealtimeEndpointReconciler(ctx)
 		go srv.runManagedRealtimeOwnerReaper(ctx)

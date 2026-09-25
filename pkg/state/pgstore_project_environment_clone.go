@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -203,14 +204,22 @@ func checkProjectEnvironmentCloneQuota(ctx context.Context, tx pgx.Tx, clone Pro
 }
 
 func insertClonedProjectEnvironment(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (ProjectEnvironment, error) {
+	environment := ProjectEnvironment{
+		PreviewPRNumber: clone.PreviewPRNumber,
+		PreviewHeadSHA:  clone.PreviewHeadSHA,
+	}
+	if err := initializeProjectEnvironmentPreviewLifecycle(&environment, time.Now().UTC()); err != nil {
+		return ProjectEnvironment{}, err
+	}
 	row := tx.QueryRow(ctx, `
 		insert into project_environments
-		    (account_id, project_id, slug, protected, preview_pr_number, preview_head_sha)
-		values ($1, $2, $3, $4, nullif($5, 0), nullif($6, ''))
+		    (account_id, project_id, slug, protected, preview_pr_number, preview_head_sha, preview_state, preview_expires_at)
+		values ($1, $2, $3, $4, nullif($5, 0), nullif($6, ''), nullif($7, ''), $8)
 		returning id, account_id, project_id, slug, protected,
-		          coalesce(preview_pr_number, 0), coalesce(preview_head_sha, ''), created_at, updated_at
+		          coalesce(preview_pr_number, 0), coalesce(preview_head_sha, ''),
+		          coalesce(preview_state, ''), preview_expires_at, created_at, updated_at
 	`, clone.AccountID, clone.ProjectID, clone.TargetSlug, clone.TargetProtected,
-		clone.PreviewPRNumber, clone.PreviewHeadSHA)
+		clone.PreviewPRNumber, clone.PreviewHeadSHA, environment.PreviewState, environment.PreviewExpiresAt)
 	created, err := scanProjectEnvironment(row)
 	return created, mapErr(err)
 }

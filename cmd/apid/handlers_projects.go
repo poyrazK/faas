@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -559,43 +558,20 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	resourceCleanup, err := s.planProjectEnvironmentManagedResourceCleanup(r.Context(), acct, project, environmentSlug)
-	if err != nil {
-		if errors.Is(err, managedpostgres.ErrUnavailable) || errors.Is(err, managedpostgres.ErrConflict) ||
-			errors.Is(err, managedpostgres.ErrNotFound) {
-			api.WriteProblem(w, managedPostgresManifestProblem(err, "managed resources could not be inspected; the environment was not deleted"))
-		} else {
-			api.WriteProblem(w, api.ErrCapacity("could not inspect environment resources; the environment was not deleted"))
-		}
-		return
-	}
-	cleanupResources := projectEnvironmentCleanupResources(resourceCleanup)
-	var cleanupJob state.ProjectEnvironmentCleanupJob
-	var cleanupStore state.ProjectEnvironmentCleanupStore
-	if !cleanupResources.Empty() {
-		var supported bool
-		cleanupStore, supported = s.store.(state.ProjectEnvironmentCleanupStore)
-		if !supported {
-			api.WriteProblem(w, api.ErrCapacity("durable managed-resource cleanup is unavailable; the environment was not deleted"))
-			return
-		}
-		cleanupJob, err = cleanupStore.DeleteProjectEnvironmentWithCleanup(
-			r.Context(), acct.ID, project.ID, environmentSlug, cleanupResources,
-			uuid.NewString(), projectEnvironmentCleanupLeaseDuration,
-		)
-	} else {
-		err = s.store.DeleteProjectEnvironment(r.Context(), acct.ID, project.ID, environmentSlug)
-	}
-	if err != nil {
+	cleanupPending, cleanupErr := s.deleteProjectEnvironmentWithCleanup(r.Context(), acct, project, environment)
+	if cleanupErr != nil && !cleanupPending {
 		switch {
-		case errors.Is(err, state.ErrNotFound):
+		case errors.Is(cleanupErr, managedpostgres.ErrUnavailable) || errors.Is(cleanupErr, managedpostgres.ErrConflict) ||
+			errors.Is(cleanupErr, managedpostgres.ErrNotFound):
+			api.WriteProblem(w, managedPostgresManifestProblem(cleanupErr, "managed resources could not be inspected; the environment was not deleted"))
+		case errors.Is(cleanupErr, state.ErrNotFound):
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environmentSlug))
-		case errors.Is(err, state.ErrConflict):
+		case errors.Is(cleanupErr, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 				"Project environment cannot be deleted",
 				"only unprotected, non-production environments without live releases or bound domains can be deleted"))
 		default:
-			api.WriteProblem(w, api.ErrCapacity("could not delete project environment"))
+			api.WriteProblem(w, api.ErrCapacity("could not delete project environment or inspect its managed resources"))
 		}
 		return
 	}
@@ -603,39 +579,31 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		"project_id": project.ID, "project_slug": project.Slug,
 		"environment_id": environment.ID, "environment_slug": environment.Slug,
 	})
-	if cleanupJob.ID != "" {
-		cleanupErr := s.cleanupProjectEnvironmentManagedResourcePayload(context.WithoutCancel(r.Context()), acct, cleanupJob.Resources)
-		if cleanupErr == nil {
-			cleanupErr = cleanupStore.CompleteProjectEnvironmentCleanup(context.WithoutCancel(r.Context()), cleanupJob.ID, cleanupJob.LeaseToken)
-		} else {
-			retryErr := cleanupStore.RetryProjectEnvironmentCleanup(
-				context.WithoutCancel(r.Context()), cleanupJob.ID, cleanupJob.LeaseToken,
-				time.Now().UTC().Add(projectEnvironmentCleanupRetryDelay(cleanupJob.AttemptCount+1)),
-			)
-			cleanupErr = errors.Join(cleanupErr, retryErr)
+	if cleanupPending {
+		if s.log != nil {
+			s.log.Error("project environment managed resource cleanup incomplete", "project_id", project.ID, "environment", environmentSlug, "err", cleanupErr)
 		}
-		if cleanupErr != nil {
-			if s.log != nil {
-				s.log.Error("project environment managed resource cleanup incomplete", "project_id", project.ID, "environment", environmentSlug, "err", cleanupErr)
-			}
-			s.audit.Emit(context.WithoutCancel(r.Context()), "project.environment.resource_cleanup_failed", &acct.ID, map[string]any{
-				"project_id": project.ID, "project_slug": project.Slug, "environment_slug": environmentSlug,
-			})
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
+		s.audit.Emit(context.WithoutCancel(r.Context()), "project.environment.resource_cleanup_failed", &acct.ID, map[string]any{
+			"project_id": project.ID, "project_slug": project.Slug, "environment_slug": environmentSlug,
+		})
+		w.WriteHeader(http.StatusAccepted)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func projectEnvironmentResponse(environment state.ProjectEnvironment) api.ProjectEnvironmentResponse {
-	return api.ProjectEnvironmentResponse{
+	response := api.ProjectEnvironmentResponse{
 		ID: environment.ID, ProjectID: environment.ProjectID, Slug: environment.Slug,
 		Protected: environment.Protected, PreviewPRNumber: environment.PreviewPRNumber,
-		PreviewHeadSHA: environment.PreviewHeadSHA,
-		CreatedAt:      environment.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:      environment.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		PreviewHeadSHA: environment.PreviewHeadSHA, PreviewState: environment.PreviewState,
+		CreatedAt: environment.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt: environment.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if environment.PreviewExpiresAt != nil {
+		response.PreviewExpiresAt = environment.PreviewExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	return response
 }
 
 func projectEnvironmentNotFound(projectSlug, environmentSlug string) *api.Problem {

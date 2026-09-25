@@ -148,6 +148,9 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	if err != nil {
 		return gateway.App{}, false, err
 	}
+	if environment.PreviewState == state.ProjectEnvironmentPreviewTearingDown {
+		return gateway.App{}, false, nil
+	}
 	app, err := r.store.AppByID(ctx, appID)
 	if errors.Is(err, state.ErrNotFound) {
 		// MemStore uses compact hexadecimal IDs while PostgreSQL returns

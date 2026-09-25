@@ -189,7 +189,8 @@ func TestProjectEnvironmentPRPreviewIdentity(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.PreviewPRNumber != 381 || created.PreviewHeadSHA != sha {
+	if created.PreviewPRNumber != 381 || created.PreviewHeadSHA != sha ||
+		created.PreviewState != state.ProjectEnvironmentPreviewOpen || created.PreviewExpiresAt == "" {
 		t.Fatalf("created PR preview = %+v", created)
 	}
 	byPR, err := store.ProjectEnvironmentByPreviewPR(ctx, acct.ID, project.ID, 381)

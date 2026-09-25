@@ -176,6 +176,9 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		PreviewPRNumber: clone.PreviewPRNumber, PreviewHeadSHA: clone.PreviewHeadSHA,
 		CreatedAt: now, UpdatedAt: now,
 	}
+	if err := initializeProjectEnvironmentPreviewLifecycle(&created, now); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
 	m.projectEnvironments[created.ID] = created
 	result := m.copyProjectEnvironmentConfigLocked(clone, created.CreatedAt)
 	result.WorkloadsCopied = len(apps)

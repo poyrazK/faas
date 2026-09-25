@@ -4598,11 +4598,16 @@ func scanProjects(rows pgx.Rows) ([]Project, error) {
 
 func scanProjectEnvironment(row pgx.Row) (ProjectEnvironment, error) {
 	var env ProjectEnvironment
+	var previewExpiresAt sql.NullTime
 	if err := row.Scan(
 		&env.ID, &env.AccountID, &env.ProjectID, &env.Slug, &env.Protected,
-		&env.PreviewPRNumber, &env.PreviewHeadSHA, &env.CreatedAt, &env.UpdatedAt,
+		&env.PreviewPRNumber, &env.PreviewHeadSHA, &env.PreviewState, &previewExpiresAt,
+		&env.CreatedAt, &env.UpdatedAt,
 	); err != nil {
 		return ProjectEnvironment{}, mapErr(err)
+	}
+	if previewExpiresAt.Valid {
+		env.PreviewExpiresAt = &previewExpiresAt.Time
 	}
 	return env, nil
 }
@@ -4611,11 +4616,16 @@ func scanProjectEnvironments(rows pgx.Rows) ([]ProjectEnvironment, error) {
 	out := make([]ProjectEnvironment, 0)
 	for rows.Next() {
 		var env ProjectEnvironment
+		var previewExpiresAt sql.NullTime
 		if err := rows.Scan(
 			&env.ID, &env.AccountID, &env.ProjectID, &env.Slug, &env.Protected,
-			&env.PreviewPRNumber, &env.PreviewHeadSHA, &env.CreatedAt, &env.UpdatedAt,
+			&env.PreviewPRNumber, &env.PreviewHeadSHA, &env.PreviewState, &previewExpiresAt,
+			&env.CreatedAt, &env.UpdatedAt,
 		); err != nil {
 			return nil, mapErr(err)
+		}
+		if previewExpiresAt.Valid {
+			env.PreviewExpiresAt = &previewExpiresAt.Time
 		}
 		out = append(out, env)
 	}
@@ -4916,6 +4926,7 @@ func (s *PgStore) ListProjectEnvironments(ctx context.Context, accountID, projec
 	rows, err := s.pool.Query(ctx, `
 		select e.id, e.account_id, e.project_id, e.slug, e.protected,
 		       coalesce(e.preview_pr_number, 0), coalesce(e.preview_head_sha, ''),
+		       coalesce(e.preview_state, ''), e.preview_expires_at,
 		       e.created_at, e.updated_at
 		  from project_environments e
 		  join projects p on p.id = e.project_id
@@ -4946,6 +4957,7 @@ func (s *PgStore) ProjectEnvironmentBySlug(ctx context.Context, accountID, proje
 	row := s.pool.QueryRow(ctx, `
 		select e.id, e.account_id, e.project_id, e.slug, e.protected,
 		       coalesce(e.preview_pr_number, 0), coalesce(e.preview_head_sha, ''),
+		       coalesce(e.preview_state, ''), e.preview_expires_at,
 		       e.created_at, e.updated_at
 		  from project_environments e
 		  join projects p on p.id = e.project_id
@@ -4961,6 +4973,7 @@ func (s *PgStore) ProjectEnvironmentByPreviewPR(ctx context.Context, accountID, 
 	row := s.pool.QueryRow(ctx, `
 		select e.id, e.account_id, e.project_id, e.slug, e.protected,
 		       coalesce(e.preview_pr_number, 0), coalesce(e.preview_head_sha, ''),
+		       coalesce(e.preview_state, ''), e.preview_expires_at,
 		       e.created_at, e.updated_at
 		  from project_environments e
 		  join projects p on p.id = e.project_id
@@ -4975,7 +4988,8 @@ func (s *PgStore) ProjectEnvironmentByPreviewPR(ctx context.Context, accountID, 
 func (s *PgStore) ProjectEnvironmentByID(ctx context.Context, id string) (ProjectEnvironment, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, project_id, slug, protected,
-		       coalesce(preview_pr_number, 0), coalesce(preview_head_sha, ''), created_at, updated_at
+		       coalesce(preview_pr_number, 0), coalesce(preview_head_sha, ''),
+		       coalesce(preview_state, ''), preview_expires_at, created_at, updated_at
 		  from project_environments where id = $1
 	`, id)
 	return scanProjectEnvironment(row)
@@ -4989,12 +5003,17 @@ func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvir
 	if err != nil || project.AccountID != env.AccountID {
 		return ProjectEnvironment{}, ErrNotFound
 	}
+	if err := initializeProjectEnvironmentPreviewLifecycle(&env, time.Now().UTC()); err != nil {
+		return ProjectEnvironment{}, err
+	}
 	row := s.pool.QueryRow(ctx, `
-		insert into project_environments (account_id, project_id, slug, protected, preview_pr_number, preview_head_sha)
-		values ($1, $2, $3, $4, nullif($5, 0), nullif($6, ''))
+		insert into project_environments (account_id, project_id, slug, protected, preview_pr_number, preview_head_sha, preview_state, preview_expires_at)
+		values ($1, $2, $3, $4, nullif($5, 0), nullif($6, ''), nullif($7, ''), $8)
 		returning id, account_id, project_id, slug, protected,
-		          coalesce(preview_pr_number, 0), coalesce(preview_head_sha, ''), created_at, updated_at
-	`, env.AccountID, env.ProjectID, env.Slug, env.Protected, env.PreviewPRNumber, env.PreviewHeadSHA)
+		          coalesce(preview_pr_number, 0), coalesce(preview_head_sha, ''),
+		          coalesce(preview_state, ''), preview_expires_at, created_at, updated_at
+	`, env.AccountID, env.ProjectID, env.Slug, env.Protected, env.PreviewPRNumber, env.PreviewHeadSHA,
+		env.PreviewState, env.PreviewExpiresAt)
 	created, err := scanProjectEnvironment(row)
 	if err != nil {
 		return ProjectEnvironment{}, mapErr(err)
@@ -5020,6 +5039,7 @@ func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accoun
 		   and e.project_id = $2 and e.slug = $3
 		returning e.id, e.account_id, e.project_id, e.slug, e.protected,
 		          coalesce(e.preview_pr_number, 0), coalesce(e.preview_head_sha, ''),
+		          coalesce(e.preview_state, ''), e.preview_expires_at,
 		          e.created_at, e.updated_at
 	`, accountID, projectID, slug, protected)
 	return scanProjectEnvironment(row)
@@ -5058,13 +5078,15 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 
 	var projectSlug string
 	var protected bool
+	var previewPRNumber int
+	var previewState string
 	err = tx.QueryRow(ctx, `
-		select p.slug, e.protected
+		select p.slug, e.protected, coalesce(e.preview_pr_number, 0), coalesce(e.preview_state, '')
 		  from project_environments e
 		  join projects p on p.id = e.project_id
 		 where p.account_id = $1 and e.project_id = $2 and e.slug = $3
 		 for update
-	`, accountID, projectID, slug).Scan(&projectSlug, &protected)
+	`, accountID, projectID, slug).Scan(&projectSlug, &protected, &previewPRNumber, &previewState)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ProjectEnvironmentCleanupJob{}, ErrNotFound
@@ -5080,6 +5102,43 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 	}
 	if hasBoundDomain {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	if previewPRNumber > 0 && previewState == ProjectEnvironmentPreviewTearingDown {
+		apps, err := tx.Query(ctx, `
+			select id from apps
+			 where account_id = $1 and project_id = $2
+		 order by id
+		 for update
+		`, accountID, projectID)
+		if err != nil {
+			return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		}
+		for apps.Next() {
+			var appID string
+			if err := apps.Scan(&appID); err != nil {
+				apps.Close()
+				return ProjectEnvironmentCleanupJob{}, mapErr(err)
+			}
+		}
+		if err := apps.Err(); err != nil {
+			apps.Close()
+			return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		}
+		apps.Close()
+		var hasInFlightRelease bool
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from apps a
+				join deployments d on d.app_id = a.id
+				where a.account_id = $1 and a.project_id = $2 and d.scope = $3
+				  and d.status in ('pending', 'building', 'imaging', 'snapshotting', 'live')
+			)
+		`, accountID, projectID, slug).Scan(&hasInFlightRelease); err != nil {
+			return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		}
+		if hasInFlightRelease {
+			return ProjectEnvironmentCleanupJob{}, ErrConflict
+		}
 	}
 
 	var hasLiveRelease bool
@@ -8496,8 +8555,11 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("state: mark deployment live resolve app: %w", err)
 	}
-	var locked int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {
+	var appProjectID, appPreviewOfSlug string
+	if err := tx.QueryRow(ctx, `
+		select coalesce(project_id::text, ''), coalesce(preview_of_slug, '')
+		  from apps where id = $1 for update
+	`, appID).Scan(&appProjectID, &appPreviewOfSlug); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -8515,6 +8577,40 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	}
 	if dep.Status == DeployCancelled {
 		return ErrInvalidStateTransition
+	}
+	if appProjectID != "" && appPreviewOfSlug == "" && normalizedDeploymentScope(dep.Scope) != DefaultEnvScope {
+		var previewTearingDown bool
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from project_environments
+				 where project_id = $1 and slug = $2
+				   and preview_pr_number is not null and preview_state = 'tearing_down'
+			)
+		`, appProjectID, normalizedDeploymentScope(dep.Scope)).Scan(&previewTearingDown); err != nil {
+			return fmt.Errorf("state: mark deployment live check preview lifecycle: %w", err)
+		}
+		if previewTearingDown {
+			if dep.Status == DeploySuperseded || dep.Status == DeployFailed {
+				return ErrInvalidStateTransition
+			}
+			if _, err := tx.Exec(ctx, `
+				update deployments set status = 'superseded', traffic_percent = 0
+				 where id = $1
+			`, id); err != nil {
+				return fmt.Errorf("state: supersede release for expired project preview: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `
+				select pg_notify('deployment_changed', json_build_object(
+					'deployment_id', $1, 'app_id', $2, 'status', 'superseded'
+				)::text)
+			`, id, appID); err != nil {
+				return fmt.Errorf("state: notify expired project preview release: %w", err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return fmt.Errorf("state: commit expired project preview release: %w", err)
+			}
+			return ErrInvalidStateTransition
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		update crons
