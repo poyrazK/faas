@@ -12,9 +12,17 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/edgevalidate"
 )
 
-const Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation below composes deterministic actions in gateway phase order, including rewrite and request-header mutations. It stops as incomplete at a matching rule whose result needs runtime state or unavailable request context. A completed 'continue' outcome means the inspected edge-rule phases did not terminate the request, not that the app will return successfully. App-level maintenance, ingress and auth policy, target app existence and ownership, CORS execution, declared routes, body gates, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+const (
+	// MaxTraceBodyBytes bounds request payloads accepted by the CLI and
+	// dashboard simulator. It is intentionally lower than gateway limits so a
+	// trace cannot consume unbounded memory or schema-validation time.
+	MaxTraceBodyBytes = 1 << 20
+
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate rules; its contents are never included in the result. The trace stops as incomplete where runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. App-level maintenance, ingress/auth policy, target-app rules after routing, CORS execution, declared routes, explicit limit rules, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+)
 
 // Input is the request context that can be simulated without contacting the
 // gateway or app runtime. Call NormalizeInput before Simulate.
@@ -26,19 +34,28 @@ type Input struct {
 	ClientIP string
 	Country  string
 	Headers  http.Header
+	Body     []byte
+	// BodyProvided distinguishes an intentionally empty body from omitted
+	// request-body context. Validate rules remain incomplete when omitted.
+	BodyProvided bool
+	// RequestBodyMaxBytes is the app's effective plan cap. Zero selects the
+	// platform maximum for callers that do not have app metadata.
+	RequestBodyMaxBytes int64
 }
 
 type Result struct {
-	App        string              `json:"app"`
-	Host       string              `json:"host"`
-	Path       string              `json:"path"`
-	Method     string              `json:"method"`
-	ClientIP   string              `json:"client_ip,omitempty"`
-	Country    string              `json:"country,omitempty"`
-	Headers    map[string][]string `json:"headers,omitempty"`
-	Scope      string              `json:"scope"`
-	Rules      []RuleRow           `json:"rules"`
-	Simulation Simulation          `json:"simulation"`
+	App          string              `json:"app"`
+	Host         string              `json:"host"`
+	Path         string              `json:"path"`
+	Method       string              `json:"method"`
+	ClientIP     string              `json:"client_ip,omitempty"`
+	Country      string              `json:"country,omitempty"`
+	Headers      map[string][]string `json:"headers,omitempty"`
+	BodyProvided bool                `json:"body_provided"`
+	BodyBytes    int                 `json:"body_bytes,omitempty"`
+	Scope        string              `json:"scope"`
+	Rules        []RuleRow           `json:"rules"`
+	Simulation   Simulation          `json:"simulation"`
 }
 
 type Simulation struct {
@@ -72,6 +89,8 @@ type SimulationStep struct {
 	RetryAfterSeconds int                    `json:"retry_after_seconds,omitempty"`
 	Message           string                 `json:"message,omitempty"`
 	TargetApp         string                 `json:"target_app,omitempty"`
+	ValidationField   string                 `json:"validation_field,omitempty"`
+	ValidationKeyword string                 `json:"validation_keyword,omitempty"`
 	RequestOps        []api.EdgeRuleHeaderOp `json:"request_header_ops,omitempty"`
 	ResponseOps       []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
 	Reason            string                 `json:"reason"`
@@ -104,6 +123,8 @@ type ActionPreview struct {
 	ResponseHeaderOps []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
 	RetryAfterSeconds int                    `json:"retry_after_seconds,omitempty"`
 	Message           string                 `json:"message,omitempty"`
+	ValidationField   string                 `json:"validation_field,omitempty"`
+	ValidationKeyword string                 `json:"validation_keyword,omitempty"`
 	Body              json.RawMessage        `json:"body,omitempty"`
 }
 
@@ -121,6 +142,15 @@ func NormalizeInput(input Input) (Input, error) {
 	}
 	if input.Path == "" {
 		input.Path = "/"
+	}
+	if len(input.Body) > MaxTraceBodyBytes {
+		return Input{}, fmt.Errorf("request body must not exceed %d bytes", MaxTraceBodyBytes)
+	}
+	if len(input.Body) > 0 {
+		input.BodyProvided = true
+	}
+	if input.RequestBodyMaxBytes <= 0 || input.RequestBodyMaxBytes > api.MaxRequestBodyBytes {
+		input.RequestBodyMaxBytes = api.MaxRequestBodyBytes
 	}
 	if !strings.HasPrefix(input.Path, "/") || len(input.Path) > 2048 {
 		return Input{}, fmt.Errorf("path must start with / and be at most 2048 characters")
@@ -192,6 +222,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 	result := Result{
 		App: input.App, Host: input.Host, Path: input.Path, Method: input.Method,
 		ClientIP: input.ClientIP, Country: input.Country,
+		BodyProvided: input.BodyProvided, BodyBytes: len(input.Body),
 		Headers: headerSnapshot(input.Headers), Scope: Scope,
 		Rules: make([]RuleRow, 0, len(sorted)),
 	}
@@ -240,7 +271,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 				}
 			}
 		}
-		row.Outcome, row.OutcomeReason, row.ActionPreview = previewAction(rule, row, input.ClientIP, input.Country, input.Path)
+		row.Outcome, row.OutcomeReason, row.ActionPreview = previewAction(rule, row, input, input.Path)
 		result.Rules = append(result.Rules, row)
 	}
 	result.Simulation = simulateRequest(input, sorted)
@@ -281,12 +312,13 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			continue
 		}
 		row := RuleRow{Status: "first_candidate"}
-		outcome, reason, preview := previewAction(*rule, row, input.ClientIP, input.Country, requestPath)
+		outcome, reason, preview := previewAction(*rule, row, input, requestPath)
 		step := SimulationStep{Phase: phase, RuleID: rule.ID, Kind: phase, Outcome: outcome, PathBefore: requestPath, Reason: reason}
 		if preview != nil {
 			step.StatusCode, step.Location, step.TargetApp = preview.StatusCode, preview.Location, preview.TargetApp
 			step.RedirectHeaders = cloneStringMap(preview.RedirectHeaders)
 			step.RetryAfterSeconds, step.Message = preview.RetryAfterSeconds, preview.Message
+			step.ValidationField, step.ValidationKeyword = preview.ValidationField, preview.ValidationKeyword
 			step.RequestOps = append([]api.EdgeRuleHeaderOp(nil), preview.RequestHeaderOps...)
 			step.ResponseOps = append([]api.EdgeRuleHeaderOp(nil), preview.ResponseHeaderOps...)
 		}
@@ -367,6 +399,21 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			simulation.Steps = append(simulation.Steps, step)
 			simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
 			return simulation
+		case "validate":
+			switch outcome {
+			case "validated", "validation_failed_observe", "validation_failed_warn":
+				simulation.ResponseHeaderOps = append(simulation.ResponseHeaderOps, preview.ResponseHeaderOps...)
+				step.PathAfter = requestPath
+				simulation.Steps = append(simulation.Steps, step)
+			case "validation_failed", "unsupported_media_type", "body_too_large":
+				simulation.Status, simulation.Outcome = "complete", outcome
+				simulation.StatusCode, simulation.StoppedAt, simulation.Reason = preview.StatusCode, phase, reason
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			default:
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
 		default:
 			return stop("incomplete", "needs_runtime_context", phase, "matching rule depends on gateway runtime state or request data that this trace does not collect", rule)
 		}
@@ -399,7 +446,7 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind, host, requestPath, metho
 	return first, false
 }
 
-func previewAction(rule api.EdgeRuleResponse, row RuleRow, clientIP, country, requestPath string) (string, string, *ActionPreview) {
+func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestPath string) (string, string, *ActionPreview) {
 	switch row.Status {
 	case "skipped":
 		return "not_applicable", "static selectors did not match", nil
@@ -477,7 +524,7 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, clientIP, country, re
 		preview := &ActionPreview{Type: "respond", StatusCode: action.StatusCode, Body: append(json.RawMessage(nil), action.Body...)}
 		return "fixed_response", fmt.Sprintf("would return fixed HTTP %d response", action.StatusCode), preview
 	case "ip":
-		if clientIP == "" {
+		if input.ClientIP == "" {
 			return "needs_context", "supply client_ip to evaluate this rule", nil
 		}
 		var envelope struct {
@@ -486,10 +533,10 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, clientIP, country, re
 		if err := json.Unmarshal(rule.Action, &envelope); err != nil || envelope.IP == nil {
 			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
 		}
-		outcome, reason := evaluateIP(*envelope.IP, net.ParseIP(clientIP))
+		outcome, reason := evaluateIP(*envelope.IP, net.ParseIP(input.ClientIP))
 		return outcome, reason, nil
 	case "geo":
-		if country == "" {
+		if input.Country == "" {
 			return "needs_context", "supply country; trace does not consult the live geo database", nil
 		}
 		var envelope struct {
@@ -498,11 +545,97 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, clientIP, country, re
 		if err := json.Unmarshal(rule.Action, &envelope); err != nil || envelope.Geo == nil {
 			return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
 		}
-		outcome, reason := evaluateGeo(*envelope.Geo, country)
+		outcome, reason := evaluateGeo(*envelope.Geo, input.Country)
 		return outcome, reason, nil
+	case "validate":
+		return previewValidateRule(rule, input)
 	default:
 		return "not_simulated", "this rule kind has runtime behavior outside the action preview", nil
 	}
+}
+
+func previewValidateRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleValidateAction](rule.Action, "validate")
+	if !ok || len(action.Schema) == 0 {
+		return "unavailable", "rule schema is missing or invalid; gateway compilation would reject it", nil
+	}
+	preview := &ActionPreview{Type: "validate"}
+	// Real HTTP parsers remove optional whitespace around field values. The
+	// CLI/dashboard parser retains bytes for exact edge-rule header matches,
+	// so trim OWS here to mirror the gateway's parsed Content-Type value.
+	contentType := strings.TrimSpace(input.Headers.Get("Content-Type"))
+	if len(action.ContentTypes) > 0 && !validateContentTypeAllowed(contentType, action.ContentTypes) {
+		preview.StatusCode = http.StatusUnsupportedMediaType
+		return "unsupported_media_type", "request Content-Type does not match the validation rule", preview
+	}
+	if !input.BodyProvided {
+		return "needs_request_body", "supply --body-file or enable the request body field to evaluate this rule", preview
+	}
+	bodyLimit := input.RequestBodyMaxBytes
+	if action.MaxBodyBytes > 0 && int64(action.MaxBodyBytes) < bodyLimit {
+		bodyLimit = int64(action.MaxBodyBytes)
+	}
+	if int64(len(input.Body)) > bodyLimit {
+		preview.StatusCode = http.StatusRequestEntityTooLarge
+		return "body_too_large", fmt.Sprintf("request body is %d bytes; the effective validation cap is %d bytes", len(input.Body), bodyLimit), preview
+	}
+	compiled, err := edgevalidate.Compile(action.Schema, action.RejectOnUnknownFields)
+	if err != nil {
+		return "unavailable", "validation schema could not be compiled; check the stored edge rule", preview
+	}
+	fieldErr, err := compiled.Validate(input.Body)
+	if err != nil {
+		return "unavailable", "validation schema evaluation failed", preview
+	}
+	if fieldErr == nil {
+		return "validated", "request body satisfies the JSON Schema", preview
+	}
+	preview.ValidationField = fieldErr.Field
+	preview.ValidationKeyword = fieldErr.Expected
+	mode := rule.ValidateMode
+	if mode == "" {
+		mode = action.ValidateMode
+	}
+	if mode == "" {
+		mode = api.ValidateModeBlock
+	}
+	switch mode {
+	case api.ValidateModeObserve:
+		return "validation_failed_observe", validationFailureReason(fieldErr), preview
+	case api.ValidateModeWarn:
+		preview.ResponseHeaderOps = []api.EdgeRuleHeaderOp{{Action: "set", Name: "X-Validation-Warning", Value: rule.ID}}
+		return "validation_failed_warn", validationFailureReason(fieldErr), preview
+	default:
+		preview.StatusCode = http.StatusUnprocessableEntity
+		return "validation_failed", validationFailureReason(fieldErr), preview
+	}
+}
+
+func validationFailureReason(fieldErr *edgevalidate.FieldError) string {
+	if fieldErr == nil {
+		return "request body does not match the JSON Schema"
+	}
+	if fieldErr.Field == "" {
+		return fmt.Sprintf("request body does not match the JSON Schema (keyword %s)", fieldErr.Expected)
+	}
+	return fmt.Sprintf("request body does not match the JSON Schema at %s (keyword %s)", fieldErr.Field, fieldErr.Expected)
+}
+
+// validateContentTypeAllowed mirrors the gateway's content-type check:
+// exact media type or the same media type with parameters such as charset.
+func validateContentTypeAllowed(contentType string, allowed []string) bool {
+	if contentType == "" {
+		return false
+	}
+	for _, candidate := range allowed {
+		if candidate == contentType {
+			return true
+		}
+		if index := strings.IndexByte(contentType, ';'); index >= 0 && strings.TrimSpace(contentType[:index]) == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeAction[T any](raw json.RawMessage, kind string) (*T, bool) {

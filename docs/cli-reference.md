@@ -1395,6 +1395,7 @@ Simulate composed edge-rule outcomes for a request
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 | `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
+| `--body-file <path|->` | request body file or - for stdin (max 1 MiB; contents are withheld) |  |
 
 ### edge-rules create
 

@@ -900,6 +900,7 @@ type EdgeRuleTraceFormData struct {
 	Path         string
 	Method       string
 	Headers      string
+	BodyProvided bool
 	ClientIP     string
 	Country      string
 	ErrorMessage string

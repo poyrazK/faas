@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,6 +28,7 @@ func cmdEdgeRulesTrace(args []string) int {
 	method := fs.String("method", http.MethodGet, "request method (default GET)")
 	clientIP := fs.String("client-ip", "", "simulated client IP for kind=ip rules")
 	country := fs.String("country", "", "simulated ISO 3166-1 alpha-2 country for kind=geo rules")
+	bodyFile := fs.String("body-file", "", fmt.Sprintf("read request body from file (max %d bytes; contents are not output)", edgeruletrace.MaxTraceBodyBytes))
 	var headerArgs multiFlag
 	fs.Var(&headerArgs, "header", "simulated request header (Name:Value; repeat; values compare exactly)")
 	if err := fs.Parse(args); err != nil {
@@ -36,7 +38,7 @@ func cmdEdgeRulesTrace(args []string) int {
 		return 1
 	}
 	if *slug == "" || *rawURL == "" {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules trace --app <slug> --url <http(s)://host/path> [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules trace --app <slug> --url <http(s)://host/path> [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--body-file <path|->]", "edge-rules")
 		return 1
 	}
 	u, err := url.Parse(*rawURL)
@@ -51,9 +53,18 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("Invalid --header", err)
 	}
+	var requestBody []byte
+	bodyProvided := *bodyFile != ""
+	if bodyProvided {
+		requestBody, err = readEdgeRuleTraceBody(*bodyFile)
+		if err != nil {
+			return printErr("Invalid --body-file", err)
+		}
+	}
 	input, err := edgeruletrace.NormalizeInput(edgeruletrace.Input{
 		App: *slug, Host: u.Hostname(), Path: requestPath, Method: *method,
 		ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
+		Body: requestBody, BodyProvided: bodyProvided,
 	})
 	if err != nil {
 		return printErr("Invalid trace input", err)
@@ -61,6 +72,17 @@ func cmdEdgeRulesTrace(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if input.BodyProvided {
+		app, appErr := client.GetApp(context.Background(), input.App)
+		if appErr != nil {
+			return printErr("App lookup failed", appErr)
+		}
+		input.RequestBodyMaxBytes = app.EffectiveLimits.RequestBodyMaxBytes
+		input, err = edgeruletrace.NormalizeInput(input)
+		if err != nil {
+			return printErr("Invalid trace input", err)
+		}
 	}
 	rules, err := client.ListEdgeRulesForApp(context.Background(), input.App)
 	if err != nil {
@@ -79,6 +101,9 @@ func cmdEdgeRulesTrace(args []string) int {
 
 func renderEdgeRuleTrace(result edgeruletrace.Result) {
 	_, _ = fmt.Fprintf(osStdout, "%s %s%s (app %s)\n", result.Method, result.Host, result.Path, result.App)
+	if result.BodyProvided {
+		_, _ = fmt.Fprintf(osStdout, "request body: supplied (%d bytes; contents withheld)\n", result.BodyBytes)
+	}
 	if result.ClientIP != "" || result.Country != "" {
 		_, _ = fmt.Fprintf(osStdout, "simulated context: client_ip=%s country=%s\n", emptyAsDash(result.ClientIP), emptyAsDash(result.Country))
 	}
@@ -130,6 +155,28 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 		_, _ = fmt.Fprintf(osStdout, "  simulation stopped at %s: %s\n", result.Simulation.StoppedAt, result.Simulation.Reason)
 	}
 	_, _ = fmt.Fprintln(osStdout, result.Scope)
+}
+
+func readEdgeRuleTraceBody(path string) ([]byte, error) {
+	reader := osStdin
+	var file *os.File
+	if path != "-" {
+		opened, err := openCustomerFile(path)
+		if err != nil {
+			return nil, err
+		}
+		file = opened
+		defer func() { _ = file.Close() }()
+		reader = file
+	}
+	body, err := io.ReadAll(io.LimitReader(reader, int64(edgeruletrace.MaxTraceBodyBytes)+1))
+	if err != nil {
+		return nil, fmt.Errorf("could not read request body")
+	}
+	if len(body) > edgeruletrace.MaxTraceBodyBytes {
+		return nil, fmt.Errorf("request body exceeds the %d-byte trace limit", edgeruletrace.MaxTraceBodyBytes)
+	}
+	return body, nil
 }
 
 func sortedHeaderNames(headers map[string][]string) []string {
