@@ -13,12 +13,13 @@ func TestMemStoreLatestInstanceReadiness(t *testing.T) {
 	for _, event := range []struct {
 		at     time.Time
 		status string
+		kind   string
 	}{
-		{at: first, status: "ready"},
-		{at: first.Add(time.Second), status: "unready"},
+		{at: first, status: "ready", kind: "wake.sidecar_health"},
+		{at: first.Add(time.Second), status: "unready", kind: "wake.app_readiness"},
 	} {
-		body := []byte(`{"instance_id":"instance-1","status":"` + event.status + `"}`)
-		if err := store.AppendEventAt(ctx, "vmmd", "wake.sidecar_health", nil, body, event.at); err != nil {
+		body := []byte(`{"instance_id":"instance-1","sidecar_name":"proxy","status":"` + event.status + `"}`)
+		if err := store.AppendEventAt(ctx, "vmmd", event.kind, nil, body, event.at); err != nil {
 			t.Fatalf("AppendEventAt(%s): %v", event.status, err)
 		}
 	}
@@ -33,5 +34,13 @@ func TestMemStoreLatestInstanceReadiness(t *testing.T) {
 	}
 	if _, ok := got["missing"]; ok {
 		t.Fatal("returned readiness for unknown instance")
+	}
+
+	bySource, err := store.LatestInstanceReadinessBySource(ctx, []string{"instance-1"})
+	if err != nil {
+		t.Fatalf("LatestInstanceReadinessBySource: %v", err)
+	}
+	if bySource["instance-1"]["sidecar:proxy"].Ready != true || bySource["instance-1"]["primary_app"].Ready != false {
+		t.Fatalf("readiness by source = %+v; want independent sidecar ready and primary app unready states", bySource["instance-1"])
 	}
 }

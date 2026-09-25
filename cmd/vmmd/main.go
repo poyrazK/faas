@@ -975,6 +975,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return startLivenessLoopHelper(ctx, mgr, log, instance, slot, deploymentID, cfg,
 			jailer.VsockUDSSocketPath(instance), activityTracker)
 	})
+	var appReadinessEvents *events.Platform
+	if store != nil {
+		appReadinessEvents = events.NewPlatform("vmmd", store, log, ops, nil)
+	}
+	mgr.WithReadinessProbeStarter(func(ctx context.Context, instance string, slot int, appID string, cfg fcvm.ReadinessProbeConfig) {
+		startAppReadinessProbeLoop(ctx, log, appReadinessEvents, instance, appID, cfg,
+			jailer.VsockUDSSocketPath(instance))
+	})
 	mgr.SetHostIdentities(hostIdentities)
 	// issue #299: wire the artifact backend the Manager uses to
 	// read Grype scan sidecars at boot time. Mirrors the VMM's
