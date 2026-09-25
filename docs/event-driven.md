@@ -106,14 +106,18 @@ async_routes:
     max_age_seconds: 600
 ```
 
-`app` is the target app slug, and destinations are existing webhook IDs from
+`app` is the target app slug (or, in a project deploy, its workload name), and
+destinations are existing webhook IDs from
 `gregale webhooks list --app reports`. Route names are stable per app: later
 deploys update a matching manifest-owned route and remove stale manifest-owned
 routes. Unmanaged edge rules are never adopted or deleted; an exact route
 collision fails deployment with guidance to resolve it first. Omitting
 `async_routes` leaves managed routes unchanged, while `async_routes: []`
-clears them. Routes default to `POST`; `PUT`, `PATCH`, and `DELETE` are also
-accepted. This declaration is YAML-only, and `--no-triggers` skips it.
+clears them. In project deploys, only selected workloads are reconciled;
+omitted route declarations clear that workload's manifest-owned routes, while
+`--only` and `--exclude` workloads remain untouched. `--no-triggers` leaves
+existing project routes unchanged. Routes default to `POST`; `PUT`, `PATCH`,
+and `DELETE` are also accepted. This declaration is YAML-only.
 
 ## Application inbox
 

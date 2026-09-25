@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestProjectManifestAsyncRoutesRequireNoTriggersOptOut(t *testing.T) {
+func TestProjectManifestAsyncRoutesLoadForProjectReconciliation(t *testing.T) {
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(context.Background(), "project-async-routes@example.com", api.PlanPro)
 	if err != nil {
@@ -26,11 +28,27 @@ func TestProjectManifestAsyncRoutesRequireNoTriggersOptOut(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, problem := srv.loadAndResolveManifestPostgresBindings(context.Background(), acct, dir, []string{"reports"}, "", false); problem == nil {
-		t.Fatal("project deploy accepted async_routes without --no-triggers")
+	resolved, problem := srv.loadAndResolveProjectManifest(context.Background(), acct, dir, []string{"reports"}, "")
+	if problem != nil {
+		t.Fatalf("project deploy async_routes: %+v", problem)
 	}
-	if _, problem := srv.loadAndResolveManifestPostgresBindings(context.Background(), acct, dir, []string{"reports"}, "", true); problem != nil {
-		t.Fatalf("project deploy with --no-triggers: %+v", problem)
+	if !resolved.AsyncRoutesPresent || resolved.AsyncRoutes == nil || len(resolved.AsyncRoutes) != 0 {
+		t.Fatalf("resolved async routes = %#v (present=%v), want explicit empty list", resolved.AsyncRoutes, resolved.AsyncRoutesPresent)
+	}
+}
+
+func TestProjectManifestAsyncRoutesGateOnlySelectedWorkloads(t *testing.T) {
+	routes := []gregalemanifest.AsyncRoute{{App: "reports", Name: "create-report"}}
+	workloads := []reposcan.Workload{
+		{Name: "reports", Class: reposcan.ClassHTTP},
+		{Name: "worker", Class: reposcan.ClassWorker},
+	}
+	if problem := projectAsyncRoutesPlanProblem(api.PlanFree, routes, workloads[:1], nil); problem == nil || problem.Code != api.CodePlanEdgeRuleKindNotAllowed {
+		t.Fatalf("selected Free route problem = %+v, want async route feature gate", problem)
+	}
+	workerRoute := []gregalemanifest.AsyncRoute{{App: "worker", Name: "consume"}}
+	if problem := projectAsyncRoutesPlanProblem(api.PlanFree, workerRoute, workloads[:1], nil); problem != nil {
+		t.Fatalf("unselected Free route must not block a partial project deploy: %+v", problem)
 	}
 }
 

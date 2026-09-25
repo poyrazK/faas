@@ -82,8 +82,8 @@ func TestValidateSingleAppManifestTargets(t *testing.T) {
 	if err := validateSingleAppManifestTargets(write(t, "async_routes:\n  - app: real-app\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n"), "real-app"); err != nil {
 		t.Fatalf("matching async route target: %v", err)
 	}
-	if err := validateProjectManifestConfig(write(t, "async_routes: []\n")); err == nil {
-		t.Fatal("project deploy silently accepted unsupported async_routes reconciliation")
+	if err := validateProjectManifestConfig(write(t, "async_routes:\n  - app: reports\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n")); err != nil {
+		t.Fatalf("project deploy async_routes: %v", err)
 	}
 }
 

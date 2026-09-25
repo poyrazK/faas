@@ -25,41 +25,51 @@ type resolvedManagedPostgresBinding struct {
 	access         managedpostgres.CredentialAccess
 }
 
-// loadAndResolveManifestPostgresBindings validates the manifest and resolves
-// every dependency before project/app mutation. Callers can therefore fail
-// closed on a missing, ambiguous, or provisioning database without leaving a
-// partially-created compute project behind.
-func (s *server) loadAndResolveManifestPostgresBindings(
+// resolvedProjectManifest contains the declarations needed after project
+// workloads have been reconciled. The async-route presence bit preserves the
+// manifest distinction between an absent key (leave routes untouched) and an
+// explicit empty list (clear routes for selected workloads).
+type resolvedProjectManifest struct {
+	PostgresBindings   []resolvedManagedPostgresBinding
+	AsyncRoutes        []gregalemanifest.AsyncRoute
+	AsyncRoutesPresent bool
+}
+
+// loadAndResolveProjectManifest validates the manifest and resolves every
+// database dependency before project/app mutation. It also returns async
+// routes for the apply phase, which reconciles them only after selected apps
+// exist.
+func (s *server) loadAndResolveProjectManifest(
 	ctx context.Context,
 	acct state.Account,
 	dir string,
 	appSlugs []string,
 	environment string,
-	noTriggers bool,
-) ([]resolvedManagedPostgresBinding, *api.Problem) {
+) (resolvedProjectManifest, *api.Problem) {
 	manifest, present, err := gregalemanifest.Load(dir)
 	if err != nil {
-		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+		return resolvedProjectManifest{}, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 			"Invalid manifest", err.Error())
 	}
 	if !present || manifest == nil {
-		return nil, nil
-	}
-	if manifest.AsyncRoutes != nil && !noTriggers {
-		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
-			"Invalid manifest", "async_routes are not supported by project deploy; deploy each app separately or pass --no-triggers")
+		return resolvedProjectManifest{}, nil
 	}
 	if prob := validateManifestAgainstPlan(manifest, acct.Plan); prob != nil {
-		return nil, prob
+		return resolvedProjectManifest{}, prob
 	}
 	if err := manifest.ValidateForPlan(acct.Plan); err != nil {
-		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+		return resolvedProjectManifest{}, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 			"Invalid manifest", err.Error())
 	}
-	if len(manifest.Databases) == 0 {
-		return nil, nil
+	bindings, problem := s.resolveManifestPostgresBindings(ctx, acct, manifest, appSlugs, environment)
+	if problem != nil {
+		return resolvedProjectManifest{}, problem
 	}
-	return s.resolveManifestPostgresBindings(ctx, acct, manifest, appSlugs, environment)
+	return resolvedProjectManifest{
+		PostgresBindings:   bindings,
+		AsyncRoutes:        manifest.AsyncRoutes,
+		AsyncRoutesPresent: manifest.AsyncRoutes != nil,
+	}, nil
 }
 
 func (s *server) resolveManifestPostgresBindings(
