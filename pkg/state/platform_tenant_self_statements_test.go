@@ -16,6 +16,7 @@ type platformTenantSelfStatementTestStore interface {
 	CreateApp(context.Context, state.App) (state.App, error)
 	CreateAPIConsumer(context.Context, string, string, string, string) (state.APIConsumer, error)
 	CreatePlatformTenant(context.Context, string, string, string, int) (state.PlatformTenant, bool, error)
+	LinkPlatformTenantConsumer(context.Context, string, string, string) (state.APIConsumer, error)
 }
 
 func TestMemListFinalizedPlatformTenantStatementsIsBounded(t *testing.T) {
