@@ -836,6 +836,7 @@ export type { WorkerScaling } from './models/WorkerScaling.js';
 export type { WorkflowCallbackResponse } from './models/WorkflowCallbackResponse.js';
 export type { WorkflowCallbackWebhookBindingResponse } from './models/WorkflowCallbackWebhookBindingResponse.js';
 export type { WorkflowCallbackWebhookReceiptResponse } from './models/WorkflowCallbackWebhookReceiptResponse.js';
+export type { WorkflowConditionSpec } from './models/WorkflowConditionSpec.js';
 export type { WorkflowRetrySpec } from './models/WorkflowRetrySpec.js';
 export type { WorkflowRunResponse } from './models/WorkflowRunResponse.js';
 export type { WorkflowSpec } from './models/WorkflowSpec.js';

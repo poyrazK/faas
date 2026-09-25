@@ -53,6 +53,10 @@ func workflowStepResponse(s *state.WorkflowStep) api.WorkflowStepResponse {
 		st := s.StartedAt.UTC().Format(time.RFC3339)
 		resp.StartedAt = &st
 	}
+	if s.NextCheckAt != nil {
+		next := s.NextCheckAt.UTC().Format(time.RFC3339)
+		resp.NextCheckAt = &next
+	}
 	if s.FinishedAt != nil {
 		ft := s.FinishedAt.UTC().Format(time.RFC3339)
 		resp.FinishedAt = &ft

@@ -67,6 +67,31 @@ The workflow stays parked between callbacks; no application instance is
 reserved for the wait. The callback ID is not an authentication token:
 both requests need the owning account's API authorization.
 
+If an external system cannot push an event, use a bounded condition checker:
+
+```yaml
+- name: await_delivery
+  wait_for_condition:
+    run: check_delivery
+    interval: 30m
+    max_attempts: 100
+  timeout: 3d
+  on_timeout: notify_support
+  depends_on: [charge]
+```
+
+`check_delivery` receives the workflow input on its first call. It must return
+JSON with a boolean `done`, for example `{"done":false,"state":{"order_id":"ord_123"}}`.
+The entire false result is sent as input to the next check; `done:true` makes
+the result the step output and unlocks dependents. Gregale persists each result
+and the next check time, then releases compute between calls. A 5xx or transport
+error retries on the same schedule; malformed 2xx and 4xx responses fail the
+run. The interval is at least one minute, with at most 1,000 checks and a
+plan-bounded overall timeout (currently at most seven days). Attempt
+exhaustion follows `on_timeout` when present. Checker calls are at least once;
+use their stable `Idempotency-Key` for any side effects. A push event or
+callback remains preferable when the external system supports one.
+
 For an unsupported external provider, receive and verify its webhook in your own handler,
 then use that authenticated Gregale API to complete the callback. Do not give
 the provider your Gregale API key. There is no per-callback public URL.
@@ -99,8 +124,9 @@ handler.
 
 This is a declarative workflow, not a replayed single function: handlers are
 separate at-least-once invocations and must make external side effects
-idempotent. Gregale does not yet provide `ctx.sleep()`, `waitUntil()` or
-year-long code-as-workflow executions.
+idempotent. Gregale does not yet provide `ctx.sleep()` or year-long
+code-as-workflow executions. Its existing short-lived `ctx.waitUntil()`
+post-response tail is separate from durable `wait_for_condition` checks.
 
 ```bash
 gregale invoke --async --payload @payload.json APP_ID

@@ -20,6 +20,238 @@ type mockStepExecutor struct {
 	attempts map[string]int
 }
 
+type conditionStepExecutor struct {
+	checks  int
+	inputs  [][]byte
+	keys    []string
+	results [][]byte
+	codes   []int
+}
+
+func (e *conditionStepExecutor) ExecuteStep(_ context.Context, _ string, path, _ string, headers map[string]string, body []byte, _ time.Duration) (int, []byte, error) {
+	if path != "/check_delivery" {
+		return 200, []byte(`{"sent":true}`), nil
+	}
+	e.checks++
+	e.inputs = append(e.inputs, append([]byte(nil), body...))
+	e.keys = append(e.keys, headers["Idempotency-Key"])
+	code := 200
+	if len(e.codes) >= e.checks {
+		code = e.codes[e.checks-1]
+	}
+	return code, e.results[e.checks-1], nil
+}
+
+func TestWorkflowOrchestrator_ConditionCheckParksAndResumes(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	exec := &conditionStepExecutor{results: [][]byte{[]byte(`{"done":false,"state":{"id":"ord_1"}}`), []byte(`{"done":true,"result":"delivered"}`)}}
+	spec := api.WorkflowSpec{Name: "delivery", Steps: []api.WorkflowStepSpec{
+		{Name: "await", WaitForCondition: &api.WorkflowConditionSpec{Run: "check_delivery", Interval: 35 * time.Millisecond, MaxAttempts: 3}, Timeout: time.Second},
+		{Name: "email", Run: "send_email", DependsOn: []string{"await"}},
+	}}
+	snapshot, _ := json.Marshal(spec)
+	run := &state.WorkflowRun{AppID: "app-condition", WorkflowName: spec.Name, Input: json.RawMessage(`{"order_id":"ord_1"}`), DefinitionSnapshot: snapshot}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := sched.NewWorkflowOrchestrator(store, exec, nil, nil, nil).DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	parked, _ := store.GetWorkflowRun(ctx, run.ID)
+	steps, _ := store.GetWorkflowSteps(ctx, run.ID)
+	if parked.Status != state.WorkflowRunStatusAwaitingEvent || exec.checks != 1 || steps[0].NextCheckAt == nil || !parked.ScheduledFor.Equal(*steps[0].NextCheckAt) {
+		t.Fatalf("condition did not durably park: run=%#v steps=%#v checks=%d", parked, steps, exec.checks)
+	}
+	if string(exec.inputs[0]) != string(run.Input) {
+		t.Fatalf("first checker input = %s", exec.inputs[0])
+	}
+	// An unrelated event wakes the run but must not trigger an early check.
+	if err := sched.NewWorkflowOrchestrator(store, exec, nil, nil, nil).ProcessEvent(ctx, run.ID, "unrelated", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	reparked, _ := store.GetWorkflowRun(ctx, run.ID)
+	if exec.checks != 1 || !reparked.ScheduledFor.Equal(parked.ScheduledFor) {
+		t.Fatalf("unrelated wake shifted check: checks=%d before=%v after=%v", exec.checks, parked.ScheduledFor, reparked.ScheduledFor)
+	}
+	if delay := time.Until(reparked.ScheduledFor); delay > 0 {
+		time.Sleep(delay + 10*time.Millisecond)
+	}
+	if err := sched.NewWorkflowOrchestrator(store, exec, nil, nil, nil).DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := store.GetWorkflowRun(ctx, run.ID)
+	if final.Status != state.WorkflowRunStatusSucceeded || exec.checks != 2 || string(exec.inputs[1]) != string(exec.results[0]) {
+		t.Fatalf("condition did not resume: run=%#v checks=%d inputs=%q", final, exec.checks, exec.inputs)
+	}
+	if exec.keys[0] == exec.keys[1] {
+		t.Fatalf("distinct checks reused idempotency key: %v", exec.keys)
+	}
+}
+
+func TestWorkflowOrchestrator_ConditionAndParallelTimerKeepEarliestWake(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	exec := &conditionStepExecutor{results: [][]byte{[]byte(`{"done":false}`), []byte(`{"done":true}`)}}
+	spec := api.WorkflowSpec{Name: "parallel", Steps: []api.WorkflowStepSpec{
+		{Name: "condition", WaitForCondition: &api.WorkflowConditionSpec{Run: "check_delivery", Interval: 120 * time.Millisecond, MaxAttempts: 3}, Timeout: time.Second},
+		{Name: "timer", WaitForDuration: 30 * time.Millisecond},
+	}}
+	snapshot, _ := json.Marshal(spec)
+	run := &state.WorkflowRun{AppID: "app-parallel-condition", WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	orch := sched.NewWorkflowOrchestrator(store, exec, nil, nil, nil)
+	if err := orch.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := store.GetWorkflowRun(ctx, run.ID)
+	steps, _ := store.GetWorkflowSteps(ctx, run.ID)
+	var checkAt time.Time
+	for _, item := range steps {
+		if item.StepName == "condition" && item.NextCheckAt != nil {
+			checkAt = *item.NextCheckAt
+		}
+	}
+	if checkAt.IsZero() || !first.ScheduledFor.Before(checkAt) {
+		t.Fatalf("parallel timer was not first wake: run=%#v check=%v", first, checkAt)
+	}
+	if delay := time.Until(first.ScheduledFor); delay > 0 {
+		time.Sleep(delay + 10*time.Millisecond)
+	}
+	if err := orch.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	middle, _ := store.GetWorkflowRun(ctx, run.ID)
+	if exec.checks != 1 || !middle.ScheduledFor.Equal(checkAt) {
+		t.Fatalf("timer wake shifted condition: checks=%d scheduled=%v want=%v", exec.checks, middle.ScheduledFor, checkAt)
+	}
+	if delay := time.Until(checkAt); delay > 0 {
+		time.Sleep(delay + 10*time.Millisecond)
+	}
+	if err := orch.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := store.GetWorkflowRun(ctx, run.ID)
+	if final.Status != state.WorkflowRunStatusSucceeded || exec.checks != 2 {
+		t.Fatalf("parallel condition did not complete: run=%#v checks=%d", final, exec.checks)
+	}
+}
+
+func TestWorkflowOrchestrator_ConditionAttemptExhaustionRunsTimeoutBranch(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	exec := &conditionStepExecutor{results: [][]byte{[]byte(`{"done":false}`)}}
+	spec := api.WorkflowSpec{Name: "attempts", Steps: []api.WorkflowStepSpec{
+		{Name: "await", WaitForCondition: &api.WorkflowConditionSpec{Run: "check_delivery", Interval: time.Hour, MaxAttempts: 1}, Timeout: 2 * time.Hour, OnTimeout: "notify"},
+		{Name: "notify", Run: "notify"},
+	}}
+	snapshot, _ := json.Marshal(spec)
+	run := &state.WorkflowRun{AppID: "app-exhaust", WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := sched.NewWorkflowOrchestrator(store, exec, nil, nil, nil).DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := store.GetWorkflowRun(ctx, run.ID)
+	if final.Status != state.WorkflowRunStatusSucceeded || exec.checks != 1 {
+		t.Fatalf("attempt exhaustion = run:%#v checks:%d", final, exec.checks)
+	}
+	steps, _ := store.GetWorkflowSteps(ctx, run.ID)
+	for _, step := range steps {
+		if step.StepName == "await" && string(step.Output) != `{"timeout":true}` {
+			t.Fatalf("timeout sentinel = %s", step.Output)
+		}
+	}
+}
+
+func TestWorkflowOrchestrator_ConditionCheckerFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		code       int
+		body       []byte
+		wantStatus string
+	}{
+		{"malformed success", 200, []byte(`{"status":"unknown"}`), state.WorkflowRunStatusDead},
+		{"permanent response", 400, []byte(`{"error":"bad request"}`), state.WorkflowRunStatusFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			exec := &conditionStepExecutor{results: [][]byte{tc.body}, codes: []int{tc.code}}
+			spec := api.WorkflowSpec{Name: "checker_failure", Steps: []api.WorkflowStepSpec{{Name: "wait", WaitForCondition: &api.WorkflowConditionSpec{Run: "check_delivery", Interval: time.Minute, MaxAttempts: 3}, Timeout: time.Hour}}}
+			snapshot, _ := json.Marshal(spec)
+			run := &state.WorkflowRun{AppID: "app-checker-failure", WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
+			if err := store.CreateWorkflowRun(ctx, run); err != nil {
+				t.Fatal(err)
+			}
+			if err := sched.NewWorkflowOrchestrator(store, exec, nil, nil, nil).DispatchTick(ctx); err != nil {
+				t.Fatal(err)
+			}
+			final, _ := store.GetWorkflowRun(ctx, run.ID)
+			if final.Status != tc.wantStatus || exec.checks != 1 {
+				t.Fatalf("failure result = status:%s checks:%d", final.Status, exec.checks)
+			}
+		})
+	}
+	ctx := context.Background()
+	store := state.NewMemStore()
+	exec := &conditionStepExecutor{results: [][]byte{[]byte(`server error`), []byte(`{"done":true}`)}, codes: []int{503, 200}}
+	spec := api.WorkflowSpec{Name: "retry_checker", Steps: []api.WorkflowStepSpec{{Name: "wait", WaitForCondition: &api.WorkflowConditionSpec{Run: "check_delivery", Interval: 25 * time.Millisecond, MaxAttempts: 2}, Timeout: time.Second}}}
+	snapshot, _ := json.Marshal(spec)
+	run := &state.WorkflowRun{AppID: "app-checker-retry", WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	orch := sched.NewWorkflowOrchestrator(store, exec, nil, nil, nil)
+	if err := orch.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	parked, _ := store.GetWorkflowRun(ctx, run.ID)
+	if parked.Status != state.WorkflowRunStatusAwaitingEvent || exec.checks != 1 {
+		t.Fatalf("transient failure did not park: status:%s checks:%d", parked.Status, exec.checks)
+	}
+	if delay := time.Until(parked.ScheduledFor); delay > 0 {
+		time.Sleep(delay + 10*time.Millisecond)
+	}
+	if err := orch.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := store.GetWorkflowRun(ctx, run.ID)
+	if final.Status != state.WorkflowRunStatusSucceeded || exec.checks != 2 {
+		t.Fatalf("transient failure did not recover: status:%s checks:%d", final.Status, exec.checks)
+	}
+}
+
+func TestWorkflowOrchestrator_CancelParkedCondition(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	exec := &conditionStepExecutor{results: [][]byte{[]byte(`{"done":false}`)}}
+	spec := api.WorkflowSpec{Name: "cancel_condition", Steps: []api.WorkflowStepSpec{{Name: "wait", WaitForCondition: &api.WorkflowConditionSpec{Run: "check_delivery", Interval: time.Hour, MaxAttempts: 5}, Timeout: 2 * time.Hour}}}
+	snapshot, _ := json.Marshal(spec)
+	run := &state.WorkflowRun{AppID: "app-cancel-condition", WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	orch := sched.NewWorkflowOrchestrator(store, exec, nil, nil, nil)
+	if err := orch.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.CancelRun(ctx, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := store.GetWorkflowRun(ctx, run.ID)
+	steps, _ := store.GetWorkflowSteps(ctx, run.ID)
+	if final.Status != state.WorkflowRunStatusFailed || steps[0].Status != state.WorkflowStepStatusSkipped || exec.checks != 1 {
+		t.Fatalf("cancelled condition = run:%s step:%s checks:%d", final.Status, steps[0].Status, exec.checks)
+	}
+}
+
 func newMockExecutor() *mockStepExecutor {
 	return &mockStepExecutor{
 		responses: make(map[string]struct {

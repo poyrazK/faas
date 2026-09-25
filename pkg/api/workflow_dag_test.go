@@ -465,6 +465,52 @@ func TestWorkflowCallbackJSONAndIdentifiers(t *testing.T) {
 	}
 }
 
+func TestWorkflowConditionWireAndValidation(t *testing.T) {
+	var spec WorkflowSpec
+	input := `{"name":"delivery","steps":[{"name":"await_delivery","wait_for_condition":{"run":"check_delivery","interval":"30m","max_attempts":100},"timeout":"3d"}]}`
+	if err := json.Unmarshal([]byte(input), &spec); err != nil {
+		t.Fatal(err)
+	}
+	condition := spec.Steps[0].WaitForCondition
+	if condition == nil || condition.Run != "check_delivery" || condition.Interval != 30*time.Minute || condition.MaxAttempts != 100 {
+		t.Fatalf("decoded condition = %#v", condition)
+	}
+	if _, err := ValidateWorkflowDAG(spec, PlanHobby); err != nil {
+		t.Fatalf("valid condition: %v", err)
+	}
+	encoded, err := json.Marshal(spec)
+	if err != nil || !strings.Contains(string(encoded), `"interval":"30m0s"`) {
+		t.Fatalf("condition round trip = %s, %v", encoded, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*WorkflowStepSpec)
+		want   error
+	}{
+		{"short interval", func(s *WorkflowStepSpec) { s.WaitForCondition.Interval = time.Second }, ErrWorkflowConditionInvalid},
+		{"long interval", func(s *WorkflowStepSpec) { s.WaitForCondition.Interval = 8 * 24 * time.Hour }, ErrWorkflowConditionInvalid},
+		{"too many attempts", func(s *WorkflowStepSpec) { s.WaitForCondition.MaxAttempts = 1001 }, ErrWorkflowConditionInvalid},
+		{"missing checker", func(s *WorkflowStepSpec) { s.WaitForCondition.Run = "" }, ErrWorkflowConditionInvalid},
+		{"missing timeout", func(s *WorkflowStepSpec) { s.Timeout = 0 }, ErrWorkflowWaitTimeoutInvalid},
+		{"long timeout", func(s *WorkflowStepSpec) { s.Timeout = 8 * 24 * time.Hour }, ErrWorkflowWaitTimeoutInvalid},
+		{"mixed target", func(s *WorkflowStepSpec) { s.Run = "other" }, ErrWorkflowInvalidStepTarget},
+		{"retry option", func(s *WorkflowStepSpec) { s.Retry = &WorkflowRetrySpec{MaxAttempts: 2} }, ErrWorkflowConditionOptionsInvalid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			copySpec := spec
+			copySpec.Steps = append([]WorkflowStepSpec(nil), spec.Steps...)
+			copySpec.Steps[0].WaitForCondition = &WorkflowConditionSpec{Run: condition.Run, Interval: condition.Interval, MaxAttempts: condition.MaxAttempts}
+			tc.mutate(&copySpec.Steps[0])
+			if _, err := ValidateWorkflowDAG(copySpec, PlanHobby); !errors.Is(err, tc.want) {
+				t.Fatalf("validation = %v, want %v", err, tc.want)
+			}
+		})
+	}
+	if err := json.Unmarshal([]byte(`{"name":"bad","steps":[{"name":"wait","wait_for_condition":{"run":"check","interval":"1m","max_attempts":2,"unexpected":true},"timeout":"1h"}]}`), &spec); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("unknown nested condition field = %v", err)
+	}
+}
+
 func TestWorkflowRetryJSONRejectsUnknownField(t *testing.T) {
 	var spec WorkflowSpec
 	err := json.Unmarshal([]byte(`{"name":"bad","steps":[{"name":"main","run":"do_work","retry":{"max_attempts":2,"jitter":"full"}}]}`), &spec)

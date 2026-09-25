@@ -1,7 +1,6 @@
 package sched
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,7 +53,13 @@ func (o *WorkflowOrchestrator) emitAudit(ctx context.Context, kind string, paylo
 	}
 }
 
-var workflowTimeoutOutput = json.RawMessage(`{"timeout":true}`)
+func workflowTimedOutOutput(raw json.RawMessage) bool {
+	var value map[string]any
+	if json.Unmarshal(raw, &value) != nil || len(value) != 1 {
+		return false
+	}
+	return value["timeout"] == true
+}
 
 func workflowRetryDelay(spec api.WorkflowStepSpec, attempt int) time.Duration {
 	if attempt < 1 {
@@ -112,7 +117,7 @@ func workflowTimeoutHandlerDecision(stepName string, specs []api.WorkflowStepSpe
 		}
 		switch step.Status {
 		case state.WorkflowStepStatusSucceeded:
-			if bytes.Equal(step.Output, workflowTimeoutOutput) {
+			if workflowTimedOutOutput(step.Output) {
 				triggered = true
 			}
 		case state.WorkflowStepStatusSkipped:
@@ -387,11 +392,56 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		// Recurse to see if downstream steps are unlocked
 		return o.AdvanceWorkflowRun(ctx, runID)
 	}
+	// An active condition has an independent next-check timestamp. Reconcile
+	// the run wake against every parked wait after this pass, so a parallel
+	// timer or event deadline is not lost when the checker re-parks.
+	if err := o.reconcileConditionWake(ctx, runID, spec); err != nil {
+		return err
+	}
 
 	return nil
 }
 
+func (o *WorkflowOrchestrator) reconcileConditionWake(ctx context.Context, runID string, spec api.WorkflowSpec) error {
+	steps, err := o.store.GetWorkflowSteps(ctx, runID)
+	if err != nil {
+		return err
+	}
+	byName := make(map[string]api.WorkflowStepSpec, len(spec.Steps))
+	for _, item := range spec.Steps {
+		byName[item.Name] = item
+	}
+	conditionAwaiting := false
+	var earliest time.Time
+	for _, step := range steps {
+		if step.Status != state.WorkflowStepStatusAwaitingEvent || step.StartedAt == nil {
+			continue
+		}
+		item := byName[step.StepName]
+		var due time.Time
+		switch {
+		case item.WaitForCondition != nil && step.NextCheckAt != nil:
+			conditionAwaiting = true
+			due = *step.NextCheckAt
+		case item.WaitForDuration > 0:
+			due = step.StartedAt.Add(item.WaitForDuration)
+		case item.WaitForEvent != "" || item.WaitForCallback:
+			due = step.StartedAt.Add(item.Timeout)
+		}
+		if !due.IsZero() && (earliest.IsZero() || due.Before(earliest)) {
+			earliest = due
+		}
+	}
+	if conditionAwaiting && !earliest.IsZero() {
+		return o.store.SetWorkflowRunWaitWake(ctx, runID, earliest)
+	}
+	return nil
+}
+
 func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec) (bool, error) {
+	if spec.WaitForCondition != nil {
+		return o.executeConditionCheck(ctx, run, step, spec)
+	}
 	// A duration wait has no executor call: only a persisted deadline is left
 	// behind while the run is parked. The step's first started_at is the source
 	// of truth, so an unrelated event cannot move the deadline forward.
@@ -585,6 +635,104 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 		"error":         errMsg,
 	})
 
+	return true, nil
+}
+
+// executeConditionCheck makes at most one bounded checker call. Every false or
+// transient result commits the next wake before returning to the scheduler.
+func (o *WorkflowOrchestrator) executeConditionCheck(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec) (bool, error) {
+	condition := spec.WaitForCondition
+	update := state.WorkflowConditionUpdate{
+		RunID: run.ID, StepName: step.StepName, Interval: condition.Interval,
+		Timeout: spec.Timeout, MaxAttempts: condition.MaxAttempts, OnTimeout: spec.OnTimeout != "",
+	}
+	outcome, err := o.store.ResolveWorkflowCondition(ctx, update)
+	if err != nil {
+		return false, err
+	}
+	switch outcome.Status {
+	case state.WorkflowConditionWaiting:
+		return false, nil
+	case state.WorkflowConditionTimedOut:
+		return true, nil
+	case state.WorkflowConditionReady:
+		// Continue below.
+	default:
+		return false, fmt.Errorf("unexpected workflow condition status %q", outcome.Status)
+	}
+	if o.executor == nil {
+		return false, errors.New("no workflow step executor configured")
+	}
+	attempt := step.Attempt + 1
+	if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusRunning, nil, nil); err != nil {
+		return false, err
+	}
+	if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusRunning, attempt, nil, nil); err != nil {
+		return false, err
+	}
+	input := step.Input
+	if step.Attempt > 0 && len(step.Output) > 0 {
+		input = step.Output
+	} else if len(input) == 0 {
+		input = run.Input
+	}
+	headers := map[string]string{
+		"X-Faas-Internal-Wake": "workflow", "X-Faas-Workflow-Run-Id": run.ID,
+		"X-Faas-Workflow-Step": step.StepName, "X-Faas-Workflow-Attempt": fmt.Sprintf("%d", attempt),
+		"Idempotency-Key": fmt.Sprintf("workflow/%s/%s/%d", run.ID, step.StepName, attempt),
+		"Content-Type":    "application/json",
+	}
+	statusCode, body, callErr := o.executor.ExecuteStep(ctx, run.AppID, "/"+condition.Run, "POST", headers, input, 30*time.Second)
+	update.Checked = true
+	if callErr == nil && statusCode >= 200 && statusCode < 300 {
+		var response struct {
+			Done *bool `json:"done"`
+		}
+		if err := json.Unmarshal(body, &response); err != nil || response.Done == nil {
+			return o.failConditionCheck(ctx, run, step, attempt, "condition checker must return a JSON object with boolean done", state.WorkflowStepStatusDead)
+		}
+		update.Done = *response.Done
+		update.Result = json.RawMessage(body)
+	} else if callErr != nil || statusCode >= 500 {
+		message := fmt.Sprintf("condition checker HTTP %d", statusCode)
+		if callErr != nil {
+			message = callErr.Error()
+		}
+		update.Error = &message
+		update.Result = json.RawMessage(`{"done":false}`)
+	} else {
+		return o.failConditionCheck(ctx, run, step, attempt, fmt.Sprintf("condition checker HTTP %d", statusCode), state.WorkflowStepStatusFailed)
+	}
+	outcome, err = o.store.ResolveWorkflowCondition(ctx, update)
+	if err != nil {
+		return false, err
+	}
+	if outcome.Status == state.WorkflowConditionWaiting {
+		if step.StartedAt == nil {
+			o.emitAudit(ctx, events.WorkflowAwaitingCondition, map[string]any{
+				"run_id": run.ID, "app_id": run.AppID, "workflow_name": run.WorkflowName,
+				"step_name": step.StepName, "next_check_at": outcome.NextCheckAt,
+			})
+		}
+		return false, nil
+	}
+	if outcome.Status == state.WorkflowConditionSucceeded || outcome.Status == state.WorkflowConditionTimedOut {
+		return true, nil
+	}
+	return false, fmt.Errorf("unexpected workflow condition status %q", outcome.Status)
+}
+
+func (o *WorkflowOrchestrator) failConditionCheck(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, attempt int, message, status string) (bool, error) {
+	if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, status, attempt, nil, &message); err != nil {
+		return false, err
+	}
+	if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, status, nil, &message); err != nil {
+		return false, err
+	}
+	o.emitAudit(ctx, events.WorkflowStepFailed, map[string]any{
+		"run_id": run.ID, "app_id": run.AppID, "workflow_name": run.WorkflowName,
+		"step_name": step.StepName, "attempt": attempt, "status": status, "error": message,
+	})
 	return true, nil
 }
 

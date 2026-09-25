@@ -52,6 +52,33 @@ func TestMemStore_WorkflowEventParkCannotLoseConcurrentArrival(t *testing.T) {
 	}
 }
 
+func TestMemStore_WorkflowConditionDeadlineWinsLateCheckerResult(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	run := &state.WorkflowRun{AppID: "app-condition-deadline", WorkflowName: "condition", DefinitionSnapshot: json.RawMessage(`{"name":"condition"}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkWorkflowStepStatus(ctx, run.ID, "await", state.WorkflowStepStatusRunning, 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(15 * time.Millisecond)
+	result, err := store.ResolveWorkflowCondition(ctx, state.WorkflowConditionUpdate{
+		RunID: run.ID, StepName: "await", Checked: true, Done: true,
+		Result: json.RawMessage(`{"done":true}`), Interval: time.Minute, Timeout: 5 * time.Millisecond, MaxAttempts: 3,
+	})
+	if err != nil || result.Status != state.WorkflowConditionTimedOut {
+		t.Fatalf("late checker result = %#v, %v", result, err)
+	}
+	final, _ := store.GetWorkflowRun(ctx, run.ID)
+	if final.Status != state.WorkflowRunStatusDead {
+		t.Fatalf("late checker completed run: %s", final.Status)
+	}
+}
+
 func TestMemStore_WorkflowCallbackEarlyDuplicateExpiryAndCancellation(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

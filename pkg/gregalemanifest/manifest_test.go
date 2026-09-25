@@ -116,6 +116,13 @@ func TestLoad_WorkflowDSL(t *testing.T) {
       - name: check_delivery
         run: check_delivery
         depends_on: [wait_for_delivery]
+      - name: await_shipping
+        wait_for_condition:
+          run: check_shipping
+          interval: 30m
+          max_attempts: 100
+        timeout: 3d
+        depends_on: [check_delivery]
 `), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -137,6 +144,9 @@ func TestLoad_WorkflowDSL(t *testing.T) {
 	}
 	if got := wf.Steps[1].WaitForDuration; got != 72*time.Hour {
 		t.Fatalf("wait duration = %v, want 72h", got)
+	}
+	if condition := wf.Steps[3].WaitForCondition; condition == nil || condition.Run != "check_shipping" || condition.Interval != 30*time.Minute || condition.MaxAttempts != 100 {
+		t.Fatalf("condition = %#v", condition)
 	}
 	if _, err := api.ValidateWorkflowDAG(wf, api.PlanHobby); err != nil {
 		t.Fatalf("validate duration wait: %v", err)

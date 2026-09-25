@@ -10,6 +10,7 @@ from ..models.workflow_step_spec_method import WorkflowStepSpecMethod, check_wor
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.workflow_condition_spec import WorkflowConditionSpec
     from ..models.workflow_retry_spec import WorkflowRetrySpec
     from ..models.workflow_step_spec_input_type_0 import WorkflowStepSpecInputType0
 
@@ -22,7 +23,8 @@ class WorkflowStepSpec:
     """One workflow step. The canonical ADR-081 target is `run`; `path`
     and `method` remain accepted for the existing HTTP wake executor
     during the runtime migration. Exactly one of `run`, `path`,
-    `wait_for_event`, `wait_for_callback`, or `wait_for_duration` must be supplied.
+    `wait_for_event`, `wait_for_callback`, `wait_for_duration`, or
+    `wait_for_condition` must be supplied.
 
     """
 
@@ -41,6 +43,9 @@ class WorkflowStepSpec:
     wait_for_duration: str | Unset = UNSET
     """Durable timer, from 1s up to the plan's 7-day workflow wait limit. Fixed day suffixes such as `3d` mean
     24-hour days; no compute is held while waiting."""
+    wait_for_condition: WorkflowConditionSpec | Unset = UNSET
+    """Bounded scheduled checker. Each 2xx response must be a JSON object with boolean done. A false response
+    becomes the next check's input; no compute is held between checks."""
     timeout: str | Unset = UNSET
     """Step or wait timeout in time.ParseDuration form, for example `30s`; workflow also accepts fixed 24-hour day
     suffixes such as `7d`."""
@@ -83,6 +88,10 @@ class WorkflowStepSpec:
 
         wait_for_duration = self.wait_for_duration
 
+        wait_for_condition: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.wait_for_condition, Unset):
+            wait_for_condition = self.wait_for_condition.to_dict()
+
         timeout = self.timeout
 
         on_timeout = self.on_timeout
@@ -118,6 +127,8 @@ class WorkflowStepSpec:
             field_dict["wait_for_callback"] = wait_for_callback
         if wait_for_duration is not UNSET:
             field_dict["wait_for_duration"] = wait_for_duration
+        if wait_for_condition is not UNSET:
+            field_dict["wait_for_condition"] = wait_for_condition
         if timeout is not UNSET:
             field_dict["timeout"] = timeout
         if on_timeout is not UNSET:
@@ -129,6 +140,7 @@ class WorkflowStepSpec:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.workflow_condition_spec import WorkflowConditionSpec
         from ..models.workflow_retry_spec import WorkflowRetrySpec
         from ..models.workflow_step_spec_input_type_0 import WorkflowStepSpecInputType0
 
@@ -179,6 +191,13 @@ class WorkflowStepSpec:
 
         wait_for_duration = d.pop("wait_for_duration", UNSET)
 
+        _wait_for_condition = d.pop("wait_for_condition", UNSET)
+        wait_for_condition: WorkflowConditionSpec | Unset
+        if isinstance(_wait_for_condition, Unset):
+            wait_for_condition = UNSET
+        else:
+            wait_for_condition = WorkflowConditionSpec.from_dict(_wait_for_condition)
+
         timeout = d.pop("timeout", UNSET)
 
         on_timeout = d.pop("on_timeout", UNSET)
@@ -210,6 +229,7 @@ class WorkflowStepSpec:
             wait_for_event=wait_for_event,
             wait_for_callback=wait_for_callback,
             wait_for_duration=wait_for_duration,
+            wait_for_condition=wait_for_condition,
             timeout=timeout,
             on_timeout=on_timeout,
             retry=retry,

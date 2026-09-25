@@ -15,7 +15,7 @@ const workflowRunSelectCols = `id, app_id, workflow_name, status, current_step, 
        definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at`
 
 const workflowStepSelectCols = `run_id, step_name, status, attempt, input, output,
-       started_at, finished_at, error, created_at`
+       started_at, next_check_at, finished_at, error, created_at`
 
 const workflowEventSelectCols = `id, run_id, event_name, payload, received_at`
 
@@ -46,7 +46,7 @@ func scanWorkflowStepCols(scan func(...any) error) (*WorkflowStep, error) {
 	var inputBytes, outputBytes []byte
 	var runUUID string
 	if err := scan(&runUUID, &s.StepName, &s.Status, &s.Attempt,
-		&inputBytes, &outputBytes, &s.StartedAt, &s.FinishedAt,
+		&inputBytes, &outputBytes, &s.StartedAt, &s.NextCheckAt, &s.FinishedAt,
 		&s.Error, &s.CreatedAt); err != nil {
 		return nil, err
 	}
@@ -388,6 +388,14 @@ func (s *PgStore) ScheduleWorkflowRun(ctx context.Context, id, status string, sc
 			return ErrWorkflowRunNotFound
 		}
 		return fmt.Errorf("%w: workflow run is terminal", ErrConflict)
+	}
+	return nil
+}
+
+func (s *PgStore) SetWorkflowRunWaitWake(ctx context.Context, id string, scheduledFor time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE workflow_runs SET status = 'awaiting_event', scheduled_for = $2, updated_at = now() WHERE id = $1 AND status IN ('running', 'awaiting_event')`, id, scheduledFor.UTC())
+	if err != nil {
+		return fmt.Errorf("pgstore: set workflow wait wake: %w", err)
 	}
 	return nil
 }

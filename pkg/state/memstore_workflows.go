@@ -272,6 +272,23 @@ func (m *MemStore) ScheduleWorkflowRun(_ context.Context, id, status string, sch
 	return nil
 }
 
+func (m *MemStore) SetWorkflowRunWaitWake(_ context.Context, id string, scheduledFor time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.workflowRuns[id]
+	if !ok {
+		return ErrWorkflowRunNotFound
+	}
+	if run.Status != WorkflowRunStatusRunning && run.Status != WorkflowRunStatusAwaitingEvent {
+		return nil
+	}
+	run.Status = WorkflowRunStatusAwaitingEvent
+	run.ScheduledFor = scheduledFor.UTC()
+	run.UpdatedAt = time.Now().UTC()
+	m.workflowRuns[id] = run
+	return nil
+}
+
 func (m *MemStore) RecoverWorkflowRun(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

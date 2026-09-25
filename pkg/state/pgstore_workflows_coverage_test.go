@@ -75,6 +75,111 @@ func TestPgStore_WorkflowCallbackWebhookBinding(t *testing.T) {
 	}
 }
 
+func TestPgStore_WorkflowConditionCheckTransitions(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "wf-condition@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "wf-condition", RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, WorkflowName: "condition", DefinitionSnapshot: json.RawMessage(`{"name":"condition"}`)}
+	if err := s.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
+		t.Fatal(err)
+	}
+	u := state.WorkflowConditionUpdate{RunID: run.ID, StepName: "await", Interval: 80 * time.Millisecond, Timeout: time.Second, MaxAttempts: 3}
+	if got, err := s.ResolveWorkflowCondition(ctx, u); err != nil || got.Status != state.WorkflowConditionReady {
+		t.Fatalf("initial condition = %#v, %v", got, err)
+	}
+	if err := s.MarkWorkflowStepStatus(ctx, run.ID, "await", state.WorkflowStepStatusRunning, 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	u.Checked = true
+	u.Result = json.RawMessage(`{"done":false,"state":{"id":"ord_1"}}`)
+	first, err := s.ResolveWorkflowCondition(ctx, u)
+	if err != nil || first.Status != state.WorkflowConditionWaiting || first.NextCheckAt.IsZero() {
+		t.Fatalf("first check = %#v, %v", first, err)
+	}
+	steps, err := s.GetWorkflowSteps(ctx, run.ID)
+	if err != nil || len(steps) != 1 || steps[0].NextCheckAt == nil || !steps[0].NextCheckAt.Equal(first.NextCheckAt) || steps[0].Attempt != 1 {
+		t.Fatalf("durable check state = %#v, %v", steps, err)
+	}
+	u.Checked = false
+	u.Result = nil
+	if got, err := s.ResolveWorkflowCondition(ctx, u); err != nil || got.Status != state.WorkflowConditionWaiting || !got.NextCheckAt.Equal(first.NextCheckAt) {
+		t.Fatalf("early recheck = %#v, %v", got, err)
+	}
+	if delay := time.Until(first.NextCheckAt); delay > 0 {
+		time.Sleep(delay + 10*time.Millisecond)
+	}
+	if got, err := s.ResolveWorkflowCondition(ctx, u); err != nil || got.Status != state.WorkflowConditionReady {
+		t.Fatalf("due check = %#v, %v", got, err)
+	}
+	if err := s.MarkWorkflowStepStatus(ctx, run.ID, "await", state.WorkflowStepStatusRunning, 2, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	u.Checked, u.Done = true, true
+	u.Result = json.RawMessage(`{"done":true,"result":"delivered"}`)
+	if got, err := s.ResolveWorkflowCondition(ctx, u); err != nil || got.Status != state.WorkflowConditionSucceeded {
+		t.Fatalf("completed check = %#v, %v", got, err)
+	}
+	steps, err = s.GetWorkflowSteps(ctx, run.ID)
+	if err != nil || steps[0].Status != state.WorkflowStepStatusSucceeded || steps[0].NextCheckAt != nil || !json.Valid(steps[0].Output) {
+		t.Fatalf("completed step = status:%s next:%v output:%s err:%v", steps[0].Status, steps[0].NextCheckAt, steps[0].Output, err)
+	}
+	var completed map[string]any
+	if err := json.Unmarshal(steps[0].Output, &completed); err != nil || completed["done"] != true || completed["result"] != "delivered" {
+		t.Fatalf("completed output = %s, %v", steps[0].Output, err)
+	}
+
+	other := &state.WorkflowRun{AppID: app.ID, WorkflowName: "condition", DefinitionSnapshot: json.RawMessage(`{"name":"condition"}`)}
+	if err := s.CreateWorkflowRun(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateWorkflowSteps(ctx, other.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkWorkflowStepStatus(ctx, other.ID, "await", state.WorkflowStepStatusRunning, 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	u = state.WorkflowConditionUpdate{RunID: other.ID, StepName: "await", Checked: true, Result: json.RawMessage(`{"done":false}`), Interval: time.Hour, Timeout: time.Hour, MaxAttempts: 1, OnTimeout: true}
+	if got, err := s.ResolveWorkflowCondition(ctx, u); err != nil || got.Status != state.WorkflowConditionTimedOut {
+		t.Fatalf("attempt exhaustion = %#v, %v", got, err)
+	}
+	steps, err = s.GetWorkflowSteps(ctx, other.ID)
+	var timedOut map[string]any
+	if err != nil || json.Unmarshal(steps[0].Output, &timedOut) != nil || timedOut["timeout"] != true {
+		t.Fatalf("timeout step = %s, %v", steps[0].Output, err)
+	}
+
+	late := &state.WorkflowRun{AppID: app.ID, WorkflowName: "condition", DefinitionSnapshot: json.RawMessage(`{"name":"condition"}`)}
+	if err := s.CreateWorkflowRun(ctx, late); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateWorkflowSteps(ctx, late.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkWorkflowStepStatus(ctx, late.ID, "await", state.WorkflowStepStatusRunning, 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE workflow_steps SET started_at = now() - interval '1 hour' WHERE run_id = $1 AND step_name = 'await'`, late.ID); err != nil {
+		t.Fatal(err)
+	}
+	u = state.WorkflowConditionUpdate{RunID: late.ID, StepName: "await", Checked: true, Done: true, Result: json.RawMessage(`{"done":true}`), Interval: time.Minute, Timeout: time.Minute, MaxAttempts: 3}
+	if got, err := s.ResolveWorkflowCondition(ctx, u); err != nil || got.Status != state.WorkflowConditionTimedOut {
+		t.Fatalf("late completion = %#v, %v", got, err)
+	}
+	steps, err = s.GetWorkflowSteps(ctx, late.ID)
+	if err != nil || steps[0].Status != state.WorkflowStepStatusDead {
+		t.Fatalf("late completion step = %#v, %v", steps, err)
+	}
+}
+
 func TestPgStore_WorkflowCallbackAndEventParking(t *testing.T) {
 	s, _, ctx := pgStoreWithPool(t)
 	acct, err := s.CreateAccount(ctx, "wf-callback@example.com", api.PlanHobby)

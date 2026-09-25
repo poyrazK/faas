@@ -164,16 +164,17 @@ type WorkflowRun struct {
 
 // WorkflowStep is one row of public.workflow_steps.
 type WorkflowStep struct {
-	RunID      string          `json:"run_id"`
-	StepName   string          `json:"step_name"`
-	Status     string          `json:"status"`
-	Attempt    int             `json:"attempt"`
-	Input      json.RawMessage `json:"input,omitempty"`
-	Output     json.RawMessage `json:"output,omitempty"`
-	StartedAt  *time.Time      `json:"started_at,omitempty"`
-	FinishedAt *time.Time      `json:"finished_at,omitempty"`
-	Error      *string         `json:"error,omitempty"`
-	CreatedAt  time.Time       `json:"created_at"`
+	RunID       string          `json:"run_id"`
+	StepName    string          `json:"step_name"`
+	Status      string          `json:"status"`
+	Attempt     int             `json:"attempt"`
+	Input       json.RawMessage `json:"input,omitempty"`
+	Output      json.RawMessage `json:"output,omitempty"`
+	StartedAt   *time.Time      `json:"started_at,omitempty"`
+	NextCheckAt *time.Time      `json:"next_check_at,omitempty"`
+	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
+	Error       *string         `json:"error,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 // WorkflowEvent is one row of public.workflow_events.
@@ -208,6 +209,9 @@ type WorkflowStore interface {
 	// event wait takes its timeout path.
 	ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error)
 	ScheduleWorkflowRun(ctx context.Context, id, status string, scheduledFor time.Time) error
+	// SetWorkflowRunWaitWake replaces a parked run's deadline after all active
+	// waits have been evaluated. It does not override a newly pending event wake.
+	SetWorkflowRunWaitWake(ctx context.Context, id string, scheduledFor time.Time) error
 	RecoverWorkflowRun(ctx context.Context, id string) error
 	CancelWorkflowRun(ctx context.Context, id, reason string) (*WorkflowRun, error)
 	CountActiveRunsByApp(ctx context.Context, appID string) (int, error)
@@ -219,6 +223,9 @@ type WorkflowStore interface {
 	// ParkWorkflowTimer atomically records the step's first activation and the
 	// run's durable wake deadline. Re-parking never resets the original deadline.
 	ParkWorkflowTimer(ctx context.Context, runID, stepName string, duration time.Duration) (time.Time, error)
+	// ResolveWorkflowCondition atomically records one checker result or expires
+	// a parked condition. The run and step are locked in cancellation order.
+	ResolveWorkflowCondition(ctx context.Context, update WorkflowConditionUpdate) (WorkflowConditionOutcome, error)
 	// ParkWorkflowEvent atomically checks for an already-delivered event and
 	// registers the wait. A concurrent event insertion cannot be lost between
 	// the check and the park transition.

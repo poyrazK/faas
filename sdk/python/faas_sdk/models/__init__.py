@@ -1609,6 +1609,7 @@ from .workflow_callback_response import WorkflowCallbackResponse
 from .workflow_callback_webhook_binding_response import WorkflowCallbackWebhookBindingResponse
 from .workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 from .workflow_callback_webhook_receipt_response_status import WorkflowCallbackWebhookReceiptResponseStatus
+from .workflow_condition_spec import WorkflowConditionSpec
 from .workflow_retry_spec import WorkflowRetrySpec
 from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
 from .workflow_run_response import WorkflowRunResponse
@@ -3184,6 +3185,7 @@ __all__ = (
     "WorkflowCallbackWebhookBindingResponse",
     "WorkflowCallbackWebhookReceiptResponse",
     "WorkflowCallbackWebhookReceiptResponseStatus",
+    "WorkflowConditionSpec",
     "WorkflowRetrySpec",
     "WorkflowRetrySpecBackoff",
     "WorkflowRunResponse",
