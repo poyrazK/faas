@@ -134,6 +134,13 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 			Domain: domain.Domain, Ownership: ownership, Verified: domain.Verified(),
 		})
 	}
+	ipPolicies := api.ProjectEnvironmentEdgePolicyResponse{Ownership: "application", Rules: []api.ProjectEnvironmentEdgeRuleResponse{}}
+	ipPolicy, err := s.store.GetProjectEnvironmentIPPolicy(ctx, accountID, app.ID, scope)
+	if err == nil {
+		ipPolicies = projectEnvironmentEdgePolicyResponse(ipPolicy)
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment IP policies")
+	}
 	return api.ProjectEnvironmentStateWorkloadResponse{
 		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Release: release,
 		Variables: projectEnvironmentVariables(variables), Secrets: projectEnvironmentSecrets(secrets),
@@ -142,6 +149,7 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 		Routes:          routes,
 		Policies:        policies,
 		RoutingPolicies: routingPolicies,
+		IPPolicies:      ipPolicies,
 	}, nil
 }
 
@@ -305,6 +313,7 @@ func projectEnvironmentWorkloadDiffs(before, after []api.ProjectEnvironmentState
 			Routes:          projectEnvironmentRoutePolicyDiff(prior.Routes, next.Routes),
 			Policies:        projectEnvironmentEdgePolicyDiff(prior.Policies, next.Policies),
 			RoutingPolicies: projectEnvironmentEdgePolicyDiff(prior.RoutingPolicies, next.RoutingPolicies),
+			IPPolicies:      projectEnvironmentEdgePolicyDiff(prior.IPPolicies, next.IPPolicies),
 		})
 	}
 	return out

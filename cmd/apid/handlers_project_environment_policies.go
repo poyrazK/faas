@@ -144,6 +144,8 @@ func projectEnvironmentEdgePolicyResponse(policy state.ProjectEnvironmentEdgePol
 			action = rule.Action.Redirect
 		case state.EdgeRuleKindRewrite:
 			action = rule.Action.Rewrite
+		case state.EdgeRuleKindIP:
+			action = rule.Action.IP
 		}
 		body, _ := json.Marshal(action)
 		out.Rules = append(out.Rules, api.ProjectEnvironmentEdgeRuleResponse{

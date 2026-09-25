@@ -23,5 +23,6 @@ export type ProjectEnvironmentStateWorkloadResponse = {
   routes: ProjectEnvironmentRoutePolicyResponse;
   policies: ProjectEnvironmentEdgePolicyResponse;
   routing_policies: ProjectEnvironmentEdgePolicyResponse;
+  ip_policies: ProjectEnvironmentEdgePolicyResponse;
 };
 

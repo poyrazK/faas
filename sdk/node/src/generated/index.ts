@@ -758,6 +758,7 @@ export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.j
 export type { UpdatePrivateNetworkPolicyRequest } from './models/UpdatePrivateNetworkPolicyRequest.js';
 export type { UpdateProjectEnvironmentConfigRequest } from './models/UpdateProjectEnvironmentConfigRequest.js';
 export type { UpdateProjectEnvironmentEdgePolicyRequest } from './models/UpdateProjectEnvironmentEdgePolicyRequest.js';
+export type { UpdateProjectEnvironmentIPPolicyRequest } from './models/UpdateProjectEnvironmentIPPolicyRequest.js';
 export type { UpdateProjectEnvironmentRequest } from './models/UpdateProjectEnvironmentRequest.js';
 export type { UpdateProjectEnvironmentRoutePolicyRequest } from './models/UpdateProjectEnvironmentRoutePolicyRequest.js';
 export type { UpdateProjectEnvironmentRoutingPolicyRequest } from './models/UpdateProjectEnvironmentRoutingPolicyRequest.js';

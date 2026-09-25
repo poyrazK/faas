@@ -1693,6 +1693,14 @@ func (c *Client) UpdateProjectEnvironmentRoutingPolicies(ctx context.Context, pr
 	return out, c.do(ctx, http.MethodPut, path, req, &out)
 }
 
+// UpdateProjectEnvironmentIPPolicies replaces only IP rules for a named
+// environment workload, independently of other edge-policy groups.
+func (c *Client) UpdateProjectEnvironmentIPPolicies(ctx context.Context, projectSlug, environmentSlug, workloadSlug string, req UpdateProjectEnvironmentIPPolicyRequest) (ProjectEnvironmentEdgePolicyResponse, error) {
+	var out ProjectEnvironmentEdgePolicyResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/workloads/" + url.PathEscape(workloadSlug) + "/ip-policies"
+	return out, c.do(ctx, http.MethodPut, path, req, &out)
+}
+
 // GetProjectEnvironmentConfigDiff compares the latest snapshots in the
 // source environment and the requested target environment.
 func (c *Client) GetProjectEnvironmentConfigDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentConfigDiffResponse, error) {

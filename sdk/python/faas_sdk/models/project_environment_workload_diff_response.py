@@ -37,6 +37,8 @@ class ProjectEnvironmentWorkloadDiffResponse:
     """Difference in one environment edge-policy group or its ownership."""
     routing_policies: ProjectEnvironmentEdgePolicyDiffResponse
     """Difference in one environment edge-policy group or its ownership."""
+    ip_policies: ProjectEnvironmentEdgePolicyDiffResponse
+    """Difference in one environment edge-policy group or its ownership."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +74,8 @@ class ProjectEnvironmentWorkloadDiffResponse:
 
         routing_policies = self.routing_policies.to_dict()
 
+        ip_policies = self.ip_policies.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -86,6 +90,7 @@ class ProjectEnvironmentWorkloadDiffResponse:
                 "routes": routes,
                 "policies": policies,
                 "routing_policies": routing_policies,
+                "ip_policies": ip_policies,
             }
         )
 
@@ -142,6 +147,8 @@ class ProjectEnvironmentWorkloadDiffResponse:
 
         routing_policies = ProjectEnvironmentEdgePolicyDiffResponse.from_dict(d.pop("routing_policies"))
 
+        ip_policies = ProjectEnvironmentEdgePolicyDiffResponse.from_dict(d.pop("ip_policies"))
+
         project_environment_workload_diff_response = cls(
             workload_slug=workload_slug,
             workload_name=workload_name,
@@ -153,6 +160,7 @@ class ProjectEnvironmentWorkloadDiffResponse:
             routes=routes,
             policies=policies,
             routing_policies=routing_policies,
+            ip_policies=ip_policies,
         )
 
         project_environment_workload_diff_response.additional_properties = d

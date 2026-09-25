@@ -197,6 +197,16 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		m.projectEnvironmentRoutingPolicies[projectEnvironmentRoutePolicyKey(appID, clone.TargetSlug)] = policy
 		result.PoliciesCopied++
 	}
+	for appID := range apps {
+		policy, ok := m.projectEnvironmentIPPolicies[projectEnvironmentRoutePolicyKey(appID, clone.SourceSlug)]
+		if !ok {
+			continue
+		}
+		policy.EnvironmentSlug, policy.CreatedAt, policy.UpdatedAt = clone.TargetSlug, created.CreatedAt, created.CreatedAt
+		policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
+		m.projectEnvironmentIPPolicies[projectEnvironmentRoutePolicyKey(appID, clone.TargetSlug)] = policy
+		result.PoliciesCopied++
+	}
 	// Other edge-rule kinds remain application-wide even after an explicit clone.
 	result.SharedResources = append(result.SharedResources, "policies")
 	return created, result, nil

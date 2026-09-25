@@ -1472,6 +1472,7 @@ from .update_private_network_policy_request import UpdatePrivateNetworkPolicyReq
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_environment_edge_policy_request import UpdateProjectEnvironmentEdgePolicyRequest
+from .update_project_environment_ip_policy_request import UpdateProjectEnvironmentIPPolicyRequest
 from .update_project_environment_request import UpdateProjectEnvironmentRequest
 from .update_project_environment_route_policy_request import UpdateProjectEnvironmentRoutePolicyRequest
 from .update_project_environment_routing_policy_request import UpdateProjectEnvironmentRoutingPolicyRequest
@@ -2964,6 +2965,7 @@ __all__ = (
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectEnvironmentEdgePolicyRequest",
+    "UpdateProjectEnvironmentIPPolicyRequest",
     "UpdateProjectEnvironmentRequest",
     "UpdateProjectEnvironmentRoutePolicyRequest",
     "UpdateProjectEnvironmentRoutingPolicyRequest",

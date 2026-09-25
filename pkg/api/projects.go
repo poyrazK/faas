@@ -154,6 +154,7 @@ type ProjectEnvironmentStateWorkloadResponse struct {
 	Routes          ProjectEnvironmentRoutePolicyResponse     `json:"routes"`
 	Policies        ProjectEnvironmentEdgePolicyResponse      `json:"policies"`
 	RoutingPolicies ProjectEnvironmentEdgePolicyResponse      `json:"routing_policies"`
+	IPPolicies      ProjectEnvironmentEdgePolicyResponse      `json:"ip_policies"`
 }
 
 // App-wide domains appear in every environment; bound domains appear only in
@@ -172,7 +173,7 @@ type ProjectEnvironmentDomainChangeResponse struct {
 }
 
 // ProjectEnvironmentEdgePolicyResponse describes one independent policy group.
-// The headers/CORS and redirect/rewrite groups report ownership separately.
+// Headers/CORS, redirect/rewrite, and IP groups report ownership separately.
 type ProjectEnvironmentEdgePolicyResponse struct {
 	Ownership string                               `json:"ownership"`
 	Rules     []ProjectEnvironmentEdgeRuleResponse `json:"rules"`
@@ -197,6 +198,11 @@ type UpdateProjectEnvironmentEdgePolicyRequest struct {
 // UpdateProjectEnvironmentRoutingPolicyRequest is a complete replacement
 // for redirect/rewrite rules, independent of headers/CORS ownership.
 type UpdateProjectEnvironmentRoutingPolicyRequest struct {
+	Rules *[]ProjectEnvironmentEdgeRuleResponse `json:"rules"`
+}
+
+// UpdateProjectEnvironmentIPPolicyRequest replaces only IP edge rules.
+type UpdateProjectEnvironmentIPPolicyRequest struct {
 	Rules *[]ProjectEnvironmentEdgeRuleResponse `json:"rules"`
 }
 
@@ -296,6 +302,7 @@ type ProjectEnvironmentWorkloadDiffResponse struct {
 	Routes          ProjectEnvironmentRoutePolicyDiffResponse  `json:"routes"`
 	Policies        ProjectEnvironmentEdgePolicyDiffResponse   `json:"policies"`
 	RoutingPolicies ProjectEnvironmentEdgePolicyDiffResponse   `json:"routing_policies"`
+	IPPolicies      ProjectEnvironmentEdgePolicyDiffResponse   `json:"ip_policies"`
 }
 
 type ProjectEnvironmentEdgePolicyDiffResponse struct {
