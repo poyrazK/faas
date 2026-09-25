@@ -15,7 +15,7 @@ T = TypeVar("T", bound="PlatformTenantUsageBucketResponse")
 
 @_attrs_define
 class PlatformTenantUsageBucketResponse:
-    """One UTC day of app-consumer usage from the durable raw usage ledger."""
+    """One UTC day of durable tenant-attributed usage. Exactly one of consumer_id or surface_id is present."""
 
     app_id: UUID
     window_start: datetime.datetime

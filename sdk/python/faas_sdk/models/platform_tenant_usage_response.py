@@ -17,7 +17,7 @@ T = TypeVar("T", bound="PlatformTenantUsageResponse")
 
 @_attrs_define
 class PlatformTenantUsageResponse:
-    """Cross-app raw usage totals with app and consumer attribution."""
+    """Cross-app raw usage totals with app and consumer-or-surface attribution."""
 
     tenant_id: UUID
     period_start: datetime.datetime
