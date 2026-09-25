@@ -445,6 +445,9 @@ type AppSpec struct {
 	// each sidecar layer; sealed deployment env overrides travel separately in
 	// the sidecar spec and are opened only by vmmd into the instance upper.
 	Sidecars []fcvm.WorkloadSpec
+	// MainDependsOn carries the deployment's primary-workload startup gates.
+	// The guest roster combines these with sidecar dependencies before launch.
+	MainDependsOn []api.WorkloadDependency
 	// Port (issue #460 / ADR-053 §Decision 1, PR-C) is the per-deployment
 	// override port the customer's app binds inside the guest. 0 = legacy
 	// 8080 (netns.AppPort default at the vmmd wire boundary). The host's
@@ -1379,6 +1382,12 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			Value: e.Value,
 		})
 	}
+	mainDependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(a.MainDependsOn))
+	for _, dep := range a.MainDependsOn {
+		mainDependsOn = append(mainDependsOn, &vmmdpb.WorkloadDependency{
+			Name: dep.Name, Condition: string(dep.Condition),
+		})
+	}
 	sidecars := make([]*vmmdpb.SidecarSpec, 0, len(a.Sidecars))
 	for _, sc := range a.Sidecars {
 		sealedSidecarEnv := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedEnv))
@@ -1444,6 +1453,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		SealedEnv:       sealed,
 		ApiEnv:          apiEnv,
 		Sidecars:        sidecars,
+		MainDependsOn:   mainDependsOn,
 		EgressAllowlist: a.EgressAllowlist,
 		Port:            uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC

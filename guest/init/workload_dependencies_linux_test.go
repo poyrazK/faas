@@ -93,6 +93,19 @@ func TestNormalizeWorkloadDependencies_MultipleCompanionsAndProbeGates(t *testin
 	}
 }
 
+func TestNormalizeWorkloadDependencies_RejectsMainDependencyOnInit(t *testing.T) {
+	roster := workloadRoster{
+		Main: workloadSpec{
+			Name: "main", Type: "main",
+			DependsOn: []api.WorkloadDependency{{Name: "migrate", Condition: api.WorkloadDependencyCompletedSuccessfully}},
+		},
+		Sidecars: []workloadSpec{{Name: "migrate", Type: "init"}},
+	}
+	if _, err := normalizeWorkloadDependencies(roster); err == nil || !strings.Contains(err.Error(), "long-running sidecar") {
+		t.Fatalf("normalize error = %v, want rejection of explicit main dependency on init", err)
+	}
+}
+
 func TestNormalizeWorkloadDependencies_RejectsCycle(t *testing.T) {
 	roster := workloadRoster{
 		Main: workloadSpec{Name: "main", Type: "main"},

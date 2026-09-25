@@ -30,6 +30,47 @@ func (e *Engine) sidecarsForDeployment(ctx context.Context, dep state.Deployment
 	return sidecarSpecsFromDeployment(dep.Sidecars, layers)
 }
 
+// mainWorkloadDependenciesForDeployment validates and decodes the startup
+// edges persisted with a deployment. The guest performs the complete graph
+// and cycle check again before starting any workload.
+func mainWorkloadDependenciesForDeployment(dep state.Deployment, sidecars []fcvm.WorkloadSpec) ([]api.WorkloadDependency, error) {
+	raw := strings.TrimSpace(string(dep.OverrideMainDependsOn))
+	if raw == "" || raw == "null" || raw == "[]" {
+		return nil, nil
+	}
+	var dependencies []api.WorkloadDependency
+	if err := json.Unmarshal(dep.OverrideMainDependsOn, &dependencies); err != nil {
+		return nil, fmt.Errorf("decode primary workload dependencies: %w", err)
+	}
+	if len(dependencies) > api.WorkloadDependencyCapMax {
+		return nil, fmt.Errorf("primary workload dependency count %d exceeds cap %d", len(dependencies), api.WorkloadDependencyCapMax)
+	}
+	types := make(map[string]string, len(sidecars))
+	for _, sidecar := range sidecars {
+		types[sidecar.Name] = sidecar.Type
+	}
+	seen := make(map[string]struct{}, len(dependencies))
+	for _, dependency := range dependencies {
+		if _, duplicate := seen[dependency.Name]; duplicate {
+			return nil, fmt.Errorf("primary workload depends on companion %q more than once", dependency.Name)
+		}
+		seen[dependency.Name] = struct{}{}
+		typeName, exists := types[dependency.Name]
+		if !exists {
+			return nil, fmt.Errorf("primary workload depends on unknown companion %q", dependency.Name)
+		}
+		if typeName != string(api.SidecarTypeSidecar) {
+			return nil, fmt.Errorf("primary workload dependency %q must target a long-running companion", dependency.Name)
+		}
+		switch dependency.Condition {
+		case "", api.WorkloadDependencyStarted, api.WorkloadDependencyHealthy, api.WorkloadDependencyCompletedSuccessfully:
+		default:
+			return nil, fmt.Errorf("primary workload dependency %q has invalid condition %q", dependency.Name, dependency.Condition)
+		}
+	}
+	return dependencies, nil
+}
+
 func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSidecarLayer) ([]fcvm.WorkloadSpec, error) {
 	var sidecars api.Sidecars
 	if err := json.Unmarshal(raw, &sidecars); err != nil {

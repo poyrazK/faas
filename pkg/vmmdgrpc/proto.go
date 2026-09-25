@@ -331,7 +331,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// runner. Empty falls back to "unknown" in the
 		// histogram observer. Bounded cardinality (≤5 runner
 		// ids today; the runner set is guest-init build-time).
-		Runtime: app.GetRuntime(),
+		Runtime:       app.GetRuntime(),
+		MainDependsOn: workloadDependenciesFromProto(app.GetMainDependsOn()),
 		// Issue #463 / ADR-069 / PR-B: per-workload sidecar
 		// wire. schedd populates AppSpec.sidecars from
 		// deployment_sidecar_layers at wake time; vmmd turns
@@ -482,7 +483,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// Issue #470 / PR #470-FU-B: see toWakeRequest.
 		// Cold-boot mirrors the runtime so deploy's first
 		// boot primes the same per-runner histogram labelling.
-		Runtime: app.GetRuntime(),
+		Runtime:       app.GetRuntime(),
+		MainDependsOn: workloadDependenciesFromProto(app.GetMainDependsOn()),
 		// Issue #463 / ADR-069 / PR-B: see toWakeRequest.
 		// Cold-boot mirrors the per-workload sidecar wire so
 		// deploy's first boot stages the same drives +

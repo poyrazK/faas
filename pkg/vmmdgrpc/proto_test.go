@@ -702,6 +702,40 @@ func TestToColdBootRequest_WithSidecars(t *testing.T) {
 	}
 }
 
+func TestToWakeRequest_ForwardsMainDependencies(t *testing.T) {
+	want := api.WorkloadDependency{Name: "proxy", Condition: api.WorkloadDependencyHealthy}
+	wr, err := toWakeRequest(context.Background(), &vmmdpb.CreateFromSnapshotRequest{
+		Instance: "inst-main-deps",
+		App: &vmmdpb.AppSpec{
+			Sidecars:      []*vmmdpb.SidecarSpec{{Name: "proxy", Type: "sidecar"}},
+			MainDependsOn: []*vmmdpb.WorkloadDependency{{Name: want.Name, Condition: string(want.Condition)}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toWakeRequest: %v", err)
+	}
+	if len(wr.MainDependsOn) != 1 || wr.MainDependsOn[0] != want {
+		t.Fatalf("MainDependsOn = %+v, want %+v", wr.MainDependsOn, []api.WorkloadDependency{want})
+	}
+}
+
+func TestToColdBootRequest_ForwardsMainDependencies(t *testing.T) {
+	want := api.WorkloadDependency{Name: "proxy", Condition: api.WorkloadDependencyHealthy}
+	wr, err := toColdBootRequest(context.Background(), &vmmdpb.CreateColdBootRequest{
+		Instance: "inst-main-deps",
+		App: &vmmdpb.AppSpec{
+			Sidecars:      []*vmmdpb.SidecarSpec{{Name: "proxy", Type: "sidecar"}},
+			MainDependsOn: []*vmmdpb.WorkloadDependency{{Name: want.Name, Condition: string(want.Condition)}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toColdBootRequest: %v", err)
+	}
+	if len(wr.MainDependsOn) != 1 || wr.MainDependsOn[0] != want {
+		t.Fatalf("MainDependsOn = %+v, want %+v", wr.MainDependsOn, []api.WorkloadDependency{want})
+	}
+}
+
 // TestCharacterizationToStruct_OpenAPIDoc (ADR-122 §D2) pins the
 // vmmdgrpc-side wire shape for the OpenAPIDoc field. The proto.go
 // path mirrors pkg/api/characterization_test.go::TestCharacterizationReport_JSONRoundTrip

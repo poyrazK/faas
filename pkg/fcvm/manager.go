@@ -3157,6 +3157,9 @@ type WakeRequest struct {
 	// one nested cgroup scope. Empty slice = legacy single-
 	// workload path (pre-PR-B callers). Additive per ADR-016.
 	Sidecars []WorkloadSpec
+	// MainDependsOn carries the deployment's primary workload startup gates.
+	// It is copied into the main entry in the guest workload roster.
+	MainDependsOn []api.WorkloadDependency
 }
 
 // ExecutionWakeRequest is the payload-free machine envelope for a disposable
@@ -3233,6 +3236,7 @@ func (m *Manager) WakeAppTask(ctx context.Context, req AppTaskWakeRequest) (*Ins
 	// command dyno. The task receives the pinned main image and its scoped
 	// environment without starting or staging deployment sidecars.
 	wake.Sidecars = nil
+	wake.MainDependsOn = nil
 	return m.Wake(ctx, wake)
 }
 
@@ -3369,6 +3373,8 @@ type ColdBootRequest struct {
 	// the contract. Same symmetry rationale as Port /
 	// HealthcheckPath / EgressAllowlist above.
 	Sidecars []WorkloadSpec
+	// MainDependsOn is forwarded to the primary workload in the guest roster.
+	MainDependsOn []api.WorkloadDependency
 	// DeploymentID (issue #463 / ADR-069 / PR-B AC #1) is the
 	// deployments.id UUID forwarded verbatim to WakeRequest.DeploymentID.
 	// Mirrors the WakeRequest field's contract: empty = legacy
@@ -3414,7 +3420,8 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 		// sidecar wire so Wake threads each entry into the
 		// per-workload drive + cgroup + manifest stage. Empty
 		// = legacy single-workload path.
-		Sidecars: req.Sidecars,
+		Sidecars:      req.Sidecars,
+		MainDependsOn: req.MainDependsOn,
 		// Issue #463 / ADR-069 / PR-B AC #1: forward the
 		// deployment_id so Wake stamps it onto the live Instance
 		// and the vsock DGRAM sidecar-init-failed dispatch can
@@ -3623,6 +3630,9 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	if err := validateMainWorkloadDependencyTargets(req.MainDependsOn, req.Sidecars); err != nil {
+		return nil, fmt.Errorf("wake %s: primary workload dependencies: %w", req.Instance, err)
+	}
 	var wakeID string
 	if fields, ok := wire.FromContext(ctx); ok {
 		wakeID = fields.WakeID
@@ -4043,6 +4053,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			CPUMillicores: req.CPUMillicores,
 			Port:          req.Port,
 			Essential:     true,
+			DependsOn:     append([]api.WorkloadDependency(nil), req.MainDependsOn...),
 		}); err != nil {
 			return nil, fmt.Errorf("wake %s: stage main workload manifest: %w", req.Instance, err)
 		}
@@ -4066,6 +4077,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			Name: WorkloadNameMain, Type: WorkloadNameMain,
 			RamMB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores, Port: req.Port,
 			Essential: true,
+			DependsOn: append([]api.WorkloadDependency(nil), req.MainDependsOn...),
 		}
 		if err := m.vmm.StageWorkloadRoster(req.Instance, mainSpec, req.Sidecars); err != nil {
 			return nil, fmt.Errorf("wake %s: stage workload roster: %w", req.Instance, err)
@@ -6860,6 +6872,7 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 		CPUMillicores: req.CPUMillicores,
 		Port:          req.Port,
 		Essential:     true,
+		DependsOn:     append([]api.WorkloadDependency(nil), req.MainDependsOn...),
 	})
 	for _, sc := range req.Sidecars {
 		if sc.Name == WorkloadNameMain {
@@ -6888,6 +6901,36 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 		})
 	}
 	return out
+}
+
+func validateMainWorkloadDependencyTargets(dependencies []api.WorkloadDependency, sidecars []WorkloadSpec) error {
+	if len(dependencies) > api.WorkloadDependencyCapMax {
+		return fmt.Errorf("main has %d dependencies; max is %d", len(dependencies), api.WorkloadDependencyCapMax)
+	}
+	types := make(map[string]string, len(sidecars))
+	for _, sidecar := range sidecars {
+		types[sidecar.Name] = sidecar.Type
+	}
+	seen := make(map[string]struct{}, len(dependencies))
+	for _, dependency := range dependencies {
+		if _, duplicate := seen[dependency.Name]; duplicate {
+			return fmt.Errorf("main depends on %q more than once", dependency.Name)
+		}
+		seen[dependency.Name] = struct{}{}
+		typeName, exists := types[dependency.Name]
+		if !exists {
+			return fmt.Errorf("main depends on unknown workload %q", dependency.Name)
+		}
+		if typeName != string(api.SidecarTypeSidecar) {
+			return fmt.Errorf("main dependency %q must target a long-running sidecar", dependency.Name)
+		}
+		switch dependency.Condition {
+		case "", api.WorkloadDependencyStarted, api.WorkloadDependencyHealthy, api.WorkloadDependencyCompletedSuccessfully:
+		default:
+			return fmt.Errorf("main dependency %q has invalid condition %q", dependency.Name, dependency.Condition)
+		}
+	}
+	return nil
 }
 
 func cloneWorkloadProbe(in *api.SidecarProbe) *api.SidecarProbe {
