@@ -23,6 +23,11 @@ import (
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
+	// Customer-configured admission budgets are safety bounds, not plan
+	// allowances. Zero disables a dimension; these caps keep counters and
+	// request validation bounded without prescribing a default quota.
+	MaxPlatformTenantRequestsPerMinute int64 = 1_000_000
+	MaxPlatformTenantRequestsPerDay    int64 = 100_000_000
 	// CertIssuanceFailedAfter is the sustained failure window before the
 	// platform raises the customer-facing certificate issuance alert.
 	CertIssuanceFailedAfter = 15 * time.Minute

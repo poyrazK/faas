@@ -536,6 +536,7 @@ export type { PlatformTenantCredentialResult } from './PlatformTenantCredentialR
 export type { PlatformTenantCredentialsResponse } from './PlatformTenantCredentialsResponse.js';
 export type { PlatformTenantDetailResponse } from './PlatformTenantDetailResponse.js';
 export type { PlatformTenantListResponse } from './PlatformTenantListResponse.js';
+export type { PlatformTenantRequestBudgetResponse } from './PlatformTenantRequestBudgetResponse.js';
 export type { PlatformTenantResponse } from './PlatformTenantResponse.js';
 export type { PlatformTenantStatementHandoffResponse } from './PlatformTenantStatementHandoffResponse.js';
 export type { PlatformTenantStatementLineResponse } from './PlatformTenantStatementLineResponse.js';
@@ -710,6 +711,7 @@ export type { SetDeploymentAliasRequest } from './SetDeploymentAliasRequest.js';
 export type { SetGraceWindowRequest } from './SetGraceWindowRequest.js';
 export type { SetObjectBucketAccessGrantRequest } from './SetObjectBucketAccessGrantRequest.js';
 export type { SetPasswordRequest } from './SetPasswordRequest.js';
+export type { SetPlatformTenantRequestBudgetRequest } from './SetPlatformTenantRequestBudgetRequest.js';
 export type { SetPlatformTenantStatusRequest } from './SetPlatformTenantStatusRequest.js';
 export type { SeverityCounts } from './SeverityCounts.js';
 export type { Sidecar } from './Sidecar.js';

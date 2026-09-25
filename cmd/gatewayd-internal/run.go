@@ -2400,6 +2400,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// PgStore used by apid. The gateway keeps the hot-path policy and the
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
+	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	// E2 / issue #1397: browser wake pages use the same gatewayd audit
 	// writer as the auth gates so wake.page_served joins the eventual
 	// scheduler wake by its real wake_id.

@@ -3755,6 +3755,43 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantActivationResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/platform-tenants/{id}/request-budget:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer whose shared admission budget is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantRequestBudget
+      summary: Read cross-app customer request admission ceilings and counters.
+      responses:
+        '200':
+          description: Current policy and UTC-window admitted-request counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantRequestBudgetResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantRequestBudget
+      summary: Set cross-app customer request admission ceilings.
+      description: Zero disables a ceiling. The shared counter is authoritative across gateway replicas; configured admission fails closed if it is unavailable. These are admitted-request counts, not billed usage or a money cap.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantRequestBudgetRequest' }
+      responses:
+        '200':
+          description: Updated policy and current counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantRequestBudgetResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/account/platform-tenants/{id}/usage:
     parameters:
       - name: id
@@ -22110,6 +22147,29 @@ components:
       required: [status]
       properties:
         status: { type: string, enum: [active, suspended] }
+
+    SetPlatformTenantRequestBudgetRequest:
+      description: Both optional admission ceilings must be supplied; zero disables a dimension.
+      type: object
+      required: [max_requests_per_minute, max_requests_per_day]
+      properties:
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0, maximum: 1000000 }
+        max_requests_per_day: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+
+    PlatformTenantRequestBudgetResponse:
+      description: One customer's authoritative cross-app admitted-request budget and current UTC counters. Absent policy has configured=false and zero ceilings.
+      type: object
+      required: [tenant_id, configured, max_requests_per_minute, max_requests_per_day, minute_used, day_used, minute_resets_at, day_resets_at]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        configured: { type: boolean }
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
+        max_requests_per_day: { type: integer, format: int64, minimum: 0 }
+        minute_used: { type: integer, format: int64, minimum: 0 }
+        day_used: { type: integer, format: int64, minimum: 0 }
+        minute_resets_at: { type: string, format: date-time }
+        day_resets_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     LinkPlatformTenantConsumerRequest:
       description: Attach an existing app-local API consumer to one platform customer.

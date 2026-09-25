@@ -858,7 +858,11 @@ type Handler struct {
 	// rotating across many apps is rejected before any per-app bucket
 	// drains and before the wake gate (a schedd gRPC RPC) is touched.
 	accountLimiter *Limiter
-	gate           *WakeGate
+	// Configured platform-customer admission is authoritative across apps.
+	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
+	tenantRequestBudgetStore   TenantRequestBudgetStore
+	tenantRequestBudgetEnabled bool
+	gate                       *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -6172,6 +6176,9 @@ haveApp:
 	if !deploymentSmoke {
 		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 	}
+	if !h.enforceTenantRequestBudget(w, r, rec, app, deploymentSmoke) {
+		return
+	}
 
 	// Receive and bound the complete request body before wake admission. The
 	// upload has a plan-sized deadline and spills large bodies to disk; it does
@@ -7276,7 +7283,11 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentCreatedAt:     target.DeploymentCreatedAt,
 				ImageDigest:             target.ImageDigest,
 			}
-			if h.usageOutbox != nil {
+			if r.Context().Value(suppressFinancialUsageKey{}) == true {
+				// Rejected admissions remain visible in request telemetry but
+				// cannot become billable via either the outbox or debugger fallback.
+				row.UsageOutboxed = true
+			} else if h.usageOutbox != nil {
 				errorCount := int64(0)
 				if status >= 400 {
 					errorCount = 1
