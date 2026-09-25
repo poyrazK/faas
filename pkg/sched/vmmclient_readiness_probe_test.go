@@ -14,6 +14,7 @@ func TestAppSpecToProtoCarriesReadinessProbe(t *testing.T) {
 	}
 }
 
+// adr: 242
 func TestAppSpecToProtoCarriesMainDependencies(t *testing.T) {
 	want := []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}}
 	got := (AppSpec{MainDependsOn: want}).toProto().GetMainDependsOn()

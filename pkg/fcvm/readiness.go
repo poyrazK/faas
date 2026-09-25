@@ -87,7 +87,7 @@ func (m *Manager) startReadinessLoop(ctx context.Context, instance string, slot 
 		m.log.Warn("readiness: invalid override; instance remains fail-closed", "instance", instance, "err", err)
 		return
 	}
-	parent := m.lifecycleCtx
+	parent := m.lifecycleCtx //nolint:contextcheck // Readiness is daemon-owned and intentionally outlives the wake RPC.
 	if parent == nil {
 		parent = context.WithoutCancel(ctx)
 	}
