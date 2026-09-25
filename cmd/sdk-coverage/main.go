@@ -273,17 +273,18 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
-	"GET /v1/outbound/integrations":                             "ListOutboundIntegrationOffers",
-	"POST /v1/outbound/integrations":                            "CreateOutboundIntegration",
-	"DELETE /v1/outbound/integrations/{integration}":            "DeleteOutboundIntegration",
-	"GET /v1/outbound/integrations/{integration}/usage":         "GetOutboundIntegrationUsage",
-	"PUT /v1/outbound/integrations/{integration}/budget":        "SetOutboundIntegrationDailyBudget",
-	"GET /v1/apps/{slug}/outbound-bindings":                     "ListOutboundAppBindings",
-	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":       "BindOutboundIntegration",
-	"PATCH /v1/apps/{slug}/outbound-bindings/{integration}":     "UpdateOutboundBindingPolicy",
-	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":    "UnbindOutboundIntegration",
-	"PUT /v1/outbound/integrations/{integration}/credential":    "PutOutboundCredential",
-	"DELETE /v1/outbound/integrations/{integration}/credential": "DeleteOutboundCredential",
+	"GET /v1/outbound/integrations":                              "ListOutboundIntegrationOffers",
+	"POST /v1/outbound/integrations":                             "CreateOutboundIntegration",
+	"DELETE /v1/outbound/integrations/{integration}":             "DeleteOutboundIntegration",
+	"GET /v1/outbound/integrations/{integration}/usage":          "GetOutboundIntegrationUsage",
+	"PUT /v1/outbound/integrations/{integration}/budget":         "SetOutboundIntegrationDailyBudget",
+	"PUT /v1/outbound/integrations/{integration}/request-policy": "SetOutboundIntegrationRequestPolicy",
+	"GET /v1/apps/{slug}/outbound-bindings":                      "ListOutboundAppBindings",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":        "BindOutboundIntegration",
+	"PATCH /v1/apps/{slug}/outbound-bindings/{integration}":      "UpdateOutboundBindingPolicy",
+	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":     "UnbindOutboundIntegration",
+	"PUT /v1/outbound/integrations/{integration}/credential":     "PutOutboundCredential",
+	"DELETE /v1/outbound/integrations/{integration}/credential":  "DeleteOutboundCredential",
 	// First-class queue bindings use a hyphenated path segment. Pin the
 	// noun-oriented Go SDK names instead of the fallback's literal
 	// "Queue-bindings" spelling.

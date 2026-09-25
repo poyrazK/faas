@@ -21,6 +21,13 @@ func copyOutboundOffer(in OutboundIntegrationOffer) OutboundIntegrationOffer {
 	return in
 }
 
+func copyOutboundBinding(in OutboundAppBinding) OutboundAppBinding {
+	in.OutboundIntegrationOffer = copyOutboundOffer(in.OutboundIntegrationOffer)
+	in.RouteMethods = append([]string(nil), in.RouteMethods...)
+	in.RoutePathPrefixes = append([]string(nil), in.RoutePathPrefixes...)
+	return in
+}
+
 func (m *MemStore) SetOutboundDailyRequestLimit(_ context.Context, accountID, integrationID string, limit *int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -196,9 +203,7 @@ func (m *MemStore) ListOutboundAppBindings(_ context.Context, accountID, appID s
 		if offer, ok := m.outboundIntegrationOffers[binding.ID]; ok && offer.AccountID == accountID {
 			binding.OutboundIntegrationOffer = copyOutboundOffer(offer)
 			binding.Enabled = offer.Enabled && len(offer.AllowedMethods) > 0 && len(offer.AllowedPathPrefixes) > 0
-			binding.RouteMethods = append([]string(nil), binding.RouteMethods...)
-			binding.RoutePathPrefixes = append([]string(nil), binding.RoutePathPrefixes...)
-			out = append(out, binding)
+			out = append(out, copyOutboundBinding(binding))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -221,14 +226,12 @@ func (m *MemStore) BindOutboundIntegration(_ context.Context, accountID, appID, 
 	key := appID + "|" + integrationID
 	if existing, ok := m.outboundAppBindings[key]; ok {
 		existing.OutboundIntegrationOffer = copyOutboundOffer(offer)
-		existing.RouteMethods = append([]string(nil), existing.RouteMethods...)
-		existing.RoutePathPrefixes = append([]string(nil), existing.RoutePathPrefixes...)
-		return existing, nil
+		return copyOutboundBinding(existing), nil
 	}
 	binding := OutboundAppBinding{OutboundIntegrationOffer: copyOutboundOffer(offer), AppID: appID,
 		RouteMethods: append([]string(nil), offer.AllowedMethods...), RoutePathPrefixes: append([]string(nil), offer.AllowedPathPrefixes...), CreatedAt: time.Now()}
 	m.outboundAppBindings[key] = binding
-	return binding, nil
+	return copyOutboundBinding(binding), nil
 }
 
 func (m *MemStore) UpdateOutboundBindingPolicy(_ context.Context, accountID, appID, integrationID string, methods, paths []string) error {

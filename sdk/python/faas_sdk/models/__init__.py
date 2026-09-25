@@ -389,6 +389,8 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_outbound_integration_request import CreateOutboundIntegrationRequest
+from .create_outbound_integration_request_allowed_methods_item import CreateOutboundIntegrationRequestAllowedMethodsItem
 from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
@@ -1005,6 +1007,13 @@ from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .outbound_app_binding import OutboundAppBinding
+from .outbound_app_binding_list import OutboundAppBindingList
+from .outbound_integration_offer import OutboundIntegrationOffer
+from .outbound_integration_offer_credential_source import OutboundIntegrationOfferCredentialSource
+from .outbound_integration_offer_list import OutboundIntegrationOfferList
+from .outbound_integration_offer_owner_kind import OutboundIntegrationOfferOwnerKind
+from .outbound_integration_usage_response import OutboundIntegrationUsageResponse
 from .parked_deployment_ref import ParkedDeploymentRef
 from .parked_deployment_ref_parked_reason import ParkedDeploymentRefParkedReason
 from .password_forgot_response_200 import PasswordForgotResponse200
@@ -1239,6 +1248,8 @@ from .put_app_secret_request import PutAppSecretRequest
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_outbound_credential_request import PutOutboundCredentialRequest
+from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -1498,6 +1509,7 @@ from .update_managed_realtime_endpoint_request_auth_required_claims import (
 )
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
+from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
 from .update_private_network_policy_request import UpdatePrivateNetworkPolicyRequest
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
@@ -1944,6 +1956,8 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateOutboundIntegrationRequest",
+    "CreateOutboundIntegrationRequestAllowedMethodsItem",
     "CreatePlatformTenantRequest",
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
@@ -2552,6 +2566,13 @@ __all__ = (
     "OrgResponseStatus",
     "OrgWithRole",
     "OrgWithRoleRole",
+    "OutboundAppBinding",
+    "OutboundAppBindingList",
+    "OutboundIntegrationOffer",
+    "OutboundIntegrationOfferCredentialSource",
+    "OutboundIntegrationOfferList",
+    "OutboundIntegrationOfferOwnerKind",
+    "OutboundIntegrationUsageResponse",
     "ParkedDeploymentRef",
     "ParkedDeploymentRefParkedReason",
     "PasswordForgotResponse200",
@@ -2766,6 +2787,8 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
+    "PutOutboundCredentialRequest",
+    "PutOutboundDailyRequestBudgetRequest",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",
@@ -3017,6 +3040,7 @@ __all__ = (
     "UpdateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
+    "UpdateOutboundBindingPolicyRequest",
     "UpdatePrivateNetworkPolicyRequest",
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",

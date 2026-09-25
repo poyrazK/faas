@@ -101,6 +101,9 @@ func validateCustomerOutboundIntegration(offer OutboundIntegrationOffer) error {
 }
 
 func isOutboundIntegrationName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
 	for i := 0; i < len(name); i++ {
 		ch := name[i]
 		valid := ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || i > 0 && ch == '-'
