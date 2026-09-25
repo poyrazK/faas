@@ -150,3 +150,64 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 		t.Fatalf("shared postgres budget: provider_calls=%d granted=%d rejected=%d; want 5/5/15", providerCalls.Load(), granted, rejected)
 	}
 }
+
+func TestCustomerBindingControlsManagedIntegrationAttachment(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "outbound-bind-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "outbound-bind-" + uuid.NewString()[:8], RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration, err := outbound.NewIntegration(uuid.NewString(), "https://api.example.com", "unused-token", nil, 10, 10, 10, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration.ProviderAuthMode = outbound.ProviderAuthManaged
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1/widgets"}
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{AccountID: uuid.MustParse(account.ID), Name: "widgets", Policy: integration}); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := outbound.NewPostgresResolver(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := resolver.Integration(ctx, integration.ID)
+	if err != nil || before.AllowsApp(app.ID) {
+		t.Fatalf("before binding: allows=%t err=%v", before.AllowsApp(app.ID), err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, account.ID, app.ID, integration.ID); err != nil {
+		t.Fatal(err)
+	}
+	otherAccount, err := store.CreateAccount(ctx, "outbound-other-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BindOutboundIntegration(ctx, otherAccount.ID, app.ID, integration.ID); err != state.ErrNotFound {
+		t.Fatalf("cross-account bind error = %v; want not found", err)
+	}
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{
+		AccountID: uuid.MustParse(otherAccount.ID), Name: "widgets", Policy: integration,
+	}); err == nil {
+		t.Fatal("integration ownership transfer succeeded")
+	}
+	after, err := resolver.Integration(ctx, integration.ID)
+	if err != nil || !after.AllowsApp(app.ID) || !after.AllowsRequest(http.MethodGet, "/v1/widgets") {
+		t.Fatalf("after binding: allows=%t err=%v", after.AllowsApp(app.ID), err)
+	}
+	if err := store.UnbindOutboundIntegration(ctx, account.ID, app.ID, integration.ID); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := resolver.Integration(ctx, integration.ID)
+	if err != nil || removed.AllowsApp(app.ID) {
+		t.Fatalf("after unbinding: allows=%t err=%v", removed.AllowsApp(app.ID), err)
+	}
+}

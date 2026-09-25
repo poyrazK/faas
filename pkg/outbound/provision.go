@@ -40,7 +40,7 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	_, err = tx.Exec(ctx, `
+	command, err := tx.Exec(ctx, `
 		INSERT INTO outbound_integrations
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst,
 		     max_in_flight, request_timeout_ms, enabled, provider_auth_mode,
@@ -55,7 +55,8 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		    enabled = EXCLUDED.enabled, provider_auth_mode = EXCLUDED.provider_auth_mode,
 		    allowed_methods = EXCLUDED.allowed_methods,
 		    allowed_path_prefixes = EXCLUDED.allowed_path_prefixes,
-		    updated_at = now()`,
+		    updated_at = now()
+		WHERE outbound_integrations.account_id = EXCLUDED.account_id`,
 		integrationID, record.AccountID, record.Name, record.Policy.Origin.String(),
 		record.Policy.TokenHash[:], record.Policy.RatePerSecond, record.Policy.Burst,
 		record.Policy.MaxInFlight, record.Policy.RequestTimeout.Milliseconds(), record.Policy.Enabled,
@@ -63,6 +64,9 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		nonNilStrings(record.Policy.AllowedPathPrefixes))
 	if err != nil {
 		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf("%w: integration account cannot change", ErrInvalidIntegration)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM outbound_integration_apps WHERE integration_id = $1`, integrationID); err != nil {
 		return err

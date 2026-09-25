@@ -36,6 +36,8 @@ servers:
         description: Public hostname (one-box FaaS).
 
 tags:
+  - name: outbound
+    description: Bind apps to account-owned, operator-provisioned managed outbound integrations without exposing provider credentials.
   - name: storage
     description: Private customer object-storage preview, separate from runtime snapshots and image layers.
   - name: managed_postgres
@@ -318,6 +320,73 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/outbound/integrations:
+    get:
+      tags: [outbound]
+      operationId: listOutboundIntegrationOffers
+      summary: List managed outbound integrations available to this account.
+      description: Provider credentials and gateway tokens are never returned.
+      responses:
+        '200':
+          description: Available managed integrations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundIntegrationOfferList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/outbound-bindings:
+    get:
+      tags: [outbound]
+      operationId: listOutboundAppBindings
+      summary: List an app's managed outbound bindings.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: Current app bindings, without credential material.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAppBindingList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/outbound-bindings/{integration}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: integration
+        in: path
+        required: true
+        description: UUID of an account-owned managed integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: bindOutboundIntegration
+      summary: Bind an app to an existing managed outbound integration.
+      description: Idempotent. The integration is operator-provisioned; this request never carries a provider key.
+      responses:
+        '200':
+          description: Binding active.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAppBinding' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: unbindOutboundIntegration
+      summary: Remove an app's managed outbound binding.
+      description: Idempotent; returns 204 even when the binding is already absent.
+      responses:
+        '204': { description: Binding absent. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/status:
     get:
       tags: [status]
@@ -19478,6 +19547,46 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    OutboundIntegrationOffer:
+      type: object
+      description: Account-owned managed integration metadata; never contains a provider key or gateway token.
+      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        origin: { type: string, format: uri }
+        allowed_methods:
+          type: array
+          items: { type: string }
+        allowed_path_prefixes:
+          type: array
+          items: { type: string }
+        enabled: { type: boolean }
+    OutboundIntegrationOfferList:
+      type: object
+      description: Enabled managed integrations this account may bind to its apps.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
+    OutboundAppBinding:
+      type: object
+      description: An app's customer-owned attachment to a managed integration.
+      required: [integration, app_id, created_at]
+      properties:
+        integration: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
+        app_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+    OutboundAppBindingList:
+      type: object
+      description: Customer-owned outbound attachments for one app.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAppBinding' }
+
     PreflightLevel:
       type: string
       enum: [green, amber, red]

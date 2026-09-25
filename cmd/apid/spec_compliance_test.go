@@ -68,6 +68,7 @@ const (
 	devSyncFile                   = "dev_sync.go"                    // developer edit-to-live history
 	privateNetworkFile            = "private_network.go"             // Gregale-owned private network fabric DTOs
 	queueBindingFile              = "queue_bindings.go"              // first-class queue binding DTOs
+	outboundBindingsFile          = "outbound_bindings.go"           // managed outbound binding DTOs
 	platformTenantsFile           = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 )
@@ -975,6 +976,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
+		filepath.Join(root, "pkg", "api", outboundBindingsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),

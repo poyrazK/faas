@@ -95,9 +95,9 @@ func (i Integration) Validate() error {
 	if math.IsNaN(i.RatePerSecond) || math.IsInf(i.RatePerSecond, 0) || i.RatePerSecond <= 0 || i.Burst < 1 || i.MaxInFlight < 1 {
 		return fmt.Errorf("%w: rate, burst, and max_in_flight must be positive", ErrInvalidIntegration)
 	}
-	if len(i.AppIDs) == 0 {
-		return fmt.Errorf("%w: at least one attached app is required", ErrInvalidIntegration)
-	}
+	// An operator may provision an integration with no initial app. Customer
+	// attachments live in apid-owned outbound_app_bindings and are loaded by
+	// the resolver at request time.
 	if i.RequestTimeout <= 0 {
 		return fmt.Errorf("%w: request timeout must be positive", ErrInvalidIntegration)
 	}

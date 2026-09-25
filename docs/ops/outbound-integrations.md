@@ -44,6 +44,18 @@ restarting `outboundd`. The configured gateway token is still required for
 the existing database schema but is **not** given to apps or accepted as
 authentication for managed integrations.
 
+`app_ids` may be empty for a managed integration. Once the operator has
+provisioned it, the account can list available integrations with
+`GET /v1/outbound/integrations`, attach one with
+`PUT /v1/apps/{slug}/outbound-bindings/{integration_id}`, list an app's
+attachments with `GET /v1/apps/{slug}/outbound-bindings`, and remove one with
+`DELETE /v1/apps/{slug}/outbound-bindings/{integration_id}`. These API calls
+carry no provider credential. `apid` owns the durable customer binding row;
+`outboundd` reads it at request time alongside operator `app_ids`, so a bind
+or unbind needs no daemon restart. A customer unbind does not remove an
+operator attachment. The account must own both app and managed integration.
+See [ADR-242](../adr/242-customer-outbound-binding-intent.md).
+
 For every managed integration, set `allowed_methods` (uppercase `GET`, `HEAD`,
 `POST`, `PUT`, `PATCH`, or `DELETE`) and `allowed_path_prefixes`. A prefix
 matches a whole path segment: `/v1/customers` allows `/v1/customers` and

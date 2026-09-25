@@ -1,0 +1,33 @@
+package state
+
+import (
+	"context"
+	"time"
+)
+
+// OutboundIntegrationOffer is safe account-scoped policy metadata. Provider
+// authorization values and gateway tokens never appear in this projection.
+type OutboundIntegrationOffer struct {
+	ID                  string
+	AccountID           string
+	Name                string
+	Origin              string
+	AllowedMethods      []string
+	AllowedPathPrefixes []string
+	Enabled             bool
+}
+
+type OutboundAppBinding struct {
+	OutboundIntegrationOffer
+	AppID     string
+	CreatedAt time.Time
+}
+
+// OutboundBindingStore owns only customer app-binding intent. outboundd still
+// owns outbound_integrations and outbound_integration_apps provisioning.
+type OutboundBindingStore interface {
+	ListOutboundIntegrationOffers(context.Context, string) ([]OutboundIntegrationOffer, error)
+	ListOutboundAppBindings(context.Context, string, string) ([]OutboundAppBinding, error)
+	BindOutboundIntegration(context.Context, string, string, string) (OutboundAppBinding, error)
+	UnbindOutboundIntegration(context.Context, string, string, string) error
+}

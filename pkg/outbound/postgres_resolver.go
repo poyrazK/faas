@@ -30,6 +30,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		return Integration{}, ErrIntegrationNotFound
 	}
 	var origin string
+	var accountID uuid.UUID
 	var providerAuthMode string
 	var allowedMethods, allowedPathPrefixes []string
 	var tokenHash []byte
@@ -37,11 +38,11 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var burst, maxInFlight, timeoutMS int
 	var enabled bool
 	err = r.pool.QueryRow(ctx, `
-		SELECT origin, token_hash, rate_per_second, burst, max_in_flight,
+		SELECT account_id, origin, token_hash, rate_per_second, burst, max_in_flight,
 		       request_timeout_ms, enabled, provider_auth_mode,
 		       allowed_methods, allowed_path_prefixes
 		FROM outbound_integrations WHERE id = $1`, integrationID).
-		Scan(&origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &allowedMethods, &allowedPathPrefixes)
+		Scan(&accountID, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &allowedMethods, &allowedPathPrefixes)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -60,7 +61,18 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	}
 	var hash [sha256.Size]byte
 	copy(hash[:], tokenHash)
-	rows, err := r.pool.Query(ctx, `SELECT app_id::text FROM outbound_integration_apps WHERE integration_id = $1`, integrationID)
+	rows, err := r.pool.Query(ctx, `
+		SELECT attachment.app_id::text
+		  FROM outbound_integration_apps attachment
+		  JOIN apps app ON app.id = attachment.app_id
+		 WHERE attachment.integration_id = $1 AND app.account_id = $3 AND app.status <> 'deleted'
+		UNION
+		SELECT binding.app_id::text
+		  FROM outbound_app_bindings binding
+		  JOIN apps app ON app.id = binding.app_id
+		 WHERE binding.integration_id = $1 AND binding.account_id = $3
+		   AND app.account_id = $3 AND app.status <> 'deleted'
+		   AND $2 = 'managed'`, integrationID, providerAuthMode, accountID)
 	if err != nil {
 		return Integration{}, err
 	}

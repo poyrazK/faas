@@ -2191,6 +2191,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateQueueBinding))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteQueueBinding))))
 
+	// Customer intent for operator-provisioned managed outbound integrations.
+	// apid owns these binding rows; outboundd only reads them for admission.
+	mux.HandleFunc("GET /v1/outbound/integrations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOutboundIntegrationOffers))))
+	mux.HandleFunc("GET /v1/apps/{slug}/outbound-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOutboundAppBindings))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundAppBinding))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/outbound-bindings/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteOutboundAppBinding))))
+
 	// Managed realtime endpoint resources (ADR-156). These routes persist the
 	// callback contract and sealed credentials; live connections remain owned by
 	// realtimed and are reconciled from this durable source of truth.
