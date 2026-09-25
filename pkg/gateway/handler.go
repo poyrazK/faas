@@ -2517,62 +2517,11 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 // pkg/api/dto.go validates the allowList entries at create-time;
 // this function is the runtime mirror.
 func matchOrigin(allowList []string, origin string) string {
-	if origin == "" {
-		return ""
-	}
-	// RFC 6454 §3: scheme + host are case-insensitive.
-	// Lowercase the scheme and host of the request Origin so
-	// "HTTPS://App.Example.COM" matches the
-	// "https://app.example.com" allowlist entry.
-	origin = strings.ToLower(origin)
-	for _, raw := range allowList {
-		a := strings.ToLower(raw)
-		if a == "*" || a == origin {
-			return a
-		}
-		// Subdomain wildcard: "https://*.example.com" → match
-		// any "https://<single-label>.example.com". We split
-		// on "://" so the ".*" pattern only applies to the
-		// host segment, not the scheme.
-		sch, hostSuffix, ok := splitScheme(a)
-		if !ok {
-			continue
-		}
-		rSch, rHost, ok2 := splitScheme(origin)
-		if !ok2 {
-			continue
-		}
-		if sch != rSch {
-			continue
-		}
-		// Subdomain wildcard: "*.<rest>" — match any host
-		// with exactly one extra label prefixed to <rest>.
-		if strings.HasPrefix(hostSuffix, "*.") {
-			suffix := hostSuffix[2:] // strip "*."
-			suffixLabels := strings.Count(suffix, ".")
-			if strings.HasSuffix(rHost, "."+suffix) &&
-				strings.Count(rHost, ".") == suffixLabels+1 {
-				return a // echo the lower-cased allowlist entry
-			}
-		}
-		// Port wildcard: "<host>:*" — match any port.
-		if strings.HasSuffix(hostSuffix, ":*") {
-			prefix := strings.TrimSuffix(hostSuffix, ":*")
-			if strings.HasPrefix(rHost, prefix+":") {
-				return a
-			}
-		}
-	}
-	return ""
+	return api.MatchEdgeRuleCORSOrigin(allowList, origin)
 }
 
-// splitScheme is a tiny helper that returns (scheme, "host[:port]")
-// for an origin of the form "scheme://host[:port]". Used by
-// matchOrigin to peel off the scheme before applying the
-// subdomain/port wildcard predicates. Returns false when the input
-// has no "://" separator (which the apid validator rejects at
-// create-time, so this is a runtime guard against a future schema
-// loosening that bypasses apid).
+// splitScheme is retained for focused gateway tests. The production matcher
+// is shared from pkg/api so the simulator and gateway use identical semantics.
 func splitScheme(origin string) (scheme, rest string, ok bool) {
 	idx := strings.Index(origin, "://")
 	if idx < 0 {

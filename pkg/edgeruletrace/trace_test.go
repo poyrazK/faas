@@ -142,6 +142,133 @@ func TestNormalizeInputPreservesEffectivePlanBodyLimit(t *testing.T) {
 	}
 }
 
+func TestSimulateInlineCORSRuleAppliesResponseHeaders(t *testing.T) {
+	rule := corsTraceRule(t, "cors-rule", []string{"GET"}, api.EdgeRuleCORSAction{
+		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET", "POST"},
+		AllowHeaders: []string{"Content-Type", "X-Request-ID"}, ExposeHeaders: []string{"X-Request-ID"},
+		AllowCredentials: true, MaxAgeSeconds: 600,
+	})
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, Headers: http.Header{"Origin": []string{"https://app.example.com"}}}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	want := []api.EdgeRuleHeaderOp{
+		{Action: "set", Name: "Access-Control-Allow-Origin", Value: "https://app.example.com"},
+		{Action: "set", Name: "Access-Control-Allow-Credentials", Value: "true"},
+		{Action: "set", Name: "Access-Control-Allow-Methods", Value: "GET, POST"},
+		{Action: "set", Name: "Access-Control-Allow-Headers", Value: "Content-Type, X-Request-ID"},
+		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "X-Request-ID"},
+		{Action: "set", Name: "Access-Control-Max-Age", Value: "600"},
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.ResponseHeaderOps) != len(want) {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	for i := range want {
+		if result.Simulation.ResponseHeaderOps[i] != want[i] {
+			t.Fatalf("response header ops = %#v, want %#v", result.Simulation.ResponseHeaderOps, want)
+		}
+	}
+	if got := result.Simulation.Steps[0].Outcome; got != "cors_applied" {
+		t.Fatalf("CORS step outcome = %q, want cors_applied", got)
+	}
+}
+
+func TestSimulateCORSPreflightUsesRequestedMethodToSelectRule(t *testing.T) {
+	rule := corsTraceRule(t, "cors-get", []string{"GET"}, api.EdgeRuleCORSAction{
+		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"}, AllowHeaders: []string{"Content-Type"},
+	})
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodOptions, Headers: http.Header{
+		"Origin": []string{"https://app.example.com"}, "Access-Control-Request-Method": []string{"GET"},
+	}}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if len(result.Rules) != 1 || result.Rules[0].Status != "first_candidate" || !strings.Contains(result.Rules[0].Reason, "preflight requests GET") {
+		t.Fatalf("standalone CORS row = %#v", result.Rules)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "cors_preflight" || result.Simulation.StatusCode != http.StatusNoContent || result.Simulation.StoppedAt != "cors" {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	if len(result.Simulation.ResponseHeaderOps) != 3 || result.Simulation.Steps[0].StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight response = %#v", result.Simulation)
+	}
+}
+
+func TestSimulateCORSPreflightMethodSelectorRemainsCaseSensitive(t *testing.T) {
+	rule := corsTraceRule(t, "cors-get", []string{"GET"}, api.EdgeRuleCORSAction{
+		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"},
+	})
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodOptions, Headers: http.Header{
+		"Origin": []string{"https://app.example.com"}, "Access-Control-Request-Method": []string{"get"},
+	}}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Rules[0].Status != "skipped" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 0 {
+		t.Fatalf("lowercase preflight method should not select GET CORS rule: rows=%#v simulation=%#v", result.Rules, result.Simulation)
+	}
+}
+
+func TestSimulateCORSDeniedMethodAndOriginContinueWithoutHeaders(t *testing.T) {
+	tests := []struct {
+		name          string
+		method        string
+		requestMethod string
+		matchMethod   string
+		allowMethods  []string
+		allowOrigins  []string
+		origin        string
+		outcome       string
+	}{
+		{name: "method denied", method: http.MethodOptions, requestMethod: "PUT", matchMethod: "PUT", allowMethods: []string{"GET"}, allowOrigins: []string{"https://app.example.com"}, origin: "https://app.example.com", outcome: "cors_method_not_allowed"},
+		{name: "origin denied", method: http.MethodGet, matchMethod: "GET", allowMethods: []string{"GET"}, allowOrigins: []string{"https://app.example.com"}, origin: "https://other.example.com", outcome: "cors_origin_not_allowed"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rule := corsTraceRule(t, "cors-rule", []string{tc.matchMethod}, api.EdgeRuleCORSAction{AllowMethods: tc.allowMethods, AllowOrigins: tc.allowOrigins})
+			headers := http.Header{"Origin": []string{tc.origin}}
+			if tc.requestMethod != "" {
+				headers.Set("Access-Control-Request-Method", tc.requestMethod)
+			}
+			result, err := edgeruletrace.Simulate(edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: tc.method, Headers: headers}, []api.EdgeRuleResponse{rule})
+			if err != nil {
+				t.Fatalf("Simulate: %v", err)
+			}
+			if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.ResponseHeaderOps) != 0 || result.Simulation.Steps[0].Outcome != tc.outcome {
+				t.Fatalf("simulation = %#v", result.Simulation)
+			}
+		})
+	}
+}
+
+func TestSimulateCORSOptionsWithoutOriginShortCircuitsWithoutHeaders(t *testing.T) {
+	rule := corsTraceRule(t, "cors-options", []string{"OPTIONS"}, api.EdgeRuleCORSAction{
+		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"},
+	})
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodOptions}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Outcome != "cors_preflight" || result.Simulation.StatusCode != http.StatusNoContent || len(result.Simulation.ResponseHeaderOps) != 0 {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+}
+
+func TestSimulateCORSPresetIsIncomplete(t *testing.T) {
+	presetID := "preset-1"
+	rule := corsTraceRule(t, "cors-preset", []string{"GET"}, api.EdgeRuleCORSAction{CorsPresetID: &presetID})
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_cors_preset" || result.Simulation.StoppedAt != "cors" {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+}
+
 func TestSimulateLimitRuleWithRequestBody(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -243,5 +370,17 @@ func limitTraceRule(t *testing.T, id string, buffered, streaming int) api.EdgeRu
 	}
 	return api.EdgeRuleResponse{
 		ID: id, Enabled: true, Kind: "limit", MatchHost: "*", MatchPath: "*", Action: encodedAction,
+	}
+}
+
+func corsTraceRule(t *testing.T, id string, matchMethods []string, action api.EdgeRuleCORSAction) api.EdgeRuleResponse {
+	t.Helper()
+	encodedAction, err := json.Marshal(map[string]any{"cors": action})
+	if err != nil {
+		t.Fatalf("Marshal CORS action: %v", err)
+	}
+	return api.EdgeRuleResponse{
+		ID: id, Enabled: true, Kind: "cors", MatchHost: "*", MatchPath: "*",
+		MatchMethods: matchMethods, Action: encodedAction,
 	}
 }

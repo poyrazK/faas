@@ -21,7 +21,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. App-level maintenance, ingress/auth policy, target-app rules after routing, CORS execution, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline edge-rule CORS is simulated from Origin and preflight request headers; preset-backed CORS rules are incomplete because resolved preset settings are not returned to the trace. App-level default CORS, app-level maintenance, ingress/auth policy, target-app rules after routing, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 // Input is the request context that can be simulated without contacting the
@@ -228,6 +228,11 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 	}
 	firstByKind := make(map[string]int)
 	for _, rule := range sorted {
+		matchMethod := input.Method
+		requestedMethod := ""
+		if rule.Kind == "cors" {
+			matchMethod, requestedMethod = corsMatchMethod(input.Method, input.Headers)
+		}
 		row := RuleRow{
 			ID: rule.ID, Kind: rule.Kind, Priority: rule.Priority,
 			MatchHost: rule.MatchHost, MatchPath: rule.MatchPath,
@@ -238,8 +243,8 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			row.Status, row.Reason = "skipped", "rule is disabled"
 		case !HostMatches(rule.MatchHost, input.Host):
 			row.Status, row.Reason = "skipped", fmt.Sprintf("host %q does not match %q", input.Host, rule.MatchHost)
-		case !MethodMatches(rule.MatchMethods, input.Method):
-			row.Status, row.Reason = "skipped", fmt.Sprintf("method %q is not in %s", input.Method, strings.Join(rule.MatchMethods, ", "))
+		case !ruleMethodMatches(rule.Kind, rule.MatchMethods, matchMethod):
+			row.Status, row.Reason = "skipped", fmt.Sprintf("method %q is not in %s", matchMethod, strings.Join(rule.MatchMethods, ", "))
 		case !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, input.Headers):
 			row.Status, row.Reason = "skipped", headerMismatch(rule.MatchHeaders, input.Headers)
 		default:
@@ -270,6 +275,9 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 					firstByKind[rule.Kind] = len(result.Rules)
 				}
 			}
+		}
+		if rule.Kind == "cors" && row.Status != "skipped" && requestedMethod != "" {
+			row.Reason += fmt.Sprintf("; preflight requests %s", requestedMethod)
 		}
 		row.Outcome, row.OutcomeReason, row.ActionPreview = previewAction(rule, row, input, input.Path)
 		result.Rules = append(result.Rules, row)
@@ -304,7 +312,11 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 
 	phases := []string{"route", "maintenance", "redirect", "rewrite", "headers", "cors", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
 	for _, phase := range phases {
-		rule, tied := firstPhaseRule(rules, phase, input.Host, requestPath, input.Method, workingHeaders)
+		matchMethod := input.Method
+		if phase == "cors" {
+			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)
+		}
+		rule, tied := firstPhaseRule(rules, phase, input.Host, requestPath, matchMethod, workingHeaders)
 		if tied {
 			return stop("incomplete", "ambiguous", phase, "equal-priority matching rules have no guaranteed evaluation order", rule)
 		}
@@ -312,7 +324,9 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			continue
 		}
 		row := RuleRow{Status: "first_candidate"}
-		outcome, reason, preview := previewAction(*rule, row, input, requestPath)
+		actionInput := input
+		actionInput.Headers = workingHeaders
+		outcome, reason, preview := previewAction(*rule, row, actionInput, requestPath)
 		step := SimulationStep{Phase: phase, RuleID: rule.ID, Kind: phase, Outcome: outcome, PathBefore: requestPath, Reason: reason}
 		if preview != nil {
 			step.StatusCode, step.Location, step.TargetApp = preview.StatusCode, preview.Location, preview.TargetApp
@@ -374,6 +388,27 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			simulation.ResponseHeaderOps = append(simulation.ResponseHeaderOps, preview.ResponseHeaderOps...)
 			step.PathAfter = requestPath
 			simulation.Steps = append(simulation.Steps, step)
+		case "cors":
+			switch outcome {
+			case "cors_applied", "cors_no_origin", "cors_method_not_allowed", "cors_origin_not_allowed":
+				if outcome == "cors_applied" {
+					simulation.ResponseHeaderOps = append(simulation.ResponseHeaderOps, preview.ResponseHeaderOps...)
+				}
+				step.PathAfter = requestPath
+				simulation.Steps = append(simulation.Steps, step)
+			case "cors_preflight":
+				simulation.Status, simulation.Outcome = "complete", "cors_preflight"
+				simulation.StatusCode, simulation.StoppedAt = http.StatusNoContent, phase
+				simulation.ResponseHeaderOps = append(simulation.ResponseHeaderOps, preview.ResponseHeaderOps...)
+				simulation.Reason = reason
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			case "needs_cors_preset":
+				return stop("incomplete", outcome, phase, reason, rule)
+			default:
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
 		case "ip", "geo":
 			switch outcome {
 			case "allow":
@@ -441,7 +476,7 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind, host, requestPath, metho
 	var first *api.EdgeRuleResponse
 	for i := range rules {
 		rule := &rules[i]
-		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, host) || !MethodMatches(rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
 			continue
 		}
 		matched, err := true, error(nil)
@@ -519,6 +554,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 			ResponseHeaderOps: append([]api.EdgeRuleHeaderOp(nil), action.ResponseHeaders...),
 		}
 		return "headers", fmt.Sprintf("would apply %d request-header and %d response-header operation(s)", len(action.RequestHeaders), len(action.ResponseHeaders)), preview
+	case "cors":
+		return previewCORSRule(rule, input)
 	case "maintenance":
 		action, ok := decodeAction[api.EdgeRuleMaintenanceAction](rule.Action, "maintenance")
 		if !ok {
@@ -568,6 +605,79 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 	default:
 		return "not_simulated", "this rule kind has runtime behavior outside the action preview", nil
 	}
+}
+
+// corsMatchMethod mirrors applyEdgeRuleCORS: browser preflights match a CORS
+// rule against Access-Control-Request-Method, but only when Origin is present.
+func corsMatchMethod(method string, headers http.Header) (matchMethod, requestedMethod string) {
+	matchMethod = method
+	if method == http.MethodOptions && headers.Get("Origin") != "" {
+		requestedMethod = strings.TrimSpace(headers.Get("Access-Control-Request-Method"))
+		if requestedMethod != "" {
+			matchMethod = requestedMethod
+		}
+	}
+	return matchMethod, requestedMethod
+}
+
+func previewCORSRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleCORSAction](rule.Action, "cors")
+	if !ok {
+		return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
+	}
+	if action.CorsPresetID != nil {
+		return "needs_cors_preset", "CORS policy references a preset whose resolved settings are not included in the edge-rule response", nil
+	}
+
+	_, requestedMethod := corsMatchMethod(input.Method, input.Headers)
+	preflightContext := ""
+	if requestedMethod != "" {
+		preflightContext = fmt.Sprintf("preflight requests %s; ", requestedMethod)
+		allowed := false
+		for _, method := range action.AllowMethods {
+			if method == requestedMethod {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return "cors_method_not_allowed", preflightContext + "requested method is not allowed, so the gateway adds no CORS headers and continues the request", &ActionPreview{Type: "cors"}
+		}
+	}
+
+	origin := input.Headers.Get("Origin")
+	allowedOrigin := api.MatchEdgeRuleCORSOrigin(action.AllowOrigins, origin)
+	if origin != "" && allowedOrigin == "" {
+		return "cors_origin_not_allowed", preflightContext + "Origin is not allowed, so the gateway adds no CORS headers and continues the request", &ActionPreview{Type: "cors"}
+	}
+
+	preview := &ActionPreview{Type: "cors"}
+	if allowedOrigin != "" {
+		preview.ResponseHeaderOps = append(preview.ResponseHeaderOps, api.EdgeRuleHeaderOp{Action: "set", Name: "Access-Control-Allow-Origin", Value: allowedOrigin})
+		if action.AllowCredentials {
+			preview.ResponseHeaderOps = append(preview.ResponseHeaderOps, api.EdgeRuleHeaderOp{Action: "set", Name: "Access-Control-Allow-Credentials", Value: "true"})
+		}
+		if len(action.AllowMethods) > 0 {
+			preview.ResponseHeaderOps = append(preview.ResponseHeaderOps, api.EdgeRuleHeaderOp{Action: "set", Name: "Access-Control-Allow-Methods", Value: strings.Join(action.AllowMethods, ", ")})
+		}
+		if len(action.AllowHeaders) > 0 {
+			preview.ResponseHeaderOps = append(preview.ResponseHeaderOps, api.EdgeRuleHeaderOp{Action: "set", Name: "Access-Control-Allow-Headers", Value: strings.Join(action.AllowHeaders, ", ")})
+		}
+		if len(action.ExposeHeaders) > 0 {
+			preview.ResponseHeaderOps = append(preview.ResponseHeaderOps, api.EdgeRuleHeaderOp{Action: "set", Name: "Access-Control-Expose-Headers", Value: strings.Join(action.ExposeHeaders, ", ")})
+		}
+		if action.MaxAgeSeconds > 0 {
+			preview.ResponseHeaderOps = append(preview.ResponseHeaderOps, api.EdgeRuleHeaderOp{Action: "set", Name: "Access-Control-Max-Age", Value: fmt.Sprintf("%d", action.MaxAgeSeconds)})
+		}
+	}
+	if input.Method == http.MethodOptions {
+		preview.StatusCode = http.StatusNoContent
+		return "cors_preflight", preflightContext + "would return HTTP 204 preflight response", preview
+	}
+	if origin == "" {
+		return "cors_no_origin", "CORS rule matches but the request has no Origin header, so no CORS response headers are added", preview
+	}
+	return "cors_applied", fmt.Sprintf("would apply %d CORS response-header operation(s)", len(preview.ResponseHeaderOps)), preview
 }
 
 func previewValidateRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
@@ -855,6 +965,21 @@ func MethodMatches(methods []string, method string) bool {
 	}
 	for _, candidate := range methods {
 		if strings.EqualFold(candidate, method) {
+			return true
+		}
+	}
+	return false
+}
+
+// ruleMethodMatches uses the gateway's case-sensitive lookup for CORS methods.
+// The ordinary HTTP method has already been normalized; Access-Control-Request-Method
+// is passed to the gateway matcher as submitted, without case normalization.
+func ruleMethodMatches(kind string, methods []string, method string) bool {
+	if kind != "cors" || len(methods) == 0 {
+		return MethodMatches(methods, method)
+	}
+	for _, candidate := range methods {
+		if candidate == method {
 			return true
 		}
 	}
