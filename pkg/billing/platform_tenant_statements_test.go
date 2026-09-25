@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 238
 func TestBuildPlatformTenantStatementCrossAppAdjustments(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	appA, appB, consumerA, consumerB := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
