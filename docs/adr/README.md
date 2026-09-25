@@ -55,7 +55,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 238 | [Cross-app platform tenant usage statements](238-cross-app-platform-tenant-statements.md) | accepted | Immutable single-currency customer snapshots, late-usage adjustment revisions, and mutually exclusive app/tenant handoffs |
-| 240 | [Application acknowledgement of secret reload](240-application-secret-reload-acknowledgement.md) | accepted | Version-fenced, non-sensitive self-attestation after the app applies the guest-local secret projection |
+| 249 | [Application acknowledgement of secret reload](249-application-secret-reload-acknowledgement.md) | accepted | Version-fenced, non-sensitive self-attestation after the app applies the guest-local secret projection |
 | 237 | [Provider-neutral customer billing for direct object storage](237-provider-neutral-object-storage-billing.md) | accepted architecture; implementation pending | Keep direct signed URLs; versioned customer meter and rate card; provider cost is separate operator evidence |
 | 234 | [Durable consumer-usage delivery](234-durable-consumer-usage-delivery.md) | accepted | Separate fsynced gateway usage outbox and apid receipt from optional debugger; replay by event ID |
 | 233 | [Environment-owned declared route contracts](233-environment-owned-declared-routes.md) | accepted | Scoped route-policy replacement, atomic clone, effective diff, and deployment-URL enforcement; OpenAPI fallback remains shared |

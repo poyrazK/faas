@@ -16,7 +16,7 @@
   The list query includes only active runtimes that have reported. A missing
   report is unknown, not evidence that a runtime lacks access; the result is
   not a complete fleet denominator. A successful guest-init signal still does
-  not mean that the application applied the credentials. ADR-240 adds a
+  not mean that the application applied the credentials. ADR-249 adds a
   separate, explicitly application-owned self-attestation.
 - **Security:** The table and API contain only secret key/scope, opaque version,
   runtime ID, timestamps, and closed guest-init outcome fields. No plaintext or

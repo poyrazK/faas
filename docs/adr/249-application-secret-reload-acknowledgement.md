@@ -1,4 +1,4 @@
-# ADR-240 · Application acknowledgement of secret reload
+# ADR-249 · Application acknowledgement of secret reload
 
 - **Status:** accepted
 - **Date:** 2026-09-25
