@@ -21536,7 +21536,8 @@ func (s *PgStore) GetIdempotent(ctx context.Context, accountID, key string) (int
 	var body []byte
 	err := s.pool.QueryRow(ctx,
 		`select response_status, response_body from idempotency_keys
-		 where account_id = $1 and key = $2 and created_at > now() - interval '24 hours'`,
+		 where account_id = $1 and key = $2 and created_at > now() - interval '24 hours'
+		   and response_status > 0`,
 		accountID, key).Scan(&status, &body)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -21551,9 +21552,47 @@ func (s *PgStore) PutIdempotent(ctx context.Context, accountID, key string, stat
 	_, err := s.pool.Exec(ctx,
 		`insert into idempotency_keys (key, account_id, response_status, response_body)
 		 values ($1, $2, $3, $4)
-		 on conflict (account_id, key) do update set response_status = excluded.response_status, response_body = excluded.response_body`,
+		 on conflict (account_id, key) do update set response_status = excluded.response_status,
+		     response_body = excluded.response_body, created_at = now()`,
 		key, accountID, status, body)
 	return err
+}
+
+// ReserveIdempotent claims an Idempotency-Key before the request runs, so
+// two concurrent requests with one key cannot both execute. A new key, a
+// key whose last use is older than the 24 h replay window, or an in-flight
+// reservation older than abandonAfter (its request crashed) is reserved for
+// the caller as an in-flight row (response_status 0). Otherwise the caller
+// gets the completed response to replay, or InFlight while another request
+// still holds the key.
+func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	var reserved bool
+	err := s.pool.QueryRow(ctx,
+		`insert into idempotency_keys (key, account_id, response_status, response_body)
+		 values ($1, $2, 0, ''::bytea)
+		 on conflict (account_id, key) do update
+		    set response_status = 0, response_body = ''::bytea, created_at = now()
+		  where idempotency_keys.created_at <= now() - interval '24 hours'
+		     or (idempotency_keys.response_status = 0
+		         and idempotency_keys.created_at <= now() - make_interval(secs => $3))
+		 returning true`,
+		key, accountID, abandonAfter.Seconds()).Scan(&reserved)
+	if err == nil {
+		return IdempotencyReservation{Reserved: true}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return IdempotencyReservation{}, err
+	}
+	var res IdempotencyReservation
+	err = s.pool.QueryRow(ctx,
+		`select response_status, response_body from idempotency_keys
+		 where account_id = $1 and key = $2`,
+		accountID, key).Scan(&res.Status, &res.Body)
+	if err != nil {
+		return IdempotencyReservation{}, err
+	}
+	res.InFlight = res.Status == 0
+	return res, nil
 }
 
 // --- secrets -----------------------------------------------------------------

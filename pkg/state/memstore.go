@@ -17418,10 +17418,27 @@ func (m *MemStore) GetIdempotent(_ context.Context, accountID, key string) (int,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.idem[accountID+"\x00"+key]
-	if !ok || time.Since(e.created) > 24*time.Hour {
+	if !ok || time.Since(e.created) > 24*time.Hour || e.status == 0 {
 		return 0, nil, ErrNotFound
 	}
 	return e.status, e.body, nil
+}
+
+// ReserveIdempotent mirrors PgStore.ReserveIdempotent.
+func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := accountID + "\x00" + key
+	e, ok := m.idem[id]
+	age := time.Since(e.created)
+	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter) {
+		m.idem[id] = idemEntry{created: time.Now()}
+		return IdempotencyReservation{Reserved: true}, nil
+	}
+	if e.status == 0 {
+		return IdempotencyReservation{InFlight: true}, nil
+	}
+	return IdempotencyReservation{Status: e.status, Body: append([]byte(nil), e.body...)}, nil
 }
 
 func (m *MemStore) PutIdempotent(_ context.Context, accountID, key string, status int, body []byte) error {

@@ -3731,17 +3731,63 @@ func (s *server) idempotent(next accountHandler) accountHandler {
 			next(w, r, acct)
 			return
 		}
+		// A key names one operation: scope it to the method and path so
+		// reusing a key on another endpoint runs that request instead of
+		// replaying an unrelated cached response.
+		key = r.Method + " " + r.URL.Path + "\n" + key
+		if reserver, ok := s.store.(idempotencyReserver); ok {
+			s.idempotentReserved(w, r, acct, reserver, key, next)
+			return
+		}
 		if status, body, err := s.store.GetIdempotent(r.Context(), acct.ID, key); err == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Idempotent-Replayed", "true")
-			w.WriteHeader(status)
-			_, _ = w.Write(body)
+			replayIdempotent(w, status, body)
 			return
 		}
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
 		_ = s.store.PutIdempotent(r.Context(), acct.ID, key, cap.status, cap.body.Bytes())
 	}
+}
+
+// idempotencyAbandonAfter is how long an in-flight Idempotency-Key
+// reservation blocks retries before it is presumed abandoned (the request
+// crashed). It must outlast the slowest idempotent handler, a large source
+// upload.
+const idempotencyAbandonAfter = 15 * time.Minute
+
+type idempotencyReserver interface {
+	ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (state.IdempotencyReservation, error)
+}
+
+// idempotentReserved claims the key before running next. Checking for a
+// cached response and storing one afterwards let two concurrent requests
+// with one key — a client retrying after a timeout while the first is
+// still running — both execute the operation.
+func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct state.Account, reserver idempotencyReserver, key string, next accountHandler) {
+	res, err := reserver.ReserveIdempotent(r.Context(), acct.ID, key, idempotencyAbandonAfter)
+	switch {
+	case err != nil:
+		// Fail open, as the replay lookup always has: an idempotency
+		// store error must not turn every keyed request into an outage.
+		next(w, r, acct)
+	case res.InFlight:
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Request in progress", "a request with this Idempotency-Key is still being processed; retry once it completes").
+			WithHeader("Retry-After", "1"))
+	case !res.Reserved:
+		replayIdempotent(w, res.Status, res.Body)
+	default:
+		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
+		next(cap, r, acct)
+		_ = s.store.PutIdempotent(context.WithoutCancel(r.Context()), acct.ID, key, cap.status, cap.body.Bytes())
+	}
+}
+
+func replayIdempotent(w http.ResponseWriter, status int, body []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Idempotent-Replayed", "true")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // requireIdempotency is the stricter companion used by provider-admin

@@ -6545,3 +6545,14 @@ const (
 type CustomerEventLister interface {
 	ListCustomerEvents(ctx context.Context, filter CustomerEventFilter) ([]Event, error)
 }
+
+// IdempotencyReservation is the outcome of ReserveIdempotent. Exactly one of
+// Reserved (the caller owns the key and must complete it with
+// PutIdempotent), InFlight (another request holds the key), or a completed
+// response (Status/Body to replay) applies.
+type IdempotencyReservation struct {
+	Reserved bool
+	InFlight bool
+	Status   int
+	Body     []byte
+}
