@@ -32931,6 +32931,9 @@ components:
         wake_boot_p95_ms: { type: integer, minimum: 0, nullable: true, description: "p95 from schedd wake.boot_started to wake.boot_completed (instance RUNNING) for distinct wake IDs correlated to this route; null when event pairs are unavailable." }
         guest_execution_p50_ms: { type: integer, minimum: 0, nullable: true, description: "Weighted p50 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is unavailable." }
         guest_execution_p95_ms: { type: integer, minimum: 0, nullable: true, description: "Weighted p95 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is unavailable." }
+        guest_cpu_avg_ms: { type: integer, minimum: 0, nullable: true, description: "Request-weighted average child-process user+system CPU time for Linux one-shot invocations. Includes runtime startup and uses bounded upward buckets; null for persistent workers and arbitrary HTTP containers." }
+        guest_cpu_p95_ms: { type: integer, minimum: 0, nullable: true, description: "Weighted p95 child-process CPU time from Linux one-shot invocations, using bounded upward buckets; null when process usage is unavailable." }
+        guest_peak_rss_max_mb: { type: integer, minimum: 0, nullable: true, description: "Maximum process high-water RSS across measured invocations, rounded into an upper MiB bucket; null when process usage is unavailable." }
         dependency_samples: { type: integer, format: int64, minimum: 0, description: "Count of retained, platform-classified dependency span samples for this route; not a complete call count." }
         dependency_requests: { type: integer, format: int64, minimum: 0, description: "Collapsed request weight represented by rows with at least one classified dependency span." }
         dependencies:
@@ -33018,6 +33021,9 @@ components:
         wake_boot_p95_ms: { type: integer, minimum: 0, nullable: true }
         guest_execution_p50_ms: { type: integer, minimum: 0, nullable: true }
         guest_execution_p95_ms: { type: integer, minimum: 0, nullable: true }
+        guest_cpu_avg_ms: { type: integer, minimum: 0, nullable: true }
+        guest_cpu_p95_ms: { type: integer, minimum: 0, nullable: true }
+        guest_peak_rss_max_mb: { type: integer, minimum: 0, nullable: true }
 
     RequestAnalyticsResponse:
       type: object

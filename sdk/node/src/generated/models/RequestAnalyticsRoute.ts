@@ -36,6 +36,18 @@ export type RequestAnalyticsRoute = {
    */
   guest_execution_p95_ms?: number | null;
   /**
+   * Request-weighted average child-process user+system CPU time for Linux one-shot invocations. Includes runtime startup and uses bounded upward buckets; null for persistent workers and arbitrary HTTP containers.
+   */
+  guest_cpu_avg_ms?: number | null;
+  /**
+   * Weighted p95 child-process CPU time from Linux one-shot invocations, using bounded upward buckets; null when process usage is unavailable.
+   */
+  guest_cpu_p95_ms?: number | null;
+  /**
+   * Maximum process high-water RSS across measured invocations, rounded into an upper MiB bucket; null when process usage is unavailable.
+   */
+  guest_peak_rss_max_mb?: number | null;
+  /**
    * Count of retained, platform-classified dependency span samples for this route; not a complete call count.
    */
   dependency_samples?: number;

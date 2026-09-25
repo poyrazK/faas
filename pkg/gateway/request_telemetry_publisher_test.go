@@ -191,6 +191,50 @@ func TestCollapseRequestTelemetry_PreservesGuestOutcomes(t *testing.T) {
 	}
 }
 
+func TestCollapseRequestTelemetry_PreservesMeasuredGuestResourceBuckets(t *testing.T) {
+	appID, deployID, accountID := uuid.New(), uuid.New(), uuid.New()
+	base := time.Date(2026, 8, 24, 18, 42, 0, 0, time.UTC)
+	rows := []RequestTelemetryRow{
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /users", Method: "GET", Status: 200, LatencyMS: 20, GuestCPUTimeMS: 3, GuestPeakRSSMB: 64, GuestResourceUsageAvailable: true, ReceivedAt: base, Count: 1},
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /users", Method: "GET", Status: 200, LatencyMS: 20, GuestCPUTimeMS: 101, GuestPeakRSSMB: 65, GuestResourceUsageAvailable: true, ReceivedAt: base, Count: 1},
+		{AccountID: accountID, AppID: appID, DeploymentID: deployID, Route: "GET /users", Method: "GET", Status: 200, LatencyMS: 20, ReceivedAt: base, Count: 1},
+	}
+	collapsed := collapseRequestTelemetry(rows)
+	if len(collapsed) != 3 {
+		t.Fatalf("collapsed rows = %d, want distinct unavailable and measured CPU buckets: %+v", len(collapsed), collapsed)
+	}
+	measured := map[int]int{}
+	unavailable := false
+	for _, row := range collapsed {
+		if !row.GuestResourceUsageAvailable {
+			unavailable = true
+			continue
+		}
+		measured[row.GuestCPUTimeMS] = row.GuestPeakRSSMB
+	}
+	if !unavailable || measured[3] != 64 || measured[105] != 80 {
+		t.Fatalf("resource buckets = measured:%v unavailable:%t", measured, unavailable)
+	}
+}
+
+func TestRequestTelemetryMemoryBucketUpperBound(t *testing.T) {
+	cases := []struct{ input, want int }{{0, 0}, {1, 4}, {64, 64}, {65, 80}, {256, 256}, {257, 320}, {1024, 1024}, {1025, 1280}}
+	for _, tc := range cases {
+		if got := requestTelemetryMemoryBucketUpperBound(tc.input); got != tc.want {
+			t.Errorf("requestTelemetryMemoryBucketUpperBound(%d) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestRequestTelemetryCPUTimeBucketUpperBound(t *testing.T) {
+	cases := []struct{ input, want int }{{0, 0}, {1, 1}, {100, 100}, {101, 105}, {500, 500}, {501, 525}, {2_000, 2_000}, {2_001, 2_100}}
+	for _, tc := range cases {
+		if got := requestTelemetryCPUTimeBucketUpperBound(tc.input); got != tc.want {
+			t.Errorf("requestTelemetryCPUTimeBucketUpperBound(%d) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestRequestTelemetryLatencyBucketUpperBound(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

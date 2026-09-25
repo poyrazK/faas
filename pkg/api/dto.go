@@ -9880,6 +9880,13 @@ type RequestAnalyticsRoute struct {
 	// not CPU time, and is not available for arbitrary HTTP containers.
 	GuestExecutionP50MS *int `json:"guest_execution_p50_ms,omitempty"`
 	GuestExecutionP95MS *int `json:"guest_execution_p95_ms,omitempty"`
+	// GuestCPUAvgMS and GuestCPUP95MS are measured child-process CPU time
+	// for Linux one-shot runtime invocations. The measurement includes runtime
+	// startup; it is not available for persistent workers or arbitrary HTTP
+	// containers. RSS is the maximum rounded/bucketed process high-water mark.
+	GuestCPUAvgMS     *int `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUP95MS     *int `json:"guest_cpu_p95_ms,omitempty"`
+	GuestPeakRSSMaxMB *int `json:"guest_peak_rss_max_mb,omitempty"`
 	// DependencySamples counts classified dependency spans retained in the
 	// bounded trace evidence window; it is a sample count, not total calls.
 	DependencySamples  int64                        `json:"dependency_samples,omitempty"`
@@ -9968,6 +9975,9 @@ type RequestAnalyticsGroup struct {
 	WakeBootP95MS       *int    `json:"wake_boot_p95_ms,omitempty"`
 	GuestExecutionP50MS *int    `json:"guest_execution_p50_ms,omitempty"`
 	GuestExecutionP95MS *int    `json:"guest_execution_p95_ms,omitempty"`
+	GuestCPUAvgMS       *int    `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUP95MS       *int    `json:"guest_cpu_p95_ms,omitempty"`
+	GuestPeakRSSMaxMB   *int    `json:"guest_peak_rss_max_mb,omitempty"`
 }
 
 // RequestAnalyticsResponse is the bounded historical request analytics

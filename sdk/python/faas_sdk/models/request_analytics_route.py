@@ -42,6 +42,15 @@ class RequestAnalyticsRoute:
     guest_execution_p95_ms: int | None | Unset = UNSET
     """Weighted p95 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is
     unavailable."""
+    guest_cpu_avg_ms: int | None | Unset = UNSET
+    """Request-weighted average child-process user+system CPU time for Linux one-shot invocations. Includes runtime
+    startup and uses bounded upward buckets; null for persistent workers and arbitrary HTTP containers."""
+    guest_cpu_p95_ms: int | None | Unset = UNSET
+    """Weighted p95 child-process CPU time from Linux one-shot invocations, using bounded upward buckets; null when
+    process usage is unavailable."""
+    guest_peak_rss_max_mb: int | None | Unset = UNSET
+    """Maximum process high-water RSS across measured invocations, rounded into an upper MiB bucket; null when
+    process usage is unavailable."""
     dependency_samples: int | Unset = UNSET
     """Count of retained, platform-classified dependency span samples for this route; not a complete call count."""
     dependency_requests: int | Unset = UNSET
@@ -97,6 +106,24 @@ class RequestAnalyticsRoute:
         else:
             guest_execution_p95_ms = self.guest_execution_p95_ms
 
+        guest_cpu_avg_ms: int | None | Unset
+        if isinstance(self.guest_cpu_avg_ms, Unset):
+            guest_cpu_avg_ms = UNSET
+        else:
+            guest_cpu_avg_ms = self.guest_cpu_avg_ms
+
+        guest_cpu_p95_ms: int | None | Unset
+        if isinstance(self.guest_cpu_p95_ms, Unset):
+            guest_cpu_p95_ms = UNSET
+        else:
+            guest_cpu_p95_ms = self.guest_cpu_p95_ms
+
+        guest_peak_rss_max_mb: int | None | Unset
+        if isinstance(self.guest_peak_rss_max_mb, Unset):
+            guest_peak_rss_max_mb = UNSET
+        else:
+            guest_peak_rss_max_mb = self.guest_peak_rss_max_mb
+
         dependency_samples = self.dependency_samples
 
         dependency_requests = self.dependency_requests
@@ -135,6 +162,12 @@ class RequestAnalyticsRoute:
             field_dict["guest_execution_p50_ms"] = guest_execution_p50_ms
         if guest_execution_p95_ms is not UNSET:
             field_dict["guest_execution_p95_ms"] = guest_execution_p95_ms
+        if guest_cpu_avg_ms is not UNSET:
+            field_dict["guest_cpu_avg_ms"] = guest_cpu_avg_ms
+        if guest_cpu_p95_ms is not UNSET:
+            field_dict["guest_cpu_p95_ms"] = guest_cpu_p95_ms
+        if guest_peak_rss_max_mb is not UNSET:
+            field_dict["guest_peak_rss_max_mb"] = guest_peak_rss_max_mb
         if dependency_samples is not UNSET:
             field_dict["dependency_samples"] = dependency_samples
         if dependency_requests is not UNSET:
@@ -207,6 +240,33 @@ class RequestAnalyticsRoute:
 
         guest_execution_p95_ms = _parse_guest_execution_p95_ms(d.pop("guest_execution_p95_ms", UNSET))
 
+        def _parse_guest_cpu_avg_ms(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        guest_cpu_avg_ms = _parse_guest_cpu_avg_ms(d.pop("guest_cpu_avg_ms", UNSET))
+
+        def _parse_guest_cpu_p95_ms(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        guest_cpu_p95_ms = _parse_guest_cpu_p95_ms(d.pop("guest_cpu_p95_ms", UNSET))
+
+        def _parse_guest_peak_rss_max_mb(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        guest_peak_rss_max_mb = _parse_guest_peak_rss_max_mb(d.pop("guest_peak_rss_max_mb", UNSET))
+
         dependency_samples = d.pop("dependency_samples", UNSET)
 
         dependency_requests = d.pop("dependency_requests", UNSET)
@@ -238,6 +298,9 @@ class RequestAnalyticsRoute:
             wake_boot_p95_ms=wake_boot_p95_ms,
             guest_execution_p50_ms=guest_execution_p50_ms,
             guest_execution_p95_ms=guest_execution_p95_ms,
+            guest_cpu_avg_ms=guest_cpu_avg_ms,
+            guest_cpu_p95_ms=guest_cpu_p95_ms,
+            guest_peak_rss_max_mb=guest_peak_rss_max_mb,
             dependency_samples=dependency_samples,
             dependency_requests=dependency_requests,
             dependencies=dependencies,

@@ -32,6 +32,9 @@ class RequestAnalyticsGroup:
     wake_boot_p95_ms: int | None | Unset = UNSET
     guest_execution_p50_ms: int | None | Unset = UNSET
     guest_execution_p95_ms: int | None | Unset = UNSET
+    guest_cpu_avg_ms: int | None | Unset = UNSET
+    guest_cpu_p95_ms: int | None | Unset = UNSET
+    guest_peak_rss_max_mb: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +82,24 @@ class RequestAnalyticsGroup:
         else:
             guest_execution_p95_ms = self.guest_execution_p95_ms
 
+        guest_cpu_avg_ms: int | None | Unset
+        if isinstance(self.guest_cpu_avg_ms, Unset):
+            guest_cpu_avg_ms = UNSET
+        else:
+            guest_cpu_avg_ms = self.guest_cpu_avg_ms
+
+        guest_cpu_p95_ms: int | None | Unset
+        if isinstance(self.guest_cpu_p95_ms, Unset):
+            guest_cpu_p95_ms = UNSET
+        else:
+            guest_cpu_p95_ms = self.guest_cpu_p95_ms
+
+        guest_peak_rss_max_mb: int | None | Unset
+        if isinstance(self.guest_peak_rss_max_mb, Unset):
+            guest_peak_rss_max_mb = UNSET
+        else:
+            guest_peak_rss_max_mb = self.guest_peak_rss_max_mb
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -103,6 +124,12 @@ class RequestAnalyticsGroup:
             field_dict["guest_execution_p50_ms"] = guest_execution_p50_ms
         if guest_execution_p95_ms is not UNSET:
             field_dict["guest_execution_p95_ms"] = guest_execution_p95_ms
+        if guest_cpu_avg_ms is not UNSET:
+            field_dict["guest_cpu_avg_ms"] = guest_cpu_avg_ms
+        if guest_cpu_p95_ms is not UNSET:
+            field_dict["guest_cpu_p95_ms"] = guest_cpu_p95_ms
+        if guest_peak_rss_max_mb is not UNSET:
+            field_dict["guest_peak_rss_max_mb"] = guest_peak_rss_max_mb
 
         return field_dict
 
@@ -168,6 +195,33 @@ class RequestAnalyticsGroup:
 
         guest_execution_p95_ms = _parse_guest_execution_p95_ms(d.pop("guest_execution_p95_ms", UNSET))
 
+        def _parse_guest_cpu_avg_ms(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        guest_cpu_avg_ms = _parse_guest_cpu_avg_ms(d.pop("guest_cpu_avg_ms", UNSET))
+
+        def _parse_guest_cpu_p95_ms(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        guest_cpu_p95_ms = _parse_guest_cpu_p95_ms(d.pop("guest_cpu_p95_ms", UNSET))
+
+        def _parse_guest_peak_rss_max_mb(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        guest_peak_rss_max_mb = _parse_guest_peak_rss_max_mb(d.pop("guest_peak_rss_max_mb", UNSET))
+
         request_analytics_group = cls(
             value=value,
             requests=requests,
@@ -182,6 +236,9 @@ class RequestAnalyticsGroup:
             wake_boot_p95_ms=wake_boot_p95_ms,
             guest_execution_p50_ms=guest_execution_p50_ms,
             guest_execution_p95_ms=guest_execution_p95_ms,
+            guest_cpu_avg_ms=guest_cpu_avg_ms,
+            guest_cpu_p95_ms=guest_cpu_p95_ms,
+            guest_peak_rss_max_mb=guest_peak_rss_max_mb,
         )
 
         request_analytics_group.additional_properties = d

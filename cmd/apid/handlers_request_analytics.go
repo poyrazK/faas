@@ -293,6 +293,9 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			WakeBootP95MS:       nullableAnalyticsInt(row.WakeBootP95Ms),
 			GuestExecutionP50MS: nullableAnalyticsInt(row.GuestExecutionP50Ms),
 			GuestExecutionP95MS: nullableAnalyticsInt(row.GuestExecutionP95Ms),
+			GuestCPUAvgMS:       nullableAnalyticsInt(row.GuestCpuAvgMs),
+			GuestCPUP95MS:       nullableAnalyticsInt(row.GuestCpuP95Ms),
+			GuestPeakRSSMaxMB:   nullableAnalyticsInt(row.GuestPeakRssMaxMb),
 		}
 		groups = append(groups, group)
 		if group.Value == "__other__" {
@@ -317,6 +320,9 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 				WakeBootP95MS:       group.WakeBootP95MS,
 				GuestExecutionP50MS: group.GuestExecutionP50MS,
 				GuestExecutionP95MS: group.GuestExecutionP95MS,
+				GuestCPUAvgMS:       group.GuestCPUAvgMS,
+				GuestCPUP95MS:       group.GuestCPUP95MS,
+				GuestPeakRSSMaxMB:   group.GuestPeakRSSMaxMB,
 			})
 		}
 	}
@@ -813,29 +819,33 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		debugQuery.Set("since", response.Since)
 		debugQuery.Set("route", route.Route)
 		routes = append(routes, dashboard.RequestAnalyticsRouteView{
-			Route:                   route.Route,
-			Method:                  route.Method,
-			Requests:                route.Requests,
-			ErrorRequests:           route.ErrorRequests,
-			ErrorRatePct:            route.ErrorRatePct,
-			ColdBoots:               route.ColdBoots,
-			P50MS:                   route.P50MS,
-			P95MS:                   route.P95MS,
-			P99MS:                   route.P99MS,
-			ColdRequestP95MS:        intFromAnalyticsPointer(route.ColdRequestP95MS),
-			ColdRequestP95Available: route.ColdRequestP95MS != nil,
-			WakeBootP95MS:           intFromAnalyticsPointer(route.WakeBootP95MS),
-			WakeBootP95Available:    route.WakeBootP95MS != nil,
-			GuestExecutionP50MS:     intFromAnalyticsPointer(route.GuestExecutionP50MS),
-			GuestExecutionP95MS:     intFromAnalyticsPointer(route.GuestExecutionP95MS),
-			GuestExecutionAvailable: route.GuestExecutionP50MS != nil && route.GuestExecutionP95MS != nil,
-			DependencySamples:       route.DependencySamples,
-			DependencyRequests:      route.DependencyRequests,
-			Dependencies:            route.Dependencies,
-			EstimatedComputeCostEUR: millicentsAsEUR(route.EstimatedComputeCostMillicents),
-			RequestSharePct:         route.RequestSharePct,
-			TrendURL:                "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),
-			DebugURL:                "/dashboard/apps/" + app.Slug + "/debug?" + debugQuery.Encode(),
+			Route:                       route.Route,
+			Method:                      route.Method,
+			Requests:                    route.Requests,
+			ErrorRequests:               route.ErrorRequests,
+			ErrorRatePct:                route.ErrorRatePct,
+			ColdBoots:                   route.ColdBoots,
+			P50MS:                       route.P50MS,
+			P95MS:                       route.P95MS,
+			P99MS:                       route.P99MS,
+			ColdRequestP95MS:            intFromAnalyticsPointer(route.ColdRequestP95MS),
+			ColdRequestP95Available:     route.ColdRequestP95MS != nil,
+			WakeBootP95MS:               intFromAnalyticsPointer(route.WakeBootP95MS),
+			WakeBootP95Available:        route.WakeBootP95MS != nil,
+			GuestExecutionP50MS:         intFromAnalyticsPointer(route.GuestExecutionP50MS),
+			GuestExecutionP95MS:         intFromAnalyticsPointer(route.GuestExecutionP95MS),
+			GuestExecutionAvailable:     route.GuestExecutionP50MS != nil && route.GuestExecutionP95MS != nil,
+			GuestCPUAvgMS:               intFromAnalyticsPointer(route.GuestCPUAvgMS),
+			GuestCPUP95MS:               intFromAnalyticsPointer(route.GuestCPUP95MS),
+			GuestPeakRSSMaxMB:           intFromAnalyticsPointer(route.GuestPeakRSSMaxMB),
+			GuestResourceUsageAvailable: route.GuestCPUAvgMS != nil && route.GuestCPUP95MS != nil && route.GuestPeakRSSMaxMB != nil,
+			DependencySamples:           route.DependencySamples,
+			DependencyRequests:          route.DependencyRequests,
+			Dependencies:                route.Dependencies,
+			EstimatedComputeCostEUR:     millicentsAsEUR(route.EstimatedComputeCostMillicents),
+			RequestSharePct:             route.RequestSharePct,
+			TrendURL:                    "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),
+			DebugURL:                    "/dashboard/apps/" + app.Slug + "/debug?" + debugQuery.Encode(),
 		})
 	}
 	selectedQuery := url.Values{}

@@ -673,7 +673,7 @@
               {{if .Data.RequestAnalytics.Routes}}
               <h3>Top routes</h3>
               <table>
-                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Request share</th><th>Est. compute</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th><th>Cold-request p95</th><th>Wake boot p95</th><th>Guest runtime p50/p95</th><th>Dependency waits (sampled)</th><th>Trend</th><th>Explore</th></tr></thead>
+                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Request share</th><th>Est. compute</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th><th>Cold-request p95</th><th>Wake boot p95</th><th>Guest runtime p50/p95</th><th>Guest CPU avg/p95</th><th>Peak guest RSS</th><th>Dependency waits (sampled)</th><th>Trend</th><th>Explore</th></tr></thead>
                 <tbody>
                   {{range .Data.RequestAnalytics.Routes}}
                     <tr>
@@ -689,6 +689,8 @@
                       <td>{{if .ColdRequestP95Available}}{{.ColdRequestP95MS}} ms{{else}}—{{end}}</td>
                       <td>{{if .WakeBootP95Available}}{{.WakeBootP95MS}} ms{{else}}—{{end}}</td>
                       <td>{{if .GuestExecutionAvailable}}{{.GuestExecutionP50MS}} / {{.GuestExecutionP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .GuestResourceUsageAvailable}}{{.GuestCPUAvgMS}} / {{.GuestCPUP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .GuestResourceUsageAvailable}}{{.GuestPeakRSSMaxMB}} MiB (bucketed){{else}}—{{end}}</td>
                       <td>{{if .Dependencies}}{{range .Dependencies}}{{if .Kind}}{{.Kind}}{{else}}{{.Type}}{{end}} / {{.Name}}: exclusive p95 {{.ExclusiveP95MS}} ms (p95 {{.P95MS}} ms, {{.Samples}} samples)<br>{{end}}{{else}}—{{end}}</td>
                       <td>{{if .TrendURL}}<a href="{{.TrendURL}}">View</a>{{else}}—{{end}}</td>
                       <td>{{if .DebugURL}}<a href="{{.DebugURL}}">Inspect requests</a>{{else}}—{{end}}</td>

@@ -511,11 +511,14 @@ func TestPgStoreRequestAnalyticsIncludesColdWakeAndGuestExecutionPercentiles(t *
 		wakeID       string
 		guestMS      int32
 		guestRuntime string
+		guestCPU     int32
+		guestRSS     int32
+		resources    bool
 		count        int32
 	}{
-		{route: "GET /checkout", latency: 40, guestMS: 15, guestRuntime: "node24", count: 2},
-		{route: "GET /checkout", latency: 180, coldBoot: true, wakeID: wakeOne, guestMS: 140, guestRuntime: "node24", count: 1},
-		{route: "GET /checkout", latency: 220, coldBoot: true, wakeID: wakeTwo, guestMS: 200, guestRuntime: "node24", count: 1},
+		{route: "GET /checkout", latency: 40, guestMS: 15, guestRuntime: "node24", guestCPU: 10, guestRSS: 48, resources: true, count: 2},
+		{route: "GET /checkout", latency: 180, coldBoot: true, wakeID: wakeOne, guestMS: 140, guestRuntime: "node24", guestCPU: 20, guestRSS: 80, resources: true, count: 1},
+		{route: "GET /checkout", latency: 220, coldBoot: true, wakeID: wakeTwo, guestMS: 200, guestRuntime: "node24", guestCPU: 30, guestRSS: 144, resources: true, count: 1},
 		{route: "GET /users", latency: 25, count: 1},
 	}
 	for _, row := range rows {
@@ -528,6 +531,7 @@ func TestPgStoreRequestAnalyticsIncludesColdWakeAndGuestExecutionPercentiles(t *
 			UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
 			WakeID:          pgtype.Text{String: row.wakeID, Valid: row.wakeID != ""},
 			GuestDurationMs: row.guestMS, GuestRuntime: row.guestRuntime, GuestOutcome: "ok",
+			GuestCpuTimeMs: row.guestCPU, GuestPeakRssMb: row.guestRSS, GuestResourceUsageAvailable: row.resources,
 		}); err != nil {
 			t.Fatalf("insert %s: %v", row.route, err)
 		}
@@ -561,8 +565,13 @@ func TestPgStoreRequestAnalyticsIncludesColdWakeAndGuestExecutionPercentiles(t *
 		!checkout.GuestExecutionP95Ms.Valid || checkout.GuestExecutionP95Ms.Int32 != 200 {
 		t.Errorf("guest execution percentiles = (%+v, %+v), want (15ms, 200ms)", checkout.GuestExecutionP50Ms, checkout.GuestExecutionP95Ms)
 	}
+	if !checkout.GuestCpuAvgMs.Valid || checkout.GuestCpuAvgMs.Int32 != 18 ||
+		!checkout.GuestCpuP95Ms.Valid || checkout.GuestCpuP95Ms.Int32 != 30 ||
+		!checkout.GuestPeakRssMaxMb.Valid || checkout.GuestPeakRssMaxMb.Int32 != 144 {
+		t.Errorf("guest resources avg/p95/max = (%+v, %+v, %+v), want (18ms, 30ms, 144MiB)", checkout.GuestCpuAvgMs, checkout.GuestCpuP95Ms, checkout.GuestPeakRssMaxMb)
+	}
 	users := byRoute["GET /users"]
-	if users.ColdRequestP95Ms.Valid || users.WakeBootP95Ms.Valid || users.GuestExecutionP50Ms.Valid || users.GuestExecutionP95Ms.Valid {
+	if users.ColdRequestP95Ms.Valid || users.WakeBootP95Ms.Valid || users.GuestExecutionP50Ms.Valid || users.GuestExecutionP95Ms.Valid || users.GuestCpuAvgMs.Valid || users.GuestCpuP95Ms.Valid || users.GuestPeakRssMaxMb.Valid {
 		t.Errorf("route without cold/runtime evidence has non-null percentiles: %+v", users)
 	}
 }
