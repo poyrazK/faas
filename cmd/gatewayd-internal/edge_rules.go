@@ -1622,7 +1622,9 @@ func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncReso
 		}
 		out = append(out, gateway.EdgeRuleAsyncResolved{
 			ID: rule.ID, AccountID: rule.AccountID, AppID: rule.AppID,
-			Priority: rule.Priority, PathGlob: rule.MatchPath,
+			OnSuccessWebhook: rule.Action.Async.OnSuccess,
+			OnFailureWebhook: rule.Action.Async.OnFailure,
+			Priority:         rule.Priority, PathGlob: rule.MatchPath,
 			Methods:      buildMethodsMap(rule.MatchMethods),
 			MatchHeaders: buildMatchHeadersMap(rule.MatchHeaders),
 		})

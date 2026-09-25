@@ -29967,11 +29967,21 @@ components:
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
-        The action is an empty object; retry, deadline, retention, and payload
-        limits come from the existing invocation and account-plan contracts.
+        on_success and on_failure optionally select app webhook subscription
+        IDs that receive the terminal job.finished invocation outcome. Retry,
+        deadline, retention, and payload limits come from the existing
+        invocation and account-plan contracts.
       type: object
+      properties:
+        on_success:
+          type: string
+          format: uuid
+          description: Optional app webhook subscription ID for successful invocations.
+        on_failure:
+          type: string
+          format: uuid
+          description: Optional app webhook subscription ID for failed or dead-lettered invocations.
       additionalProperties: false
-      maxProperties: 0
 
     EdgeRuleGeoAction:
       description: |

@@ -14591,6 +14591,14 @@ func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json
 		}
 		return err
 	}
+	invocation, err := scanInvocation(tx.QueryRow(ctx,
+		`select `+invocationSelectCols+` from invocations where id = $1`, id))
+	if err != nil {
+		return fmt.Errorf("state: invocations complete destination lookup: %w", err)
+	}
+	if err := enqueueInvocationDestinationTx(ctx, tx, invocation); err != nil {
+		return err
+	}
 	if quotaReserved {
 		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
 			return err
@@ -14614,6 +14622,33 @@ func decrementAccountAsyncInflightTx(ctx context.Context, tx pgx.Tx, accountID s
 		       updated_at = now()
 		 where account_id = $1`, accountID); err != nil {
 		return fmt.Errorf("state: account_async_quota decrement tx: %w", err)
+	}
+	return nil
+}
+
+// enqueueInvocationDestinationTx records the selected callback in the
+// existing webhook delivery ledger. It runs inside the invocation's terminal
+// transition transaction, so either both the outcome and callback are durable
+// or neither is.
+func enqueueInvocationDestinationTx(ctx context.Context, tx pgx.Tx, inv Invocation) error {
+	delivery, ok, err := invocationDestinationDelivery(inv)
+	if err != nil {
+		return fmt.Errorf("state: build invocation destination: %w", err)
+	}
+	if !ok {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into app_webhook_deliveries
+			(webhook_id, app_id, account_id, event, payload, next_attempt_at)
+		select h.id, h.app_id, h.account_id, $1, $2::jsonb, $3
+		  from app_webhooks h
+		 where h.id = $4
+		   and h.app_id = $5
+		   and h.account_id = $6
+		   and h.enabled`, string(delivery.Event), string(delivery.Payload), delivery.NextAttemptAt,
+		delivery.WebhookID, delivery.AppID, delivery.AccountID); err != nil {
+		return fmt.Errorf("state: enqueue invocation destination: %w", err)
 	}
 	return nil
 }
@@ -14750,6 +14785,16 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 			return ErrNotFound
 		}
 		return err
+	}
+	if newState == string(InvocationFailed) || newState == string(InvocationDeadLetter) {
+		invocation, err := scanInvocation(tx.QueryRow(ctx,
+			`select `+invocationSelectCols+` from invocations where id = $1`, id))
+		if err != nil {
+			return fmt.Errorf("state: invocations fail destination lookup: %w", err)
+		}
+		if err := enqueueInvocationDestinationTx(ctx, tx, invocation); err != nil {
+			return err
+		}
 	}
 	// Release exactly the slot acquired by this row. Pending pre-claim
 	// deferrals carry quota_reserved=false and must not touch the counter.
@@ -30774,6 +30819,9 @@ func (s *PgStore) forceDeadlineBreachedInvocations(ctx context.Context, ids []st
 	}
 
 	for _, inv := range forced {
+		if err := enqueueInvocationDestinationTx(ctx, tx, inv); err != nil {
+			return nil, err
+		}
 		if reservedByID[inv.ID] {
 			if err := decrementAccountAsyncInflightTx(ctx, tx, accountByID[inv.ID]); err != nil {
 				return nil, fmt.Errorf("state: invocations deadline decrement: %w", err)

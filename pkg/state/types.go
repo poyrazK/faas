@@ -3653,9 +3653,9 @@ type Invocation struct {
 	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
 	// OnSuccessDestinationID and OnFailureDestinationID reference
 	// app_webhooks subscriptions selected by the caller at enqueue time.
-	// They are immutable invocation intent: the scheduler reads them only
-	// after the row reaches a terminal outcome and enqueues one durable
-	// job.finished delivery to the selected subscription.
+	// They are immutable invocation intent: the state store enqueues the
+	// matching durable job.finished delivery atomically when the invocation
+	// reaches a terminal outcome.
 	OnSuccessDestinationID string `json:"on_success_destination_id,omitempty"`
 	OnFailureDestinationID string `json:"on_failure_destination_id,omitempty"`
 }
@@ -7010,10 +7010,14 @@ type EdgeRuleThrottleAction struct {
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
 }
 
-// EdgeRuleAsyncAction is intentionally empty. Matching, payload limits,
-// retry defaults, deadlines, and result retention all reuse the existing
-// durable invocation contract and the account plan's limits.
-type EdgeRuleAsyncAction struct{}
+// EdgeRuleAsyncAction selects app webhook subscriptions for terminal
+// outcomes. Matching, payload limits, retry defaults, deadlines, and result
+// retention all reuse the existing durable invocation contract and the
+// account plan's limits.
+type EdgeRuleAsyncAction struct {
+	OnSuccess string `json:"on_success,omitempty"`
+	OnFailure string `json:"on_failure,omitempty"`
+}
 
 // EdgeRuleAction is the kind-tagged union stored in edge_rules.action
 // as jsonb. The wire shape lives in pkg/api/dto.go (one struct per

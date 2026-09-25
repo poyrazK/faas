@@ -3963,7 +3963,8 @@ type Store interface {
 	DeleteTriggerRecordsByIDs(ctx context.Context, ids []string) (int, error)
 	// CompleteInvocation finalises a dispatched row with an optional result
 	// envelope (response status + body bytes for sync invoke; nil for the
-	// other sources). State → completed.
+	// other sources). State → completed. A selected on-success webhook delivery
+	// is inserted into the durable delivery ledger in the same transaction.
 	CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error
 	// FailInvocation records a terminal or retryable error. When retryAfter
 	// > 0 the row goes back to state='pending' with due_at = now +
@@ -3987,7 +3988,8 @@ type Store interface {
 	// run-history surface can distinguish a blown deadline from a
 	// generic failure without parsing lastError. Ignored on the
 	// transient branch (the row stays non-terminal, so it carries no
-	// outcome) and overridden by the dead-letter branch.
+	// outcome) and overridden by the dead-letter branch. Terminal state and a
+	// selected on-failure webhook delivery commit atomically.
 	FailInvocation(ctx context.Context, id string, lastError string, retryAfter time.Duration, budget int, opts ...FailOption) error
 	// CountPendingInvocations is index-backed by invocations_app_pending_idx;
 	// used by the apid cap check on POST .../queues/invocations:send and
