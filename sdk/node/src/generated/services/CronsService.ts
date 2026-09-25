@@ -226,14 +226,12 @@ export class CronsService {
   }
   /**
    * Manually fire a cron now (bypasses the schedule boundary).
-   * Issue #791 PR-C / ADR-090. Inserts a pending row into
+   * Inserts a pending row into
    * `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-   * schedd claims the row on the next LISTEN delivery and calls
-   * `RunCronNow` in its own process. The response is the
-   * immediate 202 with the request id; the customer's
-   * `GET /v1/crons/{id}/runs` will surface the matching
-   * `cron.fired.manually` audit row once schedd stamps the
-   * terminal state.
+   * schedd claims the row on the next LISTEN delivery. HTTP crons
+   * dispatch through `RunCronNow`; command crons enqueue a task
+   * pinned to the current live deployment. Poll the request to
+   * obtain its invocation id or command task id.
    *
    * Idempotent: a replay with the same Idempotency-Key returns
    * the stored 202 without enqueuing a second fire.
@@ -241,9 +239,10 @@ export class CronsService {
    * Scoped to `deploy:write` (or `admin`); no new `cron:write`
    * scope is added (ADR-090 §Sub-decisions 1). The fire does
    * NOT shift `last_fired_at` — the next scheduled boundary is
-   * unaffected. This endpoint applies to HTTP crons only; use
-   * `gregale app <slug> exec` for a one-off command rather than
-   * manually firing a deployment-command cron.
+   * unaffected. For a command cron, its saved command, timeout,
+   * output limit, retry policy, skip_if_running behavior, and
+   * current live deployment are used; no ad-hoc command may be
+   * supplied here.
    *
    * @returns FireCronResponse Fire-now enqueued. The request_id is the durable handle.
    * @throws ApiError
@@ -277,7 +276,6 @@ export class CronsService {
         401: `code: unauthorized`,
         402: `Plan tier does not include cron support (e.g. Free plan).`,
         404: `code: not_found`,
-        409: `Command crons only fire on their schedule.`,
         410: `The cron is disabled.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

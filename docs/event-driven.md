@@ -42,9 +42,13 @@ failed, so make retryable commands idempotent. A worker lease lost after
 dispatch is not automatically replayed because completion is uncertain.
 
 Inspect outcomes with `crons runs`; the returned `task_id` can be used
-with `GET /v1/apps/APP_ID/tasks/TASK_ID` to read captured output. Command crons
-do not support fire-now, while `gregale app APP_ID exec ...` remains the
-one-off command surface. Scheduled jobs create one task per occurrence and
+with `GET /v1/apps/APP_ID/tasks/TASK_ID` to read captured output. Use
+`gregale crons run CRON_ID` to immediately run the cron's saved command on
+the current live deployment without moving its schedule cursor.
+If `--skip-if-running` is configured and another run is still active, the
+manual request fails rather than overlapping it.
+`gregale app APP_ID exec ...` remains the surface for an arbitrary one-off
+command. Scheduled jobs create one task per occurrence and
 pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.

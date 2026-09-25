@@ -10972,6 +10972,7 @@ func (m *MemStore) MarkFireNowRequestSucceeded(_ context.Context, requestID, inv
 	}
 	r.Status = FireNowStatusSucceeded
 	r.InvocationID = &invocationID
+	r.TaskID = nil
 	now := time.Now().UTC()
 	r.FinishedAt = &now
 	m.fireNowRequests[requestID] = r

@@ -3438,7 +3438,8 @@ type Store interface {
 
 	// Fire-now request queue (ADR-090 PR-C / migrations/00193).
 	// apid inserts on POST /v1/crons/{id}/run; schedd claims +
-	// dispatches via RunCronNow. The interface is the single seam
+	// dispatches via RunCronNow or queues a deployment-attached app task.
+	// The interface is the single seam
 	// between handlers (apid, pkg/api/client.go callers) and the
 	// underlying store; MemStore keeps an in-memory slice for tests,
 	// PgStore uses the cron_fire_now_requests table.

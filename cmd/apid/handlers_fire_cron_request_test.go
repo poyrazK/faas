@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -109,6 +110,40 @@ func TestGetFireCronRequest_TerminalSucceeded(t *testing.T) {
 	}
 	if resp.InvocationID == nil || *resp.InvocationID != invID {
 		t.Errorf("invocation_id = %v, want %q", resp.InvocationID, invID)
+	}
+}
+
+func TestGetFireCronRequest_CommandCronIncludesTaskID(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, _ := seedAppTaskDeployment(t, e, "fire-req-command-task")
+	cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, "0 0 1 1 *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	requestID, err := e.store.InsertFireNowRequest(context.Background(), cron.ID, e.acct.ID)
+	if err != nil {
+		t.Fatalf("InsertFireNowRequest: %v", err)
+	}
+	if _, err := e.store.ClaimPendingFireNowRequest(context.Background()); err != nil {
+		t.Fatalf("ClaimPendingFireNowRequest: %v", err)
+	}
+	task, err := e.store.CreateManualCronAppTaskForFireNow(context.Background(), requestID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("CreateManualCronAppTaskForFireNow: %v", err)
+	}
+
+	rec := e.do(t, "GET", "/v1/cron-fire-now-requests/"+requestID, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.FireCronRequestResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if response.Status != string(state.FireNowStatusSucceeded) || response.TaskID == nil || *response.TaskID != task.ID {
+		t.Fatalf("response = %+v; want command task receipt %s", response, task.ID)
 	}
 }
 

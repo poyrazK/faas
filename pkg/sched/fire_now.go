@@ -17,9 +17,8 @@
 //   - drainPendingFireNowRequests calls ClaimPendingFireNowRequest
 //     which atomically transitions one pending row to `running` via
 //     FOR UPDATE SKIP LOCKED LIMIT 1.
-//   - Calls (*Loop).RunCronNow (the canonical "fire this cron" helper
-//     extracted from dispatchOneCron in PR-C step 1) to dispatch
-//     the request.
+//   - Calls (*Loop).RunCronNow for HTTP crons or creates a durable
+//     deployment-attached task for command crons.
 //   - Stamps the row's terminal state via MarkFireNowRequestSucceeded
 //     / MarkFireNowRequestFailed.
 
@@ -77,11 +76,17 @@ func (l *Loop) drainPendingFireNowRequests(ctx context.Context) {
 
 // processFireNowRequest is the per-row dispatch. Loads the cron
 // (defence in depth — the cron may have been disabled/deleted between
-// INSERT and claim), calls RunCronNow, stamps the terminal state.
+// INSERT and claim), dispatches HTTP crons via RunCronNow and command
+// crons via the app-task queue, then stamps the terminal state.
 // Errors are mapped to status: ErrCronDisabled / ErrAccountSuspended /
 // ErrNoCapacity → failed; anything else → failed with the err.Error()
 // text capped at 1 KB.
 func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowRequest) {
+	if cron, err := l.engine.Store().CronByID(ctx, req.CronID); err == nil && len(cron.Command) > 0 {
+		l.processCommandCronFireNow(ctx, req, cron)
+		return
+	}
+
 	run, err := l.RunCronNow(ctx, req.CronID, req.AccountID)
 
 	// fireNowDispatchDuration: issue #791 PR-D / ADR-090 §"Sub-decision
@@ -160,6 +165,77 @@ func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowReque
 	if obs := l.ops.CronFireNowDispatchDuration(resultLabel); obs != nil {
 		obs.Observe(elapsed)
 	}
+}
+
+// processCommandCronFireNow queues a deployment-attached task for a manual
+// fire. The state store atomically writes the task and marks the fire-now
+// request succeeded with its task id; the task itself runs through the
+// existing app-task coordinator and command-cron retry lifecycle.
+func (l *Loop) processCommandCronFireNow(ctx context.Context, req state.FireNowRequest, cron state.Cron) {
+	elapsed := time.Since(req.RequestedAt).Seconds()
+	resultLabel := fireNowResultLabelFailed
+	defer func() {
+		if obs := l.ops.CronFireNowDispatchDuration(resultLabel); obs != nil {
+			obs.Observe(elapsed)
+		}
+	}()
+
+	markFailed := func(err error) {
+		if markErr := l.engine.Store().MarkFireNowRequestFailed(ctx, req.ID, err.Error()); markErr != nil {
+			l.log.Warn("sched: fire_now: mark command cron failed", "request_id", req.ID, "err", markErr)
+		}
+		l.log.Warn("sched: fire_now: command cron dispatch failed",
+			"request_id", req.ID, "cron_id", req.CronID, "err", err)
+	}
+	if !cron.Enabled {
+		markFailed(ErrCronDisabled)
+		return
+	}
+	if cron.SuspendedReason != "" {
+		markFailed(state.ErrAppTaskCronSuspended)
+		return
+	}
+	app, err := l.engine.Store().AppByID(ctx, cron.AppID)
+	if err != nil {
+		markFailed(err)
+		return
+	}
+	if app.AccountID != req.AccountID {
+		markFailed(state.ErrNotFound)
+		return
+	}
+	account, err := l.engine.Store().AccountByID(ctx, app.AccountID)
+	if err != nil {
+		markFailed(err)
+		return
+	}
+	if !account.Active() {
+		markFailed(ErrAccountSuspended)
+		return
+	}
+	taskStore, ok := l.engine.Store().(state.AppTaskStore)
+	if !ok {
+		markFailed(errors.New("app task store is unavailable"))
+		return
+	}
+	firedAt := l.now()
+	task, err := taskStore.CreateManualCronAppTaskForFireNow(ctx, req.ID, firedAt)
+	if err != nil {
+		if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
+			if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
+				if _, suspendErr := suspender.SuspendCronsForApp(ctx, cron.AppID, state.CronSuspendedNoLiveDeployment); suspendErr != nil {
+					l.log.Warn("sched: fire_now: suspend command cron without live deployment", "cron_id", cron.ID, "err", suspendErr)
+				}
+			}
+		}
+		l.emitCommandCronFired(ctx, cron, account.ID, firedAt, "err", "", TriggerManual)
+		markFailed(err)
+		return
+	}
+	l.emitCommandCronFired(ctx, cron, account.ID, firedAt, "ok", task.ID, TriggerManual)
+	l.log.Info("sched: fire_now: command cron task queued",
+		"request_id", req.ID, "cron_id", cron.ID, "task_id", task.ID, "deployment_id", task.DeploymentID)
+	resultLabel = fireNowResultLabelSucceeded
 }
 
 // _ = slog.Default // keep the slog import in case future logging
