@@ -304,9 +304,12 @@ for guest trust and CA requirements. See [ADR-275](adr/275-https-service-binding
 for caller-side verification.
 
 `gregale bindings verify <app> <service>` runs a platform-owned HTTPS canary
-inside a disposable task guest attached to the caller's deployment. It checks
-the `.internal` DNS alias, verifies the gateway certificate against the
-workload-scoped CA bundle, and exercises the same binding and target
+inside a disposable task guest attached to the caller's deployment. Use
+`gregale bindings verify <app> --all` to check every declared service before
+switching the caller to HTTPS-first transport. The all-bindings form reports
+each result and exits nonzero if any check fails. Both forms check the
+`.internal` DNS alias, verify the gateway certificate against the
+workload-scoped CA bundle, and exercise the same binding and target
 authorization path as a real request. The final routing check only consults
 the healthy endpoint registry: it does not wake an idle target or invoke its
 handler. The probe has no HTTP fallback.

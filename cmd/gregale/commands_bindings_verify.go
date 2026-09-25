@@ -27,36 +27,56 @@ type serviceBindingProbeClient interface {
 	CancelAppTask(context.Context, string, string) (api.AppTaskResponse, error)
 }
 
+type serviceBindingProbeBatchItem struct {
+	Service string                        `json:"service"`
+	Status  string                        `json:"status"`
+	Report  api.ServiceBindingProbeReport `json:"report"`
+}
+
+type serviceBindingProbeBatchReport struct {
+	App      string                         `json:"app"`
+	Total    int                            `json:"total"`
+	Checked  int                            `json:"checked"`
+	Passed   int                            `json:"passed"`
+	Failed   int                            `json:"failed"`
+	Skipped  int                            `json:"skipped"`
+	Bindings []serviceBindingProbeBatchItem `json:"bindings"`
+}
+
 func cmdBindingsVerify(args []string) int {
 	fs := newFlagSet("bindings-verify", flag.ContinueOnError)
+	all := fs.Bool("all", false, "verify every declared service binding")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while the canary runs")
-	waitTimeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the CLI to wait for the canary task")
+	waitTimeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the CLI to wait for canary task(s)")
 	flagArgs, positionals := splitArgsForFlags(args)
-	if err := fs.Parse(flagArgs); err != nil || fs.NArg() != 0 || len(positionals) != 2 {
+	if err := fs.Parse(flagArgs); err != nil || fs.NArg() != 0 || *all && len(positionals) != 1 || !*all && len(positionals) != 2 {
 		printBindingsVerifyUsage()
 		return 1
 	}
 	slug := strings.TrimSpace(positionals[0])
-	service := strings.TrimSpace(positionals[1])
 	if !api.ValidAppSlug(slug) || *pollInterval <= 0 || *waitTimeout <= 0 {
 		printBindingsVerifyUsage()
 		return 1
 	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	if *all {
+		return runAllServiceBindingProbes(context.Background(), client, slug, *pollInterval, *waitTimeout)
+	}
+	service := strings.TrimSpace(positionals[1])
 	services, err := api.NormalizeServiceBindingTargets([]string{service})
 	if err != nil || len(services) != 1 {
 		printBindingsVerifyUsage()
 		return 1
 	}
 	service = services[0]
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
 	return runServiceBindingProbe(context.Background(), client, slug, service, *pollInterval, *waitTimeout)
 }
 
 func printBindingsVerifyUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--poll-interval D] [--wait-timeout D]", "bindings")
+	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [flags] | gregale bindings verify <app> --all [flags]", "bindings")
 }
 
 func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration) int {
@@ -75,6 +95,109 @@ func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClien
 		return printErr("Service is not bound to this app", fmt.Errorf("%s has no declared binding for %s", slug, service))
 	}
 
+	report, task, errorTitle, err, exitCode := executeServiceBindingProbe(ctx, client, slug, service, pollInterval, waitTimeout)
+	if errorTitle != "" {
+		return printErr(errorTitle, err)
+	}
+	if exitCode == 130 {
+		return exitCode
+	}
+	if jsonOutput {
+		if err := writeJSON(report); err != nil {
+			return jsonOut(err)
+		}
+		return exitCode
+	}
+	renderServiceBindingProbeReport(slug, report, task)
+	return exitCode
+}
+
+func runAllServiceBindingProbes(ctx context.Context, client serviceBindingProbeClient, slug string, pollInterval, waitTimeout time.Duration) int {
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return printErr("Could not load app bindings", err)
+	}
+	declared := make([]string, 0, len(app.ServiceBindings))
+	for _, binding := range app.ServiceBindings {
+		declared = append(declared, binding.Service)
+	}
+	services, err := api.NormalizeServiceBindingTargets(declared)
+	if err != nil {
+		return printErr("Could not read app bindings", err)
+	}
+	if len(services) == 0 {
+		return printErr("No service bindings to verify", fmt.Errorf("%s has no declared service bindings", slug))
+	}
+
+	batch := serviceBindingProbeBatchReport{
+		App:      slug,
+		Total:    len(services),
+		Bindings: make([]serviceBindingProbeBatchItem, 0, len(services)),
+	}
+	batchContext, cancelBatch := context.WithTimeout(ctx, waitTimeout)
+	defer cancelBatch()
+	interrupted := false
+	for _, service := range services {
+		if interrupted || batchContext.Err() != nil {
+			report := newServiceBindingProbeReport(slug, service)
+			if interrupted {
+				report.Error = "not checked because verification was interrupted"
+			} else {
+				report.Error = "not checked before the overall wait timeout"
+			}
+			batch.Skipped++
+			batch.Bindings = append(batch.Bindings, serviceBindingProbeBatchItem{Service: service, Status: "not_checked", Report: report})
+			continue
+		}
+		report, task, errorTitle, probeErr, exitCode := executeServiceBindingProbe(batchContext, client, slug, service, pollInterval, waitTimeout)
+		if errorTitle != "" {
+			report = newServiceBindingProbeReport(slug, service)
+			report.Error = probeErr.Error()
+		}
+		status := "failed"
+		switch exitCode {
+		case 0:
+			status = "passed"
+			batch.Passed++
+		case 130:
+			status = "not_checked"
+			batch.Skipped++
+			interrupted = true
+			report.Error = "verification interrupted before a result was collected"
+		default:
+			batch.Failed++
+			batch.Checked++
+		}
+		batch.Bindings = append(batch.Bindings, serviceBindingProbeBatchItem{
+			Service: service,
+			Status:  status,
+			Report:  report,
+		})
+		if exitCode == 0 {
+			batch.Checked++
+		}
+		if task.OutputTruncated {
+			PrintWarn(osStderr, "canary output for %s was truncated at %d bytes", service, task.MaxOutputBytes)
+		}
+	}
+	if jsonOutput {
+		if err := writeJSON(batch); err != nil {
+			return jsonOut(err)
+		}
+	} else {
+		renderServiceBindingProbeBatch(batch)
+	}
+	if interrupted {
+		return 130
+	}
+	if batch.Failed > 0 || batch.Skipped > 0 {
+		return 1
+	}
+	return 0
+}
+
+func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration) (api.ServiceBindingProbeReport, api.AppTaskResponse, string, error, int) {
+	report := newServiceBindingProbeReport(slug, service)
 	request := api.CreateAppTaskRequest{
 		Command:        []string{api.AppTaskServiceBindingProbeCommand, service},
 		TimeoutSeconds: bindingProbeTaskTimeoutSeconds,
@@ -82,8 +205,11 @@ func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClien
 	}
 	task, err := client.CreateAppTask(ctx, slug, request)
 	if err != nil {
-		return printErr("Could not start service-binding canary", err)
+		report.Error = err.Error()
+		return report, task, "Could not start service-binding canary", err, 1
 	}
+	report.TaskID = task.ID
+	report.DeploymentID = task.DeploymentID
 	interruptContext, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	waitContext, cancel := context.WithTimeout(interruptContext, waitTimeout)
@@ -100,29 +226,23 @@ func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClien
 				} else if !jsonOutput {
 					PrintWarn(osStderr, "cancellation requested for canary task %s (status=%s)", task.ID, cancelled.Status)
 				}
-				return 130
+				return report, task, "", nil, 130
 			}
-			return printErr("Service-binding canary is still running", waitContext.Err())
+			report.Error = "canary task did not finish before the wait timeout"
+			return report, task, "Service-binding canary is still running", waitContext.Err(), 1
 		case <-time.After(pollInterval):
 		}
 		task, err = client.GetAppTask(waitContext, slug, task.ID)
 		if err != nil {
 			if errors.Is(waitContext.Err(), context.DeadlineExceeded) {
-				return printErr("Service-binding canary wait timed out; the task is still running", waitContext.Err())
+				report.Error = "canary task did not finish before the wait timeout"
+				return report, task, "Service-binding canary wait timed out; the task is still running", waitContext.Err(), 1
 			}
-			return printErr("Could not read service-binding canary status", err)
+			report.Error = err.Error()
+			return report, task, "Could not read service-binding canary status", err, 1
 		}
 	}
 
-	report := api.ServiceBindingProbeReport{
-		App:           slug,
-		Service:       service,
-		URL:           "https://" + service + ".internal",
-		DNS:           api.ServiceBindingProbeCheck{Status: "not_checked"},
-		TLS:           api.ServiceBindingProbeCheck{Status: "not_checked"},
-		Authorization: api.ServiceBindingProbeCheck{Status: "not_checked"},
-		Routing:       api.ServiceBindingProbeCheck{Status: "not_checked"},
-	}
 	if task.StdoutTail != "" {
 		if err := json.Unmarshal([]byte(task.StdoutTail), &report); err != nil {
 			report.Error = "task did not return a valid canary report"
@@ -144,20 +264,39 @@ func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClien
 	}
 	report.TaskID = task.ID
 	report.DeploymentID = task.DeploymentID
-	if jsonOutput {
-		if err := writeJSON(report); err != nil {
-			return jsonOut(err)
-		}
-		if task.Status != api.AppTaskStatusSucceeded || !report.Passed() {
-			return 1
-		}
-		return 0
-	}
-	renderServiceBindingProbeReport(slug, report, task)
 	if task.Status != api.AppTaskStatusSucceeded || !report.Passed() {
-		return 1
+		if report.Error == "" {
+			if task.Failure != nil {
+				report.Error = task.Failure.Code + ": " + task.Failure.Message
+			} else {
+				report.Error = "canary task did not succeed"
+			}
+		}
+		return report, task, "", nil, 1
 	}
-	return 0
+	return report, task, "", nil, 0
+}
+
+func newServiceBindingProbeReport(app, service string) api.ServiceBindingProbeReport {
+	return api.ServiceBindingProbeReport{
+		App:           app,
+		Service:       service,
+		URL:           "https://" + service + ".internal",
+		DNS:           api.ServiceBindingProbeCheck{Status: "not_checked"},
+		TLS:           api.ServiceBindingProbeCheck{Status: "not_checked"},
+		Authorization: api.ServiceBindingProbeCheck{Status: "not_checked"},
+		Routing:       api.ServiceBindingProbeCheck{Status: "not_checked"},
+	}
+}
+
+func renderServiceBindingProbeBatch(batch serviceBindingProbeBatchReport) {
+	_, _ = fmt.Fprintf(osStdout, "Service binding readiness: %s (%d/%d passed, %d failed, %d not checked)\n", batch.App, batch.Passed, batch.Total, batch.Failed, batch.Skipped)
+	for _, item := range batch.Bindings {
+		_, _ = fmt.Fprintln(osStdout)
+		renderServiceBindingProbeReport(batch.App, item.Report, api.AppTaskResponse{
+			ID: item.Report.TaskID, DeploymentID: item.Report.DeploymentID,
+		})
+	}
 }
 
 func renderServiceBindingProbeReport(app string, report api.ServiceBindingProbeReport, task api.AppTaskResponse) {
