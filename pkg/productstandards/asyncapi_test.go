@@ -39,13 +39,13 @@ func TestAsyncAPIContract(t *testing.T) {
 	_ = object(t, securitySchemes, "bearerAuth")
 
 	wantEvents := map[string]string{
-		"appParked":               "app.parked",
-		"appWoken":                "app.woken",
-		"deploymentLive":          "deployment.live",
-		"deploymentFailed":        "deployment.failed",
-		"rolloutCompleted":        "rollout.completed",
-		"rolloutAborted":          "rollout.aborted",
-		"usageStatementFinalized": "usage_statement.finalized",
+		"appParked":                        "app.parked",
+		"appWoken":                         "app.woken",
+		"deploymentLive":                   "deployment.live",
+		"deploymentFailed":                 "deployment.failed",
+		"rolloutCompleted":                 "rollout.completed",
+		"rolloutAborted":                   "rollout.aborted",
+		"usageStatementFinalized":          "usage_statement.finalized",
 		"platformTenantStatementFinalized": "platform_tenant.statement.finalized",
 	}
 	for channelName, eventName := range wantEvents {
@@ -99,13 +99,13 @@ func TestAsyncAPIContract(t *testing.T) {
 	}
 
 	for operationName, channelName := range map[string]string{
-		"deliverAppParked":               "appParked",
-		"deliverAppWoken":                "appWoken",
-		"deliverDeploymentLive":          "deploymentLive",
-		"deliverDeploymentFailed":        "deploymentFailed",
-		"deliverRolloutCompleted":        "rolloutCompleted",
-		"deliverRolloutAborted":          "rolloutAborted",
-		"deliverUsageStatementFinalized": "usageStatementFinalized",
+		"deliverAppParked":                        "appParked",
+		"deliverAppWoken":                         "appWoken",
+		"deliverDeploymentLive":                   "deploymentLive",
+		"deliverDeploymentFailed":                 "deploymentFailed",
+		"deliverRolloutCompleted":                 "rolloutCompleted",
+		"deliverRolloutAborted":                   "rolloutAborted",
+		"deliverUsageStatementFinalized":          "usageStatementFinalized",
 		"deliverPlatformTenantStatementFinalized": "platformTenantStatementFinalized",
 	} {
 		operation := object(t, operations, operationName)
