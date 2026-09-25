@@ -1194,7 +1194,8 @@ type Handler struct {
 	// It is wired by cmd/gatewayd-internal/main.go from the
 	// pkg/edgejwks.Verifier constructed against the per-URL JWKS
 	// cache; nil = JWT kind disabled (unit tests + pre-PR-5 builds).
-	jwtVerifier JWTVerifier
+	jwtVerifier                       JWTVerifier
+	platformTenantExternalRefResolver PlatformTenantExternalRefResolver
 
 	// internalSvcVerifier (ADR-119 / issue #477 #4) is the
 	// per-service public-key allowlist consulted by
@@ -1816,6 +1817,13 @@ func (h *Handler) WithGeoReader(r CountryReader) *Handler {
 // cmd/gatewayd-internal/edge_rules_jwks.go).
 func (h *Handler) WithJWTVerifier(v JWTVerifier) *Handler {
 	h.jwtVerifier = v
+	return h
+}
+
+// WithPlatformTenantExternalRefResolver arms verified JWT-to-tenant lookup.
+// A nil resolver leaves opted-in rules unavailable and therefore fail-closed.
+func (h *Handler) WithPlatformTenantExternalRefResolver(r PlatformTenantExternalRefResolver) *Handler {
+	h.platformTenantExternalRefResolver = r
 	return h
 }
 
@@ -2721,11 +2729,18 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// the JWT access rule does not require that claim's value. Copy the cached
 	// JWT rule before adding the extraction hint; matcher-owned values are
 	// immutable and shared across requests.
-	verifyRule := rule
+	var extractClaims []string
 	if throttle := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method); throttle != nil &&
 		throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
+		extractClaims = append(extractClaims, throttle.JWTClaimName)
+	}
+	if rule.PlatformTenantExternalRefClaim != "" {
+		extractClaims = append(extractClaims, rule.PlatformTenantExternalRefClaim)
+	}
+	verifyRule := rule
+	if len(extractClaims) > 0 {
 		cloned := *rule
-		cloned.ExtractClaims = []string{throttle.JWTClaimName}
+		cloned.ExtractClaims = extractClaims
 		verifyRule = &cloned
 	}
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, verifyRule)
@@ -2742,11 +2757,14 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// applyEdgeRuleThrottle can key a per-consumer bucket when the
 	// matched rule opts into key_by="jwt_subject" or
 	// key_by="jwt_claim". Claims.Custom is the string→string
-	// subset the verifier extracted from rule.RequiredClaims — no
-	// extra parse cost on the hot path.
+	// subset selected by rule requirements or request-local policy —
+	// no extra parse cost on the hot path.
 	authenticated := authenticatedFrom(r.Context())
 	authenticated.JWTSubject = claims.Subject
 	authenticated.JWTClaims = claims.Custom
+	if h.applyPlatformTenantJWTClaim(w, r, app, rule, claims, &authenticated) {
+		return true
+	}
 	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	return false
 }
@@ -7236,7 +7254,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			}
 			platformTenantID := authenticatedFrom(r.Context()).PlatformTenantID
 			platformTenantSurfaceID := authenticatedFrom(r.Context()).PlatformTenantSurfaceID
-			if parsed, err := uuid.Parse(platformTenantID); err == nil && (consumerID != "" || platformTenantSurfaceID != "") {
+			platformTenantJWTAuthorizationRuleID := authenticatedFrom(r.Context()).PlatformTenantJWTAuthorizationRuleID
+			if parsed, err := uuid.Parse(platformTenantID); err == nil && (consumerID != "" || platformTenantSurfaceID != "" || platformTenantJWTAuthorizationRuleID != "") {
 				platformTenantID = parsed.String()
 			} else {
 				platformTenantID = ""
@@ -7246,6 +7265,11 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			} else {
 				platformTenantSurfaceID = ""
 			}
+			if parsed, err := uuid.Parse(platformTenantJWTAuthorizationRuleID); err == nil && consumerID == "" && platformTenantSurfaceID == "" && platformTenantID != "" {
+				platformTenantJWTAuthorizationRuleID = parsed.String()
+			} else {
+				platformTenantJWTAuthorizationRuleID = ""
+			}
 			if h.requestTelemetry != nil && requestTraceID == "" {
 				// Keep the legacy request-id fallback for deployments where the
 				// OTel provider is disabled. Traced requests always use the real
@@ -7253,35 +7277,36 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				requestTraceID = telemetryTraceID(requestID)
 			}
 			row := RequestTelemetryRow{
-				EventID:                 uuid.New(),
-				AccountID:               acctUUID,
-				AppID:                   appUUID,
-				DeploymentID:            deploymentUUID,
-				Route:                   telemetryRoute,
-				Method:                  r.Method,
-				Status:                  status,
-				LatencyMS:               int(elapsed / time.Millisecond),
-				ColdBoot:                cold,
-				TraceID:                 requestTraceID,
-				ReceivedAt:              time.Now(),
-				WakeID:                  target.WakeID,
-				InstanceID:              target.InstanceID,
-				UAFamily:                uaFamily,
-				ReferrerHost:            referrerHost,
-				Country:                 country,
-				GuestDurationMS:         guestEvidence.DurationMS,
-				GuestRuntime:            guestEvidence.Runtime,
-				GuestOutcome:            guestEvidence.Outcome,
-				GuestErrorClass:         guestEvidence.ErrorClass,
-				ConsumerID:              consumerID,
-				PlatformTenantID:        platformTenantID,
-				PlatformTenantSurfaceID: platformTenantSurfaceID,
-				NodeID:                  target.NodeID,
-				Region:                  target.Region,
-				CommitSHA:               target.CommitSHA,
-				DeploymentTag:           target.DeploymentTag,
-				DeploymentCreatedAt:     target.DeploymentCreatedAt,
-				ImageDigest:             target.ImageDigest,
+				EventID:                              uuid.New(),
+				AccountID:                            acctUUID,
+				AppID:                                appUUID,
+				DeploymentID:                         deploymentUUID,
+				Route:                                telemetryRoute,
+				Method:                               r.Method,
+				Status:                               status,
+				LatencyMS:                            int(elapsed / time.Millisecond),
+				ColdBoot:                             cold,
+				TraceID:                              requestTraceID,
+				ReceivedAt:                           time.Now(),
+				WakeID:                               target.WakeID,
+				InstanceID:                           target.InstanceID,
+				UAFamily:                             uaFamily,
+				ReferrerHost:                         referrerHost,
+				Country:                              country,
+				GuestDurationMS:                      guestEvidence.DurationMS,
+				GuestRuntime:                         guestEvidence.Runtime,
+				GuestOutcome:                         guestEvidence.Outcome,
+				GuestErrorClass:                      guestEvidence.ErrorClass,
+				ConsumerID:                           consumerID,
+				PlatformTenantID:                     platformTenantID,
+				PlatformTenantSurfaceID:              platformTenantSurfaceID,
+				PlatformTenantJWTAuthorizationRuleID: platformTenantJWTAuthorizationRuleID,
+				NodeID:                               target.NodeID,
+				Region:                               target.Region,
+				CommitSHA:                            target.CommitSHA,
+				DeploymentTag:                        target.DeploymentTag,
+				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
+				ImageDigest:                          target.ImageDigest,
 			}
 			if r.Context().Value(suppressFinancialUsageKey{}) == true {
 				// Rejected admissions remain visible in request telemetry but
@@ -7295,9 +7320,10 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				err := h.usageOutbox.Enqueue(usageoutbox.Event{
 					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
 					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
-					PlatformTenantSurfaceID: row.PlatformTenantSurfaceID,
-					WindowStart:             row.ReceivedAt.UTC().Truncate(time.Minute),
-					RequestCount:            1, ErrorCount: errorCount, BillableUnits: 1,
+					PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
+					PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
+					WindowStart:                          row.ReceivedAt.UTC().Truncate(time.Minute),
+					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: 1,
 				})
 				if err != nil {
 					h.metrics.IncUsageOutboxFailure()

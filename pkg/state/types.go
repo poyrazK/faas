@@ -696,23 +696,28 @@ type APIConsumerUsageEvent struct {
 	// PlatformTenantSurfaceID is set only for anonymous traffic on a verified
 	// tenant surface. It is a request-time snapshot, not a current-link lookup.
 	PlatformTenantSurfaceID string
-	WindowStart             time.Time
-	RequestCount            int64
-	ErrorCount              int64
-	BillableUnits           int64
+	// PlatformTenantJWTAuthorizationRuleID identifies usage attributed through
+	// a verified JWT rule. Raw JWT subjects and custom claim values are never
+	// written to the financial ledger.
+	PlatformTenantJWTAuthorizationRuleID string
+	WindowStart                          time.Time
+	RequestCount                         int64
+	ErrorCount                           int64
+	BillableUnits                        int64
 }
 
 // APIConsumerUsageBucket is the read-side aggregate for one app, attributed
-// consumer or surface, and UTC minute. It is returned in chronological order.
+// consumer, verified surface, or verified JWT rule, and UTC minute.
 type APIConsumerUsageBucket struct {
-	AccountID     string
-	AppID         string
-	ConsumerKey   string
-	SurfaceID     string // populated only for tenant-surface usage reads
-	WindowStart   time.Time
-	RequestCount  int64
-	ErrorCount    int64
-	BillableUnits int64
+	AccountID              string
+	AppID                  string
+	ConsumerKey            string
+	SurfaceID              string // populated only for tenant-surface usage reads
+	JWTAuthorizationRuleID string // populated only for opt-in verified JWT attribution
+	WindowStart            time.Time
+	RequestCount           int64
+	ErrorCount             int64
+	BillableUnits          int64
 }
 
 // APIConsumerRateCard is an immutable, versioned price for one request unit
@@ -6778,11 +6783,12 @@ type EdgeRuleCORSAction struct {
 // algs. RequiredClaims enforces a key=value check on top of the
 // standard iss/aud/exp/nbf validation.
 type EdgeRuleJWTAction struct {
-	Issuer         string            `json:"issuer"`
-	Audience       []string          `json:"audience,omitempty"`
-	JWKSURL        string            `json:"jwks_url"`
-	Algorithms     []string          `json:"algorithms"`
-	RequiredClaims map[string]string `json:"required_claims,omitempty"`
+	Issuer                         string            `json:"issuer"`
+	Audience                       []string          `json:"audience,omitempty"`
+	JWKSURL                        string            `json:"jwks_url"`
+	Algorithms                     []string          `json:"algorithms"`
+	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =

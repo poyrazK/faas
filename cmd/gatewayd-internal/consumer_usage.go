@@ -68,8 +68,9 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 				receipt, err = client.RecordConsumerUsage(callCtx, &apidpb.ConsumerUsageEvent{
 					EventId: event.EventID, AccountId: event.AccountID, AppId: event.AppID,
 					ConsumerId: event.ConsumerID, PlatformTenantId: event.PlatformTenantID,
-					PlatformTenantSurfaceId: event.PlatformTenantSurfaceID,
-					WindowStartUnixMs:       event.WindowStart.UnixMilli(), RequestCount: event.RequestCount,
+					PlatformTenantSurfaceId:              event.PlatformTenantSurfaceID,
+					PlatformTenantJwtAuthorizationRuleId: event.PlatformTenantJWTAuthorizationRuleID,
+					WindowStartUnixMs:                    event.WindowStart.UnixMilli(), RequestCount: event.RequestCount,
 					ErrorCount: event.ErrorCount, BillableUnits: event.BillableUnits,
 				})
 				cancel()
@@ -78,6 +79,9 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 				}
 				if err == nil && event.PlatformTenantSurfaceID != "" && !receipt.GetSurfaceAttributionSupported() {
 					err = fmt.Errorf("apid does not acknowledge tenant-surface attribution")
+				}
+				if err == nil && event.PlatformTenantJWTAuthorizationRuleID != "" && !receipt.GetJwtTenantAttributionSupported() {
+					err = fmt.Errorf("apid does not acknowledge JWT tenant attribution")
 				}
 				if err == nil {
 					err = q.Ack(item)

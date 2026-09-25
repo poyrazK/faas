@@ -2490,6 +2490,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.edgeJWKSAdapter != nil {
 		handler.WithJWTVerifier(deps.edgeJWKSAdapter)
 	}
+	if deps.pgStore != nil {
+		handler.WithPlatformTenantExternalRefResolver(newPlatformTenantExternalRefResolver(deps.pgStore))
+	}
 	// ADR-091 D21 — arm the geoip reader that applyEdgeRuleGeo
 	// consults. nil-safe: deps.geoReader nil (file missing or
 	// FAAS_GEOIP_DB_PATH empty) keeps the gate disabled; the
@@ -2712,37 +2715,38 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			for i := range rows {
 				row := rows[i]
 				req := &apidpb.IncrementRequestTelemetryRequest{
-					EventId:                 row.EventID.String(),
-					AccountId:               row.AccountID.String(),
-					AppId:                   row.AppID.String(),
-					DeploymentId:            row.DeploymentID.String(),
-					RouteTemplate:           row.Route,
-					Method:                  row.Method,
-					HttpStatus:              int32(row.Status),
-					LatencyMs:               int32(row.LatencyMS),
-					ColdBoot:                row.ColdBoot,
-					TraceId:                 row.TraceID,
-					ReceivedAtUnixMs:        row.ReceivedAt.UnixMilli(),
-					Count:                   int32(row.Count),
-					UaFamily:                row.UAFamily,
-					ReferrerHost:            row.ReferrerHost,
-					Country:                 row.Country,
-					WakeId:                  row.WakeID,
-					InstanceId:              row.InstanceID,
-					GuestDurationMs:         int32(row.GuestDurationMS),
-					GuestRuntime:            row.GuestRuntime,
-					GuestOutcome:            row.GuestOutcome,
-					GuestErrorClass:         row.GuestErrorClass,
-					ConsumerId:              row.ConsumerID,
-					PlatformTenantId:        row.PlatformTenantID,
-					PlatformTenantSurfaceId: row.PlatformTenantSurfaceID,
-					UsageOutboxed:           row.UsageOutboxed,
-					NodeId:                  row.NodeID,
-					Region:                  row.Region,
-					CommitSha:               row.CommitSHA,
-					DeploymentTag:           row.DeploymentTag,
-					DeploymentCreatedAt:     row.DeploymentCreatedAt,
-					ImageDigest:             row.ImageDigest,
+					EventId:                              row.EventID.String(),
+					AccountId:                            row.AccountID.String(),
+					AppId:                                row.AppID.String(),
+					DeploymentId:                         row.DeploymentID.String(),
+					RouteTemplate:                        row.Route,
+					Method:                               row.Method,
+					HttpStatus:                           int32(row.Status),
+					LatencyMs:                            int32(row.LatencyMS),
+					ColdBoot:                             row.ColdBoot,
+					TraceId:                              row.TraceID,
+					ReceivedAtUnixMs:                     row.ReceivedAt.UnixMilli(),
+					Count:                                int32(row.Count),
+					UaFamily:                             row.UAFamily,
+					ReferrerHost:                         row.ReferrerHost,
+					Country:                              row.Country,
+					WakeId:                               row.WakeID,
+					InstanceId:                           row.InstanceID,
+					GuestDurationMs:                      int32(row.GuestDurationMS),
+					GuestRuntime:                         row.GuestRuntime,
+					GuestOutcome:                         row.GuestOutcome,
+					GuestErrorClass:                      row.GuestErrorClass,
+					ConsumerId:                           row.ConsumerID,
+					PlatformTenantId:                     row.PlatformTenantID,
+					PlatformTenantSurfaceId:              row.PlatformTenantSurfaceID,
+					PlatformTenantJwtAuthorizationRuleId: row.PlatformTenantJWTAuthorizationRuleID,
+					UsageOutboxed:                        row.UsageOutboxed,
+					NodeId:                               row.NodeID,
+					Region:                               row.Region,
+					CommitSha:                            row.CommitSHA,
+					DeploymentTag:                        row.DeploymentTag,
+					DeploymentCreatedAt:                  row.DeploymentCreatedAt,
+					ImageDigest:                          row.ImageDigest,
 				}
 				if row.Count < 1 {
 					req.Count = 1

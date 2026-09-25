@@ -80,6 +80,9 @@ type Authenticated struct {
 	// PlatformTenantSurfaceID is set only for anonymous traffic on a verified
 	// tenant-surface route. Key-authenticated traffic retains consumer attribution.
 	PlatformTenantSurfaceID string
+	// PlatformTenantJWTAuthorizationRuleID is set only when an opted-in,
+	// verified JWT rule supplied the sole platform-tenant attribution.
+	PlatformTenantJWTAuthorizationRuleID string
 
 	// JWTSubject is the `sub` claim from a JWKS-verified token for
 	// requests that satisfied applyEdgeRuleJWT. Empty for traffic

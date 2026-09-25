@@ -56,6 +56,13 @@ type PlatformTenantStore interface {
 	PlatformTenantSurfaceSuspended(context.Context, string) (bool, error)
 }
 
+// PlatformTenantExternalRefResolver maps only an account-owned external
+// reference to its current tenant status. Gateway callers use this after
+// verifying a JWT; request data never supplies account or tenant IDs.
+type PlatformTenantExternalRefResolver interface {
+	ResolvePlatformTenantExternalRef(context.Context, string, string) (PlatformTenant, error)
+}
+
 // PlatformTenantApplyStore reconciles an additive onboarding bundle in one
 // transaction. A dry run performs the same ownership and conflict checks but
 // leaves no rows behind. Omitted resources are never detached or revoked.

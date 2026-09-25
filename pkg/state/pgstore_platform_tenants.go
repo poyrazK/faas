@@ -83,6 +83,15 @@ func (s *PgStore) GetPlatformTenant(ctx context.Context, accountID, tenantID str
 		where account_id = $1::uuid and id = $2::uuid`, accountID, tenantID))
 }
 
+func (s *PgStore) ResolvePlatformTenantExternalRef(ctx context.Context, accountID, externalRef string) (PlatformTenant, error) {
+	if accountID == "" || externalRef == "" || len(externalRef) > 256 {
+		return PlatformTenant{}, ErrNotFound
+	}
+	return scanPlatformTenant(s.pool.QueryRow(ctx, `
+		select `+platformTenantCols+` from platform_tenants
+		where account_id = $1::uuid and external_ref = $2`, accountID, externalRef))
+}
+
 func (s *PgStore) ListPlatformTenants(ctx context.Context, accountID string, limit, offset int) ([]PlatformTenant, error) {
 	if accountID == "" {
 		return nil, ErrNotFound
@@ -212,6 +221,7 @@ func (s *PgStore) ListPlatformTenantUsage(ctx context.Context, accountID, tenant
 		select u.account_id, u.app_id,
 		       case when u.source_kind = 'consumer' then u.consumer_key else '' end,
 		       case when u.source_kind = 'surface' then u.consumer_key else '' end,
+		       case when u.source_kind = 'jwt' then u.consumer_key else '' end,
 		       date_trunc('day', u.window_start, 'UTC') as usage_day,
 		       sum(u.request_count)::bigint, sum(u.error_count)::bigint, sum(u.billable_units)::bigint
 		from platform_tenant_usage_minutes u
@@ -226,7 +236,7 @@ func (s *PgStore) ListPlatformTenantUsage(ctx context.Context, accountID, tenant
 	out := []APIConsumerUsageBucket{}
 	for rows.Next() {
 		var bucket APIConsumerUsageBucket
-		if err := rows.Scan(&bucket.AccountID, &bucket.AppID, &bucket.ConsumerKey, &bucket.SurfaceID,
+		if err := rows.Scan(&bucket.AccountID, &bucket.AppID, &bucket.ConsumerKey, &bucket.SurfaceID, &bucket.JWTAuthorizationRuleID,
 			&bucket.WindowStart, &bucket.RequestCount, &bucket.ErrorCount, &bucket.BillableUnits); err != nil {
 			return nil, err
 		}

@@ -144,13 +144,14 @@ type PlatformTenantDetailResponse struct {
 }
 
 type PlatformTenantUsageBucketResponse struct {
-	AppID         string    `json:"app_id"`
-	ConsumerID    string    `json:"consumer_id,omitempty"`
-	SurfaceID     string    `json:"surface_id,omitempty"`
-	WindowStart   time.Time `json:"window_start"`
-	RequestCount  int64     `json:"request_count"`
-	ErrorCount    int64     `json:"error_count"`
-	BillableUnits int64     `json:"billable_units"`
+	AppID                  string    `json:"app_id"`
+	ConsumerID             string    `json:"consumer_id,omitempty"`
+	SurfaceID              string    `json:"surface_id,omitempty"`
+	JWTAuthorizationRuleID string    `json:"jwt_authorization_rule_id,omitempty"`
+	WindowStart            time.Time `json:"window_start"`
+	RequestCount           int64     `json:"request_count"`
+	ErrorCount             int64     `json:"error_count"`
+	BillableUnits          int64     `json:"billable_units"`
 }
 
 type PlatformTenantUsageResponse struct {
@@ -170,6 +171,7 @@ type PlatformTenantStatementLineResponse struct {
 	AppID                  string    `json:"app_id"`
 	ConsumerID             string    `json:"consumer_id,omitempty"`
 	SurfaceID              string    `json:"surface_id,omitempty"`
+	JWTAuthorizationRuleID string    `json:"jwt_authorization_rule_id,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`

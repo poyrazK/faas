@@ -22236,20 +22236,21 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantSurfaceResponse' }
 
     PlatformTenantUsageBucketResponse:
-      description: One UTC day of durable tenant-attributed usage. Exactly one of consumer_id or surface_id is present.
+      description: One UTC day of durable tenant-attributed usage. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
       type: object
       required: [app_id, window_start, request_count, error_count, billable_units]
       properties:
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
         surface_id: { type: string, format: uuid }
+        jwt_authorization_rule_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
         request_count: { type: integer, format: int64, minimum: 0 }
         error_count: { type: integer, format: int64, minimum: 0 }
         billable_units: { type: integer, format: int64, minimum: 0 }
 
     PlatformTenantUsageResponse:
-      description: Cross-app raw usage totals with app and consumer-or-surface attribution.
+      description: Cross-app raw usage totals with app and consumer, surface, or JWT-rule attribution.
       type: object
       required: [tenant_id, period_start, period_end, request_count, error_count, billable_units, buckets, as_of]
       properties:
@@ -22265,13 +22266,14 @@ components:
         as_of: { type: string, format: date-time }
 
     PlatformTenantStatementLineResponse:
-      description: Immutable tenant-attributed UTC minute priced with one app's rate-card version. Exactly one of consumer_id or surface_id is present.
+      description: Immutable tenant-attributed UTC minute priced with one app's rate-card version. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
       type: object
       required: [app_id, window_start, billable_units, amount_millicents]
       properties:
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
         surface_id: { type: string, format: uuid }
+        jwt_authorization_rule_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
@@ -29558,6 +29560,12 @@ components:
         required_claims:
           type: object
           additionalProperties: { type: string }
+        platform_tenant_external_ref_claim:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[^\s]{1,128}$'
+          description: Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are rejected before the request reaches the guest.
 
     EdgeRuleIPAction:
       description: 'CIDR allow/deny evaluator. Deny is checked AFTER allow so a single-IP deny wins.'
