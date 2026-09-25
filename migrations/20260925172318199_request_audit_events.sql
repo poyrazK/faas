@@ -5,7 +5,7 @@
 -- financial and audit rows; no query, header or body is stored. Source IP is
 -- optional and verified at the public-gateway handoff.
 -- Undeclared route candidates may still include literal path segments.
-CREATE TABLE request_audit_events (
+CREATE TABLE IF NOT EXISTS request_audit_events (
     event_id uuid PRIMARY KEY REFERENCES api_consumer_usage_events(event_id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -23,9 +23,9 @@ CREATE TABLE request_audit_events (
     source_ip inet,
     received_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX request_audit_events_app_time_idx
+CREATE INDEX IF NOT EXISTS request_audit_events_app_time_idx
     ON request_audit_events (account_id, app_id, occurred_at DESC, event_id DESC);
-CREATE INDEX request_audit_events_app_route_idx
+CREATE INDEX IF NOT EXISTS request_audit_events_app_route_idx
     ON request_audit_events (account_id, app_id, route_template, occurred_at DESC);
 -- +goose StatementEnd
 
