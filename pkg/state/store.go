@@ -331,8 +331,8 @@ func SetRecoverRolloutStuckAfter(d time.Duration) {
 	RecoverRolloutStuckAfter = d
 }
 
-// ErrInvalidStateTransition is returned by CancelDeploymentTx /
-// MarkDeploymentCancelled when the row's current status is not in
+// ErrInvalidStateTransition is returned by CancelDeploymentTx when the
+// row's current status is not in
 // the cancel-eligible set {pending, building, imaging, snapshotting}.
 // Translates at the handler boundary to HTTP 409 with the
 // deployment_cancel_not_cancellable code (ADR-124).
@@ -2772,16 +2772,6 @@ type Store interface {
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
-
-	// MarkDeploymentCancelled atomically transitions the row to
-	// DeployCancelled, stamping cancelled_at / cancelled_by_principal /
-	// cancel_reason audit columns. The CAS guard enforces
-	// status ∈ {pending, building, imaging, snapshotting} —
-	// concurrent terminal transitions are last-write-wins safe.
-	// Returns ErrInvalidStateTransition if the row is already
-	// terminal or DeployLive, and ErrNotFound if id is unknown.
-	// (ADR-124 — deployment queue controls.)
-	MarkDeploymentCancelled(ctx context.Context, id, principal string, reason CancelReason, when time.Time) error
 
 	// CancelDeploymentTx is the single-transaction orchestrator
 	// that mirrors AutoRollbackDeploymentsTx (ADR-118). On

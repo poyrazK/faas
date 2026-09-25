@@ -7833,36 +7833,6 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 	return nil
 }
 
-// MarkDeploymentCancelled (ADR-124) — memstore mirror of
-// pgstore.MarkDeploymentCancelled. CAS guard via the
-// IsCancelEligible predicate, errrrors mirror pgstore sentinels.
-func (m *MemStore) MarkDeploymentCancelled(_ context.Context, id, principal string, reason CancelReason, when time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	d, ok := m.deployments[id]
-	if !ok {
-		return ErrNotFound
-	}
-	if d.Status == DeployLive {
-		return ErrCancelLiveForbidden
-	}
-	if !d.Status.IsCancelEligible() {
-		return ErrInvalidStateTransition
-	}
-	if !reason.IsValid() {
-		return ErrInvalidStateTransition
-	}
-	d.Status = DeployCancelled
-	d.CancelledAt = &when
-	d.CancelledByPrincipal = principal
-	d.CancelReason = string(reason)
-	if err := finalizeCancelledDeploymentState(&d, when, reason); err != nil {
-		return err
-	}
-	m.deployments[id] = d
-	return nil
-}
-
 // CancelDeploymentTx (ADR-124) — single-mu-lock orchestrator
 // mirroring pgstore.CancelDeploymentTx. The memstore is not
 // concurrent in the same way Postgres is, so we sequentially
