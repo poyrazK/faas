@@ -36,7 +36,7 @@ func inferredObservedPath(path string) string {
 // permanently rejected delivery at the receiver.
 func observedRouteLabel(method, path string) string {
 	if path == otherRouteLabel || method == "" || len(method) > 16 ||
-		len(method)+1+len(path) > 256 || strings.ContainsAny(path, "?#\r\n\t") {
+		len(method)+1+len(path) > 256 || strings.ContainsAny(path, "?#\x00\r\n\t") {
 		return otherRouteLabel
 	}
 	return method + " " + path

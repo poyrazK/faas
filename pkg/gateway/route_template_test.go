@@ -29,6 +29,7 @@ func TestObservedRouteLabelRejectsOutboxPoisonPaths(t *testing.T) {
 		{"GET", "/users/{id}", "GET /users/{id}"},
 		{"GET", "/users/private?token", otherRouteLabel},
 		{"GET", "/users/name\nother", otherRouteLabel},
+		{"GET", "/users/name\x00other", otherRouteLabel},
 		{"LONGCUSTOMMETHODNAME", "/users", otherRouteLabel},
 	} {
 		if got := observedRouteLabel(tc.method, tc.path); got != tc.want {

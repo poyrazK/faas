@@ -94,7 +94,7 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 		if route == discoveredRouteOverflow {
 			return fmt.Errorf("api discovery: overflow label is reserved")
 		}
-		if event.RequestCount != 1 || len(route) > 256 || strings.ContainsAny(route, "?#\r\n\t") {
+		if event.RequestCount != 1 || len(route) > 256 || strings.ContainsAny(route, "?#\x00\r\n\t") {
 			return fmt.Errorf("api discovery: invalid request count or route")
 		}
 		method, path, ok := strings.Cut(route, " ")

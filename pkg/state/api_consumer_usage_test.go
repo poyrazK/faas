@@ -125,3 +125,16 @@ func TestRequestAuditRejectsNULRoute(t *testing.T) {
 		t.Fatal("NUL-containing audit route accepted")
 	}
 }
+
+func TestAPIDiscoveryRejectsNULRoute(t *testing.T) {
+	now := time.Now().UTC()
+	event := APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(),
+		ConsumerKey: AnonymousConsumerKey, WindowStart: now.Truncate(time.Minute),
+		RequestCount: 1, BillableUnits: 1,
+		DiscoveredRoute: "GET /profile/name\x00other", DiscoveredAt: now,
+	}
+	if err := ValidateAPIConsumerUsageEvent(event); err == nil {
+		t.Fatal("NUL-containing route accepted")
+	}
+}
