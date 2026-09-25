@@ -591,6 +591,9 @@ from .diff_request import DiffRequest
 from .diff_request_env_by_scope import DiffRequestEnvByScope
 from .diff_response import DiffResponse
 from .diff_response_plan import DiffResponsePlan
+from .discovered_api_route import DiscoveredAPIRoute
+from .discovered_routes_response import DiscoveredRoutesResponse
+from .discovered_routes_response_source import DiscoveredRoutesResponseSource
 from .dispatch_invocation_batch_body import DispatchInvocationBatchBody
 from .dispatch_invocation_batch_body_records_item import DispatchInvocationBatchBodyRecordsItem
 from .dispatch_invocation_batch_body_records_item_headers import DispatchInvocationBatchBodyRecordsItemHeaders
@@ -1284,6 +1287,8 @@ from .request_analytics_timeseries_response_group_by import RequestAnalyticsTime
 from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
 from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSeries
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
+from .request_audit_list_response import RequestAuditListResponse
+from .request_audit_record import RequestAuditRecord
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
@@ -2132,6 +2137,9 @@ __all__ = (
     "DiffRequestEnvByScope",
     "DiffResponse",
     "DiffResponsePlan",
+    "DiscoveredAPIRoute",
+    "DiscoveredRoutesResponse",
+    "DiscoveredRoutesResponseSource",
     "DispatchInvocationBatchBody",
     "DispatchInvocationBatchBodyRecordsItem",
     "DispatchInvocationBatchBodyRecordsItemHeaders",
@@ -2801,6 +2809,8 @@ __all__ = (
     "RequestAnalyticsTimeseriesResponseMethod",
     "RequestAnalyticsTimeseriesSeries",
     "RequestAnalyticsTimeseriesSeriesMethod",
+    "RequestAuditListResponse",
+    "RequestAuditRecord",
     "ResolvedExecutionLimits",
     "ResourceProfile",
     "RestoreManagedPostgresDatabaseRequest",

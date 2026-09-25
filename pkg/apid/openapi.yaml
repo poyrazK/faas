@@ -31967,7 +31967,7 @@ components:
         (API-hosting roadmap item 11 / ADR-126 follow-up). The response
         never writes an OpenAPI document or edge rule.
       type: object
-      required: [app_id, source, observed_available, observed_source, collectors_expected, collectors_healthy, routes]
+      required: [app_id, source, observed_available, observed_source, observed_inventory_available, observed_cap_hit, collectors_expected, collectors_healthy, routes]
       properties:
         app_id:
           type: string
@@ -31977,11 +31977,17 @@ components:
           description: "preview, empty: no_import, degraded: routes_partial, or degraded: routes_unavailable."
         observed_available:
           type: boolean
-          description: "Whether at least one collector returned current route telemetry."
+          description: "Whether current route telemetry or a persisted discovered-route inventory is available."
         observed_source:
           type: string
           enum: [live, partial, unavailable]
-          description: "Completeness of the fleet-wide observed-route input."
+          description: "Completeness of the current fleet-wide telemetry input; persisted inventory availability is reported separately."
+        observed_inventory_available:
+          type: boolean
+          description: "Whether durable, opt-in discovered routes contributed to the observed route set."
+        observed_cap_hit:
+          type: boolean
+          description: "Whether the live route snapshot or durable discovered-route inventory reached its route cap."
         collectors_expected:
           type: integer
           minimum: 0

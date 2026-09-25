@@ -9232,17 +9232,20 @@ type EdgeRuleSuggestion struct {
 // contract preview for an app (ADR-126 follow-up / API-hosting roadmap item
 // 11). Routes are sorted by path and method; each row includes the edge rules
 // that match it so a developer can see contract drift and policy coverage
-// before changing any rules.
+// before changing any rules. The observed route set may include durable,
+// opt-in route discovery in addition to current fleet telemetry.
 type AppOpenAPIPolicyPreviewResponse struct {
-	AppID              string                         `json:"app_id"`
-	Source             string                         `json:"source"`
-	ObservedAvailable  bool                           `json:"observed_available"`
-	ObservedSource     string                         `json:"observed_source"`
-	CollectorsExpected int                            `json:"collectors_expected"`
-	CollectorsHealthy  int                            `json:"collectors_healthy"`
-	OpenAPIVersion     string                         `json:"openapi_version,omitempty"`
-	Routes             []AppOpenAPIPolicyPreviewRoute `json:"routes"`
-	Suggestions        []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
+	AppID                      string                         `json:"app_id"`
+	Source                     string                         `json:"source"`
+	ObservedAvailable          bool                           `json:"observed_available"`
+	ObservedSource             string                         `json:"observed_source"`
+	ObservedInventoryAvailable bool                           `json:"observed_inventory_available"`
+	ObservedCapHit             bool                           `json:"observed_cap_hit"`
+	CollectorsExpected         int                            `json:"collectors_expected"`
+	CollectorsHealthy          int                            `json:"collectors_healthy"`
+	OpenAPIVersion             string                         `json:"openapi_version,omitempty"`
+	Routes                     []AppOpenAPIPolicyPreviewRoute `json:"routes"`
+	Suggestions                []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
 }
 
 // ApplyAppOpenAPIPolicyRequest controls the explicit OpenAPI policy apply
