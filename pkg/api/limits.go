@@ -3760,6 +3760,10 @@ const (
 	// lookup needed to resolve a narrower plan budget is temporarily
 	// unavailable, so lookup failures can never turn into infinite retry.
 	DurableRetryMaxAttempts = 25
+	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
+	// rule age before the serving plan applies its lower deadline cap.
+	// The Scale plan currently owns the largest invocation deadline.
+	MaxAsyncRouteAgeSeconds = 86400
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 

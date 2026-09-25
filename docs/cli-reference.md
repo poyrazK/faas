@@ -1414,6 +1414,23 @@ Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (se
 
 Add an edge rule
 
+For `--kind async`, these optional fields configure per-route execution; omitted
+values keep the existing app/plan defaults. Retry attempts include the initial
+delivery, and plan limits cap the attempt budget and maximum age.
+
+| Flag | Meaning | |
+|---|---|---|
+| `--on-success-webhook <ID>` | success webhook subscription |  |
+| `--on-failure-webhook <ID>` | failure webhook subscription |  |
+| `--async-max-attempts <N>` | total attempts (0 = plan default) |  |
+| `--async-retry-base-seconds <N>` | exponential retry base delay |  |
+| `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
+| `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
+| `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default) |  |
+
+The update command replaces the complete action, so repeat any webhook
+destination settings that should remain configured when changing async policy.
+
 ### edge-rules get
 
 Show one edge rule

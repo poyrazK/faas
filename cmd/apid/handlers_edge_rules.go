@@ -234,8 +234,19 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 			return api.ErrValidation(fmt.Sprintf("async action: %v", err))
 		}
 		for field := range fields {
-			if field != "on_success" && field != "on_failure" {
+			if field != "on_success" && field != "on_failure" && field != "retry_policy" && field != "max_age_seconds" {
 				return api.ErrValidation(fmt.Sprintf("async action does not accept field %q", field))
+			}
+		}
+		if rawPolicy, ok := fields["retry_policy"]; ok && string(rawPolicy) != "null" {
+			var policyFields map[string]json.RawMessage
+			if err := json.Unmarshal(rawPolicy, &policyFields); err != nil {
+				return api.ErrValidation(fmt.Sprintf("async action retry_policy: %v", err))
+			}
+			for field := range policyFields {
+				if field != "max_attempts" && field != "base_seconds" && field != "max_seconds" && field != "jitter_seconds" {
+					return api.ErrValidation(fmt.Sprintf("async action retry_policy does not accept field %q", field))
+				}
 			}
 		}
 		var a api.EdgeRuleAsyncAction
@@ -738,7 +749,12 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 	case state.EdgeRuleKindAsync:
 		var a api.EdgeRuleAsyncAction
 		if err := json.Unmarshal(raw, &a); err == nil {
-			out.Async = &state.EdgeRuleAsyncAction{OnSuccess: a.OnSuccess, OnFailure: a.OnFailure}
+			out.Async = &state.EdgeRuleAsyncAction{
+				OnSuccess:     a.OnSuccess,
+				OnFailure:     a.OnFailure,
+				RetryPolicy:   a.RetryPolicy,
+				MaxAgeSeconds: a.MaxAgeSeconds,
+			}
 		}
 	}
 	return out

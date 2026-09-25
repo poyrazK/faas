@@ -8,6 +8,9 @@
   ID and `/v1/invocations/{id}` status URL without waking the app. Schedd's
   existing durable drain later wakes the app, delivers the original method,
   URL, JSON body, and safe headers, and stores the terminal result/error.
+  An optional `retry_policy` overrides the app retry curve for this route, and
+  `max_age_seconds` sets the invocation deadline from acceptance; the current
+  account plan caps both the retry budget and maximum age at dispatch/admission.
   Optional `on_success` and `on_failure` fields select same-app webhook
   subscriptions for the terminal `job.finished` event. The selected delivery
   is recorded atomically with the terminal invocation transition.
@@ -21,6 +24,9 @@
   invocation payload is JSONB. Public `Authorization`, `Cookie`, hop-by-hop,
   and `x-faas-*` headers are never persisted. `Idempotency-Key` deterministically
   derives the invocation UUID so a retried acceptance returns the same job.
+  Omitted route retry and age controls preserve the existing app/plan defaults;
+  explicit maximum age begins when the edge accepts the request and is clamped
+  to `MaxAsyncInvocationDeadlineSeconds` for the current plan.
   Synthetic delivery is excluded from matching to prevent recursion. Worker
   and job workloads are rejected because they have no request listener.
 - **Rejected alternatives:** A new jobs table and worker pool would duplicate
