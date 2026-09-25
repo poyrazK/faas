@@ -186,8 +186,15 @@ nothing hard-codes a hostname:
 ```yaml
 services:
   public-api:
+    build: ./public-api
     depends_on: [auth, billing, recommendation]
-    x-gregale-service-policy: declared
+  auth:
+    build: ./auth
+  billing:
+    build: ./billing
+    x-gregale-allow-callers: [public-api]
+  recommendation:
+    build: ./recommendation
 ```
 
 `public-api` then starts with `GREGALE_SERVICE_AUTH_URL`,
@@ -197,11 +204,19 @@ unknown names, self-edges, and ambiguous names are rejected.
 
 The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, and queue
-bindings. The default `account` policy keeps the backwards-compatible behavior:
-omitting an edge does not deny same-account traffic. Opt into the `declared`
-policy with `x-gregale-service-policy: declared`; the gateway then returns 403
-for calls to services that are not listed in `depends_on`. The CLI reports
-those service bindings as `enforced`.
+bindings. New project workloads use the `declared` caller policy: the gateway
+returns 403 for calls to services not listed in `depends_on`. Existing apps
+retain their persisted policy on reapply. For an intentional same-account
+escape hatch, set `x-gregale-service-policy: account` on the caller. The CLI
+reports declared service bindings as `enforced`.
+
+The target can independently restrict who calls it with
+`x-gregale-allow-callers`. In the example, `billing` admits `public-api` but
+not other same-account apps, even if they declare a dependency on `billing`.
+An omitted list preserves legacy same-account reachability; `[]` denies every
+internal caller. The list accepts at most 100 logical app slugs, not generated
+PR preview names. This target check runs before routing or waking `billing`. Preview callers
+must also pass the existing project and target preview policies.
 
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
@@ -313,7 +328,7 @@ verification. Leave the flag off otherwise.
 
 ## Internal-only ingress
 
-Pro and Scale apps can be hidden from the public edge while remaining reachable
+Apps on every plan can be hidden from the public edge while remaining reachable
 from authenticated same-account service calls. Set the visibility at create
 time (`visibility: "internal"`) or update an existing app:
 

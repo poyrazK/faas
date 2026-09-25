@@ -118,7 +118,7 @@ class UpdateAppRequest:
         | UpdateAppRequestVisibilityType2Type1
         | UpdateAppRequestVisibilityType3Type1
     ) = UNSET
-    """Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale."""
+    """Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan."""
     ram_mb: int | None | Unset = UNSET
     cpu_millicores: (
         None

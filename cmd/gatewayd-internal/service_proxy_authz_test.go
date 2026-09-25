@@ -38,6 +38,7 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 		return app
 	}
 	caller := newApp(acct.ID, "authzcaller")
+	otherCaller := newApp(acct.ID, "othercaller")
 	target := newApp(acct.ID, "authztarget")
 	strictAllowed := newApp(acct.ID, "strictallowed", state.AppManifest{
 		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
@@ -65,6 +66,10 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 	unknownTargetPolicy := newApp(acct.ID, "unknowntargetpolicy", state.AppManifest{
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy("future-policy"),
 	})
+	allowedNames := []string{"authzcaller"}
+	noNames := []string{}
+	allowlistedTarget := newApp(acct.ID, "allowlistedtarget", state.AppManifest{AllowedServiceCallers: &allowedNames})
+	closedTarget := newApp(acct.ID, "closedtarget", state.AppManifest{AllowedServiceCallers: &noNames})
 	preview, err := store.CreateApp(ctx, state.App{
 		AccountID: acct.ID, Slug: "pr-42-authzcaller", Type: state.AppTypeApp,
 		RAMMB: 128, Status: state.AppActive, PreviewOfSlug: caller.Slug,
@@ -107,6 +112,10 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 		{"preview cannot reach guarded production target", preview.ID, denyingTarget.ID, gateway.ErrServiceProxyPreviewDenied},
 		{"unknown target policy fails closed for preview", preview.ID, unknownTargetPolicy.ID, gateway.ErrServiceProxyPreviewDenied},
 		{"unknown target policy does not block production", caller.ID, unknownTargetPolicy.ID, nil},
+		{"target admits named caller", caller.ID, allowlistedTarget.ID, nil},
+		{"target rejects unlisted caller", otherCaller.ID, allowlistedTarget.ID, gateway.ErrServiceProxyCallerDenied},
+		{"target rejects all when list empty", caller.ID, closedTarget.ID, gateway.ErrServiceProxyCallerDenied},
+		{"target matches preview by logical caller", preview.ID, allowlistedTarget.ID, nil},
 		{"guard applies only to production target", preview.ID, previewTarget.ID, nil},
 		{"cross-account is denied", outsider.ID, target.ID, gateway.ErrServiceProxyDenied},
 		{"absent caller is denied", absentUUID, target.ID, gateway.ErrServiceProxyDenied},

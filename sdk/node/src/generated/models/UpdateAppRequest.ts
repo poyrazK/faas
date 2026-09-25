@@ -14,7 +14,7 @@ import type { WorkerScaling } from './WorkerScaling.js';
  */
 export type UpdateAppRequest = {
   /**
-   * Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale.
+   * Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan.
    */
   visibility?: 'public' | 'internal';
   ram_mb?: number | null;

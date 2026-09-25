@@ -54,8 +54,7 @@ class CreateAppRequest:
     """The tag- prefix is reserved for stable deployment-alias hostnames."""
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
-    """Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro
-    and Scale."""
+    """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
     vcpu: int | Unset = UNSET

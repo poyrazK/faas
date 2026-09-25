@@ -17,7 +17,7 @@ export type CreateAppRequest = {
   slug: string;
   type?: 'app' | 'function';
   /**
-   * Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro and Scale.
+   * Ingress exposure for the new app. Choose internal to make it service-only; available on every plan.
    */
   visibility?: 'public' | 'internal';
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';

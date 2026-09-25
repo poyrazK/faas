@@ -48,3 +48,10 @@ func TestScanDetectionTraceMapsToPlanResponse(t *testing.T) {
 		t.Fatalf("detection warnings = %+v", warnings)
 	}
 }
+
+func TestPlanWorkloadNewProjectDefaultsDeclared(t *testing.T) {
+	workload := toPlanWorkload(reposcan.Workload{Name: "frontend"})
+	if workload.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+		t.Fatalf("new workload policy = %q, want declared", workload.ServiceBindingPolicy)
+	}
+}

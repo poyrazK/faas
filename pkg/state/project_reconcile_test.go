@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -51,6 +52,25 @@ func TestMemStoreApplyProjectReconcileRollsBackOnCronResolutionError(t *testing.
 	}
 	if len(crons) != 1 || crons[0].Schedule != "*/5 * * * *" {
 		t.Fatalf("cron mutation leaked after rollback: %#v", crons)
+	}
+}
+
+func TestTargetCallerDenyAllSurvivesManifestRoundTrip(t *testing.T) {
+	empty := []string{}
+	manifest := mergeProjectManagedManifest(AppManifest{}, AppManifest{AllowedServiceCallers: &empty})
+	if manifest.IsZero() {
+		t.Fatal("deny-all manifest must not be considered empty")
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded AppManifest
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.AllowedServiceCallers == nil || len(*decoded.AllowedServiceCallers) != 0 {
+		t.Fatalf("deny-all policy lost across JSON round-trip: %s", encoded)
 	}
 }
 

@@ -5427,12 +5427,11 @@ func ErrPlanPrivateNetworkNotAllowed(p Plan) *Problem {
 		WithDocs(docsBase + "/networking")
 }
 
-// ErrPlanInternalIngressNotAllowed is returned when a Free/Hobby account
-// requests an internal-only app edge. Private ingress is a Pro/Scale feature.
+// ErrPlanInternalIngressNotAllowed is retained for an unrecognized plan.
 func ErrPlanInternalIngressNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanInternalIngressNotAllowed,
 		"Plan does not unlock internal-only ingress",
-		fmt.Sprintf("plan %q does not unlock internal-only ingress; upgrade to Pro or Scale.", p)).
+		fmt.Sprintf("plan %q does not allow internal-only ingress.", p)).
 		WithLimit(0, 0).
 		WithDocs(docsBase + "/networking")
 }

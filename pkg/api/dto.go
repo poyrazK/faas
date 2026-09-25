@@ -462,7 +462,7 @@ type DevSessionResponse struct {
 // "set to zero".
 type UpdateAppRequest struct {
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
-	// values are public or internal. Internal is available on Pro and Scale.
+	// values are public or internal. Internal is available on every plan.
 	Visibility      *string `json:"visibility,omitempty"`
 	RAMMB           *int    `json:"ram_mb,omitempty"`
 	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
@@ -1297,6 +1297,9 @@ type AppResponse struct {
 	// from preview apps. "allow" is the legacy default; "deny" rejects them
 	// when this app is the production target.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	// AllowedServiceCallers is the target-side internal-service policy. Nil
+	// permits same-account callers; an empty non-nil list denies all.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -5904,6 +5907,7 @@ type PlanWorkload struct {
 
 	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	AllowedServiceCallers     *[]string                 `json:"allowed_service_callers,omitempty"`
 
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`

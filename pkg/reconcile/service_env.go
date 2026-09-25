@@ -79,8 +79,36 @@ func serviceBindingsEqual(left, right []api.AppServiceBinding) bool {
 	return true
 }
 
-func serviceBindingPolicyForWorkload(w reposcan.Workload) api.ServiceBindingPolicy {
+func serviceBindingPolicyForNewWorkload(w reposcan.Workload) api.ServiceBindingPolicy {
+	if w.ServiceBindingPolicy == "" {
+		return api.ServiceBindingPolicyDeclared
+	}
 	return api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
+}
+
+func serviceBindingPolicyForExistingWorkload(w reposcan.Workload, existing api.ServiceBindingPolicy) api.ServiceBindingPolicy {
+	if w.ServiceBindingPolicy == "" {
+		return existing.Effective()
+	}
+	return api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
+}
+
+func allowedServiceCallersEqual(left, right *[]string) bool {
+	if (left == nil) != (right == nil) {
+		return false
+	}
+	if left == nil {
+		return true
+	}
+	if len(*left) != len(*right) {
+		return false
+	}
+	for i := range *left {
+		if (*left)[i] != (*right)[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func previewServiceCallsPolicyForWorkload(w reposcan.Workload) api.PreviewServiceCallsPolicy {

@@ -738,6 +738,11 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 // Request handlers should use the request context so the optional canonical
 // domain lookup is cancelled with the request.
 func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan api.Plan) api.AppResponse {
+	var allowedCallers *[]string
+	if a.Manifest.AllowedServiceCallers != nil {
+		copyOfNames := append([]string{}, (*a.Manifest.AllowedServiceCallers)...)
+		allowedCallers = &copyOfNames
+	}
 	consumerAuthMode := string(a.ConsumerAuthMode)
 	if consumerAuthMode == "" {
 		consumerAuthMode = api.ConsumerAuthModeOptional
@@ -813,6 +818,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
 		ServiceBindingPolicy:      a.Manifest.EffectiveServiceBindingPolicy(),
 		PreviewServiceCallsPolicy: a.Manifest.EffectivePreviewServiceCallsPolicy(),
+		AllowedServiceCallers:     allowedCallers,
 		EgressAllowlist:           ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger
 		// targets. 0 = "disabled" (no autoscale rule). Reactive

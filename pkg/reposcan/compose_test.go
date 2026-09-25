@@ -1,9 +1,12 @@
 package reposcan
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // TestDetectCompose_ExtractsServices covers the canonical
@@ -111,6 +114,72 @@ services:
 	}
 	if len(warnings) != 0 {
 		t.Errorf("warnings = %v, want none (all denylisted images)", warnings)
+	}
+}
+
+func TestDetectCompose_AllowedServiceCallers(t *testing.T) {
+	fsys := fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  billing:
+    build: ./billing
+    x-gregale-allow-callers: [Frontend, frontend, worker]
+  closed:
+    build: ./closed
+    x-gregale-allow-callers: []
+  legacy:
+    build: ./legacy
+`)},
+	}
+	seeds, _, _, err := detectCompose(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workloads := mergeByKey(seeds)
+	if len(workloads) != 3 {
+		t.Fatalf("merged workload count = %d, want 3", len(workloads))
+	}
+	for _, seed := range seeds {
+		switch seed.name {
+		case "billing":
+			if seed.allowedServiceCallers == nil || strings.Join(*seed.allowedServiceCallers, ",") != "frontend,worker" {
+				t.Fatalf("billing allowlist = %v", seed.allowedServiceCallers)
+			}
+		case "closed":
+			if seed.allowedServiceCallers == nil || len(*seed.allowedServiceCallers) != 0 {
+				t.Fatalf("closed allowlist = %v", seed.allowedServiceCallers)
+			}
+		case "legacy":
+			if seed.allowedServiceCallers != nil {
+				t.Fatalf("legacy allowlist = %v", seed.allowedServiceCallers)
+			}
+		}
+	}
+	for _, workload := range workloads {
+		if workload.Name == "billing" && (workload.AllowedServiceCallers == nil || strings.Join(*workload.AllowedServiceCallers, ",") != "frontend,worker") {
+			t.Fatalf("merged billing allowlist = %v", workload.AllowedServiceCallers)
+		}
+	}
+}
+
+func TestDetectCompose_RejectsInvalidAllowedServiceCaller(t *testing.T) {
+	fsys := fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  billing:
+    build: ./billing
+    x-gregale-allow-callers: ["../other"]
+`)}}
+	_, _, _, err := detectCompose(fsys)
+	if err == nil || !strings.Contains(err.Error(), "x-gregale-allow-callers") {
+		t.Fatalf("invalid caller error = %v", err)
+	}
+}
+
+func TestNormalizeAllowedServiceCallersBoundsList(t *testing.T) {
+	names := make([]string, api.AllowedServiceCallersMax+1)
+	for i := range names {
+		names[i] = fmt.Sprintf("caller-%d", i)
+	}
+	if _, err := normalizeAllowedServiceCallers(&names); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("over-limit list error = %v", err)
 	}
 }
 

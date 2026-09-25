@@ -1534,6 +1534,9 @@ type AppManifest struct {
 
 	ServiceBindingPolicy      api.ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
 	PreviewServiceCallsPolicy api.PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	// Nil preserves legacy same-account reachability; an explicit empty list
+	// denies all internal callers. Values are logical app names.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
 
 	WorkingDir string `json:"working_dir,omitempty"`
 	Port       int    `json:"port,omitempty"`
@@ -1598,7 +1601,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.PreviewServiceCallsPolicy == "" && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1614,6 +1617,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy
+	existing.AllowedServiceCallers = desired.AllowedServiceCallers
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
