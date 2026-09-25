@@ -706,6 +706,36 @@
         </section>
       {{end}}
 
+      <section id="discovered-api" aria-label="Discovered API routes">
+        <h2>Discovered API</h2>
+        <p class="muted">Route candidates inferred from observed traffic. Unrecognized path segments may remain literal.</p>
+        {{if not .Data.DiscoveredRoutes.Available}}
+          <p role="status">The route inventory is temporarily unavailable. Refresh the page to try again.</p>
+        {{else}}
+          {{if .Data.DiscoveredRoutes.CapHit}}
+            <p role="status"><strong>Route limit reached.</strong> Gregale stores up to 500 route templates for this app; additional candidates are counted in an overflow bucket.</p>
+          {{end}}
+          {{if .Data.DiscoveredRoutes.Routes}}
+            <table aria-label="Persisted discovered API routes">
+              <thead><tr><th>Method</th><th>Route template</th><th>Requests</th><th>First seen</th><th>Last seen</th></tr></thead>
+              <tbody>
+                {{range .Data.DiscoveredRoutes.Routes}}
+                  <tr>
+                    <td><code>{{.Method}}</code></td>
+                    <td><code>{{.Path}}</code></td>
+                    <td>{{.RequestCount}}</td>
+                    <td>{{.FirstSeen}}</td>
+                    <td>{{.LastSeen}}</td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+          {{else}}
+            <p>No routes have been recorded yet. API discovery may be disabled, or the app may not have received traffic since it was enabled.</p>
+          {{end}}
+        {{end}}
+      </section>
+
       {{if .Data.PreviewEnvironment}}
         {{with .Data.PreviewEnvironment}}
           <section aria-label="PR preview environment" id="pr-preview-environment">

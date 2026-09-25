@@ -1156,6 +1156,9 @@ type AppDetailData struct {
 	// the live Prometheus panels. nil means the plan does not include the
 	// telemetry retention feature or the best-effort read failed.
 	RequestAnalytics *RequestAnalyticsView
+	// DiscoveredRoutes is the persistent, opt-in API route catalog. The
+	// dashboard keeps the rest of the app page available if this read fails.
+	DiscoveredRoutes DiscoveredRoutesView
 	// Alerts is the per-app (and account-wide) alert-rule snapshot
 	// (issue #396 / ADR-045, PR 4). nil means the apid dashboard
 	// query failed non-fatally (the page renders the "Alerts"
@@ -1847,6 +1850,25 @@ type RequestAnalyticsRouteView struct {
 	TrendURL      string
 	// DebugURL opens the read-only request explorer filtered to this route.
 	DebugURL string
+}
+
+// DiscoveredRoutesView is the customer-facing projection of the durable API
+// inventory. Available is false when the store read fails or the capability
+// is unavailable; an available empty slice means no routes have been recorded.
+type DiscoveredRoutesView struct {
+	Available bool
+	CapHit    bool
+	Routes    []DiscoveredRouteItem
+}
+
+// DiscoveredRouteItem is one observed method and route template, with
+// inventory timestamps formatted by the handler for the dashboard.
+type DiscoveredRouteItem struct {
+	Method       string
+	Path         string
+	FirstSeen    string
+	LastSeen     string
+	RequestCount int64
 }
 
 // DebugPageData is the server-rendered production debugger surface for one
