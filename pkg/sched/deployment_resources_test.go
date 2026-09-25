@@ -1,3 +1,5 @@
+// adr: 157 — deployment compute shapes use the validated CPU/RAM profile.
+// adr: 198 — deployment revision artifact fields remain immutable.
 package sched
 
 import (

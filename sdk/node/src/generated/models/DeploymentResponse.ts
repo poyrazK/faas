@@ -6,6 +6,7 @@ import type { BuildPlan } from './BuildPlan.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+import type { DeploymentResources } from './DeploymentResources.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
@@ -77,6 +78,7 @@ export type DeploymentResponse = {
    * True when this deployment carries a non-null override_* column set.
    */
   has_overrides?: boolean;
+  resources?: DeploymentResources;
   /**
    * Whether the deployment opted out of the temporary startup CPU allowance; absent/false preserves the default boost.
    */

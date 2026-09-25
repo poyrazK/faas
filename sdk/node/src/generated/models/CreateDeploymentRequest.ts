@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 import type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
+import type { DeploymentResourcesRequest } from './DeploymentResourcesRequest.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
@@ -47,6 +48,7 @@ export type CreateDeploymentRequest = {
    * Registered project environment to resolve to the deployment scope. Requires the app to belong to the project; omitted preserves legacy scope behavior.
    */
   environment?: string;
+  resources?: DeploymentResourcesRequest;
   /**
    * Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280.
    */
