@@ -186,7 +186,7 @@ type PrewarmIntentResponse struct {
 type CreateAppRequest struct {
 	Slug string `json:"slug"`
 	// Visibility controls public versus authenticated private ingress. Empty
-	// defaults to public; internal is available on Pro and Scale.
+	// defaults to public; internal is available on every plan.
 	Visibility      string `json:"visibility,omitempty"`
 	Type            string `json:"type,omitempty"`             // "app" (default) | "function"
 	Runtime         string `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
