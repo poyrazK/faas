@@ -273,10 +273,12 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
-	"GET /v1/outbound/integrations":                          "ListOutboundIntegrationOffers",
-	"GET /v1/apps/{slug}/outbound-bindings":                  "ListOutboundAppBindings",
-	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":    "BindOutboundIntegration",
-	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}": "UnbindOutboundIntegration",
+	"GET /v1/outbound/integrations":                             "ListOutboundIntegrationOffers",
+	"GET /v1/apps/{slug}/outbound-bindings":                     "ListOutboundAppBindings",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":       "BindOutboundIntegration",
+	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":    "UnbindOutboundIntegration",
+	"PUT /v1/outbound/integrations/{integration}/credential":    "PutOutboundCredential",
+	"DELETE /v1/outbound/integrations/{integration}/credential": "DeleteOutboundCredential",
 	// First-class queue bindings use a hyphenated path segment. Pin the
 	// noun-oriented Go SDK names instead of the fallback's literal
 	// "Queue-bindings" spelling.

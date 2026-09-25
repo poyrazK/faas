@@ -20,7 +20,37 @@ func copyOutboundOffer(in OutboundIntegrationOffer) OutboundIntegrationOffer {
 func (m *MemStore) SeedOutboundIntegrationOffer(offer OutboundIntegrationOffer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if offer.CredentialSource == "" {
+		offer.CredentialSource = "operator_env"
+		offer.CredentialConfigured = true
+	}
 	m.outboundIntegrationOffers[offer.ID] = copyOutboundOffer(offer)
+}
+
+func (m *MemStore) SetOutboundCredential(_ context.Context, accountID, integrationID string, sealed []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID || !offer.Enabled || offer.CredentialSource != "customer_sealed" || len(sealed) == 0 {
+		return ErrNotFound
+	}
+	m.outboundCredentials[integrationID] = append([]byte(nil), sealed...)
+	offer.CredentialConfigured = true
+	m.outboundIntegrationOffers[integrationID] = offer
+	return nil
+}
+
+func (m *MemStore) DeleteOutboundCredential(_ context.Context, accountID, integrationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID || offer.CredentialSource != "customer_sealed" {
+		return ErrNotFound
+	}
+	delete(m.outboundCredentials, integrationID)
+	offer.CredentialConfigured = false
+	m.outboundIntegrationOffers[integrationID] = offer
+	return nil
 }
 
 func (m *MemStore) ListOutboundIntegrationOffers(_ context.Context, accountID string) ([]OutboundIntegrationOffer, error) {

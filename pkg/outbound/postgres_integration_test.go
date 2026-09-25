@@ -1,10 +1,12 @@
 package outbound_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,12 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -151,6 +155,95 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	}
 }
 
+func TestPostgresCustomerSealedCredentialRotation(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "outbound-key-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration, err := outbound.NewIntegration(uuid.NewString(), "https://api.example.com", "unused-token", nil, 10, 10, 10, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integration.ProviderAuthMode = outbound.ProviderAuthManaged
+	integration.CredentialSource = outbound.CredentialSourceCustomerSealed
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1"}
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{AccountID: uuid.MustParse(account.ID), Name: "customer-key", Policy: integration}); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAccount, err := store.CreateAccount(ctx, "outbound-key-other-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := outbound.NewPostgresSealedCredentialResolver(pool, []*age.X25519Identity{identity}, []string{integration.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.Authorization(ctx, uuid.NewString()); err == nil {
+		t.Fatal("unconfigured integration credential was resolvable")
+	}
+	for _, value := range []string{"Bearer first", "Bearer rotated"} {
+		sealed, err := secretbox.SealBytes(identity.Recipient(), outbound.ManagedAuthorizationSealNamespace, []byte(value), outbound.ManagedAuthorizationMaxBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetOutboundCredential(ctx, otherAccount.ID, integration.ID, sealed); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("cross-account credential write error = %v", err)
+		}
+		if err := store.SetOutboundCredential(ctx, account.ID, integration.ID, sealed); err != nil {
+			t.Fatal(err)
+		}
+		var stored []byte
+		if err := pool.QueryRow(ctx, `SELECT authorization_sealed FROM outbound_integration_credentials WHERE integration_id = $1`, integration.ID).Scan(&stored); err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(stored, []byte(value)) {
+			t.Fatal("provider credential stored in plaintext")
+		}
+		got, err := resolver.Authorization(ctx, integration.ID)
+		if err != nil || got != value {
+			t.Fatalf("resolved credential = %q, %v", got, err)
+		}
+	}
+	if err := store.DeleteOutboundCredential(ctx, otherAccount.ID, integration.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account credential deletion error = %v", err)
+	}
+	if err := store.DeleteOutboundCredential(ctx, account.ID, integration.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.Authorization(ctx, integration.ID); err == nil {
+		t.Fatal("revoked credential was still resolvable")
+	}
+	sealed, err := secretbox.SealBytes(identity.Recipient(), outbound.ManagedAuthorizationSealNamespace, []byte("Bearer stale"), outbound.ManagedAuthorizationMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOutboundCredential(ctx, account.ID, integration.ID, sealed); err != nil {
+		t.Fatal(err)
+	}
+	integration.CredentialSource = outbound.CredentialSourceOperatorEnv
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{AccountID: uuid.MustParse(account.ID), Name: "customer-key", Policy: integration}); err != nil {
+		t.Fatal(err)
+	}
+	integration.CredentialSource = outbound.CredentialSourceCustomerSealed
+	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{AccountID: uuid.MustParse(account.ID), Name: "customer-key", Policy: integration}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolver.Authorization(ctx, integration.ID); err == nil {
+		t.Fatal("credential revived after switching the source away and back")
+	}
+}
+
 func TestCustomerBindingControlsManagedIntegrationAttachment(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
@@ -191,7 +284,7 @@ func TestCustomerBindingControlsManagedIntegrationAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.BindOutboundIntegration(ctx, otherAccount.ID, app.ID, integration.ID); err != state.ErrNotFound {
+	if _, err := store.BindOutboundIntegration(ctx, otherAccount.ID, app.ID, integration.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account bind error = %v; want not found", err)
 	}
 	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{

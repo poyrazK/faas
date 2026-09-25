@@ -335,6 +335,41 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/credential:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of an account-owned customer-sealed integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: putOutboundCredential
+      summary: Set or rotate a customer-held outbound provider credential.
+      description: The Authorization value is sealed at rest and never returned. Requires MFA and deploy-write scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundCredentialRequest' }
+      responses:
+        '204': { description: Credential saved; no secret is returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundCredential
+      summary: Revoke a customer-held outbound provider credential.
+      description: Idempotent for an existing integration; subsequent gateway calls fail closed.
+      responses:
+        '204': { description: Credential absent. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/outbound-bindings:
     get:
       tags: [outbound]
@@ -367,7 +402,7 @@ paths:
       description: Idempotent. The integration is operator-provisioned; this request never carries a provider key.
       responses:
         '200':
-          description: Binding active.
+          description: Binding stored; a customer-sealed integration also needs a configured credential to serve traffic.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAppBinding' }
@@ -19550,7 +19585,7 @@ components:
     OutboundIntegrationOffer:
       type: object
       description: Account-owned managed integration metadata; never contains a provider key or gateway token.
-      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled]
+      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled, credential_source, credential_configured]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -19562,6 +19597,19 @@ components:
           type: array
           items: { type: string }
         enabled: { type: boolean }
+        credential_source:
+          type: string
+          enum: [operator_env, customer_sealed]
+          description: Who supplies the provider Authorization value.
+        credential_configured:
+          type: boolean
+          description: Whether the selected source currently has a credential; never reveals its value.
+    PutOutboundCredentialRequest:
+      type: object
+      description: Provider Authorization header value, accepted once and never returned.
+      required: [authorization]
+      properties:
+        authorization: { type: string, minLength: 1, maxLength: 8192 }
     OutboundIntegrationOfferList:
       type: object
       description: Enabled managed integrations this account may bind to its apps.

@@ -2197,6 +2197,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/outbound-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOutboundAppBindings))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundAppBinding))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/outbound-bindings/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteOutboundAppBinding))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/credential", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundCredential))))
+	mux.HandleFunc("DELETE /v1/outbound/integrations/{integration}/credential", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteOutboundCredential))))
 
 	// Managed realtime endpoint resources (ADR-156). These routes persist the
 	// callback contract and sealed credentials; live connections remain owned by

@@ -50,7 +50,14 @@ type Handler struct {
 	MaxResponseHeaderBytes int64
 	MaxResponseHeaders     int
 	IdentityVerifier       IdentityVerifier
+	CredentialResolver     ManagedCredentialResolver
 	managedAuthorization   map[string]string
+}
+
+// ManagedCredentialResolver supplies a customer-sealed Authorization value
+// only inside outboundd. It must never return this value to the caller app.
+type ManagedCredentialResolver interface {
+	Authorization(context.Context, string) (string, error)
 }
 
 // SetManagedAuthorizations configures provider Authorization values held by
@@ -74,7 +81,7 @@ func (h *Handler) SetManagedAuthorizations(values map[string]string) error {
 // ValidManagedAuthorization accepts one bounded HTTP Authorization value.
 // Never include the value in an error: it is a provider credential.
 func ValidManagedAuthorization(value string) bool {
-	if value == "" || len(value) > 8192 || strings.TrimSpace(value) != value {
+	if value == "" || len(value) > ManagedAuthorizationMaxBytes || strings.TrimSpace(value) != value {
 		return false
 	}
 	for i := range len(value) {
@@ -163,15 +170,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
 		return
 	}
-	if integration.ProviderAuthMode == ProviderAuthManaged {
-		if _, ok := h.managedAuthorization[integration.ID]; !ok {
-			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
-			return
-		}
-	}
 	if !integration.AllowsRequest(r.Method, path) || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
 		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
 		return
+	}
+	var managedAuthorization string
+	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource != CredentialSourceCustomerSealed {
+		managedAuthorization = h.managedAuthorization[integration.ID]
+		if !ValidManagedAuthorization(managedAuthorization) {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
+			return
+		}
 	}
 	if h.MaxBodyBytes > 0 && r.ContentLength > h.MaxBodyBytes {
 		writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
@@ -214,6 +223,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.DecInFlight(integration.ID)
 		_ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID)
 	}()
+	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource == CredentialSourceCustomerSealed {
+		if h.CredentialResolver == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
+			return
+		}
+		managedAuthorization, err = h.CredentialResolver.Authorization(ctx, integration.ID)
+		if err != nil || !ValidManagedAuthorization(managedAuthorization) {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
+			return
+		}
+	}
 	upstreamStarted := time.Now()
 	upstreamURL, err := targetURL(integration.Origin, path, r.URL.RawQuery)
 	if err != nil {
@@ -235,7 +255,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if integration.ProviderAuthMode == ProviderAuthManaged {
 		// The guest may send an Authorization header, but it cannot replace
 		// or read the provider credential held by outboundd.
-		upstreamReq.Header.Set("Authorization", h.managedAuthorization[integration.ID])
+		upstreamReq.Header.Set("Authorization", managedAuthorization)
 	}
 	// NewRequest cannot infer the length of a server-side ReadCloser (or
 	// MaxBytesReader). Preserve known lengths and the explicit empty-body

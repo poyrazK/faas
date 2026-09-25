@@ -44,8 +44,8 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		INSERT INTO outbound_integrations
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst,
 		     max_in_flight, request_timeout_ms, enabled, provider_auth_mode,
-		     allowed_methods, allowed_path_prefixes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		     allowed_methods, allowed_path_prefixes, credential_source)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (id) DO UPDATE SET
 		    account_id = EXCLUDED.account_id, name = EXCLUDED.name,
 		    origin = EXCLUDED.origin, token_hash = EXCLUDED.token_hash,
@@ -55,13 +55,14 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		    enabled = EXCLUDED.enabled, provider_auth_mode = EXCLUDED.provider_auth_mode,
 		    allowed_methods = EXCLUDED.allowed_methods,
 		    allowed_path_prefixes = EXCLUDED.allowed_path_prefixes,
+		    credential_source = EXCLUDED.credential_source,
 		    updated_at = now()
 		WHERE outbound_integrations.account_id = EXCLUDED.account_id`,
 		integrationID, record.AccountID, record.Name, record.Policy.Origin.String(),
 		record.Policy.TokenHash[:], record.Policy.RatePerSecond, record.Policy.Burst,
 		record.Policy.MaxInFlight, record.Policy.RequestTimeout.Milliseconds(), record.Policy.Enabled,
 		providerAuthMode(record.Policy.ProviderAuthMode), nonNilStrings(record.Policy.AllowedMethods),
-		nonNilStrings(record.Policy.AllowedPathPrefixes))
+		nonNilStrings(record.Policy.AllowedPathPrefixes), credentialSource(record.Policy.CredentialSource))
 	if err != nil {
 		return err
 	}
@@ -88,6 +89,13 @@ func providerAuthMode(mode string) string {
 		return ProviderAuthApplication
 	}
 	return mode
+}
+
+func credentialSource(source string) string {
+	if source == "" {
+		return CredentialSourceOperatorEnv
+	}
+	return source
 }
 
 func nonNilStrings(values []string) []string {

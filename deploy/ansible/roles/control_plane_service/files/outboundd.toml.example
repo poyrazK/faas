@@ -21,7 +21,8 @@ metrics_addr = "127.0.0.1:9108"
 # write_timeout = "2m"
 # idle_timeout = "2m"
 
-# Required if any integration has provider_authorization_env. Install a
+# Required if any integration has provider_authorization_env or
+# credential_source = "customer_sealed". Install a
 # public JWKS published by vmmd (never its signing private key) at this path.
 # The issuer must exactly match vmmd's configured workload-identity issuer.
 # workload_identity_jwks_path = "/etc/faas/workload-identity.jwks.json"
@@ -58,3 +59,7 @@ metrics_addr = "127.0.0.1:9108"
 # request_timeout = "30s"
 # enabled = true
 # request_timeout defaults to 30s when omitted; enabled defaults to true.
+# To let the account provide and rotate the provider Authorization value,
+# replace provider_authorization_env with credential_source = "customer_sealed".
+# apid seals that value using fleet.age.pub, and outboundd opens it using
+# its fleet.age LoadCredential. The app never receives either key.

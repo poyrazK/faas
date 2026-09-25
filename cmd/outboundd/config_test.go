@@ -181,3 +181,32 @@ func TestManagedIntegrationRequiresLocalWorkloadIdentityJWKS(t *testing.T) {
 		t.Fatalf("verified identity = %+v, %v", identity, err)
 	}
 }
+
+func TestCustomerSealedSourceRequiresManagedPolicyWithoutOperatorKey(t *testing.T) {
+	cfg := &Config{Integrations: map[string]IntegrationConfig{
+		"payments": {
+			ID: "00000000-0000-0000-0000-000000000001", AccountID: "00000000-0000-0000-0000-000000000010",
+			Origin: "https://api.example.com", TokenEnv: "GATEWAY_TOKEN",
+			CredentialSource: "customer_sealed", AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1/widgets"},
+			RatePerSecond: 50, Burst: 50, MaxInFlight: 20,
+		},
+	}}
+	items, err := cfg.Policies(func(name string) string {
+		if name == "GATEWAY_TOKEN" {
+			return "gateway-token"
+		}
+		return ""
+	})
+	if err != nil || len(items) != 1 || items[0].Record.Policy.ProviderAuthMode != "managed" || items[0].providerAuthorization != "" {
+		t.Fatalf("customer-sealed policy = %+v, %v", items, err)
+	}
+	if _, err := cfg.IdentityVerifier(items); err == nil {
+		t.Fatal("customer-sealed integration accepted without workload identity JWKS")
+	}
+	invalid := cfg.Integrations["payments"]
+	invalid.ProviderAuthorizationEnv = "PROVIDER_AUTH"
+	cfg.Integrations["payments"] = invalid
+	if _, err := cfg.Policies(func(string) string { return "value" }); err == nil {
+		t.Fatal("mixed operator and customer credential sources were accepted")
+	}
+}

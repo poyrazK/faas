@@ -56,6 +56,22 @@ or unbind needs no daemon restart. A customer unbind does not remove an
 operator attachment. The account must own both app and managed integration.
 See [ADR-242](../adr/242-customer-outbound-binding-intent.md).
 
+For a customer-held provider credential, provision the managed integration with
+`credential_source = "customer_sealed"` and **omit** `provider_authorization_env`.
+Keep the explicit method/path allowlist, workload-identity JWKS, and gateway
+token configuration. The account can then `PUT
+/v1/outbound/integrations/{integration_id}/credential` with JSON
+`{"authorization":"Bearer <provider-key>"}` to set or rotate the provider
+Authorization value, or `DELETE` the same path to revoke it. These routes
+require MFA and deploy-write scope. Responses and integration-list metadata
+never contain the key; the list shows only `credential_source` and
+`credential_configured`. `apid` requires the fleet age **public** recipient,
+and `outboundd` receives the matching private identity as a systemd credential.
+The ciphertext is fetched and opened for each admitted route request, so a
+rotation or deletion takes effect without restarting the gateway. A missing,
+corrupt, or revoked key fails closed with 503 before the provider call. See
+[ADR-243](../adr/243-customer-sealed-outbound-credentials.md).
+
 For every managed integration, set `allowed_methods` (uppercase `GET`, `HEAD`,
 `POST`, `PUT`, `PATCH`, or `DELETE`) and `allowed_path_prefixes`. A prefix
 matches a whole path segment: `/v1/customers` allows `/v1/customers` and
@@ -87,7 +103,7 @@ remove the old key after all assertions signed with it have expired. Drain
 older gateway binaries before exposing a managed integration: they may still
 accept the legacy shared token.
 
-This is an operator-configured primitive. A bound app can use the provider
+Origins and route policy remain operator-configured. A bound app can use the provider
 credential through the gateway within its configured HTTP routes, but an
 external provider could echo a credential in its own response. Scope provider
 keys accordingly. See [ADR-239](../adr/239-platform-held-outbound-provider-authorization.md)

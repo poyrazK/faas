@@ -158,6 +158,7 @@ type MemStore struct {
 	objectUploadCompletions   map[string]ObjectUploadCompletion
 	outboundIntegrationOffers map[string]OutboundIntegrationOffer
 	outboundAppBindings       map[string]OutboundAppBinding
+	outboundCredentials       map[string][]byte
 	mu                        sync.Mutex
 	accounts                  map[string]Account
 	accountDeployRates        map[string]accountDeployRateRow
@@ -930,6 +931,7 @@ func NewMemStore() *MemStore {
 		objectUploadCompletions:   map[string]ObjectUploadCompletion{},
 		outboundIntegrationOffers: map[string]OutboundIntegrationOffer{},
 		outboundAppBindings:       map[string]OutboundAppBinding{},
+		outboundCredentials:       map[string][]byte{},
 		accounts:                  map[string]Account{},
 		accountDeployRates:        map[string]accountDeployRateRow{},
 		keys:                      map[string]APIKey{},

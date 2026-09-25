@@ -12,8 +12,10 @@ import (
 	"os"
 	"time"
 
+	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -57,12 +59,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("outboundd: workload identity: %w", err)
 	}
 	managedAuthorizations := make(map[string]string)
+	needCustomerCredentials := false
+	customerCredentialIDs := make([]string, 0)
 	for _, item := range configured {
 		if err := outbound.EnsureIntegration(ctx, pool, item.Record); err != nil {
 			return fmt.Errorf("outboundd: provision integration %s: %w", item.Record.Policy.ID, err)
 		}
 		if item.providerAuthorization != "" {
 			managedAuthorizations[item.Record.Policy.ID] = item.providerAuthorization
+		}
+		if item.Record.Policy.CredentialSource == outbound.CredentialSourceCustomerSealed {
+			needCustomerCredentials = true
+			customerCredentialIDs = append(customerCredentialIDs, item.Record.Policy.ID)
 		}
 	}
 	resolver, err := outbound.NewPostgresResolver(pool)
@@ -79,6 +87,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	if err := handler.SetManagedAuthorizations(managedAuthorizations); err != nil {
 		return fmt.Errorf("outboundd: managed provider authorization: %w", err)
+	}
+	if needCustomerCredentials {
+		identityPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
+		if identityPath == "" {
+			return errors.New("outboundd: customer-sealed credentials require FAAS_FLEET_AGE_IDENTITY_PATH")
+		}
+		identity, err := secretbox.LoadHostKey(identityPath)
+		if err != nil {
+			return fmt.Errorf("outboundd: load fleet credential identity: %w", err)
+		}
+		credentialResolver, err := outbound.NewPostgresSealedCredentialResolver(pool, []*age.X25519Identity{identity}, customerCredentialIDs)
+		if err != nil {
+			return fmt.Errorf("outboundd: customer credential resolver: %w", err)
+		}
+		handler.CredentialResolver = credentialResolver
 	}
 	handler.IdentityVerifier = identityVerifier
 	outboundMetrics, err := outbound.NewMetrics(ops.Registry())

@@ -66,6 +66,7 @@ type IntegrationConfig struct {
 	Origin                   string        `toml:"origin"`
 	TokenEnv                 string        `toml:"token_env"`
 	ProviderAuthorizationEnv string        `toml:"provider_authorization_env"`
+	CredentialSource         string        `toml:"credential_source"`
 	AllowedMethods           []string      `toml:"allowed_methods"`
 	AllowedPathPrefixes      []string      `toml:"allowed_path_prefixes"`
 	AppIDs                   []string      `toml:"app_ids"`
@@ -153,6 +154,16 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		if token == "" {
 			return nil, fmt.Errorf("integration %q: token environment variable %s is empty", key, tokenEnv)
 		}
+		credentialSource := raw.CredentialSource
+		if credentialSource == "" {
+			credentialSource = outbound.CredentialSourceOperatorEnv
+		}
+		if credentialSource != outbound.CredentialSourceOperatorEnv && credentialSource != outbound.CredentialSourceCustomerSealed {
+			return nil, fmt.Errorf("integration %q: invalid credential_source", key)
+		}
+		if credentialSource == outbound.CredentialSourceCustomerSealed && raw.ProviderAuthorizationEnv != "" {
+			return nil, fmt.Errorf("integration %q: customer_sealed cannot use provider_authorization_env", key)
+		}
 		var providerAuthorization string
 		if raw.ProviderAuthorizationEnv != "" {
 			if raw.ProviderAuthorizationEnv == tokenEnv {
@@ -171,9 +182,10 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		if err != nil {
 			return nil, fmt.Errorf("integration %q: %w", key, err)
 		}
-		if providerAuthorization != "" {
+		if providerAuthorization != "" || credentialSource == outbound.CredentialSourceCustomerSealed {
 			policy.ProviderAuthMode = outbound.ProviderAuthManaged
 		}
+		policy.CredentialSource = credentialSource
 		policy.AllowedMethods = raw.AllowedMethods
 		policy.AllowedPathPrefixes = raw.AllowedPathPrefixes
 		if err := policy.Validate(); err != nil {

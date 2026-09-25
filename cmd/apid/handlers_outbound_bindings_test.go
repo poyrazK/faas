@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -71,5 +72,68 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 	list = e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/outbound-bindings", nil, nil)
 	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &bindings) != nil || len(bindings.Items) != 0 {
 		t.Fatalf("binding list after delete = %d %s", list.Code, list.Body.String())
+	}
+}
+
+func TestOutboundCustomerCredentialLifecycle(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := outboundCredentialRecipient
+	outboundCredentialRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	t.Cleanup(func() { outboundCredentialRecipient = previous })
+	id := uuid.NewString()
+	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: id, AccountID: e.acct.ID, Name: "customer-key", Origin: "https://api.example.com",
+		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
+		Enabled: true, CredentialSource: "customer_sealed",
+	})
+	path := "/v1/outbound/integrations/" + id + "/credential"
+	bad := e.do(t, http.MethodPut, path, api.PutOutboundCredentialRequest{Authorization: "Bearer bad\nvalue"}, nil)
+	assertProblem(t, bad, http.StatusBadRequest, api.CodeValidation)
+	other, err := e.store.CreateAccount(context.Background(), "outbound-credential-other@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID := uuid.NewString()
+	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: otherID, AccountID: other.ID, Name: "other-key", Origin: "https://private.example",
+		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
+		Enabled: true, CredentialSource: "customer_sealed",
+	})
+	wrong := e.do(t, http.MethodPut, "/v1/outbound/integrations/"+otherID+"/credential",
+		api.PutOutboundCredentialRequest{Authorization: "Bearer sk_foreign"}, nil)
+	assertProblem(t, wrong, http.StatusNotFound, api.CodeNotFound)
+	operatorID := uuid.NewString()
+	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: operatorID, AccountID: e.acct.ID, Name: "operator-key", Origin: "https://api.operator.example",
+		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+	})
+	operatorWrite := e.do(t, http.MethodPut, "/v1/outbound/integrations/"+operatorID+"/credential",
+		api.PutOutboundCredentialRequest{Authorization: "Bearer sk_override"}, nil)
+	assertProblem(t, operatorWrite, http.StatusNotFound, api.CodeNotFound)
+	for _, value := range []string{"Bearer sk_first", "Bearer sk_rotated"} {
+		response := e.do(t, http.MethodPut, path, api.PutOutboundCredentialRequest{Authorization: value}, nil)
+		if response.Code != http.StatusNoContent || strings.Contains(response.Body.String(), value) {
+			t.Fatalf("set credential = %d %s", response.Code, response.Body.String())
+		}
+	}
+	list := e.do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
+	var offers api.OutboundIntegrationOfferList
+	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &offers) != nil || len(offers.Items) != 2 || !offers.Items[0].CredentialConfigured {
+		t.Fatalf("credential status = %d %s", list.Code, list.Body.String())
+	}
+	if strings.Contains(list.Body.String(), "sk_first") || strings.Contains(list.Body.String(), "sk_rotated") {
+		t.Fatal("credential escaped through offer metadata")
+	}
+	deleted := e.do(t, http.MethodDelete, path, nil, nil)
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete credential = %d %s", deleted.Code, deleted.Body.String())
+	}
+	list = e.do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
+	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &offers) != nil || len(offers.Items) != 2 || offers.Items[0].CredentialConfigured {
+		t.Fatalf("revoked credential status = %d %s", list.Code, list.Body.String())
 	}
 }

@@ -25,3 +25,13 @@ func (c *Client) UnbindOutboundIntegration(ctx context.Context, slug, integratio
 	path := "/v1/apps/" + url.PathEscape(slug) + "/outbound-bindings/" + url.PathEscape(integrationID)
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
+
+func (c *Client) PutOutboundCredential(ctx context.Context, integrationID, authorization string) error {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/credential"
+	return c.do(ctx, "PUT", path, PutOutboundCredentialRequest{Authorization: authorization}, nil)
+}
+
+func (c *Client) DeleteOutboundCredential(ctx context.Context, integrationID string) error {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/credential"
+	return c.do(ctx, "DELETE", path, nil, nil)
+}

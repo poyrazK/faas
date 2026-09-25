@@ -26,8 +26,10 @@ const (
 	ReasonRate        = "rate_limit"
 	ReasonConcurrency = "concurrency_limit"
 
-	ProviderAuthApplication = "application"
-	ProviderAuthManaged     = "managed"
+	ProviderAuthApplication        = "application"
+	ProviderAuthManaged            = "managed"
+	CredentialSourceOperatorEnv    = "operator_env"
+	CredentialSourceCustomerSealed = "customer_sealed"
 )
 
 // Integration is the immutable policy used for one provider. TokenHash is a
@@ -42,6 +44,7 @@ type Integration struct {
 	MaxInFlight         int
 	RequestTimeout      time.Duration
 	ProviderAuthMode    string
+	CredentialSource    string
 	AllowedMethods      []string
 	AllowedPathPrefixes []string
 	Enabled             bool
@@ -103,6 +106,12 @@ func (i Integration) Validate() error {
 	}
 	if i.ProviderAuthMode != "" && i.ProviderAuthMode != ProviderAuthApplication && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: provider authentication mode is invalid", ErrInvalidIntegration)
+	}
+	if i.CredentialSource != "" && i.CredentialSource != CredentialSourceOperatorEnv && i.CredentialSource != CredentialSourceCustomerSealed {
+		return fmt.Errorf("%w: credential source is invalid", ErrInvalidIntegration)
+	}
+	if i.CredentialSource == CredentialSourceCustomerSealed && i.ProviderAuthMode != ProviderAuthManaged {
+		return fmt.Errorf("%w: customer credential source requires managed authentication", ErrInvalidIntegration)
 	}
 	return i.validateRoutePolicy()
 }
