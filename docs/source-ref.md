@@ -95,9 +95,10 @@ different deploy transport.
 The source-ref path reads `gregale.yaml` (or `gregale.yml`) from the fetched
 archive, not from the runner's current directory. Cron and event-trigger
 declarations are validated, quota-checked, deduplicated, and applied before
-the build is accepted; `workflows:` is stored on the deployment. Pass
-`--no-triggers` when a release should deploy code and workflows without
-reconciling trigger declarations.
+the build is accepted. `async_routes:` declarations are validated and
+reconciled by their stable manifest names; `workflows:` is stored on the
+deployment. Pass `--no-triggers` when a release should deploy code and
+workflows without reconciling trigger or async-route declarations.
 
 The app-level `scaling:` declaration is currently rejected on this transport
 because the source-ref handler cannot safely update app policy transactionally

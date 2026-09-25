@@ -116,3 +116,20 @@ func TestMemStore_EdgeRule_ValidateModeEmptyStaysEmpty(t *testing.T) {
 		t.Errorf("empty ValidateMode stored as %q, want \"\" (memstore preserves verbatim; pgstore would coalesce to 'block')", created.ValidateMode)
 	}
 }
+
+func TestMemStore_EdgeRule_ManifestKeyUniquePerApp(t *testing.T) {
+	m, ctx := state.NewMemStore(), context.Background()
+	acct, app := memEdgeRuleSeedAccount(t, m, ctx, api.PlanPro, "manifest-key")
+	params := memSampleValidateRuleParams(acct, app, "manifest-key.example.com", "block")
+	params.ManifestKey = "async-route:create-report"
+	created, err := m.CreateEdgeRule(ctx, params)
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+	if created.ManifestKey != params.ManifestKey {
+		t.Fatalf("ManifestKey = %q, want %q", created.ManifestKey, params.ManifestKey)
+	}
+	if _, err := m.CreateEdgeRule(ctx, params); err != state.ErrConflict {
+		t.Fatalf("duplicate manifest key error = %v, want ErrConflict", err)
+	}
+}

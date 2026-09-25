@@ -20042,9 +20042,24 @@ func cloneEdgeRuleMatchHeaders(in map[string]string) map[string]string {
 	return out
 }
 
+func (m *MemStore) manifestEdgeRuleKeyExistsLocked(appID, manifestKey, excludeID string) bool {
+	if manifestKey == "" {
+		return false
+	}
+	for id, rule := range m.edgeRules {
+		if id != excludeID && rule.AppID == appID && rule.ManifestKey == manifestKey {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
+		return EdgeRule{}, ErrConflict
+	}
 	if in.MatchMethods == nil {
 		in.MatchMethods = []string{}
 	}
@@ -20053,6 +20068,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		ID:           newID(),
 		AccountID:    in.AccountID,
 		AppID:        in.AppID,
+		ManifestKey:  in.ManifestKey,
 		MatchHost:    in.MatchHost,
 		MatchPath:    in.MatchPath,
 		MatchMethods: in.MatchMethods,
@@ -20084,6 +20100,9 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
+		return EdgeRule{}, ErrConflict
+	}
 	app, ok := m.apps[in.AppID]
 	if !ok || app.Status == AppDeleted {
 		return EdgeRule{}, ErrNotFound
@@ -20170,6 +20189,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		ID:           newID(),
 		AccountID:    in.AccountID,
 		AppID:        in.AppID,
+		ManifestKey:  in.ManifestKey,
 		MatchHost:    in.MatchHost,
 		MatchPath:    in.MatchPath,
 		MatchMethods: in.MatchMethods,

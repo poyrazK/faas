@@ -995,6 +995,7 @@ type EdgeRule struct {
 	UpdatedAt    pgtype.Timestamptz
 	ValidateMode string
 	CorsPresetID pgtype.UUID
+	ManifestKey  pgtype.Text
 }
 
 type EgressPolicy struct {

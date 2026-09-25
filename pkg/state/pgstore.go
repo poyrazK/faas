@@ -12949,7 +12949,8 @@ func (s *PgStore) NextDeploymentRouteGeneration(ctx context.Context) (int64, err
 
 const edgeRuleSelectCols = `id, account_id, app_id, match_host, match_path,
        match_methods, priority, enabled, kind, action,
-       cors_preset_id, validate_mode, created_at, updated_at, match_headers`
+       cors_preset_id, validate_mode, created_at, updated_at, match_headers,
+       manifest_key`
 
 // scanEdgeRule reads a single row. ErrNotFound on no-rows; raw error
 // otherwise. The kind column comes back as text; Action comes back
@@ -12995,11 +12996,12 @@ func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 		actionBytes       []byte
 		matchHeadersBytes []byte
 		corsPresetID      *string
+		manifestKey       *string
 	)
 	if err := scan(
 		&r.ID, &r.AccountID, &r.AppID, &r.MatchHost, &r.MatchPath,
 		&matchMethods, &r.Priority, &r.Enabled, &kind, &actionBytes,
-		&corsPresetID, &r.ValidateMode, &r.CreatedAt, &r.UpdatedAt, &matchHeadersBytes,
+		&corsPresetID, &r.ValidateMode, &r.CreatedAt, &r.UpdatedAt, &matchHeadersBytes, &manifestKey,
 	); err != nil {
 		return EdgeRule{}, err
 	}
@@ -13012,6 +13014,9 @@ func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 	}
 	if corsPresetID != nil {
 		r.CorsPresetID = corsPresetID
+	}
+	if manifestKey != nil {
+		r.ManifestKey = *manifestKey
 	}
 	if len(actionBytes) > 0 {
 		if err := json.Unmarshal(actionBytes, &r.Action); err != nil {
@@ -13054,11 +13059,11 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			cors_preset_id, validate_mode, match_headers
+			cors_preset_id, validate_mode, match_headers, manifest_key
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb
+			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb, nullif($13, '')
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -13075,6 +13080,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		// empty-handler default at pkg/gateway/handler.go:2694.
 		in.ValidateMode,
 		matchHeadersBytes,
+		in.ManifestKey,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -13206,11 +13212,11 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			validate_mode, match_headers
+			validate_mode, match_headers, manifest_key
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			coalesce(nullif($10, ''), 'block'), $11::jsonb
+			coalesce(nullif($10, ''), 'block'), $11::jsonb, nullif($12, '')
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -13219,6 +13225,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		// CreateEdgeRule path (ADR-128).
 		in.ValidateMode,
 		matchHeadersBytes,
+		in.ManifestKey,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {

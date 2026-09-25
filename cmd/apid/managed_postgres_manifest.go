@@ -35,6 +35,7 @@ func (s *server) loadAndResolveManifestPostgresBindings(
 	dir string,
 	appSlugs []string,
 	environment string,
+	noTriggers bool,
 ) ([]resolvedManagedPostgresBinding, *api.Problem) {
 	manifest, present, err := gregalemanifest.Load(dir)
 	if err != nil {
@@ -43,6 +44,10 @@ func (s *server) loadAndResolveManifestPostgresBindings(
 	}
 	if !present || manifest == nil {
 		return nil, nil
+	}
+	if manifest.AsyncRoutes != nil && !noTriggers {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+			"Invalid manifest", "async_routes are not supported by project deploy; deploy each app separately or pass --no-triggers")
 	}
 	if prob := validateManifestAgainstPlan(manifest, acct.Plan); prob != nil {
 		return nil, prob

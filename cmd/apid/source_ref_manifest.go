@@ -38,6 +38,7 @@ type deploymentReleaseCommand struct {
 type sourceRefManifestStaged struct {
 	accountID             string
 	appID                 string
+	edgeRuleChanges       []sourceRefManifestEdgeRuleChange
 	cronIDs               []string
 	triggerIDs            []string
 	eventSubscriptionIDs  []string
@@ -51,7 +52,7 @@ type sourceRefManifestStaged struct {
 }
 
 func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
-	return staged.scalingChanged || staged.retryPolicyChanged ||
+	return staged.scalingChanged || staged.retryPolicyChanged || len(staged.edgeRuleChanges) > 0 ||
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 ||
 		len(staged.eventSubscriptionIDs) > 0 || len(staged.bindingIDs) > 0
 }
@@ -293,7 +294,15 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
 		}
 	}
-	if !applyTriggers || (len(m.Triggers) == 0 && len(m.EventTriggers) == 0) {
+	if !applyTriggers {
+		return staged, nil
+	}
+	if len(m.Triggers) == 0 && len(m.EventTriggers) == 0 {
+		if m.AsyncRoutes != nil {
+			if problem := s.applySourceRefManifestAsyncRoutes(ctx, acct, app, m.AsyncRoutes, &staged); problem != nil {
+				return staged, problem
+			}
+		}
 		return staged, nil
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
@@ -431,6 +440,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				"subscription_id": row.ID, "app_id": app.ID, "source": subscription.Source,
 				"type": subscription.Type, "source_ref": true,
 			})
+		}
+	}
+	if m.AsyncRoutes != nil {
+		if problem := s.applySourceRefManifestAsyncRoutes(ctx, acct, app, m.AsyncRoutes, &staged); problem != nil {
+			return staged, problem
 		}
 	}
 	return staged, nil
@@ -574,6 +588,11 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		} else {
 			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","retry_policy_changed":true}`, staged.appID))
+		}
+	}
+	for i := len(staged.edgeRuleChanges) - 1; i >= 0; i-- {
+		if err := s.rollbackSourceRefManifestEdgeRule(ctx, staged.appID, staged.edgeRuleChanges[i]); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	for i := len(staged.bindingIDs) - 1; i >= 0; i-- {
