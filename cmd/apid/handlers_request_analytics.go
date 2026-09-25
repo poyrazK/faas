@@ -40,6 +40,8 @@ const requestAnalyticsDependencyRowLimit = 2000
 const requestAnalyticsDependencyGroupLimit = 64
 const requestAnalyticsDependencyOutputLimit = 10
 const requestAnalyticsDeploymentLimit = 50
+const requestAnalyticsDeploymentCPURegressionMinRequests = int64(20)
+const requestAnalyticsDeploymentCPURegressionThresholdPct = 25.0
 
 const requestAnalyticsRouteMaxLength = 256
 
@@ -419,6 +421,11 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 				if deploymentRequestCount > 0 {
 					sharePct = float64(row.Requests) * 100 / float64(deploymentRequestCount)
 				}
+				var guestCPUAvgMS *int
+				if row.GuestCpuMeasuredRequests > 0 {
+					cpuAvg := int(row.GuestCpuAvgMs)
+					guestCPUAvgMS = &cpuAvg
+				}
 				deployments = append(deployments, api.RequestAnalyticsDeploymentCost{
 					DeploymentID:                   row.DeploymentID,
 					CommitSHA:                      requestAnalyticsDimensionString(row.CommitSha),
@@ -427,8 +434,12 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 					Requests:                       row.Requests,
 					RequestSharePct:                sharePct,
 					EstimatedComputeCostMillicents: deploymentAllocations[i],
+					GuestCPUAvgMS:                  guestCPUAvgMS,
+					GuestCPUMeasuredRequests:       row.GuestCpuMeasuredRequests,
+					GuestCPURegression:             false,
 				})
 			}
+			annotateDeploymentCPURegressions(deployments)
 			otherSharePct := 0.0
 			if deploymentRequestCount > 0 {
 				otherSharePct = float64(otherDeploymentRequests) * 100 / float64(deploymentRequestCount)
@@ -471,6 +482,75 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		DeploymentCosts:       deploymentCosts,
 		AsOf:                  window.AsOf.Format(time.RFC3339Nano),
 	}, nil
+}
+
+// annotateDeploymentCPURegressions compares the mean measured guest CPU time
+// for each deployment with the previous eligible deployment in this analytics
+// window. The comparison is advisory: it is traffic-mix sensitive, only
+// available for instrumented Linux one-shot runtimes, and requires enough
+// measured requests on both sides to avoid warning on tiny samples.
+func annotateDeploymentCPURegressions(deployments []api.RequestAnalyticsDeploymentCost) {
+	type measuredDeployment struct {
+		index     int
+		createdAt time.Time
+	}
+	measured := make([]measuredDeployment, 0, len(deployments))
+	for i := range deployments {
+		deployment := &deployments[i]
+		if deployment.GuestCPUAvgMS == nil || deployment.GuestCPUMeasuredRequests < requestAnalyticsDeploymentCPURegressionMinRequests {
+			continue
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, deployment.DeploymentCreatedAt)
+		if err != nil {
+			continue
+		}
+		measured = append(measured, measuredDeployment{index: i, createdAt: createdAt})
+	}
+	sort.Slice(measured, func(i, j int) bool {
+		if measured[i].createdAt.Equal(measured[j].createdAt) {
+			return deployments[measured[i].index].DeploymentID < deployments[measured[j].index].DeploymentID
+		}
+		return measured[i].createdAt.Before(measured[j].createdAt)
+	})
+
+	var previous *measuredDeployment
+	for i := 0; i < len(measured); {
+		groupEnd := i + 1
+		for groupEnd < len(measured) && measured[groupEnd].createdAt.Equal(measured[i].createdAt) {
+			groupEnd++
+		}
+		if groupEnd-i != 1 {
+			// Creation timestamps do not provide an ordering within this group;
+			// reset the baseline rather than manufacturing a comparison.
+			previous = nil
+			i = groupEnd
+			continue
+		}
+		current := measured[i]
+		currentDeployment := &deployments[current.index]
+		if previous != nil {
+			previousDeployment := deployments[previous.index]
+			baselineMS := *previousDeployment.GuestCPUAvgMS
+			if baselineMS > 0 {
+				changePct := (float64(*currentDeployment.GuestCPUAvgMS-baselineMS) / float64(baselineMS)) * 100
+				currentDeployment.GuestCPUChangePct = &changePct
+				currentDeployment.GuestCPUComparedTo = requestAnalyticsDeploymentRevision(previousDeployment)
+				currentDeployment.GuestCPURegression = changePct >= requestAnalyticsDeploymentCPURegressionThresholdPct
+			}
+		}
+		previous = &measured[i]
+		i++
+	}
+}
+
+func requestAnalyticsDeploymentRevision(deployment api.RequestAnalyticsDeploymentCost) string {
+	if deployment.DeploymentTag != "" {
+		return deployment.DeploymentTag
+	}
+	if deployment.CommitSHA != "" {
+		return deployment.CommitSHA
+	}
+	return deployment.DeploymentID
 }
 
 type requestAnalyticsRouteKey struct {
@@ -950,15 +1030,27 @@ func requestAnalyticsDeploymentCostBreakdownView(cost *api.RequestAnalyticsDeplo
 		if revision == "" {
 			revision = deployment.DeploymentID
 		}
-		deployments = append(deployments, dashboard.RequestAnalyticsDeploymentCostView{
-			DeploymentID:    deployment.DeploymentID,
-			Revision:        revision,
-			Tag:             deployment.DeploymentTag,
-			CreatedAt:       deployment.DeploymentCreatedAt,
-			Requests:        deployment.Requests,
-			RequestSharePct: deployment.RequestSharePct,
-			EstimatedEUR:    millicentsAsEUR(deployment.EstimatedComputeCostMillicents),
-		})
+		view := dashboard.RequestAnalyticsDeploymentCostView{
+			DeploymentID:             deployment.DeploymentID,
+			Revision:                 revision,
+			Tag:                      deployment.DeploymentTag,
+			CreatedAt:                deployment.DeploymentCreatedAt,
+			Requests:                 deployment.Requests,
+			RequestSharePct:          deployment.RequestSharePct,
+			EstimatedEUR:             millicentsAsEUR(deployment.EstimatedComputeCostMillicents),
+			GuestCPUAvailable:        deployment.GuestCPUAvgMS != nil,
+			GuestCPUMeasuredRequests: deployment.GuestCPUMeasuredRequests,
+			GuestCPUChangeAvailable:  deployment.GuestCPUChangePct != nil,
+			GuestCPUComparedTo:       deployment.GuestCPUComparedTo,
+			GuestCPURegression:       deployment.GuestCPURegression,
+		}
+		if deployment.GuestCPUAvgMS != nil {
+			view.GuestCPUAvgMS = *deployment.GuestCPUAvgMS
+		}
+		if deployment.GuestCPUChangePct != nil {
+			view.GuestCPUChangePct = *deployment.GuestCPUChangePct
+		}
+		deployments = append(deployments, view)
 	}
 	return &dashboard.RequestAnalyticsDeploymentCostBreakdownView{
 		EstimatedEUR:   millicentsAsEUR(cost.EstimatedMillicents),

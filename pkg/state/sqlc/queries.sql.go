@@ -10677,7 +10677,16 @@ WITH per_deployment AS (
            COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
            COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
            COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
-           SUM(count)::bigint AS requests
+           SUM(count)::bigint AS requests,
+           COALESCE(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
     FROM request_telemetry
     WHERE app_id = $1
       AND account_id = $2
@@ -10690,6 +10699,8 @@ SELECT deployment_id,
        deployment_tag,
        deployment_created_at,
        requests,
+       guest_cpu_measured_requests,
+       guest_cpu_avg_ms,
        SUM(requests) OVER ()::bigint AS total_requests
 FROM per_deployment
 ORDER BY requests DESC, deployment_id ASC
@@ -10705,12 +10716,14 @@ type RequestTelemetryAnalyticsByDeploymentParams struct {
 }
 
 type RequestTelemetryAnalyticsByDeploymentRow struct {
-	DeploymentID        string
-	CommitSha           interface{}
-	DeploymentTag       interface{}
-	DeploymentCreatedAt interface{}
-	Requests            int64
-	TotalRequests       int64
+	DeploymentID             string
+	CommitSha                interface{}
+	DeploymentTag            interface{}
+	DeploymentCreatedAt      interface{}
+	Requests                 int64
+	GuestCpuMeasuredRequests int64
+	GuestCpuAvgMs            int32
+	TotalRequests            int64
 }
 
 // Bounded deployment cost allocation for the customer request analytics
@@ -10739,6 +10752,8 @@ func (q *Queries) RequestTelemetryAnalyticsByDeployment(ctx context.Context, db 
 			&i.DeploymentTag,
 			&i.DeploymentCreatedAt,
 			&i.Requests,
+			&i.GuestCpuMeasuredRequests,
+			&i.GuestCpuAvgMs,
 			&i.TotalRequests,
 		); err != nil {
 			return nil, err

@@ -700,10 +700,10 @@
               </table>
               {{with .Data.RequestAnalytics.DeploymentCosts}}
                 <h3>Estimated compute by deployment</h3>
-                <p class="muted">€{{.EstimatedEUR}} for this app and window, split across immutable deployments by request share. Allocated: €{{.AllocatedEUR}}; this is the same raw-compute estimate shown above, not a separate charge.</p>
+                <p class="muted">€{{.EstimatedEUR}} for this app and window, split across immutable deployments by request share. Allocated: €{{.AllocatedEUR}}; this is the same raw-compute estimate shown above, not a separate charge. CPU comparisons are advisory, require at least 20 measured requests per deployment, and can change with route mix; CPU data is only available for supported Linux one-shot runtimes.</p>
                 {{if .Deployments}}
                   <table aria-label="Estimated compute by deployment">
-                    <thead><tr><th>Deployment</th><th>Revision</th><th>Requests</th><th>Request share</th><th>Est. compute</th></tr></thead>
+                    <thead><tr><th>Deployment</th><th>Revision</th><th>Requests</th><th>Request share</th><th>Est. compute</th><th>Measured guest CPU / request</th><th>Change vs earlier measured deployment</th></tr></thead>
                     <tbody>
                       {{range .Deployments}}
                         <tr>
@@ -712,6 +712,8 @@
                           <td>{{.Requests}}</td>
                           <td>{{printf "%.2f" .RequestSharePct}}%</td>
                           <td>€{{.EstimatedEUR}}</td>
+                          <td>{{if .GuestCPUAvailable}}{{.GuestCPUAvgMS}} ms ({{.GuestCPUMeasuredRequests}} measured requests){{else}}—{{end}}</td>
+                          <td>{{if .GuestCPUChangeAvailable}}{{if gt .GuestCPUChangePct 0.0}}+{{end}}{{printf "%.1f" .GuestCPUChangePct}}% vs <code>{{printf "%.12s" .GuestCPUComparedTo}}</code>{{if .GuestCPURegression}} <strong>⚠ CPU/request regression</strong>{{end}}{{else}}—{{end}}</td>
                         </tr>
                       {{end}}
                     </tbody>
