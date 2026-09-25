@@ -95,7 +95,7 @@
           <p><code>{{.Method}} {{.Host}}{{.Path}}</code> · final path <code>{{.Simulation.FinalPath}}</code></p>
           {{if .BodyProvided}}<p>Request body: {{.BodyBytes}} bytes supplied; contents withheld.</p>{{end}}
           <p>{{.Simulation.Reason}}</p>
-          {{if .Simulation.StatusCode}}<p>Response status: <strong>{{.Simulation.StatusCode}}</strong>{{if .Simulation.Location}} · location <code>{{.Simulation.Location}}</code>{{end}}{{if .Simulation.RetryAfterSeconds}} · Retry-After {{.Simulation.RetryAfterSeconds}}s{{end}}</p>{{end}}
+          {{if .Simulation.StatusCode}}<p>Response status: <strong>{{.Simulation.StatusCode}}</strong>{{if .Simulation.ProblemCode}} · problem <code>{{.Simulation.ProblemCode}}</code>{{end}}{{if .Simulation.Location}} · location <code>{{.Simulation.Location}}</code>{{end}}{{if .Simulation.RetryAfterSeconds}} · Retry-After {{.Simulation.RetryAfterSeconds}}s{{end}}</p>{{end}}
           {{if .Simulation.Message}}<p>Response message: {{.Simulation.Message}}</p>{{end}}
           {{if .Simulation.TargetApp}}<p>Routed target app: <code>{{.Simulation.TargetApp}}</code></p>{{end}}
           {{if .Simulation.Steps}}
