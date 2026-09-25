@@ -22,6 +22,14 @@ export type ProjectEnvironmentResponse = {
    * Full lowercase commit SHA recorded for the preview environment.
    */
   preview_head_sha?: string;
+  /**
+   * Lifecycle state for a PR-scoped project environment.
+   */
+  preview_state?: 'open' | 'closed' | 'tearing_down';
+  /**
+   * Time when the preview expires or its current cleanup grace period ends.
+   */
+  preview_expires_at?: string;
   created_at: string;
   updated_at: string;
   cloned_from?: string;

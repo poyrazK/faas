@@ -1160,6 +1160,7 @@ from .project_environment_release_list_response import ProjectEnvironmentRelease
 from .project_environment_release_workload_response import ProjectEnvironmentReleaseWorkloadResponse
 from .project_environment_release_workload_response_status import ProjectEnvironmentReleaseWorkloadResponseStatus
 from .project_environment_response import ProjectEnvironmentResponse
+from .project_environment_response_preview_state import ProjectEnvironmentResponsePreviewState
 from .project_environment_route_policy_diff_response import ProjectEnvironmentRoutePolicyDiffResponse
 from .project_environment_route_policy_diff_response_kind import ProjectEnvironmentRoutePolicyDiffResponseKind
 from .project_environment_route_policy_response import ProjectEnvironmentRoutePolicyResponse
@@ -2662,6 +2663,7 @@ __all__ = (
     "ProjectEnvironmentReleaseWorkloadResponse",
     "ProjectEnvironmentReleaseWorkloadResponseStatus",
     "ProjectEnvironmentResponse",
+    "ProjectEnvironmentResponsePreviewState",
     "ProjectEnvironmentRoutePolicyDiffResponse",
     "ProjectEnvironmentRoutePolicyDiffResponseKind",
     "ProjectEnvironmentRoutePolicyResponse",

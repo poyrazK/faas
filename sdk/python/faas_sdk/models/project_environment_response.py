@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.project_environment_response_preview_state import (
+    ProjectEnvironmentResponsePreviewState,
+    check_project_environment_response_preview_state,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -31,6 +35,10 @@ class ProjectEnvironmentResponse:
     """GitHub pull request number for preview environments."""
     preview_head_sha: str | Unset = UNSET
     """Full lowercase commit SHA recorded for the preview environment."""
+    preview_state: ProjectEnvironmentResponsePreviewState | Unset = UNSET
+    """Lifecycle state for a PR-scoped project environment."""
+    preview_expires_at: datetime.datetime | Unset = UNSET
+    """Time when the preview expires or its current cleanup grace period ends."""
     cloned_from: str | Unset = UNSET
     clone: ProjectEnvironmentCloneResponse | Unset = UNSET
     """Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only
@@ -54,6 +62,14 @@ class ProjectEnvironmentResponse:
 
         preview_head_sha = self.preview_head_sha
 
+        preview_state: str | Unset = UNSET
+        if not isinstance(self.preview_state, Unset):
+            preview_state = self.preview_state
+
+        preview_expires_at: str | Unset = UNSET
+        if not isinstance(self.preview_expires_at, Unset):
+            preview_expires_at = self.preview_expires_at.isoformat()
+
         cloned_from = self.cloned_from
 
         clone: dict[str, Any] | Unset = UNSET
@@ -76,6 +92,10 @@ class ProjectEnvironmentResponse:
             field_dict["preview_pr_number"] = preview_pr_number
         if preview_head_sha is not UNSET:
             field_dict["preview_head_sha"] = preview_head_sha
+        if preview_state is not UNSET:
+            field_dict["preview_state"] = preview_state
+        if preview_expires_at is not UNSET:
+            field_dict["preview_expires_at"] = preview_expires_at
         if cloned_from is not UNSET:
             field_dict["cloned_from"] = cloned_from
         if clone is not UNSET:
@@ -104,6 +124,20 @@ class ProjectEnvironmentResponse:
 
         preview_head_sha = d.pop("preview_head_sha", UNSET)
 
+        _preview_state = d.pop("preview_state", UNSET)
+        preview_state: ProjectEnvironmentResponsePreviewState | Unset
+        if isinstance(_preview_state, Unset):
+            preview_state = UNSET
+        else:
+            preview_state = check_project_environment_response_preview_state(_preview_state)
+
+        _preview_expires_at = d.pop("preview_expires_at", UNSET)
+        preview_expires_at: datetime.datetime | Unset
+        if isinstance(_preview_expires_at, Unset):
+            preview_expires_at = UNSET
+        else:
+            preview_expires_at = datetime.datetime.fromisoformat(_preview_expires_at)
+
         cloned_from = d.pop("cloned_from", UNSET)
 
         _clone = d.pop("clone", UNSET)
@@ -122,6 +156,8 @@ class ProjectEnvironmentResponse:
             updated_at=updated_at,
             preview_pr_number=preview_pr_number,
             preview_head_sha=preview_head_sha,
+            preview_state=preview_state,
+            preview_expires_at=preview_expires_at,
             cloned_from=cloned_from,
             clone=clone,
         )
