@@ -27,6 +27,10 @@ class ProjectEnvironmentResponse:
     protected: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    preview_pr_number: int | Unset = UNSET
+    """GitHub pull request number for preview environments."""
+    preview_head_sha: str | Unset = UNSET
+    """Full lowercase commit SHA recorded for the preview environment."""
     cloned_from: str | Unset = UNSET
     clone: ProjectEnvironmentCloneResponse | Unset = UNSET
     """Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only
@@ -46,6 +50,10 @@ class ProjectEnvironmentResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        preview_pr_number = self.preview_pr_number
+
+        preview_head_sha = self.preview_head_sha
+
         cloned_from = self.cloned_from
 
         clone: dict[str, Any] | Unset = UNSET
@@ -64,6 +72,10 @@ class ProjectEnvironmentResponse:
                 "updated_at": updated_at,
             }
         )
+        if preview_pr_number is not UNSET:
+            field_dict["preview_pr_number"] = preview_pr_number
+        if preview_head_sha is not UNSET:
+            field_dict["preview_head_sha"] = preview_head_sha
         if cloned_from is not UNSET:
             field_dict["cloned_from"] = cloned_from
         if clone is not UNSET:
@@ -88,6 +100,10 @@ class ProjectEnvironmentResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        preview_pr_number = d.pop("preview_pr_number", UNSET)
+
+        preview_head_sha = d.pop("preview_head_sha", UNSET)
+
         cloned_from = d.pop("cloned_from", UNSET)
 
         _clone = d.pop("clone", UNSET)
@@ -104,6 +120,8 @@ class ProjectEnvironmentResponse:
             protected=protected,
             created_at=created_at,
             updated_at=updated_at,
+            preview_pr_number=preview_pr_number,
+            preview_head_sha=preview_head_sha,
             cloned_from=cloned_from,
             clone=clone,
         )

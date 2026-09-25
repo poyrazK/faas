@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.project_environment_clone_plan_action_response import ProjectEnvironmentClonePlanActionResponse
 
@@ -30,6 +32,8 @@ class ProjectEnvironmentClonePlanResponse:
     actions: list[ProjectEnvironmentClonePlanActionResponse]
     blocking_reasons: list[str]
     warnings: list[str]
+    preview_pr_number: int | Unset = UNSET
+    """GitHub pull request number to attach to the cloned environment."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +60,8 @@ class ProjectEnvironmentClonePlanResponse:
 
         warnings = self.warnings
 
+        preview_pr_number = self.preview_pr_number
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -72,6 +78,8 @@ class ProjectEnvironmentClonePlanResponse:
                 "warnings": warnings,
             }
         )
+        if preview_pr_number is not UNSET:
+            field_dict["preview_pr_number"] = preview_pr_number
 
         return field_dict
 
@@ -105,6 +113,8 @@ class ProjectEnvironmentClonePlanResponse:
 
         warnings = cast(list[str], d.pop("warnings"))
 
+        preview_pr_number = d.pop("preview_pr_number", UNSET)
+
         project_environment_clone_plan_response = cls(
             project_slug=project_slug,
             from_environment=from_environment,
@@ -116,6 +126,7 @@ class ProjectEnvironmentClonePlanResponse:
             actions=actions,
             blocking_reasons=blocking_reasons,
             warnings=warnings,
+            preview_pr_number=preview_pr_number,
         )
 
         project_environment_clone_plan_response.additional_properties = d

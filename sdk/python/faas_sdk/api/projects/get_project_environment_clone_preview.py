@@ -17,6 +17,7 @@ def _get_kwargs(
     *,
     to: str,
     share_resources: bool | Unset = False,
+    preview_pr_number: int | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -24,6 +25,8 @@ def _get_kwargs(
     params["to"] = to
 
     params["share_resources"] = share_resources
+
+    params["preview_pr_number"] = preview_pr_number
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -91,6 +94,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     to: str,
     share_resources: bool | Unset = False,
+    preview_pr_number: int | Unset = UNSET,
 ) -> Response[Problem | ProjectEnvironmentClonePlanResponse]:
     """Preflight an environment clone without creating resources.
 
@@ -105,6 +109,7 @@ def sync_detailed(
         environment (str):
         to (str):
         share_resources (bool | Unset):  Default: False.
+        preview_pr_number (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,6 +124,7 @@ def sync_detailed(
         environment=environment,
         to=to,
         share_resources=share_resources,
+        preview_pr_number=preview_pr_number,
     )
 
     response = client.get_httpx_client().request(
@@ -135,6 +141,7 @@ def sync(
     client: AuthenticatedClient | Client,
     to: str,
     share_resources: bool | Unset = False,
+    preview_pr_number: int | Unset = UNSET,
 ) -> Problem | ProjectEnvironmentClonePlanResponse | None:
     """Preflight an environment clone without creating resources.
 
@@ -149,6 +156,7 @@ def sync(
         environment (str):
         to (str):
         share_resources (bool | Unset):  Default: False.
+        preview_pr_number (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -164,6 +172,7 @@ def sync(
         client=client,
         to=to,
         share_resources=share_resources,
+        preview_pr_number=preview_pr_number,
     ).parsed
 
 
@@ -174,6 +183,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     to: str,
     share_resources: bool | Unset = False,
+    preview_pr_number: int | Unset = UNSET,
 ) -> Response[Problem | ProjectEnvironmentClonePlanResponse]:
     """Preflight an environment clone without creating resources.
 
@@ -188,6 +198,7 @@ async def asyncio_detailed(
         environment (str):
         to (str):
         share_resources (bool | Unset):  Default: False.
+        preview_pr_number (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -202,6 +213,7 @@ async def asyncio_detailed(
         environment=environment,
         to=to,
         share_resources=share_resources,
+        preview_pr_number=preview_pr_number,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -216,6 +228,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     to: str,
     share_resources: bool | Unset = False,
+    preview_pr_number: int | Unset = UNSET,
 ) -> Problem | ProjectEnvironmentClonePlanResponse | None:
     """Preflight an environment clone without creating resources.
 
@@ -230,6 +243,7 @@ async def asyncio(
         environment (str):
         to (str):
         share_resources (bool | Unset):  Default: False.
+        preview_pr_number (int | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -246,5 +260,6 @@ async def asyncio(
             client=client,
             to=to,
             share_resources=share_resources,
+            preview_pr_number=preview_pr_number,
         )
     ).parsed
