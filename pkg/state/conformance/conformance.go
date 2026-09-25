@@ -1373,7 +1373,7 @@ func testJobTaskReapClaimed(t *testing.T, fx *Fixture) {
 	}
 	expired := time.Now().UTC().Add(-time.Minute)
 	cutoff := time.Now().UTC().Add(-30 * time.Second)
-	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, "instance-1", "lease-1", expired, fx.Node.ID); err != nil {
+	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, uuid.NewString(), "lease-1", expired, fx.Node.ID); err != nil {
 		t.Fatalf("first JobTaskMarkClaimed: %v", err)
 	}
 	if _, err := fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, "lease-1", expired.Add(-time.Second), 1, time.Now()); !errors.Is(err, state.ErrNotFound) {
@@ -1387,7 +1387,7 @@ func testJobTaskReapClaimed(t *testing.T, fx *Fixture) {
 	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.LeaseToken != nil {
 		t.Fatalf("retried task: %+v, %v", task, err)
 	}
-	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, "instance-2", "lease-2", expired, fx.Node.ID); err != nil {
+	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, uuid.NewString(), "lease-2", expired, fx.Node.ID); err != nil {
 		t.Fatalf("second JobTaskMarkClaimed: %v", err)
 	}
 	retry, err = fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, "lease-2", cutoff, 1, time.Now().UTC())
