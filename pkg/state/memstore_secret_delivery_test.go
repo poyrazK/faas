@@ -77,11 +77,19 @@ func TestMemStoreAppSecretResealPreservesDeliveryVersion(t *testing.T) {
 func TestMemStoreAppSecretRuntimeReloadVersionFence(t *testing.T) {
 	store, ctx, account, app := memValueHashFixture(t)
 	const scope, key = "prod", "DATABASE_URL"
+	firstRuntime, err := store.CreateInstance(ctx, app.ID, "deployment-1", string(state.StateRunning), 256, "node-1", "")
+	if err != nil {
+		t.Fatalf("create first runtime: %v", err)
+	}
+	secondRuntime, err := store.CreateInstance(ctx, app.ID, "deployment-1", string(state.StateRunning), 256, "node-1", "")
+	if err != nil {
+		t.Fatalf("create second runtime: %v", err)
+	}
 	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, app.ID, scope, key, "kid-1", "1111111111111111", []byte("cipher-1")); err != nil {
 		t.Fatalf("seed secret: %v", err)
 	}
 	result := state.AppSecretRuntimeReloadResult{
-		AccountID: account.ID, AppID: app.ID, InstanceID: "instance-1", Revision: strings.Repeat("a", 64),
+		AccountID: account.ID, AppID: app.ID, InstanceID: firstRuntime.ID, Revision: strings.Repeat("a", 64),
 		Projection: state.SecretReloadProjectionUpdated, Signal: state.SecretReloadSignalSent,
 		AttemptedAt: time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC),
 		Candidates:  []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 1}},
@@ -94,6 +102,15 @@ func TestMemStoreAppSecretRuntimeReloadVersionFence(t *testing.T) {
 		got.LastRuntimeReloadSignal != state.SecretReloadSignalSent || got.LastRuntimeReloadAt == nil {
 		t.Fatalf("runtime reload metadata = %+v", got)
 	}
+	result.InstanceID = secondRuntime.ID
+	result.Signal = state.SecretReloadSignalQueued
+	if updated, err := store.RecordAppSecretRuntimeReload(ctx, result); err != nil || updated != 1 {
+		t.Fatalf("record second runtime v1: updated=%d err=%v", updated, err)
+	}
+	observations, err := store.ListAppSecretRuntimeReloadObservations(ctx, account.ID, app.ID, scope)
+	if err != nil || len(observations) != 2 || !hasRuntimeObservation(observations, firstRuntime.ID, 1) || !hasRuntimeObservation(observations, secondRuntime.ID, 1) {
+		t.Fatalf("runtime observations = %+v, %v; want both active runtimes", observations, err)
+	}
 
 	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, app.ID, scope, key, "kid-1", "2222222222222222", []byte("cipher-2")); err != nil {
 		t.Fatalf("rotate secret: %v", err)
@@ -105,6 +122,26 @@ func TestMemStoreAppSecretRuntimeReloadVersionFence(t *testing.T) {
 	if got.DeliveryVersion != 2 || got.LastRuntimeReloadVersion != 1 {
 		t.Fatalf("stale reload status was attributed to v2: current=%d observed=%d", got.DeliveryVersion, got.LastRuntimeReloadVersion)
 	}
+	result.InstanceID = firstRuntime.ID
+	result.Signal = state.SecretReloadSignalSent
+	result.Candidates[0].Version = 2
+	result.AttemptedAt = result.AttemptedAt.Add(time.Minute)
+	if updated, err := store.RecordAppSecretRuntimeReload(ctx, result); err != nil || updated != 1 {
+		t.Fatalf("record first runtime v2: updated=%d err=%v", updated, err)
+	}
+	observations, err = store.ListAppSecretRuntimeReloadObservations(ctx, account.ID, app.ID, scope)
+	if err != nil || len(observations) != 2 || !hasRuntimeObservation(observations, firstRuntime.ID, 2) || !hasRuntimeObservation(observations, secondRuntime.ID, 1) {
+		t.Fatalf("runtime observations after rotation = %+v, %v; want current and stale versions", observations, err)
+	}
+}
+
+func hasRuntimeObservation(observations []state.AppSecretRuntimeReloadObservation, instanceID string, version int64) bool {
+	for _, observation := range observations {
+		if observation.InstanceID == instanceID && observation.Version == version {
+			return true
+		}
+	}
+	return false
 }
 
 func deliveryResult(accountID, appID, key string, version int64, status state.SecretDeliveryStatus) state.AppSecretDeliveryResult {

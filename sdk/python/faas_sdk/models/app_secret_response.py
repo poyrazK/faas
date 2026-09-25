@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -28,6 +28,10 @@ from ..models.app_secret_response_last_runtime_reload_signal import (
     check_app_secret_response_last_runtime_reload_signal,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.secret_runtime_reload_observation import SecretRuntimeReloadObservation
+
 
 T = TypeVar("T", bound="AppSecretResponse")
 
@@ -77,6 +81,9 @@ class AppSecretResponse:
     """Closed, non-sensitive guest-init outcome code."""
     last_runtime_reload_instance_id: str | Unset = UNSET
     """Runtime instance that reported this projection/signal outcome."""
+    runtime_reload_observations: list[SecretRuntimeReloadObservation] | Unset = UNSET
+    """For this scope, the array contains only active runtimes that reported; it is not an inventory of every
+    active or authorized runtime."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,6 +141,13 @@ class AppSecretResponse:
 
         last_runtime_reload_instance_id = self.last_runtime_reload_instance_id
 
+        runtime_reload_observations: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.runtime_reload_observations, Unset):
+            runtime_reload_observations = []
+            for runtime_reload_observations_item_data in self.runtime_reload_observations:
+                runtime_reload_observations_item = runtime_reload_observations_item_data.to_dict()
+                runtime_reload_observations.append(runtime_reload_observations_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -174,11 +188,15 @@ class AppSecretResponse:
             field_dict["last_runtime_reload_error_code"] = last_runtime_reload_error_code
         if last_runtime_reload_instance_id is not UNSET:
             field_dict["last_runtime_reload_instance_id"] = last_runtime_reload_instance_id
+        if runtime_reload_observations is not UNSET:
+            field_dict["runtime_reload_observations"] = runtime_reload_observations
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.secret_runtime_reload_observation import SecretRuntimeReloadObservation
+
         d = dict(src_dict)
         key = d.pop("key")
 
@@ -261,6 +279,17 @@ class AppSecretResponse:
 
         last_runtime_reload_instance_id = d.pop("last_runtime_reload_instance_id", UNSET)
 
+        _runtime_reload_observations = d.pop("runtime_reload_observations", UNSET)
+        runtime_reload_observations: list[SecretRuntimeReloadObservation] | Unset = UNSET
+        if _runtime_reload_observations is not UNSET:
+            runtime_reload_observations = []
+            for runtime_reload_observations_item_data in _runtime_reload_observations:
+                runtime_reload_observations_item = SecretRuntimeReloadObservation.from_dict(
+                    runtime_reload_observations_item_data
+                )
+
+                runtime_reload_observations.append(runtime_reload_observations_item)
+
         app_secret_response = cls(
             key=key,
             scope=scope,
@@ -282,6 +311,7 @@ class AppSecretResponse:
             last_runtime_reload_at=last_runtime_reload_at,
             last_runtime_reload_error_code=last_runtime_reload_error_code,
             last_runtime_reload_instance_id=last_runtime_reload_instance_id,
+            runtime_reload_observations=runtime_reload_observations,
         )
 
         app_secret_response.additional_properties = d

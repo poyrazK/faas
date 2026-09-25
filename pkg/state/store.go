@@ -5594,6 +5594,11 @@ type Store interface {
 	// projection/signal outcome for the exact secret versions reported by a
 	// runtime. It does not confirm that the application applied the values.
 	RecordAppSecretRuntimeReload(ctx context.Context, result AppSecretRuntimeReloadResult) (int, error)
+	// ListAppSecretRuntimeReloadObservations returns the latest report for each
+	// active runtime and secret in one app. An empty scope lists all scopes.
+	// Only non-sensitive version, instance and guest-init outcome metadata is
+	// returned; absence of a report is not proof that the runtime lacks access.
+	ListAppSecretRuntimeReloadObservations(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadObservation, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer; imaged is the only reader. PasswordEncrypted

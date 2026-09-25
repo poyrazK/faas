@@ -30972,6 +30972,22 @@ components:
         last_runtime_reload_at: { type: string, format: date-time }
         last_runtime_reload_error_code: { type: string, enum: [projection_failed, signal_failed], description: "Closed, non-sensitive guest-init outcome code." }
         last_runtime_reload_instance_id: { type: string, description: "Runtime instance that reported this projection/signal outcome." }
+        runtime_reload_observations:
+          type: array
+          description: "For this scope, the array contains only active runtimes that reported; it is not an inventory of every active or authorized runtime."
+          items: { $ref: '#/components/schemas/SecretRuntimeReloadObservation' }
+
+    SecretRuntimeReloadObservation:
+      description: "Non-sensitive guest-init projection/signal outcome for one secret version on one active runtime. Not an application acknowledgement."
+      type: object
+      required: [instance_id, version, projection, signal, observed_at]
+      properties:
+        instance_id: { type: string, description: "Runtime instance ID that reported this outcome." }
+        version: { type: integer, format: int64, minimum: 1, description: "Secret version observed by guest-init; compare with delivery_version to detect stale status." }
+        projection: { type: string, enum: [updated, unchanged, failed] }
+        signal: { type: string, enum: [sent, queued, failed, not_attempted] }
+        observed_at: { type: string, format: date-time }
+        error_code: { type: string, enum: [projection_failed, signal_failed] }
 
     # ADR-092 PR-B: per-row shape for the nested secrets_by_scope
     # response (mirror of ScopedAppEnvResponse). Reserved for the
@@ -31019,6 +31035,10 @@ components:
         last_runtime_reload_at: { type: string, format: date-time }
         last_runtime_reload_error_code: { type: string, enum: [projection_failed, signal_failed] }
         last_runtime_reload_instance_id: { type: string }
+        runtime_reload_observations:
+          type: array
+          description: "Latest guest-init outcome from each active reporting runtime. Missing reports are unknown, and successful signals do not prove application acknowledgement."
+          items: { $ref: '#/components/schemas/SecretRuntimeReloadObservation' }
 
     AppSecretListResponse:
       description: "Paginated list of sealed-secret envelopes (no plaintext). Discriminated union: `secrets` is the flat arm; `secrets_by_scope` is the `?scope=__all__` arm (ADR-092 PR-B)."

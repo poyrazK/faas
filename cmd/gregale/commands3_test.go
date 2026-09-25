@@ -23,6 +23,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+func TestSecretRuntimeReloadLabelSummarizesReportsWithoutClaimingConvergence(t *testing.T) {
+	got := secretRuntimeReloadLabel(2, 1, "failed", "not_attempted", "instance-old", []api.SecretRuntimeReloadObservation{
+		{InstanceID: "instance-current", Version: 2, Projection: "updated", Signal: "sent"},
+		{InstanceID: "instance-old", Version: 1, Projection: "failed", Signal: "not_attempted"},
+	})
+	for _, want := range []string{"2 active reports", "1 current", "1 stale", "instance-old"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("runtime summary %q does not contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "/2") || strings.Contains(got, "converged") {
+		t.Errorf("runtime summary overclaims fleet convergence: %q", got)
+	}
+}
+
 func TestSetProjectDeploySecrets(t *testing.T) {
 	var paths []string
 	var bodies []api.PutAppSecretRequest

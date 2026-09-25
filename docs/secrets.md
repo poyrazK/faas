@@ -56,8 +56,10 @@ secrets. Secret reload requests are resolved against the live deployment's
 scope and `env_secrets` allowlist (legacy deployments without an allowlist keep
 their existing all-secrets-in-scope behavior). The application is responsible
 for confirming to itself that it successfully reloaded. `secrets list` reports
-both wake-time delivery and guest-init's latest live-refresh observation, but
-does not claim that the application applied the new credentials.
+wake-time delivery and the latest live-refresh observation from each active
+runtime that has reported. A missing runtime report is unknown (not proof that
+the runtime lacks access), and these observations do not claim that the
+application applied the new credentials.
 
 `gregale secrets list` reports delivery for each key:
 
@@ -73,9 +75,10 @@ races with a wake or refresh report, the older result cannot mark the newer
 value delivered or reloaded. The CLI labels live-refresh outcomes as runtime
 file updated/unchanged/failed and whether the signal was sent, queued, or
 failed; a reported version different from the current version is shown as
-stale. A successful signal means only that guest-init's signal operation
-succeeded, not that the app handled it. These are latest-per-secret
-observations from one reporting runtime, not a fleet-wide health guarantee;
-the API includes that runtime's ID. The API exposes only opaque versions,
-status, timestamps, and runtime correlation IDs; it never places plaintext or
+stale. Text output summarizes active runtime reports and flags failures; JSON
+includes each reporting instance ID. The report count is not a denominator for
+all active or authorized instances: runtimes with no report remain unknown.
+A successful signal means only that guest-init's signal operation succeeded,
+not that the app handled it. The API exposes only opaque versions, status,
+timestamps, and runtime correlation IDs; it never places plaintext or
 ciphertext in delivery metadata or audit events.

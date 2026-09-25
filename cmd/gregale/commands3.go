@@ -147,7 +147,8 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 		for _, row := range resp.SecretsByScope[s] {
 			_, _ = fmt.Fprintf(w, "  %-48s %s · %s\n", s+"/"+row.Key,
 				secretDeliveryLabel(row.DeliveryStatus), secretRuntimeReloadLabel(row.DeliveryVersion,
-					row.LastRuntimeReloadVersion, row.LastRuntimeReloadProjection, row.LastRuntimeReloadSignal, row.LastRuntimeReloadInstanceID))
+					row.LastRuntimeReloadVersion, row.LastRuntimeReloadProjection, row.LastRuntimeReloadSignal, row.LastRuntimeReloadInstanceID,
+					row.RuntimeReloadObservations))
 		}
 	}
 }
@@ -166,7 +167,8 @@ func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse)
 	for _, s := range resp.Secrets {
 		_, _ = fmt.Fprintf(w, "  %-48s %s · %s\n", scopeOrDefault(s.Scope)+"/"+s.Key,
 			secretDeliveryLabel(s.DeliveryStatus), secretRuntimeReloadLabel(s.DeliveryVersion,
-				s.LastRuntimeReloadVersion, s.LastRuntimeReloadProjection, s.LastRuntimeReloadSignal, s.LastRuntimeReloadInstanceID))
+				s.LastRuntimeReloadVersion, s.LastRuntimeReloadProjection, s.LastRuntimeReloadSignal, s.LastRuntimeReloadInstanceID,
+				s.RuntimeReloadObservations))
 	}
 }
 
@@ -177,7 +179,36 @@ func secretDeliveryLabel(status string) string {
 	return "delivery " + status
 }
 
-func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection, signal, instanceID string) string {
+func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection, signal, instanceID string, observations []api.SecretRuntimeReloadObservation) string {
+	if len(observations) > 0 {
+		current, stale, sent, queued, unchanged, failed := 0, 0, 0, 0, 0, 0
+		var failedInstances []string
+		for _, observation := range observations {
+			if observation.Version == currentVersion {
+				current++
+				switch {
+				case observation.Projection == "unchanged":
+					unchanged++
+				case observation.Projection == "updated" && observation.Signal == "sent":
+					sent++
+				case observation.Projection == "updated" && observation.Signal == "queued":
+					queued++
+				}
+			} else {
+				stale++
+			}
+			if observation.Projection == "failed" || observation.Signal == "failed" {
+				failed++
+				failedInstances = append(failedInstances, observation.InstanceID)
+			}
+		}
+		label := fmt.Sprintf("runtime status: %d active reports (%d current: %d sent, %d queued, %d unchanged; %d stale",
+			len(observations), current, sent, queued, unchanged, stale)
+		if failed > 0 {
+			label += fmt.Sprintf(", %d failed: %s", failed, strings.Join(failedInstances, ","))
+		}
+		return label + ")"
+	}
 	if observedVersion == 0 {
 		return "runtime status unknown"
 	}

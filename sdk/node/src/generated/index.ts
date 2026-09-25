@@ -698,6 +698,7 @@ export type { ScopedAppSecretResponse } from './models/ScopedAppSecretResponse.j
 export type { SeatUsageResponse } from './models/SeatUsageResponse.js';
 export type { SecretFinding } from './models/SecretFinding.js';
 export type { SecretKey } from './models/SecretKey.js';
+export type { SecretRuntimeReloadObservation } from './models/SecretRuntimeReloadObservation.js';
 export type { SecretScanResult } from './models/SecretScanResult.js';
 export type { SecurityQuarantineRecoveryRequest } from './models/SecurityQuarantineRecoveryRequest.js';
 export type { SecurityQuarantineRecoveryResponse } from './models/SecurityQuarantineRecoveryResponse.js';

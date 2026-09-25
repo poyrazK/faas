@@ -5892,9 +5892,9 @@ type AppSecret struct {
 	LastDeliveryErrorCode   string
 	LastDeliveredWakeID     string
 	LastDeliveredInstanceID string
-	// Runtime reload observations are reported by guest-init after the
-	// projection write and signal attempt. They are version-fenced and do not
-	// represent an application-level acknowledgement.
+	// These LastRuntimeReload fields preserve the latest guest-init report for
+	// compatibility. Per-runtime latest outcomes are stored separately; neither
+	// represents an application-level acknowledgement.
 	LastRuntimeReloadVersion    int64
 	LastRuntimeReloadRevision   string
 	LastRuntimeReloadProjection SecretReloadProjectionStatus
@@ -5967,6 +5967,21 @@ type AppSecretRuntimeReloadResult struct {
 	ErrorCode   string
 	AttemptedAt time.Time
 	Candidates  []AppSecretDeliveryCandidate
+}
+
+// AppSecretRuntimeReloadObservation is the latest guest-init projection and
+// signal outcome for one secret version on one currently active runtime. It
+// intentionally excludes secret values and does not claim application-level
+// acknowledgement.
+type AppSecretRuntimeReloadObservation struct {
+	Scope      string
+	Key        string
+	InstanceID string
+	Version    int64
+	Projection SecretReloadProjectionStatus
+	Signal     SecretReloadSignalStatus
+	ObservedAt time.Time
+	ErrorCode  string
 }
 
 // AccountAppSecret is the per-row shape returned by

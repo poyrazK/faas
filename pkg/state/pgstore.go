@@ -22338,15 +22338,70 @@ func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSe
 		if err != nil {
 			return 0, mapErr(err)
 		}
-		updated += int(tag.RowsAffected())
-	}
-	if updated != len(result.Candidates) {
-		return 0, ErrConflict
+		if tag.RowsAffected() != 1 {
+			return 0, ErrConflict
+		}
+		observationTag, err := tx.Exec(ctx,
+			`insert into app_secret_runtime_reload_observations
+				(app_id, scope, key, instance_id, secret_version, projection, signal, observed_at, error_code)
+			 select s.app_id, s.scope, s.key, i.id, $5, $7, $8, $9, nullif($10, '')
+			 from app_secrets s
+			 join instances i on i.id = $6 and i.app_id = s.app_id
+			 where s.account_id = $1 and s.app_id = $2 and s.scope = $3 and s.key = $4
+			   and s.delivery_version = $5
+			 on conflict (app_id, scope, key, instance_id) do update
+			 set secret_version = excluded.secret_version,
+			     projection = excluded.projection,
+			     signal = excluded.signal,
+			     observed_at = excluded.observed_at,
+			     error_code = excluded.error_code
+			 where app_secret_runtime_reload_observations.secret_version <= excluded.secret_version`,
+			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
+			result.InstanceID, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode)
+		if err != nil {
+			return 0, mapErr(err)
+		}
+		if observationTag.RowsAffected() != 1 {
+			return 0, ErrConflict
+		}
+		updated++
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, mapErr(err)
 	}
 	return updated, nil
+}
+
+func (s *PgStore) ListAppSecretRuntimeReloadObservations(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadObservation, error) {
+	if accountID == "" || appID == "" {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := s.pool.Query(ctx,
+		`select o.scope, o.key, o.instance_id::text, o.secret_version,
+		        o.projection, o.signal, o.observed_at, coalesce(o.error_code, '')
+	   from app_secret_runtime_reload_observations o
+	   join app_secrets s on s.app_id = o.app_id and s.scope = o.scope and s.key = o.key
+	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
+	  where s.account_id = $1 and o.app_id = $2 and ($3 = '' or o.scope = $3)
+	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+	  order by o.scope asc, o.key asc, o.instance_id asc`, accountID, appID, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AppSecretRuntimeReloadObservation
+	for rows.Next() {
+		var observation AppSecretRuntimeReloadObservation
+		var projection, signal string
+		if err := rows.Scan(&observation.Scope, &observation.Key, &observation.InstanceID,
+			&observation.Version, &projection, &signal, &observation.ObservedAt, &observation.ErrorCode); err != nil {
+			return nil, err
+		}
+		observation.Projection = SecretReloadProjectionStatus(projection)
+		observation.Signal = SecretReloadSignalStatus(signal)
+		out = append(out, observation)
+	}
+	return out, rows.Err()
 }
 
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------
