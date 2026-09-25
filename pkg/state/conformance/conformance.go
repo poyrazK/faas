@@ -119,6 +119,7 @@ func Run(t *testing.T, open Open) {
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
+		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
 		{"queued_job_capacity_deferral_preserves_retry", testJobTaskDeferQueued},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
@@ -1354,6 +1355,62 @@ func testJobBootFailureBudget(t *testing.T, fx *Fixture) {
 	task, err = fx.Store.JobTaskGet(fx.Ctx, run.ID, tasks[0].TaskIndex)
 	if err != nil || task.Status != "failed" || task.Attempt != 2 || task.FinishedAt == nil || task.ErrorClass == nil || *task.ErrorClass != "infra" || task.ErrorMessage == nil || *task.ErrorMessage != "artifact unavailable" {
 		t.Fatalf("terminal task=%+v err=%v", task, err)
+	}
+}
+
+// adr: 099 — reaping must fence the stale lease, retry within budget, and
+// dead-letter after the final attempt.
+func testJobTaskReapClaimed(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "reap-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 1, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	run, tasks, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", nil, nil, nil, nil, 1)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("JobRunCreate: tasks=%d err=%v", len(tasks), err)
+	}
+	expired := time.Now().UTC().Add(-time.Minute)
+	cutoff := time.Now().UTC().Add(-30 * time.Second)
+	instance1 := uuid.NewString()
+	if _, err := fx.Store.CreateJobInstance(fx.Ctx, instance1, job.ID, run.ID, 0,
+		string(state.StateColdBooting), 128, fx.Node.ID, ""); err != nil {
+		t.Fatalf("first CreateJobInstance: %v", err)
+	}
+	lease1 := uuid.NewString()
+	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, instance1, lease1, expired, fx.Node.ID); err != nil {
+		t.Fatalf("first JobTaskMarkClaimed: %v", err)
+	}
+	if _, err := fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, lease1, expired.Add(-time.Second), 1, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("premature reap: %v, want ErrNotFound", err)
+	}
+	retry, err := fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, lease1, cutoff, 1, time.Now().UTC())
+	if err != nil || !retry {
+		t.Fatalf("first reap: retry=%v err=%v, want retry", retry, err)
+	}
+	task, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, 0)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.LeaseToken != nil {
+		t.Fatalf("retried task: %+v, %v", task, err)
+	}
+	instance2 := uuid.NewString()
+	if _, err := fx.Store.CreateJobInstance(fx.Ctx, instance2, job.ID, run.ID, 0,
+		string(state.StateColdBooting), 128, fx.Node.ID, ""); err != nil {
+		t.Fatalf("second CreateJobInstance: %v", err)
+	}
+	lease2 := uuid.NewString()
+	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, instance2, lease2, expired, fx.Node.ID); err != nil {
+		t.Fatalf("second JobTaskMarkClaimed: %v", err)
+	}
+	retry, err = fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, lease2, cutoff, 1, time.Now().UTC())
+	if err != nil || retry {
+		t.Fatalf("final reap: retry=%v err=%v, want terminal", retry, err)
+	}
+	run, err = fx.Store.JobRunGetByID(fx.Ctx, run.ID)
+	if err != nil || run.AggregateStatus != "dead_letter" || run.TasksFailed != 1 || run.DeadLetterCount != 1 {
+		t.Fatalf("settled run: %+v, %v", run, err)
 	}
 }
 

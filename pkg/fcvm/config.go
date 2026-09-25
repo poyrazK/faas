@@ -238,7 +238,7 @@ type ColdBootSpec struct {
 // run-to-completion workload class; the key differences are:
 //
 //   - ImageRef is the canonical materialized StorageBackend key
-//     (jobs/<job-id>.ext4), not the customer-facing OCI source ref.
+//     (the immutable jobs artifact key), not the customer-facing OCI source ref.
 //     imaged resolves and publishes that artifact before schedd can
 //     claim a task; vmmd only stages the immutable ext4 key.
 //   - Command is the argv (exec form, no shell). guest/init/

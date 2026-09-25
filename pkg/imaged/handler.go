@@ -115,6 +115,9 @@ type Handler struct {
 	// therefore handle only notifications addressed to their own node.
 	// Empty preserves the legacy single-box behaviour.
 	nodeName string
+	// jobMaterializationLeaseOverride lets tests exercise lease renewal on a
+	// short clock. Production uses the package's conservative default lease.
+	jobMaterializationLeaseOverride time.Duration
 
 	// trustedPublishersDir is the directory holding the per-app
 	// cosign trusted-publisher PEM files (issue #472 / ADR-054).
@@ -1468,11 +1471,9 @@ type jobChangedPayload struct {
 	JobID string `json:"job_id"`
 }
 
-// deleteJobArtifact removes the canonical ext4 image after a job is
-// soft-deleted. Job deletion is guarded by the state layer against live task
-// instances, so no running VM can still be using this fixed key. Missing
-// objects are harmless: the path is idempotent and also covers jobs created
-// before image materialization was enabled.
+// deleteJobArtifact removes all ext4 artifacts owned by a soft-deleted job.
+// Job deletion is guarded by the state layer against live task instances, so
+// no running VM can still be using these keys. Missing objects are harmless.
 func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	be, err := h.storageFor()
 	if err != nil {
@@ -1481,18 +1482,60 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err := be.Delete(ctx, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
 		return err
 	}
+	if lister, ok := be.(storage.LocalArtifactLister); ok {
+		keys, err := lister.List(ctx, "jobs/")
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			if foundJobID, valid := jobArtifactJobID(key); !valid || foundJobID != jobID {
+				continue
+			}
+			if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
-// ReconcileDeletedJobArtifacts removes canonical job images whose job row is
-// no longer visible. Job deletion is soft-delete, so JobGetByID returning
-// ErrNotFound is the durable signal that the artifact can no longer be used.
-// This sweep closes the gap where imaged was down (or disconnected from
-// LISTEN/NOTIFY) when the job_changed deletion notification was emitted.
+// cleanupSupersededJobArtifacts removes build attempts other than the key
+// atomically published in the job row. Callers invoke it only after the row
+// is ready; job image updates are blocked while runs have queued or claimed
+// tasks, so no task can still be using the prior image.
+func (h *Handler) cleanupSupersededJobArtifacts(ctx context.Context, jobID, keepKey string) error {
+	be, err := h.storageFor()
+	if err != nil {
+		return err
+	}
+	lister, ok := be.(storage.LocalArtifactLister)
+	if !ok {
+		return nil
+	}
+	keys, err := lister.List(ctx, "jobs/")
+	if err != nil {
+		return err
+	}
+	var cleanupErrs []error
+	for _, key := range keys {
+		foundJobID, valid := jobArtifactJobID(key)
+		if !valid || foundJobID != jobID || key == keepKey {
+			continue
+		}
+		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete %s: %w", key, err))
+		}
+	}
+	return errors.Join(cleanupErrs...)
+}
+
+// ReconcileDeletedJobArtifacts removes orphaned attempts for deleted jobs and
+// superseded attempts for ready jobs. Pending jobs are left alone because a
+// worker may currently be writing an unpublished per-attempt key. This sweep
+// repairs missed notifications and failed best-effort cleanup.
 //
 // Only backends that can enumerate keys participate. Remote backends own
-// their catalog garbage collection; active rows are always retained so a
-// concurrent materialization on another imaged node cannot be raced.
+// their catalog garbage collection.
 func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 	if h == nil || h.store == nil {
 		return nil
@@ -1511,17 +1554,18 @@ func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 	}
 	var reconcileErrs []error
 	for _, key := range keys {
-		const prefix = "jobs/"
-		const suffix = ".ext4"
-		if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, suffix) {
+		jobID, valid := jobArtifactJobID(key)
+		if !valid {
 			continue
 		}
-		jobID := strings.TrimSuffix(strings.TrimPrefix(key, prefix), suffix)
-		if _, err := uuid.Parse(jobID); err != nil || sched.JobLayerKey(jobID) != key {
-			continue
-		}
-		if _, err := h.store.JobGetByID(ctx, jobID); err == nil {
-			continue
+		job, err := h.store.JobGetByID(ctx, jobID)
+		if err == nil {
+			// A terminal materialization cannot dispatch tasks and has no
+			// published image to retain.
+			if job.ImageMaterializationStatus != "failed" &&
+				(job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "" || job.ImageStorageKey == key) {
+				continue
+			}
 		} else if !errors.Is(err, state.ErrNotFound) {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s lookup: %w", jobID, err))
 			continue
@@ -1531,6 +1575,33 @@ func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 		}
 	}
 	return errors.Join(reconcileErrs...)
+}
+
+func jobArtifactJobID(key string) (string, bool) {
+	const prefix = "jobs/"
+	const suffix = ".ext4"
+	if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, suffix) {
+		return "", false
+	}
+	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(key, prefix), suffix), "/")
+	if len(parts) == 1 {
+		stem := parts[0]
+		if _, err := uuid.Parse(stem); err == nil && sched.JobLayerKey(stem) == key {
+			return stem, true
+		}
+		attempt := strings.Split(stem, "__")
+		if len(attempt) != 2 {
+			return "", false
+		}
+		if _, err := uuid.Parse(attempt[0]); err != nil {
+			return "", false
+		}
+		if _, err := uuid.Parse(attempt[1]); err != nil {
+			return "", false
+		}
+		return attempt[0], sched.JobLayerAttemptKey(attempt[0], attempt[1]) == key
+	}
+	return "", false
 }
 
 // PR-B: buildQueuedPayload and (*Handler).handleBuildQueued were

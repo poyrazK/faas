@@ -5,17 +5,23 @@ reference, then dispatch one or more tasks; each run retains task status and
 logs. A newly-created or image-updated job is `pending` until imaged resolves
 the reference and publishes its immutable ext4 rootfs. Tasks remain queued
 until that artifact is `ready`; pull/build failures are exposed as
-`image_materialization_status=failed` plus an actionable error.
+`image_materialization_status=failed` plus an actionable error. A terminal
+image failure marks any queued tasks failed and settles their runs; new runs
+are rejected until `image_ref` is updated and materialization succeeds.
 
 Image pulls may use account-owned private-registry credentials configured with
 `gregale jobs registry`; passwords are sealed at rest and never returned by
-the API. Materialization is retry-safe across imaged workers, and schedd does
-not dispatch a task until the job's ext4 artifact is ready.
+the API. Imaged retries bounded pull/build failures across restarts, and
+schedd does not dispatch a task until the job's ext4 artifact is ready.
+Each materialization attempt writes a unique `jobs/<job-id>__<attempt-id>.ext4`
+object, then publishes it only if its worker still owns the live claim. A
+losing attempt cannot overwrite or delete the winner; reconciliation removes
+unpublished and superseded objects.
 
 Jobs created before OCI image materialization may still refer directly to an
 `apps/...ext4` artifact. During the upgrade, these rows briefly show
 `image_materialization_status=verifying_legacy` and cannot dispatch. imaged
-copies a readable legacy layer to the job-owned `jobs/<job-id>.ext4` key
+copies a readable legacy layer to the legacy job-owned `jobs/<job-id>.ext4` key
 before setting `ready`, so app-layer garbage collection cannot remove a
 running job's image. A missing artifact becomes `failed` with an explicit
 error; if the store cannot answer or the copy fails, the job remains
@@ -44,6 +50,11 @@ the account live-job limit. Only claimed tasks create VMs. Each claim checks
 the run parallelism and account live limit atomically across scheduler replicas;
 remaining tasks stay queued until capacity opens.
 
+Job definitions cannot be edited or deleted while a run has queued or claimed
+tasks. This prevents customer edits from changing the image reference, command,
+environment, resource limits, or retry policy mid-run. Cancel the run or wait
+for it to finish before updating the job.
+
 Keep tasks idempotent and write checkpoints outside the VM if a retry must
 resume work. Set a timeout and retry budget that match the downstream service,
 and use the job run id as the correlation id in application logs. Failed runs
@@ -56,6 +67,9 @@ retry. The next attempt waits for the same capped backoff; when retries are
 exhausted, the task records an `infra` error explaining that the image
 artifact or VM boot path needs attention. A task with `--retries 0` therefore
 fails after its first unsuccessful boot instead of creating VMs indefinitely.
+An expired task lease follows the same bounded retry policy and becomes a
+dead-lettered timeout if no attempts remain; it is never counted as a
+customer cancellation.
 
 `jobs logs` returns a 64 KiB tail by default. Pass `--max-bytes N` (up to
 1 MiB) to retrieve a larger tail when the response is truncated.

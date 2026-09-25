@@ -305,6 +305,10 @@ var (
 	// the regex admits [a-z0-9-] only), so "__" is unambiguous and
 	// trivially reverses.
 	appsTagSep = "__"
+
+	// jobArtifactTagSep separates a job UUID from an immutable artifact UUID.
+	// Neither UUID contains underscores, so OCI tags round-trip unambiguously.
+	jobArtifactTagSep = "__"
 )
 
 // plan translates a storage key into the (repo, manifestRef) tuple the
@@ -364,16 +368,21 @@ func (o *OCIRegistryStorageBackend) plan(key string) (repo, ref string, err erro
 		}
 		return repoLayers, dep, nil
 	case repoJobs:
-		// jobs/<job>.ext4 → repo "jobs", tag "<job>".
-		// Job IDs are canonical UUIDs, matching jobs.id in Postgres.
+		// jobs/<job>.ext4 → repo "jobs", tag "<job>" (legacy key).
+		// jobs/<job>__<artifact>.ext4 adds an immutable build attempt. Both
+		// identifiers are canonical UUIDs and round-trip through unplan().
 		if len(parts) != 2 || !strings.HasSuffix(parts[1], ".ext4") {
-			return "", "", fmt.Errorf("%w: %q does not match jobs/<job>.ext4", ErrInvalidKey, key)
+			return "", "", fmt.Errorf("%w: %q does not match a job ext4 key", ErrInvalidKey, key)
 		}
-		jobID := strings.TrimSuffix(parts[1], ".ext4")
-		if !depIDCharset.MatchString(jobID) {
-			return "", "", fmt.Errorf("%w: jobs id %q fails UUID charset", ErrInvalidKey, jobID)
+		tag := strings.TrimSuffix(parts[1], ".ext4")
+		if depIDCharset.MatchString(tag) {
+			return repoJobs, tag, nil
 		}
-		return repoJobs, jobID, nil
+		attempt := strings.Split(tag, jobArtifactTagSep)
+		if len(attempt) != 2 || !depIDCharset.MatchString(attempt[0]) || !depIDCharset.MatchString(attempt[1]) {
+			return "", "", fmt.Errorf("%w: job artifact tag %q must contain job and attempt UUIDs", ErrInvalidKey, tag)
+		}
+		return repoJobs, tag, nil
 	case repoKernel:
 		// kernel/<version> → repo "kernel", tag "<version>"
 		if len(parts) != 2 {
@@ -1083,10 +1092,14 @@ func (o *OCIRegistryStorageBackend) unplan(repo, tag string) (string, bool) {
 	case repoLayers:
 		return "layers/" + tag + ".ext4", true
 	case repoJobs:
-		if !depIDCharset.MatchString(tag) {
+		if depIDCharset.MatchString(tag) {
+			return "jobs/" + tag + ".ext4", true
+		}
+		attempt := strings.Split(tag, jobArtifactTagSep)
+		if len(attempt) != 2 || !depIDCharset.MatchString(attempt[0]) || !depIDCharset.MatchString(attempt[1]) {
 			return "", false
 		}
-		return "jobs/" + tag + ".ext4", true
+		return "jobs/" + attempt[0] + jobArtifactTagSep + attempt[1] + ".ext4", true
 	case repoKernel:
 		return "kernel/" + tag, true
 	case repoScans:
