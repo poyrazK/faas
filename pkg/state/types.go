@@ -2124,6 +2124,9 @@ type Deployment struct {
 	// scale-up threshold. Nil inherits the app's CPU target; zero disables
 	// CPU-based scale-up for this revision.
 	CPUUtilizationTargetPct *float64 `json:"cpu_utilization_target_pct,omitempty"`
+	// MaxConcurrentRequests is the immutable hard request cap for each
+	// instance of this revision. Zero inherits the plan's per-instance cap.
+	MaxConcurrentRequests int `json:"max_concurrent_requests,omitempty"`
 	// TrafficPercent is the per-deployment traffic-split weight
 	// (issue #556 PR-A). Integer in [0, 100] enforced by the
 	// deployments_traffic_percent_chk CHECK constraint (migration

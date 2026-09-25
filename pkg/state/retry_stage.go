@@ -115,6 +115,7 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 		Priority:                src.Priority,
 		MaxInstances:            src.MaxInstances,
 		CPUUtilizationTargetPct: cpuUtilizationTargetPct,
+		MaxConcurrentRequests:   src.MaxConcurrentRequests,
 		DeployedVia:             src.DeployedVia,
 		DeployedByUserID:        src.DeployedByUserID,
 		DeployedFromIP:          src.DeployedFromIP,

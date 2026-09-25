@@ -41,6 +41,20 @@ func effectiveVMConcurrencyLimit(_ App, planLimit int) int {
 	return planLimit
 }
 
+// effectiveTargetVMConcurrencyLimit resolves a revision's hard request cap.
+// The plan remains the upper bound and the fallback for legacy revisions.
+func effectiveTargetVMConcurrencyLimit(app App, target Target, planLimit int) int {
+	if planLimit <= 0 {
+		return planLimit
+	}
+	if target.DeploymentID != "" {
+		if configured := app.DeploymentConcurrencyLimits[target.DeploymentID]; configured > 0 && configured <= planLimit {
+			return configured
+		}
+	}
+	return planLimit
+}
+
 // vmConcurrencyManager owns the request slots for routable instances. The
 // gateway is the first component that knows which instance a request is
 // about to use, so enforcing the plan bound here keeps the limit independent
@@ -417,11 +431,12 @@ func (m *vmConcurrencyManager) acquire(ctx context.Context, instanceID, plan str
 // instance is saturated. While every routable VM is full, it periodically
 // picks again so a request queued behind the first restored VM can move to a
 // sibling as soon as that sibling becomes ready.
-func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult, perVM int, deploymentID, versionKey string) (PickResult, func(), bool, error) {
-	if h == nil || h.backend == nil || h.vmConcurrency == nil || perVM <= 0 || !pick.OK || pick.Target.InstanceID == "" {
+func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult, planLimit int, deploymentID, versionKey string) (PickResult, func(), bool, error) {
+	if h == nil || h.backend == nil || h.vmConcurrency == nil || planLimit <= 0 || !pick.OK || pick.Target.InstanceID == "" {
 		return pick, func() {}, false, nil
 	}
-	if release, ok := h.vmConcurrency.tryAcquire(pick.Target.InstanceID, string(app.Plan), perVM); ok {
+	initialLimit := effectiveTargetVMConcurrencyLimit(app, pick.Target, planLimit)
+	if release, ok := h.vmConcurrency.tryAcquire(pick.Target.InstanceID, string(app.Plan), initialLimit); ok {
 		return pick, release, false, nil
 	}
 	tryReadyTarget := func() (PickResult, func(), bool) {
@@ -455,7 +470,8 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 			if !candidate.OK || candidate.Target.InstanceID == "" {
 				continue
 			}
-			if release, ok := h.vmConcurrency.tryAcquire(candidate.Target.InstanceID, string(app.Plan), perVM); ok {
+			candidateLimit := effectiveTargetVMConcurrencyLimit(app, candidate.Target, planLimit)
+			if release, ok := h.vmConcurrency.tryAcquire(candidate.Target.InstanceID, string(app.Plan), candidateLimit); ok {
 				return candidate, release, true
 			}
 		}

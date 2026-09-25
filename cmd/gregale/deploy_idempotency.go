@@ -30,6 +30,7 @@ type deployIdempotencyIntent struct {
 	RAMMB                   int      `json:"ram_mb,omitempty"`
 	CPUMillicores           int      `json:"cpu_millicores,omitempty"`
 	MaxInstances            int      `json:"max_instances,omitempty"`
+	MaxConcurrentRequests   *int     `json:"max_concurrent_requests,omitempty"`
 	CPUUtilizationTargetPct *float64 `json:"cpu_utilization_target_pct,omitempty"`
 	Dockerfile              bool     `json:"dockerfile,omitempty"`
 	RequireAuthn            *bool    `json:"require_authn,omitempty"`

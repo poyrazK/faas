@@ -476,6 +476,9 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 		value := *req.Scaling.CPUUtilizationTargetPct
 		dep.CPUUtilizationTargetPct = &value
 	}
+	if req.Scaling != nil && req.Scaling.MaxConcurrentRequests != nil {
+		dep.MaxConcurrentRequests = *req.Scaling.MaxConcurrentRequests
+	}
 	if req.RollbackOn5xx != nil {
 		dep.RollbackOn5xx = *req.RollbackOn5xx
 	}
@@ -637,19 +640,30 @@ func validateDeploymentMaxInstances(requested *int, app state.App, plan api.Plan
 }
 
 func validateDeploymentScaling(scaling *api.DeploymentScalingRequest, plan api.Plan) *api.Problem {
-	if scaling == nil || scaling.CPUUtilizationTargetPct == nil {
+	if scaling == nil {
 		return nil
 	}
-	value := *scaling.CPUUtilizationTargetPct
-	if !plan.ScaleUpTargetCPUAllowed() {
-		return api.NewProblem(http.StatusForbidden, api.CodePlanScaleUpNotAllowed,
-			"Autoscale target CPU% is not allowed on this plan",
-			"Autoscale target CPU% requires Pro or Scale; upgrade to a paid tier.")
+	if scaling.CPUUtilizationTargetPct != nil {
+		value := *scaling.CPUUtilizationTargetPct
+		if !plan.ScaleUpTargetCPUAllowed() {
+			return api.NewProblem(http.StatusForbidden, api.CodePlanScaleUpNotAllowed,
+				"Autoscale target CPU% is not allowed on this plan",
+				"Autoscale target CPU% requires Pro or Scale; upgrade to a paid tier.")
+		}
+		if math.IsNaN(value) || math.IsInf(value, 0) || (value != 0 && (value < 1 || value > 100)) {
+			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidAutoscaleTargetCPU,
+				"Invalid autoscale target CPU%",
+				fmt.Sprintf("scaling.cpu_utilization_target_pct must be 0 (disable) or in [1, 100]; got %g", value))
+		}
 	}
-	if math.IsNaN(value) || math.IsInf(value, 0) || (value != 0 && (value < 1 || value > 100)) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidAutoscaleTargetCPU,
-			"Invalid autoscale target CPU%",
-			fmt.Sprintf("scaling.cpu_utilization_target_pct must be 0 (disable) or in [1, 100]; got %g", value))
+	if scaling.MaxConcurrentRequests != nil {
+		value := *scaling.MaxConcurrentRequests
+		limit := plan.ConcurrencyPerVMBound()
+		if value < 1 || value > limit {
+			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+				"Invalid per-instance concurrency",
+				fmt.Sprintf("scaling.max_concurrent_requests must be between 1 and the %s plan limit (%d); got %d", plan, limit, value))
+		}
 	}
 	return nil
 }

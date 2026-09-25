@@ -664,7 +664,13 @@ func renderDeploymentResources(w io.Writer, resources *api.DeploymentResources) 
 }
 
 func renderDeploymentScaling(w io.Writer, scaling *api.DeploymentScalingRequest) {
-	if scaling == nil || scaling.CPUUtilizationTargetPct == nil {
+	if scaling == nil {
+		return
+	}
+	if scaling.MaxConcurrentRequests != nil {
+		_, _ = fmt.Fprintf(w, "%-14s %d per instance\n", "max_requests:", *scaling.MaxConcurrentRequests)
+	}
+	if scaling.CPUUtilizationTargetPct == nil {
 		return
 	}
 	target := *scaling.CPUUtilizationTargetPct

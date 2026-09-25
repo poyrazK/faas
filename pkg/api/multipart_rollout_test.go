@@ -17,6 +17,7 @@ func TestMultipartDeployPreservesRolloutAndEnvironment(t *testing.T) {
 	profile := "small"
 	cpuTarget := 70.0
 	zeroCPU := 0.0
+	maxRequests := 12
 	for _, tc := range []struct {
 		name      string
 		ann       DeployAnnotations
@@ -31,6 +32,7 @@ func TestMultipartDeployPreservesRolloutAndEnvironment(t *testing.T) {
 		{name: "revision resources", ann: DeployAnnotations{Resources: &DeploymentResourcesRequest{RAMMB: &ramMB, CPUMillicores: &cpuMillicores, ResourceProfile: &profile}}, wantField: "resources", wantValue: `{"ram_mb":256,"cpu_millicores":500,"resource_profile":"small"}`},
 		{name: "revision CPU target", ann: DeployAnnotations{Scaling: &DeploymentScalingRequest{CPUUtilizationTargetPct: &cpuTarget}}, wantField: "scaling", wantValue: `{"cpu_utilization_target_pct":70}`},
 		{name: "revision CPU target disabled", ann: DeployAnnotations{Scaling: &DeploymentScalingRequest{CPUUtilizationTargetPct: &zeroCPU}}, wantField: "scaling", wantValue: `{"cpu_utilization_target_pct":0}`},
+		{name: "revision request cap", ann: DeployAnnotations{Scaling: &DeploymentScalingRequest{MaxConcurrentRequests: &maxRequests}}, wantField: "scaling", wantValue: `{"max_concurrent_requests":12}`},
 		{name: "rollback enabled", ann: DeployAnnotations{RollbackOn5xx: boolPtr(true)}, wantField: "rollback_on_5xx", wantValue: "true"},
 		{name: "rollback explicitly disabled", ann: DeployAnnotations{RollbackOn5xx: boolPtr(false)}, wantField: "rollback_on_5xx", wantValue: "false"},
 		{name: "startup CPU boost disabled", ann: DeployAnnotations{DisableStartupCPUBoost: boolPtr(true)}, wantField: "disable_startup_cpu_boost", wantValue: "true"},

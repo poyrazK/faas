@@ -559,6 +559,8 @@ Adding a runtime is a 7-layer procedure (migrations, schema, apid handler whitel
 
 The platform advertises a per-VM concurrency bound (the `concurrency_per_vm` field on `GET /v1/apps/{slug}`, mirrored in `pkg/api/limits.go::ConcurrencyPerVMBound`): **Free 4, Hobby 5, Pro 25, Scale 80**. This is an upper bound the *platform* publishes for a single VM and is **distinct from** the per-app instance cap (`max_concurrency`, spec §6.2-1) — a customer's per-app instance cap is the count of live VMs the schedd will admit, not the request fan-out one VM serves.
 
+Each immutable deployment may set `scaling.max_concurrent_requests` to a positive value no greater than its plan's `concurrency_per_vm` bound. Omission inherits the plan value. The gateway resolves the hard request gate from the selected target's deployment, so canary and stable revisions can use different caps; this does not change the scheduler's separate `concurrent_requests` autoscaling target.
+
 The runner's HTTP listener (`http.ListenAndServe` on `:8080`) dispatches each accepted connection on its own goroutine, so the bound is reachable at the listener layer for any runner — Go's `net/http` does not serialize. Whether the customer's **handler process** achieves the bound depends on the runtime:
 
 - **Node.js (single-event-loop)** — a Node handler achieves the bound; the event loop serves concurrent requests within one process.

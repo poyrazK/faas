@@ -585,6 +585,7 @@ type CreateDeploymentRequest struct {
 	Image          string                      `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
 	TrafficPercent *int                        `json:"traffic_percent,omitempty"`
 	Resources      *DeploymentResourcesRequest `json:"resources,omitempty"`
+	Scaling        *DeploymentScalingRequest   `json:"scaling,omitempty"`
 }
 
 type DeploymentResourcesRequest struct {
@@ -597,6 +598,13 @@ type DeploymentResources struct {
 	RAMMB           int    `json:"ram_mb"`
 	CPUMillicores   int    `json:"cpu_millicores"`
 	ResourceProfile string `json:"resource_profile,omitempty"`
+}
+
+// DeploymentScalingRequest contains per-revision scaling controls. A nil
+// MaxConcurrentRequests inherits the plan's per-instance request limit.
+type DeploymentScalingRequest struct {
+	CPUUtilizationTargetPct *float64 `json:"cpu_utilization_target_pct,omitempty"`
+	MaxConcurrentRequests   *int     `json:"max_concurrent_requests,omitempty"`
 }
 
 // DeploymentResponse is a deployment as returned by the API.
@@ -636,10 +644,11 @@ type DeploymentResponse struct {
 	// HostingReceipt is the non-secret deployment evidence captured after
 	// readiness. Raw JSON keeps the Go SDK forward-compatible with receipt
 	// schema additions.
-	HostingReceipt json.RawMessage      `json:"hosting_receipt,omitempty"`
-	SourceRoot     string               `json:"source_root,omitempty"`
-	TrafficPercent int                  `json:"traffic_percent,omitempty"`
-	Resources      *DeploymentResources `json:"resources,omitempty"`
+	HostingReceipt json.RawMessage           `json:"hosting_receipt,omitempty"`
+	SourceRoot     string                    `json:"source_root,omitempty"`
+	TrafficPercent int                       `json:"traffic_percent,omitempty"`
+	Resources      *DeploymentResources      `json:"resources,omitempty"`
+	Scaling        *DeploymentScalingRequest `json:"scaling,omitempty"`
 }
 
 // UpdateDeploymentTrafficRequest is the body for

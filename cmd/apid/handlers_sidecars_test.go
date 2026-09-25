@@ -89,6 +89,19 @@ func TestBuildDeploymentForInsert_PersistsDeploymentCPUScalingTarget(t *testing.
 	}
 }
 
+func TestBuildDeploymentForInsert_PersistsRevisionConcurrencyCap(t *testing.T) {
+	maxRequests := 8
+	dep, problem := buildDeploymentForInsert(state.App{ID: "app-concurrency-cap"}, &api.CreateDeploymentRequest{
+		Image: "sha256:test", Scaling: &api.DeploymentScalingRequest{MaxConcurrentRequests: &maxRequests},
+	}, nil, api.MustLimitsFor(api.PlanPro), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	if dep.MaxConcurrentRequests != maxRequests {
+		t.Fatalf("deployment max_concurrent_requests = %d, want %d", dep.MaxConcurrentRequests, maxRequests)
+	}
+}
+
 func TestValidateDeploymentScaling(t *testing.T) {
 	belowMinimum := 0.5
 	freeTarget := 70.0
@@ -108,6 +121,25 @@ func TestValidateDeploymentScaling(t *testing.T) {
 	zero := 0.0
 	if problem := validateDeploymentScaling(&api.DeploymentScalingRequest{CPUUtilizationTargetPct: &zero}, api.PlanPro); problem != nil {
 		t.Fatalf("explicit zero should disable the target: %v", problem)
+	}
+	for name, value := range map[string]int{"zero": 0, "above plan limit": api.MustLimitsFor(api.PlanHobby).ConcurrencyPerVMBound + 1} {
+		if problem := validateDeploymentScaling(&api.DeploymentScalingRequest{MaxConcurrentRequests: &value}, api.PlanHobby); problem == nil || problem.Code != api.CodeValidation {
+			t.Errorf("%s concurrency cap problem = %#v, want %q", name, problem, api.CodeValidation)
+		}
+	}
+	validCap := 1
+	if problem := validateDeploymentScaling(&api.DeploymentScalingRequest{MaxConcurrentRequests: &validCap}, api.PlanFree); problem != nil {
+		t.Fatalf("Free plan should permit a lower per-instance cap: %v", problem)
+	}
+}
+
+func TestDeploymentScalingResponseIncludesRequestCap(t *testing.T) {
+	response := deploymentScalingResponse(state.Deployment{MaxConcurrentRequests: 6})
+	if response == nil || response.MaxConcurrentRequests == nil || *response.MaxConcurrentRequests != 6 {
+		t.Fatalf("scaling response = %#v, want max_concurrent_requests=6", response)
+	}
+	if got := deploymentScalingResponse(state.Deployment{}); got != nil {
+		t.Fatalf("inherited scaling response = %#v, want nil", got)
 	}
 }
 
