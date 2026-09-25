@@ -108,3 +108,21 @@ encoded in the stable hostname, replaces only the redirect/rewrite kinds, and
 uses the existing convergence fence for cache invalidation. Route substitution,
 custom domains, and remaining edge-rule kinds are not made environment-owned
 by this decision.
+
+## Follow-up: opt-in environment-bound custom domains
+
+An exact custom hostname may now be created with
+`gregale domains add --domain staging.example.com --app api --environment staging`.
+The environment must belong to the app's project and account. Existing domains
+remain app-wide, and wildcard domains cannot be environment-bound. A bound
+hostname selects only that environment's current live release and inherits its
+declared-route and edge-policy overrides. If that release is absent, the host
+returns 404; it never falls back to production. Route lookups for bound hosts
+are re-resolved on every request, including during an outage, so a prior
+release is not served from a stale cache.
+
+Environment state and diff show bound domains alongside app-wide domains.
+Cloning an environment deliberately does not copy bound hostnames: DNS
+ownership and certificate verification must be established for each unique
+hostname. A bound domain cannot be the app-wide default, and deleting its
+environment requires removing the domain first.

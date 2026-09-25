@@ -124,6 +124,9 @@ func printDomainRow(d api.CustomDomainResponse, verbose bool) {
 		verified = statusVerified
 	}
 	fmt.Printf("%-40s %-12s %s\n", d.Domain, verified, d.AppID)
+	if d.EnvironmentID != "" {
+		fmt.Printf("    environment_id: %s\n", d.EnvironmentID)
+	}
 	if verbose && d.Verified {
 		if d.CertNotAfter != "" {
 			fmt.Printf("    cert_not_after: %s\n", d.CertNotAfter)

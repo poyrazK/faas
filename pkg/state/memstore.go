@@ -3030,6 +3030,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
+	for _, domain := range m.domains {
+		if domain.EnvironmentID == environmentID {
+			return ProjectEnvironmentCleanupJob{}, ErrConflict
+		}
+	}
 
 	for _, app := range m.apps {
 		if app.ProjectID != projectID {
@@ -10260,7 +10265,7 @@ func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain strin
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
-	if !ok || d.AppID != appID || !d.Verified() || IsWildcardCustomDomain(domain) {
+	if !ok || d.AppID != appID || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return ErrNotFound
 	}
 	if m.defaultDomains == nil {
@@ -10273,7 +10278,8 @@ func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain strin
 func (m *MemStore) IsDefaultCustomDomain(_ context.Context, appID, domain string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.defaultDomains[appID] == domain && !IsWildcardCustomDomain(domain), nil
+	d, ok := m.domains[domain]
+	return ok && d.EnvironmentID == "" && m.defaultDomains[appID] == domain && !IsWildcardCustomDomain(domain), nil
 }
 
 // DefaultCustomDomain returns the selected verified custom domain for an app.
@@ -10287,7 +10293,7 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 		return "", ErrNotFound
 	}
 	d, ok := m.domains[domain]
-	if !ok || !d.Verified() || IsWildcardCustomDomain(domain) {
+	if !ok || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return "", ErrNotFound
 	}
 	return domain, nil

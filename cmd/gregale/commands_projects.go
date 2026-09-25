@@ -399,6 +399,9 @@ func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
 		for _, change := range workload.Bindings {
 			_, _ = fmt.Fprintf(osStdout, "  binding  %-20s %-8s %s\n", change.BindingID, change.Change, change.Kind)
 		}
+		for _, change := range workload.Domains {
+			_, _ = fmt.Fprintf(osStdout, "  domain   %-20s %-8s\n", change.Domain, change.Kind)
+		}
 		if workload.Routes.Kind != "unchanged" {
 			_, _ = fmt.Fprintf(osStdout, "  routes   %-20s %s -> %s\n", workload.Routes.Kind,
 				routePolicySummary(workload.Routes.Before), routePolicySummary(workload.Routes.After))
@@ -412,9 +415,9 @@ func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
 				edgePolicySummary(workload.RoutingPolicies.Before), edgePolicySummary(workload.RoutingPolicies.After))
 		}
 	}
-	_, _ = fmt.Fprintln(osStdout, "\nSHARED (not environment-scoped)")
+	_, _ = fmt.Fprintln(osStdout, "\nSHARED / MIXED RESOURCES")
 	for _, resource := range diff.SharedResources {
-		_, _ = fmt.Fprintf(osStdout, "  %s\n", resource.Kind)
+		_, _ = fmt.Fprintf(osStdout, "  %s (%s)\n", resource.Kind, resource.Ownership)
 	}
 }
 

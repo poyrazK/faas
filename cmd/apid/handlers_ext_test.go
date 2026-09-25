@@ -2426,6 +2426,51 @@ func TestCreateDomain_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateDomain_EnvironmentBinding(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "domain-project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "domain-project-app", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := e.store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "POST", "/v1/domains", api.CreateCustomDomainRequest{
+		Domain: "stage.example.com", AppID: app.ID, Environment: "staging",
+	}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.CustomDomainResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.EnvironmentID != environment.ID {
+		t.Fatalf("environment_id=%q want %q", response.EnvironmentID, environment.ID)
+	}
+	domain, err := e.store.DomainByName(ctx, response.Domain)
+	if err != nil || domain.EnvironmentID != environment.ID {
+		t.Fatalf("stored binding = %+v err=%v", domain, err)
+	}
+	if err := e.store.MarkDomainVerified(ctx, domain.Domain); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, "POST", "/v1/domains/"+domain.Domain+"/default", nil, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+	rec = e.do(t, "POST", "/v1/domains", api.CreateCustomDomainRequest{
+		Domain: "bad.example.com", AppID: app.ID, Environment: "missing",
+	}, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing environment status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateDomain_PerIPChallengeRateLimit(t *testing.T) {
 	e := setup(t, api.PlanScale)
 	appID := mustSeedApp(t, e, "domain-rate-limit")

@@ -2560,6 +2560,24 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		s.notFound(w, "no such app")
 		return
 	}
+	var environmentID string
+	if req.Environment != "" {
+		if app.ProjectID == "" || state.IsWildcardCustomDomain(domain) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid environment binding", "environment-bound domains require a project app and an exact hostname"))
+			return
+		}
+		environment, lookupErr := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, app.ProjectID, req.Environment)
+		if lookupErr != nil {
+			if errors.Is(lookupErr, state.ErrNotFound) {
+				s.notFound(w, "no such project environment")
+			} else {
+				api.WriteProblem(w, api.ErrCapacity("could not load project environment"))
+			}
+			return
+		}
+		environmentID = environment.ID
+	}
 	limits, limitsOK := api.LimitsFor(acct.Plan)
 	if !limitsOK {
 		api.WriteProblem(w, api.ErrCapacity("unknown plan"))
@@ -2583,15 +2601,19 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	token := randomToken(16)
 	perApp, perAccount, _ := api.CustomDomainLimitsFor(acct.Plan)
 	type quotaCreator interface {
-		CreateCustomDomainIfUnderQuota(context.Context, string, string, string, int, int) (state.CustomDomain, error)
+		CreateCustomDomainIfUnderQuota(context.Context, string, string, string, int, int, ...string) (state.CustomDomain, error)
 	}
 	creator, ok := s.store.(quotaCreator)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("domain quota enforcement unavailable"))
 		return
 	}
-	d, err := creator.CreateCustomDomainIfUnderQuota(r.Context(), domain, app.ID, token, perApp, perAccount)
+	d, err := creator.CreateCustomDomainIfUnderQuota(r.Context(), domain, app.ID, token, perApp, perAccount, environmentID)
 	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such project environment")
+			return
+		}
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
 			return
@@ -2747,6 +2769,11 @@ func (s *server) setDefaultDomain(w http.ResponseWriter, r *http.Request, acct s
 	if state.IsWildcardCustomDomain(d.Domain) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Wildcard domain cannot be default", "select a concrete verified custom domain as the app's default host"))
+		return
+	}
+	if d.EnvironmentID != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Environment domain cannot be default", "use an app-wide domain as the default host"))
 		return
 	}
 	type defaultSetter interface {
@@ -5303,6 +5330,7 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 	r := api.CustomDomainResponse{
 		Domain:         d.Domain,
 		AppID:          d.AppID,
+		EnvironmentID:  d.EnvironmentID,
 		ChallengeToken: d.ChallengeToken,
 		Verified:       d.Verified(),
 		CertStatus:     string(status),

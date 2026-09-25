@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 )
 
 // updateProjectEnvironmentPolicies replaces only the headers/CORS policy for
-// the workload's stable environment URL. Other app edge rules are unchanged.
+// the workload's stable environment URL and bound custom domains.
 func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, environment, _, problem := s.loadProjectEnvironmentConfig(r.Context(), acct, r.PathValue("slug"), r.PathValue("environment"))
 	if problem != nil {
@@ -78,7 +79,12 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 			Priority: priority, Enabled: enabled, Action: actionFromBody(check.Kind, check.Action),
 		})
 	}
-	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_policy_updated", host)
+	hosts, err := s.projectEnvironmentPolicyHosts(r.Context(), app.ID, environment.ID, host)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not inspect environment-bound domains; no policy was changed"))
+		return
+	}
+	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_policy_updated", hosts...)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-policy fleet convergence is unavailable; no policy was changed"))
 		return
@@ -106,6 +112,23 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 	}
 	convergence.setResponseState(w, "active")
 	writeJSON(w, http.StatusOK, projectEnvironmentEdgePolicyResponse(policy))
+}
+
+// The convergence fence must cover every hostname that serves this policy,
+// not only the platform URL. Otherwise a bound domain could retain cached
+// security headers while the platform URL has already converged.
+func (s *server) projectEnvironmentPolicyHosts(ctx context.Context, appID, environmentID, stableHost string) ([]string, error) {
+	domains, err := s.store.ListDomainsForApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	hosts := []string{stableHost}
+	for _, domain := range domains {
+		if domain.EnvironmentID == environmentID && domain.Verified() {
+			hosts = append(hosts, domain.Domain)
+		}
+	}
+	return hosts, nil
 }
 
 func projectEnvironmentEdgePolicyResponse(policy state.ProjectEnvironmentEdgePolicy) api.ProjectEnvironmentEdgePolicyResponse {

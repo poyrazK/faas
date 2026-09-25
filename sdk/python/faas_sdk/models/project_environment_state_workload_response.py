@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
     from ..models.project_environment_binding_response import ProjectEnvironmentBindingResponse
+    from ..models.project_environment_domain_response import ProjectEnvironmentDomainResponse
     from ..models.project_environment_edge_policy_response import ProjectEnvironmentEdgePolicyResponse
     from ..models.project_environment_release_workload_response import ProjectEnvironmentReleaseWorkloadResponse
     from ..models.project_environment_route_policy_response import ProjectEnvironmentRoutePolicyResponse
@@ -30,6 +31,7 @@ class ProjectEnvironmentStateWorkloadResponse:
     variables: list[ProjectEnvironmentVariableResponse]
     secrets: list[ProjectEnvironmentSecretResponse]
     bindings: list[ProjectEnvironmentBindingResponse]
+    domains: list[ProjectEnvironmentDomainResponse]
     routes: ProjectEnvironmentRoutePolicyResponse
     """Effective declared-route contract and whether it is environment-owned."""
     policies: ProjectEnvironmentEdgePolicyResponse
@@ -60,6 +62,11 @@ class ProjectEnvironmentStateWorkloadResponse:
             bindings_item = bindings_item_data.to_dict()
             bindings.append(bindings_item)
 
+        domains = []
+        for domains_item_data in self.domains:
+            domains_item = domains_item_data.to_dict()
+            domains.append(domains_item)
+
         routes = self.routes.to_dict()
 
         policies = self.policies.to_dict()
@@ -76,6 +83,7 @@ class ProjectEnvironmentStateWorkloadResponse:
                 "variables": variables,
                 "secrets": secrets,
                 "bindings": bindings,
+                "domains": domains,
                 "routes": routes,
                 "policies": policies,
                 "routing_policies": routing_policies,
@@ -87,6 +95,7 @@ class ProjectEnvironmentStateWorkloadResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.project_environment_binding_response import ProjectEnvironmentBindingResponse
+        from ..models.project_environment_domain_response import ProjectEnvironmentDomainResponse
         from ..models.project_environment_edge_policy_response import ProjectEnvironmentEdgePolicyResponse
         from ..models.project_environment_release_workload_response import ProjectEnvironmentReleaseWorkloadResponse
         from ..models.project_environment_route_policy_response import ProjectEnvironmentRoutePolicyResponse
@@ -121,6 +130,13 @@ class ProjectEnvironmentStateWorkloadResponse:
 
             bindings.append(bindings_item)
 
+        domains = []
+        _domains = d.pop("domains")
+        for domains_item_data in _domains:
+            domains_item = ProjectEnvironmentDomainResponse.from_dict(domains_item_data)
+
+            domains.append(domains_item)
+
         routes = ProjectEnvironmentRoutePolicyResponse.from_dict(d.pop("routes"))
 
         policies = ProjectEnvironmentEdgePolicyResponse.from_dict(d.pop("policies"))
@@ -134,6 +150,7 @@ class ProjectEnvironmentStateWorkloadResponse:
             variables=variables,
             secrets=secrets,
             bindings=bindings,
+            domains=domains,
             routes=routes,
             policies=policies,
             routing_policies=routing_policies,

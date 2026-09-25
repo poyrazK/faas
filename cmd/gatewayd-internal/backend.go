@@ -323,6 +323,11 @@ func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, b
 	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 		return gateway.App{}, false, nil
 	}
+	if dom.EnvironmentID != "" {
+		resolved, found, err := r.environmentHost(ctx, dom.EnvironmentID, app.ID)
+		resolved.DynamicRoute = true
+		return resolved, found, err
+	}
 	return r.toApp(ctx, app)
 }
 
@@ -1078,6 +1083,11 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		}
 	case db.NotifyDomainChanged:
 		inv.FlushRoutes()
+		// A hostname may have moved between an app-wide route and an
+		// environment binding. Its compiled policy and cached response must
+		// not survive that ownership change.
+		inv.ResetEdgeRules()
+		inv.InvalidateResponseCacheAll()
 	case db.NotifyDomainVerify:
 		// F4 wildcard rows are minted eagerly after DNS ownership is
 		// confirmed. Keep this optional so existing invalidators and

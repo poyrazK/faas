@@ -6,38 +6,39 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
+from ..models.project_environment_domain_response_ownership import (
+    ProjectEnvironmentDomainResponseOwnership,
+    check_project_environment_domain_response_ownership,
+)
 
-T = TypeVar("T", bound="CreateCustomDomainRequest")
+T = TypeVar("T", bound="ProjectEnvironmentDomainResponse")
 
 
 @_attrs_define
-class CreateCustomDomainRequest:
-    """Bind an exact custom domain to an app, optionally following one of its project environments."""
+class ProjectEnvironmentDomainResponse:
+    """Effective custom hostname and its ownership for one workload."""
 
     domain: str
-    app_id: str
-    environment: str | Unset = UNSET
-    """Optional project environment slug. Wildcard hostnames cannot be environment-bound."""
+    ownership: ProjectEnvironmentDomainResponseOwnership
+    verified: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         domain = self.domain
 
-        app_id = self.app_id
+        ownership: str = self.ownership
 
-        environment = self.environment
+        verified = self.verified
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "domain": domain,
-                "app_id": app_id,
+                "ownership": ownership,
+                "verified": verified,
             }
         )
-        if environment is not UNSET:
-            field_dict["environment"] = environment
 
         return field_dict
 
@@ -46,18 +47,18 @@ class CreateCustomDomainRequest:
         d = dict(src_dict)
         domain = d.pop("domain")
 
-        app_id = d.pop("app_id")
+        ownership = check_project_environment_domain_response_ownership(d.pop("ownership"))
 
-        environment = d.pop("environment", UNSET)
+        verified = d.pop("verified")
 
-        create_custom_domain_request = cls(
+        project_environment_domain_response = cls(
             domain=domain,
-            app_id=app_id,
-            environment=environment,
+            ownership=ownership,
+            verified=verified,
         )
 
-        create_custom_domain_request.additional_properties = d
-        return create_custom_domain_request
+        project_environment_domain_response.additional_properties = d
+        return project_environment_domain_response
 
     @property
     def additional_keys(self) -> list[str]:

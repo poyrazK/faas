@@ -128,6 +128,45 @@ func TestProjectEnvironmentStateAndUnifiedDiff(t *testing.T) {
 	}
 }
 
+func TestProjectEnvironmentDomainBindingAppearsInStateAndDiff(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	environment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateCustomDomainIfUnderQuota(ctx, "shared.example.test", app.ID, "shared", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateCustomDomainIfUnderQuota(ctx, "stage.example.test", app.ID, "stage", 10, 10, environment.ID); err != nil {
+		t.Fatal(err)
+	}
+	production, problem := srv.loadProjectEnvironmentState(ctx, acct, project.Slug, "production")
+	if problem != nil {
+		t.Fatal(problem)
+	}
+	staging, problem := srv.loadProjectEnvironmentState(ctx, acct, project.Slug, "staging")
+	if problem != nil {
+		t.Fatal(problem)
+	}
+	if len(production.Workloads) != 1 || len(production.Workloads[0].Domains) != 1 || production.Workloads[0].Domains[0].Domain != "shared.example.test" {
+		t.Fatalf("production domains = %+v", production.Workloads)
+	}
+	if len(staging.Workloads) != 1 || len(staging.Workloads[0].Domains) != 2 {
+		t.Fatalf("staging domains = %+v", staging.Workloads)
+	}
+	diff, err := buildProjectEnvironmentDiff(production, staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.Workloads) != 1 || len(diff.Workloads[0].Domains) != 1 ||
+		diff.Workloads[0].Domains[0].Domain != "stage.example.test" || diff.Workloads[0].Domains[0].Kind != "added" {
+		t.Fatalf("domain diff = %+v", diff.Workloads)
+	}
+}
+
 func TestProjectEnvironmentSecretVersionDriftAndLegacyUnknown(t *testing.T) {
 	const hash = "1111111111111111"
 	before := api.ProjectEnvironmentSecretResponse{Key: "TOKEN", ValueHash: hash, Version: 3}

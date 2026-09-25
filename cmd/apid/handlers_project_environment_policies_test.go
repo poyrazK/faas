@@ -75,3 +75,32 @@ func TestProjectEnvironmentPoliciesWriteStateAndDiff(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectEnvironmentPolicyHostsIncludeVerifiedBoundDomains(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	environment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateCustomDomainIfUnderQuota(ctx, "shared.example.test", app.ID, "shared", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := store.CreateCustomDomainIfUnderQuota(ctx, "stage.example.test", app.ID, "stage", 10, 10, environment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := srv.projectEnvironmentPolicyHosts(ctx, app.ID, environment.ID, "stable.gregale.dev")
+	if err != nil || len(hosts) != 1 {
+		t.Fatalf("unverified domain entered convergence fence: hosts=%v err=%v", hosts, err)
+	}
+	if err := store.MarkDomainVerified(ctx, bound.Domain); err != nil {
+		t.Fatal(err)
+	}
+	hosts, err = srv.projectEnvironmentPolicyHosts(ctx, app.ID, environment.ID, "stable.gregale.dev")
+	if err != nil || len(hosts) != 2 || hosts[0] != "stable.gregale.dev" || hosts[1] != bound.Domain {
+		t.Fatalf("bound domain missing from convergence fence: hosts=%v err=%v", hosts, err)
+	}
+}

@@ -15,10 +15,22 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestDomainsAddSendsEnvironmentBinding(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"domain":"stage.example.test","app_id":"app-1","environment_id":"env-1","challenge_token":"token","verified":false}`, http.StatusAccepted)
+	if code := cmdDomains([]string{"add", "--domain", "stage.example.test", "--app", "api", "--environment", "staging"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/domains" || !strings.Contains(string(f.sawBody), `"environment":"staging"`) {
+		t.Fatalf("request = %s %s body=%s", f.sawMethod, f.sawPath, f.sawBody)
+	}
+}
 
 func TestDomainsVerify_HappyPath(t *testing.T) {
 	resetJSONOut(t)

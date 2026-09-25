@@ -199,6 +199,63 @@ func TestPgRouter_EnvironmentHostFollowsLiveScopeAndChecksOwnership(t *testing.T
 	}
 }
 
+func TestPgRouter_EnvironmentBoundCustomDomainFollowsLiveRelease(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "environment-domain-route@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "environment-domain-route"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "environment-domain-app", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
+	domain, err := store.CreateCustomDomainIfUnderQuota(ctx, "stage.example.test", app.ID, "token", 10, 10, environment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := pgRouter{store: store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev"}
+	if _, ok, err := router.ResolveHost(ctx, domain.Domain); err != nil || ok {
+		t.Fatalf("unverified domain routed: ok=%v err=%v", ok, err)
+	}
+	if err := store.MarkDomainVerified(ctx, domain.Domain); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, domain.Domain); err != nil || ok {
+		t.Fatalf("bound domain fell back to production: ok=%v err=%v", ok, err)
+	}
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err := router.ResolveHost(ctx, domain.Domain)
+	if err != nil || !ok || resolved.PinnedDeploymentID != first.ID || resolved.PinnedDeploymentScope != "staging" || !resolved.DynamicRoute {
+		t.Fatalf("bound route = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err = router.ResolveHost(ctx, domain.Domain)
+	if err != nil || !ok || resolved.PinnedDeploymentID != second.ID {
+		t.Fatalf("promoted bound route = %+v ok=%v err=%v", resolved, ok, err)
+	}
+}
+
 func TestPgRouter_DeploymentPreviewRejectsInactiveRevision(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "orders-failed", api.PlanPro)
@@ -547,6 +604,9 @@ func TestHandleInvalidation(t *testing.T) {
 	// invalidates only that app's hostname routes, preserving other apps.
 	if f.flushCnt != 1 {
 		t.Errorf("flush count = %d, want 1 (domain only; NotifyAppChanged uses ResetApp)", f.flushCnt)
+	}
+	if f.resetCnt != 1 || f.responseCacheAll != 1 {
+		t.Errorf("domain ownership change left compiled state: edge resets=%d response-cache resets=%d", f.resetCnt, f.responseCacheAll)
 	}
 	if len(f.resetApps) != 1 || f.resetApps[0] != appID {
 		t.Errorf("resetApps = %v, want [%s]", f.resetApps, appID)

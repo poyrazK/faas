@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProjectEnvironmentBindingResponse } from './ProjectEnvironmentBindingResponse.js';
+import type { ProjectEnvironmentDomainResponse } from './ProjectEnvironmentDomainResponse.js';
 import type { ProjectEnvironmentEdgePolicyResponse } from './ProjectEnvironmentEdgePolicyResponse.js';
 import type { ProjectEnvironmentReleaseWorkloadResponse } from './ProjectEnvironmentReleaseWorkloadResponse.js';
 import type { ProjectEnvironmentRoutePolicyResponse } from './ProjectEnvironmentRoutePolicyResponse.js';
@@ -18,6 +19,7 @@ export type ProjectEnvironmentStateWorkloadResponse = {
   variables: Array<ProjectEnvironmentVariableResponse>;
   secrets: Array<ProjectEnvironmentSecretResponse>;
   bindings: Array<ProjectEnvironmentBindingResponse>;
+  domains: Array<ProjectEnvironmentDomainResponse>;
   routes: ProjectEnvironmentRoutePolicyResponse;
   policies: ProjectEnvironmentEdgePolicyResponse;
   routing_policies: ProjectEnvironmentEdgePolicyResponse;

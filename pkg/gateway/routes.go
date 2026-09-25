@@ -12,6 +12,7 @@ import (
 // same app row.
 type RouteTarget struct {
 	AppID                 string
+	DynamicRoute          bool
 	RoutedSurfaceID       string
 	PinnedDeploymentID    string
 	PinnedDeploymentScope string

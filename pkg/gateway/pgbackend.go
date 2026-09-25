@@ -970,6 +970,17 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	// concurrent hits do not serialize behind LRU promotion; route changes
 	// still invalidate the cache through the existing notifier path.
 	if target, ok := b.routes.PeekTarget(host); ok {
+		if target.DynamicRoute {
+			app, found, err := b.router.ResolveHost(ctx, host)
+			if err != nil {
+				return App{}, false // never serve a stale environment binding
+			}
+			if !found {
+				b.routes.Invalidate(host)
+				b.stale.Delete(host)
+			}
+			return app, found
+		}
 		if app, ok := b.getApp(target.AppID); ok {
 			valid, deny := b.cachedPlatformTenantRouteValid(ctx, host, target, &app)
 			if deny {
@@ -998,6 +1009,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	}
 	b.routes.PutTarget(host, RouteTarget{
 		AppID:                 app.ID,
+		DynamicRoute:          app.DynamicRoute,
 		RoutedSurfaceID:       app.RoutedSurfaceID,
 		PinnedDeploymentID:    app.PinnedDeploymentID,
 		PinnedDeploymentScope: app.PinnedDeploymentScope,
@@ -1005,10 +1017,15 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	baseApp := app
 	baseApp.PinnedDeploymentID = ""
 	baseApp.PinnedDeploymentScope = ""
+	baseApp.DynamicRoute = false
 	baseApp.RoutedSurfaceID = ""
 	baseApp.PlatformTenantID = ""
 	b.putApp(baseApp)
-	b.stale.Put(host, app)
+	if app.DynamicRoute {
+		b.stale.Delete(host)
+	} else {
+		b.stale.Put(host, app)
+	}
 	return app, true
 }
 

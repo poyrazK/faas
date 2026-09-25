@@ -12,7 +12,7 @@ import (
 )
 
 // updateProjectEnvironmentRoutingPolicies replaces redirect/rewrite rules on
-// the stable environment URL. It leaves headers/CORS and ordinary hosts alone.
+// the stable environment URL and bound custom domains.
 func (s *server) updateProjectEnvironmentRoutingPolicies(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, environment, _, problem := s.loadProjectEnvironmentConfig(r.Context(), acct, r.PathValue("slug"), r.PathValue("environment"))
 	if problem != nil {
@@ -69,7 +69,12 @@ func (s *server) updateProjectEnvironmentRoutingPolicies(w http.ResponseWriter, 
 			Priority: priority, Enabled: enabled, Action: actionFromBody(check.Kind, check.Action),
 		})
 	}
-	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_routing_policy_updated", host)
+	hosts, err := s.projectEnvironmentPolicyHosts(r.Context(), app.ID, environment.ID, host)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not inspect environment-bound domains; no routing policy was changed"))
+		return
+	}
+	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_routing_policy_updated", hosts...)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-policy fleet convergence is unavailable; no routing policy was changed"))
 		return

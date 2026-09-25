@@ -88,7 +88,8 @@ def sync_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCustomDomainRequest): Bind a custom domain to an app.
+        body (CreateCustomDomainRequest): Bind an exact custom domain to an app, optionally
+            following one of its project environments.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,7 +121,8 @@ def sync(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCustomDomainRequest): Bind a custom domain to an app.
+        body (CreateCustomDomainRequest): Bind an exact custom domain to an app, optionally
+            following one of its project environments.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,7 +149,8 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCustomDomainRequest): Bind a custom domain to an app.
+        body (CreateCustomDomainRequest): Bind an exact custom domain to an app, optionally
+            following one of its project environments.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,7 +180,8 @@ async def asyncio(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCustomDomainRequest): Bind a custom domain to an app.
+        body (CreateCustomDomainRequest): Bind an exact custom domain to an app, optionally
+            following one of its project environments.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

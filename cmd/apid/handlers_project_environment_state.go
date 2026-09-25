@@ -117,10 +117,28 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment routing policies")
 	}
+	domains, err := s.store.ListDomainsForApp(ctx, app.ID)
+	if err != nil {
+		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment domains")
+	}
+	effectiveDomains := make([]api.ProjectEnvironmentDomainResponse, 0, len(domains))
+	for _, domain := range domains {
+		if domain.EnvironmentID != "" && domain.EnvironmentID != environment.ID {
+			continue
+		}
+		ownership := "application"
+		if domain.EnvironmentID != "" {
+			ownership = "environment"
+		}
+		effectiveDomains = append(effectiveDomains, api.ProjectEnvironmentDomainResponse{
+			Domain: domain.Domain, Ownership: ownership, Verified: domain.Verified(),
+		})
+	}
 	return api.ProjectEnvironmentStateWorkloadResponse{
 		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Release: release,
 		Variables: projectEnvironmentVariables(variables), Secrets: projectEnvironmentSecrets(secrets),
 		Bindings:        projectEnvironmentBindings(secrets),
+		Domains:         effectiveDomains,
 		Routes:          routes,
 		Policies:        policies,
 		RoutingPolicies: routingPolicies,
@@ -232,9 +250,8 @@ func projectEnvironmentBindings(rows []state.AppSecret) []api.ProjectEnvironment
 }
 
 func projectEnvironmentSharedResources(workloads []api.ProjectEnvironmentStateWorkloadResponse) []api.ProjectEnvironmentSharedResourceResponse {
-	const note = "shared by all environments until this resource gains environment ownership"
 	out := []api.ProjectEnvironmentSharedResourceResponse{
-		{Kind: "domains", Ownership: "application", Note: note},
+		{Kind: "domains", Ownership: "mixed", Note: "app-wide domains are shared; environment-bound domains are unique and not cloned"},
 		{Kind: "policies", Ownership: "application", Note: "other edge-rule kinds remain application-owned; route substitution is disabled on stable environment URLs"},
 	}
 	for _, workload := range workloads {
@@ -284,10 +301,40 @@ func projectEnvironmentWorkloadDiffs(before, after []api.ProjectEnvironmentState
 			Variables:       projectEnvironmentVariableDiffs(prior.Variables, next.Variables),
 			Secrets:         projectEnvironmentSecretDiffs(prior.Secrets, next.Secrets),
 			Bindings:        projectEnvironmentBindingDiffs(prior.Bindings, next.Bindings),
+			Domains:         projectEnvironmentDomainDiffs(prior.Domains, next.Domains),
 			Routes:          projectEnvironmentRoutePolicyDiff(prior.Routes, next.Routes),
 			Policies:        projectEnvironmentEdgePolicyDiff(prior.Policies, next.Policies),
 			RoutingPolicies: projectEnvironmentEdgePolicyDiff(prior.RoutingPolicies, next.RoutingPolicies),
 		})
+	}
+	return out
+}
+
+func projectEnvironmentDomainDiffs(before, after []api.ProjectEnvironmentDomainResponse) []api.ProjectEnvironmentDomainChangeResponse {
+	old := make(map[string]api.ProjectEnvironmentDomainResponse, len(before))
+	next := make(map[string]api.ProjectEnvironmentDomainResponse, len(after))
+	keys := map[string]struct{}{}
+	for _, domain := range before {
+		old[domain.Domain], keys[domain.Domain] = domain, struct{}{}
+	}
+	for _, domain := range after {
+		next[domain.Domain], keys[domain.Domain] = domain, struct{}{}
+	}
+	out := make([]api.ProjectEnvironmentDomainChangeResponse, 0, len(keys))
+	for _, name := range sortedStringSet(keys) {
+		prior, oldOK := old[name]
+		current, newOK := next[name]
+		if oldOK && newOK && prior == current {
+			continue
+		}
+		change := api.ProjectEnvironmentDomainChangeResponse{Domain: name, Kind: diffKind(oldOK, newOK)}
+		if oldOK {
+			change.Before = &prior
+		}
+		if newOK {
+			change.After = &current
+		}
+		out = append(out, change)
 	}
 	return out
 }
