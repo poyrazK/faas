@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -174,4 +175,133 @@ func listDir(t *testing.T, dir string) []string {
 		names = append(names, e.Name())
 	}
 	return names
+}
+
+// The builder drive is written by untrusted build code; vmmd exports it as
+// root. build-done.json must be a bounded regular file on the drive, never a
+// link to a host file (or an endless device such as /dev/zero, which made
+// os.ReadFile grow until vmmd was OOM-killed).
+func TestReadBuildDoneRefusesLinksAndOversize(t *testing.T) {
+	cases := []struct {
+		name  string
+		plant func(t *testing.T, mountRoot, hostFile string)
+		want  string // "" = must not be read
+	}{
+		{
+			name: "regular manifest",
+			plant: func(t *testing.T, mountRoot, _ string) {
+				p := filepath.Join(mountRoot, buildDoneRel)
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte(`{"exit_code":0}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: `{"exit_code":0}`,
+		},
+		{
+			name: "symlink to a host file",
+			plant: func(t *testing.T, mountRoot, hostFile string) {
+				mustSymlink(t, hostFile, filepath.Join(mountRoot, buildDoneRel))
+			},
+		},
+		{
+			name: "symlink to an endless device",
+			plant: func(t *testing.T, mountRoot, _ string) {
+				mustSymlink(t, "/dev/zero", filepath.Join(mountRoot, buildDoneRel))
+			},
+		},
+		{
+			name: "parent directory links to the host",
+			plant: func(t *testing.T, mountRoot, hostFile string) {
+				hostDir := filepath.Dir(hostFile)
+				if err := os.WriteFile(filepath.Join(hostDir, "build-done.json"), []byte(hostSentinel), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				mustSymlink(t, hostDir, filepath.Join(mountRoot, "upper", "etc", "faas"))
+			},
+		},
+		{
+			name: "oversize manifest",
+			plant: func(t *testing.T, mountRoot, _ string) {
+				p := filepath.Join(mountRoot, buildDoneRel)
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, make([]byte, maxBuildDoneBytes+1), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mountRoot := t.TempDir()
+			_, hostFile := plantHostFile(t)
+			tc.plant(t, mountRoot, hostFile)
+			data, ok := readBuildDone(mountRoot)
+			if tc.want == "" {
+				if ok {
+					t.Fatalf("read %d bytes that must not be read: %.40q", len(data), data)
+				}
+				return
+			}
+			if !ok || string(data) != tc.want {
+				t.Fatalf("readBuildDone = %q ok=%v, want %q", data, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildOutDirRefusesSymlinkedComponents(t *testing.T) {
+	mountRoot := t.TempDir()
+	hostDir, _ := plantHostFile(t)
+	if err := os.MkdirAll(filepath.Join(hostDir, "out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, hostDir, filepath.Join(mountRoot, "upper", "build"))
+	if dir, ok := buildOutDir(mountRoot); ok {
+		t.Fatalf("buildOutDir followed a symlinked component to %s", dir)
+	}
+
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(real, "upper", "build", "out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if dir, ok := buildOutDir(real); !ok || dir != filepath.Join(real, "upper", "build", "out") {
+		t.Fatalf("buildOutDir(real) = %q ok=%v", dir, ok)
+	}
+}
+
+// copyTree exports builder output as root. Only directories and regular
+// files are copied: a recreated symlink hands builderd a path into the host
+// (image.tar -> another build's export), and opening a FIFO or device node
+// blocks or reads the host device.
+func TestCopyTreeDropsLinksAndSpecialFiles(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	hostDir, hostFile := plantHostFile(t)
+	if err := os.MkdirAll(filepath.Join(src, "cache", "blobs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "cache", "blobs", "layer"), []byte("blob"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, hostFile, filepath.Join(src, "image.tar"))
+	mustSymlink(t, hostDir, filepath.Join(src, "cache", "host"))
+	if err := syscall.Mkfifo(filepath.Join(src, "fifo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyTree(src, dst, 1<<20); err != nil {
+		t.Fatalf("copyTree: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "cache", "blobs", "layer")); err != nil || string(got) != "blob" {
+		t.Fatalf("regular file not exported: %q err=%v", got, err)
+	}
+	for _, rel := range []string{"image.tar", "cache/host", "fifo"} {
+		if _, err := os.Lstat(filepath.Join(dst, rel)); !os.IsNotExist(err) {
+			t.Errorf("%s exported (err=%v); want it dropped", rel, err)
+		}
+	}
 }

@@ -3497,26 +3497,30 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	// the host block in rw journal replay while the builder queue is waiting.
 	// A plain read-only mount remains a compatibility fallback for images whose
 	// filesystem features reject noload.
-	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload", drive1, mp).CombinedOutput(); mountErr != nil {
-		if roOut, roErr := exec.Command("mount", "-o", "loop,ro", drive1, mp).CombinedOutput(); roErr != nil {
+	//
+	// The drive was written by untrusted build code running as root in the
+	// guest, so the mount is also nodev,nosuid,noexec: a device node the
+	// build created (the host's NVMe, /dev/zero) must not become a live
+	// device when vmmd, as root, reads the export.
+	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); mountErr != nil {
+		if roOut, roErr := exec.Command("mount", "-o", "loop,ro,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); roErr != nil {
 			return fmt.Errorf("mount loop: ro,noload=%w (%s); ro=%w (%s)", mountErr, bytes.TrimSpace(out), roErr, bytes.TrimSpace(roOut))
 		}
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
 	// build-done.json is the canonical manifest builderd reads.
-	srcDone := filepath.Join(mp, "upper", "etc", "faas", "build-done.json")
-	if data, err := os.ReadFile(srcDone); err == nil {
+	if data, ok := readBuildDone(mp); ok {
 		if err := os.WriteFile(filepath.Join(exportDir, "build-done.json"), data, 0o644); err != nil {
 			return fmt.Errorf("write build-done.json: %w", err)
 		}
-	} // else: VM died before guest-init wrote it — caller falls back to exit-code class.
+	} // else: VM died before guest-init wrote it (or it is not a bounded
+	// regular file) — caller falls back to exit-code class.
 
 	// /build/out/ holds the produced OCI tarball. Walk + copy with the size
 	// cap enforced. A build that overruns the cap is logged as infra failure
 	// via the caller's classification (no error returned — best-effort).
-	srcOut := filepath.Join(mp, "upper", "build", "out")
-	if _, err := os.Stat(srcOut); err == nil {
+	if srcOut, ok := buildOutDir(mp); ok {
 		dstOut := filepath.Join(exportDir, "build", "out")
 		if err := os.MkdirAll(dstOut, 0o755); err != nil {
 			return fmt.Errorf("mkdir out: %w", err)
@@ -3524,6 +3528,55 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 		return copyTree(srcOut, dstOut, v.exportMax())
 	}
 	return nil
+}
+
+// maxBuildDoneBytes bounds the guest-written build-done.json manifest (exit
+// code, failure class, and a log tail).
+const maxBuildDoneBytes = 1 << 20
+
+// buildDoneRel is build-done.json's path on the mounted builder drive.
+const buildDoneRel = "upper/etc/faas/build-done.json"
+
+// readBuildDone reads the guest-written build manifest from the mounted
+// builder drive. Untrusted build code wrote the drive and vmmd reads it as
+// root, so the path resolves through os.Root and must name a bounded regular
+// file: a link to a host file, or to an endless device such as /dev/zero,
+// is never read.
+func readBuildDone(mountRoot string) ([]byte, bool) {
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat(buildDoneRel)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxBuildDoneBytes {
+		return nil, false
+	}
+	f, err := root.Open(buildDoneRel)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxBuildDoneBytes+1))
+	if err != nil || len(data) > maxBuildDoneBytes {
+		return nil, false
+	}
+	return data, true
+}
+
+// buildOutDir returns the mounted drive's upper/build/out when every path
+// component is a real directory. A symlinked component would start the
+// export walk inside a host directory.
+func buildOutDir(mountRoot string) (string, bool) {
+	dir := mountRoot
+	for _, part := range []string{"upper", "build", "out"} {
+		dir = filepath.Join(dir, part)
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() {
+			return "", false
+		}
+	}
+	return dir, true
 }
 
 func handoffBuildExportOwnership(exportDir string) error {
@@ -4194,12 +4247,13 @@ func copyTree(src, dst string, maxBytes int64) error {
 			}
 			return os.Chmod(target, info.Mode().Perm())
 		}
-		if d.Type()&os.ModeSymlink != 0 {
-			linkName, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(linkName, target)
+		if !d.Type().IsRegular() {
+			// Builder output is an OCI tarball plus BuildKit's local
+			// cache — directories and regular files only. Symlinks, device
+			// nodes, FIFOs and sockets the untrusted build created are
+			// dropped: recreating a link hands builderd a path into the
+			// host, and opening a device node reads it as root.
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
