@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"math"
 	"net/url"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ type OutboundIntegrationOffer struct {
 	CredentialSource     string
 	CredentialConfigured bool
 	OwnerKind            string
+	RequestPolicy        api.OutboundRequestPolicy
 }
 
 // OutboundIntegrationUsage is the durable UTC-day counter for one managed
@@ -58,6 +60,7 @@ type OutboundBindingStore interface {
 	CreateOutboundIntegration(context.Context, OutboundIntegrationOffer) (OutboundIntegrationOffer, error)
 	DeleteOutboundIntegration(context.Context, string, string) error
 	SetOutboundDailyRequestLimit(context.Context, string, string, *int64) error
+	SetOutboundRequestPolicy(context.Context, string, string, api.OutboundRequestPolicy) error
 	GetOutboundIntegrationUsage(context.Context, string, string) (OutboundIntegrationUsage, error)
 	ListOutboundAppBindings(context.Context, string, string) ([]OutboundAppBinding, error)
 	BindOutboundIntegration(context.Context, string, string, string) (OutboundAppBinding, error)
@@ -79,6 +82,11 @@ func validateCustomerOutboundIntegration(offer OutboundIntegrationOffer) error {
 		return ErrInvalidArgument
 	}
 	if offer.DailyRequestLimit != nil && (*offer.DailyRequestLimit < 1 || *offer.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return ErrInvalidArgument
+	}
+	policy := offer.RequestPolicy
+	if policy.RatePerSecond <= 0 || math.IsNaN(policy.RatePerSecond) || math.IsInf(policy.RatePerSecond, 0) ||
+		policy.Burst < 1 || policy.MaxInFlight < 1 || policy.RequestTimeoutMS < 1 {
 		return ErrInvalidArgument
 	}
 	if len(offer.Name) < 1 || len(offer.Name) > 63 || !isOutboundIntegrationName(offer.Name) {

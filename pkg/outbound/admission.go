@@ -170,10 +170,11 @@ type AdmissionSpec struct {
 // Decision describes an admission or a deterministic rejection. A granted
 // decision always has a lease ID which must be released exactly once.
 type Decision struct {
-	Granted    bool
-	LeaseID    string
-	RetryAfter time.Duration
-	Reason     string
+	Granted        bool
+	LeaseID        string
+	RetryAfter     time.Duration
+	Reason         string
+	RequestTimeout time.Duration
 }
 
 // Backend is the shared state boundary. Implementations must fail closed on

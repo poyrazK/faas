@@ -312,6 +312,13 @@ type Limits struct {
 	// request limit on any one managed outbound integration. It is a policy
 	// ceiling, not an included usage allowance; an omitted limit remains uncapped.
 	OutboundRequestsPerDayMax int64
+	// Outbound request policy ceilings bound customer-selected per-integration
+	// rate, burst, concurrency, and timeout. These are configurable safeguards,
+	// not included outbound request allowances; see ADR-258.
+	OutboundRatePerSecondMax    float64
+	OutboundBurstMax            int
+	OutboundMaxInFlightMax      int
+	OutboundRequestTimeoutMSMax int
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
@@ -1749,10 +1756,11 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanFree,
 		DeployedApps:              1,
 		OutboundRequestsPerDayMax: 100_000,
-		DeploysPerHour:            10,
-		DeveloperApps:             1,
-		MaxConcurrency:            1,
-		RAMMB:                     128,
+		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000,
+		DeploysPerHour: 10,
+		DeveloperApps:  1,
+		MaxConcurrency: 1,
+		RAMMB:          128,
 		// ConcurrencyPerVMBound (issue #559): Free allows four
 		// concurrent requests per VM. This keeps the demo tier useful
 		// for small bursts while MaxConcurrency (= 1) still limits a
@@ -2130,17 +2138,18 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanHobby,
 		DeployedApps:              5,
 		OutboundRequestsPerDayMax: 1_000_000,
-		DeploysPerHour:            50,
-		DeveloperApps:             2,
-		MaxConcurrency:            2,
-		RAMMB:                     256,
-		AppLayerMaxMB:             512,
-		SourceTarballMaxMB:        100,
-		VCPU:                      2,
-		IdleTimeoutS:              60,
-		CertExpiryWarningDays:     30,
-		IncludedGBHours:           50,
-		PriceMillicents:           900_000, // €9.00
+		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000,
+		DeploysPerHour:        50,
+		DeveloperApps:         2,
+		MaxConcurrency:        2,
+		RAMMB:                 256,
+		AppLayerMaxMB:         512,
+		SourceTarballMaxMB:    100,
+		VCPU:                  2,
+		IdleTimeoutS:          60,
+		CertExpiryWarningDays: 30,
+		IncludedGBHours:       50,
+		PriceMillicents:       900_000, // €9.00
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
 		ConcurrencyPerVMBound: 5,
@@ -2528,17 +2537,18 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanPro,
 		DeployedApps:              25,
 		OutboundRequestsPerDayMax: 10_000_000,
-		DeploysPerHour:            250,
-		DeveloperApps:             5,
-		MaxConcurrency:            5,
-		RAMMB:                     512,
-		AppLayerMaxMB:             1024,
-		SourceTarballMaxMB:        250,
-		VCPU:                      2,
-		IdleTimeoutS:              300,
-		CertExpiryWarningDays:     30,
-		IncludedGBHours:           250,
-		PriceMillicents:           2_900_000, // €29.00
+		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000,
+		DeploysPerHour:        250,
+		DeveloperApps:         5,
+		MaxConcurrency:        5,
+		RAMMB:                 512,
+		AppLayerMaxMB:         1024,
+		SourceTarballMaxMB:    250,
+		VCPU:                  2,
+		IdleTimeoutS:          300,
+		CertExpiryWarningDays: 30,
+		IncludedGBHours:       250,
+		PriceMillicents:       2_900_000, // €29.00
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
 		// typical SaaS-tier workload envelope (one Node/Python
@@ -2888,17 +2898,18 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanScale,
 		DeployedApps:              100,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
-		DeploysPerHour:            1000,
-		DeveloperApps:             10,
-		MaxConcurrency:            20,
-		RAMMB:                     1024,
-		AppLayerMaxMB:             2048,
-		SourceTarballMaxMB:        250,
-		VCPU:                      4,
-		IdleTimeoutS:              600,
-		CertExpiryWarningDays:     30,
-		IncludedGBHours:           1500,
-		PriceMillicents:           9_900_000, // €99.00
+		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000,
+		DeploysPerHour:        1000,
+		DeveloperApps:         10,
+		MaxConcurrency:        20,
+		RAMMB:                 1024,
+		AppLayerMaxMB:         2048,
+		SourceTarballMaxMB:    250,
+		VCPU:                  4,
+		IdleTimeoutS:          600,
+		CertExpiryWarningDays: 30,
+		IncludedGBHours:       1500,
+		PriceMillicents:       9_900_000, // €99.00
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
 		// body cites this number directly). 80 concurrent requests

@@ -82,6 +82,15 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		}
 		dailyRequestLimit = &dailyRequestLimitValue
 	}
+	if ownerKind == IntegrationOwnerCustomer {
+		policy, ok := api.EffectiveOutboundRequestPolicyForPlan(api.Plan(plan), api.OutboundRequestPolicy{
+			RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight, RequestTimeoutMS: timeoutMS,
+		})
+		if !ok {
+			return Integration{}, fmt.Errorf("%w: customer outbound request policy is invalid", ErrInvalidIntegration)
+		}
+		rate, burst, maxInFlight, timeoutMS = policy.RatePerSecond, policy.Burst, policy.MaxInFlight, policy.RequestTimeoutMS
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true
 		  FROM outbound_integration_apps attachment

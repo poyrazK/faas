@@ -150,7 +150,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 		// EgressAllowlistAllowed/MaxSize default to false/0 (Go zero), so
 		// Free/Hobby rows below omit them intentionally — mirrors the
 		// MinInstancesAllowed row shape.
-		PlanFree: {Plan: PlanFree, DeployedApps: 1, OutboundRequestsPerDayMax: 100_000, DeploysPerHour: 10, DeveloperApps: 1, MaxConcurrency: 1, RAMMB: 128, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 5, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
+		PlanFree: {Plan: PlanFree, DeployedApps: 1, OutboundRequestsPerDayMax: 100_000, OutboundRatePerSecondMax: 10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, DeploysPerHour: 10, DeveloperApps: 1, MaxConcurrency: 1, RAMMB: 128, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 5, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
 			// Issue #559: Free = 4 — enough listener concurrency for
 			// small demo bursts while MaxConcurrency remains one VM.
 			ConcurrencyPerVMBound: 4,
@@ -304,7 +304,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-124: Free keeps cancel + clear-obsolete; reorder
 			// stays plan-gated (Free=false).
 			QueueControlsAllowed: false, MaxQueuedDeploysPerApp: 2, MaxCancelOpsPerHour: 0, MaxReorderOpsPerHour: 0},
-		PlanHobby: {Plan: PlanHobby, DeployedApps: 5, OutboundRequestsPerDayMax: 1_000_000, DeploysPerHour: 50, DeveloperApps: 2, MaxConcurrency: 2, RAMMB: 256, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 50, PriceMillicents: 900_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
+		PlanHobby: {Plan: PlanHobby, DeployedApps: 5, OutboundRequestsPerDayMax: 1_000_000, OutboundRatePerSecondMax: 20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, DeploysPerHour: 50, DeveloperApps: 2, MaxConcurrency: 2, RAMMB: 256, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 50, PriceMillicents: 900_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
 			// Issue #559: Hobby = 5 (smallest paid tier — one Node
 			// event loop comfortably handles 5 concurrent requests).
 			ConcurrencyPerVMBound: 5,
@@ -468,7 +468,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-124 queue controls — Hobby unlocks the gated surface.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 5, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
-		PlanPro: {Plan: PlanPro, DeployedApps: 25, OutboundRequestsPerDayMax: 10_000_000, DeploysPerHour: 250, DeveloperApps: 5, MaxConcurrency: 5, RAMMB: 512, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 250, PriceMillicents: 2_900_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
+		PlanPro: {Plan: PlanPro, DeployedApps: 25, OutboundRequestsPerDayMax: 10_000_000, OutboundRatePerSecondMax: 100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, DeploysPerHour: 250, DeveloperApps: 5, MaxConcurrency: 5, RAMMB: 512, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 250, PriceMillicents: 2_900_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
 			// Issue #559: Pro = 25 (typical SaaS-tier workload
 			// envelope — one Node/Python service handling fan-out).
 			ConcurrencyPerVMBound: 25,
@@ -625,7 +625,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 10, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
 		// DeployedApps).
-		PlanScale: {Plan: PlanScale, DeployedApps: 100, OutboundRequestsPerDayMax: 100_000_000, DeploysPerHour: 1000, DeveloperApps: 10, MaxConcurrency: 20, RAMMB: 1024, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 1500, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
+		PlanScale: {Plan: PlanScale, DeployedApps: 100, OutboundRequestsPerDayMax: 100_000_000, OutboundRatePerSecondMax: 500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, DeploysPerHour: 1000, DeveloperApps: 10, MaxConcurrency: 20, RAMMB: 1024, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 1500, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
 			// Issue #559: Scale = 80 (matches Cloud Run's
 			// `80 × vCPU` default per the issue body).
 			ConcurrencyPerVMBound: 80,
