@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -18,6 +19,7 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 		RolloutState:       "rolling_out",
 		RolloutStartedAt:   &oldStarted,
 		RolloutCompletedAt: &oldStarted,
+		OverrideReadinessProbe: json.RawMessage(`{"path":"/readyz"}`),
 	}
 
 	got, err := retryDeploymentInput(src, now)
@@ -32,5 +34,8 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	}
 	if got.RolloutCompletedAt != nil || got.RolloutAbortedAt != nil || got.RolloutAbortedReason != "" {
 		t.Fatalf("terminal rollout state carried into retry: %+v", got)
+	}
+	if string(got.OverrideReadinessProbe) != `{"path":"/readyz"}` {
+		t.Fatalf("OverrideReadinessProbe = %s, want the source readiness policy", got.OverrideReadinessProbe)
 	}
 }
