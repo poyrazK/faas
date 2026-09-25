@@ -24,6 +24,8 @@ func TestManagedAuthorizationOverridesGuestOnlyForConfiguredIntegration(t *testi
 		t.Fatal(err)
 	}
 	managed.ProviderAuthMode = ProviderAuthManaged
+	managed.AllowedMethods = []string{http.MethodGet}
+	managed.AllowedPathPrefixes = []string{"/v1/items"}
 	legacy, err := NewIntegration("legacy", provider.URL, "legacy-token", []string{"app-1"}, 100, 3, 3, time.Second)
 	if err != nil {
 		t.Fatal(err)

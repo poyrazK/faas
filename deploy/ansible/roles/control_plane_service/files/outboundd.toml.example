@@ -35,6 +35,10 @@ metrics_addr = "127.0.0.1:9108"
 # provider_authorization_env to keep one provider Authorization value in
 # outboundd instead; the gateway replaces any app-supplied Authorization and
 # requires a signed workload identity token rather than the gateway token.
+# Managed integrations must also declare allowed_methods and
+# allowed_path_prefixes. Prefixes are segment-aware and apply to the app's
+# path after /i/<uuid>, before any fixed origin path is prepended. An explicit
+# "/" prefix permits every path; use narrow routes and provider-side scopes.
 # token_env remains required for the existing schema, but do not expose its
 # value to an app using a managed integration.
 #
@@ -45,6 +49,8 @@ metrics_addr = "127.0.0.1:9108"
 # origin = "https://api.example.com"
 # token_env = "FAAS_OUTBOUND_PAYMENTS_TOKEN"
 # provider_authorization_env = "FAAS_OUTBOUND_PAYMENTS_PROVIDER_AUTH"
+# allowed_methods = ["GET", "POST"]
+# allowed_path_prefixes = ["/v1/widgets", "/v1/customers"]
 # app_ids = ["00000000-0000-0000-0000-000000000020"]
 # rate_per_second = 50
 # burst = 50

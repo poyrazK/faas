@@ -64,6 +64,8 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 		t.Fatalf("new integration: %v", err)
 	}
 	integration.ProviderAuthMode = outbound.ProviderAuthManaged
+	integration.AllowedMethods = []string{http.MethodGet}
+	integration.AllowedPathPrefixes = []string{"/v1/items"}
 	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{
 		AccountID: uuid.MustParse(account.ID), Name: "payments", Policy: integration,
 	}); err != nil {

@@ -74,10 +74,11 @@ func TestPoliciesLoadOptionalProviderAuthorizationFromPrivateEnvironment(t *test
 			Origin:                   "https://api.example.com",
 			TokenEnv:                 "GATEWAY_TOKEN",
 			ProviderAuthorizationEnv: "PROVIDER_AUTHORIZATION",
-			AppIDs:                   []string{"00000000-0000-0000-0000-000000000020"},
-			RatePerSecond:            50,
-			Burst:                    50,
-			MaxInFlight:              20,
+			AllowedMethods:           []string{"GET"}, AllowedPathPrefixes: []string{"/v1/widgets"},
+			AppIDs:        []string{"00000000-0000-0000-0000-000000000020"},
+			RatePerSecond: 50,
+			Burst:         50,
+			MaxInFlight:   20,
 		},
 	}}
 	lookup := func(name string) string {
@@ -103,6 +104,12 @@ func TestPoliciesLoadOptionalProviderAuthorizationFromPrivateEnvironment(t *test
 	if items[0].Record.Policy.ProviderAuthMode != "managed" {
 		t.Fatal("managed authentication mode was not set")
 	}
+	withoutRoutes := cfg.Integrations["payments"]
+	withoutRoutes.AllowedPathPrefixes = nil
+	cfg.Integrations["payments"] = withoutRoutes
+	if _, err := cfg.Policies(lookup); err == nil {
+		t.Fatal("managed credential without explicit route policy was accepted")
+	}
 
 	cfg.Integrations["payments"] = IntegrationConfig{
 		ID:                       "00000000-0000-0000-0000-000000000001",
@@ -110,10 +117,11 @@ func TestPoliciesLoadOptionalProviderAuthorizationFromPrivateEnvironment(t *test
 		Origin:                   "https://api.example.com",
 		TokenEnv:                 "GATEWAY_TOKEN",
 		ProviderAuthorizationEnv: "MISSING_PROVIDER_AUTHORIZATION",
-		AppIDs:                   []string{"00000000-0000-0000-0000-000000000020"},
-		RatePerSecond:            50,
-		Burst:                    50,
-		MaxInFlight:              20,
+		AllowedMethods:           []string{"GET"}, AllowedPathPrefixes: []string{"/v1/widgets"},
+		AppIDs:        []string{"00000000-0000-0000-0000-000000000020"},
+		RatePerSecond: 50,
+		Burst:         50,
+		MaxInFlight:   20,
 	}
 	if _, err := cfg.Policies(lookup); err == nil {
 		t.Fatal("missing provider credential was accepted")
@@ -126,8 +134,9 @@ func TestManagedIntegrationRequiresLocalWorkloadIdentityJWKS(t *testing.T) {
 			ID: "00000000-0000-0000-0000-000000000001", AccountID: "00000000-0000-0000-0000-000000000010",
 			Origin: "https://api.example.com", TokenEnv: "GATEWAY_TOKEN",
 			ProviderAuthorizationEnv: "PROVIDER_AUTHORIZATION",
-			AppIDs:                   []string{"00000000-0000-0000-0000-000000000020"},
-			RatePerSecond:            50, Burst: 50, MaxInFlight: 20,
+			AllowedMethods:           []string{"GET"}, AllowedPathPrefixes: []string{"/v1/widgets"},
+			AppIDs:        []string{"00000000-0000-0000-0000-000000000020"},
+			RatePerSecond: 50, Burst: 50, MaxInFlight: 20,
 		},
 	}}
 	items, err := cfg.Policies(func(name string) string {

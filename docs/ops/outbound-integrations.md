@@ -44,6 +44,27 @@ restarting `outboundd`. The configured gateway token is still required for
 the existing database schema but is **not** given to apps or accepted as
 authentication for managed integrations.
 
+For every managed integration, set `allowed_methods` (uppercase `GET`, `HEAD`,
+`POST`, `PUT`, `PATCH`, or `DELETE`) and `allowed_path_prefixes`. A prefix
+matches a whole path segment: `/v1/customers` allows `/v1/customers` and
+`/v1/customers/cus_123`, not `/v1/customers-delete`. These permissions apply
+to the path following `/i/<integration-id>`; a fixed origin path is prepended
+later. Denied requests receive `403 outbound_route_not_allowed` before
+admission or provider contact. Managed requests with percent-encoded paths,
+dot segments, repeated slashes, backslashes, semicolons, common method-override
+headers, or a `_method` query parameter are rejected to avoid obvious bypasses.
+An explicit `/` prefix allows
+all canonical paths, but should be used only with tightly scoped provider
+credentials. This is an HTTP route guard, not a substitute for provider-side
+authorization: query parameters and request bodies can still change a
+provider operation.
+
+After applying the route-policy migration, existing managed integration rows
+with empty permissions fail closed until `outboundd` provisions explicit rules
+from its config. Configure rules before restarting the daemon. Application-
+owned integrations keep their existing behavior and do not accept these
+managed-only route fields.
+
 Managed integrations require a vmmd-signed workload identity assertion. Copy
 the public JWKS published by the configured vmmd signer to a local file readable
 by `outboundd`, then configure `workload_identity_jwks_path` and the exact
@@ -55,9 +76,10 @@ older gateway binaries before exposing a managed integration: they may still
 accept the legacy shared token.
 
 This is an operator-configured primitive. A bound app can use the provider
-credential through the gateway, but the binding does not yet restrict provider
-paths or methods, and an external provider could echo a credential in its own
-response. Scope provider keys accordingly. See [ADR-239](../adr/239-platform-held-outbound-provider-authorization.md).
+credential through the gateway within its configured HTTP routes, but an
+external provider could echo a credential in its own response. Scope provider
+keys accordingly. See [ADR-239](../adr/239-platform-held-outbound-provider-authorization.md)
+and [ADR-241](../adr/241-managed-outbound-route-policy.md).
 
 An application calls the gateway explicitly. For a managed integration, fetch
 an assertion from the guest-local identity endpoint using the integration's

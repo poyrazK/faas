@@ -31,15 +31,17 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	}
 	var origin string
 	var providerAuthMode string
+	var allowedMethods, allowedPathPrefixes []string
 	var tokenHash []byte
 	var rate float64
 	var burst, maxInFlight, timeoutMS int
 	var enabled bool
 	err = r.pool.QueryRow(ctx, `
 		SELECT origin, token_hash, rate_per_second, burst, max_in_flight,
-		       request_timeout_ms, enabled, provider_auth_mode
+		       request_timeout_ms, enabled, provider_auth_mode,
+		       allowed_methods, allowed_path_prefixes
 		FROM outbound_integrations WHERE id = $1`, integrationID).
-		Scan(&origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode)
+		Scan(&origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &allowedMethods, &allowedPathPrefixes)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -77,7 +79,8 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	i := Integration{ID: id, Origin: u, TokenHash: hash, AppIDs: apps,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
 		RequestTimeout:   time.Duration(timeoutMS) * time.Millisecond,
-		ProviderAuthMode: providerAuthMode, Enabled: true}
+		ProviderAuthMode: providerAuthMode, AllowedMethods: allowedMethods,
+		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
 	}

@@ -33,16 +33,18 @@ const (
 // Integration is the immutable policy used for one provider. TokenHash is a
 // SHA-256 digest; the raw bearer token is intentionally never stored or logged.
 type Integration struct {
-	ID               string
-	Origin           *url.URL
-	TokenHash        [32]byte
-	AppIDs           map[string]struct{}
-	RatePerSecond    float64
-	Burst            int
-	MaxInFlight      int
-	RequestTimeout   time.Duration
-	ProviderAuthMode string
-	Enabled          bool
+	ID                  string
+	Origin              *url.URL
+	TokenHash           [32]byte
+	AppIDs              map[string]struct{}
+	RatePerSecond       float64
+	Burst               int
+	MaxInFlight         int
+	RequestTimeout      time.Duration
+	ProviderAuthMode    string
+	AllowedMethods      []string
+	AllowedPathPrefixes []string
+	Enabled             bool
 }
 
 // NewIntegration validates and constructs an integration from a raw token.
@@ -102,7 +104,7 @@ func (i Integration) Validate() error {
 	if i.ProviderAuthMode != "" && i.ProviderAuthMode != ProviderAuthApplication && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: provider authentication mode is invalid", ErrInvalidIntegration)
 	}
-	return nil
+	return i.validateRoutePolicy()
 }
 
 func (i Integration) AllowsApp(appID string) bool {
@@ -160,6 +162,8 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 		for appID := range item.AppIDs {
 			copyItem.AppIDs[appID] = struct{}{}
 		}
+		copyItem.AllowedMethods = append([]string(nil), item.AllowedMethods...)
+		copyItem.AllowedPathPrefixes = append([]string(nil), item.AllowedPathPrefixes...)
 		r.items[item.ID] = copyItem
 	}
 	return r, nil
@@ -178,6 +182,8 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	}
 	i.Origin = cloneURL(i.Origin)
 	i.AppIDs = copyStringSet(i.AppIDs)
+	i.AllowedMethods = append([]string(nil), i.AllowedMethods...)
+	i.AllowedPathPrefixes = append([]string(nil), i.AllowedPathPrefixes...)
 	return i, nil
 }
 

@@ -169,6 +169,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !integration.AllowsRequest(r.Method, path) || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
+		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
+		return
+	}
 	if h.MaxBodyBytes > 0 && r.ContentLength > h.MaxBodyBytes {
 		writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
 		return

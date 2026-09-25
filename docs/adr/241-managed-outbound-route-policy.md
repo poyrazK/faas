@@ -1,0 +1,11 @@
+# ADR-241: Explicit HTTP routes for managed outbound credentials
+
+- **Status:** accepted
+- **Date:** 2026-09-25
+- **Decision:** A managed-credential outbound integration must configure nonempty `allowed_methods` and `allowed_path_prefixes`. `outboundd` verifies both after workload identity and app attachment but before shared admission, provider key injection, or provider contact. Application-owned integrations keep their existing unrestricted route behavior and reject managed-only policy fields rather than silently ignoring them.
+- **Why:** ADR-239 keeps the provider key out of the app, but a bound app could otherwise invoke every operation at the fixed provider origin. The platform needs an explicit request-shape guard before broadening managed credentials into customer-facing bindings.
+- **Matching:** Methods use a closed uppercase HTTP set. Prefixes are segment-aware and apply to the application path following `/i/<integration-id>`, before the integration's fixed origin path is prepended. Managed paths and configured origin paths must be canonical: percent escapes, dot segments, repeated slashes, backslashes, semicolons, controls, and non-ASCII encoded paths are rejected. This avoids making authorization depend on a provider's URL decoding or normalization. `/` is an explicit broad-path choice, never an implicit default.
+- **Persistence:** Postgres stores method and path arrays with bounded cardinality; `outboundd` provisions them from operator config and the resolver validates them on every load. Existing managed rows receive empty arrays during migration and fail closed until explicitly reprovisioned. No provider credential is stored in these columns.
+- **Limits:** Common method-override headers and `_method` query parameters are rejected, but this guard is not a provider-specific permission system. Other query parameters, bodies, and provider-specific conventions can alter operation semantics. Provider-side key scopes remain necessary. This change does not intercept direct egress, meter provider charges, retry, or cache requests.
+
+Denied requests return `403 outbound_route_not_allowed` without consuming the integration's rate or concurrency budget. Invalid configured rules prevent provisioning; invalid or stale managed rows are unavailable rather than being treated as unrestricted.

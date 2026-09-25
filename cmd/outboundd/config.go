@@ -66,6 +66,8 @@ type IntegrationConfig struct {
 	Origin                   string        `toml:"origin"`
 	TokenEnv                 string        `toml:"token_env"`
 	ProviderAuthorizationEnv string        `toml:"provider_authorization_env"`
+	AllowedMethods           []string      `toml:"allowed_methods"`
+	AllowedPathPrefixes      []string      `toml:"allowed_path_prefixes"`
 	AppIDs                   []string      `toml:"app_ids"`
 	RatePerSecond            float64       `toml:"rate_per_second"`
 	Burst                    int           `toml:"burst"`
@@ -171,6 +173,11 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		}
 		if providerAuthorization != "" {
 			policy.ProviderAuthMode = outbound.ProviderAuthManaged
+		}
+		policy.AllowedMethods = raw.AllowedMethods
+		policy.AllowedPathPrefixes = raw.AllowedPathPrefixes
+		if err := policy.Validate(); err != nil {
+			return nil, fmt.Errorf("integration %q: %w", key, err)
 		}
 		enabled := true
 		if raw.Enabled != nil {
