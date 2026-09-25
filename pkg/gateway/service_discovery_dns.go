@@ -1,10 +1,11 @@
 package gateway
 
 // The guest service resolver is deliberately a small node-local DNS handler.
-// It owns only the private service suffix; all other names are forwarded to
-// the operator's configured upstream resolvers. A DNS answer never grants
-// access by itself: the HTTP service proxy still resolves the slug, binds the
-// caller to its source identity, and enforces the same-account boundary.
+// It owns the legacy service suffix and binding-scoped .internal aliases;
+// all other names are forwarded to the operator's configured upstream
+// resolvers. A DNS answer never grants access by itself: the HTTP service
+// proxy still resolves the slug, binds the caller to its source identity,
+// and enforces the same-account boundary.
 
 import (
 	"context"
@@ -24,19 +25,21 @@ const (
 	serviceDiscoveryTimeout = 2 * time.Second
 )
 
-// ServiceDiscoveryDNSHandler answers the private service suffix on a compute
-// node's tenant bridge and forwards ordinary DNS queries upstream.
+// ServiceDiscoveryDNSHandler answers private service names on a compute
+// node's tenant bridge and forwards ordinary/unbound DNS queries upstream.
 type ServiceDiscoveryDNSHandler struct {
-	bridgeIP netip.Addr
-	upstream []string
-	log      *slog.Logger
+	bridgeIP      netip.Addr
+	upstream      []string
+	log           *slog.Logger
+	resolveCaller ServiceProxyCallerResolver
+	allowAlias    ServiceAliasAllowed
 }
 
 // NewServiceDiscoveryDNSHandler constructs a resolver for a private bridge
 // address. Upstreams may be empty; the public Cloudflare pair is used as a
 // bounded fallback so an app's ordinary egress lookups keep working on hosts
 // without a readable resolver configuration.
-func NewServiceDiscoveryDNSHandler(bridgeIP netip.Addr, upstream []string, log *slog.Logger) (*ServiceDiscoveryDNSHandler, error) {
+func NewServiceDiscoveryDNSHandler(bridgeIP netip.Addr, upstream []string, log *slog.Logger, resolveCaller ServiceProxyCallerResolver, allowAlias ServiceAliasAllowed) (*ServiceDiscoveryDNSHandler, error) {
 	if !bridgeIP.IsValid() || !bridgeIP.Is4() || bridgeIP.IsLoopback() || bridgeIP.IsUnspecified() {
 		return nil, fmt.Errorf("service discovery DNS bridge address must be a private IPv4 address")
 	}
@@ -64,7 +67,7 @@ func NewServiceDiscoveryDNSHandler(bridgeIP netip.Addr, upstream []string, log *
 	if len(clean) == 0 {
 		clean = []string{"1.1.1.1:53", "1.0.0.1:53"}
 	}
-	return &ServiceDiscoveryDNSHandler{bridgeIP: bridgeIP, upstream: clean, log: log}, nil
+	return &ServiceDiscoveryDNSHandler{bridgeIP: bridgeIP, upstream: clean, log: log, resolveCaller: resolveCaller, allowAlias: allowAlias}, nil
 }
 
 func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
@@ -76,11 +79,59 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 		}
 		return
 	}
+	private := false
+	external := false
+	caller := ""
+	callerResolved := false
+	lookupCtx, cancelLookup := context.WithTimeout(context.Background(), serviceDiscoveryTimeout)
+	defer cancelLookup()
 	for _, question := range req.Question {
-		if serviceDiscoveryName(question.Name) == "" {
-			h.forward(w, req)
+		if serviceDiscoveryName(question.Name) != "" {
+			private = true
+			continue
+		}
+		alias := serviceAliasName(question.Name)
+		if alias == "" || h.resolveCaller == nil || h.allowAlias == nil {
+			external = true
+			continue
+		}
+		if !callerResolved {
+			callerResolved = true
+			remote := ""
+			if addr := w.RemoteAddr(); addr != nil {
+				remote = addr.String()
+			}
+			var err error
+			caller, err = h.resolveCaller(lookupCtx, remote)
+			if err != nil {
+				h.writeRcode(w, req, dns.RcodeServerFailure)
+				return
+			}
+		}
+		if caller == "" {
+			external = true
+			continue
+		}
+		allowed, err := h.allowAlias(lookupCtx, caller, alias)
+		if err != nil {
+			h.writeRcode(w, req, dns.RcodeServerFailure)
 			return
 		}
+		if allowed {
+			private = true
+		} else {
+			external = true
+		}
+	}
+	if external {
+		if private {
+			// Never forward a bound or legacy service name merely because a
+			// multi-question packet also contained an external name.
+			h.writeRcode(w, req, dns.RcodeFormatError)
+			return
+		}
+		h.forward(w, req)
+		return
 	}
 	// Every question belongs to our private suffix. Respond authoritatively so
 	// resolvers do not leak unknown service names to a public upstream.
@@ -107,6 +158,14 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 	}
 }
 
+func (h *ServiceDiscoveryDNSHandler) writeRcode(w dns.ResponseWriter, req *dns.Msg, code int) {
+	msg := new(dns.Msg)
+	msg.SetRcode(req, code)
+	if err := w.WriteMsg(msg); err != nil {
+		h.log.Debug("service discovery DNS response failed", "err", err)
+	}
+}
+
 func (h *ServiceDiscoveryDNSHandler) forward(w dns.ResponseWriter, req *dns.Msg) {
 	ctx, cancel := context.WithTimeout(context.Background(), serviceDiscoveryTimeout)
 	defer cancel()
@@ -127,8 +186,16 @@ func (h *ServiceDiscoveryDNSHandler) forward(w dns.ResponseWriter, req *dns.Msg)
 }
 
 func serviceDiscoveryName(name string) string {
+	return privateServiceName(name, ServiceDiscoveryDomain)
+}
+
+func serviceAliasName(name string) string {
+	return privateServiceName(name, ServiceAliasDomain)
+}
+
+func privateServiceName(name, domain string) string {
 	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
-	suffix := ServiceDiscoveryDomain
+	suffix := domain
 	if !strings.HasSuffix(name, "."+suffix) {
 		return ""
 	}

@@ -249,8 +249,20 @@ environment variables appear when the caller next starts or redeploys, while
 already-running instances retain their current environment. The generated
 `GREGALE_SERVICE_*_URL` namespace is platform-owned.
 Project-managed and preview apps reject changes to these fields on PATCH; edit the
-project source instead. This feature does not create a `billing.internal` DNS
-alias or expose the service publicly.
+project source instead. Binding declarations do not expose services publicly.
+
+Bound services can also be called through the short private alias
+`http://billing.internal:10080`. Gregale's node-local DNS answers that name
+only for a VM whose app declares a `billing` binding. A direct request to the
+service proxy with `Host: billing.internal` is checked against the same binding
+inventory, so bypassing DNS cannot grant access. The existing same-account,
+target allowlist, and preview checks still run before any target is woken.
+Unbound `.internal` names are passed to the configured upstream DNS resolver;
+Gregale does not claim the customer's entire private namespace. The existing
+`*.svc.gregale` names and generated `GREGALE_SERVICE_*_URL` values remain
+unchanged for rolling-upgrade compatibility. The alias is HTTP on port 10080;
+TLS and portless `https://billing.internal` are not yet supported, and the
+alias is never a public ingress hostname.
 
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
