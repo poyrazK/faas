@@ -87,6 +87,23 @@ func startRuntimeSecretReloader(ctx context.Context, manifest api.AppManifest, s
 		ticker := time.NewTicker(runtimeSecretPollInterval)
 		defer ticker.Stop()
 		lastRevision := ""
+		var pendingReport *runtimeSecretReloadReport
+		reportPending := func() {
+			if pendingReport == nil {
+				return
+			}
+			accepted, stale, err := sendRuntimeSecretReloadReport(*pendingReport)
+			if err != nil {
+				log.Debug("guest-init: runtime secret reload status unavailable", "err_kind", "report_failed")
+				return
+			}
+			if stale {
+				log.Debug("guest-init: runtime secret reload status became stale", "err_kind", "stale_report")
+			}
+			if accepted || stale {
+				pendingReport = nil
+			}
+		}
 		for {
 			response, err := fetchRuntimeSecrets(lastRevision)
 			if err != nil {
@@ -114,16 +131,30 @@ func startRuntimeSecretReloader(ctx context.Context, manifest api.AppManifest, s
 				}
 				if runtimeSecretsEqual(current, fresh) {
 					lastRevision = response.Revision
+					pendingReport = &runtimeSecretReloadReport{
+						Revision: response.Revision, Projection: "unchanged", Signal: "not_attempted",
+					}
 				} else if err := secrets.publish(secretReloadFilePath, lookupUID(manifest.EffectiveUser()), fresh); err != nil {
 					log.Warn("guest-init: runtime secret projection update failed", "err_kind", "write_failed")
+					pendingReport = &runtimeSecretReloadReport{
+						Revision: response.Revision, Projection: "failed", Signal: "not_attempted", ErrorCode: "projection_failed",
+					}
 				} else {
 					lastRevision = response.Revision
-					if err := sup.ForwardSignalOnStart(signal); err != nil && !errors.Is(err, os.ErrProcessDone) {
+					report := &runtimeSecretReloadReport{Revision: response.Revision, Projection: "updated", Signal: "sent"}
+					queued, err := sup.ForwardSignalOnStartWithStatus(signal)
+					if err != nil {
+						report.Signal = "failed"
+						report.ErrorCode = "signal_failed"
 						log.Debug("guest-init: secret reload signal could not be forwarded", "signal", signal.String(), "err_kind", "signal_failed")
+					} else if queued {
+						report.Signal = "queued"
 					}
+					pendingReport = report
 					log.Info("guest-init: runtime secrets updated", "count", len(fresh), "revision", lastRevision)
 				}
 			}
+			reportPending()
 			select {
 			case <-ctx.Done():
 				return
@@ -131,6 +162,47 @@ func startRuntimeSecretReloader(ctx context.Context, manifest api.AppManifest, s
 			}
 		}
 	}()
+}
+
+type runtimeSecretReloadReport struct {
+	Revision   string
+	Projection string
+	Signal     string
+	ErrorCode  string
+}
+
+func sendRuntimeSecretReloadReport(report runtimeSecretReloadReport) (accepted, stale bool, err error) {
+	conn, err := dialRuntimeConfigHost()
+	if err != nil {
+		return false, false, err
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
+	body, err := json.Marshal(runtimeConfigRequest{
+		Kind: "secret_reload_status", Revision: report.Revision,
+		Projection: report.Projection, Signal: report.Signal, ErrorCode: report.ErrorCode,
+	})
+	if err != nil {
+		return false, false, err
+	}
+	if err := writeRuntimeConfigFrame(conn, body); err != nil {
+		return false, false, err
+	}
+	frame, err := readRuntimeConfigFrame(conn)
+	if err != nil {
+		return false, false, err
+	}
+	var response runtimeConfigResponse
+	if err := json.Unmarshal(frame, &response); err != nil {
+		return false, false, err
+	}
+	if response.Error == "secret_reload_stale" {
+		return false, true, nil
+	}
+	if response.Error != "" || !response.Accepted {
+		return false, false, errors.New("runtime secret reload status rejected")
+	}
+	return true, false, nil
 }
 
 func validGuestRuntimeSecretRevision(revision string) bool {

@@ -44,5 +44,26 @@ export type AppSecretResponse = {
    * Runtime instance that most recently received a secret version.
    */
   last_delivered_instance_id?: string;
+  /**
+   * Secret version associated with the latest guest-init projection/signal observation. Compare with delivery_version; a mismatch means the observation is stale. This is not application acknowledgement.
+   */
+  last_runtime_reload_version?: number;
+  /**
+   * Whether guest-init updated the local projection, found it already current, or failed to write it.
+   */
+  last_runtime_reload_projection?: 'updated' | 'unchanged' | 'failed';
+  /**
+   * Whether guest-init sent or queued its configured signal. This does not mean the application applied the new credentials.
+   */
+  last_runtime_reload_signal?: 'sent' | 'queued' | 'failed' | 'not_attempted';
+  last_runtime_reload_at?: string;
+  /**
+   * Closed, non-sensitive guest-init outcome code.
+   */
+  last_runtime_reload_error_code?: 'projection_failed' | 'signal_failed';
+  /**
+   * Runtime instance that reported this projection/signal outcome.
+   */
+  last_runtime_reload_instance_id?: string;
 };
 

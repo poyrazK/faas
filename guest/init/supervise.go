@@ -141,24 +141,32 @@ func (s *Supervisor) flushPendingStartSignals() {
 // construction/startup has not reached a signalable process yet, it queues the
 // signal and markStarted delivers it once the child is running.
 func (s *Supervisor) ForwardSignalOnStart(sig syscall.Signal) error {
+	_, err := s.ForwardSignalOnStartWithStatus(sig)
+	return err
+}
+
+// ForwardSignalOnStartWithStatus reports whether the signal was queued because
+// the workload did not yet have a signalable process. A queued signal is
+// delivered when the next child starts.
+func (s *Supervisor) ForwardSignalOnStartWithStatus(sig syscall.Signal) (queued bool, err error) {
 	if s == nil {
-		return nil
+		return false, nil
 	}
 	s.startSignalMu.Lock()
 	defer s.startSignalMu.Unlock()
 	cmd := s.lastCmd.Load()
 	if cmd == nil || cmd.Process == nil {
 		s.pendingStartSignals = append(s.pendingStartSignals, sig)
-		return nil
+		return true, nil
 	}
 	if err := cmd.Process.Signal(sig); err != nil {
 		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
 			s.pendingStartSignals = append(s.pendingStartSignals, sig)
-			return nil
+			return true, nil
 		}
-		return err
+		return false, err
 	}
-	return nil
+	return false, nil
 }
 
 func (s *Supervisor) markHealthy() { //nolint:unused // called by Linux workload supervision.

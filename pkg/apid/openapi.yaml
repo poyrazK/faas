@@ -30966,6 +30966,12 @@ components:
         last_delivery_error_code: { type: string, enum: [runtime_start_failed], description: "Non-sensitive closed failure reason for the current version; omitted unless delivery_status is failed." }
         last_delivered_wake_id: { type: string, description: "Wake correlation id of the most recent successful delivery." }
         last_delivered_instance_id: { type: string, description: "Runtime instance that most recently received a secret version." }
+        last_runtime_reload_version: { type: integer, format: int64, minimum: 1, description: "Secret version associated with the latest guest-init projection/signal observation. Compare with delivery_version; a mismatch means the observation is stale. This is not application acknowledgement." }
+        last_runtime_reload_projection: { type: string, enum: [updated, unchanged, failed], description: "Whether guest-init updated the local projection, found it already current, or failed to write it." }
+        last_runtime_reload_signal: { type: string, enum: [sent, queued, failed, not_attempted], description: "Whether guest-init sent or queued its configured signal. This does not mean the application applied the new credentials." }
+        last_runtime_reload_at: { type: string, format: date-time }
+        last_runtime_reload_error_code: { type: string, enum: [projection_failed, signal_failed], description: "Closed, non-sensitive guest-init outcome code." }
+        last_runtime_reload_instance_id: { type: string, description: "Runtime instance that reported this projection/signal outcome." }
 
     # ADR-092 PR-B: per-row shape for the nested secrets_by_scope
     # response (mirror of ScopedAppEnvResponse). Reserved for the
@@ -31007,6 +31013,12 @@ components:
         last_delivery_error_code: { type: string, enum: [runtime_start_failed] }
         last_delivered_wake_id: { type: string }
         last_delivered_instance_id: { type: string }
+        last_runtime_reload_version: { type: integer, format: int64, minimum: 1, description: "Secret version associated with the latest guest-init projection/signal observation; compare with delivery_version to detect stale status. Not an application acknowledgement." }
+        last_runtime_reload_projection: { type: string, enum: [updated, unchanged, failed] }
+        last_runtime_reload_signal: { type: string, enum: [sent, queued, failed, not_attempted], description: "Guest-init sent/queued signal outcome; does not mean the application applied the new credentials." }
+        last_runtime_reload_at: { type: string, format: date-time }
+        last_runtime_reload_error_code: { type: string, enum: [projection_failed, signal_failed] }
+        last_runtime_reload_instance_id: { type: string }
 
     AppSecretListResponse:
       description: "Paginated list of sealed-secret envelopes (no plaintext). Discriminated union: `secrets` is the flat arm; `secrets_by_scope` is the `?scope=__all__` arm (ADR-092 PR-B)."

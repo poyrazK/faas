@@ -5590,6 +5590,10 @@ type Store interface {
 	// for the exact secret versions schedd staged. A concurrent rotation wins:
 	// candidates whose version no longer matches remain pending.
 	RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error)
+	// RecordAppSecretRuntimeReload conditionally records guest-init's
+	// projection/signal outcome for the exact secret versions reported by a
+	// runtime. It does not confirm that the application applied the values.
+	RecordAppSecretRuntimeReload(ctx context.Context, result AppSecretRuntimeReloadResult) (int, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer; imaged is the only reader. PasswordEncrypted

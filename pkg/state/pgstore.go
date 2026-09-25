@@ -21852,7 +21852,11 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''),
 		        COALESCE(secret_version, 0), delivery_version, COALESCE(delivered_version, 0), delivery_status,
 		        last_delivery_attempt_at, last_delivered_at, COALESCE(last_delivery_error_code, ''),
-		        COALESCE(last_delivered_wake_id, ''), COALESCE(last_delivered_instance_id, ''), created_at, updated_at
+		        COALESCE(last_delivered_wake_id, ''), COALESCE(last_delivered_instance_id, ''),
+		        COALESCE(last_runtime_reload_version, 0), COALESCE(last_runtime_reload_revision, ''),
+		        COALESCE(last_runtime_reload_projection, ''), COALESCE(last_runtime_reload_signal, ''),
+		        last_runtime_reload_at, COALESCE(last_runtime_reload_error_code, ''),
+		        COALESCE(last_runtime_reload_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
@@ -21861,6 +21865,9 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 		&out.SecretVersion, &out.DeliveryVersion, &out.DeliveredVersion, &out.DeliveryStatus,
 		&out.LastDeliveryAttemptAt, &out.LastDeliveredAt, &out.LastDeliveryErrorCode,
 		&out.LastDeliveredWakeID, &out.LastDeliveredInstanceID,
+		&out.LastRuntimeReloadVersion, &out.LastRuntimeReloadRevision,
+		&out.LastRuntimeReloadProjection, &out.LastRuntimeReloadSignal,
+		&out.LastRuntimeReloadAt, &out.LastRuntimeReloadErrorCode, &out.LastRuntimeReloadInstanceID,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -22069,7 +22076,11 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
 		        coalesce(secret_version, 0), delivery_version, coalesce(delivered_version, 0), delivery_status,
 		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
-		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''),
+		        coalesce(last_runtime_reload_version, 0), coalesce(last_runtime_reload_revision, ''),
+		        coalesce(last_runtime_reload_projection, ''), coalesce(last_runtime_reload_signal, ''),
+		        last_runtime_reload_at, coalesce(last_runtime_reload_error_code, ''),
+		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -22087,6 +22098,9 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 			&r.SecretVersion, &r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
 			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
 			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
+			&r.LastRuntimeReloadVersion, &r.LastRuntimeReloadRevision,
+			&r.LastRuntimeReloadProjection, &r.LastRuntimeReloadSignal,
+			&r.LastRuntimeReloadAt, &r.LastRuntimeReloadErrorCode, &r.LastRuntimeReloadInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -22117,7 +22131,11 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
 		        coalesce(secret_version, 0), delivery_version, coalesce(delivered_version, 0), delivery_status,
 		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
-		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''),
+		        coalesce(last_runtime_reload_version, 0), coalesce(last_runtime_reload_revision, ''),
+		        coalesce(last_runtime_reload_projection, ''), coalesce(last_runtime_reload_signal, ''),
+		        last_runtime_reload_at, coalesce(last_runtime_reload_error_code, ''),
+		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -22135,6 +22153,9 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 			&r.SecretVersion, &r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
 			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
 			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
+			&r.LastRuntimeReloadVersion, &r.LastRuntimeReloadRevision,
+			&r.LastRuntimeReloadProjection, &r.LastRuntimeReloadSignal,
+			&r.LastRuntimeReloadAt, &r.LastRuntimeReloadErrorCode, &r.LastRuntimeReloadInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -22276,6 +22297,51 @@ func (s *PgStore) RecordAppSecretDelivery(ctx context.Context, result AppSecretD
 			return 0, mapErr(err)
 		}
 		updated += int(tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, mapErr(err)
+	}
+	return updated, nil
+}
+
+func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSecretRuntimeReloadResult) (int, error) {
+	if !validAppSecretRuntimeReloadResult(result) {
+		return 0, ErrInvalidArgument
+	}
+	if len(result.Candidates) == 0 {
+		return 0, nil
+	}
+	attemptedAt := result.AttemptedAt.UTC()
+	if attemptedAt.IsZero() {
+		attemptedAt = time.Now().UTC()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	updated := 0
+	for _, candidate := range result.Candidates {
+		tag, err := tx.Exec(ctx,
+			`update app_secrets
+			 set last_runtime_reload_version = $5,
+			     last_runtime_reload_revision = $6,
+			     last_runtime_reload_projection = $7,
+			     last_runtime_reload_signal = $8,
+			     last_runtime_reload_at = $9,
+			     last_runtime_reload_error_code = nullif($10, ''),
+			     last_runtime_reload_instance_id = $11
+			 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+			   and delivery_version = $5`,
+			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
+			result.Revision, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode, result.InstanceID)
+		if err != nil {
+			return 0, mapErr(err)
+		}
+		updated += int(tag.RowsAffected())
+	}
+	if updated != len(result.Candidates) {
+		return 0, ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, mapErr(err)

@@ -18484,6 +18484,45 @@ func (m *MemStore) RecordAppSecretDelivery(_ context.Context, result AppSecretDe
 	return updated, nil
 }
 
+func (m *MemStore) RecordAppSecretRuntimeReload(_ context.Context, result AppSecretRuntimeReloadResult) (int, error) {
+	if !validAppSecretRuntimeReloadResult(result) {
+		return 0, ErrInvalidArgument
+	}
+	if len(result.Candidates) == 0 {
+		return 0, nil
+	}
+	at := result.AttemptedAt.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, candidate := range result.Candidates {
+		secret, ok := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
+		if !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
+			return 0, ErrConflict
+		}
+	}
+	updated := 0
+	for _, candidate := range result.Candidates {
+		k := secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}
+		secret, ok := m.secrets[k]
+		if !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
+			continue
+		}
+		secret.LastRuntimeReloadVersion = candidate.Version
+		secret.LastRuntimeReloadRevision = result.Revision
+		secret.LastRuntimeReloadProjection = result.Projection
+		secret.LastRuntimeReloadSignal = result.Signal
+		secret.LastRuntimeReloadAt = &at
+		secret.LastRuntimeReloadErrorCode = result.ErrorCode
+		secret.LastRuntimeReloadInstanceID = result.InstanceID
+		m.secrets[k] = secret
+		updated++
+	}
+	return updated, nil
+}
+
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------
 //
 // Mirror of the customer-secrets surface (lines 4479-4544) keyed by

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +49,7 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
+		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
@@ -2570,6 +2572,38 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	resealed, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
 	if err != nil || resealed.SecretVersion != 2 || resealed.DeliveryVersion != 2 {
 		t.Fatalf("reseal changed secret revision: secret=%+v err=%v", resealed, err)
+	}
+}
+
+func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
+	const key = "DATABASE_URL"
+	scope := api.DefaultEnvScope
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v1")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v1): %v", err)
+	}
+	result := state.AppSecretRuntimeReloadResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: "instance-conformance",
+		Revision: strings.Repeat("a", 64), Projection: state.SecretReloadProjectionUpdated,
+		Signal:     state.SecretReloadSignalSent,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 1}},
+	}
+	updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result)
+	if err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload(v1): updated=%d err=%v, want 1/nil", updated, err)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v2")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v2): %v", err)
+	}
+	updated, err = fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result)
+	if !errors.Is(err, state.ErrConflict) || updated != 0 {
+		t.Fatalf("stale RecordAppSecretRuntimeReload(v1): updated=%d err=%v, want conflict", updated, err)
+	}
+	current, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope(after stale runtime reload): %v", err)
+	}
+	if current.DeliveryVersion != 2 || current.LastRuntimeReloadVersion != 1 {
+		t.Fatalf("stale runtime reload changed current metadata = current %d observed %d, want 2/1", current.DeliveryVersion, current.LastRuntimeReloadVersion)
 	}
 }
 

@@ -39,5 +39,17 @@ export type ScopedAppSecretResponse = {
   last_delivery_error_code?: 'runtime_start_failed';
   last_delivered_wake_id?: string;
   last_delivered_instance_id?: string;
+  /**
+   * Secret version associated with the latest guest-init projection/signal observation; compare with delivery_version to detect stale status. Not an application acknowledgement.
+   */
+  last_runtime_reload_version?: number;
+  last_runtime_reload_projection?: 'updated' | 'unchanged' | 'failed';
+  /**
+   * Guest-init sent/queued signal outcome; does not mean the application applied the new credentials.
+   */
+  last_runtime_reload_signal?: 'sent' | 'queued' | 'failed' | 'not_attempted';
+  last_runtime_reload_at?: string;
+  last_runtime_reload_error_code?: 'projection_failed' | 'signal_failed';
+  last_runtime_reload_instance_id?: string;
 };
 

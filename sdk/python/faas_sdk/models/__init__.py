@@ -175,6 +175,9 @@ from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecr
 from .app_secret_response import AppSecretResponse
 from .app_secret_response_delivery_status import AppSecretResponseDeliveryStatus
 from .app_secret_response_last_delivery_error_code import AppSecretResponseLastDeliveryErrorCode
+from .app_secret_response_last_runtime_reload_error_code import AppSecretResponseLastRuntimeReloadErrorCode
+from .app_secret_response_last_runtime_reload_projection import AppSecretResponseLastRuntimeReloadProjection
+from .app_secret_response_last_runtime_reload_signal import AppSecretResponseLastRuntimeReloadSignal
 from .app_security_finding import AppSecurityFinding
 from .app_security_finding_severity import AppSecurityFindingSeverity
 from .app_security_posture_response import AppSecurityPostureResponse
@@ -1328,6 +1331,11 @@ from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
 from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
 from .scoped_app_secret_response_last_delivery_error_code import ScopedAppSecretResponseLastDeliveryErrorCode
+from .scoped_app_secret_response_last_runtime_reload_error_code import ScopedAppSecretResponseLastRuntimeReloadErrorCode
+from .scoped_app_secret_response_last_runtime_reload_projection import (
+    ScopedAppSecretResponseLastRuntimeReloadProjection,
+)
+from .scoped_app_secret_response_last_runtime_reload_signal import ScopedAppSecretResponseLastRuntimeReloadSignal
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -1746,6 +1754,9 @@ __all__ = (
     "AppSecretResponse",
     "AppSecretResponseDeliveryStatus",
     "AppSecretResponseLastDeliveryErrorCode",
+    "AppSecretResponseLastRuntimeReloadErrorCode",
+    "AppSecretResponseLastRuntimeReloadProjection",
+    "AppSecretResponseLastRuntimeReloadSignal",
     "AppSecurityFinding",
     "AppSecurityFindingSeverity",
     "AppSecurityPostureResponse",
@@ -2843,6 +2854,9 @@ __all__ = (
     "ScopedAppSecretResponse",
     "ScopedAppSecretResponseDeliveryStatus",
     "ScopedAppSecretResponseLastDeliveryErrorCode",
+    "ScopedAppSecretResponseLastRuntimeReloadErrorCode",
+    "ScopedAppSecretResponseLastRuntimeReloadProjection",
+    "ScopedAppSecretResponseLastRuntimeReloadSignal",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",

@@ -40,6 +40,35 @@ func TestFetchRuntimeSecretsUsesDedicatedRequestKind(t *testing.T) {
 	}
 }
 
+func TestSendRuntimeSecretReloadReportUsesClosedMetadata(t *testing.T) {
+	previous := dialRuntimeConfigHost
+	t.Cleanup(func() { dialRuntimeConfigHost = previous })
+	dialRuntimeConfigHost = func() (net.Conn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			body, err := readRuntimeConfigFrame(server)
+			if err != nil {
+				return
+			}
+			var request runtimeConfigRequest
+			if json.Unmarshal(body, &request) != nil || request.Kind != "secret_reload_status" ||
+				request.Revision != strings.Repeat("a", 64) || request.Projection != "updated" ||
+				request.Signal != "sent" || request.ErrorCode != "" {
+				return
+			}
+			_ = writeRuntimeConfigFrame(server, []byte(`{"accepted":true}`))
+		}()
+		return client, nil
+	}
+	accepted, stale, err := sendRuntimeSecretReloadReport(runtimeSecretReloadReport{
+		Revision: strings.Repeat("a", 64), Projection: "updated", Signal: "sent",
+	})
+	if err != nil || !accepted || stale {
+		t.Fatalf("sendRuntimeSecretReloadReport = accepted %t stale %t err %v", accepted, stale, err)
+	}
+}
+
 func TestWriteRuntimeSecretsProjectionIsAtomicAndPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "projection", "secrets.json")
 	uid, gid := os.Getuid(), os.Getgid()

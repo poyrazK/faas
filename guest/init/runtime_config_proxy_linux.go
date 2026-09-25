@@ -25,9 +25,12 @@ const (
 )
 
 type runtimeConfigRequest struct {
-	Kind     string `json:"kind,omitempty"`
-	Scope    string `json:"scope"`
-	Revision string `json:"revision,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	Scope      string `json:"scope"`
+	Revision   string `json:"revision,omitempty"`
+	Projection string `json:"projection,omitempty"`
+	Signal     string `json:"signal,omitempty"`
+	ErrorCode  string `json:"error_code,omitempty"`
 }
 
 type runtimeConfigResponse struct {
@@ -35,6 +38,7 @@ type runtimeConfigResponse struct {
 	Secrets   *map[string]string `json:"secrets,omitempty"`
 	Revision  string             `json:"revision,omitempty"`
 	Unchanged bool               `json:"unchanged,omitempty"`
+	Accepted  bool               `json:"accepted,omitempty"`
 	Error     string             `json:"error,omitempty"`
 }
 
