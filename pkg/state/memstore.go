@@ -15057,6 +15057,11 @@ func (m *MemStore) AppendEventWithTrace(ctx context.Context, actor, kind string,
 func (m *MemStore) appendEventWithTraceAt(_ context.Context, actor, kind string, subject *string, data []byte, traceID *string, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.appendEventLocked(actor, kind, subject, data, traceID, at)
+}
+
+// appendEventLocked appends an event when the caller already owns m.mu.
+func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data []byte, traceID *string, at time.Time) error {
 	var subj *uuid.UUID
 	if subject != nil {
 		subj = parseSubjectID(*subject)

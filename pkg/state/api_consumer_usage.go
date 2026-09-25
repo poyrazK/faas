@@ -133,7 +133,9 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 		if event.Audit != nil {
 			m.recordRequestAuditLocked(event)
 		}
-		m.recordDiscoveredRouteLocked(event)
+		if payload := m.recordDiscoveredRouteLocked(event); len(payload) > 0 {
+			m.appendEventLocked("apid", "event.published", &event.AccountID, payload, nil, time.Now().UTC())
+		}
 		return false, nil
 	}
 	if event.PlatformTenantID != "" {
@@ -170,7 +172,9 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	if event.Audit != nil {
 		m.recordRequestAuditLocked(event)
 	}
-	m.recordDiscoveredRouteLocked(event)
+	if payload := m.recordDiscoveredRouteLocked(event); len(payload) > 0 {
+		m.appendEventLocked("apid", "event.published", &event.AccountID, payload, nil, time.Now().UTC())
+	}
 	return true, nil
 }
 

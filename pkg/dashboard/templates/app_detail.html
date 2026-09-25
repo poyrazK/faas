@@ -186,7 +186,7 @@
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
-  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed, sse:api_route_discovered" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
     {{template "email-verification-banner" .}}
     {{/* Issue #791 PR-E / ADR-090 closure — flash banner shown
          after a dashboard fire-now POST. The handler redirects
@@ -717,12 +717,14 @@
           {{end}}
           {{if .Data.DiscoveredRoutes.Routes}}
             <table aria-label="Persisted discovered API routes">
-              <thead><tr><th>Method</th><th>Route template</th><th>Requests</th><th>First seen</th><th>Last seen</th></tr></thead>
+              <thead><tr><th>Method</th><th>Route template</th><th>Contract</th><th>Edge policy</th><th>Requests</th><th>First seen</th><th>Last seen</th></tr></thead>
               <tbody>
                 {{range .Data.DiscoveredRoutes.Routes}}
                   <tr>
                     <td><code>{{.Method}}</code></td>
                     <td><code>{{.Path}}</code></td>
+                    <td>{{.Contract}}</td>
+                    <td>{{.Policy}}</td>
                     <td>{{.RequestCount}}</td>
                     <td>{{.FirstSeen}}</td>
                     <td>{{.LastSeen}}</td>

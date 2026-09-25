@@ -1869,6 +1869,8 @@ type DiscoveredRouteItem struct {
 	FirstSeen    string
 	LastSeen     string
 	RequestCount int64
+	Contract     string
+	Policy       string
 }
 
 // DebugPageData is the server-rendered production debugger surface for one
