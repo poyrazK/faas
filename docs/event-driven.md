@@ -7,13 +7,36 @@ gregale invoke --async --payload @payload.json APP_ID
 gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
 gregale jobs run nightly --tasks 10
 gregale crons add --app APP_ID --schedule "0 * * * *" --path /jobs/nightly
+gregale crons add --app APP_ID --schedule "*/15 * * * *" --command bin/maintenance --arg=--compact
 gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
 ```
 
 Use a scheduled job when work should run to completion in an isolated job
-environment; use an app cron when the schedule should make an HTTP request to
-an app route. Scheduled jobs create one task per occurrence and pick up the
-job's current configuration at fire time.
+environment; use an HTTP app cron when the schedule should make a request to an
+app route. Use a command cron when a recurring task needs the app's deployment
+environment without an HTTP endpoint:
+
+```bash
+gregale crons add --app APP_ID --schedule "0 2 * * *" \
+  --command bin/rebuild-index --arg=--incremental --timezone Europe/Istanbul
+gregale crons add --app APP_ID --schedule "0 4 * * 0" \
+  --command "bin/cleanup --older-than 30d" --shell
+gregale crons runs CRON_ID
+```
+
+Command crons create one deployment-attached app task for each scheduled
+occurrence and select the app's currently live deployment at fire time, so a
+later deployment automatically supplies the new command environment. The
+command runs with a 10-minute timeout and 1 MiB output limit by default; use
+`--timeout-seconds` and `--max-output-bytes` to adjust them. `--arg` is
+repeatable and preserves argument boundaries. `--shell` instead treats the
+single `--command` value as a shell string and cannot be combined with `--arg`.
+Use `--skip-if-running` to skip a firing while an earlier command task remains
+active. Inspect outcomes with `crons runs`; the returned `task_id` can be used
+with `GET /v1/apps/APP_ID/tasks/TASK_ID` to read captured output. Command crons
+do not support fire-now, while `gregale app APP_ID exec ...` remains the
+one-off command surface. Scheduled jobs create one task per occurrence and
+pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 

@@ -73,7 +73,11 @@ func cmdCronsInfo(args []string) int {
 func renderCronInfo(w io.Writer, c api.CronResponse) {
 	_, _ = fmt.Fprintf(w, "cron %s\n", c.ID)
 	_, _ = fmt.Fprintf(w, "  schedule: %s\n", c.Schedule)
-	_, _ = fmt.Fprintf(w, "  path:     %s\n", c.Path)
+	if c.Kind == "command" {
+		_, _ = fmt.Fprintf(w, "  command:  %s\n", formatCronCommand(c))
+	} else {
+		_, _ = fmt.Fprintf(w, "  path:     %s\n", c.Path)
+	}
 	_, _ = fmt.Fprintf(w, "  enabled:  %t\n", c.Enabled)
 	if c.SuspendedReason != "" {
 		_, _ = fmt.Fprintf(w, "  suspended: %s (deploy the app to reactivate this schedule)\n", c.SuspendedReason)

@@ -30,8 +30,8 @@ export class CronsService {
     });
   }
   /**
-   * Create a cron trigger.
-   * @returns CronResponse The new cron trigger.
+   * Create a scheduled HTTP request or deployment command.
+   * @returns CronResponse The new schedule.
    * @throws ApiError
    */
   public static createCron({
@@ -39,7 +39,7 @@ export class CronsService {
     idempotencyKey,
   }: {
     /**
-     * Cron payload — schedule expression + target URL. See CreateCronRequest.
+     * Schedule plus exactly one target: an HTTP path or a deployment command. See CreateCronRequest.
      */
     requestBody: CreateCronRequest,
     /**
@@ -62,10 +62,12 @@ export class CronsService {
         401: `code: unauthorized`,
         402: `code: cron_invalid | plan_crons_not_allowed | plan_cron_quota`,
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }
@@ -239,7 +241,9 @@ export class CronsService {
    * Scoped to `deploy:write` (or `admin`); no new `cron:write`
    * scope is added (ADR-090 §Sub-decisions 1). The fire does
    * NOT shift `last_fired_at` — the next scheduled boundary is
-   * unaffected.
+   * unaffected. This endpoint applies to HTTP crons only; use
+   * `gregale app <slug> exec` for a one-off command rather than
+   * manually firing a deployment-command cron.
    *
    * @returns FireCronResponse Fire-now enqueued. The request_id is the durable handle.
    * @throws ApiError
@@ -273,6 +277,7 @@ export class CronsService {
         401: `code: unauthorized`,
         402: `Plan tier does not include cron support (e.g. Free plan).`,
         404: `code: not_found`,
+        409: `Command crons only fire on their schedule.`,
         410: `The cron is disabled.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

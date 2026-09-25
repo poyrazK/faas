@@ -59,10 +59,20 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_403
 
+    if response.status_code == 422:
+        response_422 = Problem.from_dict(response.json())
+
+        return response_422
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
         return response_429
+
+    if response.status_code == 501:
+        response_501 = Problem.from_dict(response.json())
+
+        return response_501
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -87,12 +97,12 @@ def sync_detailed(
     body: CreateCronRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[CronResponse | Problem]:
-    """Create a cron trigger.
+    """Create a scheduled HTTP request or deployment command.
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCronRequest): Cron creation payload: schedule expression, target URL, and
-            optional timezone/overlap policy.
+        body (CreateCronRequest): Create an HTTP-path cron or deployment-attached app command
+            schedule.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,12 +130,12 @@ def sync(
     body: CreateCronRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> CronResponse | Problem | None:
-    """Create a cron trigger.
+    """Create a scheduled HTTP request or deployment command.
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCronRequest): Cron creation payload: schedule expression, target URL, and
-            optional timezone/overlap policy.
+        body (CreateCronRequest): Create an HTTP-path cron or deployment-attached app command
+            schedule.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -148,12 +158,12 @@ async def asyncio_detailed(
     body: CreateCronRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[CronResponse | Problem]:
-    """Create a cron trigger.
+    """Create a scheduled HTTP request or deployment command.
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCronRequest): Cron creation payload: schedule expression, target URL, and
-            optional timezone/overlap policy.
+        body (CreateCronRequest): Create an HTTP-path cron or deployment-attached app command
+            schedule.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -179,12 +189,12 @@ async def asyncio(
     body: CreateCronRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> CronResponse | Problem | None:
-    """Create a cron trigger.
+    """Create a scheduled HTTP request or deployment command.
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateCronRequest): Cron creation payload: schedule expression, target URL, and
-            optional timezone/overlap policy.
+        body (CreateCronRequest): Create an HTTP-path cron or deployment-attached app command
+            schedule.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
