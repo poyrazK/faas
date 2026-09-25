@@ -77,23 +77,17 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 	if s == nil || s.pool == nil {
 		return nil, errors.New("state: pgstore has nil pool")
 	}
-	// Session-scoped: pg_advisory_lock below is held across statements on
-	// this pinned connection and released by the returned closure, so it
-	// must not run on a transaction-pooled connection (db/direct.go).
-	conn, err := db.DirectPool(s.pool).Acquire(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("state: acquire edge-rule mutation lock connection: %w", err)
-	}
-	if _, err := conn.Exec(ctx, `select pg_advisory_lock(hashtextextended($1, 0))`, appID); err != nil {
-		conn.Release()
-		return nil, fmt.Errorf("state: acquire edge-rule mutation lock for %q: %w", appID, err)
-	}
-	return func(ctx context.Context) {
-		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		_, _ = conn.Exec(unlockCtx, `select pg_advisory_unlock(hashtextextended($1, 0))`, appID)
-		cancel()
-		conn.Release()
-	}, nil
+	// Session-scoped: the lock is held across statements on a pinned
+	// direct-pool connection and released by the returned closure, so it
+	// must not run on a transaction-pooled connection (db/direct.go). The
+	// key expression is unchanged so mixed-version apids still agree on it.
+	return s.acquireSessionAdvisoryLock(ctx, sessionAdvisoryLock{
+		what:      "edge-rule mutation lock",
+		tryLock:   `select pg_try_advisory_lock(hashtextextended($1, 0))`,
+		unlock:    `select pg_advisory_unlock(hashtextextended($1, 0))`,
+		keyArg:    appID,
+		retryWait: 50 * time.Millisecond,
+	})
 }
 
 // AcquireDeploymentActivationLock holds a session-scoped advisory lock across
@@ -112,35 +106,60 @@ func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymen
 	if s == nil || s.pool == nil {
 		return nil, errors.New("state: pgstore has nil pool")
 	}
+	return s.acquireSessionAdvisoryLock(ctx, sessionAdvisoryLock{
+		what:      "deployment activation lock",
+		tryLock:   `select pg_try_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`,
+		unlock:    `select pg_advisory_unlock(hashtextextended('deployment-activation:' || $1, 0))`,
+		keyArg:    deploymentID,
+		retryWait: 50 * time.Millisecond,
+	})
+}
+
+// sessionAdvisoryLock describes one session-scoped advisory lock: the
+// non-blocking try/unlock statements over the same key expression.
+type sessionAdvisoryLock struct {
+	what      string
+	tryLock   string
+	unlock    string
+	keyArg    string
+	retryWait time.Duration
+}
+
+// acquireSessionAdvisoryLock takes a session-scoped advisory lock on a
+// pinned direct-pool connection without holding a pool connection while it
+// waits. A blocking pg_advisory_lock parks one connection per contender: a
+// handful of concurrent contenders exhausts the pool, and the holder — which
+// needs the same pool for its ordinary reads and writes — can never finish
+// and release. Contenders instead try, give the connection back, and retry.
+//
+// A connection whose lock state is uncertain (the try raced cancellation,
+// or the unlock failed) is closed rather than returned to the pool, where
+// it would orphan the lock and block every later holder.
+func (s *PgStore) acquireSessionAdvisoryLock(ctx context.Context, l sessionAdvisoryLock) (func(context.Context), error) {
 	var conn *pgxpool.Conn
 	for {
 		var err error
 		conn, err = db.DirectPool(s.pool).Acquire(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
+			return nil, fmt.Errorf("state: acquire %s connection: %w", l.what, err)
 		}
 		var locked bool
-		err = conn.QueryRow(ctx,
-			`select pg_try_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&locked)
-		if err != nil {
+		if err = conn.QueryRow(ctx, l.tryLock, l.keyArg).Scan(&locked); err != nil {
 			// Cancellation can race a server-side lock grant. Closing the
 			// session is the only safe way to rule out an orphaned lock.
 			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			_ = conn.Hijack().Close(closeCtx)
 			cancel()
-			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+			return nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, err)
 		}
 		if locked {
 			break
 		}
 		conn.Release()
-		// A second subscriber may contend for the same deployment while the
-		// winner still needs this pool for ordinary reads and stage writes.
-		// Give the connection back before retrying or waiting for cancellation.
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, ctx.Err())
-		case <-time.After(50 * time.Millisecond):
+			return nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, ctx.Err())
+		case <-time.After(l.retryWait):
 		}
 	}
 	var once sync.Once
@@ -148,12 +167,11 @@ func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymen
 		once.Do(func() {
 			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			var unlocked bool
-			unlockErr := conn.QueryRow(unlockCtx,
-				`select pg_advisory_unlock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&unlocked)
+			unlockErr := conn.QueryRow(unlockCtx, l.unlock, l.keyArg).Scan(&unlocked)
 			cancel()
 			if unlockErr != nil || !unlocked {
 				// Never return a connection carrying an uncertain session lock
-				// to the pool: a later activation could block behind itself.
+				// to the pool: a later holder could block behind itself.
 				closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 				_ = conn.Hijack().Close(closeCtx)
 				closeCancel()
