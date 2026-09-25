@@ -206,7 +206,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
-		LeaseTTL: integration.RequestTimeout,
+		DailyRequestLimit: integration.DailyRequestLimit,
+		LeaseTTL:          integration.RequestTimeout,
 	})
 	if err != nil {
 		h.Metrics.ObserveAdmission(metricIntegrationID, "error")

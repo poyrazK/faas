@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // IntegrationRecord contains the account-owned metadata needed when an
@@ -39,12 +40,23 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if record.Policy.DailyRequestLimit != nil {
+		var plan string
+		if err := tx.QueryRow(ctx, `SELECT plan FROM accounts WHERE id = $1 FOR SHARE`, record.AccountID).Scan(&plan); err != nil {
+			return err
+		}
+		maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
+		if !ok || *record.Policy.DailyRequestLimit > maximum {
+			return fmt.Errorf("%w: daily request limit exceeds the account plan ceiling", ErrInvalidIntegration)
+		}
+	}
 	command, err := tx.Exec(ctx, `
 		INSERT INTO outbound_integrations
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst,
 		     max_in_flight, request_timeout_ms, enabled, provider_auth_mode,
-		     allowed_methods, allowed_path_prefixes, credential_source, owner_kind)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'operator')
+		     allowed_methods, allowed_path_prefixes, credential_source, owner_kind,
+		     daily_request_limit)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'operator',$15)
 		ON CONFLICT (id) DO UPDATE SET
 		    account_id = EXCLUDED.account_id, name = EXCLUDED.name,
 		    origin = EXCLUDED.origin, token_hash = EXCLUDED.token_hash,
@@ -55,6 +67,7 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		    allowed_methods = EXCLUDED.allowed_methods,
 		    allowed_path_prefixes = EXCLUDED.allowed_path_prefixes,
 		    credential_source = EXCLUDED.credential_source,
+		    daily_request_limit = EXCLUDED.daily_request_limit,
 		    updated_at = now()
 		WHERE outbound_integrations.account_id = EXCLUDED.account_id
 		  AND outbound_integrations.owner_kind = 'operator'`,
@@ -62,7 +75,8 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		record.Policy.TokenHash[:], record.Policy.RatePerSecond, record.Policy.Burst,
 		record.Policy.MaxInFlight, record.Policy.RequestTimeout.Milliseconds(), record.Policy.Enabled,
 		providerAuthMode(record.Policy.ProviderAuthMode), nonNilStrings(record.Policy.AllowedMethods),
-		nonNilStrings(record.Policy.AllowedPathPrefixes), credentialSource(record.Policy.CredentialSource))
+		nonNilStrings(record.Policy.AllowedPathPrefixes), credentialSource(record.Policy.CredentialSource),
+		record.Policy.DailyRequestLimit)
 	if err != nil {
 		return err
 	}

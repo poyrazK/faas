@@ -20,6 +20,17 @@ func (c *Client) DeleteOutboundIntegration(ctx context.Context, integrationID st
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
+func (c *Client) GetOutboundIntegrationUsage(ctx context.Context, integrationID string) (OutboundIntegrationUsageResponse, error) {
+	var out OutboundIntegrationUsageResponse
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/usage"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) SetOutboundIntegrationDailyBudget(ctx context.Context, integrationID string, limit *int64) error {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/budget"
+	return c.do(ctx, "PUT", path, PutOutboundDailyRequestBudgetRequest{DailyRequestLimit: limit}, nil)
+}
+
 func (c *Client) ListOutboundAppBindings(ctx context.Context, slug string) (OutboundAppBindingList, error) {
 	var out OutboundAppBindingList
 	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/outbound-bindings", nil, &out)

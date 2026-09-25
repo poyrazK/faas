@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/outbound/routepolicy"
 )
 
@@ -13,7 +14,60 @@ var _ OutboundBindingStore = (*MemStore)(nil)
 func copyOutboundOffer(in OutboundIntegrationOffer) OutboundIntegrationOffer {
 	in.AllowedMethods = append([]string(nil), in.AllowedMethods...)
 	in.AllowedPathPrefixes = append([]string(nil), in.AllowedPathPrefixes...)
+	if in.DailyRequestLimit != nil {
+		limit := *in.DailyRequestLimit
+		in.DailyRequestLimit = &limit
+	}
 	return in
+}
+
+func (m *MemStore) SetOutboundDailyRequestLimit(_ context.Context, accountID, integrationID string, limit *int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID || offer.OwnerKind != "customer" {
+		return ErrNotFound
+	}
+	if limit != nil {
+		account, exists := m.accounts[accountID]
+		maximum, planKnown := api.OutboundRequestsPerDayMaxForPlan(account.Plan)
+		if !exists || !planKnown || *limit < 1 || *limit > maximum {
+			return ErrInvalidArgument
+		}
+	}
+	if limit == nil {
+		offer.DailyRequestLimit = nil
+	} else {
+		copy := *limit
+		offer.DailyRequestLimit = &copy
+	}
+	m.outboundIntegrationOffers[integrationID] = offer
+	return nil
+}
+
+func (m *MemStore) GetOutboundIntegrationUsage(_ context.Context, accountID, integrationID string) (OutboundIntegrationUsage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID {
+		return OutboundIntegrationUsage{}, ErrNotFound
+	}
+	utcNow := time.Now().UTC()
+	resetAt := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
+	dailyLimit := copyOutboundOffer(offer).DailyRequestLimit
+	if dailyLimit != nil {
+		if account, exists := m.accounts[accountID]; exists {
+			if maximum, ok := api.OutboundRequestsPerDayMaxForPlan(account.Plan); ok && *dailyLimit > maximum {
+				*dailyLimit = maximum
+			}
+		}
+	}
+	return OutboundIntegrationUsage{
+		DailyRequestCount: 0,
+		DailyRequestLimit: dailyLimit,
+		UsageDate:         utcNow.Format("2006-01-02"),
+		ResetsAt:          resetAt,
+	}, nil
 }
 
 // SeedOutboundIntegrationOffer mirrors operator provisioning in development
@@ -38,8 +92,15 @@ func (m *MemStore) CreateOutboundIntegration(_ context.Context, offer OutboundIn
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[offer.AccountID]; !ok {
+	account, ok := m.accounts[offer.AccountID]
+	if !ok {
 		return OutboundIntegrationOffer{}, ErrNotFound
+	}
+	if offer.DailyRequestLimit != nil {
+		maximum, planKnown := api.OutboundRequestsPerDayMaxForPlan(account.Plan)
+		if !planKnown || *offer.DailyRequestLimit > maximum {
+			return OutboundIntegrationOffer{}, ErrInvalidArgument
+		}
 	}
 	active := 0
 	for _, existing := range m.outboundIntegrationOffers {

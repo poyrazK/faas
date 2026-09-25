@@ -27,7 +27,16 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		CredentialSource:     offer.CredentialSource,
 		CredentialConfigured: offer.CredentialConfigured,
 		OwnerKind:            offer.OwnerKind,
+		DailyRequestLimit:    copyOutboundDailyLimit(offer.DailyRequestLimit),
 	}
+}
+
+func copyOutboundDailyLimit(limit *int64) *int64 {
+	if limit == nil {
+		return nil
+	}
+	copy := *limit
+	return &copy
 }
 
 func outboundBindingResponse(binding state.OutboundAppBinding) api.OutboundAppBinding {
@@ -75,6 +84,13 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "A valid outbound integration is required")
 		return
 	}
+	if req.DailyRequestLimit != nil {
+		maximum, ok := api.OutboundRequestsPerDayMaxForPlan(acct.Plan)
+		if !ok || *req.DailyRequestLimit < 1 || *req.DailyRequestLimit > maximum {
+			outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Daily request limit exceeds the account plan ceiling")
+			return
+		}
+	}
 	origin, err := url.Parse(req.Origin)
 	if err != nil || strings.ContainsAny(req.Origin, "?#") || outbound.ValidatePublicOrigin(r.Context(), origin) != nil {
 		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Origin must resolve only to public addresses over HTTPS")
@@ -88,6 +104,7 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 		ID: uuid.NewString(), AccountID: acct.ID, Name: req.Name, Origin: origin.String(),
 		AllowedMethods:      append([]string(nil), req.AllowedMethods...),
 		AllowedPathPrefixes: append([]string(nil), req.AllowedPathPrefixes...),
+		DailyRequestLimit:   copyOutboundDailyLimit(req.DailyRequestLimit),
 		Enabled:             true, CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: "customer",
 	}
 	created, err := store.CreateOutboundIntegration(r.Context(), offer)
@@ -125,6 +142,70 @@ func (s *server) deleteOutboundIntegration(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) getOutboundIntegrationUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	integrationID := r.PathValue("integration")
+	if _, err := uuid.Parse(integrationID); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Integration ID must be a UUID")
+		return
+	}
+	store, ok := s.outboundBindingStore(w)
+	if !ok {
+		return
+	}
+	usage, err := store.GetOutboundIntegrationUsage(r.Context(), acct.ID, integrationID)
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "outbound integration not found")
+		return
+	}
+	if err != nil {
+		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_usage_unavailable", "Outbound integration usage is unavailable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, api.OutboundIntegrationUsageResponse{
+		DailyRequestCount: usage.DailyRequestCount,
+		DailyRequestLimit: copyOutboundDailyLimit(usage.DailyRequestLimit),
+		UsageDate:         usage.UsageDate,
+		ResetsAt:          usage.ResetsAt,
+	})
+}
+
+func (s *server) putOutboundIntegrationDailyBudget(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	integrationID := r.PathValue("integration")
+	if _, err := uuid.Parse(integrationID); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Integration ID must be a UUID")
+		return
+	}
+	var req api.PutOutboundDailyRequestBudgetRequest
+	if err := decodeJSONSized(r, &req, 4<<10); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "A daily request budget is required")
+		return
+	}
+	if req.DailyRequestLimit != nil {
+		maximum, ok := api.OutboundRequestsPerDayMaxForPlan(acct.Plan)
+		if !ok || *req.DailyRequestLimit < 1 || *req.DailyRequestLimit > maximum {
+			outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Daily request limit exceeds the account plan ceiling")
+			return
+		}
+	}
+	store, ok := s.outboundBindingStore(w)
+	if !ok {
+		return
+	}
+	err := store.SetOutboundDailyRequestLimit(r.Context(), acct.ID, integrationID, req.DailyRequestLimit)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		s.notFound(w, "customer outbound integration not found")
+	case errors.Is(err, state.ErrInvalidArgument):
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Daily request limit exceeds the account plan ceiling")
+	case err != nil:
+		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_budget_unavailable", "Outbound daily request budget could not be updated")
+	default:
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func (s *server) listOutboundAppBindings(w http.ResponseWriter, r *http.Request, acct state.Account) {

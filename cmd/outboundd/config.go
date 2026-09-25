@@ -73,6 +73,7 @@ type IntegrationConfig struct {
 	RatePerSecond            float64       `toml:"rate_per_second"`
 	Burst                    int           `toml:"burst"`
 	MaxInFlight              int           `toml:"max_in_flight"`
+	DailyRequestLimit        int64         `toml:"daily_request_limit"`
 	RequestTimeout           time.Duration `toml:"request_timeout"`
 	Enabled                  *bool         `toml:"enabled"`
 }
@@ -186,6 +187,10 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 			policy.ProviderAuthMode = outbound.ProviderAuthManaged
 		}
 		policy.CredentialSource = credentialSource
+		if raw.DailyRequestLimit != 0 {
+			limit := raw.DailyRequestLimit
+			policy.DailyRequestLimit = &limit
+		}
 		policy.AllowedMethods = raw.AllowedMethods
 		policy.AllowedPathPrefixes = raw.AllowedPathPrefixes
 		if err := policy.Validate(); err != nil {

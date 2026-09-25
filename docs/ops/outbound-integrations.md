@@ -34,9 +34,10 @@ default gateway transport.
 
 Create `/etc/faas/outboundd.toml` from the Ansible example. Each integration
 specifies a UUID, a fixed `https://` origin, attached app UUIDs, a rate/burst,
-and `max_in_flight`. Put the raw Gregale gateway token in the named environment
-file (`/etc/faas/secrets/outboundd/outboundd.env`); only its SHA-256 digest is
-stored in Postgres. For integrations without a managed provider credential,
+`max_in_flight`, and optionally `daily_request_limit`. Put the raw Gregale
+gateway token in the named environment file
+(`/etc/faas/secrets/outboundd/outboundd.env`); only its SHA-256 digest is stored
+in Postgres. For integrations without a managed provider credential,
 provider authentication remains application-owned: non-`X-Gregale-*` headers
 such as `Authorization` are forwarded. Those legacy integrations still need
 their gateway token and app ID in each request.
@@ -119,7 +120,8 @@ any attached app may use:
   "name": "payments",
   "origin": "https://api.stripe.com",
   "allowed_methods": ["GET", "POST"],
-  "allowed_path_prefixes": ["/v1/customers", "/v1/payment_intents"]
+  "allowed_path_prefixes": ["/v1/customers", "/v1/payment_intents"],
+  "daily_request_limit": 10000
 }
 ```
 
@@ -134,6 +136,24 @@ it further. Customer-created integrations have a fixed 10 requests/second,
 burst 20, 10 concurrent requests, and 30-second timeout, with a maximum of 25
 enabled customer integrations per account. The credential remains unavailable
 until uploaded and the gateway fails closed if it is missing or revoked.
+
+`daily_request_limit` is optional and caps admitted calls for this integration
+in one UTC day. Its maximum is plan-specific per integration (Free 100,000;
+Hobby 1,000,000; Pro 10,000,000; Scale 100,000,000); these are configuration
+ceilings, not included request allowances. Omit it to leave the integration
+without a customer-selected daily cap. Change or clear it later with
+`PUT /v1/outbound/integrations/{id}/budget`, for example
+`{"daily_request_limit":5000}`; send `null` to clear it. Read the count and
+reset timestamp with `GET /v1/outbound/integrations/{id}/usage`. That response
+counts a request when outbound admission grants it, even if the provider later
+fails; policy, authentication, rate, concurrency, and daily-limit rejections do
+not consume a daily request. A daily-limit rejection is a `429` with
+`X-Gregale-Outbound-Rejection: daily_request_limit` and a `Retry-After` to the
+next UTC midnight. This is a request-count guard, not a dollar or token budget;
+provider pricing and usage units still need provider-specific adapters.
+Operator-provisioned integrations can set the same field in their
+`outboundd.toml` configuration; the customer API only changes customer-owned
+integrations.
 
 Delete a customer-owned integration with
 `DELETE /v1/outbound/integrations/{id}`. This permanently removes its sealed

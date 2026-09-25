@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // PostgresResolver loads policies from the outbound integration tables. It is
@@ -31,20 +32,27 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	}
 	var origin string
 	var accountID uuid.UUID
+	var plan string
 	var providerAuthMode string
 	var credentialSource string
 	var ownerKind string
 	var allowedMethods, allowedPathPrefixes []string
 	var tokenHash []byte
 	var rate float64
+	var dailyRequestLimitValue int64
 	var burst, maxInFlight, timeoutMS int
 	var enabled bool
 	err = r.pool.QueryRow(ctx, `
-		SELECT account_id, origin, token_hash, rate_per_second, burst, max_in_flight,
-		       request_timeout_ms, enabled, provider_auth_mode, credential_source,
-		       allowed_methods, allowed_path_prefixes, owner_kind
-		FROM outbound_integrations WHERE id = $1`, integrationID).
-		Scan(&accountID, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind)
+		SELECT integration.account_id, account.plan, integration.origin, integration.token_hash,
+		       integration.rate_per_second, integration.burst, integration.max_in_flight,
+		       integration.request_timeout_ms, integration.enabled, integration.provider_auth_mode,
+		       integration.credential_source, integration.allowed_methods,
+		       integration.allowed_path_prefixes, integration.owner_kind,
+		       COALESCE(integration.daily_request_limit, 0)
+		  FROM outbound_integrations integration
+		  JOIN accounts account ON account.id = integration.account_id
+		 WHERE integration.id = $1`, integrationID).
+		Scan(&accountID, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -63,6 +71,17 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	}
 	var hash [sha256.Size]byte
 	copy(hash[:], tokenHash)
+	var dailyRequestLimit *int64
+	if dailyRequestLimitValue > 0 {
+		maxForPlan, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
+		if !ok {
+			return Integration{}, fmt.Errorf("%w: account plan has no outbound request budget ceiling", ErrInvalidIntegration)
+		}
+		if dailyRequestLimitValue > maxForPlan {
+			dailyRequestLimitValue = maxForPlan
+		}
+		dailyRequestLimit = &dailyRequestLimitValue
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true
 		  FROM outbound_integration_apps attachment
@@ -102,8 +121,9 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	i := Integration{ID: id, Origin: u, TokenHash: hash, AppIDs: apps,
 		OperatorAppIDs: operatorApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
-		RequestTimeout:   time.Duration(timeoutMS) * time.Millisecond,
-		ProviderAuthMode: providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
+		DailyRequestLimit: dailyRequestLimit,
+		RequestTimeout:    time.Duration(timeoutMS) * time.Millisecond,
+		ProviderAuthMode:  providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
 		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err

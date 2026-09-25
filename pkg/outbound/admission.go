@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var (
@@ -25,6 +27,7 @@ var (
 const (
 	ReasonRate        = "rate_limit"
 	ReasonConcurrency = "concurrency_limit"
+	ReasonDailyLimit  = "daily_request_limit"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -47,6 +50,7 @@ type Integration struct {
 	RatePerSecond       float64
 	Burst               int
 	MaxInFlight         int
+	DailyRequestLimit   *int64
 	RequestTimeout      time.Duration
 	ProviderAuthMode    string
 	CredentialSource    string
@@ -105,6 +109,9 @@ func (i Integration) Validate() error {
 	if math.IsNaN(i.RatePerSecond) || math.IsInf(i.RatePerSecond, 0) || i.RatePerSecond <= 0 || i.Burst < 1 || i.MaxInFlight < 1 {
 		return fmt.Errorf("%w: rate, burst, and max_in_flight must be positive", ErrInvalidIntegration)
 	}
+	if i.DailyRequestLimit != nil && (*i.DailyRequestLimit < 1 || *i.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return fmt.Errorf("%w: daily request limit is outside the supported range", ErrInvalidIntegration)
+	}
 	// An operator may provision an integration with no initial app. Customer
 	// attachments live in apid-owned outbound_app_bindings and are loaded by
 	// the resolver at request time.
@@ -152,11 +159,12 @@ type Resolver interface {
 // AdmissionSpec is the policy snapshot supplied to the shared admission
 // backend. Backends must enforce it atomically across all gateway processes.
 type AdmissionSpec struct {
-	IntegrationID string
-	RatePerSecond float64
-	Burst         int
-	MaxInFlight   int
-	LeaseTTL      time.Duration
+	IntegrationID     string
+	RatePerSecond     float64
+	Burst             int
+	MaxInFlight       int
+	DailyRequestLimit *int64
+	LeaseTTL          time.Duration
 }
 
 // Decision describes an admission or a deterministic rejection. A granted
@@ -196,6 +204,7 @@ func NewStaticResolver(items []Integration) (*StaticResolver, error) {
 		}
 		copyItem.OperatorAppIDs = copyStringSet(item.OperatorAppIDs)
 		copyItem.CustomerAppRoutes = copyRoutePolicies(item.CustomerAppRoutes)
+		copyItem.DailyRequestLimit = copyInt64Pointer(item.DailyRequestLimit)
 		copyItem.AllowedMethods = append([]string(nil), item.AllowedMethods...)
 		copyItem.AllowedPathPrefixes = append([]string(nil), item.AllowedPathPrefixes...)
 		r.items[item.ID] = copyItem
@@ -218,9 +227,18 @@ func (r *StaticResolver) Integration(ctx context.Context, id string) (Integratio
 	i.AppIDs = copyStringSet(i.AppIDs)
 	i.OperatorAppIDs = copyStringSet(i.OperatorAppIDs)
 	i.CustomerAppRoutes = copyRoutePolicies(i.CustomerAppRoutes)
+	i.DailyRequestLimit = copyInt64Pointer(i.DailyRequestLimit)
 	i.AllowedMethods = append([]string(nil), i.AllowedMethods...)
 	i.AllowedPathPrefixes = append([]string(nil), i.AllowedPathPrefixes...)
 	return i, nil
+}
+
+func copyInt64Pointer(in *int64) *int64 {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 func cloneURL(in *url.URL) *url.URL {

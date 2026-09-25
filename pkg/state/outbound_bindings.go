@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/outbound/routepolicy"
 )
 
@@ -25,9 +26,20 @@ type OutboundIntegrationOffer struct {
 	AllowedMethods       []string
 	AllowedPathPrefixes  []string
 	Enabled              bool
+	DailyRequestLimit    *int64
 	CredentialSource     string
 	CredentialConfigured bool
 	OwnerKind            string
+}
+
+// OutboundIntegrationUsage is the durable UTC-day counter for one managed
+// integration. It counts gateway-admitted calls, whether or not the provider
+// ultimately returns a successful response.
+type OutboundIntegrationUsage struct {
+	DailyRequestCount int64
+	DailyRequestLimit *int64
+	UsageDate         string
+	ResetsAt          time.Time
 }
 
 type OutboundAppBinding struct {
@@ -45,6 +57,8 @@ type OutboundBindingStore interface {
 	ListOutboundIntegrationOffers(context.Context, string) ([]OutboundIntegrationOffer, error)
 	CreateOutboundIntegration(context.Context, OutboundIntegrationOffer) (OutboundIntegrationOffer, error)
 	DeleteOutboundIntegration(context.Context, string, string) error
+	SetOutboundDailyRequestLimit(context.Context, string, string, *int64) error
+	GetOutboundIntegrationUsage(context.Context, string, string) (OutboundIntegrationUsage, error)
 	ListOutboundAppBindings(context.Context, string, string) ([]OutboundAppBinding, error)
 	BindOutboundIntegration(context.Context, string, string, string) (OutboundAppBinding, error)
 	UnbindOutboundIntegration(context.Context, string, string, string) error
@@ -62,6 +76,9 @@ func validateCustomerOutboundIntegration(offer OutboundIntegrationOffer) error {
 	}
 	if offer.OwnerKind != "customer" || !offer.Enabled ||
 		offer.CredentialSource != "customer_sealed" || offer.CredentialConfigured {
+		return ErrInvalidArgument
+	}
+	if offer.DailyRequestLimit != nil && (*offer.DailyRequestLimit < 1 || *offer.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
 		return ErrInvalidArgument
 	}
 	if len(offer.Name) < 1 || len(offer.Name) > 63 || !isOutboundIntegrationName(offer.Name) {

@@ -8,15 +8,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type memoryLease struct{ expiresAt time.Time }
 
 type memoryState struct {
-	tokens      float64
-	last        time.Time
-	leases      map[string]memoryLease
-	initialized bool
+	tokens            float64
+	last              time.Time
+	leases            map[string]memoryLease
+	dailyUsageDate    string
+	dailyRequestCount int64
+	initialized       bool
 }
 
 // MemoryBackend is a deterministic in-process backend for tests and local
@@ -42,6 +45,9 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	if spec.IntegrationID == "" || math.IsNaN(spec.RatePerSecond) || math.IsInf(spec.RatePerSecond, 0) || spec.RatePerSecond <= 0 || spec.Burst < 1 || spec.MaxInFlight < 1 {
 		return Decision{}, fmt.Errorf("%w: invalid admission spec", ErrInvalidIntegration)
 	}
+	if spec.DailyRequestLimit != nil && (*spec.DailyRequestLimit < 1 || *spec.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return Decision{}, fmt.Errorf("%w: daily request limit is outside the supported range", ErrInvalidIntegration)
+	}
 	ttl := spec.LeaseTTL
 	if ttl <= 0 {
 		ttl = 30 * time.Second
@@ -49,10 +55,16 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()
+	utcNow := now.UTC()
+	today := utcNow.Format("2006-01-02")
 	state := b.states[spec.IntegrationID]
 	if state == nil {
 		state = &memoryState{tokens: float64(spec.Burst), last: now, leases: make(map[string]memoryLease), initialized: true}
 		b.states[spec.IntegrationID] = state
+	}
+	if state.dailyUsageDate != today {
+		state.dailyUsageDate = today
+		state.dailyRequestCount = 0
 	}
 	if !state.initialized {
 		state.tokens = float64(spec.Burst)
@@ -91,7 +103,16 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		}
 		return Decision{RetryAfter: retry, Reason: ReasonRate}, nil
 	}
+	if spec.DailyRequestLimit != nil && state.dailyRequestCount >= *spec.DailyRequestLimit {
+		nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
+		retry := nextDay.Sub(utcNow)
+		if retry < time.Millisecond {
+			retry = time.Millisecond
+		}
+		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit}, nil
+	}
 	state.tokens--
+	state.dailyRequestCount++
 	id := uuid.NewString()
 	state.leases[id] = memoryLease{expiresAt: now.Add(ttl)}
 	return Decision{Granted: true, LeaseID: id}, nil
