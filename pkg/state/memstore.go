@@ -18541,14 +18541,60 @@ func (m *MemStore) RecordAppSecretRuntimeReload(_ context.Context, result AppSec
 		observationKey := secretRuntimeReloadObservationKey{
 			AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key, InstanceID: result.InstanceID,
 		}
-		m.secretRuntimeReloadObservations[observationKey] = AppSecretRuntimeReloadObservation{
+		observation := AppSecretRuntimeReloadObservation{
 			Scope: candidate.Scope, Key: candidate.Key, InstanceID: result.InstanceID,
 			Version: candidate.Version, Projection: result.Projection, Signal: result.Signal,
 			ObservedAt: at, ErrorCode: result.ErrorCode,
 		}
+		if previous := m.secretRuntimeReloadObservations[observationKey]; previous.ApplicationAckVersion >= candidate.Version {
+			observation.ApplicationAckVersion = previous.ApplicationAckVersion
+			observation.ApplicationAck = previous.ApplicationAck
+			observation.ApplicationAckAt = previous.ApplicationAckAt
+			observation.ApplicationAckErrorCode = previous.ApplicationAckErrorCode
+		}
+		m.secretRuntimeReloadObservations[observationKey] = observation
 		updated++
 	}
 	return updated, nil
+}
+
+func (m *MemStore) RecordAppSecretRuntimeReloadAck(_ context.Context, result AppSecretRuntimeReloadAckResult) (int, error) {
+	if !validAppSecretRuntimeReloadAckResult(result) {
+		return 0, ErrInvalidArgument
+	}
+	if len(result.Candidates) == 0 {
+		return 0, nil
+	}
+	at := result.AttemptedAt.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	instance, ok := m.instances[result.InstanceID]
+	if !ok || instance.AppID != result.AppID {
+		return 0, ErrConflict
+	}
+	for _, candidate := range result.Candidates {
+		secret, secretOK := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
+		observation, observationOK := m.secretRuntimeReloadObservations[secretRuntimeReloadObservationKey{
+			AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key, InstanceID: result.InstanceID,
+		}]
+		if !secretOK || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version ||
+			!observationOK || observation.Version > candidate.Version || observation.ApplicationAckVersion > candidate.Version {
+			return 0, ErrConflict
+		}
+	}
+	for _, candidate := range result.Candidates {
+		key := secretRuntimeReloadObservationKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key, InstanceID: result.InstanceID}
+		observation := m.secretRuntimeReloadObservations[key]
+		observation.ApplicationAckVersion = candidate.Version
+		observation.ApplicationAck = result.Status
+		observation.ApplicationAckAt = &at
+		observation.ApplicationAckErrorCode = result.ErrorCode
+		m.secretRuntimeReloadObservations[key] = observation
+	}
+	return len(result.Candidates), nil
 }
 
 func (m *MemStore) ListAppSecretRuntimeReloadObservations(_ context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadObservation, error) {

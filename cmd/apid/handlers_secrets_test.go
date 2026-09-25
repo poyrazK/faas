@@ -190,6 +190,13 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("record second runtime reload: %v", err)
 	}
+	if _, err := e.store.RecordAppSecretRuntimeReloadAck(context.Background(), state.AppSecretRuntimeReloadAckResult{
+		AccountID: e.acct.ID, AppID: app.ID, InstanceID: firstRuntime.ID, Revision: strings.Repeat("a", 64),
+		Status:     state.SecretApplicationReloadAckApplied,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: api.DefaultEnvScope, Key: "STRIPE_KEY", Version: 1}},
+	}); err != nil {
+		t.Fatalf("record application reload acknowledgement: %v", err)
+	}
 	listRec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/secrets", nil, nil)
 	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
 		t.Fatalf("decode runtime reload list: %v", err)
@@ -202,6 +209,17 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 		!((got[0].InstanceID == firstRuntime.ID && got[1].InstanceID == secondRuntime.ID) ||
 			(got[0].InstanceID == secondRuntime.ID && got[1].InstanceID == firstRuntime.ID)) {
 		t.Errorf("per-runtime reload observations = %+v, want both active runtimes", got)
+	}
+	if got := listResp.Secrets[0].RuntimeReloadObservations; len(got) == 2 {
+		var found bool
+		for _, observation := range got {
+			if observation.InstanceID == firstRuntime.ID {
+				found = observation.ApplicationAckVersion == 1 && observation.ApplicationAck == string(state.SecretApplicationReloadAckApplied) && observation.ApplicationAckAt != ""
+			}
+		}
+		if !found {
+			t.Errorf("application acknowledgement missing from runtime report: %+v", got)
+		}
 	}
 
 	// DELETE.

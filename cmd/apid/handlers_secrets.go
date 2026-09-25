@@ -235,6 +235,8 @@ func (s *server) listSecretRuntimeReloadObservations(ctx context.Context, accoun
 			InstanceID: row.InstanceID, Version: row.Version,
 			Projection: string(row.Projection), Signal: string(row.Signal),
 			ObservedAt: row.ObservedAt.UTC().Format(time.RFC3339Nano), ErrorCode: row.ErrorCode,
+			ApplicationAckVersion: row.ApplicationAckVersion, ApplicationAck: string(row.ApplicationAck),
+			ApplicationAckAt: formatOptionalSecretTime(row.ApplicationAckAt), ApplicationAckErrorCode: row.ApplicationAckErrorCode,
 		})
 	}
 	return out, nil

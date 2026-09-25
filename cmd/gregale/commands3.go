@@ -182,7 +182,10 @@ func secretDeliveryLabel(status string) string {
 func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection, signal, instanceID string, observations []api.SecretRuntimeReloadObservation) string {
 	if len(observations) > 0 {
 		current, stale, sent, queued, unchanged, failed := 0, 0, 0, 0, 0, 0
+		appApplied, appFailed, appAckStale := 0, 0, 0
 		var failedInstances []string
+		var appFailedInstances []string
+		var staleAppAckInstances []string
 		for _, observation := range observations {
 			if observation.Version == currentVersion {
 				current++
@@ -201,11 +204,33 @@ func secretRuntimeReloadLabel(currentVersion, observedVersion int64, projection,
 				failed++
 				failedInstances = append(failedInstances, observation.InstanceID)
 			}
+			if observation.ApplicationAckVersion > 0 {
+				if observation.ApplicationAckVersion != currentVersion {
+					appAckStale++
+					staleAppAckInstances = append(staleAppAckInstances, observation.InstanceID)
+				} else if observation.ApplicationAck == "applied" {
+					appApplied++
+				} else if observation.ApplicationAck == "failed" {
+					appFailed++
+					appFailedInstances = append(appFailedInstances, observation.InstanceID)
+				}
+			}
 		}
 		label := fmt.Sprintf("runtime status: %d active reports (%d current: %d sent, %d queued, %d unchanged; %d stale",
 			len(observations), current, sent, queued, unchanged, stale)
 		if failed > 0 {
 			label += fmt.Sprintf(", %d failed: %s", failed, strings.Join(failedInstances, ","))
+		}
+		if appApplied+appFailed+appAckStale > 0 {
+			label += fmt.Sprintf("; app ack: %d applied, %d failed, %d stale", appApplied, appFailed, appAckStale)
+			if appAckStale > 0 {
+				label += " (" + strings.Join(staleAppAckInstances, ",") + ")"
+			}
+			if appFailed > 0 {
+				label += " (" + strings.Join(appFailedInstances, ",") + ")"
+			}
+		} else {
+			label += "; app ack unknown"
 		}
 		return label + ")"
 	}

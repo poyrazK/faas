@@ -5594,6 +5594,9 @@ type Store interface {
 	// projection/signal outcome for the exact secret versions reported by a
 	// runtime. It does not confirm that the application applied the values.
 	RecordAppSecretRuntimeReload(ctx context.Context, result AppSecretRuntimeReloadResult) (int, error)
+	// RecordAppSecretRuntimeReloadAck records an app's explicit, version-fenced
+	// claim that it applied (or failed to apply) the current secret revision.
+	RecordAppSecretRuntimeReloadAck(ctx context.Context, result AppSecretRuntimeReloadAckResult) (int, error)
 	// ListAppSecretRuntimeReloadObservations returns the latest report for each
 	// active runtime and secret in one app. An empty scope lists all scopes.
 	// Only non-sensitive version, instance and guest-init outcome metadata is
