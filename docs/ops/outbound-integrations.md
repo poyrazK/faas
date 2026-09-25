@@ -65,7 +65,7 @@ carry no provider credential. `apid` owns the durable customer binding row;
 `outboundd` reads it at request time alongside operator `app_ids`, so a bind
 or unbind needs no daemon restart. A customer unbind does not remove an
 operator attachment. The account must own both app and managed integration.
-See [ADR-242](../adr/242-customer-outbound-binding-intent.md).
+See [ADR-252](../adr/252-customer-outbound-binding-intent.md).
 
 After binding, an account can narrow that app's HTTP routes with
 `PATCH /v1/apps/{slug}/outbound-bindings/{integration_id}`:
@@ -84,7 +84,7 @@ customer binding. For operator-provisioned integrations, an explicit operator
 `app_ids` attachment continues to grant the full operator ceiling even if a
 customer binding for the same app is narrower. The PATCH route requires MFA
 and deploy-write scope.
-See [ADR-244](../adr/244-customer-outbound-binding-route-policy.md).
+See [ADR-254](../adr/254-customer-outbound-binding-route-policy.md).
 
 For a customer-held provider credential on an operator-provisioned integration,
 configure the managed integration with
@@ -101,7 +101,7 @@ and `outboundd` receives the matching private identity as a systemd credential.
 The ciphertext is fetched and opened for each admitted route request, so a
 rotation or deletion takes effect without restarting the gateway. A missing,
 corrupt, or revoked key fails closed with 503 before the provider call. See
-[ADR-243](../adr/243-customer-sealed-outbound-credentials.md).
+[ADR-253](../adr/253-customer-sealed-outbound-credentials.md).
 
 An account can create its own integration without an operator pre-provisioning
 the origin. Before enabling this workflow, configure
@@ -159,7 +159,7 @@ Delete a customer-owned integration with
 `DELETE /v1/outbound/integrations/{id}`. This permanently removes its sealed
 credential, app bindings, and admission state. This endpoint cannot delete
 operator-provisioned integrations. See
-[ADR-246](../adr/246-customer-created-outbound-integrations.md).
+[ADR-256](../adr/256-customer-created-outbound-integrations.md).
 
 For every managed integration, set `allowed_methods` (uppercase `GET`, `HEAD`,
 `POST`, `PUT`, `PATCH`, or `DELETE`) and `allowed_path_prefixes`. A prefix
@@ -199,9 +199,9 @@ also prevents later DNS changes from redirecting a connection to a private
 destination. A bound app can use the provider
 credential through the gateway within its configured HTTP routes, but an
 external provider could echo a credential in its own response. Scope provider
-keys accordingly. See [ADR-239](../adr/239-platform-held-outbound-provider-authorization.md),
-[ADR-241](../adr/241-managed-outbound-route-policy.md), and
-[ADR-245](../adr/245-public-destination-dialing.md).
+keys accordingly. See [ADR-249](../adr/249-platform-held-outbound-provider-authorization.md),
+[ADR-251](../adr/251-managed-outbound-route-policy.md), and
+[ADR-255](../adr/255-public-destination-dialing.md).
 
 An application calls the gateway explicitly. For a managed integration, fetch
 an assertion from the guest-local identity endpoint using the integration's

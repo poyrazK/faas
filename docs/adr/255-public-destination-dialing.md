@@ -1,4 +1,4 @@
-# ADR-245: Public destination checks for outbound requests
+# ADR-255: Public destination checks for outbound requests
 
 - **Status:** accepted
 - **Date:** 2026-09-25

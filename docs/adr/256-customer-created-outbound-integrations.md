@@ -1,4 +1,4 @@
-# ADR-246: Customer-created outbound integrations
+# ADR-256: Customer-created outbound integrations
 
 - **Status:** accepted
 - **Date:** 2026-09-25

@@ -1,4 +1,4 @@
-# ADR-247: Durable outbound usage and daily request budgets
+# ADR-257: Durable outbound usage and daily request budgets
 
 - **Status:** accepted
 - **Date:** 2026-09-25

@@ -22,7 +22,7 @@ import (
 
 // MaxOutboundRequestsPerDay is the structural upper bound for a
 // customer-configured daily request budget on one integration. Plan ceilings
-// below are at or below this value. See ADR-247.
+// below are at or below this value. See ADR-257.
 const MaxOutboundRequestsPerDay int64 = 100_000_000
 
 // Operator-configurable object-storage preview safeguards, not plan allowances
@@ -308,7 +308,7 @@ type Limits struct {
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
-	// OutboundRequestsPerDayMax (ADR-247) caps the customer-selected daily
+	// OutboundRequestsPerDayMax (ADR-257) caps the customer-selected daily
 	// request limit on any one managed outbound integration. It is a policy
 	// ceiling, not an included usage allowance; an omitted limit remains uncapped.
 	OutboundRequestsPerDayMax int64
