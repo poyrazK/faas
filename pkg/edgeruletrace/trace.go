@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/redact"
 )
 
 const (
@@ -22,8 +23,12 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. Ingress/auth policy, target-app rules after routing, environment-scoped route policies, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. Ingress/auth policy, target-app rules after routing, environment-scoped route policies, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
+
+const redactedHeaderValue = "[REDACTED]"
+
+var traceOutputRedactor = redact.New(1 << 20)
 
 // Input is the request context that can be simulated without contacting the
 // gateway or app runtime. Call NormalizeInput before Simulate.
@@ -290,7 +295,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		row := RuleRow{
 			ID: rule.ID, Kind: rule.Kind, Priority: rule.Priority,
 			MatchHost: rule.MatchHost, MatchPath: rule.MatchPath,
-			MatchMethods: rule.MatchMethods, MatchHeaders: rule.MatchHeaders,
+			MatchMethods: rule.MatchMethods, MatchHeaders: cloneStringMap(rule.MatchHeaders),
 		}
 		switch {
 		case !rule.Enabled:
@@ -337,6 +342,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		result.Rules = append(result.Rules, row)
 	}
 	result.Simulation = simulateRequest(input, sorted)
+	redactTraceOutput(&result)
 	return result
 }
 
@@ -1247,7 +1253,7 @@ func matchedSelectors(rule api.EdgeRuleResponse) string {
 		sort.Strings(headerNames)
 		var conditions []string
 		for _, name := range headerNames {
-			conditions = append(conditions, fmt.Sprintf("%s=%q", name, rule.MatchHeaders[name]))
+			conditions = append(conditions, fmt.Sprintf("%s=%q", name, redactTraceHeaderValue(name, rule.MatchHeaders[name])))
 		}
 		selectors += ", headers [" + strings.Join(conditions, ", ") + "]"
 	}
@@ -1261,7 +1267,9 @@ func headerSnapshot(headers http.Header) map[string][]string {
 	out := make(map[string][]string, len(headers))
 	for name, values := range headers {
 		key := strings.ToLower(name)
-		out[key] = append(out[key], values...)
+		for _, value := range values {
+			out[key] = append(out[key], redactTraceHeaderValue(key, value))
+		}
 	}
 	return out
 }
@@ -1275,10 +1283,160 @@ func headerMismatch(expected map[string]string, actual http.Header) string {
 	for _, name := range names {
 		value := expected[name]
 		if !api.EdgeRuleRequestHeadersMatch(map[string]string{name: value}, actual) {
-			return fmt.Sprintf("request header %q has no value equal to %q", name, value)
+			return fmt.Sprintf("request header %q has no value equal to %q", name, redactTraceHeaderValue(name, value))
 		}
 	}
 	return "request headers do not match"
+}
+
+func redactTraceOutput(result *Result) {
+	if result == nil {
+		return
+	}
+	result.Headers = redactHeaderSnapshot(result.Headers)
+	for i := range result.Rules {
+		row := &result.Rules[i]
+		row.MatchHeaders = redactHeaderValues(row.MatchHeaders)
+		row.Reason = redactTraceText(row.Reason)
+		row.OutcomeReason = redactTraceText(row.OutcomeReason)
+		if row.ActionPreview != nil {
+			redactActionPreview(row.ActionPreview)
+		}
+	}
+	redactSimulation(&result.Simulation)
+}
+
+func redactSimulation(simulation *Simulation) {
+	if simulation == nil {
+		return
+	}
+	simulation.RequestHeaders = redactHeaderSnapshot(simulation.RequestHeaders)
+	simulation.ResponseHeaderOps = redactHeaderOps(simulation.ResponseHeaderOps)
+	simulation.RedirectHeaders = redactHeaderValues(simulation.RedirectHeaders)
+	simulation.Location = redactTraceText(simulation.Location)
+	simulation.Message = redactTraceText(simulation.Message)
+	simulation.Reason = redactTraceText(simulation.Reason)
+	for i := range simulation.Steps {
+		step := &simulation.Steps[i]
+		step.RedirectHeaders = redactHeaderValues(step.RedirectHeaders)
+		step.RequestOps = redactHeaderOps(step.RequestOps)
+		step.ResponseOps = redactHeaderOps(step.ResponseOps)
+		step.Location = redactTraceText(step.Location)
+		step.Message = redactTraceText(step.Message)
+		step.Reason = redactTraceText(step.Reason)
+	}
+}
+
+func redactActionPreview(preview *ActionPreview) {
+	if preview == nil {
+		return
+	}
+	preview.RedirectHeaders = redactHeaderValues(preview.RedirectHeaders)
+	preview.RequestHeaderOps = redactHeaderOps(preview.RequestHeaderOps)
+	preview.ResponseHeaderOps = redactHeaderOps(preview.ResponseHeaderOps)
+	preview.Location = redactTraceText(preview.Location)
+	preview.Message = redactTraceText(preview.Message)
+}
+
+func redactHeaderSnapshot(headers map[string][]string) map[string][]string {
+	if len(headers) == 0 {
+		return headers
+	}
+	out := make(map[string][]string, len(headers))
+	for name, values := range headers {
+		for _, value := range values {
+			out[name] = append(out[name], redactTraceHeaderValue(name, value))
+		}
+	}
+	return out
+}
+
+func redactHeaderValues(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return headers
+	}
+	out := make(map[string]string, len(headers))
+	for name, value := range headers {
+		out[name] = redactTraceHeaderValue(name, value)
+	}
+	return out
+}
+
+func redactHeaderOps(ops []api.EdgeRuleHeaderOp) []api.EdgeRuleHeaderOp {
+	if len(ops) == 0 {
+		return ops
+	}
+	out := append([]api.EdgeRuleHeaderOp(nil), ops...)
+	for i := range out {
+		out[i].Value = redactTraceHeaderValue(out[i].Name, out[i].Value)
+	}
+	return out
+}
+
+func redactTraceHeaderValue(name, value string) string {
+	if isSensitiveTraceHeader(name) && value != "" {
+		return redactedHeaderValue
+	}
+	return redactTraceText(value)
+}
+
+func redactTraceText(value string) string {
+	redacted, _ := traceOutputRedactor.Apply(value)
+	return redacted
+}
+
+func isSensitiveTraceHeader(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "access-control-allow-credentials" {
+		return false
+	}
+	compact := strings.NewReplacer("-", "", "_", "", ".", "").Replace(name)
+	for _, marker := range []string{
+		"auth", "cookie", "token", "apikey", "accesskey", "secret", "password", "passwd",
+		"credential", "session", "signature", "privatekey", "clientkey", "refresh",
+	} {
+		if strings.Contains(compact, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// RedactHeaderInputForDisplay masks credential-like request header values
+// before submitted form data is echoed back into the dashboard.
+func RedactHeaderInputForDisplay(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	lines := strings.SplitAfter(raw, "\n")
+	for i, line := range lines {
+		newline := ""
+		if strings.HasSuffix(line, "\n") {
+			newline = "\n"
+			line = strings.TrimSuffix(line, newline)
+		}
+		carriageReturn := ""
+		if strings.HasSuffix(line, "\r") {
+			carriageReturn = "\r"
+			line = strings.TrimSuffix(line, carriageReturn)
+		}
+		if strings.TrimSpace(line) == "" {
+			lines[i] = line + carriageReturn + newline
+			continue
+		}
+		colon := strings.IndexByte(line, ':')
+		if colon <= 0 {
+			lines[i] = redactedHeaderValue + carriageReturn + newline
+			continue
+		}
+		valueStart := colon + 1
+		for valueStart < len(line) && (line[valueStart] == ' ' || line[valueStart] == '\t') {
+			valueStart++
+		}
+		value := redactTraceHeaderValue(line[:colon], line[valueStart:])
+		lines[i] = line[:valueStart] + value + carriageReturn + newline
+	}
+	return strings.Join(lines, "")
 }
 
 // HostMatches mirrors the edge-rule store's exact-host and leading-subdomain

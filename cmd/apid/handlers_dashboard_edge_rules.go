@@ -69,6 +69,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	}
 	if traceForm != nil {
 		data.Trace = *traceForm
+		data.Trace.Headers = edgeruletrace.RedactHeaderInputForDisplay(data.Trace.Headers)
 	}
 	if rules, listErr := s.store.ListEdgeRulesForApp(ctx, app.ID); listErr != nil {
 		data.ErrorMessage = "Edge-rule data is temporarily unavailable. Please try again shortly."

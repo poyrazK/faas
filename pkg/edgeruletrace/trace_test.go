@@ -158,6 +158,82 @@ func TestParseRequestHeadersTrimsHTTPOptionalWhitespace(t *testing.T) {
 	}
 }
 
+func TestSimulateRedactsSensitiveHeadersAcrossTraceOutput(t *testing.T) {
+	const (
+		authorization = "Bearer authorization-sentinel-83912"
+		cookie        = "session=cookie-sentinel-83912"
+		apiKey        = "api-key-sentinel-83912"
+		sessionToken  = "custom-token-sentinel-83912"
+		requestSet    = "action-session-sentinel-83912"
+		responseSet   = "response-cookie-sentinel-83912"
+		selector      = "mismatch-selector-sentinel-83912"
+	)
+	rules := []api.EdgeRuleResponse{
+		{
+			ID: "header-rule", Enabled: true, Kind: "headers", MatchHost: "*", MatchPath: "*", Priority: 10,
+			MatchHeaders: map[string]string{"authorization": authorization},
+			Action:       json.RawMessage(`{"headers":{"request_headers":[{"name":"X-Session-Token","value":"` + requestSet + `","action":"set"}],"response_headers":[{"name":"Set-Cookie","value":"` + responseSet + `","action":"set"}]}}`),
+		},
+		{
+			ID: "mismatch-rule", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "*", Priority: 20,
+			MatchHeaders: map[string]string{"cookie": selector},
+			Action:       json.RawMessage(`{"rewrite":{"from":"/old","to":"/new"}}`),
+		},
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, AppMaintenanceLoaded: true,
+		Headers: http.Header{
+			"Authorization":   []string{authorization},
+			"Cookie":          []string{cookie},
+			"X-Api-Key":       []string{apiKey},
+			"X-Session-Token": []string{sessionToken},
+			"X-Region":        []string{"west"},
+		},
+	}
+	result, err := edgeruletrace.Simulate(input, rules)
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Rules[0].Status != "first_candidate" || result.Simulation.Outcome != "continue" {
+		t.Fatalf("raw header matching changed by redaction: row=%#v simulation=%#v", result.Rules[0], result.Simulation)
+	}
+	if result.Rules[1].Status != "skipped" || !strings.Contains(result.Rules[1].Reason, "[REDACTED]") {
+		t.Fatalf("sensitive mismatch reason = %q", result.Rules[1].Reason)
+	}
+	if result.Headers["authorization"][0] != "[REDACTED]" || result.Headers["cookie"][0] != "[REDACTED]" || result.Headers["x-api-key"][0] != "[REDACTED]" {
+		t.Fatalf("top-level request headers were not redacted: %#v", result.Headers)
+	}
+	if result.Headers["x-region"][0] != "west" {
+		t.Fatalf("ordinary request header was changed: %#v", result.Headers)
+	}
+	if result.Simulation.RequestHeaders["x-session-token"][0] != "[REDACTED]" {
+		t.Fatalf("simulated request headers were not redacted: %#v", result.Simulation.RequestHeaders)
+	}
+	if got := result.Simulation.Steps[0].RequestOps[0].Value; got != "[REDACTED]" {
+		t.Fatalf("request header action value = %q", got)
+	}
+	if got := result.Simulation.Steps[0].ResponseOps[0].Value; got != "[REDACTED]" {
+		t.Fatalf("response header action value = %q", got)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, secret := range []string{authorization, cookie, apiKey, sessionToken, requestSet, responseSet, selector} {
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("serialized trace leaked %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestRedactHeaderInputForDisplay(t *testing.T) {
+	got := edgeruletrace.RedactHeaderInputForDisplay("Authorization: Bearer form-auth-sentinel\r\nX-Session-Token:\tform-token-sentinel\nX-Region: west\nbroken form-cookie-sentinel")
+	want := "Authorization: [REDACTED]\r\nX-Session-Token:\t[REDACTED]\nX-Region: west\n[REDACTED]"
+	if got != want {
+		t.Fatalf("RedactHeaderInputForDisplay() = %q, want %q", got, want)
+	}
+}
+
 func TestSimulateInlineCORSRuleAppliesResponseHeaders(t *testing.T) {
 	rule := corsTraceRule(t, "cors-rule", []string{"GET"}, api.EdgeRuleCORSAction{
 		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET", "POST"},
