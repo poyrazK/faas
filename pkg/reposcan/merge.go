@@ -54,6 +54,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		dependsOn    []string
 
 		serviceBindingPolicy      ServiceBindingPolicy
+		serviceBindingTransport   ServiceBindingTransport
 		previewServiceCallsPolicy PreviewServiceCallsPolicy
 		allowedServiceCallers     *[]string
 
@@ -69,6 +70,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		envSet   bool
 
 		serviceBindingPolicySet      bool
+		serviceBindingTransportSet   bool
 		previewServiceCallsPolicySet bool
 		allowedServiceCallersSet     bool
 
@@ -150,6 +152,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.serviceBindingPolicy = s.serviceBindingPolicy
 			b.serviceBindingPolicySet = true
 		}
+		if !b.serviceBindingTransportSet && s.serviceBindingTransport != "" {
+			b.serviceBindingTransport = s.serviceBindingTransport
+			b.serviceBindingTransportSet = true
+		}
 		if !b.previewServiceCallsPolicySet && s.previewServiceCallsPolicy != "" {
 			b.previewServiceCallsPolicy = s.previewServiceCallsPolicy
 			b.previewServiceCallsPolicySet = true
@@ -209,6 +215,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			DependsOn:    b.dependsOn,
 
 			ServiceBindingPolicy:      b.serviceBindingPolicy,
+			ServiceBindingTransport:   b.serviceBindingTransport,
 			PreviewServiceCallsPolicy: b.previewServiceCallsPolicy,
 			AllowedServiceCallers:     b.allowedServiceCallers,
 

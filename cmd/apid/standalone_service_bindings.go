@@ -33,3 +33,14 @@ func standaloneServicePolicy(raw *api.ServiceBindingPolicy) (api.ServiceBindingP
 		return "", api.ErrValidation(fmt.Sprintf("service_binding_policy must be account or declared, got %q", *raw))
 	}
 }
+
+func standaloneServiceTransport(raw *api.ServiceBindingTransport) (api.ServiceBindingTransport, *api.Problem) {
+	if raw == nil {
+		return "", nil
+	}
+	transport, err := api.NormalizeServiceBindingTransport(*raw)
+	if err != nil || transport == "" {
+		return "", api.ErrValidation(fmt.Sprintf("service_binding_transport must be http or https, got %q", *raw))
+	}
+	return transport, nil
+}

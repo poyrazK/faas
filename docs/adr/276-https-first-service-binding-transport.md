@@ -1,0 +1,7 @@
+# ADR-276: HTTPS-first service-binding transport
+
+- **Status:** accepted
+- **Context:** HTTPS service aliases and workload CA trust are available, but the canonical `GREGALE_SERVICE_<NAME>_URL` still selects the legacy HTTP endpoint. An additive HTTPS variable requires every app to opt in independently and does not prevent an accidental HTTP retry.
+- **Decision:** Add `x-gregale-service-transport: https` for project workloads and `service_binding_transport: "https"` for standalone apps. The canonical `_URL` then points to `https://<service>.internal`; the `_HTTPS_URL` companion remains available. The gateway rejects plaintext service requests from callers configured for HTTPS before endpoint selection or target wake. Omitted project configuration preserves a stored setting on reapply and defaults new workloads to HTTP; explicit `http` selects the legacy endpoint.
+- **Consequences:** Existing apps remain unchanged until opted in. HTTPS mode requires the private HTTPS listener and workload CA trust to be deployed before callers adopt it. `gregale bindings` reports the effective transport, and the app API exposes it for standalone apps. The transport choice is caller-owned; project-managed apps update it through source, and previews inherit it from their parent.
+- **Rejected alternatives:** Globally rewriting existing binding URLs would break callers and create a rolling-upgrade hazard. Keeping HTTPS as a convention-only URL would allow application retries to downgrade to plaintext.

@@ -199,18 +199,19 @@ func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 	}
 	desired := AppManifest{
 		Env: map[string]string{
-			"GREGALE_SERVICE_API_URL":       "http://api.svc.gregale:10080",
+			"GREGALE_SERVICE_API_URL":       "https://api.internal",
 			"GREGALE_SERVICE_API_HTTPS_URL": "https://api.internal",
 		},
 		ServiceBindings: []api.AppServiceBinding{{
 			Binding: "GREGALE_SERVICE_API_URL",
 			Service: "api",
 		}},
-		ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+		ServiceBindingPolicy:    api.ServiceBindingPolicyDeclared,
+		ServiceBindingTransport: api.ServiceBindingTransportHTTPS,
 	}
 
 	got := mergeProjectManagedManifest(existing, desired)
-	if got.Env["CUSTOM"] != "kept" || got.Env["GREGALE_SERVICE_API_URL"] != "http://api.svc.gregale:10080" ||
+	if got.Env["CUSTOM"] != "kept" || got.Env["GREGALE_SERVICE_API_URL"] != "https://api.internal" ||
 		got.Env["GREGALE_SERVICE_API_HTTPS_URL"] != "https://api.internal" {
 		t.Fatalf("merged env = %#v, want custom env and current service binding", got.Env)
 	}
@@ -225,5 +226,8 @@ func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 	}
 	if got.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
 		t.Fatalf("service binding policy = %q, want declared", got.ServiceBindingPolicy)
+	}
+	if got.ServiceBindingTransport != api.ServiceBindingTransportHTTPS {
+		t.Fatalf("service binding transport = %q, want https", got.ServiceBindingTransport)
 	}
 }

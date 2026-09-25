@@ -14,6 +14,7 @@ import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 /**
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
@@ -100,6 +101,10 @@ export type AppResponse = {
    * Effective internal-service authorization policy. Legacy apps without a stored value return `account`.
    */
   service_binding_policy?: ServiceBindingPolicy;
+  /**
+   * Effective canonical service URL transport. Legacy apps without a stored value return `http`.
+   */
+  service_binding_transport?: ServiceBindingTransport;
   /**
    * Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`.
    */

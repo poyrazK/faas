@@ -308,9 +308,11 @@ func (s *Service) applyUpdate(
 	if len(available) > 0 {
 		serviceNames = available[0]
 	}
-	manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, a.Workload, serviceNames)
+	transport := serviceBindingTransportForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingTransport)
+	manifest.Env = serviceEnvForWorkloadWithTransport(manifest.Env, a.Workload, serviceNames, transport)
 	manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(a.Workload, serviceNames)
 	manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingPolicy)
+	manifest.ServiceBindingTransport = transport
 	manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(a.Workload)
 	manifest.AllowedServiceCallers = a.Workload.AllowedServiceCallers
 	manifest.BuildDockerfile = a.Workload.Dockerfile
@@ -368,6 +370,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 	if len(available) > 0 {
 		serviceNames = available[0]
 	}
+	transport := serviceBindingTransportForNewWorkload(w)
 	return state.App{
 		AccountID:     project.AccountID,
 		ProjectID:     project.ID,
@@ -377,10 +380,11 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		WorkloadClass: class,
 		StartCommand:  startCmd,
 		Manifest: state.AppManifest{
-			Env:             serviceEnvForWorkloadWithAvailable(nil, w, serviceNames),
+			Env:             serviceEnvForWorkloadWithTransport(nil, w, serviceNames, transport),
 			ServiceBindings: serviceBindingsForWorkloadWithAvailable(w, serviceNames),
 
 			ServiceBindingPolicy:      serviceBindingPolicyForNewWorkload(w),
+			ServiceBindingTransport:   transport,
 			PreviewServiceCallsPolicy: previewServiceCallsPolicyForWorkload(w),
 			AllowedServiceCallers:     w.AllowedServiceCallers,
 
@@ -400,9 +404,11 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.WorkloadName = w.Name
 	app.WorkloadClass = workloadClassFromScan(w)
 	app.StartCommand = resolveStartCommand(w)
-	app.Manifest.Env = serviceEnvForWorkloadWithAvailable(app.Manifest.Env, w, available)
+	transport := serviceBindingTransportForExistingWorkload(w, app.Manifest.ServiceBindingTransport)
+	app.Manifest.Env = serviceEnvForWorkloadWithTransport(app.Manifest.Env, w, available, transport)
 	app.Manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(w, available)
 	app.Manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(w, app.Manifest.ServiceBindingPolicy)
+	app.Manifest.ServiceBindingTransport = transport
 	app.Manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(w)
 	app.Manifest.AllowedServiceCallers = w.AllowedServiceCallers
 	app.Manifest.BuildDockerfile = w.Dockerfile

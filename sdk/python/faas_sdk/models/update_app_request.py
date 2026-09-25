@@ -92,6 +92,18 @@ from ..models.update_app_request_service_binding_policy_type_3_type_1 import (
     UpdateAppRequestServiceBindingPolicyType3Type1,
     check_update_app_request_service_binding_policy_type_3_type_1,
 )
+from ..models.update_app_request_service_binding_transport_type_1 import (
+    UpdateAppRequestServiceBindingTransportType1,
+    check_update_app_request_service_binding_transport_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_2_type_1 import (
+    UpdateAppRequestServiceBindingTransportType2Type1,
+    check_update_app_request_service_binding_transport_type_2_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_3_type_1 import (
+    UpdateAppRequestServiceBindingTransportType3Type1,
+    check_update_app_request_service_binding_transport_type_3_type_1,
+)
 from ..models.update_app_request_visibility_type_1 import (
     UpdateAppRequestVisibilityType1,
     check_update_app_request_visibility_type_1,
@@ -147,6 +159,16 @@ class UpdateAppRequest:
     """Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account
     reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
    """
+    service_binding_transport: (
+        None
+        | Unset
+        | UpdateAppRequestServiceBindingTransportType1
+        | UpdateAppRequestServiceBindingTransportType2Type1
+        | UpdateAppRequestServiceBindingTransportType3Type1
+    ) = UNSET
+    """Set standalone canonical service URL scheme. Omit or null to keep unchanged; http restores the legacy
+    endpoint and https selects the private `.internal` alias. Project-managed and preview apps reject non-null
+    changes."""
     ram_mb: int | None | Unset = UNSET
     cpu_millicores: (
         None
@@ -361,6 +383,18 @@ class UpdateAppRequest:
             service_binding_policy = self.service_binding_policy
         else:
             service_binding_policy = self.service_binding_policy
+
+        service_binding_transport: None | str | Unset
+        if isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        else:
+            service_binding_transport = self.service_binding_transport
 
         ram_mb: int | None | Unset
         if isinstance(self.ram_mb, Unset):
@@ -714,6 +748,8 @@ class UpdateAppRequest:
             field_dict["service_binding_targets"] = service_binding_targets
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
         if cpu_millicores is not UNSET:
@@ -962,6 +998,58 @@ class UpdateAppRequest:
             )
 
         service_binding_policy = _parse_service_binding_policy(d.pop("service_binding_policy", UNSET))
+
+        def _parse_service_binding_transport(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestServiceBindingTransportType1
+            | UpdateAppRequestServiceBindingTransportType2Type1
+            | UpdateAppRequestServiceBindingTransportType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_1 = check_update_app_request_service_binding_transport_type_1(data)
+
+                return service_binding_transport_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_2_type_1 = (
+                    check_update_app_request_service_binding_transport_type_2_type_1(data)
+                )
+
+                return service_binding_transport_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_3_type_1 = (
+                    check_update_app_request_service_binding_transport_type_3_type_1(data)
+                )
+
+                return service_binding_transport_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestServiceBindingTransportType1
+                | UpdateAppRequestServiceBindingTransportType2Type1
+                | UpdateAppRequestServiceBindingTransportType3Type1,
+                data,
+            )
+
+        service_binding_transport = _parse_service_binding_transport(d.pop("service_binding_transport", UNSET))
 
         def _parse_ram_mb(data: object) -> int | None | Unset:
             if data is None:
@@ -1679,6 +1767,7 @@ class UpdateAppRequest:
             allowed_service_callers=allowed_service_callers,
             service_binding_targets=service_binding_targets,
             service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
             ram_mb=ram_mb,
             cpu_millicores=cpu_millicores,
             resource_profile=resource_profile,

@@ -21,6 +21,7 @@ from ..models.app_response_workload_class import AppResponseWorkloadClass, check
 from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
 from ..models.resource_profile import ResourceProfile, check_resource_profile
 from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -123,6 +124,9 @@ class AppResponse:
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
     """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
     `deny` rejects preview callers before waking the target."""
@@ -335,6 +339,10 @@ class AppResponse:
         if not isinstance(self.service_binding_policy, Unset):
             service_binding_policy = self.service_binding_policy
 
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = self.service_binding_transport
+
         preview_service_calls_policy: str | Unset = UNSET
         if not isinstance(self.preview_service_calls_policy, Unset):
             preview_service_calls_policy = self.preview_service_calls_policy
@@ -521,6 +529,8 @@ class AppResponse:
             field_dict["service_bindings"] = service_bindings
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if preview_service_calls_policy is not UNSET:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
         if allowed_service_callers is not UNSET:
@@ -755,6 +765,13 @@ class AppResponse:
             service_binding_policy = UNSET
         else:
             service_binding_policy = check_service_binding_policy(_service_binding_policy)
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
 
         _preview_service_calls_policy = d.pop("preview_service_calls_policy", UNSET)
         preview_service_calls_policy: PreviewServiceCallsPolicy | Unset
@@ -998,6 +1015,7 @@ class AppResponse:
             preview_expires_at=preview_expires_at,
             service_bindings=service_bindings,
             service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,
             allowed_service_callers=allowed_service_callers,
             egress_allowlist=egress_allowlist,

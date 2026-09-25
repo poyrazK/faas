@@ -901,9 +901,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Service caller policy is source-managed", "edit x-gregale-allow-callers in the project source; preview policies inherit from their source app"))
 		return
 	}
-	if (req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil) && (app.ProjectID != "" || app.PreviewOfSlug != "") {
+	if (req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil) && (app.ProjectID != "" || app.PreviewOfSlug != "") {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Service bindings are source-managed", "edit depends_on or x-gregale-service-policy in the project source; preview bindings inherit from their source app"))
+			"Service bindings are source-managed", "edit depends_on, x-gregale-service-policy, or x-gregale-service-transport in the project source; preview bindings inherit from their source app"))
 		return
 	}
 	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, app.Slug)
@@ -914,6 +914,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	servicePolicy, servicePolicyProblem := standaloneServicePolicy(req.ServiceBindingPolicy)
 	if servicePolicyProblem != nil {
 		api.WriteProblem(w, servicePolicyProblem)
+		return
+	}
+	serviceTransport, serviceTransportProblem := standaloneServiceTransport(req.ServiceBindingTransport)
+	if serviceTransportProblem != nil {
+		api.WriteProblem(w, serviceTransportProblem)
 		return
 	}
 	if prob := resolveUpdateResourceProfile(&req); prob != nil {
@@ -1105,17 +1110,30 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		lifecycleManifest.AllowedServiceCallers = allowedCallers
 	}
-	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil {
+	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil {
 		if lifecycleManifest == nil {
 			copyOfManifest := app.Manifest
 			lifecycleManifest = &copyOfManifest
 		}
 		if req.ServiceBindingTargets != nil {
 			lifecycleManifest.ServiceBindings = bindings
-			lifecycleManifest.Env = api.ServiceBindingEnv(app.Manifest.Env, bindings)
 		}
 		if req.ServiceBindingPolicy != nil {
 			lifecycleManifest.ServiceBindingPolicy = servicePolicy
+		}
+		if req.ServiceBindingTransport != nil {
+			lifecycleManifest.ServiceBindingTransport = serviceTransport
+		}
+		if req.ServiceBindingTargets != nil || req.ServiceBindingTransport != nil {
+			selectedBindings := app.Manifest.ServiceBindings
+			if req.ServiceBindingTargets != nil {
+				selectedBindings = bindings
+			}
+			selectedTransport := app.Manifest.ServiceBindingTransport
+			if req.ServiceBindingTransport != nil {
+				selectedTransport = serviceTransport
+			}
+			lifecycleManifest.Env = api.ServiceBindingEnvForTransport(app.Manifest.Env, selectedBindings, selectedTransport)
 		}
 	}
 	retryPolicyJSON, retryPolicyProblem := marshalAppRetryPolicy(req.RetryPolicy)
@@ -1486,6 +1504,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.ServiceBindingPolicy != nil {
 		oldApp["service_binding_policy"] = app.Manifest.EffectiveServiceBindingPolicy()
 		newApp["service_binding_policy"] = updated.Manifest.EffectiveServiceBindingPolicy()
+	}
+	if req.ServiceBindingTransport != nil {
+		oldApp["service_binding_transport"] = app.Manifest.EffectiveServiceBindingTransport()
+		newApp["service_binding_transport"] = updated.Manifest.EffectiveServiceBindingTransport()
 	}
 	if lifecycleChanged {
 		oldApp["lifecycle"] = apiManifestFromState(app.Manifest)

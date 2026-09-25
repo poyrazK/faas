@@ -134,6 +134,9 @@ type ServiceCaller struct {
 	// from a guest-supplied header. It lets internal service-proxy outcomes be
 	// attributed to the exact calling revision for rollout health checks.
 	DeploymentID string
+	// RequireHTTPS is set when the caller selected the HTTPS service-binding
+	// transport. Plain-HTTP calls are denied before endpoint lookup or wake.
+	RequireHTTPS bool
 }
 
 // ServiceProxyAuthorizer enforces the tenant boundary and any caller-side
@@ -568,6 +571,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// route this platform-owned span to apid without a customer API key.
 	if callerInfo.AccountID != "" {
 		dependencySpan.SetAttributes(attribute.String(retainedSpanAccountIDAttribute, callerInfo.AccountID))
+	}
+	if callerInfo.RequireHTTPS && r.TLS == nil {
+		p.metrics.IncServiceCall(ServiceCallTransportDenied)
+		serviceProxyProblem(dispatchWriter, http.StatusForbidden, "this caller requires HTTPS for service bindings")
+		return
 	}
 	setProbeStage("routing")
 	if probe {

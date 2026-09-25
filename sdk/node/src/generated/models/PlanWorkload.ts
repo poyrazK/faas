@@ -5,6 +5,7 @@
 import type { PlanDetectedBy } from './PlanDetectedBy.js';
 import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 /**
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
@@ -24,6 +25,10 @@ export type PlanWorkload = {
    * Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted.
    */
   service_binding_policy?: ServiceBindingPolicy;
+  /**
+   * Canonical URL transport selected by Compose `x-gregale-service-transport`. Omitted preserves the established transport; new workloads default to `http`.
+   */
+  service_binding_transport?: ServiceBindingTransport;
   /**
    * Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`.
    */

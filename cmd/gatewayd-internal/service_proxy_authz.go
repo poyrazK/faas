@@ -127,6 +127,7 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			AppID:         caller.ID,
 			PreviewOfSlug: caller.PreviewOfSlug,
 			AccountID:     caller.AccountID,
+			RequireHTTPS:  caller.Manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
 		}, nil
 	}
 }

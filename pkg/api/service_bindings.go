@@ -34,6 +34,45 @@ func (p ServiceBindingPolicy) Effective() ServiceBindingPolicy {
 	}
 }
 
+// ServiceBindingTransport selects the canonical URL injected into
+// GREGALE_SERVICE_<NAME>_URL. The HTTPS URL remains available as an explicit
+// alias in either mode so workloads can migrate without changing the binding
+// name.
+type ServiceBindingTransport string
+
+const (
+	ServiceBindingTransportHTTP  ServiceBindingTransport = "http"
+	ServiceBindingTransportHTTPS ServiceBindingTransport = "https"
+)
+
+// Effective returns the transport used for URL injection. Empty is the
+// backwards-compatible HTTP contract; unknown non-empty values fail closed
+// to HTTPS rather than silently downgrading a newer control-plane setting.
+func (t ServiceBindingTransport) Effective() ServiceBindingTransport {
+	switch t {
+	case "", ServiceBindingTransportHTTP:
+		return ServiceBindingTransportHTTP
+	case ServiceBindingTransportHTTPS:
+		return ServiceBindingTransportHTTPS
+	default:
+		return ServiceBindingTransportHTTPS
+	}
+}
+
+// NormalizeServiceBindingTransport validates and canonicalizes a requested
+// transport. An omitted setting is represented by the empty value so updates
+// can preserve the current transport.
+func NormalizeServiceBindingTransport(raw ServiceBindingTransport) (ServiceBindingTransport, error) {
+	switch normalized := ServiceBindingTransport(strings.ToLower(strings.TrimSpace(string(raw)))); normalized {
+	case "":
+		return "", nil
+	case ServiceBindingTransportHTTP, ServiceBindingTransportHTTPS:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("service_binding_transport must be http or https")
+	}
+}
+
 // AppServiceBinding is one declared dependency from the returned app to
 // another app in the same account. Binding is the platform-owned
 // environment key injected into the caller; Service is the target app's
@@ -161,16 +200,23 @@ func ServiceBindingEnvKey(name string) string {
 	return b.String()
 }
 
-// ServiceBindingHTTPSEnvKey derives the additive HTTPS canary variable for a
-// target. The legacy ServiceBindingEnvKey remains the canonical HTTP URL.
+// ServiceBindingHTTPSEnvKey derives the HTTPS companion variable for a
+// target. In HTTPS transport mode it intentionally matches the canonical
+// ServiceBindingEnvKey URL.
 func ServiceBindingHTTPSEnvKey(name string) string {
 	return strings.TrimSuffix(ServiceBindingEnvKey(name), ServiceBindingEnvSuffix) + ServiceBindingHTTPSEnvSuffix
 }
 
 // ServiceBindingEnv replaces platform-owned URLs while preserving other app
-// environment values. It is shared by project reconciliation and standalone
-// app writes so both surfaces inject the same endpoint contract.
+// environment values. It retains the legacy HTTP canonical URL contract.
 func ServiceBindingEnv(base map[string]string, bindings []AppServiceBinding) map[string]string {
+	return ServiceBindingEnvForTransport(base, bindings, ServiceBindingTransportHTTP)
+}
+
+// ServiceBindingEnvForTransport replaces platform-owned URLs while preserving
+// other app environment values. The HTTPS alias is injected in either mode;
+// the selected transport controls the canonical _URL binding.
+func ServiceBindingEnvForTransport(base map[string]string, bindings []AppServiceBinding, transport ServiceBindingTransport) map[string]string {
 	env := make(map[string]string, len(base)+len(bindings))
 	for key, value := range base {
 		if strings.HasPrefix(key, ServiceBindingEnvPrefix) && strings.HasSuffix(key, ServiceBindingEnvSuffix) {
@@ -178,9 +224,15 @@ func ServiceBindingEnv(base map[string]string, bindings []AppServiceBinding) map
 		}
 		env[key] = value
 	}
+	transport = transport.Effective()
 	for _, binding := range bindings {
-		env[binding.Binding] = fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, ServiceBindingPort)
-		env[ServiceBindingHTTPSEnvKey(binding.Service)] = fmt.Sprintf("https://%s.internal", binding.Service)
+		httpsURL := fmt.Sprintf("https://%s.internal", binding.Service)
+		canonicalURL := fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, ServiceBindingPort)
+		if transport == ServiceBindingTransportHTTPS {
+			canonicalURL = httpsURL
+		}
+		env[binding.Binding] = canonicalURL
+		env[ServiceBindingHTTPSEnvKey(binding.Service)] = httpsURL
 	}
 	if len(env) == 0 {
 		return nil

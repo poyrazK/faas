@@ -198,14 +198,17 @@ type CreateAppRequest struct {
 	// ServiceBindingPolicy defaults to account for standalone apps; declared
 	// opts into gateway enforcement of ServiceBindingTargets.
 	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
-	Type                 string                `json:"type,omitempty"`             // "app" (default) | "function"
-	Runtime              string                `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB                int                   `json:"ram_mb,omitempty"`           // 0 => plan default
-	VCPU                 int                   `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
-	CPUMillicores        int                   `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
-	ResourceProfile      string                `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
-	MaxConcurrency       int                   `json:"max_concurrency,omitempty"`
-	IdleTimeoutS         int                   `json:"idle_timeout_s,omitempty"`
+	// ServiceBindingTransport selects the canonical service URL scheme for
+	// standalone bindings. Omitted preserves the legacy HTTP URL contract.
+	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	Type                    string                   `json:"type,omitempty"`             // "app" (default) | "function"
+	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => plan default
+	VCPU                    int                      `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
+	CPUMillicores           int                      `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
+	ResourceProfile         string                   `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
+	MaxConcurrency          int                      `json:"max_concurrency,omitempty"`
+	IdleTimeoutS            int                      `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
@@ -485,11 +488,14 @@ type UpdateAppRequest struct {
 	// ServiceBindingPolicy switches caller-side authorization. Omitted/null
 	// leaves it unchanged; set account to restore legacy same-account access.
 	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
-	RAMMB                *int                  `json:"ram_mb,omitempty"`
-	CPUMillicores        *int                  `json:"cpu_millicores,omitempty"`
-	ResourceProfile      *string               `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
-	IdleTimeoutS         *int                  `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency       *int                  `json:"max_concurrency,omitempty"`
+	// ServiceBindingTransport changes the canonical URL scheme injected for
+	// bindings. Omitted/null leaves the current transport unchanged.
+	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
+	RAMMB                   *int                     `json:"ram_mb,omitempty"`
+	CPUMillicores           *int                     `json:"cpu_millicores,omitempty"`
+	ResourceProfile         *string                  `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
+	IdleTimeoutS            *int                     `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency          *int                     `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
 	// replaces the full policy; use min=max=desired=0 to scale a service to
 	// zero. desired must fit the app's max_concurrency; include both fields
@@ -1315,6 +1321,10 @@ type AppResponse struct {
 	// internal service requests. "account" preserves legacy same-account
 	// reachability; "declared" permits only ServiceBindings targets.
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport selects the scheme used by the canonical
+	// GREGALE_SERVICE_<NAME>_URL environment variable. The HTTPS alias remains
+	// available in either mode; legacy apps default to HTTP.
+	ServiceBindingTransport ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	// PreviewServiceCallsPolicy is this app's policy for calls originating
 	// from preview apps. "allow" is the legacy default; "deny" rejects them
 	// when this app is the production target.
@@ -6028,7 +6038,10 @@ type PlanWorkload struct {
 	Command    []string `json:"command"`
 	DependsOn  []string `json:"depends_on,omitempty"`
 
-	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
+	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	// ServiceBindingTransport opts a Compose workload into the HTTPS-first
+	// canonical URL contract. Omitted keeps the established transport.
+	ServiceBindingTransport   ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 	AllowedServiceCallers     *[]string                 `json:"allowed_service_callers,omitempty"`
 

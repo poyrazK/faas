@@ -40,6 +40,7 @@ type composeCandidate struct {
 	Profiles    []string `yaml:"profiles"`
 
 	ServiceBindingPolicy      string    `yaml:"x-gregale-service-policy"`
+	ServiceBindingTransport   string    `yaml:"x-gregale-service-transport"`
 	PreviewServiceCallsPolicy string    `yaml:"x-gregale-preview-calls"`
 	AllowedServiceCallers     *[]string `yaml:"x-gregale-allow-callers"`
 }
@@ -180,6 +181,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasBuild && serviceBindingPolicy != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-policy requires a build workload", src, name)
 		}
+		serviceBindingTransport, transportErr := normalizeServiceBindingTransport(s.ServiceBindingTransport)
+		if transportErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, transportErr)
+		}
+		if !hasBuild && serviceBindingTransport != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-transport requires a build workload", src, name)
+		}
 		previewServiceCallsPolicy, previewPolicyErr := normalizePreviewServiceCallsPolicy(s.PreviewServiceCallsPolicy)
 		if previewPolicyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, previewPolicyErr)
@@ -245,6 +253,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			dependsOn:    dependencyNames(s.DependsOn),
 
 			serviceBindingPolicy:      serviceBindingPolicy,
+			serviceBindingTransport:   serviceBindingTransport,
 			previewServiceCallsPolicy: previewServiceCallsPolicy,
 			allowedServiceCallers:     allowedCallers,
 
@@ -254,6 +263,19 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		})
 	}
 	return seeds, managed, warnings, nil
+}
+
+func normalizeServiceBindingTransport(value string) (ServiceBindingTransport, error) {
+	switch normalized := strings.ToLower(strings.TrimSpace(value)); normalized {
+	case "":
+		return "", nil
+	case string(ServiceBindingTransportHTTP):
+		return ServiceBindingTransportHTTP, nil
+	case string(ServiceBindingTransportHTTPS):
+		return ServiceBindingTransportHTTPS, nil
+	default:
+		return "", fmt.Errorf("x-gregale-service-transport must be http or https")
+	}
 }
 
 func normalizeServiceBindingPolicy(value string) (ServiceBindingPolicy, error) {

@@ -59,6 +59,9 @@ func TestStandaloneOutboundBindingsCreateAndPatch(t *testing.T) {
 		if response.ServiceBindingPolicy != policy || !reflect.DeepEqual(response.ServiceBindings, bindings) {
 			t.Fatalf("readback policy/bindings = %q/%#v", response.ServiceBindingPolicy, response.ServiceBindings)
 		}
+		if response.ServiceBindingTransport != api.ServiceBindingTransportHTTP {
+			t.Fatalf("readback transport = %q, want legacy http", response.ServiceBindingTransport)
+		}
 	}
 	assert(declared, want)
 
@@ -88,6 +91,54 @@ func TestStandaloneOutboundBindingsCreateAndPatch(t *testing.T) {
 		t.Fatalf("restore account policy: %d %s", rec.Code, rec.Body)
 	}
 	assert(account, nil)
+}
+
+func TestStandaloneServiceBindingHTTPSFirstTransportCanBeChanged(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	targets := []string{"billing"}
+	https := api.ServiceBindingTransportHTTPS
+	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+		Slug: "frontend", ServiceBindingTargets: &targets, ServiceBindingTransport: &https,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	assertTransport := func(want api.ServiceBindingTransport, wantURL string) {
+		t.Helper()
+		app, err := e.store.AppBySlug(t.Context(), "frontend")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if app.Manifest.EffectiveServiceBindingTransport() != want {
+			t.Fatalf("stored transport = %q, want %q", app.Manifest.EffectiveServiceBindingTransport(), want)
+		}
+		if got := app.Manifest.Env["GREGALE_SERVICE_BILLING_URL"]; got != wantURL {
+			t.Fatalf("canonical URL = %q, want %q", got, wantURL)
+		}
+		if got := app.Manifest.Env["GREGALE_SERVICE_BILLING_HTTPS_URL"]; got != "https://billing.internal" {
+			t.Fatalf("HTTPS alias = %q", got)
+		}
+		read := e.do(t, http.MethodGet, "/v1/apps/frontend", nil, nil)
+		var response api.AppResponse
+		if read.Code != http.StatusOK || json.Unmarshal(read.Body.Bytes(), &response) != nil || response.ServiceBindingTransport != want {
+			t.Fatalf("readback transport = %q, status=%d body=%s", response.ServiceBindingTransport, read.Code, read.Body)
+		}
+	}
+	assertTransport(api.ServiceBindingTransportHTTPS, "https://billing.internal")
+
+	httpTransport := api.ServiceBindingTransportHTTP
+	rec = e.do(t, http.MethodPatch, "/v1/apps/frontend", api.UpdateAppRequest{ServiceBindingTransport: &httpTransport}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("change transport: %d %s", rec.Code, rec.Body)
+	}
+	assertTransport(api.ServiceBindingTransportHTTP, "http://billing.svc.gregale:10080")
+
+	bad := api.ServiceBindingTransport("opportunistic")
+	rec = e.do(t, http.MethodPatch, "/v1/apps/frontend", api.UpdateAppRequest{ServiceBindingTransport: &bad}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid transport: %d %s", rec.Code, rec.Body)
+	}
+	assertTransport(api.ServiceBindingTransportHTTP, "http://billing.svc.gregale:10080")
 }
 
 func TestStandaloneOutboundBindingsAuditOldAndNew(t *testing.T) {
@@ -174,6 +225,11 @@ func TestStandaloneOutboundBindingsDefaultAndRejectInvalidOrSourceOwned(t *testi
 	rec = e.do(t, http.MethodPatch, "/v1/apps/project-frontend", api.UpdateAppRequest{ServiceBindingTargets: &targets}, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("project patch: %d %s", rec.Code, rec.Body)
+	}
+	https := api.ServiceBindingTransportHTTPS
+	rec = e.do(t, http.MethodPatch, "/v1/apps/project-frontend", api.UpdateAppRequest{ServiceBindingTransport: &https}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("project transport patch: %d %s", rec.Code, rec.Body)
 	}
 	_, err = e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "pr-1-frontend", PreviewOfSlug: "frontend", Status: state.AppActive})
 	if err != nil {

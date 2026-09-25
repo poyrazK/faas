@@ -29,6 +29,10 @@ export type UpdateAppRequest = {
    * Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
    */
   service_binding_policy?: 'account' | 'declared';
+  /**
+   * Set standalone canonical service URL scheme. Omit or null to keep unchanged; http restores the legacy endpoint and https selects the private `.internal` alias. Project-managed and preview apps reject non-null changes.
+   */
+  service_binding_transport?: 'http' | 'https';
   ram_mb?: number | null;
   /**
    * Sustained CPU allowance per instance. Omit for no change.

@@ -124,6 +124,9 @@ type Workload struct {
 	// mode declared by Compose's x-gregale-service-policy extension. Empty is
 	// the backwards-compatible account policy.
 	ServiceBindingPolicy ServiceBindingPolicy
+	// ServiceBindingTransport selects the canonical URL scheme injected for
+	// internal service bindings. Empty preserves the established HTTP contract.
+	ServiceBindingTransport ServiceBindingTransport
 	// PreviewServiceCallsPolicy controls whether this workload, as a
 	// production target, accepts internal calls from preview apps.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy
@@ -153,9 +156,15 @@ type Workload struct {
 // detection remains independent of the public wire DTO package.
 type ServiceBindingPolicy string
 
+// ServiceBindingTransport is the repository declaration consumed by
+// reconciliation for the canonical service-binding URL scheme.
+type ServiceBindingTransport string
+
 const (
-	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
-	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+	ServiceBindingPolicyAccount  ServiceBindingPolicy    = "account"
+	ServiceBindingPolicyDeclared ServiceBindingPolicy    = "declared"
+	ServiceBindingTransportHTTP  ServiceBindingTransport = "http"
+	ServiceBindingTransportHTTPS ServiceBindingTransport = "https"
 )
 
 type PreviewServiceCallsPolicy string

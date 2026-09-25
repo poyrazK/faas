@@ -11,6 +11,7 @@ func TestScanDetectionTraceMapsToPlanResponse(t *testing.T) {
 	workload := toPlanWorkload(reposcan.Workload{
 		Name:                      "web",
 		ServiceBindingPolicy:      reposcan.ServiceBindingPolicyDeclared,
+		ServiceBindingTransport:   reposcan.ServiceBindingTransportHTTPS,
 		PreviewServiceCallsPolicy: reposcan.PreviewServiceCallsDeny,
 		DetectedBy: reposcan.Detection{
 			Detector:   "compose",
@@ -24,6 +25,9 @@ func TestScanDetectionTraceMapsToPlanResponse(t *testing.T) {
 	}
 	if workload.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
 		t.Fatalf("service_binding_policy = %q, want declared", workload.ServiceBindingPolicy)
+	}
+	if workload.ServiceBindingTransport != api.ServiceBindingTransportHTTPS {
+		t.Fatalf("service_binding_transport = %q, want https", workload.ServiceBindingTransport)
 	}
 	if workload.PreviewServiceCallsPolicy != api.PreviewServiceCallsDeny {
 		t.Fatalf("preview_service_calls_policy = %q, want deny", workload.PreviewServiceCallsPolicy)

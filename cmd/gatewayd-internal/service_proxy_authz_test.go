@@ -219,6 +219,34 @@ func TestServiceProxyAuthorizerCarriesPreviewIdentity(t *testing.T) {
 	}
 }
 
+func TestServiceProxyAuthorizerCarriesHTTPSRequirement(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "https-authz@local", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "https-caller", Status: state.AppActive,
+		Manifest: state.AppManifest{ServiceBindingTransport: api.ServiceBindingTransportHTTPS},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "target", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := newServiceProxyAuthorizer(store)(ctx, caller.ID, target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.RequireHTTPS {
+		t.Fatal("caller HTTPS transport did not reach the service proxy")
+	}
+}
+
 func TestServiceProxyAuthorizerEnforcesPreviewServicePolicy(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

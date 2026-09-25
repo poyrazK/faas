@@ -1598,6 +1598,7 @@ type AppManifest struct {
 	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
 
 	ServiceBindingPolicy      api.ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
+	ServiceBindingTransport   api.ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
 	PreviewServiceCallsPolicy api.PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 	// Nil preserves legacy same-account reachability; an explicit empty list
 	// denies all internal callers. Values are logical app names.
@@ -1656,6 +1657,12 @@ func (m AppManifest) EffectiveServiceBindingPolicy() api.ServiceBindingPolicy {
 	return m.ServiceBindingPolicy.Effective()
 }
 
+// EffectiveServiceBindingTransport returns the canonical URL transport for
+// bindings. Older manifests without a value retain the HTTP contract.
+func (m AppManifest) EffectiveServiceBindingTransport() api.ServiceBindingTransport {
+	return m.ServiceBindingTransport.Effective()
+}
+
 // EffectivePreviewServiceCallsPolicy returns the target's preview ingress
 // policy. Legacy rows allow preview calls; unknown stored values deny them.
 func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCallsPolicy {
@@ -1667,7 +1674,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && len(m.ServiceBindings) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
@@ -1682,6 +1689,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
+	existing.ServiceBindingTransport = desired.ServiceBindingTransport
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy
 	existing.AllowedServiceCallers = desired.AllowedServiceCallers
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {

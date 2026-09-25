@@ -1550,7 +1550,7 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `daily_cost_cents` alert metric | n/a (per-app) | > 100 cents / 24 h (usage_daily RAM burn rate) |
 | `slo_burn_rate` alert metric | 99.5% API availability SLO | > 14.4x / 1 h **and** > 6x / 6 h (0.5% error budget, Google SRE multi-window) |
 | `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 sustained page (hot loop) |
-| `gateway_service_call_total{outcome}` | n/a (fleet) | none yet (ADR-196/197: internal service-to-service traffic; `woken / (woken+forwarded)` is the internal cold-start rate) |
+| `gateway_service_call_total{outcome}` | n/a (fleet) | `transport_denied` counts HTTPS-first callers rejected before endpoint lookup or wake; `woken / (woken+forwarded)` is the internal cold-start rate (ADR-196/197/248) |
 | `gateway_service_preview_to_preview_total` | increasing when sibling previews exist | none yet — the positive signal that PR traffic stayed inside its account/project/PR scope |
 | `gateway_service_preview_to_production_total` | 0 for accounts that expect preview isolation | none yet — a non-zero rate means PR traffic is exercising production services |
 | `gateway_service_wake_latency_seconds` p95 | ≤ 0.35 s (§6.3 platform wake budget) | none yet — collect before setting a threshold (ADR-196 defers `depends_on` wake-ahead on this evidence) |
