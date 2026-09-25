@@ -43,6 +43,14 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	if len(stmts) < 500 {
 		t.Fatalf("found only %d SQL literals; the source walk is broken", len(stmts))
 	}
+	// sqlc validates queries.sql against schema.sql, which is maintained by
+	// hand and drifts from a clean migration replay; prepare its generated
+	// statements against the real migrated schema too.
+	sqlcStmts := sqlcQueryConstants(t, "sqlc/queries.sql.go")
+	if len(sqlcStmts) < 100 {
+		t.Fatalf("found only %d sqlc query constants; the parse is broken", len(sqlcStmts))
+	}
+	stmts = append(stmts, sqlcStmts...)
 	// Only errors that mean the statement can never run.
 	definitive := map[string]bool{
 		"42703": true, // undefined_column
@@ -128,6 +136,34 @@ func literalSQLStatements(t *testing.T, roots ...string) []sqlLiteral {
 		})
 		if err != nil {
 			t.Fatalf("walk %s: %v", root, err)
+		}
+	}
+	return out
+}
+
+// sqlcQueryConstants returns every top-level string constant in sqlc's
+// generated query file.
+func sqlcQueryConstants(t *testing.T, path string) []sqlLiteral {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	var out []sqlLiteral
+	for _, decl := range f.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok || len(vs.Values) != 1 {
+				continue
+			}
+			if s, ok := foldStringLiteral(vs.Values[0]); ok {
+				out = append(out, sqlLiteral{pos: fset.Position(vs.Pos()).String(), sql: s})
+			}
 		}
 	}
 	return out
