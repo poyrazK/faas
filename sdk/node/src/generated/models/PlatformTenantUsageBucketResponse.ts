@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One UTC day of app-consumer usage from the durable raw usage ledger.
+ * One UTC day of durable tenant-attributed usage. Exactly one of consumer_id or surface_id is present.
  */
 export type PlatformTenantUsageBucketResponse = {
   app_id: string;
