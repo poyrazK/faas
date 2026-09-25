@@ -62,7 +62,7 @@ BEGIN
                   (last_runtime_reload_projection = 'unchanged' AND
                    last_runtime_reload_signal = 'not_attempted' AND
                    last_runtime_reload_error_code IS NULL))
-            );
+            ));
     END IF;
 END $$;
 -- +goose StatementEnd
