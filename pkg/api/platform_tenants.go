@@ -91,6 +91,23 @@ type SetPlatformTenantStatusRequest struct {
 	Status string `json:"status"`
 }
 
+type SetPlatformTenantRequestBudgetRequest struct {
+	MaxRequestsPerMinute *int64 `json:"max_requests_per_minute"`
+	MaxRequestsPerDay    *int64 `json:"max_requests_per_day"`
+}
+
+type PlatformTenantRequestBudgetResponse struct {
+	TenantID             string     `json:"tenant_id"`
+	Configured           bool       `json:"configured"`
+	MaxRequestsPerMinute int64      `json:"max_requests_per_minute"`
+	MaxRequestsPerDay    int64      `json:"max_requests_per_day"`
+	MinuteUsed           int64      `json:"minute_used"`
+	DayUsed              int64      `json:"day_used"`
+	MinuteResetsAt       time.Time  `json:"minute_resets_at"`
+	DayResetsAt          time.Time  `json:"day_resets_at"`
+	UpdatedAt            *time.Time `json:"updated_at,omitempty"`
+}
+
 type LinkPlatformTenantConsumerRequest struct {
 	ConsumerID string `json:"consumer_id"`
 }

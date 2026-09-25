@@ -60,6 +60,21 @@ The older app-local key-create endpoint still returns plaintext once, but no lon
 
 `GET /v1/account/platform-tenants/{id}` shows the linked consumers and surfaces. `GET /v1/account/platform-tenants?limit=100&offset=0` pages the registry. `GET /v1/account/platform-tenants/{id}/usage?since=…&until=…` sums durable request, error, and billable-unit facts attributed to that tenant **when each request occurred**, grouped by UTC day and app. Each bucket identifies either a linked `consumer_id` or a verified `surface_id`. Linking a consumer or surface later does not import its earlier traffic. Historical rows and requests from older gateways without a tenant claim remain unassigned; Gregale never guesses their owner from the current link. This is raw usage, not an invoice or a cross-app price quote.
 
+## Control customer requests across apps
+
+After every gateway is upgraded, set an optional shared admission budget:
+
+```http
+PUT /v1/account/platform-tenants/{id}/request-budget
+Content-Type: application/json
+
+{"max_requests_per_minute":1000,"max_requests_per_day":50000}
+```
+
+`GET` on the same path returns the ceilings, admitted-request counters for the current UTC minute and day, and their reset times. Both fields are required on `PUT`; zero disables that dimension, and both zero means no active budget. There is no default ceiling. The configured safety maxima are 1,000,000 per minute and 100,000,000 per day. Counts combine linked consumer-key traffic and verified tenant-surface traffic across every app. Requests on unrelated app domains or independent JWT identities without a platform tenant are outside this policy.
+
+One admitted request consumes one unit even if its guest later fails. The gate runs after ordinary app/account limits but before request buffering or waking an instance. At the ceiling, Gregale returns `429 tenant_request_budget_exceeded`, `Retry-After`, and `x-faas-rate-limit-scope: platform-tenant`; rejected requests are not billed. If the authoritative counter cannot be checked, tenant-attributed traffic returns `503 tenant_request_budget_unavailable` rather than relying on a replica-local fallback. This is an admission control, not an exact monetary spend cap or an invoice. See [ADR-240](adr/240-platform-tenant-request-budgets.md).
+
 ## Consolidate usage across apps
 
 Create a statement for an explicit UTC-minute period after configuring each app's versioned API-consumer rate cards:

@@ -1047,6 +1047,7 @@ from .platform_tenant_credentials_response import PlatformTenantCredentialsRespo
 from .platform_tenant_detail_response import PlatformTenantDetailResponse
 from .platform_tenant_detail_response_status import PlatformTenantDetailResponseStatus
 from .platform_tenant_list_response import PlatformTenantListResponse
+from .platform_tenant_request_budget_response import PlatformTenantRequestBudgetResponse
 from .platform_tenant_response import PlatformTenantResponse
 from .platform_tenant_response_status import PlatformTenantResponseStatus
 from .platform_tenant_statement_handoff_response import PlatformTenantStatementHandoffResponse
@@ -1363,6 +1364,7 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_password_request import SetPasswordRequest
+from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
 from .severity_counts import SeverityCounts
@@ -2592,6 +2594,7 @@ __all__ = (
     "PlatformTenantDetailResponse",
     "PlatformTenantDetailResponseStatus",
     "PlatformTenantListResponse",
+    "PlatformTenantRequestBudgetResponse",
     "PlatformTenantResponse",
     "PlatformTenantResponseStatus",
     "PlatformTenantStatementHandoffResponse",
@@ -2884,6 +2887,7 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetPasswordRequest",
+    "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
     "SeverityCounts",

@@ -16,12 +16,14 @@ import type { PlatformTenantActivationResponse } from '../models/PlatformTenantA
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
+import type { PlatformTenantRequestBudgetResponse } from '../models/PlatformTenantRequestBudgetResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
 import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformTenantStatementHandoffResponse.js';
 import type { PlatformTenantStatementListResponse } from '../models/PlatformTenantStatementListResponse.js';
 import type { PlatformTenantStatementResponse } from '../models/PlatformTenantStatementResponse.js';
 import type { PlatformTenantSurfaceResponse } from '../models/PlatformTenantSurfaceResponse.js';
 import type { PlatformTenantUsageResponse } from '../models/PlatformTenantUsageResponse.js';
+import type { SetPlatformTenantRequestBudgetRequest } from '../models/SetPlatformTenantRequestBudgetRequest.js';
 import type { SetPlatformTenantStatusRequest } from '../models/SetPlatformTenantStatusRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -233,6 +235,60 @@ export class PlatformTenantsService {
       },
       errors: {
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read cross-app customer request admission ceilings and counters.
+   * @returns PlatformTenantRequestBudgetResponse Current policy and UTC-window admitted-request counters.
+   * @throws ApiError
+   */
+  public static getPlatformTenantRequestBudget({
+    id,
+  }: {
+    /**
+     * Customer whose shared admission budget is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantRequestBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/request-budget',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Set cross-app customer request admission ceilings.
+   * Zero disables a ceiling. The shared counter is authoritative across gateway replicas; configured admission fails closed if it is unavailable. These are admitted-request counts, not billed usage or a money cap.
+   * @returns PlatformTenantRequestBudgetResponse Updated policy and current counters.
+   * @throws ApiError
+   */
+  public static setPlatformTenantRequestBudget({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Customer whose shared admission budget is managed.
+     */
+    id: string,
+    requestBody: SetPlatformTenantRequestBudgetRequest,
+  }): CancelablePromise<PlatformTenantRequestBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/request-budget',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
       },
     });
   }

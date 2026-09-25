@@ -184,6 +184,7 @@ type MemStore struct {
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers             map[string]APIConsumer
 	platformTenants          map[string]PlatformTenant
+	platformTenantBudgets    map[string]platformTenantBudgetRow
 	platformTenantByConsumer map[string]string
 	platformTenantBySurface  map[string]string
 	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
@@ -1044,6 +1045,7 @@ func NewMemStore() *MemStore {
 		consumerKeys:             map[string]ConsumerKey{},
 		apiConsumers:             map[string]APIConsumer{},
 		platformTenants:          map[string]PlatformTenant{},
+		platformTenantBudgets:    map[string]platformTenantBudgetRow{},
 		platformTenantByConsumer: map[string]string{},
 		platformTenantBySurface:  map[string]string{},
 		openAPISnapshots:         map[string]OpenAPISnapshot{},
@@ -19103,6 +19105,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for tid, tenant := range m.platformTenants {
 		if tenant.AccountID == id {
 			delete(m.platformTenants, tid)
+			delete(m.platformTenantBudgets, tid)
 		}
 	}
 	for surfaceID, tenantID := range m.platformTenantBySurface {
