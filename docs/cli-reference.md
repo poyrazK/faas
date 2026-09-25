@@ -666,6 +666,12 @@ Delete one cron rule
 
 Show execution history
 
+| Flag | Meaning | |
+|---|---|---|
+| `--before <CURSOR>` | pagination cursor for older runs |  |
+| `--limit <N>` | max runs to show (1..100) |  |
+| `--run <TASK-ID>` | show details and captured output for one command run |  |
+
 
 ## triggers
 

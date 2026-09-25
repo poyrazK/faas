@@ -11701,6 +11701,36 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/crons/{id}/runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - name: run_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: The task id returned in the cron run history for a command cron.
+    get:
+      tags: [crons]
+      operationId: getCronCommandRun
+      summary: Get output and execution details for one command-cron run.
+      description: |
+        Returns the durable app-task receipt for one run belonging to this
+        command cron, including captured stdout/stderr tails, exit status,
+        retry count, and failure details. Use this endpoint on demand so
+        history list pages remain compact. HTTP cron runs and task ids that
+        belong to another cron return 404.
+      responses:
+        '200':
+          description: Detailed command-cron execution receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppTaskResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/crons/{id}/run:
     parameters:
       - name: id

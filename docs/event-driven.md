@@ -41,10 +41,11 @@ Retries are at-least-once: a command may have produced side effects before it
 failed, so make retryable commands idempotent. A worker lease lost after
 dispatch is not automatically replayed because completion is uncertain.
 
-Inspect outcomes with `crons runs`; the returned `task_id` can be used
-with `GET /v1/apps/APP_ID/tasks/TASK_ID` to read captured output. Use
-`gregale crons run CRON_ID` to immediately run the cron's saved command on
-the current live deployment without moving its schedule cursor.
+Inspect outcomes with `gregale crons runs CRON_ID`. The history includes a run
+id; for a command cron, inspect its captured stdout/stderr, exit status, and
+retry details on demand with `gregale crons runs CRON_ID --run TASK_ID`. Use
+`gregale crons run CRON_ID` to immediately run the cron's saved command on the
+current live deployment without moving its schedule cursor.
 If `--skip-if-running` is configured and another run is still active, the
 manual request fails rather than overlapping it.
 `gregale app APP_ID exec ...` remains the surface for an arbitrary one-off

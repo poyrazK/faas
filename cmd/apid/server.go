@@ -1935,6 +1935,8 @@ func (s *server) handler() http.Handler {
 	// Per-cron execution history (issue #791). Read surface, so
 	// ScopesReadSurface and no idempotency wrapper.
 	mux.HandleFunc("GET /v1/crons/{id}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCronRuns))))
+	// On-demand output and attempt details for one command-cron run.
+	mux.HandleFunc("GET /v1/crons/{id}/runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCronCommandRun))))
 	// Manual fire-now (issue #791 PR-C / ADR-090). Deploy-write scope
 	// (no new cron:write constant per ADR-090 §Sub-decisions 1).
 	// idempotent is INNERMOST so the replay lookup happens AFTER

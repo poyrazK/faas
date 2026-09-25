@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppTaskResponse } from '../models/AppTaskResponse.js';
 import type { CreateCronRequest } from '../models/CreateCronRequest.js';
 import type { CronResponse } from '../models/CronResponse.js';
 import type { FireCronResponse } from '../models/FireCronResponse.js';
@@ -221,6 +222,48 @@ export class CronsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Get output and execution details for one command-cron run.
+   * Returns the durable app-task receipt for one run belonging to this
+   * command cron, including captured stdout/stderr tails, exit status,
+   * retry count, and failure details. Use this endpoint on demand so
+   * history list pages remain compact. HTTP cron runs and task ids that
+   * belong to another cron return 404.
+   *
+   * @returns AppTaskResponse Detailed command-cron execution receipt.
+   * @throws ApiError
+   */
+  public static getCronCommandRun({
+    id,
+    runId,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * The task id returned in the cron run history for a command cron.
+     */
+    runId: string,
+  }): CancelablePromise<AppTaskResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/crons/{id}/runs/{run_id}',
+      path: {
+        'id': id,
+        'run_id': runId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }

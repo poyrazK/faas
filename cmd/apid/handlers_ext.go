@@ -3587,6 +3587,50 @@ func (s *server) listCronRuns(w http.ResponseWriter, r *http.Request, acct state
 	writeJSON(w, http.StatusOK, api.ListCronRunsResponse{Runs: runs})
 }
 
+// getCronCommandRun returns the full durable task receipt for one command
+// cron run. List pages intentionally keep output tails out of the response;
+// operators can fetch them only for the specific run they are inspecting.
+func (s *server) getCronCommandRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !s.requireAppTaskAPI(w) {
+		return
+	}
+	cronID := r.PathValue("id")
+	if _, err := uuid.Parse(cronID); err != nil {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	runID := r.PathValue("run_id")
+	if _, err := uuid.Parse(runID); err != nil {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	cron, err := s.store.CronByID(r.Context(), cronID)
+	if err != nil {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	app, err := s.store.AppByID(r.Context(), cron.AppID)
+	if err != nil || app.AccountID != acct.ID || len(cron.Command) == 0 {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	tasks, ok := s.store.(state.AppTaskStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("get cron command run"))
+		return
+	}
+	task, err := tasks.AppTaskByID(r.Context(), acct.ID, app.ID, runID)
+	if errors.Is(err, state.ErrNotFound) || (err == nil && (task.Kind != state.AppTaskKindCron || task.CronID != cron.ID)) {
+		s.notFound(w, "no such cron run")
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("get cron command run"))
+		return
+	}
+	writeJSON(w, http.StatusOK, appTaskResponse(task))
+}
+
 func cronRunFromAppTask(task state.AppTask) api.CronRun {
 	run := api.CronRun{ID: task.ID, TaskID: task.ID, StartedAt: task.CreatedAt,
 		Attempts: task.AttemptCount, Outcome: api.CronRunRunning}
