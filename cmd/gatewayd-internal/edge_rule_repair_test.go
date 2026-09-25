@@ -25,6 +25,10 @@ func (f *edgeRuleRepairStoreFake) PruneEdgeRuleChangeLog(context.Context, time.T
 	return 0, nil
 }
 
+func (f *edgeRuleRepairStoreFake) UpsertGatewayEdgeRuleWatermark(context.Context, string, string, int64) error {
+	return nil
+}
+
 type edgeRuleRepairInvalidatorFake struct {
 	resetRules int
 	resetCache int

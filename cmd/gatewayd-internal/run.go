@@ -1967,7 +1967,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// matcher here (rather than leaving a typed-nil interface in PGBackend),
 	// then start the durable repair loop alongside LISTEN/NOTIFY.
 	backend.WithEdgeRules(deps.edgeRulesMatcher)
-	go watchDurableEdgeRuleChanges(ctx, pgStore, backend, log)
+	go watchDurableEdgeRuleChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
 	// App and traffic mutations still use notifications as their low-latency
 	// signal. The durable broadcast ledger closes the reconnect gap for every
 	// gateway replica without turning the shared notification outbox into a

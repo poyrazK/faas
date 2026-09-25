@@ -1,51 +1,35 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.runtime_policy_status_response_state import (
-    RuntimePolicyStatusResponseState,
-    check_runtime_policy_status_response_state,
+from ..models.runtime_policy_component_status_state import (
+    RuntimePolicyComponentStatusState,
+    check_runtime_policy_component_status_state,
 )
 
-if TYPE_CHECKING:
-    from ..models.runtime_policy_component_status import RuntimePolicyComponentStatus
-
-
-T = TypeVar("T", bound="RuntimePolicyStatusResponse")
+T = TypeVar("T", bound="RuntimePolicyComponentStatus")
 
 
 @_attrs_define
-class RuntimePolicyStatusResponse:
-    """Fresh serving-gateway status for app-cache and deployment traffic changes. The edge_rules component reports its
-    separate revision sequence.
+class RuntimePolicyComponentStatus:
+    """Fresh serving-gateway application status for a policy ledger with its own revision sequence."""
 
-    """
-
-    app_id: str
     desired_revision: int
-    """Latest desired control-plane revision for app-cache and deployment traffic policy."""
-    state: RuntimePolicyStatusResponseState
-    coverage: list[str]
+    state: RuntimePolicyComponentStatusState
     serving_gateways: int
     applied_gateways: int
     pending_gateways: int
     stale_gateways: int
-    edge_rules: RuntimePolicyComponentStatus
-    """Fresh serving-gateway application status for a policy ledger with its own revision sequence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        app_id = self.app_id
-
         desired_revision = self.desired_revision
 
         state: str = self.state
-
-        coverage = self.coverage
 
         serving_gateways = self.serving_gateways
 
@@ -55,21 +39,16 @@ class RuntimePolicyStatusResponse:
 
         stale_gateways = self.stale_gateways
 
-        edge_rules = self.edge_rules.to_dict()
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "app_id": app_id,
                 "desired_revision": desired_revision,
                 "state": state,
-                "coverage": coverage,
                 "serving_gateways": serving_gateways,
                 "applied_gateways": applied_gateways,
                 "pending_gateways": pending_gateways,
                 "stale_gateways": stale_gateways,
-                "edge_rules": edge_rules,
             }
         )
 
@@ -77,16 +56,10 @@ class RuntimePolicyStatusResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.runtime_policy_component_status import RuntimePolicyComponentStatus
-
         d = dict(src_dict)
-        app_id = d.pop("app_id")
-
         desired_revision = d.pop("desired_revision")
 
-        state = check_runtime_policy_status_response_state(d.pop("state"))
-
-        coverage = cast(list[str], d.pop("coverage"))
+        state = check_runtime_policy_component_status_state(d.pop("state"))
 
         serving_gateways = d.pop("serving_gateways")
 
@@ -96,22 +69,17 @@ class RuntimePolicyStatusResponse:
 
         stale_gateways = d.pop("stale_gateways")
 
-        edge_rules = RuntimePolicyComponentStatus.from_dict(d.pop("edge_rules"))
-
-        runtime_policy_status_response = cls(
-            app_id=app_id,
+        runtime_policy_component_status = cls(
             desired_revision=desired_revision,
             state=state,
-            coverage=coverage,
             serving_gateways=serving_gateways,
             applied_gateways=applied_gateways,
             pending_gateways=pending_gateways,
             stale_gateways=stale_gateways,
-            edge_rules=edge_rules,
         )
 
-        runtime_policy_status_response.additional_properties = d
-        return runtime_policy_status_response
+        runtime_policy_component_status.additional_properties = d
+        return runtime_policy_component_status
 
     @property
     def additional_keys(self) -> list[str]:

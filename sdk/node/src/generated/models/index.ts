@@ -683,6 +683,7 @@ export type { RotateManagedRealtimeAuthResponse } from './RotateManagedRealtimeA
 export type { RotateOrgAPIKeyRequest } from './RotateOrgAPIKeyRequest.js';
 export type { RotateOrgAPIKeyResponse } from './RotateOrgAPIKeyResponse.js';
 export type { RouteRow } from './RouteRow.js';
+export type { RuntimePolicyComponentStatus } from './RuntimePolicyComponentStatus.js';
 export type { RuntimePolicyStatusResponse } from './RuntimePolicyStatusResponse.js';
 export type { SLODuration } from './SLODuration.js';
 export type { ScalingPolicy } from './ScalingPolicy.js';
