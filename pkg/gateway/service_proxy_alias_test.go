@@ -64,6 +64,7 @@ func TestServiceProxyAliasRequiresBindingEvenWithDirectHost(t *testing.T) {
 	}
 }
 
+// adr: 276
 func TestServiceProxyHTTPSFirstRejectsPlainHTTPBeforeRoutingOrWake(t *testing.T) {
 	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{
 		AppID: "app-billing", Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}},
