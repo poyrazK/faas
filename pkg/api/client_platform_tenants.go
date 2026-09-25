@@ -84,6 +84,31 @@ func (c *Client) GetPlatformTenantUsage(ctx context.Context, id string, opts API
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+func (c *Client) ListPlatformTenantActivity(ctx context.Context, id string, opts PlatformTenantActivityOptions) (PlatformTenantActivityResponse, error) {
+	var out PlatformTenantActivityResponse
+	path := "/v1/account/platform-tenants/" + url.PathEscape(id) + "/activity"
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.AppID != "" {
+		q.Set("app_id", opts.AppID)
+	}
+	if opts.Status != 0 {
+		q.Set("status", strconv.Itoa(opts.Status))
+	}
+	if opts.Cursor != "" {
+		q.Set("cursor", opts.Cursor)
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 func platformTenantStatementsPath(tenantID string) string {
 	return "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/usage-statements"
 }

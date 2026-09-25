@@ -116,6 +116,65 @@ func TestPgStoreRequestTelemetry_ConsumerDimension(t *testing.T) {
 	}
 }
 
+func TestPgStoreRequestTelemetryByPlatformTenantUsesRequestTimeAttribution(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, otherAccountID := uuid.NewString(), uuid.NewString()
+	tenantID := uuid.NewString()
+	appA, appB := uuid.NewString(), uuid.NewString()
+	deploymentID := uuid.NewString()
+	now := time.Now().UTC()
+
+	rows := []struct {
+		account, tenant, app string
+		status, count        int32
+		at                   time.Time
+	}{
+		{accountID, tenantID, appA, 503, 3, now.Add(-time.Minute)},
+		{accountID, tenantID, appB, 200, 5, now.Add(-2 * time.Minute)},
+		{accountID, uuid.NewString(), appA, 503, 7, now.Add(-3 * time.Minute)},
+		// Even a matching tenant UUID cannot cross the account boundary.
+		{otherAccountID, tenantID, appA, 503, 11, now.Add(-4 * time.Minute)},
+	}
+	for _, row := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, row.account), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, row.app), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        "GET /tenant-activity", Method: "GET", Status: row.status,
+			LatencyMs: 24, Count: row.count, ReceivedAt: pgtype.Timestamptz{Time: row.at, Valid: true},
+			UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+			PlatformTenantID: pgtype.UUID{Bytes: parseUUID(t, row.tenant), Valid: true},
+		}); err != nil {
+			t.Fatalf("Insert request telemetry: %v", err)
+		}
+	}
+
+	got, err := store.ListRequestTelemetryByPlatformTenant(ctx, sqlc.ListRequestTelemetryByPlatformTenantParams{
+		AccountID:        pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		PlatformTenantID: pgtype.UUID{Bytes: parseUUID(t, tenantID), Valid: true},
+		ReceivedFrom:     pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
+		ReceivedUntil:    pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		Limit:            10,
+	})
+	if err != nil {
+		t.Fatalf("List tenant activity: %v", err)
+	}
+	if len(got) != 2 || uuid.UUID(got[0].AppID.Bytes).String() != appA || got[0].Status != 503 || got[0].Count != 3 || uuid.UUID(got[1].AppID.Bytes).String() != appB {
+		t.Fatalf("tenant activity = %+v, want only the two request-time matches for account/tenant", got)
+	}
+
+	filtered, err := store.ListRequestTelemetryByPlatformTenant(ctx, sqlc.ListRequestTelemetryByPlatformTenantParams{
+		AccountID:        pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		PlatformTenantID: pgtype.UUID{Bytes: parseUUID(t, tenantID), Valid: true},
+		ReceivedFrom:     pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
+		ReceivedUntil:    pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		AppIDFilter:      appA, StatusFilter: 503, Limit: 10,
+	})
+	if err != nil || len(filtered) != 1 || filtered[0].Count != 3 {
+		t.Fatalf("filtered tenant activity = %+v, err=%v; want one matching 503 row", filtered, err)
+	}
+}
+
 // TestPgStoreRequestTelemetry_RoundTrip exercises the per-request
 // INSERT path and the per-app LIST path. The list is scoped by
 // (account_id, app_id, time window) per sqlc; the test inserts a

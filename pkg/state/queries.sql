@@ -1832,7 +1832,8 @@ INSERT INTO request_telemetry (
     status, latency_ms, cold_boot, trace_id, received_at, count,
     ua_family, referrer_host, country, wake_id, instance_id,
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
-    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest
+    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
+    platform_tenant_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -1846,8 +1847,33 @@ INSERT INTO request_telemetry (
     sqlc.arg('commit_sha')::text,
     sqlc.arg('deployment_tag')::text,
     sqlc.arg('deployment_created_at')::text,
-    sqlc.arg('image_digest')::text
+    sqlc.arg('image_digest')::text,
+    sqlc.arg('platform_tenant_id')::uuid
 );
+
+-- name: ListRequestTelemetryByPlatformTenant :many
+-- Cross-app support view for a platform customer. Always constrain by both
+-- owning account and the immutable request-time tenant snapshot; do not infer
+-- attribution by joining today's consumer/surface links.
+SELECT id, app_id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
+FROM request_telemetry
+WHERE account_id = sqlc.arg('account_id')
+  AND platform_tenant_id = sqlc.arg('platform_tenant_id')
+  AND received_at >= sqlc.arg('received_from')
+  AND received_at < sqlc.arg('received_until')
+  AND (sqlc.arg('cursor_received_at')::timestamptz IS NULL
+       OR (received_at, id) < (sqlc.arg('cursor_received_at')::timestamptz,
+                               sqlc.arg('cursor_id')::uuid))
+  AND (sqlc.arg('app_id_filter')::text = ''
+       OR app_id = NULLIF(sqlc.arg('app_id_filter')::text, '')::uuid)
+  AND (sqlc.arg('status_filter')::int = 0
+       OR status = sqlc.arg('status_filter')::int)
+ORDER BY received_at DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
 
 -- name: ListRequestTelemetryByApp :many
 -- Canonical read pattern: "give me the last N requests for this app".

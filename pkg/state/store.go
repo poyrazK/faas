@@ -6163,6 +6163,9 @@ type Store interface {
 	// pre-clamps the customer limit and adds one lookahead row to determine
 	// whether Complete can be reported.
 	ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error)
+	// ListRequestTelemetryByPlatformTenant returns retention-bounded debugger
+	// evidence attributed to this tenant at request time, across its apps.
+	ListRequestTelemetryByPlatformTenant(ctx context.Context, arg sqlc.ListRequestTelemetryByPlatformTenantParams) ([]sqlc.ListRequestTelemetryByPlatformTenantRow, error)
 
 	// ListRequestTelemetryDependencySpans backs the historical dependency
 	// latency debugger view. It returns a strictly bounded set of the newest

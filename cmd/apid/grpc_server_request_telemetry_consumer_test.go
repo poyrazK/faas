@@ -121,12 +121,12 @@ func TestRequestTelemetryReceiverPersistsConsumerID(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
 	r := newRequestTelemetryReceiver(store, nil, nil, true)
 	accountID, appID, deploymentID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	consumerID := uuid.NewString()
+	consumerID, tenantID := uuid.NewString(), uuid.NewString()
 
 	out := r.handleOne(context.Background(), &apidpb.IncrementRequestTelemetryRequest{
 		AccountId: accountID, AppId: appID, DeploymentId: deploymentID,
 		RouteTemplate: "GET /v1/usage", Method: "GET", HttpStatus: 200,
-		LatencyMs: 20, ReceivedAtUnixMs: 1, ConsumerId: consumerID,
+		LatencyMs: 20, ReceivedAtUnixMs: 1, ConsumerId: consumerID, PlatformTenantId: tenantID,
 	})
 	if out.GetOutcome() != rtOutcomeInserted {
 		t.Fatalf("outcome = %q, want %q", out.GetOutcome(), rtOutcomeInserted)
@@ -136,6 +136,9 @@ func TestRequestTelemetryReceiverPersistsConsumerID(t *testing.T) {
 	}
 	if got := store.inserted[0].ConsumerID.String(); got != consumerID {
 		t.Fatalf("ConsumerID = %q, want %q", got, consumerID)
+	}
+	if got := uuid.UUID(store.inserted[0].PlatformTenantID.Bytes).String(); !store.inserted[0].PlatformTenantID.Valid || got != tenantID {
+		t.Fatalf("PlatformTenantID = %q (valid=%t), want %q", got, store.inserted[0].PlatformTenantID.Valid, tenantID)
 	}
 	if _, err := uuid.Parse(store.eventIDs[0]); err != nil {
 		t.Fatalf("log event id %q is not a UUID: %v", store.eventIDs[0], err)

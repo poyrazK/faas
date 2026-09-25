@@ -27565,6 +27565,10 @@ func (s *PgStore) ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRe
 	return s.appErrorsQueries().ListRequestTelemetryByApp(ctx, s.pool, arg)
 }
 
+func (s *PgStore) ListRequestTelemetryByPlatformTenant(ctx context.Context, arg sqlc.ListRequestTelemetryByPlatformTenantParams) ([]sqlc.ListRequestTelemetryByPlatformTenantRow, error) {
+	return s.appErrorsQueries().ListRequestTelemetryByPlatformTenant(ctx, s.pool, arg)
+}
+
 // ListRequestTelemetryDependencySpans backs the bounded historical debugger
 // dependency view. The handler performs all redaction and aggregation after
 // this tenant-scoped query returns.

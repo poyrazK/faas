@@ -1050,6 +1050,9 @@ from .plan_workload_tier import PlanWorkloadTier
 from .platform_tenant_activation_response import PlatformTenantActivationResponse
 from .platform_tenant_activation_response_status import PlatformTenantActivationResponseStatus
 from .platform_tenant_activation_surface_response import PlatformTenantActivationSurfaceResponse
+from .platform_tenant_activity_filters import PlatformTenantActivityFilters
+from .platform_tenant_activity_item import PlatformTenantActivityItem
+from .platform_tenant_activity_response import PlatformTenantActivityResponse
 from .platform_tenant_credential_intent import PlatformTenantCredentialIntent
 from .platform_tenant_credential_intent_scopes_item import PlatformTenantCredentialIntentScopesItem
 from .platform_tenant_credential_metadata import PlatformTenantCredentialMetadata
@@ -2630,6 +2633,9 @@ __all__ = (
     "PlatformTenantActivationResponse",
     "PlatformTenantActivationResponseStatus",
     "PlatformTenantActivationSurfaceResponse",
+    "PlatformTenantActivityFilters",
+    "PlatformTenantActivityItem",
+    "PlatformTenantActivityResponse",
     "PlatformTenantCredentialIntent",
     "PlatformTenantCredentialIntentScopesItem",
     "PlatformTenantCredentialMetadata",

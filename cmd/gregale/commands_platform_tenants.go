@@ -15,7 +15,7 @@ import (
 // cmdPlatformTenants manages one account customer across several apps.
 func cmdPlatformTenants(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|suspend|resume> [flags]", "platform-tenants")
+		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume> [flags]", "platform-tenants")
 		return 1
 	}
 	verb := args[0]
@@ -29,9 +29,12 @@ func cmdPlatformTenants(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "preview bundle without changes (apply)")
 	wait := fs.Bool("wait", false, "wait for DNS, certificate, and routing readiness (activation)")
 	timeout := fs.Duration("timeout", 10*time.Minute, "maximum wait for activation")
-	since := fs.String("since", "", "usage window start (RFC3339)")
+	since := fs.String("since", "", "usage window start (RFC3339) or activity lookback (e.g. 24h)")
 	until := fs.String("until", "", "usage window end (RFC3339)")
-	limit := fs.Int("limit", 100, "list page size (1..100)")
+	appID := fs.String("app-id", "", "filter activity to one linked app UUID")
+	status := fs.Int("status", 0, "filter activity to one HTTP status (100..599)")
+	cursor := fs.String("cursor", "", "opaque next-page cursor (activity)")
+	limit := fs.Int("limit", 100, "list page size (1..100; activity allows up to 200)")
 	offset := fs.Int("offset", 0, "list page offset")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
@@ -46,11 +49,20 @@ func cmdPlatformTenants(args []string) int {
 	if verb != "activation" && *wait {
 		valid = false
 	}
+	if verb != "usage" && verb != "activity" && (*since != "" || *until != "") {
+		valid = false
+	}
+	if verb != "activity" && (*appID != "" || *status != 0 || *cursor != "") {
+		valid = false
+	}
+	if verb == "activity" && (*until != "" || *status < 0 || *status > 599 || (*status > 0 && *status < 100)) {
+		valid = false
+	}
 	if *timeout <= 0 {
 		valid = false
 	}
 	if fs.NArg() != 0 || !valid {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|suspend|resume> [--file bundle.json] [--dry-run] [--id UUID] [--wait] [--timeout 10m]", "platform-tenants")
+		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume> [--file bundle.json] [--dry-run] [--id UUID] [--wait] [--timeout 10m]", "platform-tenants")
 		return 1
 	}
 	client, err := authedClient()
@@ -169,6 +181,37 @@ func cmdPlatformTenants(args []string) int {
 		if _, err := fmt.Fprintf(osStdout, "tenant %s: requests=%d errors=%d billable_units=%d\n", row.TenantID, row.RequestCount, row.ErrorCount, row.BillableUnits); err != nil {
 			return printErr("Output failed", err)
 		}
+	case "activity":
+		row, err := client.ListPlatformTenantActivity(ctx, *id, api.PlatformTenantActivityOptions{
+			Since: *since, AppID: *appID, Status: *status, Cursor: *cursor, Limit: *limit,
+		})
+		if err != nil {
+			return printErr("Activity fetch failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(row))
+		}
+		if _, err := fmt.Fprintf(osStdout, "tenant %s: %d rows / %d represented requests / %d errors (%s to %s; retention clamped=%t)\n",
+			row.TenantID, row.PageTelemetryRows, row.PageRepresentedRequests, row.PageErrorRequests,
+			row.WindowStart.Format(time.RFC3339), row.WindowEnd.Format(time.RFC3339), row.RetentionClamped); err != nil {
+			return printErr("Output failed", err)
+		}
+		for _, item := range row.Requests {
+			req := item.Request
+			traceID := "-"
+			if req.TraceID != nil {
+				traceID = *req.TraceID
+			}
+			if _, err := fmt.Fprintf(osStdout, "%s\t%d\t%s %s\t%dms\tcount=%d\t%s\n",
+				item.AppID, req.Status, req.Method, req.Route, req.LatencyMS, req.Count, traceID); err != nil {
+				return printErr("Output failed", err)
+			}
+		}
+		if !row.PageComplete {
+			if _, err := fmt.Fprintf(osStdout, "Next page: --cursor %s\n", row.NextCursor); err != nil {
+				return printErr("Output failed", err)
+			}
+		}
 	case "suspend", "resume":
 		status := "suspended"
 		if verb == "resume" {
@@ -193,6 +236,8 @@ func platformTenantFlagsValid(verb, id, externalRef, name, consumerID, surfaceID
 		return limit >= 1 && limit <= 100 && offset >= 0 && id != "" && externalRef == "" && name == "" && consumerID == "" && surfaceID == ""
 	case "info", "activation", "usage", "suspend", "resume":
 		return id != "" && externalRef == "" && name == "" && consumerID == "" && surfaceID == ""
+	case "activity":
+		return id != "" && externalRef == "" && name == "" && consumerID == "" && surfaceID == "" && limit >= 1 && limit <= 200
 	case "link-consumer":
 		return id != "" && consumerID != "" && externalRef == "" && name == "" && surfaceID == ""
 	case "link-surface":

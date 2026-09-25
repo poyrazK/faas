@@ -325,6 +325,7 @@ var dtoExclude = map[string]bool{
 	"AppWebhookRow":                   true,
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
+	"PlatformTenantActivityOptions":   true, // client-only query parameters; the response DTOs are in the public spec
 	"InboundWebhookEndpointRow":       true,
 	"AppLogDrainRow":                  true,
 	"QueueBindingRow":                 true,

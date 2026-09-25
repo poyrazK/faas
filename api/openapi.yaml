@@ -4051,6 +4051,49 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantUsageResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/platform-tenants/{id}/activity:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose cross-app request evidence is requested.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantActivity
+      summary: Read retained request-debugger evidence across a platform tenant's apps.
+      description: This plan-gated support view returns only bounded debugger evidence carrying request-time tenant attribution. It is sampled/retained evidence, not a complete request ledger or billing source of truth. Bodies, headers, and credentials are never returned.
+      parameters:
+        - name: since
+          in: query
+          description: Positive duration such as 30m, 24h, or 3d; defaults to 24h and is clamped to plan retention.
+          schema: { type: string }
+        - name: app_id
+          in: query
+          description: Restrict to one app UUID; results remain scoped to this tenant's request-time attribution.
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          description: Restrict to one HTTP response status.
+          schema: { type: integer, minimum: 100, maximum: 599 }
+        - name: limit
+          in: query
+          description: Maximum rows in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: cursor
+          in: query
+          description: Opaque cursor from the previous page; it pins the time window and filters.
+          schema: { type: string, maxLength: 4096 }
+      responses:
+        '200':
+          description: One bounded page of observed request telemetry; represented request counts are weighted by collapsed rows.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantActivityResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/account/platform-tenants/{id}/usage-statements:
     parameters:
       - name: id
@@ -22823,6 +22866,42 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantUsageBucketResponse' }
         as_of: { type: string, format: date-time }
+
+    PlatformTenantActivityItem:
+      description: One observed telemetry row and the app it belongs to. Request details contain no HTTP body or headers.
+      type: object
+      required: [app_id, request]
+      properties:
+        app_id: { type: string, format: uuid }
+        request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+
+    PlatformTenantActivityFilters:
+      description: Normalized app and HTTP status filters applied to every page.
+      type: object
+      properties:
+        app_id: { type: string, format: uuid }
+        status: { type: integer, minimum: 100, maximum: 599 }
+
+    PlatformTenantActivityResponse:
+      description: A retention-bounded page of observed debugger evidence. Page totals weight each collapsed telemetry row by request.count and must not be treated as complete usage.
+      type: object
+      required: [tenant_id, since, window_start, window_end, plan_retention_days, retention_clamped, page_telemetry_rows, page_represented_requests, page_error_requests, page_complete, filters, requests]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        since: { type: string, description: Actual lookback duration after applying the account's debugger retention ceiling. }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        plan_retention_days: { type: integer, minimum: 0 }
+        retention_clamped: { type: boolean }
+        page_telemetry_rows: { type: integer, format: int64, minimum: 0 }
+        page_represented_requests: { type: integer, format: int64, minimum: 0 }
+        page_error_requests: { type: integer, format: int64, minimum: 0 }
+        page_complete: { type: boolean, description: True when this page contains all matching retained rows in the pinned window; it does not imply complete telemetry capture. }
+        next_cursor: { type: string, description: Present when another page of retained rows exists. }
+        filters: { $ref: '#/components/schemas/PlatformTenantActivityFilters' }
+        requests:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantActivityItem' }
 
     PlatformTenantStatementLineResponse:
       description: Immutable tenant-attributed UTC minute priced with one app's rate-card version. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.

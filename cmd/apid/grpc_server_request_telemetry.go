@@ -200,6 +200,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		consumerKey = parsed.String()
 	}
 	platformTenantID := ""
+	var platformTenantUUID uuid.UUID
 	platformTenantSurfaceID := ""
 	platformTenantJWTAuthorizationRuleID := ""
 	if raw := req.GetPlatformTenantSurfaceId(); raw != "" {
@@ -228,6 +229,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 			return out
 		}
 		platformTenantID = parsed.String()
+		platformTenantUUID = parsed
 	}
 
 	count := int(req.GetCount())
@@ -366,6 +368,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		GuestOutcome:        guestOutcome,
 		GuestErrorClass:     guestErrorClass,
 		ConsumerID:          consumerID,
+		PlatformTenantID:    pgtype.UUID{Bytes: platformTenantUUID, Valid: platformTenantID != ""},
 		NodeID:              req.GetNodeId(),
 		Region:              req.GetRegion(),
 		CommitSha:           req.GetCommitSha(),
