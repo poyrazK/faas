@@ -6,11 +6,14 @@ info:
   summary: Customer-facing REST API for the one-box FaaS platform.
   description: |
     Public REST surface exposed by `apid` on `127.0.0.1:8081` (proxied by
-    `gatewayd` at the public listener). Every route is authenticated with a
-    Bearer API key (`fp_live_…`) and rate-limited per-IP (10 failed-auth / min),
-    except the provider-signed durable inbound webhook ingress.
-    Successful POSTs accept an `Idempotency-Key` header (24h TTL) and replay
-    with `Idempotent-Replayed: true`.
+    `gatewayd` at the public listener). Protected routes accept an account
+    Bearer API key (`fp_live_…`) or the tenant-bound `fp_tenant_…` credential
+    only on the explicitly documented tenant-self read routes. Authentication
+    is rate-limited per-IP (10 failed-auth / min), except the provider-signed
+    durable inbound webhook ingress.
+    Successful POSTs generally accept an `Idempotency-Key` header (24h TTL)
+    and replay with `Idempotent-Replayed: true`; the one-time token-creation
+    endpoint deliberately does not cache plaintext for retries.
 
     Errors use RFC 9457 `application/problem+json` with a stable `code`
     field — see `Problem` schema. Authentication rate limits use the same
@@ -4481,6 +4484,155 @@ paths:
               schema: { $ref: '#/components/schemas/ApplyPlatformTenantCredentialsResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/access-tokens:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant receiving the downstream self-service token.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantAccessTokens
+      summary: List metadata for downstream tenant access tokens.
+      responses:
+        '200':
+          description: Metadata only; token plaintext is never returned by listing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantAccessTokenListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantAccessToken
+      summary: Mint a tenant-bound read-only self-service credential.
+      description: The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantAccessTokenRequest' }
+      responses:
+        '201':
+          description: Token metadata and one-time plaintext bearer. Store the token securely; it cannot be retrieved later.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatePlatformTenantAccessTokenResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/account/platform-tenants/{id}/access-tokens/{token_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant that owns the access token.
+        schema: { type: string, format: uuid }
+      - name: token_id
+        in: path
+        required: true
+        description: Access token to revoke.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [platform-tenants]
+      operationId: revokePlatformTenantAccessToken
+      summary: Revoke a downstream tenant access token.
+      responses:
+        '200':
+          description: Revoked token metadata; plaintext is never returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantAccessTokenResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/usage:
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSelfUsage
+      summary: Read this tenant's own cross-app raw usage.
+      description: Requires a tenant-bound access token with platform_tenant:usage:read. The credential cannot select or impersonate a different tenant.
+      parameters:
+        - name: since
+          in: query
+          description: Inclusive UTC-day boundary for the requested tenant usage.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Exclusive UTC-day boundary; buckets before this instant are included.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: This tenant's usage over the requested bounded window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantUsageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+
+  /v1/platform-tenant-self/usage-statements:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantSelfStatements
+      summary: List this tenant's finalized cross-app usage statements.
+      description: Requires a tenant-bound access token with platform_tenant:statements:read. Drafts and superseded revisions are never exposed. Statements overlapping the requested window are returned newest period and revision first.
+      parameters:
+        - name: period_start
+          in: query
+          required: true
+          description: Inclusive UTC-minute start of the lookup window; the range may be at most 90 days.
+          schema: { type: string, format: date-time }
+        - name: period_end
+          in: query
+          required: true
+          description: Exclusive UTC-minute end of the lookup window.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          description: Maximum statements in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+        - name: offset
+          in: query
+          description: Zero-based offset for the next page; use next_offset from the previous response.
+          schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 }
+      responses:
+        '200':
+          description: One bounded page of finalized statements.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfStatementListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/platform-tenant-self/usage-statements/{statement_id}:
+    parameters:
+      - name: statement_id
+        in: path
+        required: true
+        description: Finalized immutable statement revision belonging to this token's tenant.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSelfStatement
+      summary: Read one of this tenant's finalized statement revisions.
+      description: Draft, superseded, and other tenants' statements all appear as not found.
+      responses:
+        '200':
+          description: Finalized statement snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/consumers:
     parameters:
@@ -19755,9 +19907,10 @@ components:
       type: http
       scheme: bearer
       description: |
-        Bearer API key. Format: `fp_live_` + 48 hex chars. The plaintext is
-        returned exactly once on `POST /v1/keys`; subsequent reads only
-        surface the prefix.
+        Bearer credential. Account API keys use `fp_live_` + 48 hex chars and are
+        returned exactly once on `POST /v1/keys`. Downstream platform-tenant
+        self-service tokens use the distinct `fp_tenant_` + 64 hex format and are
+        limited to the tenant's own usage and finalized statements.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -22809,6 +22962,63 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantResponse' }
         next_offset: { type: integer, minimum: 0 }
 
+    CreatePlatformTenantAccessTokenRequest:
+      description: Mint a bearer for one downstream tenant. Plaintext is returned once and expires no later than one year after creation.
+      type: object
+      required: [name, scopes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+        expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
+
+    PlatformTenantAccessTokenResponse:
+      description: Redacted token metadata. Plaintext is never returned by list or revoke.
+      type: object
+      required: [id, tenant_id, name, prefix, scopes, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
+        scopes:
+          type: array
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+
+    CreatePlatformTenantAccessTokenResponse:
+      description: Token metadata plus one-time plaintext bearer. Save the token securely; it is never retrievable again.
+      type: object
+      required: [id, tenant_id, name, prefix, scopes, created_at, expires_at, token]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
+        scopes:
+          type: array
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        token: { type: string, pattern: '^fp_tenant_[0-9a-f]{64}$', description: One-time plaintext bearer; emitted only by create. }
+
+    PlatformTenantAccessTokenListResponse:
+      description: Tenant access-token metadata without any recoverable plaintext bearer.
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantAccessTokenResponse' }
+
     PlatformTenantSurfaceResponse:
       description: A linked tenant surface summary; use the app endpoint for hostnames.
       type: object
@@ -22949,6 +23159,36 @@ components:
         statements:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantStatementResponse' }
+        next_offset: { type: integer, minimum: 0 }
+
+    PlatformTenantStatementSummaryResponse:
+      description: Finalized statement metadata without the potentially large line-item collection; retrieve line items by statement ID.
+      type: object
+      required: [id, tenant_id, period_start, period_end, revision, status, billable_units, unpriced_units, amount_millicents, as_of, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [finalized] }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        as_of: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        finalized_at: { type: string, format: date-time }
+
+    PlatformTenantSelfStatementListResponse:
+      description: Bounded page of finalized statement summaries. next_offset is present only when another page exists.
+      type: object
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantStatementSummaryResponse' }
+        next_offset: { type: integer, minimum: 0 }
 
     PlatformTenantStatementHandoffResponse:
       description: Provider-neutral receipt for a finalized cross-app statement revision.

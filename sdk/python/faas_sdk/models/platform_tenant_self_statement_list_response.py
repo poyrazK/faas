@@ -9,17 +9,17 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.platform_tenant_statement_response import PlatformTenantStatementResponse
+    from ..models.platform_tenant_statement_summary_response import PlatformTenantStatementSummaryResponse
 
 
-T = TypeVar("T", bound="PlatformTenantStatementListResponse")
+T = TypeVar("T", bound="PlatformTenantSelfStatementListResponse")
 
 
 @_attrs_define
-class PlatformTenantStatementListResponse:
-    """Immutable statement revisions for one tenant and period."""
+class PlatformTenantSelfStatementListResponse:
+    """Bounded page of finalized statement summaries. next_offset is present only when another page exists."""
 
-    statements: list[PlatformTenantStatementResponse]
+    statements: list[PlatformTenantStatementSummaryResponse]
     next_offset: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -45,25 +45,25 @@ class PlatformTenantStatementListResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.platform_tenant_statement_response import PlatformTenantStatementResponse
+        from ..models.platform_tenant_statement_summary_response import PlatformTenantStatementSummaryResponse
 
         d = dict(src_dict)
         statements = []
         _statements = d.pop("statements")
         for statements_item_data in _statements:
-            statements_item = PlatformTenantStatementResponse.from_dict(statements_item_data)
+            statements_item = PlatformTenantStatementSummaryResponse.from_dict(statements_item_data)
 
             statements.append(statements_item)
 
         next_offset = d.pop("next_offset", UNSET)
 
-        platform_tenant_statement_list_response = cls(
+        platform_tenant_self_statement_list_response = cls(
             statements=statements,
             next_offset=next_offset,
         )
 
-        platform_tenant_statement_list_response.additional_properties = d
-        return platform_tenant_statement_list_response
+        platform_tenant_self_statement_list_response.additional_properties = d
+        return platform_tenant_self_statement_list_response
 
     @property
     def additional_keys(self) -> list[str]:

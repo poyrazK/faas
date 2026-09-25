@@ -12,6 +12,9 @@ import (
 const platformTenantStatementCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
        lines, as_of, created_at, finalized_at`
+const platformTenantStatementSummaryCols = `id, account_id, platform_tenant_id, period_start, period_end,
+       revision, status, currency, billable_units, unpriced_units, amount_millicents,
+       as_of, created_at, finalized_at`
 const platformTenantHandoffCols = `id, account_id, platform_tenant_id, statement_id,
        external_invoice_id, currency, amount_millicents, created_at`
 
@@ -37,6 +40,25 @@ func scanPlatformTenantStatement(row pgx.Row) (PlatformTenantStatement, error) {
 	}
 	for i := range out.Lines {
 		out.Lines[i].WindowStart = out.Lines[i].WindowStart.UTC()
+	}
+	return out, nil
+}
+
+func scanPlatformTenantStatementSummary(row pgx.Row) (PlatformTenantStatementSummary, error) {
+	var out PlatformTenantStatementSummary
+	var status string
+	err := row.Scan(&out.ID, &out.AccountID, &out.TenantID, &out.PeriodStart, &out.PeriodEnd,
+		&out.Revision, &status, &out.Currency, &out.BillableUnits, &out.UnpricedUnits,
+		&out.AmountMillicents, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
+	if err != nil {
+		return out, err
+	}
+	out.Status = APIConsumerUsageStatementStatus(status)
+	out.PeriodStart, out.PeriodEnd, out.AsOf = out.PeriodStart.UTC(), out.PeriodEnd.UTC(), out.AsOf.UTC()
+	out.CreatedAt = out.CreatedAt.UTC()
+	if out.FinalizedAt != nil {
+		at := out.FinalizedAt.UTC()
+		out.FinalizedAt = &at
 	}
 	return out, nil
 }
@@ -189,6 +211,30 @@ func (s *PgStore) ListPlatformTenantStatements(ctx context.Context, accountID, t
 	out := []PlatformTenantStatement{}
 	for rows.Next() {
 		statement, err := scanPlatformTenantStatement(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, statement)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) ListFinalizedPlatformTenantStatements(ctx context.Context, accountID, tenantID string, start, end time.Time, limit, offset int) ([]PlatformTenantStatementSummary, error) {
+	if !end.After(start) || limit < 1 || limit > 101 || offset < 0 {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := s.pool.Query(ctx, `select `+platformTenantStatementSummaryCols+` from platform_tenant_statements
+		where account_id = $1::uuid and platform_tenant_id = $2::uuid and status = 'finalized'
+		and period_start < $4 and period_end > $3
+		order by period_start desc, revision desc, created_at desc, id desc
+		limit $5 offset $6`, accountID, tenantID, start, end, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]PlatformTenantStatementSummary, 0, limit)
+	for rows.Next() {
+		statement, err := scanPlatformTenantStatementSummary(rows)
 		if err != nil {
 			return nil, err
 		}

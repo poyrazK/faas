@@ -143,6 +143,40 @@ type PlatformTenantDetailResponse struct {
 	Surfaces  []PlatformTenantSurfaceResponse `json:"surfaces"`
 }
 
+// CreatePlatformTenantAccessTokenRequest asks the platform owner to mint a
+// read-only credential for one downstream tenant. Omitted expiration defaults
+// to 90 days; callers may choose any future time up to 365 days away.
+type CreatePlatformTenantAccessTokenRequest struct {
+	Name      string     `json:"name"`
+	Scopes    []string   `json:"scopes"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// PlatformTenantAccessTokenResponse is a redacted token record. It never
+// contains the plaintext bearer.
+type PlatformTenantAccessTokenResponse struct {
+	ID         string     `json:"id"`
+	TenantID   string     `json:"tenant_id"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	Scopes     []string   `json:"scopes"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+}
+
+// CreatePlatformTenantAccessTokenResponse is returned exactly once. The
+// plaintext bearer is intentionally absent from list and revoke responses.
+type CreatePlatformTenantAccessTokenResponse struct {
+	PlatformTenantAccessTokenResponse
+	Token string `json:"token"`
+}
+
+type PlatformTenantAccessTokenListResponse struct {
+	Tokens []PlatformTenantAccessTokenResponse `json:"tokens"`
+}
+
 type PlatformTenantUsageBucketResponse struct {
 	AppID                  string    `json:"app_id"`
 	ConsumerID             string    `json:"consumer_id,omitempty"`
@@ -241,6 +275,30 @@ type PlatformTenantStatementResponse struct {
 
 type PlatformTenantStatementListResponse struct {
 	Statements []PlatformTenantStatementResponse `json:"statements"`
+	NextOffset *int                              `json:"next_offset,omitempty"`
+}
+
+// PlatformTenantStatementSummaryResponse keeps cross-period listing bounded;
+// the downstream caller fetches line items for one statement by ID.
+type PlatformTenantStatementSummaryResponse struct {
+	ID               string     `json:"id"`
+	TenantID         string     `json:"tenant_id"`
+	PeriodStart      time.Time  `json:"period_start"`
+	PeriodEnd        time.Time  `json:"period_end"`
+	Revision         int        `json:"revision"`
+	Status           string     `json:"status"`
+	Currency         string     `json:"currency,omitempty"`
+	BillableUnits    int64      `json:"billable_units"`
+	UnpricedUnits    int64      `json:"unpriced_units"`
+	AmountMillicents int64      `json:"amount_millicents"`
+	AsOf             time.Time  `json:"as_of"`
+	CreatedAt        time.Time  `json:"created_at"`
+	FinalizedAt      *time.Time `json:"finalized_at,omitempty"`
+}
+
+type PlatformTenantSelfStatementListResponse struct {
+	Statements []PlatformTenantStatementSummaryResponse `json:"statements"`
+	NextOffset *int                                     `json:"next_offset,omitempty"`
 }
 
 type PlatformTenantStatementHandoffResponse struct {

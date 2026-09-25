@@ -43,6 +43,25 @@ func TestGenerateAPIKey(t *testing.T) {
 	}
 }
 
+func TestGeneratePlatformTenantAccessToken(t *testing.T) {
+	plaintext, prefix, hash, err := GeneratePlatformTenantAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ValidPlatformTenantAccessTokenFormat(plaintext) {
+		t.Fatalf("generated tenant token %q has invalid format", plaintext)
+	}
+	if prefix != PlatformTenantAccessTokenPrefix+plaintext[len(PlatformTenantAccessTokenPrefix):len(PlatformTenantAccessTokenPrefix)+8] {
+		t.Fatalf("prefix = %q, inconsistent with token", prefix)
+	}
+	if !bytes.Equal(hash, HashAPIKey(plaintext)) || len(hash) != 32 {
+		t.Fatal("generated token hash is not the SHA-256 of the bearer")
+	}
+	if IsValidScope(ScopePlatformTenantUsageRead) || IsValidScope(ScopePlatformTenantStatementsRead) {
+		t.Fatal("tenant-self scopes must not be mintable as account-wide API-key scopes")
+	}
+}
+
 func TestKeysAreUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 1000; i++ {
