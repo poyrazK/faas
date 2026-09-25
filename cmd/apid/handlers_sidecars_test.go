@@ -45,6 +45,56 @@ func TestBuildDeploymentForInsert_ServiceDefaultsToReadinessRollout(t *testing.T
 	}
 }
 
+func TestBuildDeploymentForInsert_SnapshotsRevisionResources(t *testing.T) {
+	app := state.App{ID: "app-resources", RAMMB: 256, CPUMillicores: 500, MaxConcurrency: 1}
+	ramMB, cpuMillicores := 128, 250
+	dep, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{
+		Image:     "sha256:test",
+		Resources: &api.DeploymentResourcesRequest{RAMMB: &ramMB, CPUMillicores: &cpuMillicores},
+	}, nil, testSidecarLimits(), api.PlanHobby)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	if dep.RAMMB != ramMB || dep.CPUMillicores != cpuMillicores {
+		t.Fatalf("deployment resources = %d MiB/%d mCPU, want %d MiB/%d mCPU", dep.RAMMB, dep.CPUMillicores, ramMB, cpuMillicores)
+	}
+}
+
+func TestResolveDeploymentResourcesRejectsInvalidOverrides(t *testing.T) {
+	app := state.App{ID: "app-resources", RAMMB: 256, CPUMillicores: 500, MaxConcurrency: 1}
+	conflictingRAM := 384
+	tooMuchRAM := 512
+	unsupportedCPU := 750
+	cases := []struct {
+		name      string
+		requested *api.DeploymentResourcesRequest
+	}{
+		{
+			name: "profile conflicts with explicit memory",
+			requested: &api.DeploymentResourcesRequest{
+				ResourceProfile: stringPointer("small"), RAMMB: &conflictingRAM,
+			},
+		},
+		{
+			name:      "memory exceeds plan",
+			requested: &api.DeploymentResourcesRequest{RAMMB: &tooMuchRAM},
+		},
+		{
+			name:      "unsupported CPU shape",
+			requested: &api.DeploymentResourcesRequest{CPUMillicores: &unsupportedCPU},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, problem := resolveDeploymentResources(app, tc.requested, testSidecarLimits(), api.PlanHobby); problem == nil {
+				t.Fatal("resolveDeploymentResources succeeded; want validation problem")
+			}
+		})
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
 func TestBuildDeploymentForInsert_PersistsMainDependencies(t *testing.T) {
 	want := []api.WorkloadDependency{
 		{Name: "proxy", Condition: api.WorkloadDependencyHealthy},

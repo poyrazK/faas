@@ -118,6 +118,7 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 		}
 		return fmt.Errorf("sched: warm pool: live deployment: %w", err)
 	}
+	app = appForDeployment(app, dep)
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {
 		return fmt.Errorf("sched: warm pool: unknown plan %q", acct.Plan)

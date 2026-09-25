@@ -27,15 +27,16 @@ type UploadDeployOptions struct {
 	// resumable session boundary. The values are informational only; the
 	// uploaded archive remains the source of truth and apid never fetches
 	// SourceURL during commit.
-	SourceURL   string         `json:"source_url,omitempty"`
-	CommitSHA   string         `json:"commit_sha,omitempty"`
-	Environment string         `json:"environment,omitempty"`
-	Reason      string         `json:"reason,omitempty"`
-	Tag         string         `json:"tag,omitempty"`
-	DeployedBy  string         `json:"deployed_by,omitempty"`
-	PRNumber    int            `json:"pr_number,omitempty"`
-	Workflows   []WorkflowSpec `json:"workflows,omitempty"`
-	Companions  Companions     `json:"companions,omitempty"`
+	SourceURL   string                      `json:"source_url,omitempty"`
+	CommitSHA   string                      `json:"commit_sha,omitempty"`
+	Environment string                      `json:"environment,omitempty"`
+	Resources   *DeploymentResourcesRequest `json:"resources,omitempty"`
+	Reason      string                      `json:"reason,omitempty"`
+	Tag         string                      `json:"tag,omitempty"`
+	DeployedBy  string                      `json:"deployed_by,omitempty"`
+	PRNumber    int                         `json:"pr_number,omitempty"`
+	Workflows   []WorkflowSpec              `json:"workflows,omitempty"`
+	Companions  Companions                  `json:"companions,omitempty"`
 	// Sidecars is the deprecated transport name retained for older clients.
 	Sidecars Sidecars `json:"sidecars,omitempty"`
 	// RollbackOn5xx is persisted with the resumable session so a commit

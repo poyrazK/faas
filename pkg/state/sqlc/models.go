@@ -891,6 +891,8 @@ type Deployment struct {
 	ApiHostingReceipt        []byte
 	InferredProfile          []byte
 	Revision                 int32
+	RamMb                    int32
+	CpuMillicores            int32
 }
 
 type DeploymentAlias struct {

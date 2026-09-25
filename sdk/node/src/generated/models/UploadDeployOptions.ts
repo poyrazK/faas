@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DeploymentResourcesRequest } from './DeploymentResourcesRequest.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
@@ -28,6 +29,7 @@ export type UploadDeployOptions = {
    * Registered project environment to resolve at upload commit.
    */
   environment?: string;
+  resources?: DeploymentResourcesRequest;
   reason?: string;
   tag?: string;
   deployed_by?: string;

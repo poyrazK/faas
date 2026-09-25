@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
+import type { DeploymentResourcesRequest } from './DeploymentResourcesRequest.js';
 /**
  * JSON body for POST /v1/apps/{slug}/deployments/source-ref
  * (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
@@ -34,6 +35,7 @@ export type SourceRefDeployRequest = {
    * Registered project environment to target for this source-ref deployment.
    */
   environment?: string;
+  resources?: DeploymentResourcesRequest;
   /**
    * Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed.
    */

@@ -39,6 +39,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(request.DeploymentScope) {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
+	app = appForDeployment(app, dep)
 	acct, err := e.store.AccountByID(ctx, request.AccountID)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task account: %w", err)

@@ -139,6 +139,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		canarySpec             *api.CanaryPresetSpec
 		rollbackOn5xx          *bool
 		disableStartupCPUBoost *bool
+		resources              *api.DeploymentResourcesRequest
 		noTriggers             bool
 		ann                    annotationForm
 		stagedManifest         sourceRefManifestStaged
@@ -281,6 +282,14 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			canarySpec = &spec
+		case "resources":
+			b, readErr := io.ReadAll(io.LimitReader(part, 64<<10))
+			var requested api.DeploymentResourcesRequest
+			if readErr != nil || json.Unmarshal(b, &requested) != nil {
+				api.WriteProblem(w, api.ErrValidation("resources must be a valid compute profile object"))
+				return
+			}
+			resources = &requested
 		case "rollback_on_5xx":
 			value := isFlagSet(part)
 			rollbackOn5xx = &value
@@ -336,7 +345,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, Resources: resources, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return

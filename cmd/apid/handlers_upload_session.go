@@ -599,7 +599,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			s.log.Warn("upload-session manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, Resources: opts.Resources, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
 	limits := api.MustLimitsFor(acct.Plan)
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)

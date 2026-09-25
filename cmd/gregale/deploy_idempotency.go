@@ -26,6 +26,9 @@ type deployIdempotencyIntent struct {
 	SourceSHA256           string `json:"source_sha256,omitempty"`
 	SourceRoot             string `json:"source_root,omitempty"`
 	Profile                string `json:"profile,omitempty"`
+	ResourcesProfile       string `json:"resources_profile,omitempty"`
+	RAMMB                  int    `json:"ram_mb,omitempty"`
+	CPUMillicores          int    `json:"cpu_millicores,omitempty"`
 	Dockerfile             bool   `json:"dockerfile,omitempty"`
 	RequireAuthn           *bool  `json:"require_authn,omitempty"`
 	AppProtocol            string `json:"app_protocol,omitempty"`

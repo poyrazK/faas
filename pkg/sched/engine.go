@@ -2637,6 +2637,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if mode == "" || mode == string(state.InstanceModeNormal) {
 		mode = instanceModeForApp(app)
 	}
+	app = appForDeployment(app, dep)
 	// A paused warm-pool row already owns resident RAM and a vmmd lease, so
 	// promote it before the ordinary cold/snapshot admission path allocates a
 	// second VM. The helper runs under appMu and returns handled=true only after
@@ -4155,6 +4156,18 @@ func effectiveAppCPUMillicores(app state.App) int {
 	return api.DefaultAppCPUMillicores
 }
 
+// appForDeployment overlays immutable revision resources on the app's mutable
+// defaults. Zero snapshot values are accepted only for legacy/direct-SQL rows.
+func appForDeployment(app state.App, dep state.Deployment) state.App {
+	if dep.RAMMB > 0 {
+		app.RAMMB = dep.RAMMB
+	}
+	if dep.CPUMillicores > 0 {
+		app.CPUMillicores = dep.CPUMillicores
+	}
+	return app
+}
+
 func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placement, error) {
 	// Phase 2 / Gate A: authorize the app against this schedd's owner and
 	// prefer that node for locality. Capacity remains fleet-wide: a saturated
@@ -4939,6 +4952,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 			return AppSpec{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
 		}
 	}
+	app = appForDeployment(app, dep)
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: account by id: %w", err)
@@ -5590,6 +5604,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err != nil {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
 	}
+	app = appForDeployment(app, dep)
 	primeLayer := layerKey(dep.RootfsKey, dep.ID)
 	if executionModeForApp(app) == api.ExecutionModeJob {
 		if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
@@ -6724,6 +6739,17 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			if !state.State(ins.State).CountsForRAM() {
 				continue
 			}
+			configuredCPU := effectiveAppCPUMillicores(app)
+			if ins.DeploymentID != "" {
+				if dep, depErr := e.store.DeploymentByID(ctx, ins.DeploymentID); depErr == nil && dep.CPUMillicores > 0 {
+					configuredCPU = dep.CPUMillicores
+				} else if depErr != nil {
+					// Recovery must not under-reserve CPU because a deployment
+					// lookup failed. The closed-set's largest quota is safe.
+					configuredCPU = api.DefaultAppCPUMillicores
+					e.log.Warn("seed ledger: deployment compute lookup failed; reserving default CPU", "instance", ins.ID, "deployment", ins.DeploymentID, "err", depErr)
+				}
+			}
 			nodeID := ins.NodeID
 			if nodeID == "" {
 				nodeID = e.defaultLocalNodeID
@@ -6738,7 +6764,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
-				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, MaxConcurrency: app.MaxConcurrency,
 				// Recovery must account for the one candidate/stable overlap
 				// that deployment smoke may have admitted before a restart.
 				// This does not authorize new capacity: the rows are already

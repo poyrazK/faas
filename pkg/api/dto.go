@@ -1689,6 +1689,10 @@ type Companions = Sidecars
 // variant is used for tarball/dockerfile deploys).
 type CreateDeploymentRequest struct {
 	Image string `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
+	// Resources overrides the app's default compute shape for this revision.
+	// Omitted fields inherit the app's current RAM/CPU configuration. Values
+	// are validated against the account plan and frozen on the deployment row.
+	Resources *DeploymentResourcesRequest `json:"resources,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -1813,6 +1817,22 @@ func (r *CreateDeploymentRequest) NormalizeCompanions() *Problem {
 		r.Companions = nil
 	}
 	return nil
+}
+
+// DeploymentResourcesRequest is an optional revision-scoped compute override.
+// Pointer fields distinguish omission (inherit the app default) from an
+// explicit invalid zero.
+type DeploymentResourcesRequest struct {
+	RAMMB           *int    `json:"ram_mb,omitempty"`
+	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
+	ResourceProfile *string `json:"resource_profile,omitempty"`
+}
+
+// DeploymentResources is the resolved immutable compute shape of a revision.
+type DeploymentResources struct {
+	RAMMB           int    `json:"ram_mb"`
+	CPUMillicores   int    `json:"cpu_millicores"`
+	ResourceProfile string `json:"resource_profile,omitempty"`
 }
 
 // CanaryPresetSpec is the canary ladder a customer asks for on a
@@ -2640,6 +2660,9 @@ type DeploymentResponse struct {
 	// ensures the value is a valid slug; the handler validates
 	// scopeFromBody before storing via api.ValidateScope.
 	Scope string `json:"scope,omitempty"`
+	// Resources is the resolved, immutable per-revision compute shape. It is
+	// absent only on legacy/direct-SQL rows that predate compute snapshots.
+	Resources *DeploymentResources `json:"resources,omitempty"`
 	// DisableStartupCPUBoost records whether this deployment opted out of the
 	// temporary startup CPU allowance. Omitted means the existing boost policy.
 	DisableStartupCPUBoost bool `json:"disable_startup_cpu_boost,omitempty"`
@@ -5900,9 +5923,10 @@ type ProjectApplyRequest struct {
 // reserved for future wire shapes (zipball, git bundle); v1
 // only ships "tarball". Empty Format defaults to "tarball".
 type SourceRefDeployRequest struct {
-	Repo   string `json:"repo"`
-	Ref    string `json:"ref"`
-	Format string `json:"format,omitempty"`
+	Repo      string                      `json:"repo"`
+	Ref       string                      `json:"ref"`
+	Format    string                      `json:"format,omitempty"`
+	Resources *DeploymentResourcesRequest `json:"resources,omitempty"`
 	// Environment selects a registered project environment. The server
 	// resolves it to the deployment's env scope before enqueueing the build.
 	Environment string `json:"environment,omitempty"`
@@ -5933,9 +5957,10 @@ type SourceRefDeployRequest struct {
 // upstream. The tarball itself is uploaded as the multipart `tarball`
 // field. See docs/adr/0XX-local-tarball-deploy-trust-root.md.
 type SourceTarballDeployRequest struct {
-	Repo       string `json:"repo,omitempty"`
-	Ref        string `json:"ref,omitempty"`
-	NoTriggers bool   `json:"no_triggers,omitempty"`
+	Repo       string                      `json:"repo,omitempty"`
+	Ref        string                      `json:"ref,omitempty"`
+	NoTriggers bool                        `json:"no_triggers,omitempty"`
+	Resources  *DeploymentResourcesRequest `json:"resources,omitempty"`
 	// Environment selects a registered project environment for this upload.
 	Environment string `json:"environment,omitempty"`
 	// Annotation fields (issue #977 / ADR-116). All four are

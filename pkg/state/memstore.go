@@ -6392,6 +6392,17 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
 	}
+	// Mirror PgStore's immutable compute snapshot defaulting while the app row
+	// is protected by m.mu. A caller-supplied per-deployment override wins.
+	if d.RAMMB <= 0 {
+		d.RAMMB = app.RAMMB
+	}
+	if d.CPUMillicores <= 0 {
+		d.CPUMillicores = app.CPUMillicores
+		if d.CPUMillicores <= 0 {
+			d.CPUMillicores = api.DefaultAppCPUMillicores
+		}
+	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
 			return Deployment{}, 0, ErrConflict

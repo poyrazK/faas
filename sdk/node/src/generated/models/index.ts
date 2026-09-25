@@ -283,6 +283,8 @@ export type { DeploymentLiveWebhookPayload } from './DeploymentLiveWebhookPayloa
 export type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 export type { DeploymentPreviewURL } from './DeploymentPreviewURL.js';
 export type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+export type { DeploymentResources } from './DeploymentResources.js';
+export type { DeploymentResourcesRequest } from './DeploymentResourcesRequest.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';
 export type { DeploymentSummaryResponse } from './DeploymentSummaryResponse.js';
 export type { DevPostgresRequest } from './DevPostgresRequest.js';

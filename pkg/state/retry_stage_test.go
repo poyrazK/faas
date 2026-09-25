@@ -21,6 +21,8 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 		RolloutCompletedAt:     &oldStarted,
 		OverrideReadinessProbe: json.RawMessage(`{"path":"/readyz"}`),
 		OverrideMainDependsOn:  json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`),
+		RAMMB:                  384,
+		CPUMillicores:          500,
 	}
 
 	got, err := retryDeploymentInput(src, now)
@@ -41,5 +43,8 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	}
 	if string(got.OverrideMainDependsOn) != `[{"name":"proxy","condition":"healthy"}]` {
 		t.Fatalf("OverrideMainDependsOn = %s, want the source startup dependencies", got.OverrideMainDependsOn)
+	}
+	if got.RAMMB != src.RAMMB || got.CPUMillicores != src.CPUMillicores {
+		t.Fatalf("retry compute shape = %d MiB/%d mCPU, want %d MiB/%d mCPU", got.RAMMB, got.CPUMillicores, src.RAMMB, src.CPUMillicores)
 	}
 }

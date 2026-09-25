@@ -26,6 +26,15 @@ func TestDeployIdempotencyKeyIsStableForTheSameIntent(t *testing.T) {
 	if first == third {
 		t.Fatalf("different source digest reused key %q", first)
 	}
+	intent.SourceSHA256 = "abc123"
+	intent.RAMMB = 512
+	fourth, err := deployIdempotencyKey("", intent)
+	if err != nil {
+		t.Fatalf("resource-shaped key: %v", err)
+	}
+	if first == fourth {
+		t.Fatalf("different revision resources reused key %q", first)
+	}
 	if !strings.HasPrefix(first, "gregale-deploy-") {
 		t.Fatalf("default key = %q, want gregale-deploy- prefix", first)
 	}

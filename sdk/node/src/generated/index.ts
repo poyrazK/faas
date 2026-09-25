@@ -288,6 +288,8 @@ export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.j
 export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
+export type { DeploymentResources } from './models/DeploymentResources.js';
+export type { DeploymentResourcesRequest } from './models/DeploymentResourcesRequest.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
 export type { DeployTokenResponse } from './models/DeployTokenResponse.js';
