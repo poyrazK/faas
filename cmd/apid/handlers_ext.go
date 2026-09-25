@@ -5003,6 +5003,13 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		RolloutAbortedReason: d.RolloutAbortedReason,
 		APIHostingReceipt:    d.APIHostingReceipt,
 	}
+	if d.RAMMB > 0 && d.CPUMillicores > 0 {
+		resp.Resources = &api.DeploymentResources{
+			RAMMB:           d.RAMMB,
+			CPUMillicores:   d.CPUMillicores,
+			ResourceProfile: string(api.ResourceProfileForResources(d.RAMMB, d.CPUMillicores)),
+		}
+	}
 	if d.ServiceRolloutHandoff.Action != "" {
 		h := d.ServiceRolloutHandoff
 		resp.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{

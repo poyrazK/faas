@@ -565,6 +565,7 @@ func cmdDeploymentGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "kind:", d.Kind)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "status:", d.Status)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "created_at:", d.CreatedAt)
+	renderDeploymentResources(osStdout, d.Resources)
 	// Issue #977 / ADR-116: annotation block. Each field is
 	// conditional on non-empty so pre-feature rows render the
 	// same shape as before (no `-` placeholders for legacy data).
@@ -645,6 +646,17 @@ func cmdDeploymentGet(args []string) int {
 		}
 	}
 	return 0
+}
+
+func renderDeploymentResources(w io.Writer, resources *api.DeploymentResources) {
+	if resources == nil {
+		return
+	}
+	shape := fmt.Sprintf("%d MiB RAM, %d mCPU", resources.RAMMB, resources.CPUMillicores)
+	if resources.ResourceProfile != "" {
+		shape += " (" + resources.ResourceProfile + " profile)"
+	}
+	_, _ = fmt.Fprintf(w, "%-14s %s\n", "resources:", shape)
 }
 
 // renderDeploymentHostingReceipt prints the durable post-readiness evidence

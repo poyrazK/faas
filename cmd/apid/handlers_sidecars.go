@@ -410,13 +410,57 @@ func validateDeploymentRollbackOptions(req *api.CreateDeploymentRequest, plan ap
 	return nil
 }
 
+func resolveDeploymentResources(app state.App, requested *api.DeploymentResourcesRequest, limits api.Limits, plan api.Plan) (int, int, *api.Problem) {
+	ramMB := app.RAMMB
+	if ramMB <= 0 {
+		ramMB = limits.RAMMB
+	}
+	cpuMillicores := effectiveAppCPUMillicores(app, plan)
+	if requested != nil {
+		if requested.ResourceProfile != nil {
+			profile, ok := api.ResourceProfileSpecFor(*requested.ResourceProfile)
+			if !ok {
+				return 0, 0, api.ErrInvalidResourceProfile(*requested.ResourceProfile)
+			}
+			if requested.RAMMB != nil && *requested.RAMMB != profile.MemoryMB {
+				return 0, 0, api.ErrResourceProfileConflict("ram_mb", profile.Name, profile.MemoryMB, *requested.RAMMB)
+			}
+			if requested.CPUMillicores != nil && *requested.CPUMillicores != profile.CPUMillicores {
+				return 0, 0, api.ErrResourceProfileConflict("cpu_millicores", profile.Name, profile.CPUMillicores, *requested.CPUMillicores)
+			}
+			ramMB, cpuMillicores = profile.MemoryMB, profile.CPUMillicores
+		}
+		if requested.RAMMB != nil {
+			ramMB = *requested.RAMMB
+		}
+		if requested.CPUMillicores != nil {
+			cpuMillicores = *requested.CPUMillicores
+		}
+	}
+	if ramMB <= 0 {
+		return 0, 0, api.ErrInvalidAppRAM(ramMB)
+	}
+	if problem := api.ValidateAppConfig(limits, ramMB, app.MaxConcurrency); problem != nil {
+		return 0, 0, problem
+	}
+	if problem := api.ValidateAppCPUMillicores(cpuMillicores); problem != nil {
+		return 0, 0, problem
+	}
+	return ramMB, cpuMillicores, nil
+}
+
 func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, overrides *api.CreateDeploymentOverrides, limits api.Limits, planOpt ...api.Plan) (state.Deployment, *api.Problem) {
 	plan := api.PlanFree
 	if len(planOpt) > 0 {
 		plan = planOpt[0]
 	}
+	ramMB, cpuMillicores, resourceProblem := resolveDeploymentResources(app, req.Resources, limits, plan)
+	if resourceProblem != nil {
+		return state.Deployment{}, resourceProblem
+	}
 	dep := state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+		RAMMB: ramMB, CPUMillicores: cpuMillicores,
 	}
 	if req.RollbackOn5xx != nil {
 		dep.RollbackOn5xx = *req.RollbackOn5xx

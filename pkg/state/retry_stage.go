@@ -79,6 +79,8 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 
 	return Deployment{
 		AppID:                  src.AppID,
+		RAMMB:                  src.RAMMB,
+		CPUMillicores:          src.CPUMillicores,
 		ImageDigest:            src.ImageDigest,
 		Kind:                   src.Kind,
 		SourcePath:             src.SourcePath,

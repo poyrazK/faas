@@ -6150,6 +6150,9 @@ paths:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
                   description: "Named environment scope read by the developer deployment; omitted uses default."
+                resources:
+                  type: string
+                  description: "JSON-encoded DeploymentResourcesRequest form field; omitted inherits the app's compute defaults."
                 source_url:
                   type: string
                   maxLength: 1024
@@ -21319,6 +21322,24 @@ components:
       type: string
       enum: [micro, small, medium, large, xlarge]
 
+    DeploymentResourcesRequest:
+      description: "Optional compute override for one immutable deployment revision. Omitted dimensions inherit the app's configured defaults; the resolved values are checked against the app's plan. A named profile cannot be combined with conflicting explicit dimensions."
+      type: object
+      additionalProperties: false
+      properties:
+        ram_mb: { type: integer, minimum: 1, description: "Revision memory in MiB; omitted inherits the app default." }
+        cpu_millicores: { type: integer, enum: [250, 500, 1000], description: "Revision sustained CPU; omitted inherits the app default." }
+        resource_profile: { $ref: '#/components/schemas/ResourceProfile' }
+
+    DeploymentResources:
+      description: "Resolved immutable compute shape persisted for this deployment revision."
+      type: object
+      required: [ram_mb, cpu_millicores]
+      properties:
+        ram_mb: { type: integer, minimum: 1, description: "Revision memory in MiB." }
+        cpu_millicores: { type: integer, enum: [250, 500, 1000], description: "Revision sustained CPU." }
+        resource_profile: { $ref: '#/components/schemas/ResourceProfile' }
+
     DeclaredRoute:
       description: "One gateway route declaration. Path parameters use OpenAPI {name} segments."
       type: object
@@ -23784,6 +23805,7 @@ components:
           { type: string, minLength: 7, maxLength: 64, pattern: '^[0-9a-f]+$', description: "Lowercase hexadecimal Git commit identifier." }
         environment:
           { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$', description: "Registered project environment to resolve at upload commit." }
+        resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
         reason: { type: string, maxLength: 280 }
         tag: { type: string }
         deployed_by: { type: string }
@@ -23901,6 +23923,7 @@ components:
           pattern: '^[a-f0-9]{64}$'
           description: "SHA-256 digest of the exact source archive handed to the builder; stable identity for local-source revisions."
         has_overrides: { type: boolean, description: "True when this deployment carries a non-null override_* column set." }
+        resources: { $ref: '#/components/schemas/DeploymentResources' }
         disable_startup_cpu_boost: { type: boolean, description: "Whether the deployment opted out of the temporary startup CPU allowance; absent/false preserves the default boost." }
         override_entrypoint:
           type: array
@@ -24210,6 +24233,7 @@ components:
           type: string
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           description: "Registered project environment to target for this local tarball deployment."
+        resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
         # Issue #977 / ADR-116 — deployment annotation echo. The four
         # columns stamped at create time are surfaced verbatim so the
         # dashboard, CLI history, and SDK consumers can render the
@@ -25304,6 +25328,7 @@ components:
           type: string
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           description: "Registered project environment to resolve to the deployment scope. Requires the app to belong to the project; omitted preserves legacy scope behavior."
+        resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
         # Issue #977 / ADR-116 — deployment annotation fields. The
         # githubd bridge + GitHub Action auto-capture DeployedBy +
         # PRNumber; the CLI captures DeployedBy from `git config
@@ -27828,6 +27853,7 @@ components:
           type: string
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           description: "Registered project environment to target for this source-ref deployment."
+        resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
         no_triggers:
           type: boolean
           default: false

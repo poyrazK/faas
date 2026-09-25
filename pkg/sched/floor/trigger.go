@@ -502,6 +502,10 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 			t.observe(d.AppID, OutcomeDisabled)
 			continue
 		}
+		ramMB := d.RAMMB
+		if ramMB <= 0 {
+			ramMB = app.RAMMB
+		}
 		var conc int
 		if t.ledger != nil {
 			conc = t.ledger.ConcurrencyForDeployment(d.AppID, d.ID)
@@ -516,7 +520,7 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 		}
 		// RAM ceiling pre-check (same as tickPerApp).
 		isRamCeiling := false
-		if t.ledger != nil && api.BillableRAMMB(app.RAMMB) > headroom {
+		if t.ledger != nil && api.BillableRAMMB(ramMB) > headroom {
 			isRamCeiling = true
 		}
 		var lastScaleOut time.Time
@@ -532,7 +536,7 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 			MaxConcurrency:    effectiveMaxConcurrency(app, plan),
 			ResidentRAMMB:     residentRAM,
 			HeadroomMB:        headroom,
-			RAMMB:             app.RAMMB,
+			RAMMB:             ramMB,
 			WorkloadClass:     app.WorkloadClass,
 			LastScaleOutAt:    lastScaleOut,
 			ScaleOutCooldownS: scalingOutCooldownS(app),

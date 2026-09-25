@@ -75,6 +75,11 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if a.DisableStartupCPUBoost != nil {
 		_ = w.WriteField("disable_startup_cpu_boost", fmt.Sprintf("%t", *a.DisableStartupCPUBoost))
 	}
+	if a.Resources != nil {
+		if raw, err := json.Marshal(a.Resources); err == nil {
+			_ = w.WriteField("resources", string(raw))
+		}
+	}
 	if a.NoTriggers {
 		_ = w.WriteField("no_triggers", "true")
 	}
@@ -133,6 +138,7 @@ type DeployAnnotations struct {
 	SourceURL   string
 	CommitSHA   string
 	Environment string // registered project environment; resolved by apid
+	Resources   *DeploymentResourcesRequest
 	Reason      string // free text, ≤280 chars (DB CHECK)
 	Tag         string // closed-set enum (DB CHECK; handler validates too)
 	DeployedBy  string // human-readable actor label

@@ -6470,14 +6470,26 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	//    acquisition in one round-trip; apps.status flips are blocked
 	//    behind this lock until COMMIT/ROLLBACK. apps_pkey is the
 	//    primary key on id, so the lock search is an index hit.
-	var locked int
+	var appRAMMB, appCPUMillicores int
 	if err := tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
-		d.AppID).Scan(&locked); err != nil {
+		`select ram_mb, coalesce(cpu_millicores, 0)
+		   from apps
+		  where id = $1 and status in ('active', 'evicted_cold')
+		  for update`,
+		d.AppID).Scan(&appRAMMB, &appCPUMillicores); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, 0, ErrNotFound
 		}
 		return Deployment{}, 0, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+	}
+	if d.RAMMB <= 0 {
+		d.RAMMB = appRAMMB
+	}
+	if d.CPUMillicores <= 0 {
+		d.CPUMillicores = appCPUMillicores
+		if d.CPUMillicores <= 0 {
+			d.CPUMillicores = api.DefaultAppCPUMillicores
+		}
 	}
 	// 2. Supersede an older pending row, if any. A live deployment remains
 	//    routable until MarkDeploymentLive atomically promotes its healthy
@@ -6601,7 +6613,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
 		                          stage_state, rollback_on_5xx, release_command, release_command_shell, disable_startup_cpu_boost,
-		                          override_readiness_probe, override_main_depends_on)
+	                          override_readiness_probe, override_main_depends_on, ram_mb, cpu_millicores)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -6615,7 +6627,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51)
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, $52, $53)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -6658,7 +6670,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
 		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx,
 		notNullEmptyTextArray(d.ReleaseCommand), d.ReleaseCommandShell, d.DisableStartupCPUBoost,
-		nullJSONRaw(d.OverrideReadinessProbe), notNullEmptyJSONRaw(d.OverrideMainDependsOn))
+		nullJSONRaw(d.OverrideReadinessProbe), notNullEmptyJSONRaw(d.OverrideMainDependsOn), d.RAMMB, d.CPUMillicores)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, 0, err
@@ -9499,7 +9511,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
 		                          traffic_percent_explicit,
 		                          release_command, release_command_shell,
-		                          override_readiness_probe, override_main_depends_on)
+	                          override_readiness_probe, override_main_depends_on, ram_mb, cpu_millicores)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -9513,7 +9525,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49)
+	         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -9543,7 +9555,8 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		stageSeed, notNullEmptyJSONRaw(newDep.Workflows), newDep.FullRootfsAllowAuto, newDep.FullRootfsOverride, nullJSONRaw(newDep.InferredProfile),
 		newDep.TrafficPercentExplicit,
 		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell,
-		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn))
+		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn),
+		newDep.RAMMB, newDep.CPUMillicores)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -23185,7 +23198,8 @@ const deploymentSelectColumnsWithRootfs = `
 	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
-		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on`
+		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
+		coalesce(ram_mb, 0), coalesce(cpu_millicores, 0)`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -23242,7 +23256,8 @@ const deploymentSelectColumnsQualified = `
 	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
-		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on`
+		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
+		coalesce(d.ram_mb, 0), coalesce(d.cpu_millicores, 0)`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -23359,6 +23374,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
+		&d.RAMMB, &d.CPUMillicores,
 	); err != nil {
 		return mapErr(err)
 	}

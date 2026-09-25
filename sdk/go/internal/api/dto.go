@@ -582,8 +582,21 @@ type DeclaredRoute struct {
 // the canary weight (issue #556 PR-A); nil = server default 100,
 // explicit 0..100 = opt into split (Pro/Scale only).
 type CreateDeploymentRequest struct {
-	Image          string `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
-	TrafficPercent *int   `json:"traffic_percent,omitempty"`
+	Image          string                      `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
+	TrafficPercent *int                        `json:"traffic_percent,omitempty"`
+	Resources      *DeploymentResourcesRequest `json:"resources,omitempty"`
+}
+
+type DeploymentResourcesRequest struct {
+	RAMMB           *int    `json:"ram_mb,omitempty"`
+	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
+	ResourceProfile *string `json:"resource_profile,omitempty"`
+}
+
+type DeploymentResources struct {
+	RAMMB           int    `json:"ram_mb"`
+	CPUMillicores   int    `json:"cpu_millicores"`
+	ResourceProfile string `json:"resource_profile,omitempty"`
 }
 
 // DeploymentResponse is a deployment as returned by the API.
@@ -623,9 +636,10 @@ type DeploymentResponse struct {
 	// HostingReceipt is the non-secret deployment evidence captured after
 	// readiness. Raw JSON keeps the Go SDK forward-compatible with receipt
 	// schema additions.
-	HostingReceipt json.RawMessage `json:"hosting_receipt,omitempty"`
-	SourceRoot     string          `json:"source_root,omitempty"`
-	TrafficPercent int             `json:"traffic_percent,omitempty"`
+	HostingReceipt json.RawMessage      `json:"hosting_receipt,omitempty"`
+	SourceRoot     string               `json:"source_root,omitempty"`
+	TrafficPercent int                  `json:"traffic_percent,omitempty"`
+	Resources      *DeploymentResources `json:"resources,omitempty"`
 }
 
 // UpdateDeploymentTrafficRequest is the body for

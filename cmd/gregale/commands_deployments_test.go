@@ -376,6 +376,22 @@ func TestRun_DispatchDeployments(t *testing.T) {
 
 // --- row rendering ----------------------------------------------------------
 
+func TestRenderDeploymentResourcesShowsResolvedShape(t *testing.T) {
+	var buf bytes.Buffer
+	renderDeploymentResources(&buf, &api.DeploymentResources{
+		RAMMB: 256, CPUMillicores: 500, ResourceProfile: "small",
+	})
+	if got, want := buf.String(), "resources:     256 MiB RAM, 500 mCPU (small profile)\n"; got != want {
+		t.Fatalf("rendered resources = %q, want %q", got, want)
+	}
+
+	buf.Reset()
+	renderDeploymentResources(&buf, nil)
+	if buf.Len() != 0 {
+		t.Fatalf("legacy deployment rendered resources: %q", buf.String())
+	}
+}
+
 // TestRenderDeploymentRow_PinsColumnLayout pins the column-count and
 // per-column widths of the human list table. If the DTO's id-length
 // ceiling changes (e.g. UUIDv7 takes over for deployments) this layout
