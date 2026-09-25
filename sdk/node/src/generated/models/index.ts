@@ -364,6 +364,8 @@ export type { GithubRecoveryRetryResponse } from './GithubRecoveryRetryResponse.
 export type { GithubRecoveryStatusResponse } from './GithubRecoveryStatusResponse.js';
 export type { GithubWebhookDeliveryRecord } from './GithubWebhookDeliveryRecord.js';
 export type { GraceWindowResponse } from './GraceWindowResponse.js';
+export type { GregaleRelease } from './GregaleRelease.js';
+export type { GregaleRevision } from './GregaleRevision.js';
 export type { Id32 } from './Id32.js';
 export type { IdempotencyKey } from './IdempotencyKey.js';
 export type { InboundWebhookEndpointResponse } from './InboundWebhookEndpointResponse.js';
@@ -611,6 +613,8 @@ export type { ProjectEnvironmentStateWorkloadResponse } from './ProjectEnvironme
 export type { ProjectEnvironmentVariableChangeResponse } from './ProjectEnvironmentVariableChangeResponse.js';
 export type { ProjectEnvironmentVariableResponse } from './ProjectEnvironmentVariableResponse.js';
 export type { ProjectEnvironmentWorkloadDiffResponse } from './ProjectEnvironmentWorkloadDiffResponse.js';
+export type { ProjectReleaseSetMemberResponse } from './ProjectReleaseSetMemberResponse.js';
+export type { ProjectReleaseSetResponse } from './ProjectReleaseSetResponse.js';
 export type { ProjectResponse } from './ProjectResponse.js';
 export type { ProjectScanRequest } from './ProjectScanRequest.js';
 export type { ProjectSourceRefScanRequest } from './ProjectSourceRefScanRequest.js';
@@ -628,6 +632,7 @@ export type { PublicStatusOverview } from './PublicStatusOverview.js';
 export type { PublicStatusUpdate } from './PublicStatusUpdate.js';
 export type { PublishEventRequest } from './PublishEventRequest.js';
 export type { PublishEventResponse } from './PublishEventResponse.js';
+export type { PublishProjectReleaseSetRequest } from './PublishProjectReleaseSetRequest.js';
 export type { PutAppEnvRequest } from './PutAppEnvRequest.js';
 export type { PutAppRegistryCredentialRequest } from './PutAppRegistryCredentialRequest.js';
 export type { PutAppSecretRequest } from './PutAppSecretRequest.js';

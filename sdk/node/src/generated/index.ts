@@ -370,6 +370,8 @@ export type { GithubRecoveryStatusResponse } from './models/GithubRecoveryStatus
 export type { GitHubWebhookActivity } from './models/GitHubWebhookActivity.js';
 export type { GithubWebhookDeliveryRecord } from './models/GithubWebhookDeliveryRecord.js';
 export type { GraceWindowResponse } from './models/GraceWindowResponse.js';
+export type { GregaleRelease } from './models/GregaleRelease.js';
+export type { GregaleRevision } from './models/GregaleRevision.js';
 export type { Id32 } from './models/Id32.js';
 export type { IdempotencyKey } from './models/IdempotencyKey.js';
 export type { InboundWebhookEndpointResponse } from './models/InboundWebhookEndpointResponse.js';
@@ -617,6 +619,8 @@ export type { ProjectEnvironmentStateWorkloadResponse } from './models/ProjectEn
 export type { ProjectEnvironmentVariableChangeResponse } from './models/ProjectEnvironmentVariableChangeResponse.js';
 export type { ProjectEnvironmentVariableResponse } from './models/ProjectEnvironmentVariableResponse.js';
 export type { ProjectEnvironmentWorkloadDiffResponse } from './models/ProjectEnvironmentWorkloadDiffResponse.js';
+export type { ProjectReleaseSetMemberResponse } from './models/ProjectReleaseSetMemberResponse.js';
+export type { ProjectReleaseSetResponse } from './models/ProjectReleaseSetResponse.js';
 export type { ProjectResponse } from './models/ProjectResponse.js';
 export type { ProjectScanRequest } from './models/ProjectScanRequest.js';
 export type { ProjectSourceRefScanRequest } from './models/ProjectSourceRefScanRequest.js';
@@ -634,6 +638,7 @@ export type { PublicStatusOverview } from './models/PublicStatusOverview.js';
 export type { PublicStatusUpdate } from './models/PublicStatusUpdate.js';
 export type { PublishEventRequest } from './models/PublishEventRequest.js';
 export type { PublishEventResponse } from './models/PublishEventResponse.js';
+export type { PublishProjectReleaseSetRequest } from './models/PublishProjectReleaseSetRequest.js';
 export type { PutAppEnvRequest } from './models/PutAppEnvRequest.js';
 export type { PutAppRegistryCredentialRequest } from './models/PutAppRegistryCredentialRequest.js';
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
