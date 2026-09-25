@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 099 — a stale claimed task retries within its budget, then dead-letters.
 func TestReapStuckJobTasksUsesRetryBudget(t *testing.T) {
 	store := state.NewMemStore()
 	_, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))

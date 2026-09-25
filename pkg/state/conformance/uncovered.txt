@@ -281,7 +281,6 @@ JobCountByAccount
 JobGetByID
 JobGetByName
 JobListByAccount
-JobRunGetByID
 JobRunIncrementDeadLetter
 JobRunListByAccount
 JobRunListByJob
@@ -292,7 +291,6 @@ JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
 JobTaskList
-JobTaskMarkClaimed
 JobTaskMarkTerminal
 JobTaskRequeue
 JobTaskRetry
