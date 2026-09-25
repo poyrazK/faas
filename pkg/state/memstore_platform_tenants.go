@@ -194,9 +194,9 @@ func (m *MemStore) ListPlatformTenantUsage(_ context.Context, accountID, tenantI
 			continue
 		}
 		bucket.WindowStart = bucket.WindowStart.UTC().Truncate(24 * time.Hour)
-		key := bucket.AppID + "/" + bucket.ConsumerKey + "/" + bucket.WindowStart.Format(time.RFC3339)
+		key := bucket.AppID + "/" + bucket.ConsumerKey + "/" + bucket.SurfaceID + "/" + bucket.WindowStart.Format(time.RFC3339)
 		day := byDay[key]
-		day.AccountID, day.AppID, day.ConsumerKey, day.WindowStart = bucket.AccountID, bucket.AppID, bucket.ConsumerKey, bucket.WindowStart
+		day.AccountID, day.AppID, day.ConsumerKey, day.SurfaceID, day.WindowStart = bucket.AccountID, bucket.AppID, bucket.ConsumerKey, bucket.SurfaceID, bucket.WindowStart
 		day.RequestCount += bucket.RequestCount
 		day.ErrorCount += bucket.ErrorCount
 		day.BillableUnits += bucket.BillableUnits
@@ -209,6 +209,9 @@ func (m *MemStore) ListPlatformTenantUsage(_ context.Context, accountID, tenantI
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].WindowStart.Equal(out[j].WindowStart) {
 			if out[i].AppID == out[j].AppID {
+				if out[i].ConsumerKey == out[j].ConsumerKey {
+					return out[i].SurfaceID < out[j].SurfaceID
+				}
 				return out[i].ConsumerKey < out[j].ConsumerKey
 			}
 			return out[i].AppID < out[j].AppID

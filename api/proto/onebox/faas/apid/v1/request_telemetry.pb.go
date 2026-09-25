@@ -45,18 +45,19 @@ const (
 
 // The financial fact contains no request path, client metadata, or payload.
 type ConsumerUsageEvent struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	EventId           string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	AccountId         string                 `protobuf:"bytes,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
-	AppId             string                 `protobuf:"bytes,3,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
-	ConsumerId        string                 `protobuf:"bytes,4,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"`                           // empty for anonymous traffic
-	PlatformTenantId  string                 `protobuf:"bytes,5,opt,name=platform_tenant_id,json=platformTenantId,proto3" json:"platform_tenant_id,omitempty"`       // verified request-time snapshot
-	WindowStartUnixMs int64                  `protobuf:"varint,6,opt,name=window_start_unix_ms,json=windowStartUnixMs,proto3" json:"window_start_unix_ms,omitempty"` // UTC minute
-	RequestCount      int64                  `protobuf:"varint,7,opt,name=request_count,json=requestCount,proto3" json:"request_count,omitempty"`
-	ErrorCount        int64                  `protobuf:"varint,8,opt,name=error_count,json=errorCount,proto3" json:"error_count,omitempty"`
-	BillableUnits     int64                  `protobuf:"varint,9,opt,name=billable_units,json=billableUnits,proto3" json:"billable_units,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	EventId                 string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	AccountId               string                 `protobuf:"bytes,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	AppId                   string                 `protobuf:"bytes,3,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	ConsumerId              string                 `protobuf:"bytes,4,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"`                           // empty for anonymous traffic
+	PlatformTenantId        string                 `protobuf:"bytes,5,opt,name=platform_tenant_id,json=platformTenantId,proto3" json:"platform_tenant_id,omitempty"`       // verified request-time snapshot
+	WindowStartUnixMs       int64                  `protobuf:"varint,6,opt,name=window_start_unix_ms,json=windowStartUnixMs,proto3" json:"window_start_unix_ms,omitempty"` // UTC minute
+	RequestCount            int64                  `protobuf:"varint,7,opt,name=request_count,json=requestCount,proto3" json:"request_count,omitempty"`
+	ErrorCount              int64                  `protobuf:"varint,8,opt,name=error_count,json=errorCount,proto3" json:"error_count,omitempty"`
+	BillableUnits           int64                  `protobuf:"varint,9,opt,name=billable_units,json=billableUnits,proto3" json:"billable_units,omitempty"`
+	PlatformTenantSurfaceId string                 `protobuf:"bytes,10,opt,name=platform_tenant_surface_id,json=platformTenantSurfaceId,proto3" json:"platform_tenant_surface_id,omitempty"` // anonymous traffic on a verified surface only
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageEvent) Reset() {
@@ -152,12 +153,22 @@ func (x *ConsumerUsageEvent) GetBillableUnits() int64 {
 	return 0
 }
 
+func (x *ConsumerUsageEvent) GetPlatformTenantSurfaceId() string {
+	if x != nil {
+		return x.PlatformTenantSurfaceId
+	}
+	return ""
+}
+
 type ConsumerUsageReceipt struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// False means the event was committed by an earlier attempt.
-	Applied       bool `protobuf:"varint,1,opt,name=applied,proto3" json:"applied,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Applied bool `protobuf:"varint,1,opt,name=applied,proto3" json:"applied,omitempty"`
+	// An older apid cannot acknowledge surface attribution. The gateway must
+	// retain the event in its outbox until this is true for surface events.
+	SurfaceAttributionSupported bool `protobuf:"varint,2,opt,name=surface_attribution_supported,json=surfaceAttributionSupported,proto3" json:"surface_attribution_supported,omitempty"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageReceipt) Reset() {
@@ -193,6 +204,13 @@ func (*ConsumerUsageReceipt) Descriptor() ([]byte, []int) {
 func (x *ConsumerUsageReceipt) GetApplied() bool {
 	if x != nil {
 		return x.Applied
+	}
+	return false
+}
+
+func (x *ConsumerUsageReceipt) GetSurfaceAttributionSupported() bool {
+	if x != nil {
+		return x.SurfaceAttributionSupported
 	}
 	return false
 }
@@ -303,9 +321,10 @@ type IncrementRequestTelemetryRequest struct {
 	PlatformTenantId string `protobuf:"bytes,29,opt,name=platform_tenant_id,json=platformTenantId,proto3" json:"platform_tenant_id,omitempty"`
 	// The same request's financial event was fsynced to the dedicated outbox.
 	// New receivers skip their legacy ledger write for this debugger row.
-	UsageOutboxed bool `protobuf:"varint,30,opt,name=usage_outboxed,json=usageOutboxed,proto3" json:"usage_outboxed,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	UsageOutboxed           bool   `protobuf:"varint,30,opt,name=usage_outboxed,json=usageOutboxed,proto3" json:"usage_outboxed,omitempty"`
+	PlatformTenantSurfaceId string `protobuf:"bytes,31,opt,name=platform_tenant_surface_id,json=platformTenantSurfaceId,proto3" json:"platform_tenant_surface_id,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -548,6 +567,13 @@ func (x *IncrementRequestTelemetryRequest) GetUsageOutboxed() bool {
 	return false
 }
 
+func (x *IncrementRequestTelemetryRequest) GetPlatformTenantSurfaceId() string {
+	if x != nil {
+		return x.PlatformTenantSurfaceId
+	}
+	return ""
+}
+
 // IncrementRequestTelemetryResponse is the per-record outcome the
 // server returns. outcome ∈ {inserted, rate_limited, db_error}.
 // `inserted` is a successful INSERT; `rate_limited` means the
@@ -615,7 +641,7 @@ var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xd2\x02\n" +
+	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\x8f\x03\n" +
 	"\x12ConsumerUsageEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -628,9 +654,12 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\rrequest_count\x18\a \x01(\x03R\frequestCount\x12\x1f\n" +
 	"\verror_count\x18\b \x01(\x03R\n" +
 	"errorCount\x12%\n" +
-	"\x0ebillable_units\x18\t \x01(\x03R\rbillableUnits\"0\n" +
+	"\x0ebillable_units\x18\t \x01(\x03R\rbillableUnits\x12;\n" +
+	"\x1aplatform_tenant_surface_id\x18\n" +
+	" \x01(\tR\x17platformTenantSurfaceId\"t\n" +
 	"\x14ConsumerUsageReceipt\x12\x18\n" +
-	"\aapplied\x18\x01 \x01(\bR\aapplied\"\x90\b\n" +
+	"\aapplied\x18\x01 \x01(\bR\aapplied\x12B\n" +
+	"\x1dsurface_attribution_supported\x18\x02 \x01(\bR\x1bsurfaceAttributionSupported\"\xcd\b\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -668,7 +697,8 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x15deployment_created_at\x18\x1b \x01(\tR\x13deploymentCreatedAt\x12!\n" +
 	"\fimage_digest\x18\x1c \x01(\tR\vimageDigest\x12,\n" +
 	"\x12platform_tenant_id\x18\x1d \x01(\tR\x10platformTenantId\x12%\n" +
-	"\x0eusage_outboxed\x18\x1e \x01(\bR\rusageOutboxed\"c\n" +
+	"\x0eusage_outboxed\x18\x1e \x01(\bR\rusageOutboxed\x12;\n" +
+	"\x1aplatform_tenant_surface_id\x18\x1f \x01(\tR\x17platformTenantSurfaceId\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\x8e\x02\n" +

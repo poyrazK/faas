@@ -25,15 +25,16 @@ var ErrFull = errors.New("consumer usage outbox full")
 
 // Event has only the financial dimensions, never request paths or client data.
 type Event struct {
-	EventID          string    `json:"event_id"`
-	AccountID        string    `json:"account_id"`
-	AppID            string    `json:"app_id"`
-	ConsumerID       string    `json:"consumer_id,omitempty"`
-	PlatformTenantID string    `json:"platform_tenant_id,omitempty"`
-	WindowStart      time.Time `json:"window_start"`
-	RequestCount     int64     `json:"request_count"`
-	ErrorCount       int64     `json:"error_count"`
-	BillableUnits    int64     `json:"billable_units"`
+	EventID                 string    `json:"event_id"`
+	AccountID               string    `json:"account_id"`
+	AppID                   string    `json:"app_id"`
+	ConsumerID              string    `json:"consumer_id,omitempty"`
+	PlatformTenantID        string    `json:"platform_tenant_id,omitempty"`
+	PlatformTenantSurfaceID string    `json:"platform_tenant_surface_id,omitempty"`
+	WindowStart             time.Time `json:"window_start"`
+	RequestCount            int64     `json:"request_count"`
+	ErrorCount              int64     `json:"error_count"`
+	BillableUnits           int64     `json:"billable_units"`
 }
 
 type Item struct {

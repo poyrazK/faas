@@ -32,6 +32,9 @@ func (m *MemStore) ListPlatformTenantUsageMinutes(_ context.Context, accountID, 
 		if out[i].ConsumerKey != out[j].ConsumerKey {
 			return out[i].ConsumerKey < out[j].ConsumerKey
 		}
+		if out[i].SurfaceID != out[j].SurfaceID {
+			return out[i].SurfaceID < out[j].SurfaceID
+		}
 		return out[i].WindowStart.Before(out[j].WindowStart)
 	})
 	return out, nil
@@ -124,8 +127,23 @@ func (m *MemStore) FinalizePlatformTenantStatement(_ context.Context, accountID,
 }
 
 func tenantStatementIncludesConsumer(statement PlatformTenantStatement, appID, consumerID string) bool {
+	if consumerID == "" {
+		return false
+	}
 	for _, line := range statement.Lines {
 		if line.AppID == appID && line.ConsumerID == consumerID {
+			return true
+		}
+	}
+	return false
+}
+
+func tenantStatementIncludesSurface(statement PlatformTenantStatement, appID, surfaceID string) bool {
+	if surfaceID == "" {
+		return false
+	}
+	for _, line := range statement.Lines {
+		if line.AppID == appID && line.SurfaceID == surfaceID {
 			return true
 		}
 	}
@@ -178,7 +196,8 @@ func (m *MemStore) CreatePlatformTenantStatementHandoff(_ context.Context, in Pl
 			continue
 		}
 		for _, line := range statement.Lines {
-			if tenantStatementIncludesConsumer(other, line.AppID, line.ConsumerID) {
+			if tenantStatementIncludesConsumer(other, line.AppID, line.ConsumerID) ||
+				tenantStatementIncludesSurface(other, line.AppID, line.SurfaceID) {
 				return PlatformTenantStatementHandoff{}, false, ErrConflict
 			}
 		}

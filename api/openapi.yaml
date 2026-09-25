@@ -22176,19 +22176,20 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantSurfaceResponse' }
 
     PlatformTenantUsageBucketResponse:
-      description: One UTC day of app-consumer usage from the durable raw usage ledger.
+      description: One UTC day of durable tenant-attributed usage. Exactly one of consumer_id or surface_id is present.
       type: object
-      required: [app_id, consumer_id, window_start, request_count, error_count, billable_units]
+      required: [app_id, window_start, request_count, error_count, billable_units]
       properties:
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
+        surface_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
         request_count: { type: integer, format: int64, minimum: 0 }
         error_count: { type: integer, format: int64, minimum: 0 }
         billable_units: { type: integer, format: int64, minimum: 0 }
 
     PlatformTenantUsageResponse:
-      description: Cross-app raw usage totals with app and consumer attribution.
+      description: Cross-app raw usage totals with app and consumer-or-surface attribution.
       type: object
       required: [tenant_id, period_start, period_end, request_count, error_count, billable_units, buckets, as_of]
       properties:
@@ -22204,12 +22205,13 @@ components:
         as_of: { type: string, format: date-time }
 
     PlatformTenantStatementLineResponse:
-      description: Immutable tenant-attributed UTC minute priced with one app's rate-card version.
+      description: Immutable tenant-attributed UTC minute priced with one app's rate-card version. Exactly one of consumer_id or surface_id is present.
       type: object
-      required: [app_id, consumer_id, window_start, billable_units, amount_millicents]
+      required: [app_id, window_start, billable_units, amount_millicents]
       properties:
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
+        surface_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }

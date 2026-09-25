@@ -128,7 +128,8 @@ type PlatformTenantDetailResponse struct {
 
 type PlatformTenantUsageBucketResponse struct {
 	AppID         string    `json:"app_id"`
-	ConsumerID    string    `json:"consumer_id"`
+	ConsumerID    string    `json:"consumer_id,omitempty"`
+	SurfaceID     string    `json:"surface_id,omitempty"`
 	WindowStart   time.Time `json:"window_start"`
 	RequestCount  int64     `json:"request_count"`
 	ErrorCount    int64     `json:"error_count"`
@@ -150,7 +151,8 @@ type PlatformTenantUsageResponse struct {
 // snapshot; later revisions contain only usage delivered after prior ones.
 type PlatformTenantStatementLineResponse struct {
 	AppID                  string    `json:"app_id"`
-	ConsumerID             string    `json:"consumer_id"`
+	ConsumerID             string    `json:"consumer_id,omitempty"`
+	SurfaceID              string    `json:"surface_id,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`

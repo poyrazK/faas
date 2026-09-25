@@ -177,3 +177,70 @@ func TestPlatformTenantStatementSupersedesUnpricedDraft(t *testing.T) {
 		t.Fatalf("repriced finalize: %d %s", got.Code, got.Body)
 	}
 }
+
+// adr: 239
+func TestPlatformTenantSurfaceUsageAndStatementAPI(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "tenant-surface-billing")
+	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "surface-customer", "Surface Customer", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surfaceID := uuid.NewString()
+	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
+	if _, err := e.store.CreateAPIConsumerRateCard(context.Background(), e.acct.ID, appID, "EUR", 11, minute); err != nil {
+		t.Fatal(err)
+	}
+	for _, units := range []int64{2} {
+		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appID,
+			ConsumerKey: state.AnonymousConsumerKey, PlatformTenantID: tenant.ID,
+			PlatformTenantSurfaceID: surfaceID, WindowStart: minute,
+			RequestCount: units, BillableUnits: units,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usagePath := "/v1/account/platform-tenants/" + tenant.ID + "/usage"
+	if rows, err := e.store.ListPlatformTenantUsage(context.Background(), e.acct.ID, tenant.ID, minute, minute.Add(time.Hour)); err != nil || len(rows) != 1 {
+		t.Fatalf("direct tenant surface usage=%+v err=%v", rows, err)
+	}
+	usage := e.do(t, http.MethodGet, usagePath+"?since="+url.QueryEscape(minute.Format(time.RFC3339))+"&until="+url.QueryEscape(minute.Add(24*time.Hour).Format(time.RFC3339)), nil, nil)
+	if usage.Code != http.StatusOK {
+		t.Fatalf("surface usage: %d %s", usage.Code, usage.Body)
+	}
+	var usageBody api.PlatformTenantUsageResponse
+	if err := json.Unmarshal(usage.Body.Bytes(), &usageBody); err != nil || len(usageBody.Buckets) != 1 || usageBody.Buckets[0].SurfaceID != surfaceID || usageBody.Buckets[0].ConsumerID != "" {
+		t.Fatalf("surface usage response=%+v err=%v", usageBody, err)
+	}
+	end := minute.Add(time.Hour)
+	path := "/v1/account/platform-tenants/" + tenant.ID + "/usage-statements"
+	period := api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &minute, PeriodEnd: &end}
+	created := e.do(t, http.MethodPost, path, period, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("surface statement: %d %s", created.Code, created.Body)
+	}
+	var first api.PlatformTenantStatementResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &first); err != nil || first.BillableUnits != 2 || first.AmountMillicents != 22 || len(first.Lines) != 1 || first.Lines[0].SurfaceID != surfaceID || first.Lines[0].ConsumerID != "" {
+		t.Fatalf("surface statement response=%+v err=%v", first, err)
+	}
+	if got := e.do(t, http.MethodPost, path+"/"+first.ID+"/finalize", struct{}{}, nil); got.Code != http.StatusOK {
+		t.Fatalf("surface finalize: %d %s", got.Code, got.Body)
+	}
+	if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appID,
+		ConsumerKey: state.AnonymousConsumerKey, PlatformTenantID: tenant.ID,
+		PlatformTenantSurfaceID: surfaceID, WindowStart: minute,
+		RequestCount: 1, BillableUnits: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	adjusted := e.do(t, http.MethodPost, path, period, nil)
+	if adjusted.Code != http.StatusCreated {
+		t.Fatalf("surface adjustment: %d %s", adjusted.Code, adjusted.Body)
+	}
+	var second api.PlatformTenantStatementResponse
+	if err := json.Unmarshal(adjusted.Body.Bytes(), &second); err != nil || second.Revision != 2 || second.AmountMillicents != 11 || len(second.Lines) != 1 || second.Lines[0].SurfaceID != surfaceID {
+		t.Fatalf("surface adjustment response=%+v err=%v", second, err)
+	}
+}

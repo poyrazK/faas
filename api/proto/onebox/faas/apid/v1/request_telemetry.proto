@@ -65,11 +65,15 @@ message ConsumerUsageEvent {
   int64 request_count = 7;
   int64 error_count = 8;
   int64 billable_units = 9;
+  string platform_tenant_surface_id = 10; // anonymous traffic on a verified surface only
 }
 
 message ConsumerUsageReceipt {
   // False means the event was committed by an earlier attempt.
   bool applied = 1;
+  // An older apid cannot acknowledge surface attribution. The gateway must
+  // retain the event in its outbox until this is true for surface events.
+  bool surface_attribution_supported = 2;
 }
 
 // IncrementRequestTelemetryRequest is one collapsed telemetry row
@@ -202,6 +206,7 @@ message IncrementRequestTelemetryRequest {
   // The same request's financial event was fsynced to the dedicated outbox.
   // New receivers skip their legacy ledger write for this debugger row.
   bool usage_outboxed = 30;
+  string platform_tenant_surface_id = 31;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

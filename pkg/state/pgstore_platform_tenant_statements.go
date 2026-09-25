@@ -56,11 +56,13 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 	if _, err := s.GetPlatformTenant(ctx, accountID, tenantID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `select account_id, app_id, consumer_key, window_start,
+	rows, err := s.pool.Query(ctx, `select account_id, app_id,
+		case when source_kind = 'consumer' then consumer_key else '' end,
+		case when source_kind = 'surface' then consumer_key else '' end, window_start,
 		request_count, error_count, billable_units from platform_tenant_usage_minutes
 		where account_id = $1::uuid and platform_tenant_id = $2::uuid
 		and window_start >= $3 and window_start < $4
-		order by app_id, consumer_key, window_start`, accountID, tenantID, start.UTC(), end.UTC())
+		order by app_id, source_kind, consumer_key, window_start`, accountID, tenantID, start.UTC(), end.UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +70,7 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 	out := []APIConsumerUsageBucket{}
 	for rows.Next() {
 		var b APIConsumerUsageBucket
-		if err := rows.Scan(&b.AccountID, &b.AppID, &b.ConsumerKey, &b.WindowStart,
+		if err := rows.Scan(&b.AccountID, &b.AppID, &b.ConsumerKey, &b.SurfaceID, &b.WindowStart,
 			&b.RequestCount, &b.ErrorCount, &b.BillableUnits); err != nil {
 			return nil, err
 		}
@@ -138,13 +140,18 @@ func (s *PgStore) CreatePlatformTenantStatement(ctx context.Context, in Platform
 	}
 	seen := map[string]bool{}
 	for _, line := range in.Lines {
-		key := line.AppID + "\x00" + line.ConsumerID
+		key := line.AppID + "\x00" + line.ConsumerID + "\x00" + line.SurfaceID
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		_, err := tx.Exec(ctx, `insert into platform_tenant_statement_consumers (statement_id, app_id, consumer_id)
-			values ($1::uuid, $2::uuid, $3::uuid)`, out.ID, line.AppID, line.ConsumerID)
+		if line.ConsumerID != "" {
+			_, err = tx.Exec(ctx, `insert into platform_tenant_statement_consumers (statement_id, app_id, consumer_id)
+				values ($1::uuid, $2::uuid, $3::uuid)`, out.ID, line.AppID, line.ConsumerID)
+		} else {
+			_, err = tx.Exec(ctx, `insert into platform_tenant_statement_surfaces (statement_id, app_id, surface_id)
+				values ($1::uuid, $2::uuid, $3::uuid)`, out.ID, line.AppID, line.SurfaceID)
+		}
 		if err != nil {
 			return PlatformTenantStatement{}, false, err
 		}
@@ -254,6 +261,13 @@ func (s *PgStore) CreatePlatformTenantStatementHandoff(ctx context.Context, in P
 		  join platform_tenant_statement_consumers mine on mine.statement_id = $1::uuid
 		  join platform_tenant_statement_consumers theirs on theirs.statement_id = p.id
 		    and theirs.app_id = mine.app_id and theirs.consumer_id = mine.consumer_id
+		 where p.period_start < $3 and p.period_end > $2
+		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
+		or exists (select 1 from platform_tenant_statement_handoffs h
+		  join platform_tenant_statements p on p.id = h.statement_id
+		  join platform_tenant_statement_surfaces mine on mine.statement_id = $1::uuid
+		  join platform_tenant_statement_surfaces theirs on theirs.statement_id = p.id
+		    and theirs.app_id = mine.app_id and theirs.surface_id = mine.surface_id
 		 where p.period_start < $3 and p.period_end > $2
 		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
 		or exists (select 1 from api_consumer_usage_statement_handoffs where account_id = $5::uuid and external_invoice_id = $6)

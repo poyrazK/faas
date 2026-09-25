@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { PlatformTenantUsageBucketResponse } from './PlatformTenantUsageBucketResponse.js';
 /**
- * Cross-app raw usage totals with app and consumer attribution.
+ * Cross-app raw usage totals with app and consumer-or-surface attribution.
  */
 export type PlatformTenantUsageResponse = {
   tenant_id: string;

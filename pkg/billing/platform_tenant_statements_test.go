@@ -44,3 +44,34 @@ func TestBuildPlatformTenantStatementCrossAppAdjustments(t *testing.T) {
 		t.Fatalf("mixed currencies err=%v", err)
 	}
 }
+
+// adr: 239
+func TestBuildPlatformTenantStatementSeparatesConsumerAndSurfaceMinutes(t *testing.T) {
+	start := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	accountID, tenantID, appID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	consumerID, surfaceID := uuid.NewString(), uuid.NewString()
+	usage := []state.APIConsumerUsageBucket{
+		{AppID: appID, ConsumerKey: consumerID, WindowStart: start, BillableUnits: 2},
+		{AppID: appID, SurfaceID: surfaceID, WindowStart: start, BillableUnits: 3},
+	}
+	cards := map[string][]state.APIConsumerRateCard{appID: {{ID: uuid.NewString(), AppID: appID,
+		Currency: "EUR", Unit: state.APIConsumerRateCardUnitRequest, PriceMillicentsPerUnit: 7, EffectiveFrom: start}}}
+	first, err := BuildPlatformTenantStatement(accountID, tenantID, start, start.Add(time.Hour), start.Add(time.Hour), usage, cards, nil)
+	if err != nil || first.BillableUnits != 5 || first.AmountMillicents != 35 || len(first.Lines) != 2 {
+		t.Fatalf("mixed-source statement = %+v, err=%v", first, err)
+	}
+	var sawConsumer, sawSurface bool
+	for _, line := range first.Lines {
+		sawConsumer = sawConsumer || line.ConsumerID == consumerID && line.SurfaceID == ""
+		sawSurface = sawSurface || line.SurfaceID == surfaceID && line.ConsumerID == ""
+	}
+	if !sawConsumer || !sawSurface {
+		t.Fatalf("source identities lost: %+v", first.Lines)
+	}
+	prior := []state.PlatformTenantStatement{{Revision: 1, Status: state.APIConsumerUsageStatementFinalized, Lines: first.Lines}}
+	usage[1].BillableUnits = 5
+	adjustment, err := BuildPlatformTenantStatement(accountID, tenantID, start, start.Add(time.Hour), start.Add(time.Hour), usage, cards, prior)
+	if err != nil || adjustment.BillableUnits != 2 || adjustment.AmountMillicents != 14 || len(adjustment.Lines) != 1 || adjustment.Lines[0].SurfaceID != surfaceID {
+		t.Fatalf("surface adjustment = %+v, err=%v", adjustment, err)
+	}
+}
