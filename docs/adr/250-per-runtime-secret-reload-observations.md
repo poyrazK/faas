@@ -1,4 +1,4 @@
-# ADR-239 · Per-runtime secret reload observations
+# ADR-250 · Per-runtime secret reload observations
 
 - **Status:** accepted
 - **Date:** 2026-09-25
