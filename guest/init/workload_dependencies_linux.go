@@ -88,15 +88,22 @@ func normalizeWorkloadDependencies(roster workloadRoster) (map[string][]api.Work
 	}
 	deps := map[string][]api.WorkloadDependency{"main": append([]api.WorkloadDependency(nil), roster.Main.DependsOn...)}
 	known := map[string]bool{"main": true}
+	types := map[string]string{"main": "main"}
 	for _, sc := range roster.Sidecars {
 		if sc.Name == "" || sc.Name == "main" || known[sc.Name] {
 			return nil, fmt.Errorf("workload roster: duplicate or reserved workload name %q", sc.Name)
 		}
 		known[sc.Name] = true
+		types[sc.Name] = sc.Type
 		if len(sc.DependsOn) > api.WorkloadDependencyCapMax {
 			return nil, fmt.Errorf("workload roster: %q has %d dependencies; max is %d", sc.Name, len(sc.DependsOn), api.WorkloadDependencyCapMax)
 		}
 		deps[sc.Name] = append([]api.WorkloadDependency(nil), sc.DependsOn...)
+	}
+	for _, dependency := range roster.Main.DependsOn {
+		if types[dependency.Name] != "sidecar" {
+			return nil, fmt.Errorf("workload roster: main dependency %q must target a long-running sidecar", dependency.Name)
+		}
 	}
 	for name, entries := range deps {
 		seen := make(map[string]struct{}, len(entries))
