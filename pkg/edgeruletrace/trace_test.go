@@ -10,6 +10,85 @@ import (
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 )
 
+func TestParseScenarioConfig(t *testing.T) {
+	config := `{"version":1,"app":"demo","request":{"url":"https://EXAMPLE.com/submit?ignored=yes","method":"post","headers":["Content-Type: application/json","X-Region: east","X-Region: west","Authorization: Bearer config-secret-123"],"client_ip":"203.0.113.7","country":"us","body":"{\"count\":3}"}}`
+	input, err := edgeruletrace.ParseScenarioConfig([]byte(config))
+	if err != nil {
+		t.Fatalf("ParseScenarioConfig: %v", err)
+	}
+	if input.App != "demo" || input.Host != "example.com" || input.Path != "/submit" || input.Method != http.MethodPost {
+		t.Fatalf("request identity = %#v", input)
+	}
+	if input.ClientIP != "203.0.113.7" || input.Country != "US" || string(input.Body) != `{"count":3}` || !input.BodyProvided {
+		t.Fatalf("request context = %#v", input)
+	}
+	if got := input.Headers.Values("X-Region"); len(got) != 2 || got[0] != "east" || got[1] != "west" {
+		t.Fatalf("repeated headers = %#v", got)
+	}
+	if got := input.Headers.Get("Authorization"); got != "Bearer config-secret-123" {
+		t.Fatalf("scenario input was redacted before evaluation: %q", got)
+	}
+}
+
+func TestParseScenarioConfigSupportsBase64AndExplicitEmptyBody(t *testing.T) {
+	for _, config := range []string{
+		`{"version":1,"app":"demo","request":{"url":"https://example.com","body":""}}`,
+		`{"version":1,"app":"demo","request":{"url":"https://example.com","body_base64":"AAEC/w=="}}`,
+	} {
+		input, err := edgeruletrace.ParseScenarioConfig([]byte(config))
+		if err != nil {
+			t.Fatalf("ParseScenarioConfig(%s): %v", config, err)
+		}
+		if !input.BodyProvided {
+			t.Errorf("body was not marked as supplied for config %s", config)
+		}
+	}
+	input, err := edgeruletrace.ParseScenarioConfig([]byte(`{"version":1,"app":"demo","request":{"url":"https://example.com","body_base64":"AAEC/w=="}}`))
+	if err != nil {
+		t.Fatalf("ParseScenarioConfig base64: %v", err)
+	}
+	if string(input.Body) != string([]byte{0, 1, 2, 255}) {
+		t.Fatalf("decoded body = %v", input.Body)
+	}
+}
+
+func TestParseScenarioConfigRejectsInvalidConfigurations(t *testing.T) {
+	tooLargeBody, err := json.Marshal(edgeruletrace.ScenarioConfig{
+		Version: edgeruletrace.ScenarioConfigVersion, App: "demo",
+		Request: edgeruletrace.ScenarioRequestConfig{URL: "https://example.com", Body: stringPointer(strings.Repeat("x", edgeruletrace.MaxTraceBodyBytes+1))},
+	})
+	if err != nil {
+		t.Fatalf("Marshal oversized scenario: %v", err)
+	}
+	cases := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{"unsupported version", `{"version":2,"app":"demo","request":{"url":"https://example.com"}}`, "unsupported trace scenario config version"},
+		{"unknown field", `{"version":1,"app":"demo","request":{"url":"https://example.com","region":"west"}}`, "unknown field"},
+		{"trailing JSON", `{"version":1,"app":"demo","request":{"url":"https://example.com"}} {}`, "one JSON object"},
+		{"credentials in URL", `{"version":1,"app":"demo","request":{"url":"https://user:password@example.com"}}`, "without credentials"},
+		{"both body encodings", `{"version":1,"app":"demo","request":{"url":"https://example.com","body":"x","body_base64":"eA=="}}`, "only one of body or body_base64"},
+		{"invalid base64", `{"version":1,"app":"demo","request":{"url":"https://example.com","body_base64":"%%%"}}`, "valid standard base64"},
+		{"malformed headers", `{"version":1,"app":"demo","request":{"url":"https://example.com","headers":["Authorization secret-value"]}}`, "valid Name:Value pairs"},
+		{"oversized body", string(tooLargeBody), "request body must not exceed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := edgeruletrace.ParseScenarioConfig([]byte(tc.config))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ParseScenarioConfig error = %v, want substring %q", err, tc.want)
+			}
+			if tc.name == "malformed headers" && strings.Contains(err.Error(), "secret-value") {
+				t.Fatalf("header value leaked through config error: %v", err)
+			}
+		})
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
 func TestSimulateValidateRuleWithRequestBody(t *testing.T) {
 	rule := validateTraceRule(t, "validate", api.ValidateModeBlock, `{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]}`, nil, 0)
 	input := validateTraceInput(`{"count":3}`)
@@ -158,6 +237,82 @@ func TestParseRequestHeadersTrimsHTTPOptionalWhitespace(t *testing.T) {
 	}
 }
 
+func TestSimulateRedactsSensitiveHeadersAcrossTraceOutput(t *testing.T) {
+	const (
+		authorization = "Bearer authorization-sentinel-83912"
+		cookie        = "session=cookie-sentinel-83912"
+		apiKey        = "api-key-sentinel-83912"
+		sessionToken  = "custom-token-sentinel-83912"
+		requestSet    = "action-session-sentinel-83912"
+		responseSet   = "response-cookie-sentinel-83912"
+		selector      = "mismatch-selector-sentinel-83912"
+	)
+	rules := []api.EdgeRuleResponse{
+		{
+			ID: "header-rule", Enabled: true, Kind: "headers", MatchHost: "*", MatchPath: "*", Priority: 10,
+			MatchHeaders: map[string]string{"authorization": authorization},
+			Action:       json.RawMessage(`{"headers":{"request_headers":[{"name":"X-Session-Token","value":"` + requestSet + `","action":"set"}],"response_headers":[{"name":"Set-Cookie","value":"` + responseSet + `","action":"set"}]}}`),
+		},
+		{
+			ID: "mismatch-rule", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "*", Priority: 20,
+			MatchHeaders: map[string]string{"cookie": selector},
+			Action:       json.RawMessage(`{"rewrite":{"from":"/old","to":"/new"}}`),
+		},
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, AppMaintenanceLoaded: true,
+		Headers: http.Header{
+			"Authorization":   []string{authorization},
+			"Cookie":          []string{cookie},
+			"X-Api-Key":       []string{apiKey},
+			"X-Session-Token": []string{sessionToken},
+			"X-Region":        []string{"west"},
+		},
+	}
+	result, err := edgeruletrace.Simulate(input, rules)
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Rules[0].Status != "first_candidate" || result.Simulation.Outcome != "continue" {
+		t.Fatalf("raw header matching changed by redaction: row=%#v simulation=%#v", result.Rules[0], result.Simulation)
+	}
+	if result.Rules[1].Status != "skipped" || !strings.Contains(result.Rules[1].Reason, "[REDACTED]") {
+		t.Fatalf("sensitive mismatch reason = %q", result.Rules[1].Reason)
+	}
+	if result.Headers["authorization"][0] != "[REDACTED]" || result.Headers["cookie"][0] != "[REDACTED]" || result.Headers["x-api-key"][0] != "[REDACTED]" {
+		t.Fatalf("top-level request headers were not redacted: %#v", result.Headers)
+	}
+	if result.Headers["x-region"][0] != "west" {
+		t.Fatalf("ordinary request header was changed: %#v", result.Headers)
+	}
+	if result.Simulation.RequestHeaders["x-session-token"][0] != "[REDACTED]" {
+		t.Fatalf("simulated request headers were not redacted: %#v", result.Simulation.RequestHeaders)
+	}
+	if got := result.Simulation.Steps[0].RequestOps[0].Value; got != "[REDACTED]" {
+		t.Fatalf("request header action value = %q", got)
+	}
+	if got := result.Simulation.Steps[0].ResponseOps[0].Value; got != "[REDACTED]" {
+		t.Fatalf("response header action value = %q", got)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, secret := range []string{authorization, cookie, apiKey, sessionToken, requestSet, responseSet, selector} {
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("serialized trace leaked %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestRedactHeaderInputForDisplay(t *testing.T) {
+	got := edgeruletrace.RedactHeaderInputForDisplay("Authorization: Bearer form-auth-sentinel\r\nX-Session-Token:\tform-token-sentinel\nX-Region: west\nbroken form-cookie-sentinel")
+	want := "Authorization: [REDACTED]\r\nX-Session-Token:\t[REDACTED]\nX-Region: west\n[REDACTED]"
+	if got != want {
+		t.Fatalf("RedactHeaderInputForDisplay() = %q, want %q", got, want)
+	}
+}
+
 func TestSimulateInlineCORSRuleAppliesResponseHeaders(t *testing.T) {
 	rule := corsTraceRule(t, "cors-rule", []string{"GET"}, api.EdgeRuleCORSAction{
 		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET", "POST"},
@@ -249,6 +404,138 @@ func TestSimulateAppMaintenanceRequiresMetadataAndFollowsRouting(t *testing.T) {
 	}
 	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "route" || result.Simulation.TargetApp != "other-app" {
 		t.Fatalf("route should precede target-app maintenance metadata: %#v", result.Simulation)
+	}
+}
+
+func TestSimulateDeclaredRoutesMatchOpenAPIStylePathsAndMethods(t *testing.T) {
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/users/42/", Method: http.MethodHead,
+		AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true,
+		DeclaredRoutes: []api.DeclaredRoute{{Path: "/users/{user_id}", Methods: []string{"get"}}},
+	}
+	result, err := edgeruletrace.Simulate(input, nil)
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	step := result.Simulation.Steps[0]
+	if step.Phase != "declared_routes" || step.Outcome != "allowed" || step.PathBefore != "/users/42/" || step.PathAfter != "/users/42/" {
+		t.Fatalf("declared-route step = %#v", step)
+	}
+}
+
+func TestSimulateDeclaredRouteGateUsesOriginalPathAfterRewrite(t *testing.T) {
+	rewrite := api.EdgeRuleResponse{
+		ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/legacy/*",
+		Action: json.RawMessage(`{"rewrite":{"from":"/legacy","to":"/internal"}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/legacy/42", Method: http.MethodGet,
+		AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true,
+		DeclaredRoutes: []api.DeclaredRoute{{Path: "/internal/{id}", Methods: []string{"GET"}}},
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rewrite})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Outcome != "undeclared_route" || result.Simulation.StatusCode != http.StatusNotFound || result.Simulation.ProblemCode != api.CodeUndeclaredRoute {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	if result.Simulation.FinalPath != "/internal/42" || result.Simulation.Message != "GET /legacy/42 is not declared for this app" {
+		t.Fatalf("declared-route response = %#v", result.Simulation)
+	}
+	if len(result.Simulation.Steps) != 2 || result.Simulation.Steps[0].Phase != "rewrite" || result.Simulation.Steps[1].PathBefore != "/legacy/42" || result.Simulation.Steps[1].PathAfter != "/internal/42" {
+		t.Fatalf("simulation steps = %#v", result.Simulation.Steps)
+	}
+}
+
+func TestSimulateDeclaredRouteRejectsUndeclaredMethodAndPath(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, method string
+	}{
+		{name: "path", path: "/admin", method: http.MethodGet},
+		{name: "method", path: "/health", method: http.MethodPost},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := edgeruletrace.Input{
+				App: "demo", Host: "example.com", Path: tc.path, Method: tc.method,
+				AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true,
+				DeclaredRoutes: []api.DeclaredRoute{{Path: "/health", Methods: []string{"GET"}}},
+			}
+			result, err := edgeruletrace.Simulate(input, nil)
+			if err != nil {
+				t.Fatalf("Simulate: %v", err)
+			}
+			if result.Simulation.Status != "complete" || result.Simulation.Outcome != "undeclared_route" || result.Simulation.StatusCode != http.StatusNotFound || result.Simulation.ProblemCode != api.CodeUndeclaredRoute || result.Simulation.Message != tc.method+" "+tc.path+" is not declared for this app" {
+				t.Fatalf("simulation = %#v", result.Simulation)
+			}
+			if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].StatusCode != http.StatusNotFound || result.Simulation.Steps[0].ProblemCode != api.CodeUndeclaredRoute {
+				t.Fatalf("declared-route step = %#v", result.Simulation.Steps)
+			}
+		})
+	}
+}
+
+func TestSimulateDeclaredRouteOpenAPIFallbackAndUnavailablePolicy(t *testing.T) {
+	base := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/widgets/42", Method: http.MethodHead,
+		AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true,
+	}
+	base.DeclaredRouteDocumentLoaded = true
+	base.DeclaredRouteOpenAPIDoc = []byte(`openapi: 3.1.0
+info:
+  title: demo
+  version: v1
+paths:
+  /widgets/{id}:
+    get:
+      responses: {}
+`)
+	result, err := edgeruletrace.Simulate(base, nil)
+	if err != nil {
+		t.Fatalf("Simulate OpenAPI fallback: %v", err)
+	}
+	if result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "allowed" {
+		t.Fatalf("OpenAPI fallback = %#v", result.Simulation)
+	}
+
+	base.DeclaredRouteDocumentLoaded = false
+	base.DeclaredRouteOpenAPIDoc = nil
+	result, err = edgeruletrace.Simulate(base, nil)
+	if err != nil {
+		t.Fatalf("Simulate unavailable document: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_declared_route_policy" {
+		t.Fatalf("unloaded document = %#v", result.Simulation)
+	}
+
+	base.DeclaredRouteDocumentMissing = true
+	result, err = edgeruletrace.Simulate(base, nil)
+	if err != nil {
+		t.Fatalf("Simulate missing document: %v", err)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "declared_route_policy_unavailable" || result.Simulation.StatusCode != http.StatusServiceUnavailable || result.Simulation.ProblemCode != api.CodeDeclaredRoutePolicyUnavailable {
+		t.Fatalf("missing document = %#v", result.Simulation)
+	}
+}
+
+func TestSimulateDeclaredRouteGateFollowsCORSPreflight(t *testing.T) {
+	rule := corsTraceRule(t, "cors-rule", []string{"GET"}, api.EdgeRuleCORSAction{
+		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"}, AllowHeaders: []string{"Content-Type"},
+	})
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/not-declared", Method: http.MethodOptions,
+		Headers:              http.Header{"Origin": []string{"https://app.example.com"}, "Access-Control-Request-Method": []string{"GET"}},
+		AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true, DeclaredRouteDocumentMissing: true,
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Outcome != "cors_preflight" || result.Simulation.StatusCode != http.StatusNoContent || result.Simulation.StoppedAt != "cors" {
+		t.Fatalf("CORS preflight did not short-circuit route gate: %#v", result.Simulation)
 	}
 }
 

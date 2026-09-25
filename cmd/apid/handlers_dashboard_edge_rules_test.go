@@ -122,7 +122,11 @@ func TestDashboardEdgeRuleTraceIsReadOnlyAndRequiresNamedCSRF(t *testing.T) {
 		t.Fatalf("CreateEdgeRule: %v", err)
 	}
 
-	fields := map[string]string{"trace_host": "edge.example.com", "trace_path": "/old", "trace_method": "GET"}
+	const dashboardHeaderSecret = "dashboard-auth-sentinel-93217"
+	fields := map[string]string{
+		"trace_host": "edge.example.com", "trace_path": "/old", "trace_method": "GET",
+		"trace_headers": "Authorization: Bearer " + dashboardHeaderSecret,
+	}
 	bad := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields)
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("missing csrf status = %d, want 400\nbody = %s", bad.Code, bad.Body.String())
@@ -138,10 +142,22 @@ func TestDashboardEdgeRuleTraceIsReadOnlyAndRequiresNamedCSRF(t *testing.T) {
 	if good.Code != http.StatusOK {
 		t.Fatalf("valid trace status = %d, want 200\nbody = %s", good.Code, good.Body.String())
 	}
+	if strings.Contains(good.Body.String(), dashboardHeaderSecret) || !strings.Contains(good.Body.String(), "Authorization: [REDACTED]") {
+		t.Fatalf("valid trace did not safely redact the echoed header\n%s", good.Body.String())
+	}
 	for _, want := range []string{"Simulation: complete", "redirect", "HTTP", "/new", "Rule matches"} {
 		if !strings.Contains(good.Body.String(), want) {
 			t.Errorf("trace body missing %q\n%s", want, good.Body.String())
 		}
+	}
+	fields["trace_headers"] += "\nmalformed " + dashboardHeaderSecret
+	invalid := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields,
+		&http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if invalid.Code != http.StatusOK {
+		t.Fatalf("invalid trace status = %d, want 200\nbody = %s", invalid.Code, invalid.Body.String())
+	}
+	if strings.Contains(invalid.Body.String(), dashboardHeaderSecret) || !strings.Contains(invalid.Body.String(), "Authorization: [REDACTED]") || !strings.Contains(invalid.Body.String(), "[REDACTED]") {
+		t.Fatalf("validation error did not safely redact the echoed header\n%s", invalid.Body.String())
 	}
 	rules, err := store.ListEdgeRulesForApp(t.Context(), app.ID)
 	if err != nil {
@@ -187,6 +203,48 @@ func TestDashboardEdgeRuleTraceSimulatesAppMaintenance(t *testing.T) {
 	for _, want := range []string{
 		"Simulation: complete · app_maintenance", "Response status: <strong>503</strong>", api.CodeAppMaintenance,
 		"Retry-After 60s", "app-wide maintenance would return HTTP 503",
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("trace response missing %q\n%s", want, rec.Body.String())
+		}
+	}
+}
+
+func TestDashboardEdgeRuleTraceSimulatesDeclaredRoutePolicy(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{
+		AccountID: acct.ID, Slug: "edge-trace-declared-route", Type: state.AppTypeApp,
+		Runtime: "node22", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	enabled := true
+	routes := []state.DeclaredRoute{{Path: "/users/{user_id}", Methods: []string{"GET"}}}
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{
+		OnlyAllowDeclaredRoutes: &enabled, SetOnlyAllowDeclaredRoutes: true,
+		DeclaredRoutes: &routes, SetDeclaredRoutes: true,
+	}); err != nil {
+		t.Fatalf("UpdateApp declared-route policy: %v", err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-declared-route/edge-rules/trace", map[string]string{
+		middleware.FormFieldName: token,
+		"trace_host":             "edge.example.com", "trace_path": "/admin", "trace_method": "GET",
+	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"Simulation: complete · undeclared_route", "Response status: <strong>404</strong>", api.CodeUndeclaredRoute,
+		"GET /admin is not declared for this app", "declared_routes",
 	} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("trace response missing %q\n%s", want, rec.Body.String())
