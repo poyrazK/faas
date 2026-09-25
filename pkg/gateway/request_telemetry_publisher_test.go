@@ -291,7 +291,7 @@ func TestCollapseRequestTelemetry_MinuteBoundarySplitsBuckets(t *testing.T) {
 	}
 }
 
-func TestCollapseRequestTelemetry_ColdBootOR(t *testing.T) {
+func TestCollapseRequestTelemetrySeparatesColdAndWarmRequests(t *testing.T) {
 	t.Parallel()
 	appID := uuid.New()
 	deployID := uuid.New()
@@ -307,11 +307,15 @@ func TestCollapseRequestTelemetry_ColdBootOR(t *testing.T) {
 		"GET /v1/foo", "GET", 200, 12, true, "", base))
 
 	collapsed := collapseRequestTelemetry(rows)
-	if got, want := len(collapsed), 1; got != want {
-		t.Fatalf("len(collapsed) = %d, want %d", got, want)
+	if got, want := len(collapsed), 2; got != want {
+		t.Fatalf("len(collapsed) = %d, want %d (cold and warm buckets stay distinct)", got, want)
 	}
-	if !collapsed[0].ColdBoot {
-		t.Errorf("ColdBoot = false, want true (OR semantics)")
+	counts := map[bool]int{}
+	for _, row := range collapsed {
+		counts[row.ColdBoot] = row.Count
+	}
+	if counts[false] != 4 || counts[true] != 1 {
+		t.Errorf("cold/warm counts = %v, want warm=4 cold=1", counts)
 	}
 }
 

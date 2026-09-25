@@ -319,7 +319,7 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 // Aggregation rules (PR-B):
 //
 //   - Key tuple: (AccountID, AppID, DeploymentID, Route, Method,
-//     Status, normalized dimensions, MinuteBucket(received_at),
+//     Status, ColdBoot, normalized dimensions, MinuteBucket(received_at),
 //     LatencyBucket(LatencyMS), WakeID). Minute bucket = received_at. The
 //     instance identifier is carried as representative metadata and is
 //     cleared when a collapsed bucket spans multiple instances.
@@ -337,10 +337,9 @@ func (p *requestTelemetryPublisher) recordShipped(n int64) {
 //   - Count: starts at 1, increments per duplicate key. The
 //     CHECK constraint count >= 1 (migrations/00428) keeps a
 //     bug from persisting zero.
-//   - ColdBoot: OR of all rows in the bucket (true wins). If
-//     even one of the 1000 collapsed rows was a cold-boot wake,
-//     the aggregate row carries the flag — a customer wants to
-//     know "did the cold-boot penalty skew my average".
+//   - ColdBoot is part of the key, keeping cold-start request
+//     latency percentiles separate from warm requests. The OR below
+//     is retained as a defensive merge rule for duplicate rows.
 //   - TraceID: first non-empty string in iteration order. The
 //     W3C trace propagates across requests inside the bucket
 //     99% of the time, so the first one is representative.
@@ -382,6 +381,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			Route:               row.Route,
 			Method:              row.Method,
 			Status:              row.Status,
+			ColdBoot:            row.ColdBoot,
 			UAFamily:            row.UAFamily,
 			ReferrerHost:        row.ReferrerHost,
 			Country:             row.Country,
@@ -439,6 +439,7 @@ type bucketKey struct {
 	Route               string
 	Method              string
 	Status              int
+	ColdBoot            bool
 	UAFamily            string
 	ReferrerHost        string
 	Country             string
@@ -466,9 +467,9 @@ func (k bucketKey) String() string {
 	// encoding if the profiler flags it. (Profile showed < 1%
 	// of publisher CPU before the collapse; even at 2x with the
 	// canonical string we're well under 2%.)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%t|%d|%d|%d",
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%t|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%t|%d|%d|%d",
 		k.AccountID, k.AppID, k.DeploymentID,
-		k.Route, k.Method, k.Status, k.UAFamily, k.ReferrerHost,
+		k.Route, k.Method, k.Status, k.ColdBoot, k.UAFamily, k.ReferrerHost,
 		k.Country, k.WakeID, k.GuestRuntime, k.GuestOutcome,
 		k.GuestErrorClass, k.ConsumerID, k.PlatformTenantID, k.NodeID, k.Region, k.CommitSHA,
 		k.DeploymentTag, k.DeploymentCreatedAt, k.ImageDigest, k.UsageOutboxed,

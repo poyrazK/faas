@@ -27,6 +27,8 @@ package state_test
 // the test inserts directly without parent rows.
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -37,6 +39,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -489,6 +492,89 @@ func TestPgStoreDebugRegressions_ReadinessFailsWhenTableMissing(t *testing.T) {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "42P01" {
 		t.Fatalf("readiness error = %T %v, want undefined-table SQLSTATE 42P01", err, err)
+	}
+}
+
+func TestPgStoreRequestAnalyticsIncludesColdWakeAndGuestExecutionPercentiles(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	accountID, appID, deploymentID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	now := time.Now().UTC()
+	wakeOne, wakeTwo := "wake-analytics-"+uuid.NewString(), "wake-analytics-"+uuid.NewString()
+	insertAnalyticsWakeEvent(t, ctx, pool, wakeOne, "wake.boot_started", now.Add(-10*time.Second))
+	insertAnalyticsWakeEvent(t, ctx, pool, wakeOne, "wake.boot_completed", now.Add(-9800*time.Millisecond))
+	insertAnalyticsWakeEvent(t, ctx, pool, wakeTwo, "wake.boot_started", now.Add(-5*time.Second))
+	insertAnalyticsWakeEvent(t, ctx, pool, wakeTwo, "wake.boot_completed", now.Add(-4600*time.Millisecond))
+	rows := []struct {
+		route        string
+		latency      int32
+		coldBoot     bool
+		wakeID       string
+		guestMS      int32
+		guestRuntime string
+		count        int32
+	}{
+		{route: "GET /checkout", latency: 40, guestMS: 15, guestRuntime: "node24", count: 2},
+		{route: "GET /checkout", latency: 180, coldBoot: true, wakeID: wakeOne, guestMS: 140, guestRuntime: "node24", count: 1},
+		{route: "GET /checkout", latency: 220, coldBoot: true, wakeID: wakeTwo, guestMS: 200, guestRuntime: "node24", count: 1},
+		{route: "GET /users", latency: 25, count: 1},
+	}
+	for _, row := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        row.route, Method: "GET", Status: 200, LatencyMs: row.latency,
+			ColdBoot: row.coldBoot, ReceivedAt: pgtype.Timestamptz{Time: now, Valid: true}, Count: row.count,
+			UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+			WakeID:          pgtype.Text{String: row.wakeID, Valid: row.wakeID != ""},
+			GuestDurationMs: row.guestMS, GuestRuntime: row.guestRuntime, GuestOutcome: "ok",
+		}); err != nil {
+			t.Fatalf("insert %s: %v", row.route, err)
+		}
+	}
+
+	got, err := store.RequestTelemetryAnalyticsByDimension(ctx, sqlc.RequestTelemetryAnalyticsByDimensionParams{
+		AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+		AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+		ReceivedAt_2: pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		GroupBy:      "route", Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("analytics by route: %v", err)
+	}
+	byRoute := make(map[string]sqlc.RequestTelemetryAnalyticsByDimensionRow, len(got))
+	for _, row := range got {
+		byRoute[fmt.Sprint(row.Dimension)] = row
+	}
+	checkout := byRoute["GET /checkout"]
+	if checkout.Requests != 4 || checkout.ColdBoots != 2 {
+		t.Fatalf("checkout totals = requests %d cold %d, want 4 and 2", checkout.Requests, checkout.ColdBoots)
+	}
+	if !checkout.ColdRequestP95Ms.Valid || checkout.ColdRequestP95Ms.Int32 != 220 {
+		t.Errorf("cold request p95 = %+v, want 220ms", checkout.ColdRequestP95Ms)
+	}
+	if !checkout.WakeBootP95Ms.Valid || checkout.WakeBootP95Ms.Int32 != 400 {
+		t.Errorf("wake boot p95 = %+v, want 400ms", checkout.WakeBootP95Ms)
+	}
+	if !checkout.GuestExecutionP50Ms.Valid || checkout.GuestExecutionP50Ms.Int32 != 15 ||
+		!checkout.GuestExecutionP95Ms.Valid || checkout.GuestExecutionP95Ms.Int32 != 200 {
+		t.Errorf("guest execution percentiles = (%+v, %+v), want (15ms, 200ms)", checkout.GuestExecutionP50Ms, checkout.GuestExecutionP95Ms)
+	}
+	users := byRoute["GET /users"]
+	if users.ColdRequestP95Ms.Valid || users.WakeBootP95Ms.Valid || users.GuestExecutionP50Ms.Valid || users.GuestExecutionP95Ms.Valid {
+		t.Errorf("route without cold/runtime evidence has non-null percentiles: %+v", users)
+	}
+}
+
+func insertAnalyticsWakeEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, wakeID, kind string, at time.Time) {
+	t.Helper()
+	data, err := json.Marshal(map[string]string{"wake_id": wakeID})
+	if err != nil {
+		t.Fatalf("marshal wake event: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO events (actor, kind, data, at) VALUES ('schedd', $1, $2, $3)`, kind, data, at); err != nil {
+		t.Fatalf("insert wake event %s: %v", kind, err)
 	}
 }
 

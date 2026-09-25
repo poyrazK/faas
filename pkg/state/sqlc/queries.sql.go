@@ -6976,7 +6976,7 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 }
 
 const listRequestTelemetryDependencySpans = `-- name: ListRequestTelemetryDependencySpans :many
-SELECT id, count, status, trace_id, received_at, spans_summary
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary
 FROM request_telemetry
 WHERE app_id = $1
   AND account_id = $2
@@ -6997,6 +6997,8 @@ type ListRequestTelemetryDependencySpansParams struct {
 
 type ListRequestTelemetryDependencySpansRow struct {
 	ID           pgtype.UUID
+	Route        string
+	Method       string
 	Count        int32
 	Status       int32
 	TraceID      pgtype.Text
@@ -7026,6 +7028,8 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 		var i ListRequestTelemetryDependencySpansRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Route,
+			&i.Method,
 			&i.Count,
 			&i.Status,
 			&i.TraceID,
@@ -10752,6 +10756,9 @@ WITH filtered AS (
         latency_ms,
         cold_boot,
         status,
+        guest_duration_ms,
+        guest_runtime,
+        wake_id,
         count::bigint AS request_count
     FROM request_telemetry
     WHERE app_id = $1
@@ -10774,6 +10781,9 @@ WITH filtered AS (
         filtered.latency_ms,
         filtered.cold_boot,
         filtered.status,
+        filtered.guest_duration_ms,
+        filtered.guest_runtime,
+        filtered.wake_id,
         filtered.request_count
     FROM filtered
     LEFT JOIN top_groups
@@ -10789,6 +10799,94 @@ WITH filtered AS (
            SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
            SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
     FROM latency_values
+), cold_latency_values AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE cold_boot
+    GROUP BY dimension, method, latency_ms
+), cold_wakes AS (
+    SELECT DISTINCT dimension, method, wake_id
+    FROM assigned
+    WHERE cold_boot
+      AND wake_id IS NOT NULL
+      AND wake_id <> ''
+      AND dimension <> '__other__'
+      AND $5::text = 'route'
+), wake_events AS (
+    SELECT cold_wakes.dimension,
+           cold_wakes.method,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_started' AND events.actor = 'schedd') AS started_at,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_completed' AND events.actor = 'schedd') AS completed_at
+    FROM cold_wakes
+    JOIN events ON events.data->>'wake_id' = cold_wakes.wake_id
+    WHERE events.kind IN ('wake.boot_started', 'wake.boot_completed')
+    GROUP BY cold_wakes.dimension, cold_wakes.method, cold_wakes.wake_id
+), wake_durations AS (
+    SELECT dimension,
+           method,
+           (EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)::int AS duration_ms
+    FROM wake_events
+    WHERE started_at IS NOT NULL
+      AND completed_at IS NOT NULL
+      AND completed_at > started_at
+), wake_values AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           COUNT(*)::bigint AS sample_count
+    FROM wake_durations
+    GROUP BY dimension, method, duration_ms
+), wake_ranked AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM wake_values
+), wake_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS wake_boot_p95_ms
+    FROM wake_ranked
+    GROUP BY dimension, method
+), cold_ranked AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM cold_latency_values
+), cold_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS cold_request_p95_ms
+    FROM cold_ranked
+    GROUP BY dimension, method
+), guest_latency_values AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE guest_runtime <> '__unknown__'
+    GROUP BY dimension, method, guest_duration_ms
+), guest_ranked AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY guest_duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM guest_latency_values
+), guest_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.50))::int AS guest_execution_p50_ms,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS guest_execution_p95_ms
+    FROM guest_ranked
+    GROUP BY dimension, method
 ), percentiles AS (
     SELECT dimension,
            method,
@@ -10813,9 +10911,16 @@ SELECT totals.dimension,
        totals.cold_boots,
        percentiles.p50_ms,
        percentiles.p95_ms,
-       percentiles.p99_ms
+       percentiles.p99_ms,
+       cold_percentiles.cold_request_p95_ms,
+       wake_percentiles.wake_boot_p95_ms,
+       guest_percentiles.guest_execution_p50_ms,
+       guest_percentiles.guest_execution_p95_ms
 FROM totals
 JOIN percentiles USING (dimension, method)
+LEFT JOIN cold_percentiles USING (dimension, method)
+LEFT JOIN wake_percentiles USING (dimension, method)
+LEFT JOIN guest_percentiles USING (dimension, method)
 ORDER BY totals.requests DESC, totals.dimension ASC, totals.method ASC
 `
 
@@ -10829,14 +10934,18 @@ type RequestTelemetryAnalyticsByDimensionParams struct {
 }
 
 type RequestTelemetryAnalyticsByDimensionRow struct {
-	Dimension     interface{}
-	Method        interface{}
-	Requests      int64
-	ErrorRequests int64
-	ColdBoots     int64
-	P50Ms         int32
-	P95Ms         int32
-	P99Ms         int32
+	Dimension           interface{}
+	Method              interface{}
+	Requests            int64
+	ErrorRequests       int64
+	ColdBoots           int64
+	P50Ms               int32
+	P95Ms               int32
+	P99Ms               int32
+	ColdRequestP95Ms    pgtype.Int4
+	WakeBootP95Ms       pgtype.Int4
+	GuestExecutionP50Ms pgtype.Int4
+	GuestExecutionP95Ms pgtype.Int4
 }
 
 // Top-N customer analytics grouped by one of the bounded dimensions. Rows
@@ -10868,6 +10977,10 @@ func (q *Queries) RequestTelemetryAnalyticsByDimension(ctx context.Context, db D
 			&i.P50Ms,
 			&i.P95Ms,
 			&i.P99Ms,
+			&i.ColdRequestP95Ms,
+			&i.WakeBootP95Ms,
+			&i.GuestExecutionP50Ms,
+			&i.GuestExecutionP95Ms,
 		); err != nil {
 			return nil, err
 		}

@@ -1811,6 +1811,7 @@ type RequestAnalyticsView struct {
 	GroupsTruncated       bool
 	RoutesLimit           int
 	RoutesTruncated       bool
+	DependenciesTruncated bool
 	ComputeCost           *RequestAnalyticsComputeCostView
 	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdownView
 	AsOf                  string
@@ -1881,6 +1882,16 @@ type RequestAnalyticsRouteView struct {
 	P50MS                   int
 	P95MS                   int
 	P99MS                   int
+	ColdRequestP95MS        int
+	ColdRequestP95Available bool
+	WakeBootP95MS           int
+	WakeBootP95Available    bool
+	GuestExecutionP50MS     int
+	GuestExecutionP95MS     int
+	GuestExecutionAvailable bool
+	DependencySamples       int64
+	DependencyRequests      int64
+	Dependencies            []api.RequestAnalyticsDependency
 	EstimatedComputeCostEUR string
 	RequestSharePct         float64
 	TrendURL                string
