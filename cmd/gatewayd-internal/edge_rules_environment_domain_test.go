@@ -51,11 +51,38 @@ func TestEnvironmentBoundCustomDomainUsesScopedEdgeRules(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	globalIP, err := store.CreateEdgeRule(ctx, state.CreateEdgeRuleParams{
+		AccountID: account.ID, AppID: app.ID, MatchHost: "*", MatchPath: "/private/*", Priority: 100,
+		Enabled: true, Kind: state.EdgeRuleKindIP,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindIP, IP: &state.EdgeRuleIPAction{Allow: []string{"198.51.100.0/24"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutProjectEnvironmentIPPolicy(ctx, state.ProjectEnvironmentEdgePolicy{
+		AccountID: account.ID, ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
+		Rules: []state.ProjectEnvironmentEdgeRule{{
+			Kind: state.EdgeRuleKindIP, MatchPath: "/private/*", Priority: 10, Enabled: true,
+			Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindIP, IP: &state.EdgeRuleIPAction{Allow: []string{"192.0.2.0/24"}}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	matcher := newGatewaydEdgeRules(store, testLogger(), nil, nil)
 	if got := matcher.MatchRedirect(ctx, domain.Domain, "/old/item", "GET"); got == nil || got.ID == global.ID || got.To != "/stage/$1" {
 		t.Fatalf("bound domain redirect = %+v", got)
 	}
 	if got := matcher.MatchRedirect(ctx, "ordinary.example.test", "/old/item", "GET"); got == nil || got.ID != global.ID {
 		t.Fatalf("ordinary hostname redirect = %+v", got)
+	}
+	if got := matcher.MatchIP(ctx, domain.Domain, "/private/item", "GET"); got == nil || got.ID == globalIP.ID || len(got.Allow) != 1 || got.Allow[0].String() != "192.0.2.0/24" {
+		t.Fatalf("bound domain IP policy = %+v", got)
+	}
+	if got := matcher.MatchIP(ctx, "ordinary.example.test", "/private/item", "GET"); got == nil || got.ID != globalIP.ID {
+		t.Fatalf("ordinary hostname IP policy = %+v", got)
+	}
+	failed := newGatewaydEdgeRules(failingEnvironmentIPStore{MemStore: store}, testLogger(), nil, nil)
+	if err := failed.EnsureEnvironmentPolicy(ctx, domain.Domain); err == nil {
+		t.Fatal("bound-domain IP policy read error did not fail closed")
 	}
 }

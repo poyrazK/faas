@@ -373,14 +373,27 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 }
 
 // EnsureEnvironmentPolicy loads the complete policy set before a stable
-// environment URL may answer any request, including redirects and CORS
-// preflights. A policy-store error must not turn an IP allowlist into a miss.
+// environment URL or bound custom domain may answer any request, including
+// redirects and CORS preflights. A policy-store error must not turn an IP
+// allowlist into a miss.
 func (g *gatewaydEdgeRules) EnsureEnvironmentPolicy(ctx context.Context, host string) error {
-	if _, _, matched := gateway.EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host); !matched {
-		return nil
-	}
 	if g == nil || g.cache == nil {
 		return errors.New("environment edge policy matcher unavailable")
+	}
+	if _, _, matched := gateway.EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host); !matched {
+		domainLookup, ok := g.store.(interface {
+			DomainByName(context.Context, string) (state.CustomDomain, error)
+		})
+		if !ok {
+			return errors.New("environment domain policy lookup unavailable")
+		}
+		domain, err := domainLookup.DomainByName(ctx, host)
+		if err != nil {
+			return err
+		}
+		if domain.EnvironmentID == "" || !domain.Verified() {
+			return state.ErrNotFound
+		}
 	}
 	_, err := g.loadHost(ctx, host)
 	return err

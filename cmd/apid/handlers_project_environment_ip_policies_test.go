@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -73,4 +74,51 @@ func TestProjectEnvironmentIPPoliciesWriteStateAndDiff(t *testing.T) {
 			t.Fatalf("invalid policy status=%d body=%s", rec.Code, rec.Body.String())
 		}
 	}
+}
+
+func TestProjectEnvironmentIPPolicyConvergenceIncludesBoundDomain(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	notifier := &capturingNotifier{}
+	srv.notif = notifier
+	ctx := context.Background()
+	environment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain, err := store.CreateCustomDomainIfUnderQuota(ctx, "stage.example.test", app.ID, "stage", 10, 10, environment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDomainVerified(ctx, domain.Domain); err != nil {
+		t.Fatal(err)
+	}
+	req, rec := projectRequest(http.MethodPut, "/v1/projects/shop/environments/staging/workloads/shop-api/ip-policies", "shop",
+		[]byte(`{"rules":[]}`))
+	req.SetPathValue("environment", "staging")
+	req.SetPathValue("workload", app.Slug)
+	srv.updateProjectEnvironmentIPPolicies(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("write status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	notifier.mu.Lock()
+	emitted := append([]capturedNotification(nil), notifier.emitted...)
+	notifier.mu.Unlock()
+	for _, event := range emitted {
+		if event.Channel != db.NotifyEdgeRuleChanged {
+			continue
+		}
+		var payload db.EdgeRuleChangedPayload
+		if err := json.Unmarshal([]byte(event.Payload), &payload); err != nil {
+			t.Fatal(err)
+		}
+		for _, host := range payload.MatchHosts {
+			if host == domain.Domain {
+				return
+			}
+		}
+	}
+	t.Fatalf("bound domain %q missing from IP-policy convergence notifications: %+v", domain.Domain, emitted)
 }
