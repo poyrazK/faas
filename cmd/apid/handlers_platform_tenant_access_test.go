@@ -60,8 +60,8 @@ func TestPlatformTenantAccessTokenOwnUsageAndStatementsOnly(t *testing.T) {
 		t.Fatalf("account route status=%d, want 403: %s", accountRoute.Code, accountRoute.Body)
 	}
 	writeRoute := request(http.MethodPost, "/v1/platform-tenant-self/usage-statements")
-	if writeRoute.Code != http.StatusForbidden {
-		t.Fatalf("self-service write status=%d, want 403: %s", writeRoute.Code, writeRoute.Body)
+	if writeRoute.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("self-service write status=%d, want 405: %s", writeRoute.Code, writeRoute.Body)
 	}
 
 	revoked := e.do(t, http.MethodDelete, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens/"+token.ID, nil, nil)
