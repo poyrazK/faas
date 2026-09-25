@@ -115,6 +115,9 @@ type Handler struct {
 	// therefore handle only notifications addressed to their own node.
 	// Empty preserves the legacy single-box behaviour.
 	nodeName string
+	// jobMaterializationLeaseOverride lets tests exercise lease renewal on a
+	// short clock. Production uses the package's conservative default lease.
+	jobMaterializationLeaseOverride time.Duration
 
 	// trustedPublishersDir is the directory holding the per-app
 	// cosign trusted-publisher PEM files (issue #472 / ADR-054).

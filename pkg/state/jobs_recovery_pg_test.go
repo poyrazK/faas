@@ -68,6 +68,47 @@ func TestPg_Jobs_ImagePublicationIsClaimFenced(t *testing.T) {
 	}
 }
 
+func TestPg_Jobs_ImageMaterializationLeaseRenewalIsFenced(t *testing.T) {
+	store, pool, ctx := pgJobsStoreWithPool(t)
+	acct, err := store.CreateAccount(ctx, "pg-image-renew-"+uuid.NewString()+"@example.com", "hobby")
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	job, err := store.JobCreate(ctx, acct.ID, "image-renew", "batch", "registry.example/worker:latest", []string{"/bin/worker"}, 256, 60, 1, 0, nil)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	first, err := store.JobClaimImageMaterialization(ctx, job.ID, "claim-a", time.Minute)
+	if err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if err := store.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "other-owner", first.ImageMaterializationAttempts, time.Minute); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("wrong-owner renewal = %v, want ErrConflict", err)
+	}
+	if err := store.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "claim-a", first.ImageMaterializationAttempts, time.Minute); err != nil {
+		t.Fatalf("current lease renewal: %v", err)
+	}
+	if _, err := store.JobClaimImageMaterialization(ctx, job.ID, "claim-b", time.Minute); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("claim after renewal = %v, want ErrNotFound", err)
+	}
+	if _, err := pool.Exec(ctx, `update jobs set image_materialization_lease_until = now() - interval '1 second' where id = $1::uuid`, job.ID); err != nil {
+		t.Fatalf("expire first lease: %v", err)
+	}
+	if err := store.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "claim-a", first.ImageMaterializationAttempts, time.Minute); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("expired lease renewal = %v, want ErrConflict", err)
+	}
+	second, err := store.JobClaimImageMaterialization(ctx, job.ID, "claim-b", time.Minute)
+	if err != nil || second.ImageMaterializationAttempts != first.ImageMaterializationAttempts+1 {
+		t.Fatalf("second claim = %+v, %v", second, err)
+	}
+	if err := store.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "claim-a", first.ImageMaterializationAttempts, time.Minute); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale-attempt renewal = %v, want ErrConflict", err)
+	}
+	if err := store.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "claim-b", second.ImageMaterializationAttempts, time.Minute); err != nil {
+		t.Fatalf("replacement lease renewal: %v", err)
+	}
+}
+
 func TestPg_Jobs_ReapClaimedRetriesAndDeadLetters(t *testing.T) {
 	store, pool, ctx := pgJobsStoreWithPool(t)
 	job, run, _ := pgJobsSeed(t, store, ctx, "reap-retry")

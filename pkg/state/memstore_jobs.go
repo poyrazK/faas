@@ -295,6 +295,28 @@ func (m *MemStore) JobClaimPendingImageMaterialization(_ context.Context, limit 
 	return out, nil
 }
 
+// JobRenewImageMaterializationLease extends only the current live claim. An
+// expired lease cannot be revived after another worker becomes eligible.
+func (m *MemStore) JobRenewImageMaterializationLease(_ context.Context, id, sourceRef, owner string, attempt int, lease time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if lease <= 0 {
+		lease = 15 * time.Minute
+	}
+	j, ok := m.jobs[id]
+	claim, claimed := m.jobMaterializationClaims[id]
+	if !ok || j.Status == "deleted" || j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" ||
+		j.ImageMaterializationAttempts != attempt || !claimed || claim.owner != owner || !claim.leaseUntil.After(time.Now()) {
+		return ErrConflict
+	}
+	now := time.Now().UTC()
+	claim.leaseUntil = now.Add(lease)
+	j.UpdatedAt = now
+	m.jobMaterializationClaims[id] = claim
+	m.jobs[id] = j
+	return nil
+}
+
 // JobSetImageMaterialization is the general state setter used by setup and
 // non-claiming compatibility callers. Claimed workers publish through the
 // claim-fenced JobPublishImageMaterialization method below.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,7 +45,10 @@ func (h *Handler) MaterializeJob(ctx context.Context, jobID string) error {
 	}
 	owner := h.jobMaterializationClaimOwner()
 	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
-		claimed, claimErr := claimer.JobClaimImageMaterialization(ctx, jobID, owner, jobMaterializationLease)
+		if _, ok := h.store.(state.JobImageMaterializationLeaseRenewer); !ok {
+			return fmt.Errorf("imaged: job image materialization store cannot renew claim leases")
+		}
+		claimed, claimErr := claimer.JobClaimImageMaterialization(ctx, jobID, owner, h.jobMaterializationLeaseTTL())
 		if claimErr != nil {
 			if errors.Is(claimErr, state.ErrNotFound) {
 				return nil // another worker owns the live lease, or backoff is active
@@ -57,6 +61,23 @@ func (h *Handler) MaterializeJob(ctx context.Context, jobID string) error {
 }
 
 func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobImageMaterializationStore, job state.Job, owner string) (err error) {
+	if _, claimed := h.store.(state.JobImageMaterializationClaimer); claimed {
+		renewer, ok := h.store.(state.JobImageMaterializationLeaseRenewer)
+		if !ok {
+			return fmt.Errorf("imaged: job image materialization store cannot renew claim leases")
+		}
+		workCtx, stopRenewal := startJobMaterializationLeaseRenewal(ctx, renewer, job, owner, h.jobMaterializationLeaseTTL())
+		defer func() {
+			if renewalErr := stopRenewal(); renewalErr != nil {
+				err = errors.Join(err, fmt.Errorf("imaged: job %s materialization lease renewal failed: %w", job.ID, renewalErr))
+			}
+		}()
+		return h.materializeClaimedJobWork(workCtx, images, job, owner)
+	}
+	return h.materializeClaimedJobWork(ctx, images, job, owner)
+}
+
+func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.JobImageMaterializationStore, job state.Job, owner string) (err error) {
 	started := time.Now()
 	outcome := "error"
 	defer func() {
@@ -194,7 +215,10 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 	var err error
 	owner := h.jobMaterializationClaimOwner()
 	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
-		jobs, err = claimer.JobClaimPendingImageMaterialization(ctx, jobMaterializationBatchSize, owner, jobMaterializationLease)
+		if _, ok := h.store.(state.JobImageMaterializationLeaseRenewer); !ok {
+			return fmt.Errorf("imaged: job image materialization store cannot renew claim leases")
+		}
+		jobs, err = claimer.JobClaimPendingImageMaterialization(ctx, jobMaterializationBatchSize, owner, h.jobMaterializationLeaseTTL())
 	} else {
 		jobs, err = images.JobListPendingImageMaterialization(ctx, jobMaterializationBatchSize)
 	}
@@ -204,12 +228,102 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, job := range jobs {
-		if err := h.materializeClaimedJob(ctx, images, job, owner); err != nil {
-			h.log.Warn("imaged: pending job image materialization failed", "job", job.ID, "err", err)
+	leaseContexts := make([]context.Context, len(jobs))
+	stopRenewals := make([]func() error, len(jobs))
+	if renewer, ok := h.store.(state.JobImageMaterializationLeaseRenewer); ok {
+		for i, job := range jobs {
+			leaseContexts[i], stopRenewals[i] = startJobMaterializationLeaseRenewal(ctx, renewer, job, owner, h.jobMaterializationLeaseTTL())
+		}
+	}
+	for i, job := range jobs {
+		var jobErr error
+		if leaseContexts[i] != nil {
+			//nolint:contextcheck // this derived context also cancels work when the claim is lost.
+			jobErr = h.materializeClaimedJobWork(leaseContexts[i], images, job, owner)
+		} else {
+			jobErr = h.materializeClaimedJobWork(ctx, images, job, owner)
+		}
+		if stopRenewals[i] != nil {
+			if renewalErr := stopRenewals[i](); renewalErr != nil {
+				jobErr = errors.Join(jobErr, fmt.Errorf("imaged: job %s materialization lease renewal failed: %w", job.ID, renewalErr))
+			}
+		}
+		if jobErr != nil {
+			h.log.Warn("imaged: pending job image materialization failed", "job", job.ID, "err", jobErr)
 		}
 	}
 	return nil
+}
+
+func (h *Handler) jobMaterializationLeaseTTL() time.Duration {
+	if h.jobMaterializationLeaseOverride > 0 {
+		return h.jobMaterializationLeaseOverride
+	}
+	return jobMaterializationLease
+}
+
+func startJobMaterializationLeaseRenewal(
+	ctx context.Context,
+	renewer state.JobImageMaterializationLeaseRenewer,
+	job state.Job,
+	owner string,
+	lease time.Duration,
+) (context.Context, func() error) {
+	if lease <= 0 {
+		lease = jobMaterializationLease
+	}
+	interval := lease / 3
+	if interval <= 0 {
+		interval = time.Nanosecond
+	}
+	workCtx, cancel := context.WithCancelCause(ctx)
+	stopCh := make(chan struct{})
+	done := make(chan error, 1)
+	var mu sync.Mutex
+	stopping := false
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				done <- nil
+				return
+			case <-ctx.Done():
+				done <- nil
+				return
+			case <-ticker.C:
+				renewCtx, renewCancel := context.WithTimeout(ctx, interval)
+				err := renewer.JobRenewImageMaterializationLease(
+					renewCtx, job.ID, job.ImageRef, owner, job.ImageMaterializationAttempts, lease)
+				renewCancel()
+				if err == nil {
+					continue
+				}
+				mu.Lock()
+				if stopping {
+					mu.Unlock()
+					done <- nil
+					return
+				}
+				renewalErr := fmt.Errorf("renew lease for job %s: %w", job.ID, err)
+				cancel(renewalErr)
+				mu.Unlock()
+				done <- renewalErr
+				return
+			}
+		}
+	}()
+	stop := func() error {
+		mu.Lock()
+		stopping = true
+		close(stopCh)
+		mu.Unlock()
+		err := <-done
+		cancel(nil)
+		return err
+	}
+	return workCtx, stop
 }
 
 // verifyLegacyJobArtifacts copies a readable legacy app layer into the

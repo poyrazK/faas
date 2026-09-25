@@ -320,3 +320,44 @@ func TestMemStoreJobMaterializationPublicationIsClaimFenced(t *testing.T) {
 		t.Fatalf("published job = %+v, want current attempt ready", winner)
 	}
 }
+
+func TestMemStoreJobMaterializationLeaseRenewalIsFenced(t *testing.T) {
+	ctx := context.Background()
+	ms := NewMemStore()
+	job, err := ms.JobCreate(ctx, "acct", "materialization-renew", "app", "ghcr.io/acme/worker:latest", nil, 256, 60, 1, 0, nil)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	first, err := ms.JobClaimImageMaterialization(ctx, job.ID, "claim-a", time.Minute)
+	if err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if err := ms.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "other-owner", first.ImageMaterializationAttempts, time.Minute); !errors.Is(err, ErrConflict) {
+		t.Fatalf("wrong-owner renewal = %v, want ErrConflict", err)
+	}
+	if err := ms.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "claim-a", first.ImageMaterializationAttempts, time.Minute); err != nil {
+		t.Fatalf("current lease renewal: %v", err)
+	}
+	if _, err := ms.JobClaimImageMaterialization(ctx, job.ID, "claim-b", time.Minute); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("claim after renewal = %v, want ErrNotFound", err)
+	}
+
+	ms.mu.Lock()
+	claim := ms.jobMaterializationClaims[job.ID]
+	claim.leaseUntil = time.Now().Add(-time.Second)
+	ms.jobMaterializationClaims[job.ID] = claim
+	ms.mu.Unlock()
+	if err := ms.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "claim-a", first.ImageMaterializationAttempts, time.Minute); !errors.Is(err, ErrConflict) {
+		t.Fatalf("expired lease renewal = %v, want ErrConflict", err)
+	}
+	second, err := ms.JobClaimImageMaterialization(ctx, job.ID, "claim-b", time.Minute)
+	if err != nil || second.ImageMaterializationAttempts != first.ImageMaterializationAttempts+1 {
+		t.Fatalf("second claim = %+v, %v", second, err)
+	}
+	if err := ms.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "claim-a", first.ImageMaterializationAttempts, time.Minute); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale-attempt renewal = %v, want ErrConflict", err)
+	}
+	if err := ms.JobRenewImageMaterializationLease(ctx, job.ID, job.ImageRef, "claim-b", second.ImageMaterializationAttempts, time.Minute); err != nil {
+		t.Fatalf("replacement lease renewal: %v", err)
+	}
+}

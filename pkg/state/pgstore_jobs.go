@@ -424,6 +424,30 @@ func (s *PgStore) JobClaimPendingImageMaterialization(ctx context.Context, limit
 	return scanJobs(rows)
 }
 
+// JobRenewImageMaterializationLease extends only the current live claim. An
+// expired lease cannot be revived after another worker becomes eligible.
+func (s *PgStore) JobRenewImageMaterializationLease(ctx context.Context, id, sourceRef, owner string, attempt int, lease time.Duration) error {
+	if lease <= 0 {
+		lease = 15 * time.Minute
+	}
+	tag, err := s.pool.Exec(ctx,
+		`update jobs set image_materialization_lease_until = clock_timestamp() + $5::interval,
+		        updated_at = now()
+		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
+		   and image_materialization_status = 'pending'
+		   and image_materialization_attempts = $4
+		   and image_materialization_lease_owner = $3
+		   and image_materialization_lease_until > clock_timestamp()`,
+		id, sourceRef, owner, attempt, lease.String())
+	if err != nil {
+		return fmt.Errorf("state: renew job image materialization lease: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
 // JobSetImageMaterialization is the general materialization state setter for
 // setup and non-claiming compatibility callers. A ready row must carry both
 // immutable identifiers; claimed workers use JobPublishImageMaterialization.

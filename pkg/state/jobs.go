@@ -254,6 +254,12 @@ type JobImageMaterializationClaimer interface {
 	JobRecordImageMaterializationFailure(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time, maxAttempts int) (Job, error)
 }
 
+// JobImageMaterializationLeaseRenewer extends only a live claim; expired or
+// superseded workers cannot resurrect their lease.
+type JobImageMaterializationLeaseRenewer interface {
+	JobRenewImageMaterializationLease(ctx context.Context, id, sourceRef, owner string, attempt int, lease time.Duration) error
+}
+
 // JobImageMaterializationPublisher is the claim-fenced success path for an
 // imaged worker. The attempt and owner must still match a live claim when the
 // immutable artifact key is published; a worker that lost its lease must not
