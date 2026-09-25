@@ -132,9 +132,9 @@ type fakeErr struct{ m string }
 
 func (e *fakeErr) Error() string { return e.m }
 
-// Compile-time guard: sseChannels must contain the channels Move 3
-// promises to wire. If a future PR drops one, the test fails before
-// the production wiring lands.
+// Compile-time guard: sseChannels must contain the established app,
+// deployment, runtime, and observability notification channels. If a
+// feature adds a channel but omits it from the fan-in, this test fails.
 func TestSSEChannels_Contract(t *testing.T) {
 	want := map[string]bool{
 		db.NotifyAppChanged:             true,
@@ -146,6 +146,7 @@ func TestSSEChannels_Contract(t *testing.T) {
 		db.NotifyInvocationDone:         true,
 		db.NotifyDebugRegressionChanged: true,
 		db.NotifyStatelessAdvisory:      true,
+		db.NotifyAPIRouteDiscovered:     true,
 	}
 	got := map[string]bool{}
 	for _, ch := range sseChannels {
