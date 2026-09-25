@@ -1119,9 +1119,25 @@ var cliCommands = []cliCommand{
 				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
 				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
 			}},
-			{Name: subCreate, Short: "Add an edge rule"},
+			{Name: subCreate, Short: "Add an edge rule", Flags: []cliFlag{
+				{Name: "on-success-webhook", Short: "success webhook subscription; repeat when updating async policy", Value: "ID"},
+				{Name: "on-failure-webhook", Short: "failure webhook subscription; repeat when updating async policy", Value: "ID"},
+				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
+				{Name: "async-retry-base-seconds", Short: "exponential retry base delay", Value: "N"},
+				{Name: "async-retry-max-seconds", Short: "maximum exponential retry delay", Value: "N"},
+				{Name: "async-retry-jitter-seconds", Short: "retry jitter fraction (0..1)", Value: "N"},
+				{Name: "async-max-age-seconds", Short: "invocation lifetime from acceptance (0 = plan default; capped by plan)", Value: "N"},
+			}},
 			{Name: subGet, Short: "Show one edge rule"},
-			{Name: subUpdate, Short: "Update one edge rule"},
+			{Name: subUpdate, Short: "Update one edge rule", Flags: []cliFlag{
+				{Name: "on-success-webhook", Short: "success webhook subscription", Value: "ID"},
+				{Name: "on-failure-webhook", Short: "failure webhook subscription", Value: "ID"},
+				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
+				{Name: "async-retry-base-seconds", Short: "exponential retry base delay", Value: "N"},
+				{Name: "async-retry-max-seconds", Short: "maximum exponential retry delay", Value: "N"},
+				{Name: "async-retry-jitter-seconds", Short: "retry jitter fraction (0..1)", Value: "N"},
+				{Name: "async-max-age-seconds", Short: "invocation lifetime from acceptance (0 = plan default; capped by plan)", Value: "N"},
+			}},
 			{Name: subRm, Short: "Delete one edge rule"},
 		},
 		Flags: []cliFlag{
@@ -1261,10 +1277,14 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "invocations",
 		DocSlug: "invocations",
-		Short:   "Per-account invocation ledger (invocations list|get <id>)",
+		Short:   "Per-account invocation ledger (invocations list|get|wait <id>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List invocations"},
 			{Name: "get", Short: "Show one invocation"},
+			{Name: "wait", Short: "Wait for one invocation to finish", Flags: []cliFlag{
+				{Name: "timeout", Value: "D", Short: "stop waiting after this duration (0 waits indefinitely)"},
+				{Name: "interval", Value: "D", Short: "time between status checks (default 1s)"},
+			}},
 		},
 		Positionals: []string{"<id>"},
 	},
