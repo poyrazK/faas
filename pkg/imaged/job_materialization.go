@@ -152,7 +152,7 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 		Storage:       be,
 		StorageKey:    key,
 	}); err != nil {
-		h.cleanupJobMaterializationArtifact(be, key)
+		h.cleanupJobMaterializationArtifact(ctx, be, key)
 		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("build ext4: %v", err))
 	}
 	var publishErr error
@@ -165,7 +165,7 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 		_, publishErr = images.JobSetImageMaterialization(ctx, job.ID, job.ImageRef, "ready", digest, key, "")
 	}
 	if publishErr != nil {
-		h.cleanupJobMaterializationArtifact(be, key)
+		h.cleanupJobMaterializationArtifact(ctx, be, key)
 		return fmt.Errorf("imaged: publish job %s materialization state: %w", job.ID, publishErr)
 	}
 	if cleanupErr := h.cleanupSupersededJobArtifacts(ctx, job.ID, key); cleanupErr != nil {
@@ -315,8 +315,8 @@ func (h *Handler) jobMaterializationClaimOwner() string {
 	return h.jobMaterializationOwner() + "/" + uuid.NewString()
 }
 
-func (h *Handler) cleanupJobMaterializationArtifact(be storage.StorageBackend, key string) {
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (h *Handler) cleanupJobMaterializationArtifact(ctx context.Context, be storage.StorageBackend, key string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	if err := be.Delete(cleanupCtx, key); err != nil && !storage.IsNotFound(err) {
 		h.log.Warn("imaged: cleanup job materialization artifact", "key", key, "err", err)

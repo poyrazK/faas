@@ -36,7 +36,7 @@ func TestPg_Jobs_ImagePublicationIsClaimFenced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	job, err := store.JobCreate(ctx, acct.ID, "image-publish", "batch", "registry.example/worker:latest", nil, 256, 60, 1, 0, nil)
+	job, err := store.JobCreate(ctx, acct.ID, "image-publish", "batch", "registry.example/worker:latest", []string{"/bin/worker"}, 256, 60, 1, 0, nil)
 	if err != nil {
 		t.Fatalf("JobCreate: %v", err)
 	}
