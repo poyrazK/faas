@@ -1694,7 +1694,8 @@ type CreateDeploymentRequest struct {
 	// digest-pinned image with a different entrypoint/cmd/env/port
 	// without rebuilding the image. The field list is frozen by
 	// ADR-053 §Decision 1 — any new override field requires a new
-	// ADR. Nil/omitted means "no overrides; deploy the image as-is".
+	// ADR; ADR-242 adds primary-workload startup dependencies.
+	// Nil/omitted means "no overrides; deploy the image as-is".
 	Overrides *CreateDeploymentOverrides `json:"overrides,omitempty"`
 	// RequireSigned (issue #472 / ADR-054) is the per-deploy opt-in
 	// to cosign signature verification. apid flips the row flag from
@@ -1834,8 +1835,8 @@ type CanaryPresetSpec struct {
 }
 
 // CreateDeploymentOverrides is the optional override object on
-// CreateDeploymentRequest (issue #460 / ADR-053). Six fields, frozen
-// by ADR-053 §Decision 1. The handler calls Validate(limits) before
+// CreateDeploymentRequest (issue #460 / ADR-053). The override contract
+// is extended only through an ADR. The handler calls Validate(limits) before
 // persisting — a failed validation 400s the whole request (the
 // override is never silently dropped; the customer who set it
 // expects it to apply).
@@ -1875,6 +1876,10 @@ type CreateDeploymentOverrides struct {
 	// vmmd waitReady + runners ships in PR-C; PR-A persists the
 	// column and surfaces it on the response.
 	Port int `json:"port,omitempty"`
+	// MainDependsOn gates the primary workload's startup on named
+	// long-running companions reaching the requested lifecycle state.
+	// Init companions already gate the primary workload implicitly.
+	MainDependsOn []WorkloadDependency `json:"main_depends_on,omitempty"`
 	// Healthcheck is the optional startup readiness probe. PR-A persists
 	// the shape; PR-B stamps AppManifest.Healthz at deploy time;
 	// PR-D activates the runtime half — pkg/fcvm/vmm.go::waitReady
@@ -2041,6 +2046,9 @@ var SecretRefNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 	if o == nil {
 		return nil
+	}
+	if p := validateMainWorkloadDependencies(o.MainDependsOn); p != nil {
+		return p
 	}
 
 	// entrypoint: non-empty if present; every element non-empty.
@@ -2527,9 +2535,9 @@ type DeploymentResponse struct {
 	// source spool has been cleaned up.
 	SourceSHA256 string `json:"source_sha256,omitempty"`
 	// HasOverrides is true when the deployment carries an
-	// override_* column set (issue #460 / ADR-053). Lets dashboards
-	// render "this deploy pinned overrides" without re-parsing the
-	// six sibling fields.
+	// override_* column set (issue #460 / ADR-053, extended by ADR-242).
+	// Lets dashboards render "this deploy pinned overrides" without
+	// re-parsing the sibling fields.
 	HasOverrides bool `json:"has_overrides,omitempty"`
 	// OverrideEntrypoint is the argv override echoed verbatim; nil
 	// when the deployment carried no override. ADR-053 §Decision 4:
@@ -2562,6 +2570,9 @@ type DeploymentResponse struct {
 	// OverrideReadinessProbe is the optional continuous primary-app traffic
 	// readiness probe echoed for audit/debugging.
 	OverrideReadinessProbe *DeploymentReadinessProbe `json:"override_readiness_probe,omitempty"`
+	// OverrideMainDependsOn echoes the primary workload's declared startup
+	// dependencies for audit/debugging.
+	OverrideMainDependsOn []WorkloadDependency `json:"override_main_depends_on,omitempty"`
 	// OverrideLivenessProbe is the liveness-probe override
 	// verbatim (issue #554 / ADR-078). nil when the deployment
 	// used the per-plan default (Hobby/Pro/Scale → 5s / 3
@@ -6475,6 +6486,36 @@ type WorkloadDependency struct {
 	Condition WorkloadDependencyCondition `json:"condition,omitempty"`
 }
 
+func validateMainWorkloadDependencies(dependencies []WorkloadDependency) *Problem {
+	if len(dependencies) > WorkloadDependencyCapMax {
+		return NewProblem(http.StatusBadRequest, CodeValidation,
+			"Invalid primary workload dependency",
+			fmt.Sprintf("overrides.main_depends_on has %d dependencies; max is %d.", len(dependencies), WorkloadDependencyCapMax))
+	}
+	seen := make(map[string]struct{}, len(dependencies))
+	for i, dependency := range dependencies {
+		if dependency.Name == "main" || !sidecarNameRe.MatchString(dependency.Name) {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("overrides.main_depends_on[%d].name %q is not a companion name.", i, dependency.Name))
+		}
+		if _, ok := seen[dependency.Name]; ok {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("overrides.main_depends_on depends on companion %q more than once.", dependency.Name))
+		}
+		seen[dependency.Name] = struct{}{}
+		switch dependency.Condition {
+		case "", WorkloadDependencyStarted, WorkloadDependencyHealthy, WorkloadDependencyCompletedSuccessfully:
+		default:
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("overrides.main_depends_on[%d].condition %q is invalid; use started, healthy, or completed_successfully.", i, dependency.Condition))
+		}
+	}
+	return nil
+}
+
 // EvictionPriority is the per-app tier classification (issue #475).
 // 'best_effort' keeps the historical LRU-by-last_request_at reaper
 // behaviour: under cross-account RAM pressure, schedd may park the
@@ -6928,7 +6969,17 @@ func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 // plan; the gate is currently unused). Passing the limits keeps
 // the signature forward-compatible without an ADR delta.
 func (ss Sidecars) Validate(limits Limits) *Problem {
-	if len(ss) == 0 {
+	return ss.ValidateWithMainDependencies(nil, limits)
+}
+
+// ValidateWithMainDependencies checks both companion declarations and the
+// complete primary/companion startup graph. It preserves Validate's existing
+// behavior for callers that do not configure primary workload dependencies.
+func (ss Sidecars) ValidateWithMainDependencies(mainDependencies []WorkloadDependency, limits Limits) *Problem {
+	if p := validateMainWorkloadDependencies(mainDependencies); p != nil {
+		return p
+	}
+	if len(ss) == 0 && len(mainDependencies) == 0 {
 		return nil
 	}
 	if len(ss) > SidecarCapMax {
@@ -6936,6 +6987,7 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	}
 	seen := map[SidecarType]int{}
 	names := map[string]bool{}
+	types := make(map[string]SidecarType, len(ss))
 	primaryIngress := ""
 	for i := range ss {
 		if p := ss[i].Validate(limits); p != nil {
@@ -6947,6 +6999,7 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 				fmt.Sprintf("sidecar name %q appears more than once.", ss[i].Name))
 		}
 		names[ss[i].Name] = true
+		types[ss[i].Name] = ss[i].Type
 		if ss[i].PrimaryIngress {
 			if primaryIngress != "" {
 				return NewProblem(http.StatusBadRequest, CodeValidation,
@@ -6969,6 +7022,19 @@ func (ss Sidecars) Validate(limits Limits) *Problem {
 	// unknown names and cycles before the request is persisted or reaches
 	// guest-init.
 	deps := map[string][]string{"main": nil}
+	for _, dependency := range mainDependencies {
+		if !names[dependency.Name] {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("primary workload depends on unknown companion %q.", dependency.Name))
+		}
+		if types[dependency.Name] != SidecarTypeSidecar {
+			return NewProblem(http.StatusBadRequest, CodeValidation,
+				"Invalid primary workload dependency",
+				fmt.Sprintf("primary workload dependency %q must target a long-running companion; init companions already gate primary startup.", dependency.Name))
+		}
+		deps["main"] = append(deps["main"], dependency.Name)
+	}
 	for _, sc := range ss {
 		for _, dep := range sc.DependsOn {
 			if dep.Name != "main" && !names[dep.Name] {

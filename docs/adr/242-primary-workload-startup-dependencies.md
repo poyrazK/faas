@@ -1,0 +1,7 @@
+# ADR-242: Primary workload startup dependencies
+
+- **Status:** accepted (2026-09-25)
+- **Context:** Companion workloads can declare dependencies on one another and on `main`, but the primary workload cannot declare that it must wait for a long-running companion. This prevents applications from expressing startup requirements such as “start the API after its local proxy has passed startup health.”
+- **Decision:** Add `overrides.main_depends_on`, a bounded list of `WorkloadDependency` entries naming long-running companions and the lifecycle condition the primary workload must wait for. Omitted conditions retain the existing `started` default. Init companions remain implicit prerequisites of the primary workload and cannot be named by this field. The whole primary/companion dependency graph is validated before persistence, including unknown targets and cycles.
+- **Persistence:** Store the immutable list in `deployments.override_main_depends_on` as JSONB. Existing rows default to an empty array; a schema check requires an array with at most `WorkloadDependencyCapMax` entries. The runtime consumes this contract in the follow-up stack layer.
+- **Consequences:** Deploy requests and deployment responses can preserve the primary workload's declared edges alongside companion specs. There is no change to resource limits, billing, network isolation, or behavior for deployments that omit the field.
