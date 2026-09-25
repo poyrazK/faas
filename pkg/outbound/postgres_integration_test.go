@@ -42,7 +42,10 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	entered := make(chan struct{}, 5)
 	finish := make(chan struct{})
 	var providerCalls atomic.Int32
-	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer provider-secret" {
+			t.Errorf("provider Authorization = %q", got)
+		}
 		providerCalls.Add(1)
 		entered <- struct{}{}
 		<-finish
@@ -56,6 +59,7 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new integration: %v", err)
 	}
+	integration.ProviderAuthMode = outbound.ProviderAuthManaged
 	if err := outbound.EnsureIntegration(ctx, pool, outbound.IntegrationRecord{
 		AccountID: uuid.MustParse(account.ID), Name: "payments", Policy: integration,
 	}); err != nil {
@@ -73,6 +77,9 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	for i := range handlers {
 		handlers[i], err = outbound.NewHandler(resolver, backend, provider.Client())
 		if err != nil {
+			t.Fatal(err)
+		}
+		if err := handlers[i].SetManagedAuthorizations(map[string]string{integration.ID: "Bearer provider-secret"}); err != nil {
 			t.Fatal(err)
 		}
 	}

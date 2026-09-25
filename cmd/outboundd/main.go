@@ -52,9 +52,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	managedAuthorizations := make(map[string]string)
 	for _, item := range configured {
 		if err := outbound.EnsureIntegration(ctx, pool, item.Record); err != nil {
 			return fmt.Errorf("outboundd: provision integration %s: %w", item.Record.Policy.ID, err)
+		}
+		if item.providerAuthorization != "" {
+			managedAuthorizations[item.Record.Policy.ID] = item.providerAuthorization
 		}
 	}
 	resolver, err := outbound.NewPostgresResolver(pool)
@@ -68,6 +72,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler, err := outbound.NewHandler(resolver, backend, nil)
 	if err != nil {
 		return err
+	}
+	if err := handler.SetManagedAuthorizations(managedAuthorizations); err != nil {
+		return fmt.Errorf("outboundd: managed provider authorization: %w", err)
 	}
 	outboundMetrics, err := outbound.NewMetrics(ops.Registry())
 	if err != nil {

@@ -28,17 +28,18 @@ type Config struct {
 }
 
 type IntegrationConfig struct {
-	ID             string        `toml:"id"`
-	AccountID      string        `toml:"account_id"`
-	Name           string        `toml:"name"`
-	Origin         string        `toml:"origin"`
-	TokenEnv       string        `toml:"token_env"`
-	AppIDs         []string      `toml:"app_ids"`
-	RatePerSecond  float64       `toml:"rate_per_second"`
-	Burst          int           `toml:"burst"`
-	MaxInFlight    int           `toml:"max_in_flight"`
-	RequestTimeout time.Duration `toml:"request_timeout"`
-	Enabled        *bool         `toml:"enabled"`
+	ID                       string        `toml:"id"`
+	AccountID                string        `toml:"account_id"`
+	Name                     string        `toml:"name"`
+	Origin                   string        `toml:"origin"`
+	TokenEnv                 string        `toml:"token_env"`
+	ProviderAuthorizationEnv string        `toml:"provider_authorization_env"`
+	AppIDs                   []string      `toml:"app_ids"`
+	RatePerSecond            float64       `toml:"rate_per_second"`
+	Burst                    int           `toml:"burst"`
+	MaxInFlight              int           `toml:"max_in_flight"`
+	RequestTimeout           time.Duration `toml:"request_timeout"`
+	Enabled                  *bool         `toml:"enabled"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -89,7 +90,8 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 type configuredIntegration struct {
-	Record outbound.IntegrationRecord
+	Record                outbound.IntegrationRecord
+	providerAuthorization string
 }
 
 func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, error) {
@@ -117,6 +119,16 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		if token == "" {
 			return nil, fmt.Errorf("integration %q: token environment variable %s is empty", key, tokenEnv)
 		}
+		var providerAuthorization string
+		if raw.ProviderAuthorizationEnv != "" {
+			if raw.ProviderAuthorizationEnv == tokenEnv {
+				return nil, fmt.Errorf("integration %q: provider_authorization_env must differ from token_env", key)
+			}
+			providerAuthorization = getenv(raw.ProviderAuthorizationEnv)
+			if !outbound.ValidManagedAuthorization(providerAuthorization) {
+				return nil, fmt.Errorf("integration %q: provider_authorization_env is empty or invalid", key)
+			}
+		}
 		timeout := raw.RequestTimeout
 		if timeout <= 0 {
 			timeout = 30 * time.Second
@@ -124,6 +136,9 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		policy, err := outbound.NewIntegration(id, raw.Origin, token, raw.AppIDs, raw.RatePerSecond, raw.Burst, raw.MaxInFlight, timeout)
 		if err != nil {
 			return nil, fmt.Errorf("integration %q: %w", key, err)
+		}
+		if providerAuthorization != "" {
+			policy.ProviderAuthMode = outbound.ProviderAuthManaged
 		}
 		enabled := true
 		if raw.Enabled != nil {
@@ -134,7 +149,10 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		if name == "" {
 			name = key
 		}
-		out = append(out, configuredIntegration{Record: outbound.IntegrationRecord{AccountID: accountID, Name: name, Policy: policy}})
+		out = append(out, configuredIntegration{
+			Record:                outbound.IntegrationRecord{AccountID: accountID, Name: name, Policy: policy},
+			providerAuthorization: providerAuthorization,
+		})
 	}
 	return out, nil
 }

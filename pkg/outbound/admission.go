@@ -25,20 +25,24 @@ var (
 const (
 	ReasonRate        = "rate_limit"
 	ReasonConcurrency = "concurrency_limit"
+
+	ProviderAuthApplication = "application"
+	ProviderAuthManaged     = "managed"
 )
 
 // Integration is the immutable policy used for one provider. TokenHash is a
 // SHA-256 digest; the raw bearer token is intentionally never stored or logged.
 type Integration struct {
-	ID             string
-	Origin         *url.URL
-	TokenHash      [32]byte
-	AppIDs         map[string]struct{}
-	RatePerSecond  float64
-	Burst          int
-	MaxInFlight    int
-	RequestTimeout time.Duration
-	Enabled        bool
+	ID               string
+	Origin           *url.URL
+	TokenHash        [32]byte
+	AppIDs           map[string]struct{}
+	RatePerSecond    float64
+	Burst            int
+	MaxInFlight      int
+	RequestTimeout   time.Duration
+	ProviderAuthMode string
+	Enabled          bool
 }
 
 // NewIntegration validates and constructs an integration from a raw token.
@@ -59,15 +63,16 @@ func NewIntegration(id, origin, token string, appIDs []string, ratePerSecond flo
 	}
 	sum := sha256.Sum256([]byte(token))
 	i := Integration{
-		ID:             id,
-		Origin:         u,
-		TokenHash:      sum,
-		AppIDs:         apps,
-		RatePerSecond:  ratePerSecond,
-		Burst:          burst,
-		MaxInFlight:    maxInFlight,
-		RequestTimeout: requestTimeout,
-		Enabled:        true,
+		ID:               id,
+		Origin:           u,
+		TokenHash:        sum,
+		AppIDs:           apps,
+		RatePerSecond:    ratePerSecond,
+		Burst:            burst,
+		MaxInFlight:      maxInFlight,
+		RequestTimeout:   requestTimeout,
+		ProviderAuthMode: ProviderAuthApplication,
+		Enabled:          true,
 	}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
@@ -93,6 +98,9 @@ func (i Integration) Validate() error {
 	}
 	if i.RequestTimeout <= 0 {
 		return fmt.Errorf("%w: request timeout must be positive", ErrInvalidIntegration)
+	}
+	if i.ProviderAuthMode != "" && i.ProviderAuthMode != ProviderAuthApplication && i.ProviderAuthMode != ProviderAuthManaged {
+		return fmt.Errorf("%w: provider authentication mode is invalid", ErrInvalidIntegration)
 	}
 	return nil
 }

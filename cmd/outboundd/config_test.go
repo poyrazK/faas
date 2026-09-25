@@ -59,3 +59,58 @@ enabled = true
 		t.Fatal("enabled should default to true")
 	}
 }
+
+func TestPoliciesLoadOptionalProviderAuthorizationFromPrivateEnvironment(t *testing.T) {
+	const key = "provider-secret"
+	cfg := &Config{Integrations: map[string]IntegrationConfig{
+		"payments": {
+			ID:                       "00000000-0000-0000-0000-000000000001",
+			AccountID:                "00000000-0000-0000-0000-000000000010",
+			Origin:                   "https://api.example.com",
+			TokenEnv:                 "GATEWAY_TOKEN",
+			ProviderAuthorizationEnv: "PROVIDER_AUTHORIZATION",
+			AppIDs:                   []string{"00000000-0000-0000-0000-000000000020"},
+			RatePerSecond:            50,
+			Burst:                    50,
+			MaxInFlight:              20,
+		},
+	}}
+	lookup := func(name string) string {
+		switch name {
+		case "GATEWAY_TOKEN":
+			return "gateway-token"
+		case "PROVIDER_AUTHORIZATION":
+			return "Bearer " + key
+		default:
+			return ""
+		}
+	}
+	items, err := cfg.Policies(lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].providerAuthorization != "Bearer "+key {
+		t.Fatal("provider authorization was not loaded")
+	}
+	if items[0].Record.Policy.Origin.String() != "https://api.example.com" {
+		t.Fatal("integration policy was not constructed")
+	}
+	if items[0].Record.Policy.ProviderAuthMode != "managed" {
+		t.Fatal("managed authentication mode was not set")
+	}
+
+	cfg.Integrations["payments"] = IntegrationConfig{
+		ID:                       "00000000-0000-0000-0000-000000000001",
+		AccountID:                "00000000-0000-0000-0000-000000000010",
+		Origin:                   "https://api.example.com",
+		TokenEnv:                 "GATEWAY_TOKEN",
+		ProviderAuthorizationEnv: "MISSING_PROVIDER_AUTHORIZATION",
+		AppIDs:                   []string{"00000000-0000-0000-0000-000000000020"},
+		RatePerSecond:            50,
+		Burst:                    50,
+		MaxInFlight:              20,
+	}
+	if _, err := cfg.Policies(lookup); err == nil {
+		t.Fatal("missing provider credential was accepted")
+	}
+}

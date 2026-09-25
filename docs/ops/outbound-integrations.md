@@ -31,6 +31,22 @@ non-`X-Gregale-*` headers such as `Authorization` are forwarded.
 Provision the same gateway token to each attached app as a secret; it is not
 derived from or logged by the gateway.
 
+To keep a provider key out of an app, set `provider_authorization_env` on its
+integration and put the complete header value (for example, `Bearer sk_...`)
+in the same private `outboundd.env` file. `outboundd` reads it at startup and
+never stores it in Postgres or passes it to the app. For that integration, the
+gateway replaces any app-supplied `Authorization` header before the provider
+request. Other integrations retain application-owned provider headers. A
+missing or malformed configured value prevents daemon startup; a replica
+without the key for a managed integration returns 503 without contacting the
+provider. Rotate the key by updating the private environment file and
+restarting `outboundd`.
+
+This is an operator-configured primitive. A bound app can use the provider
+credential through the gateway, but the binding does not yet restrict provider
+paths or methods, and an external provider could echo a credential in its own
+response. Scope provider keys accordingly. See [ADR-239](../adr/239-platform-held-outbound-provider-authorization.md).
+
 An application calls the gateway explicitly. For example:
 
 ```sh

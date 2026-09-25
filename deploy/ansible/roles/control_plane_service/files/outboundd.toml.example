@@ -23,8 +23,10 @@ metrics_addr = "127.0.0.1:9108"
 # Each key is only a local config label. The id must be a UUID and account/app
 # ownership is checked by the database trigger. The raw Gregale gateway token
 # is read once from the named environment variable and only its SHA-256 digest
-# is stored. Provider authentication headers are supplied by the application
-# and forwarded (except X-Gregale-* control headers).
+# is stored. By default, provider authentication headers are supplied by the
+# application and forwarded (except X-Gregale-* control headers). Set
+# provider_authorization_env to keep one provider Authorization value in
+# outboundd instead; the gateway replaces any app-supplied Authorization.
 #
 # [integrations.payments]
 # id = "00000000-0000-0000-0000-000000000001"
@@ -32,6 +34,7 @@ metrics_addr = "127.0.0.1:9108"
 # name = "payments"
 # origin = "https://api.example.com"
 # token_env = "FAAS_OUTBOUND_PAYMENTS_TOKEN"
+# provider_authorization_env = "FAAS_OUTBOUND_PAYMENTS_PROVIDER_AUTH"
 # app_ids = ["00000000-0000-0000-0000-000000000020"]
 # rate_per_second = 50
 # burst = 50

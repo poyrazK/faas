@@ -49,6 +49,39 @@ type Handler struct {
 	MaxResponseBytes       int64
 	MaxResponseHeaderBytes int64
 	MaxResponseHeaders     int
+	managedAuthorization   map[string]string
+}
+
+// SetManagedAuthorizations configures provider Authorization values held by
+// outboundd. Call it before serving requests. Values are copied so callers
+// cannot change a live handler's credentials through the input map.
+func (h *Handler) SetManagedAuthorizations(values map[string]string) error {
+	if h == nil {
+		return errors.New("outbound handler is nil")
+	}
+	copyValues := make(map[string]string, len(values))
+	for integrationID, value := range values {
+		if strings.TrimSpace(integrationID) == "" || !ValidManagedAuthorization(value) {
+			return errors.New("outbound managed authorization has an invalid integration ID or value")
+		}
+		copyValues[integrationID] = value
+	}
+	h.managedAuthorization = copyValues
+	return nil
+}
+
+// ValidManagedAuthorization accepts one bounded HTTP Authorization value.
+// Never include the value in an error: it is a provider credential.
+func ValidManagedAuthorization(value string) bool {
+	if value == "" || len(value) > 8192 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for i := range len(value) {
+		if value[i] < 0x20 || value[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handler, error) {
@@ -130,6 +163,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
 		return
 	}
+	if integration.ProviderAuthMode == ProviderAuthManaged {
+		if _, ok := h.managedAuthorization[integration.ID]; !ok {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
+			return
+		}
+	}
 	if h.MaxBodyBytes > 0 && r.ContentLength > h.MaxBodyBytes {
 		writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
 		return
@@ -189,6 +228,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamReq.Header = forwardedHeaders(r.Header)
+	if integration.ProviderAuthMode == ProviderAuthManaged {
+		// The guest may send an Authorization header, but it cannot replace
+		// or read the provider credential held by outboundd.
+		upstreamReq.Header.Set("Authorization", h.managedAuthorization[integration.ID])
+	}
 	// NewRequest cannot infer the length of a server-side ReadCloser (or
 	// MaxBytesReader). Preserve known lengths and the explicit empty-body
 	// sentinel so providers do not unexpectedly receive chunked uploads.
