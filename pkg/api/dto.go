@@ -188,15 +188,18 @@ type CreateAppRequest struct {
 	Slug string `json:"slug"`
 	// Visibility controls public versus authenticated private ingress. Empty
 	// defaults to public; internal is available on every plan.
-	Visibility      string `json:"visibility,omitempty"`
-	Type            string `json:"type,omitempty"`             // "app" (default) | "function"
-	Runtime         string `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB           int    `json:"ram_mb,omitempty"`           // 0 => plan default
-	VCPU            int    `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
-	CPUMillicores   int    `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
-	ResourceProfile string `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
-	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
-	IdleTimeoutS    int    `json:"idle_timeout_s,omitempty"`
+	Visibility string `json:"visibility,omitempty"`
+	// AllowedServiceCallers restricts internal callers to these logical app
+	// names. Omitted/null preserves same-account access; [] denies all.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
+	Type                  string    `json:"type,omitempty"`             // "app" (default) | "function"
+	Runtime               string    `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB                 int       `json:"ram_mb,omitempty"`           // 0 => plan default
+	VCPU                  int       `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
+	CPUMillicores         int       `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
+	ResourceProfile       string    `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
+	MaxConcurrency        int       `json:"max_concurrency,omitempty"`
+	IdleTimeoutS          int       `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
@@ -465,12 +468,16 @@ type DevSessionResponse struct {
 type UpdateAppRequest struct {
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
 	// values are public or internal. Internal is available on every plan.
-	Visibility      *string `json:"visibility,omitempty"`
-	RAMMB           *int    `json:"ram_mb,omitempty"`
-	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
-	ResourceProfile *string `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
-	IdleTimeoutS    *int    `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency  *int    `json:"max_concurrency,omitempty"`
+	Visibility *string `json:"visibility,omitempty"`
+	// AllowedServiceCallers is raw JSON to preserve three PATCH states:
+	// omitted (unchanged), null (same-account access), array (replace, with
+	// [] denying all). The handler validates and normalizes the array.
+	AllowedServiceCallers json.RawMessage `json:"allowed_service_callers,omitempty"`
+	RAMMB                 *int            `json:"ram_mb,omitempty"`
+	CPUMillicores         *int            `json:"cpu_millicores,omitempty"`
+	ResourceProfile       *string         `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
+	IdleTimeoutS          *int            `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency        *int            `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
 	// replaces the full policy; use min=max=desired=0 to scale a service to
 	// zero. desired must fit the app's max_concurrency; include both fields

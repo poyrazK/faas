@@ -1,5 +1,11 @@
 package api
 
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
 // ServiceBindingPolicy controls which same-account internal services an app
 // may call. The empty persisted value is the backwards-compatible account
 // policy.
@@ -38,4 +44,39 @@ func (p ServiceBindingPolicy) Effective() ServiceBindingPolicy {
 type AppServiceBinding struct {
 	Binding string `json:"binding"`
 	Service string `json:"service"`
+}
+
+// NormalizeAllowedServiceCallers validates and canonicalizes a target policy.
+// It returns a non-nil empty slice for an explicit deny-all list. Callers are
+// logical app names rather than generated preview slugs.
+func NormalizeAllowedServiceCallers(raw []string) ([]string, error) {
+	if len(raw) > AllowedServiceCallersMax {
+		return nil, fmt.Errorf("allowed_service_callers exceeds %d names", AllowedServiceCallersMax)
+	}
+	seen := make(map[string]struct{}, len(raw))
+	callers := make([]string, 0, len(raw))
+	for _, value := range raw {
+		name := strings.ToLower(strings.TrimSpace(value))
+		if !validServiceCallerName(name) {
+			return nil, fmt.Errorf("allowed_service_callers contains invalid app name %q", value)
+		}
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			callers = append(callers, name)
+		}
+	}
+	sort.Strings(callers)
+	return callers, nil
+}
+
+func validServiceCallerName(name string) bool {
+	if len(name) == 0 || len(name) > 63 || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	for _, c := range name {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
 }

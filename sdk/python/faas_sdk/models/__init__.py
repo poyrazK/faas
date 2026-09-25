@@ -618,6 +618,7 @@ from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
 from .edge_rule_async_action import EdgeRuleAsyncAction
+from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
 from .edge_rule_cache_action import EdgeRuleCacheAction
 from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
@@ -1243,6 +1244,8 @@ from .project_environment_variable_change_response import ProjectEnvironmentVari
 from .project_environment_variable_change_response_kind import ProjectEnvironmentVariableChangeResponseKind
 from .project_environment_variable_response import ProjectEnvironmentVariableResponse
 from .project_environment_workload_diff_response import ProjectEnvironmentWorkloadDiffResponse
+from .project_release_set_member_response import ProjectReleaseSetMemberResponse
+from .project_release_set_response import ProjectReleaseSetResponse
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
@@ -1277,6 +1280,8 @@ from .public_status_update_state import PublicStatusUpdateState
 from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_response import PublishEventResponse
+from .publish_project_release_set_request import PublishProjectReleaseSetRequest
+from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_request import PutAppSecretRequest
@@ -2228,6 +2233,7 @@ __all__ = (
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
     "EdgeRuleAsyncAction",
+    "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
     "EdgeRuleCacheAction",
     "EdgeRuleCacheActionMethodsItem",
@@ -2825,6 +2831,8 @@ __all__ = (
     "ProjectEnvironmentVariableChangeResponseKind",
     "ProjectEnvironmentVariableResponse",
     "ProjectEnvironmentWorkloadDiffResponse",
+    "ProjectReleaseSetMemberResponse",
+    "ProjectReleaseSetResponse",
     "ProjectResponse",
     "ProjectScanRequest",
     "ProjectSourceRefScanRequest",
@@ -2859,6 +2867,8 @@ __all__ = (
     "PublishEventRequest",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishProjectReleaseSetRequest",
+    "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
     "PutAppSecretRequest",

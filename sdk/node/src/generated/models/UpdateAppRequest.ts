@@ -17,6 +17,10 @@ export type UpdateAppRequest = {
    * Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan.
    */
   visibility?: 'public' | 'internal';
+  /**
+   * Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to restore same-account access. Project-managed and preview apps reject this PATCH.
+   */
+  allowed_service_callers?: any[] | null;
   ram_mb?: number | null;
   /**
    * Sustained CPU allowance per instance. Omit for no change.

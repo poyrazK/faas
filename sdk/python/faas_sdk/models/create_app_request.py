@@ -55,6 +55,9 @@ class CreateAppRequest:
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
     """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""
+    allowed_service_callers: list[str] | Unset = UNSET
+    """Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are
+    normalized to lowercase, sorted, and deduplicated."""
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
     vcpu: int | Unset = UNSET
@@ -123,6 +126,8 @@ class CreateAppRequest:
     version_affinity_managed_cookie: bool | Unset = False
     """Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with
     version_affinity_cookie; omitted uses false."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
@@ -173,6 +178,10 @@ class CreateAppRequest:
         visibility: str | Unset = UNSET
         if not isinstance(self.visibility, Unset):
             visibility = self.visibility
+
+        allowed_service_callers: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = self.allowed_service_callers
 
         runtime: str | Unset = UNSET
         if not isinstance(self.runtime, Unset):
@@ -259,6 +268,8 @@ class CreateAppRequest:
 
         version_affinity_managed_cookie = self.version_affinity_managed_cookie
 
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
         streaming_enabled = self.streaming_enabled
 
         websocket_enabled = self.websocket_enabled
@@ -298,6 +309,8 @@ class CreateAppRequest:
             field_dict["type"] = type_
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
         if ram_mb is not UNSET:
@@ -352,6 +365,8 @@ class CreateAppRequest:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
         if version_affinity_managed_cookie is not UNSET:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if streaming_enabled is not UNSET:
             field_dict["streaming_enabled"] = streaming_enabled
         if websocket_enabled is not UNSET:
@@ -402,6 +417,8 @@ class CreateAppRequest:
             visibility = UNSET
         else:
             visibility = check_create_app_request_visibility(_visibility)
+
+        allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
 
         _runtime = d.pop("runtime", UNSET)
         runtime: CreateAppRequestRuntime | Unset
@@ -523,6 +540,8 @@ class CreateAppRequest:
 
         version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
 
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
+
         streaming_enabled = d.pop("streaming_enabled", UNSET)
 
         websocket_enabled = d.pop("websocket_enabled", UNSET)
@@ -561,6 +580,7 @@ class CreateAppRequest:
             slug=slug,
             type_=type_,
             visibility=visibility,
+            allowed_service_callers=allowed_service_callers,
             runtime=runtime,
             ram_mb=ram_mb,
             vcpu=vcpu,
@@ -588,6 +608,7 @@ class CreateAppRequest:
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,
