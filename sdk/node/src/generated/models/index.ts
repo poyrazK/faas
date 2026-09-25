@@ -656,6 +656,8 @@ export type { RekeyProgress } from './RekeyProgress.js';
 export type { RenameAppRequest } from './RenameAppRequest.js';
 export type { RepoResponse } from './RepoResponse.js';
 export type { RequestAnalyticsComputeCost } from './RequestAnalyticsComputeCost.js';
+export type { RequestAnalyticsDeploymentCost } from './RequestAnalyticsDeploymentCost.js';
+export type { RequestAnalyticsDeploymentCostBreakdown } from './RequestAnalyticsDeploymentCostBreakdown.js';
 export type { RequestAnalyticsGroup } from './RequestAnalyticsGroup.js';
 export type { RequestAnalyticsResponse } from './RequestAnalyticsResponse.js';
 export type { RequestAnalyticsRoute } from './RequestAnalyticsRoute.js';

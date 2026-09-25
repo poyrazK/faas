@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RequestAnalyticsComputeCost } from './RequestAnalyticsComputeCost.js';
+import type { RequestAnalyticsDeploymentCostBreakdown } from './RequestAnalyticsDeploymentCostBreakdown.js';
 import type { RequestAnalyticsGroup } from './RequestAnalyticsGroup.js';
 import type { RequestAnalyticsRoute } from './RequestAnalyticsRoute.js';
 /**
@@ -56,6 +57,7 @@ export type RequestAnalyticsResponse = {
    */
   routes_truncated: boolean;
   compute_cost?: RequestAnalyticsComputeCost;
+  deployment_costs?: RequestAnalyticsDeploymentCostBreakdown;
   /**
    * RFC3339Nano UTC assembly timestamp.
    */
