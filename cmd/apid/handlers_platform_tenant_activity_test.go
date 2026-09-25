@@ -111,7 +111,7 @@ func TestListPlatformTenantActivityRejectsInvalidWindowAndFilters(t *testing.T) 
 	}
 	store := &platformTenantActivityTestStore{Store: e.store, PlatformTenantStore: e.store}
 	e.s.store = store
-	for _, rawQuery := range []string{"since=0h", "since=9223372036854775807d", "status=99", "limit=201", "app_id=not-a-uuid"} {
+	for _, rawQuery := range []string{"since=0h", "since=9223372036854775807d", "status=99", "status=2147483648", "limit=201", "app_id=not-a-uuid"} {
 		rec := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/activity?"+rawQuery, nil, nil)
 		if rec.Code != http.StatusBadRequest || len(store.args) != 0 {
 			t.Errorf("query %q status=%d queries=%d body=%s", rawQuery, rec.Code, len(store.args), rec.Body.String())

@@ -54,13 +54,14 @@ func (s *server) listPlatformTenantActivity(w http.ResponseWriter, r *http.Reque
 		}
 		appID = parsed.String()
 	}
-	statusFilter := 0
+	statusFilter := int32(0)
 	if raw := strings.TrimSpace(query.Get("status")); raw != "" {
-		statusFilter, err = strconv.Atoi(raw)
-		if err != nil || statusFilter < 100 || statusFilter > 599 {
+		parsedStatus, parseErr := strconv.ParseInt(raw, 10, 32)
+		if parseErr != nil || parsedStatus < 100 || parsedStatus > 599 {
 			api.WriteProblem(w, api.ErrValidation("status must be an integer from 100 to 599"))
 			return
 		}
+		statusFilter = int32(parsedStatus)
 	}
 	limit := platformTenantActivityDefaultLimit
 	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
@@ -92,7 +93,7 @@ func (s *server) listPlatformTenantActivity(w http.ResponseWriter, r *http.Reque
 			api.WriteProblem(w, api.ErrValidation(cursorErr.Error()))
 			return
 		}
-		if cursor.TenantID != tenant.ID || cursor.AppID != appID || cursor.Status != statusFilter || (sinceRaw != "" && int64(since) != cursor.SinceNanos) {
+		if cursor.TenantID != tenant.ID || cursor.AppID != appID || cursor.Status != int(statusFilter) || (sinceRaw != "" && int64(since) != cursor.SinceNanos) {
 			api.WriteProblem(w, api.ErrValidation("cursor does not match this tenant activity query"))
 			return
 		}
@@ -116,7 +117,7 @@ func (s *server) listPlatformTenantActivity(w http.ResponseWriter, r *http.Reque
 		CursorReceivedAt: cursorReceivedAt,
 		CursorID:         cursorID,
 		AppIDFilter:      appID,
-		StatusFilter:     int32(statusFilter),
+		StatusFilter:     statusFilter,
 		Limit:            int32(limit + 1),
 	})
 	if err != nil {
@@ -136,7 +137,7 @@ func (s *server) listPlatformTenantActivity(w http.ResponseWriter, r *http.Reque
 		PlanRetentionDays: limits.DebugTelemetryRetentionDays,
 		RetentionClamped:  retentionClamped,
 		PageTelemetryRows: int64(len(rows)), PageComplete: !hasMore,
-		Filters:  api.PlatformTenantActivityFilters{AppID: appID, Status: statusFilter},
+		Filters:  api.PlatformTenantActivityFilters{AppID: appID, Status: int(statusFilter)},
 		Requests: make([]api.PlatformTenantActivityItem, 0, len(rows)),
 	}
 	for _, row := range rows {
@@ -158,7 +159,7 @@ func (s *server) listPlatformTenantActivity(w http.ResponseWriter, r *http.Reque
 	}
 	if hasMore && len(rows) > 0 {
 		response.NextCursor, err = encodePlatformTenantActivityCursor(
-			tenant.ID, appID, statusFilter, since, windowStart, windowEnd,
+			tenant.ID, appID, int(statusFilter), since, windowStart, windowEnd,
 			retentionClamped, rows[len(rows)-1],
 		)
 		if err != nil {
