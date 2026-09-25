@@ -1,10 +1,13 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
+	"reflect"
 	"time"
 )
 
@@ -40,6 +43,8 @@ var (
 	ErrWorkflowInvalidInput      = errors.New("state: workflow JSON payload is invalid")
 	ErrWorkflowInvalidRecord     = errors.New("state: workflow record is invalid")
 	ErrWorkflowRunQuotaExceeded  = errors.New("state: workflow active-run quota exceeded")
+	ErrWorkflowCallbackClosed    = errors.New("state: workflow callback is closed")
+	ErrWorkflowCallbackExpired   = errors.New("state: workflow callback has expired")
 )
 
 // WorkflowRunStaleAfter is longer than the largest plan's two-hour step
@@ -87,6 +92,56 @@ func cloneWorkflowJSON(raw json.RawMessage) json.RawMessage {
 		return nil
 	}
 	return append(json.RawMessage(nil), raw...)
+}
+
+func equalWorkflowJSON(a, b json.RawMessage) bool {
+	var left, right any
+	leftDecoder := json.NewDecoder(bytes.NewReader(a))
+	leftDecoder.UseNumber()
+	rightDecoder := json.NewDecoder(bytes.NewReader(b))
+	rightDecoder.UseNumber()
+	if leftDecoder.Decode(&left) != nil || rightDecoder.Decode(&right) != nil {
+		return false
+	}
+	return equalWorkflowValue(left, right)
+}
+
+func equalWorkflowValue(left, right any) bool {
+	switch value := left.(type) {
+	case json.Number:
+		other, ok := right.(json.Number)
+		if !ok {
+			return false
+		}
+		a, validA := new(big.Rat).SetString(value.String())
+		b, validB := new(big.Rat).SetString(other.String())
+		return validA && validB && a.Cmp(b) == 0
+	case []any:
+		other, ok := right.([]any)
+		if !ok || len(value) != len(other) {
+			return false
+		}
+		for i := range value {
+			if !equalWorkflowValue(value[i], other[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		other, ok := right.(map[string]any)
+		if !ok || len(value) != len(other) {
+			return false
+		}
+		for key, item := range value {
+			otherItem, exists := other[key]
+			if !exists || !equalWorkflowValue(item, otherItem) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(left, right)
+	}
 }
 
 // WorkflowRun is one row of public.workflow_runs.
@@ -148,9 +203,9 @@ type WorkflowStore interface {
 	ListWorkflowRuns(ctx context.Context, appID string, opts ListWorkflowRunsOpts) ([]*WorkflowRun, int, error)
 	MarkWorkflowRunStatus(ctx context.Context, id, status string, output json.RawMessage, lastErr *string) error
 	ClaimNextPendingRun(ctx context.Context) (*WorkflowRun, error)
-	// ClaimNextDueWorkflowRun claims a pending run or an awaiting-event
-	// run whose scheduled_for deadline has arrived. The latter is how
-	// parked waits are resumed for timeout handling.
+	// ClaimNextDueWorkflowRun claims a pending run or a parked wait whose
+	// scheduled_for deadline has arrived. A due timer completes; a due
+	// event wait takes its timeout path.
 	ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error)
 	ScheduleWorkflowRun(ctx context.Context, id, status string, scheduledFor time.Time) error
 	RecoverWorkflowRun(ctx context.Context, id string) error
@@ -161,9 +216,23 @@ type WorkflowStore interface {
 	CreateWorkflowSteps(ctx context.Context, runID string, steps []*WorkflowStep) error
 	GetWorkflowSteps(ctx context.Context, runID string) ([]*WorkflowStep, error)
 	MarkWorkflowStepStatus(ctx context.Context, runID, stepName, status string, attempt int, output json.RawMessage, err *string) error
+	// ParkWorkflowTimer atomically records the step's first activation and the
+	// run's durable wake deadline. Re-parking never resets the original deadline.
+	ParkWorkflowTimer(ctx context.Context, runID, stepName string, duration time.Duration) (time.Time, error)
+	// ParkWorkflowEvent atomically checks for an already-delivered event and
+	// registers the wait. A concurrent event insertion cannot be lost between
+	// the check and the park transition.
+	ParkWorkflowEvent(ctx context.Context, runID, stepName, eventName string, timeout time.Duration) (*WorkflowEvent, time.Time, error)
+	// ResolveWorkflowEventWait decides the deadline race while holding the
+	// same run lock as event insertion and callback completion. If an event
+	// exists it wins; otherwise an elapsed deadline closes the wait.
+	ResolveWorkflowEventWait(ctx context.Context, runID, stepName, eventName string, timeout time.Duration, onTimeout bool) (*WorkflowEvent, bool, error)
 
 	// Events
 	InsertWorkflowEvent(ctx context.Context, e *WorkflowEvent) error
+	// CompleteWorkflowCallback records one account-authorized completion. The
+	// stable event ID makes retries idempotent; a different payload conflicts.
+	CompleteWorkflowCallback(ctx context.Context, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (duplicate bool, err error)
 	GetWorkflowEventsForRun(ctx context.Context, runID string) ([]*WorkflowEvent, error)
 	FindMatchingEvent(ctx context.Context, runID, eventName string) (*WorkflowEvent, error)
 

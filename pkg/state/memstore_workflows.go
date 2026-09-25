@@ -262,6 +262,9 @@ func (m *MemStore) ScheduleWorkflowRun(_ context.Context, id, status string, sch
 	if (r.Status == WorkflowRunStatusSucceeded || r.Status == WorkflowRunStatusFailed || r.Status == WorkflowRunStatusDead) && r.Status != status {
 		return fmt.Errorf("%w: workflow run is terminal", ErrConflict)
 	}
+	if status == WorkflowRunStatusAwaitingEvent && r.Status == WorkflowRunStatusAwaitingEvent && r.ScheduledFor.Before(scheduledFor) {
+		scheduledFor = r.ScheduledFor
+	}
 	r.Status = status
 	r.ScheduledFor = scheduledFor.UTC()
 	r.UpdatedAt = time.Now().UTC()
@@ -487,6 +490,209 @@ func (m *MemStore) MarkWorkflowStepStatus(_ context.Context, runID, stepName, st
 	return nil
 }
 
+// ParkWorkflowTimer updates the step and run under one lock. The existing
+// started_at is the deadline anchor when an unrelated event wakes the run.
+func (m *MemStore) ParkWorkflowTimer(_ context.Context, runID, stepName string, duration time.Duration) (time.Time, error) {
+	if duration <= 0 {
+		return time.Time{}, ErrWorkflowInvalidRecord
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.workflowRuns[runID]
+	if !ok {
+		return time.Time{}, ErrWorkflowRunNotFound
+	}
+	if run.Status == WorkflowRunStatusSucceeded || run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead {
+		return time.Time{}, fmt.Errorf("%w: workflow run is terminal", ErrConflict)
+	}
+	steps, ok := m.workflowSteps[runID]
+	if !ok {
+		return time.Time{}, ErrWorkflowStepNotFound
+	}
+	step, ok := steps[stepName]
+	if !ok {
+		return time.Time{}, ErrWorkflowStepNotFound
+	}
+	if step.Status != WorkflowStepStatusPending && step.Status != WorkflowStepStatusAwaitingEvent {
+		return time.Time{}, fmt.Errorf("%w: timer step is not pending or awaiting", ErrConflict)
+	}
+	now := time.Now().UTC()
+	if step.StartedAt == nil {
+		step.StartedAt = &now
+	}
+	deadline := step.StartedAt.Add(duration)
+	if run.Status == WorkflowRunStatusAwaitingEvent && run.ScheduledFor.Before(deadline) {
+		deadline = run.ScheduledFor
+	}
+	step.Status = WorkflowStepStatusAwaitingEvent
+	steps[stepName] = step
+	run.Status = WorkflowRunStatusAwaitingEvent
+	run.CurrentStep = &stepName
+	run.ScheduledFor = deadline
+	run.UpdatedAt = now
+	m.workflowRuns[runID] = run
+	return deadline, nil
+}
+
+func (m *MemStore) ParkWorkflowEvent(_ context.Context, runID, stepName, eventName string, timeout time.Duration) (*WorkflowEvent, time.Time, error) {
+	if eventName == "" || timeout <= 0 {
+		return nil, time.Time{}, ErrWorkflowInvalidRecord
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.workflowRuns[runID]
+	if !ok {
+		return nil, time.Time{}, ErrWorkflowRunNotFound
+	}
+	if run.Status == WorkflowRunStatusSucceeded || run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead {
+		return nil, time.Time{}, fmt.Errorf("%w: workflow run is terminal", ErrConflict)
+	}
+	step, ok := m.workflowSteps[runID][stepName]
+	if !ok {
+		return nil, time.Time{}, ErrWorkflowStepNotFound
+	}
+	if step.Status != WorkflowStepStatusPending && step.Status != WorkflowStepStatusAwaitingEvent {
+		return nil, time.Time{}, fmt.Errorf("%w: event wait step is not pending or awaiting", ErrConflict)
+	}
+	var matched *WorkflowEvent
+	var deadline time.Time
+	if step.StartedAt != nil {
+		deadline = step.StartedAt.Add(timeout)
+	}
+	for _, event := range m.workflowEvents[runID] {
+		if event.EventName != eventName || (!deadline.IsZero() && !event.ReceivedAt.Before(deadline)) {
+			continue
+		}
+		if matched == nil || event.ReceivedAt.Before(matched.ReceivedAt) || (event.ReceivedAt.Equal(matched.ReceivedAt) && event.ID < matched.ID) {
+			cp := event
+			matched = &cp
+		}
+	}
+	if matched != nil {
+		matched.Payload = cloneWorkflowJSON(matched.Payload)
+		return matched, time.Time{}, nil
+	}
+	now := time.Now().UTC()
+	if step.StartedAt == nil {
+		step.StartedAt = &now
+	}
+	deadline = step.StartedAt.Add(timeout)
+	wakeAt := deadline
+	if run.Status == WorkflowRunStatusAwaitingEvent && run.ScheduledFor.Before(wakeAt) {
+		wakeAt = run.ScheduledFor
+	}
+	step.Status = WorkflowStepStatusAwaitingEvent
+	m.workflowSteps[runID][stepName] = step
+	run.Status = WorkflowRunStatusAwaitingEvent
+	run.CurrentStep = &stepName
+	run.ScheduledFor = wakeAt
+	run.UpdatedAt = now
+	m.workflowRuns[runID] = run
+	return nil, deadline, nil
+}
+
+func (m *MemStore) ResolveWorkflowEventWait(_ context.Context, runID, stepName, eventName string, timeout time.Duration, onTimeout bool) (*WorkflowEvent, bool, error) {
+	if eventName == "" || timeout <= 0 {
+		return nil, false, ErrWorkflowInvalidRecord
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.workflowRuns[runID]
+	if !ok {
+		return nil, false, ErrWorkflowRunNotFound
+	}
+	step, ok := m.workflowSteps[runID][stepName]
+	if !ok {
+		return nil, false, ErrWorkflowStepNotFound
+	}
+	if step.Status != WorkflowStepStatusAwaitingEvent || step.StartedAt == nil {
+		return nil, false, fmt.Errorf("%w: workflow event wait is not active", ErrConflict)
+	}
+	deadline := step.StartedAt.Add(timeout)
+	for _, event := range m.workflowEvents[runID] {
+		if event.EventName == eventName && event.ReceivedAt.Before(deadline) {
+			cp := event
+			cp.Payload = cloneWorkflowJSON(event.Payload)
+			return &cp, false, nil
+		}
+	}
+	now := time.Now().UTC()
+	if now.Before(deadline) {
+		return nil, false, nil
+	}
+	step.FinishedAt = &now
+	if onTimeout {
+		step.Status = WorkflowStepStatusSucceeded
+		step.Output = json.RawMessage(`{"timeout":true}`)
+		run.Status = WorkflowRunStatusPending
+		run.ScheduledFor = now
+	} else {
+		message := "workflow event or callback wait timed out with no handler"
+		step.Status = WorkflowStepStatusDead
+		step.Error = &message
+		run.Status = WorkflowRunStatusDead
+		run.LastError = &message
+		run.FinishedAt = &now
+	}
+	m.workflowSteps[runID][stepName] = step
+	run.CurrentStep = &stepName
+	run.UpdatedAt = now
+	m.workflowRuns[runID] = run
+	return nil, true, nil
+}
+
+func (m *MemStore) CompleteWorkflowCallback(_ context.Context, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
+	if runID == "" || stepName == "" || eventName == "" || eventID == "" || timeout <= 0 {
+		return false, ErrWorkflowInvalidRecord
+	}
+	if err := validateWorkflowJSON(payload, false); err != nil {
+		return false, err
+	}
+	if len(payload) == 0 {
+		payload = json.RawMessage("{}")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.workflowRuns[runID]
+	if !ok {
+		return false, ErrWorkflowRunNotFound
+	}
+	for _, events := range m.workflowEvents {
+		for _, event := range events {
+			if event.ID != eventID {
+				continue
+			}
+			if event.RunID == runID && event.EventName == eventName && equalWorkflowJSON(event.Payload, payload) {
+				return true, nil
+			}
+			return false, fmt.Errorf("%w: workflow callback payload differs", ErrConflict)
+		}
+	}
+	if run.Status == WorkflowRunStatusSucceeded || run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead {
+		return false, ErrWorkflowCallbackClosed
+	}
+	now := time.Now().UTC()
+	if step, exists := m.workflowSteps[runID][stepName]; exists {
+		if step.Status == WorkflowStepStatusSucceeded || step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead || step.Status == WorkflowStepStatusSkipped {
+			return false, ErrWorkflowCallbackClosed
+		}
+		if step.StartedAt != nil && !now.Before(step.StartedAt.Add(timeout)) {
+			return false, ErrWorkflowCallbackExpired
+		}
+	}
+	m.workflowEvents[runID] = append(m.workflowEvents[runID], WorkflowEvent{
+		ID: eventID, RunID: runID, EventName: eventName,
+		Payload: cloneWorkflowJSON(payload), ReceivedAt: now,
+	})
+	if run.Status == WorkflowRunStatusAwaitingEvent {
+		run.Status = WorkflowRunStatusPending
+		run.ScheduledFor = now
+		run.UpdatedAt = now
+		m.workflowRuns[runID] = run
+	}
+	return false, nil
+}
+
 // InsertWorkflowEvent appends an external event to a run's event log.
 func (m *MemStore) InsertWorkflowEvent(_ context.Context, e *WorkflowEvent) error {
 	if e == nil {
@@ -617,6 +823,9 @@ func (m *MemStore) SweepExpiredWorkflowEvents(_ context.Context, olderThan time.
 	threshold := time.Now().UTC().Add(-olderThan)
 	deleted := 0
 	for runID, events := range m.workflowEvents {
+		if run, ok := m.workflowRuns[runID]; ok && run.FinishedAt == nil {
+			continue
+		}
 		var kept []WorkflowEvent
 		for _, e := range events {
 			if e.ReceivedAt.Before(threshold) {

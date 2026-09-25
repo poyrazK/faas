@@ -2,8 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CompleteWorkflowCallbackResponse } from '../models/CompleteWorkflowCallbackResponse.js';
 import type { InjectWorkflowEventRequest } from '../models/InjectWorkflowEventRequest.js';
 import type { InjectWorkflowEventResponse } from '../models/InjectWorkflowEventResponse.js';
+import type { ListWorkflowCallbacksResponse } from '../models/ListWorkflowCallbacksResponse.js';
 import type { ListWorkflowRunsResponse } from '../models/ListWorkflowRunsResponse.js';
 import type { ListWorkflowStepsResponse } from '../models/ListWorkflowStepsResponse.js';
 import type { WorkflowRunResponse } from '../models/WorkflowRunResponse.js';
@@ -160,6 +162,85 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List callback handles for a workflow run.
+   * Callback IDs identify waits but are not bearer credentials; completion requires account authorization.
+   * @returns ListWorkflowCallbacksResponse Callback handles from the run's snapshotted definition.
+   * @throws ApiError
+   */
+  public static listWorkflowCallbacks({
+    id,
+  }: {
+    /**
+     * Workflow-run identifier.
+     */
+    id: string,
+  }): CancelablePromise<ListWorkflowCallbacksResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/workflows/runs/{id}/callbacks',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Complete one callback wait.
+   * Requires the run owner's workflow-write authorization. An identical
+   * retry returns duplicate=true, including after the run finishes; a
+   * different payload conflicts. Completion may arrive before the step
+   * parks and will be consumed when the step becomes runnable.
+   *
+   * @returns CompleteWorkflowCallbackResponse The callback was durably received or was an identical retry.
+   * @throws ApiError
+   */
+  public static completeWorkflowCallback({
+    id,
+    callbackId,
+    requestBody,
+  }: {
+    /**
+     * Workflow run whose callback will be completed.
+     */
+    id: string,
+    /**
+     * Stable callback handle returned by the callback list endpoint.
+     */
+    callbackId: string,
+    requestBody?: any,
+  }): CancelablePromise<CompleteWorkflowCallbackResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/workflows/runs/{id}/callbacks/{callback_id}',
+      path: {
+        'id': id,
+        'callback_id': callbackId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        409: `Callback is closed or the ID was completed with different JSON.`,
+        410: `Callback wait has expired.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

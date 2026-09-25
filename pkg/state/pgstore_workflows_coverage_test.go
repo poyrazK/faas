@@ -2,11 +2,139 @@ package state_test
 
 import (
 	"encoding/json"
+	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestPgStore_WorkflowCallbackAndEventParking(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "wf-callback@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "wf-callback", RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, WorkflowName: "callback", DefinitionSnapshot: json.RawMessage("{\"name\":\"callback\"}")}
+	if err := s.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	callbackID := api.WorkflowCallbackID(run.ID, "await")
+	eventName := api.WorkflowCallbackEventName(run.ID, "await")
+	payload := json.RawMessage("{\"ok\":true}")
+	if duplicate, err := s.CompleteWorkflowCallback(ctx, run.ID, "await", eventName, callbackID, time.Hour, payload); err != nil || duplicate {
+		t.Fatalf("early callback: duplicate=%t err=%v", duplicate, err)
+	}
+	if _, err := s.SweepExpiredWorkflowEvents(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
+		t.Fatal(err)
+	}
+	if event, _, err := s.ParkWorkflowEvent(ctx, run.ID, "await", eventName, time.Hour); err != nil || event == nil {
+		t.Fatalf("early callback lost: event=%v err=%v", event, err)
+	}
+	if duplicate, err := s.CompleteWorkflowCallback(ctx, run.ID, "await", eventName, callbackID, time.Hour, payload); err != nil || !duplicate {
+		t.Fatalf("duplicate callback: duplicate=%t err=%v", duplicate, err)
+	}
+	if _, err := s.CompleteWorkflowCallback(ctx, run.ID, "await", eventName, callbackID, time.Hour, json.RawMessage("{\"ok\":false}")); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("changed callback payload = %v", err)
+	}
+
+	race := &state.WorkflowRun{AppID: app.ID, WorkflowName: "race", DefinitionSnapshot: json.RawMessage("{\"name\":\"race\"}")}
+	if err := s.CreateWorkflowRun(ctx, race); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateWorkflowSteps(ctx, race.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var parkedEvent *state.WorkflowEvent
+	var parkErr, insertErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		parkedEvent, _, parkErr = s.ParkWorkflowEvent(ctx, race.ID, "await", "ready", time.Hour)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		insertErr = s.InsertWorkflowEvent(ctx, &state.WorkflowEvent{RunID: race.ID, EventName: "ready", Payload: payload})
+	}()
+	close(start)
+	wg.Wait()
+	if parkErr != nil || insertErr != nil {
+		t.Fatalf("concurrent park=%v insert=%v", parkErr, insertErr)
+	}
+	stored, err := s.GetWorkflowRun(ctx, race.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parkedEvent == nil && stored.Status != state.WorkflowRunStatusPending {
+		t.Fatalf("arrival lost while parked: %#v", stored)
+	}
+}
+
+func TestPgStore_WorkflowTimerDeadlineIsStable(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "wf-timer@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "wf-timer", RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, WorkflowName: "timer", DefinitionSnapshot: json.RawMessage(`{"name":"timer","steps":[{"name":"wait","wait_for_duration":"1h"}]}`)}
+	if err := s.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "wait"}}); err != nil {
+		t.Fatal(err)
+	}
+	deadline, err := s.ParkWorkflowTimer(ctx, run.ID, "wait", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked, err := s.GetWorkflowRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parked.Status != state.WorkflowRunStatusAwaitingEvent || !parked.ScheduledFor.Equal(deadline) {
+		t.Fatalf("parked run = %#v, deadline = %v", parked, deadline)
+	}
+	steps, err := s.GetWorkflowSteps(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0].StartedAt == nil || !steps[0].StartedAt.Add(time.Hour).Equal(deadline) {
+		t.Fatalf("timer step = %#v, deadline = %v", steps, deadline)
+	}
+	if err := s.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusPending, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	reparked, err := s.ParkWorkflowTimer(ctx, run.ID, "wait", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reparked.Equal(deadline) {
+		t.Fatalf("reparked deadline = %v, want %v", reparked, deadline)
+	}
+	if _, err := s.CancelWorkflowRun(ctx, run.ID, "test cancellation"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ParkWorkflowTimer(ctx, run.ID, "wait", time.Hour); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("repark cancelled run = %v, want conflict", err)
+	}
+}
 
 func TestPgStore_WorkflowsCoverage(t *testing.T) {
 	s, _, ctx := pgStoreWithPool(t)

@@ -54,8 +54,6 @@ func (o *WorkflowOrchestrator) emitAudit(ctx context.Context, kind string, paylo
 	}
 }
 
-const workflowNoTimeoutWake = 100 * 365 * 24 * time.Hour
-
 var workflowTimeoutOutput = json.RawMessage(`{"timeout":true}`)
 
 func workflowRetryDelay(spec api.WorkflowStepSpec, attempt int) time.Duration {
@@ -74,16 +72,6 @@ func workflowRetryDelay(spec api.WorkflowStepSpec, attempt int) time.Duration {
 		return 5 * time.Minute
 	}
 	return delay
-}
-
-func workflowWaitDeadline(createdAt time.Time, timeout time.Duration) time.Time {
-	if createdAt.IsZero() {
-		createdAt = time.Now().UTC()
-	}
-	if timeout <= 0 {
-		return time.Now().UTC().Add(workflowNoTimeoutWake)
-	}
-	return createdAt.Add(timeout)
 }
 
 // workflowStepPath resolves the target used by the HTTP wake executor.
@@ -311,8 +299,9 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		return nil
 	}
 
-	// First revisit a due parked wait. This is the timeout path; normal event
-	// delivery marks the step succeeded before advancing the run.
+	// First revisit parked waits. A duration wait may complete here, while
+	// an event wait may take its timeout path. Event delivery normally marks
+	// the event step succeeded before advancing the run.
 	advancedAny := false
 	for _, s := range steps {
 		if s.Status != state.WorkflowStepStatusAwaitingEvent {
@@ -403,10 +392,58 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 }
 
 func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.WorkflowRun, step *state.WorkflowStep, spec api.WorkflowStepSpec) (bool, error) {
-	// Case A: wait_for_event step
-	if spec.WaitForEvent != "" {
-		evt, err := o.store.FindMatchingEvent(ctx, run.ID, spec.WaitForEvent)
-		if err == nil && evt != nil {
+	// A duration wait has no executor call: only a persisted deadline is left
+	// behind while the run is parked. The step's first started_at is the source
+	// of truth, so an unrelated event cannot move the deadline forward.
+	if spec.WaitForDuration > 0 {
+		if step.StartedAt != nil && !time.Now().UTC().Before(step.StartedAt.Add(spec.WaitForDuration)) {
+			if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, nil, nil); err != nil {
+				return false, err
+			}
+			o.emitAudit(ctx, events.WorkflowStepSucceeded, map[string]any{
+				"run_id": run.ID, "app_id": run.AppID,
+				"workflow_name": run.WorkflowName, "step_name": step.StepName,
+				"status": state.WorkflowStepStatusSucceeded,
+			})
+			return true, nil
+		}
+		deadline, err := o.store.ParkWorkflowTimer(ctx, run.ID, step.StepName, spec.WaitForDuration)
+		if err != nil {
+			return false, err
+		}
+		if step.StartedAt == nil {
+			o.emitAudit(ctx, events.WorkflowAwaitingTimer, map[string]any{
+				"run_id": run.ID, "app_id": run.AppID,
+				"workflow_name": run.WorkflowName, "step_name": step.StepName,
+				"duration": spec.WaitForDuration.String(), "wake_at": deadline,
+			})
+		}
+		return false, nil
+	}
+
+	// Case A: event or account-authorized callback wait. Registration and
+	// event lookup share the run lock with event insertion, so an arrival in
+	// the check/park window cannot be lost.
+	eventName := spec.WaitForEvent
+	if spec.WaitForCallback {
+		eventName = api.WorkflowCallbackEventName(run.ID, step.StepName)
+	}
+	if eventName != "" {
+		evt, deadline, err := o.store.ParkWorkflowEvent(ctx, run.ID, step.StepName, eventName, spec.Timeout)
+		if err != nil {
+			return false, err
+		}
+		if evt == nil && !time.Now().UTC().Before(deadline) {
+			var timedOut bool
+			evt, timedOut, err = o.store.ResolveWorkflowEventWait(ctx, run.ID, step.StepName, eventName, spec.Timeout, spec.OnTimeout != "")
+			if err != nil {
+				return false, err
+			}
+			if timedOut {
+				return true, nil
+			}
+		}
+		if evt != nil {
 			// Event already received! Complete step.
 			if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, evt.Payload, nil); err != nil {
 				return false, err
@@ -421,50 +458,14 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			})
 			return true, nil
 		}
-		if err != nil && !errors.Is(err, state.ErrWorkflowEventNotFound) {
-			return false, err
-		}
 
-		// Check timeout. scheduled_for is the durable deadline, but retain the
-		// created_at calculation as a safe fallback for old rows.
-		deadline := workflowWaitDeadline(step.CreatedAt, spec.Timeout)
-		if !time.Now().UTC().Before(deadline) {
-			if spec.OnTimeout != "" {
-				if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt, workflowTimeoutOutput, nil); err != nil {
-					return false, err
-				}
-				if err := o.store.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusPending, time.Now().UTC()); err != nil {
-					return false, err
-				}
-			} else {
-				errMsg := "wait_for_event timed out with no handler"
-				if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusDead, step.Attempt, nil, &errMsg); err != nil {
-					return false, err
-				}
-				if err := o.store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusDead, nil, &errMsg); err != nil {
-					return false, err
-				}
-			}
-			return true, nil
+		if step.StartedAt == nil {
+			o.emitAudit(ctx, events.WorkflowAwaitingEvent, map[string]any{
+				"run_id": run.ID, "app_id": run.AppID,
+				"workflow_name": run.WorkflowName, "step_name": step.StepName,
+				"event_name": eventName, "timeout": spec.Timeout.String(),
+			})
 		}
-
-		// Park run in awaiting_event. The scheduler deadline makes timeout
-		// handling durable across schedd restarts; waits without a timeout are
-		// parked far in the future and resume only through event injection.
-		if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusAwaitingEvent, step.Attempt, nil, nil); err != nil {
-			return false, err
-		}
-		if err := o.store.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusAwaitingEvent, deadline); err != nil {
-			return false, err
-		}
-		o.emitAudit(ctx, events.WorkflowAwaitingEvent, map[string]any{
-			"run_id":        run.ID,
-			"app_id":        run.AppID,
-			"workflow_name": run.WorkflowName,
-			"step_name":     step.StepName,
-			"event_name":    spec.WaitForEvent,
-			"timeout":       spec.Timeout.String(),
-		})
 		return false, nil
 	}
 

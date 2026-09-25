@@ -8,29 +8,34 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
 
 var (
-	ErrWorkflowEmptySteps          = errors.New("workflow: must have at least one step")
-	ErrWorkflowNameRequired        = errors.New("workflow: name cannot be empty")
-	ErrWorkflowPlanNotAllowed      = errors.New("workflow: plan does not allow workflows")
-	ErrWorkflowInvalidTrigger      = errors.New("workflow: trigger type must be manual")
-	ErrWorkflowDuplicateStep       = errors.New("workflow: duplicate step name")
-	ErrWorkflowInvalidStepTarget   = errors.New("workflow: step must specify exactly one of run, path, or wait_for_event")
-	ErrWorkflowInvalidPath         = errors.New("workflow: step path must start with '/'")
-	ErrWorkflowInvalidMethod       = errors.New("workflow: step method is not supported")
-	ErrWorkflowInvalidRun          = errors.New("workflow: step run cannot be empty")
-	ErrWorkflowInvalidInput        = errors.New("workflow: step input must be valid JSON")
-	ErrWorkflowUnknownDependency   = errors.New("workflow: step depends on unknown step")
-	ErrWorkflowDuplicateDependency = errors.New("workflow: step has a duplicate dependency")
-	ErrWorkflowSelfDependency      = errors.New("workflow: step cannot depend on itself")
-	ErrWorkflowDAGCycle            = errors.New("workflow: circular dependency detected in steps")
-	ErrWorkflowTimeoutInvalid      = errors.New("workflow: step timeout cannot be negative")
-	ErrWorkflowTimeoutExceeded     = errors.New("workflow: step timeout exceeds plan limit")
-	ErrWorkflowWaitTimeoutInvalid  = errors.New("workflow: wait_for_event timeout must be between 1s and the plan limit")
-	ErrWorkflowRetryInvalid        = errors.New("workflow: retry must have 1-25 attempts and fixed or exponential backoff")
-	ErrWorkflowUnknownOnTimeout    = errors.New("workflow: on_timeout references unknown step")
+	ErrWorkflowEmptySteps             = errors.New("workflow: must have at least one step")
+	ErrWorkflowNameRequired           = errors.New("workflow: name cannot be empty")
+	ErrWorkflowPlanNotAllowed         = errors.New("workflow: plan does not allow workflows")
+	ErrWorkflowInvalidTrigger         = errors.New("workflow: trigger type must be manual")
+	ErrWorkflowDuplicateStep          = errors.New("workflow: duplicate step name")
+	ErrWorkflowInvalidStepTarget      = errors.New("workflow: step must specify exactly one of run, path, wait_for_event, wait_for_callback, or wait_for_duration")
+	ErrWorkflowInvalidPath            = errors.New("workflow: step path must start with '/'")
+	ErrWorkflowInvalidMethod          = errors.New("workflow: step method is not supported")
+	ErrWorkflowInvalidRun             = errors.New("workflow: step run cannot be empty")
+	ErrWorkflowInvalidInput           = errors.New("workflow: step input must be valid JSON")
+	ErrWorkflowUnknownDependency      = errors.New("workflow: step depends on unknown step")
+	ErrWorkflowDuplicateDependency    = errors.New("workflow: step has a duplicate dependency")
+	ErrWorkflowSelfDependency         = errors.New("workflow: step cannot depend on itself")
+	ErrWorkflowDAGCycle               = errors.New("workflow: circular dependency detected in steps")
+	ErrWorkflowTimeoutInvalid         = errors.New("workflow: step timeout cannot be negative")
+	ErrWorkflowTimeoutExceeded        = errors.New("workflow: step timeout exceeds plan limit")
+	ErrWorkflowWaitTimeoutInvalid     = errors.New("workflow: event or callback wait timeout must be between 1s and the plan limit")
+	ErrWorkflowWaitDurationInvalid    = errors.New("workflow: wait_for_duration must be between 1s and the plan limit")
+	ErrWorkflowWaitOptionsInvalid     = errors.New("workflow: wait_for_duration cannot have input, method, timeout, on_timeout, or retry")
+	ErrWorkflowCallbackOptionsInvalid = errors.New("workflow: wait_for_callback cannot have input, method, or retry")
+	ErrWorkflowReservedEventName      = errors.New("workflow: wait_for_event name uses a reserved callback prefix")
+	ErrWorkflowRetryInvalid           = errors.New("workflow: retry must have 1-25 attempts and fixed or exponential backoff")
+	ErrWorkflowUnknownOnTimeout       = errors.New("workflow: on_timeout references unknown step")
 )
 
 // WorkflowTriggerSpec describes how a workflow is started. Manual is the
@@ -52,16 +57,18 @@ type WorkflowSpec struct {
 // existing HTTP wake executor and are intentionally additive during the
 // runtime migration.
 type WorkflowStepSpec struct {
-	Name         string             `json:"name" yaml:"name" toml:"name"`
-	Run          string             `json:"run,omitempty" yaml:"run,omitempty" toml:"run,omitempty"`
-	Input        json.RawMessage    `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
-	Path         string             `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
-	Method       string             `json:"method,omitempty" yaml:"method,omitempty" toml:"method,omitempty"`
-	DependsOn    []string           `json:"depends_on,omitempty" yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
-	WaitForEvent string             `json:"wait_for_event,omitempty" yaml:"wait_for_event,omitempty" toml:"wait_for_event,omitempty"`
-	Timeout      time.Duration      `json:"timeout,omitempty" yaml:"timeout,omitempty" toml:"timeout,omitempty"`
-	OnTimeout    string             `json:"on_timeout,omitempty" yaml:"on_timeout,omitempty" toml:"on_timeout,omitempty"`
-	Retry        *WorkflowRetrySpec `json:"retry,omitempty" yaml:"retry,omitempty" toml:"retry,omitempty"`
+	Name            string             `json:"name" yaml:"name" toml:"name"`
+	Run             string             `json:"run,omitempty" yaml:"run,omitempty" toml:"run,omitempty"`
+	Input           json.RawMessage    `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
+	Path            string             `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
+	Method          string             `json:"method,omitempty" yaml:"method,omitempty" toml:"method,omitempty"`
+	DependsOn       []string           `json:"depends_on,omitempty" yaml:"depends_on,omitempty" toml:"depends_on,omitempty"`
+	WaitForEvent    string             `json:"wait_for_event,omitempty" yaml:"wait_for_event,omitempty" toml:"wait_for_event,omitempty"`
+	WaitForCallback bool               `json:"wait_for_callback,omitempty" yaml:"wait_for_callback,omitempty" toml:"wait_for_callback,omitempty"`
+	WaitForDuration time.Duration      `json:"wait_for_duration,omitempty" yaml:"wait_for_duration,omitempty" toml:"wait_for_duration,omitempty"`
+	Timeout         time.Duration      `json:"timeout,omitempty" yaml:"timeout,omitempty" toml:"timeout,omitempty"`
+	OnTimeout       string             `json:"on_timeout,omitempty" yaml:"on_timeout,omitempty" toml:"on_timeout,omitempty"`
+	Retry           *WorkflowRetrySpec `json:"retry,omitempty" yaml:"retry,omitempty" toml:"retry,omitempty"`
 }
 
 // WorkflowRetrySpec configures step retry policies.
@@ -104,7 +111,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 	}
 	allowed := map[string]struct{}{
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
-		"depends_on": {}, "wait_for_event": {}, "timeout": {},
+		"depends_on": {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "timeout": {},
 		"on_timeout": {}, "retry": {},
 	}
 	for key := range fields {
@@ -114,16 +121,18 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 	}
 
 	type wire struct {
-		Name         string             `json:"name"`
-		Run          string             `json:"run"`
-		Input        json.RawMessage    `json:"input"`
-		Path         string             `json:"path"`
-		Method       string             `json:"method"`
-		DependsOn    []string           `json:"depends_on"`
-		WaitForEvent string             `json:"wait_for_event"`
-		Timeout      json.RawMessage    `json:"timeout"`
-		OnTimeout    string             `json:"on_timeout"`
-		Retry        *WorkflowRetrySpec `json:"retry"`
+		Name            string             `json:"name"`
+		Run             string             `json:"run"`
+		Input           json.RawMessage    `json:"input"`
+		Path            string             `json:"path"`
+		Method          string             `json:"method"`
+		DependsOn       []string           `json:"depends_on"`
+		WaitForEvent    string             `json:"wait_for_event"`
+		WaitForCallback bool               `json:"wait_for_callback"`
+		WaitForDuration json.RawMessage    `json:"wait_for_duration"`
+		Timeout         json.RawMessage    `json:"timeout"`
+		OnTimeout       string             `json:"on_timeout"`
+		Retry           *WorkflowRetrySpec `json:"retry"`
 	}
 	var w wire
 	if err := json.Unmarshal(data, &w); err != nil {
@@ -133,10 +142,16 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	waitForDuration, err := decodeWorkflowDuration(w.WaitForDuration, "wait_for_duration")
+	if err != nil {
+		return err
+	}
 	*s = WorkflowStepSpec{
 		Name: w.Name, Run: w.Run, Input: cloneRawJSON(w.Input), Path: w.Path,
 		Method: w.Method, DependsOn: append([]string(nil), w.DependsOn...),
-		WaitForEvent: w.WaitForEvent, Timeout: timeout, OnTimeout: w.OnTimeout,
+		WaitForEvent: w.WaitForEvent, WaitForCallback: w.WaitForCallback,
+		WaitForDuration: waitForDuration,
+		Timeout:         timeout, OnTimeout: w.OnTimeout,
 		Retry: w.Retry,
 	}
 	return nil
@@ -149,20 +164,28 @@ func (s WorkflowStepSpec) MarshalJSON() ([]byte, error) {
 	if s.Timeout != 0 {
 		timeout = s.Timeout.String()
 	}
+	var waitForDuration any
+	if s.WaitForDuration != 0 {
+		waitForDuration = s.WaitForDuration.String()
+	}
 	return json.Marshal(struct {
-		Name         string             `json:"name"`
-		Run          string             `json:"run,omitempty"`
-		Input        json.RawMessage    `json:"input,omitempty"`
-		Path         string             `json:"path,omitempty"`
-		Method       string             `json:"method,omitempty"`
-		DependsOn    []string           `json:"depends_on,omitempty"`
-		WaitForEvent string             `json:"wait_for_event,omitempty"`
-		Timeout      any                `json:"timeout,omitempty"`
-		OnTimeout    string             `json:"on_timeout,omitempty"`
-		Retry        *WorkflowRetrySpec `json:"retry,omitempty"`
+		Name            string             `json:"name"`
+		Run             string             `json:"run,omitempty"`
+		Input           json.RawMessage    `json:"input,omitempty"`
+		Path            string             `json:"path,omitempty"`
+		Method          string             `json:"method,omitempty"`
+		DependsOn       []string           `json:"depends_on,omitempty"`
+		WaitForEvent    string             `json:"wait_for_event,omitempty"`
+		WaitForCallback bool               `json:"wait_for_callback,omitempty"`
+		WaitForDuration any                `json:"wait_for_duration,omitempty"`
+		Timeout         any                `json:"timeout,omitempty"`
+		OnTimeout       string             `json:"on_timeout,omitempty"`
+		Retry           *WorkflowRetrySpec `json:"retry,omitempty"`
 	}{
 		Name: s.Name, Run: s.Run, Input: s.Input, Path: s.Path, Method: s.Method,
-		DependsOn: s.DependsOn, WaitForEvent: s.WaitForEvent, Timeout: timeout,
+		DependsOn: s.DependsOn, WaitForEvent: s.WaitForEvent,
+		WaitForCallback: s.WaitForCallback,
+		WaitForDuration: waitForDuration, Timeout: timeout,
 		OnTimeout: s.OnTimeout, Retry: s.Retry,
 	})
 }
@@ -179,7 +202,7 @@ func (s *WorkflowStepSpec) UnmarshalYAML(node *yaml.Node) error {
 	}
 	allowed := map[string]struct{}{
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
-		"depends_on": {}, "wait_for_event": {}, "timeout": {},
+		"depends_on": {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "timeout": {},
 		"on_timeout": {}, "retry": {},
 	}
 	for key := range fields {
@@ -195,23 +218,27 @@ func (s *WorkflowStepSpec) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func decodeWorkflowTimeout(raw json.RawMessage) (time.Duration, error) {
+	return decodeWorkflowDuration(raw, "timeout")
+}
+
+func decodeWorkflowDuration(raw json.RawMessage, field string) (time.Duration, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return 0, nil
 	}
 	if raw[0] == '"' {
 		var value string
 		if err := json.Unmarshal(raw, &value); err != nil {
-			return 0, fmt.Errorf("workflow: invalid timeout: %w", err)
+			return 0, fmt.Errorf("workflow: invalid %s: %w", field, err)
 		}
 		d, err := parseWorkflowDuration(value)
 		if err != nil {
-			return 0, fmt.Errorf("workflow: invalid timeout %q: %w", value, err)
+			return 0, fmt.Errorf("workflow: invalid %s %q: %w", field, value, err)
 		}
 		return d, nil
 	}
 	var nanos int64
 	if err := json.Unmarshal(raw, &nanos); err != nil {
-		return 0, fmt.Errorf("workflow: timeout must be a duration string: %w", err)
+		return 0, fmt.Errorf("workflow: %s must be a duration string: %w", field, err)
 	}
 	return time.Duration(nanos), nil
 }
@@ -280,7 +307,8 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		hasRun := strings.TrimSpace(step.Run) != ""
 		hasPath := strings.TrimSpace(step.Path) != ""
 		hasEvent := strings.TrimSpace(step.WaitForEvent) != ""
-		if boolCount(hasRun, hasPath, hasEvent) != 1 {
+		hasTimer := step.WaitForDuration != 0
+		if boolCount(hasRun, hasPath, hasEvent, step.WaitForCallback, hasTimer) != 1 {
 			return nil, fmt.Errorf("%w in step %q", ErrWorkflowInvalidStepTarget, step.Name)
 		}
 		if hasRun && !validWorkflowRunName(step.Run) {
@@ -305,7 +333,21 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		if step.Timeout < 0 {
 			return nil, fmt.Errorf("%w in step %q", ErrWorkflowTimeoutInvalid, step.Name)
 		}
-		if hasEvent {
+		if hasTimer {
+			if step.WaitForDuration < time.Second || maxWaitDays <= 0 || step.WaitForDuration > maxWaitDuration {
+				return nil, fmt.Errorf("%w in step %q", ErrWorkflowWaitDurationInvalid, step.Name)
+			}
+			if len(step.Input) > 0 || step.Method != "" || step.Timeout != 0 || step.OnTimeout != "" || step.Retry != nil {
+				return nil, fmt.Errorf("%w in step %q", ErrWorkflowWaitOptionsInvalid, step.Name)
+			}
+		}
+		if step.WaitForCallback && (len(step.Input) > 0 || step.Method != "" || step.Retry != nil) {
+			return nil, fmt.Errorf("%w in step %q", ErrWorkflowCallbackOptionsInvalid, step.Name)
+		}
+		if hasEvent && strings.HasPrefix(step.WaitForEvent, workflowCallbackEventPrefix) {
+			return nil, fmt.Errorf("%w in step %q", ErrWorkflowReservedEventName, step.Name)
+		}
+		if hasEvent || step.WaitForCallback {
 			if step.Timeout < time.Second || maxWaitDays <= 0 || step.Timeout > maxWaitDuration {
 				return nil, fmt.Errorf("%w in step %q", ErrWorkflowWaitTimeoutInvalid, step.Name)
 			}
@@ -372,6 +414,24 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 	}
 
 	return sorted, nil
+}
+
+const workflowCallbackEventPrefix = "workflow.callback."
+
+// WorkflowCallbackID is a stable, account-authenticated callback handle for
+// one step of one run. It is an identifier, not a bearer credential.
+func WorkflowCallbackID(runID, stepName string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("gregale-workflow-callback\x00"+runID+"\x00"+stepName)).String()
+}
+
+// WorkflowCallbackEventName keeps callback completions separate from ordinary
+// wait_for_event names, even when several steps wait within the same run.
+func WorkflowCallbackEventName(runID, stepName string) string {
+	return workflowCallbackEventPrefix + WorkflowCallbackID(runID, stepName)
+}
+
+func IsWorkflowCallbackEventName(eventName string) bool {
+	return strings.HasPrefix(eventName, workflowCallbackEventPrefix)
 }
 
 func boolCount(values ...bool) int {
@@ -473,4 +533,21 @@ type InjectWorkflowEventRequest struct {
 type InjectWorkflowEventResponse struct {
 	Status    string `json:"status"`
 	EventName string `json:"event_name"`
+}
+
+// WorkflowCallbackResponse identifies an authenticated callback wait. The ID
+// can be supplied to a trusted service but carries no authority by itself.
+type WorkflowCallbackResponse struct {
+	ID        string  `json:"id"`
+	StepName  string  `json:"step_name"`
+	ExpiresAt *string `json:"expires_at,omitempty"`
+}
+
+type ListWorkflowCallbacksResponse struct {
+	Callbacks []WorkflowCallbackResponse `json:"callbacks"`
+}
+
+type CompleteWorkflowCallbackResponse struct {
+	Status    string `json:"status"`
+	Duplicate bool   `json:"duplicate"`
 }

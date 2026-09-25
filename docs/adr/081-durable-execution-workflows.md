@@ -1,6 +1,11 @@
 # ADR-081 · Durable-execution wrapper over crons (issue #669)
 
 - **Status:** proposed
+- **Extended by [ADR-262](262-durable-workflow-timers.md):**
+  `wait_for_duration` is now a second long-park primitive. Historical
+  `wait_for_event`-only language below describes the original scope.
+- **Extended by [ADR-263](263-authenticated-workflow-callbacks.md):**
+  `wait_for_callback` adds account-authorized, per-run one-time completion.
 - **Superseded (in part, PR-E):** prose referred to the monolithic
   `cmd/gatewayd/` daemon split by ADR-070 into `gatewayd-public` (TLS-only
   edge) and `gatewayd-internal` (routing + wake + proxy). Body is preserved

@@ -1695,7 +1695,7 @@ type Limits struct {
 	// WorkflowStepMaxTimeout is the maximum active execution timeout for
 	// one workflow step.
 	WorkflowStepMaxTimeout time.Duration
-	// WorkflowMaxWaitDays is the maximum wait_for_event timeout.
+	// WorkflowMaxWaitDays is the maximum event-wait timeout or duration wait.
 	WorkflowMaxWaitDays int
 }
 
@@ -5361,7 +5361,7 @@ func (p Plan) WorkflowStepMaxTimeout() time.Duration {
 	return l.WorkflowStepMaxTimeout
 }
 
-// WorkflowMaxWaitDays returns the maximum wait_for_event timeout for
+// WorkflowMaxWaitDays returns the maximum event-wait timeout or duration wait for
 // the plan. Unknown plans fail closed.
 func (p Plan) WorkflowMaxWaitDays() int {
 	l, ok := LimitsFor(p)

@@ -2,6 +2,82 @@
 
 Use asynchronous invokes, jobs, webhooks, and scheduled triggers when work does not need to finish in the request path.
 
+## Durable workflow waits
+
+A declarative workflow can pause between handler invocations without keeping a
+VM alive. For example, this order flow charges a card, waits three fixed
+24-hour days, then checks delivery:
+
+```yaml
+workflows:
+  - name: order_followup
+    trigger:
+      type: manual
+    steps:
+      - name: charge
+        run: charge_card
+        retry:
+          max_attempts: 3
+          backoff: exponential
+      - name: delivery_delay
+        wait_for_duration: 3d
+        depends_on: [charge]
+      - name: check_delivery
+        run: check_delivery
+        depends_on: [delivery_delay]
+      - name: send_email
+        run: send_email
+        depends_on: [check_delivery]
+```
+
+Deploy the manifest, then start a run with:
+
+```bash
+gregale workflows run order_followup --app APP_SLUG --input '{"order_id":"ord_123"}'
+```
+
+The timer
+starts only when its dependencies succeed. It is stored in the workflow
+ledger and resumed by the scheduler when due; no application instance is
+reserved for the wait. `wait_for_duration` accepts `1s` through `7d` on
+workflow-enabled plans. It cannot be combined with `run`, `path`,
+`wait_for_event`, `timeout`, `on_timeout`, or `retry` in one step.
+
+For a one-time callback, declare a separate `wait_for_callback: true` step
+with a `timeout` and optionally an `on_timeout` handler:
+
+```yaml
+- name: await_delivery
+  wait_for_callback: true
+  timeout: 3d
+  on_timeout: delivery_timeout
+  depends_on: [charge]
+- name: delivery_timeout
+  run: notify_support
+```
+
+After starting the run, an account-authorized client calls
+`GET /v1/workflows/runs/{id}/callbacks` to get the stable callback ID for
+`await_delivery`. It completes the step with
+`POST /v1/workflows/runs/{id}/callbacks/{callback_id}` and a JSON body.
+Completion can arrive before the step activates. Repeating the same JSON
+returns a duplicate receipt; sending a different body conflicts. The timeout
+starts when the step first becomes runnable, not when the run was created.
+The workflow stays parked between callbacks; no application instance is
+reserved for the wait. The callback ID is not an authentication token:
+both requests need the owning account's API authorization.
+
+For an external provider, receive and verify its webhook in your own handler,
+then use that authenticated Gregale API to complete the callback. Do not give
+the provider your Gregale API key. There is no direct public callback URL yet.
+For repeatable or broadcast signals, continue using `wait_for_event` and
+`POST /v1/workflows/runs/{id}/events` with a stable `Idempotency-Key`.
+
+This is a declarative workflow, not a replayed single function: handlers are
+separate at-least-once invocations and must make external side effects
+idempotent. Gregale does not yet provide `ctx.sleep()`, `waitUntil()` or
+year-long code-as-workflow executions.
+
 ```bash
 gregale invoke --async --payload @payload.json APP_ID
 gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID

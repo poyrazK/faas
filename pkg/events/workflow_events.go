@@ -12,6 +12,7 @@ const (
 	WorkflowStepSucceeded = "app.workflow.step_succeeded"
 	WorkflowStepFailed    = "app.workflow.step_failed"
 	WorkflowAwaitingEvent = "app.workflow.awaiting_event"
+	WorkflowAwaitingTimer = "app.workflow.awaiting_timer"
 	WorkflowEventReceived = "app.workflow.event_received"
 	WorkflowSucceeded     = "app.workflow.succeeded"
 	WorkflowFailed        = "app.workflow.failed"
@@ -48,6 +49,14 @@ type WorkflowAwaitingEventPayload struct {
 	StepName  string `json:"step_name"`
 	EventName string `json:"event_name"`
 	Timeout   string `json:"timeout"`
+}
+
+// WorkflowAwaitingTimerPayload is emitted when a duration wait first parks.
+type WorkflowAwaitingTimerPayload struct {
+	WorkflowEventCommon
+	StepName string    `json:"step_name"`
+	Duration string    `json:"duration"`
+	WakeAt   time.Time `json:"wake_at"`
 }
 
 // WorkflowEventReceivedPayload is emitted when an external event matches an awaiting run.

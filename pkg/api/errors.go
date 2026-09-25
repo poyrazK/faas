@@ -1768,15 +1768,18 @@ const (
 	CodeJobCommandInvalid = "job_command_invalid"
 
 	// Workflows (ADR-081).
-	CodePlanWorkflowsNotAllowed       = "plan_workflows_not_allowed"
-	CodePlanWorkflowsQuota            = "plan_workflows_quota"
-	CodeWorkflowDAGCycle              = "workflow_dag_cycle"
-	CodeWorkflowStepNotFound          = "workflow_step_not_found"
-	CodeWorkflowRunNotFound           = "workflow_run_not_found"
-	CodeWorkflowDefinitionNotFound    = "workflow_definition_not_found"
-	CodeWorkflowEventNotFound         = "workflow_event_not_found"
-	CodeWorkflowNotRunning            = "workflow_not_running"
-	CodeWorkflowDeploymentUnavailable = "workflow_deployment_unavailable"
+	CodePlanWorkflowsNotAllowed         = "plan_workflows_not_allowed"
+	CodePlanWorkflowsQuota              = "plan_workflows_quota"
+	CodeWorkflowDAGCycle                = "workflow_dag_cycle"
+	CodeWorkflowStepNotFound            = "workflow_step_not_found"
+	CodeWorkflowRunNotFound             = "workflow_run_not_found"
+	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
+	CodeWorkflowEventNotFound           = "workflow_event_not_found"
+	CodeWorkflowNotRunning              = "workflow_not_running"
+	CodeWorkflowDeploymentUnavailable   = "workflow_deployment_unavailable"
+	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
+	CodeWorkflowCallbackExpired         = "workflow_callback_expired"
+	CodeWorkflowCallbackPayloadConflict = "workflow_callback_payload_conflict"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -1835,6 +1838,8 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeWorkflowDeploymentUnavailable:
 		return http.StatusNotImplemented
+	case CodeWorkflowCallbackExpired:
+		return http.StatusGone
 	case CodeCapacity, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
@@ -1874,6 +1879,7 @@ func StatusForCode(code string) int {
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
@@ -3756,6 +3762,21 @@ func ErrWorkflowStepNotFound() *Problem {
 func ErrWorkflowNotRunning() *Problem {
 	return NewProblem(http.StatusConflict, CodeWorkflowNotRunning,
 		"Workflow run not running", "the workflow run is not in running or awaiting_event status.")
+}
+
+func ErrWorkflowCallbackClosed() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowCallbackClosed,
+		"Workflow callback closed", "the callback step or its workflow run is terminal.")
+}
+
+func ErrWorkflowCallbackExpired() *Problem {
+	return NewProblem(http.StatusGone, CodeWorkflowCallbackExpired,
+		"Workflow callback expired", "the callback wait deadline has elapsed.")
+}
+
+func ErrWorkflowCallbackPayloadConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowCallbackPayloadConflict,
+		"Workflow callback payload conflict", "this callback was already completed with a different payload.")
 }
 
 // ErrJobTaskNotFound marks a 404 on (run_id, task_index) lookups

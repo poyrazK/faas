@@ -11887,6 +11887,77 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/workflows/runs/{id}/callbacks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier.
+    get:
+      tags: [workflows]
+      operationId: listWorkflowCallbacks
+      summary: List callback handles for a workflow run.
+      description: Callback IDs identify waits but are not bearer credentials; completion requires account authorization.
+      responses:
+        '200':
+          description: Callback handles from the run's snapshotted definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowCallbacksResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/callbacks/{callback_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow run whose callback will be completed.
+      - name: callback_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Stable callback handle returned by the callback list endpoint.
+    post:
+      tags: [workflows]
+      operationId: completeWorkflowCallback
+      summary: Complete one callback wait.
+      description: |
+        Requires the run owner's workflow-write authorization. An identical
+        retry returns duplicate=true, including after the run finishes; a
+        different payload conflicts. Completion may arrive before the step
+        parks and will be consumed when the step becomes runnable.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '200':
+          description: The callback was durably received or was an identical retry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompleteWorkflowCallbackResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '409':
+          description: Callback is closed or the ID was completed with different JSON.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: Callback wait has expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/workflows/runs/{id}/events:
     parameters:
       - name: id
@@ -26237,8 +26308,8 @@ components:
       description: |
         One workflow step. The canonical ADR-081 target is `run`; `path`
         and `method` remain accepted for the existing HTTP wake executor
-        during the runtime migration. Exactly one of `run`, `path`, or
-        `wait_for_event` must be supplied.
+        during the runtime migration. Exactly one of `run`, `path`,
+        `wait_for_event`, `wait_for_callback`, or `wait_for_duration` must be supplied.
       type: object
       required: [name]
       properties:
@@ -26269,6 +26340,13 @@ components:
           items: { type: string }
         wait_for_event:
           type: string
+        wait_for_callback:
+          type: boolean
+          description: "Park for one account-authorized callback completion. Requires a wait timeout."
+        wait_for_duration:
+          type: string
+          description: "Durable timer, from 1s up to the plan's 7-day workflow wait limit. Fixed day suffixes such as `3d` mean 24-hour days; no compute is held while waiting."
+          example: "3d"
         timeout:
           type: string
           description: "Step or wait timeout in time.ParseDuration form, for example `30s`; workflow also accepts fixed 24-hour day suffixes such as `7d`."
@@ -26576,6 +26654,32 @@ components:
       properties:
         event_name: { type: string }
         payload: {}
+
+    WorkflowCallbackResponse:
+      description: Account-authorized handle for one callback wait step.
+      type: object
+      required: [id, step_name]
+      properties:
+        id: { type: string, format: uuid }
+        step_name: { type: string }
+        expires_at: { type: string, format: date-time, description: Present after the wait activates. }
+
+    ListWorkflowCallbacksResponse:
+      description: Callback handles declared in this run's workflow snapshot.
+      type: object
+      required: [callbacks]
+      properties:
+        callbacks:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowCallbackResponse' }
+
+    CompleteWorkflowCallbackResponse:
+      description: Receipt for an initial or repeated callback completion.
+      type: object
+      required: [status, duplicate]
+      properties:
+        status: { type: string, enum: [received] }
+        duplicate: { type: boolean }
 
     CreateDeploymentRequest:
       description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients."

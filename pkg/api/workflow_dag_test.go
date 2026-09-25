@@ -57,6 +57,28 @@ func TestValidateWorkflowDAG(t *testing.T) {
 			wantOrder: 3,
 		},
 		{
+			name: "three-day durable timer",
+			spec: WorkflowSpec{
+				Name: "order",
+				Steps: []WorkflowStepSpec{
+					{Name: "charge", Run: "charge"},
+					{Name: "wait", WaitForDuration: 3 * 24 * time.Hour, DependsOn: []string{"charge"}},
+					{Name: "check_delivery", Run: "check_delivery", DependsOn: []string{"wait"}},
+				},
+			},
+			plan:      PlanHobby,
+			wantOrder: 3,
+		},
+		{
+			name: "callback wait",
+			spec: WorkflowSpec{Name: "approval", Steps: []WorkflowStepSpec{
+				{Name: "request", Run: "request_approval"},
+				{Name: "await", WaitForCallback: true, Timeout: 3 * 24 * time.Hour, DependsOn: []string{"request"}},
+				{Name: "continue", Run: "continue_order", DependsOn: []string{"await"}},
+			}},
+			plan: PlanHobby, wantOrder: 3,
+		},
+		{
 			name: "empty steps error",
 			spec: WorkflowSpec{
 				Name:  "empty",
@@ -215,6 +237,62 @@ func TestValidateWorkflowDAG_RejectsPlanAndPolicyViolations(t *testing.T) {
 			wantErr: ErrWorkflowWaitTimeoutInvalid,
 		},
 		{
+			name: "callback requires timeout",
+			spec: WorkflowSpec{Name: "callback-no-timeout", Steps: []WorkflowStepSpec{
+				{Name: "await", WaitForCallback: true},
+			}},
+			plan: PlanHobby, wantErr: ErrWorkflowWaitTimeoutInvalid,
+		},
+		{
+			name: "callback cannot run handler",
+			spec: WorkflowSpec{Name: "callback-with-handler", Steps: []WorkflowStepSpec{
+				{Name: "await", WaitForCallback: true, Run: "handler", Timeout: time.Hour},
+			}},
+			plan: PlanHobby, wantErr: ErrWorkflowInvalidStepTarget,
+		},
+		{
+			name: "callback cannot retry",
+			spec: WorkflowSpec{Name: "callback-with-retry", Steps: []WorkflowStepSpec{
+				{Name: "await", WaitForCallback: true, Timeout: time.Hour, Retry: &WorkflowRetrySpec{MaxAttempts: 2}},
+			}},
+			plan: PlanHobby, wantErr: ErrWorkflowCallbackOptionsInvalid,
+		},
+		{
+			name: "callback event namespace reserved",
+			spec: WorkflowSpec{Name: "reserved-event", Steps: []WorkflowStepSpec{
+				{Name: "await", WaitForEvent: "workflow.callback.fake", Timeout: time.Hour},
+			}},
+			plan: PlanHobby, wantErr: ErrWorkflowReservedEventName,
+		},
+		{
+			name: "subsecond timer",
+			spec: WorkflowSpec{Name: "short-timer", Steps: []WorkflowStepSpec{
+				{Name: "wait", WaitForDuration: 500 * time.Millisecond},
+			}},
+			plan: PlanHobby, wantErr: ErrWorkflowWaitDurationInvalid,
+		},
+		{
+			name: "timer exceeds plan cap",
+			spec: WorkflowSpec{Name: "long-timer", Steps: []WorkflowStepSpec{
+				{Name: "wait", WaitForDuration: 8 * 24 * time.Hour},
+			}},
+			plan: PlanHobby, wantErr: ErrWorkflowWaitDurationInvalid,
+		},
+		{
+			name: "timer cannot have active timeout",
+			spec: WorkflowSpec{Name: "mixed-timer", Steps: []WorkflowStepSpec{
+				{Name: "wait", WaitForDuration: time.Hour, Timeout: time.Second},
+			}},
+			plan: PlanHobby, wantErr: ErrWorkflowWaitOptionsInvalid,
+		},
+		{
+			name: "timer cannot have another target",
+			spec: WorkflowSpec{Name: "mixed-target", Steps: []WorkflowStepSpec{
+				{Name: "wait", WaitForDuration: time.Hour, Run: "charge"},
+			}},
+			plan: PlanHobby, wantErr: ErrWorkflowInvalidStepTarget,
+		},
+		{
 			name: "retry attempt zero",
 			spec: WorkflowSpec{
 				Name: "bad-retry",
@@ -336,6 +414,54 @@ func TestWorkflowStepJSONRejectsUnknownField(t *testing.T) {
 	err := json.Unmarshal([]byte(`{"name":"bad","steps":[{"name":"main","run":"do_work","unknown":true}]}`), &spec)
 	if err == nil || !strings.Contains(err.Error(), `unknown field "unknown"`) {
 		t.Fatalf("error = %v, want nested unknown-field error", err)
+	}
+}
+
+func TestWorkflowDurationWaitJSONRoundTrip(t *testing.T) {
+	var spec WorkflowSpec
+	if err := json.Unmarshal([]byte(`{"name":"order","steps":[{"name":"wait","wait_for_duration":"3d"}]}`), &spec); err != nil {
+		t.Fatalf("unmarshal timer: %v", err)
+	}
+	if got := spec.Steps[0].WaitForDuration; got != 72*time.Hour {
+		t.Fatalf("wait duration = %s, want 72h", got)
+	}
+	if _, err := ValidateWorkflowDAG(spec, PlanHobby); err != nil {
+		t.Fatalf("validate timer: %v", err)
+	}
+	encoded, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatalf("marshal timer: %v", err)
+	}
+	var roundTrip WorkflowSpec
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatalf("unmarshal round trip: %v", err)
+	}
+	if got := roundTrip.Steps[0].WaitForDuration; got != 72*time.Hour {
+		t.Fatalf("round-trip wait duration = %s, want 72h", got)
+	}
+}
+
+func TestWorkflowCallbackJSONAndIdentifiers(t *testing.T) {
+	var spec WorkflowSpec
+	if err := json.Unmarshal([]byte(`{"name":"approval","steps":[{"name":"await","wait_for_callback":true,"timeout":"3d"}]}`), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if !spec.Steps[0].WaitForCallback || spec.Steps[0].Timeout != 72*time.Hour {
+		t.Fatalf("callback spec = %#v", spec.Steps[0])
+	}
+	if _, err := ValidateWorkflowDAG(spec, PlanHobby); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(spec)
+	if err != nil || !strings.Contains(string(encoded), `"wait_for_callback":true`) {
+		t.Fatalf("encoded callback = %s, err = %v", encoded, err)
+	}
+	one := WorkflowCallbackID("run-1", "await")
+	if one != WorkflowCallbackID("run-1", "await") || one == WorkflowCallbackID("run-2", "await") || one == WorkflowCallbackID("run-1", "other") {
+		t.Fatal("callback IDs are not stable and run/step scoped")
+	}
+	if !IsWorkflowCallbackEventName(WorkflowCallbackEventName("run-1", "await")) {
+		t.Fatal("callback event did not use reserved namespace")
 	}
 }
 

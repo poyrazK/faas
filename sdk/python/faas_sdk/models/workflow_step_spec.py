@@ -21,8 +21,8 @@ T = TypeVar("T", bound="WorkflowStepSpec")
 class WorkflowStepSpec:
     """One workflow step. The canonical ADR-081 target is `run`; `path`
     and `method` remain accepted for the existing HTTP wake executor
-    during the runtime migration. Exactly one of `run`, `path`, or
-    `wait_for_event` must be supplied.
+    during the runtime migration. Exactly one of `run`, `path`,
+    `wait_for_event`, `wait_for_callback`, or `wait_for_duration` must be supplied.
 
     """
 
@@ -36,6 +36,11 @@ class WorkflowStepSpec:
     method: WorkflowStepSpecMethod | Unset = UNSET
     depends_on: list[str] | Unset = UNSET
     wait_for_event: str | Unset = UNSET
+    wait_for_callback: bool | Unset = UNSET
+    """Park for one account-authorized callback completion. Requires a wait timeout."""
+    wait_for_duration: str | Unset = UNSET
+    """Durable timer, from 1s up to the plan's 7-day workflow wait limit. Fixed day suffixes such as `3d` mean
+    24-hour days; no compute is held while waiting."""
     timeout: str | Unset = UNSET
     """Step or wait timeout in time.ParseDuration form, for example `30s`; workflow also accepts fixed 24-hour day
     suffixes such as `7d`."""
@@ -74,6 +79,10 @@ class WorkflowStepSpec:
 
         wait_for_event = self.wait_for_event
 
+        wait_for_callback = self.wait_for_callback
+
+        wait_for_duration = self.wait_for_duration
+
         timeout = self.timeout
 
         on_timeout = self.on_timeout
@@ -105,6 +114,10 @@ class WorkflowStepSpec:
             field_dict["depends_on"] = depends_on
         if wait_for_event is not UNSET:
             field_dict["wait_for_event"] = wait_for_event
+        if wait_for_callback is not UNSET:
+            field_dict["wait_for_callback"] = wait_for_callback
+        if wait_for_duration is not UNSET:
+            field_dict["wait_for_duration"] = wait_for_duration
         if timeout is not UNSET:
             field_dict["timeout"] = timeout
         if on_timeout is not UNSET:
@@ -162,6 +175,10 @@ class WorkflowStepSpec:
 
         wait_for_event = d.pop("wait_for_event", UNSET)
 
+        wait_for_callback = d.pop("wait_for_callback", UNSET)
+
+        wait_for_duration = d.pop("wait_for_duration", UNSET)
+
         timeout = d.pop("timeout", UNSET)
 
         on_timeout = d.pop("on_timeout", UNSET)
@@ -191,6 +208,8 @@ class WorkflowStepSpec:
             method=method,
             depends_on=depends_on,
             wait_for_event=wait_for_event,
+            wait_for_callback=wait_for_callback,
+            wait_for_duration=wait_for_duration,
             timeout=timeout,
             on_timeout=on_timeout,
             retry=retry,

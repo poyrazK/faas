@@ -2002,6 +2002,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getWorkflowRun))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}/steps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowSteps))))
+	mux.HandleFunc("GET /v1/workflows/runs/{id}/callbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowCallbacks))))
+	mux.HandleFunc("POST /v1/workflows/runs/{id}/callbacks/{callback_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.completeWorkflowCallback))))
 	mux.HandleFunc("POST /v1/workflows/runs/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.injectWorkflowEvent)))))
 	mux.HandleFunc("POST /v1/workflows/runs/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelWorkflowRun)))))
 	mux.HandleFunc("PATCH /v1/triggers/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateTrigger))))
