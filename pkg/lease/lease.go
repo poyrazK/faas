@@ -92,7 +92,7 @@ func isSafeIdent(s string) bool {
 // UUIDv4 token. The CAS predicate is:
 //
 //	state = expectedState
-//	AND (lease_token IS NULL OR lease_expires_at < NOW())
+//	AND (lease_token IS NULL OR lease_expires_at < $now)  -- m.Now(), the clock that wrote it
 //
 // On success the row's lease_token is set to the new UUID and
 // lease_expires_at to Now()+ttl. Returns the Lease on success or
@@ -103,12 +103,16 @@ func (m *Manager) Acquire(ctx context.Context, id, expectedState string, ttl tim
 	token := uuid.NewString()
 	expiresAt := m.Now().Add(ttl)
 
+	// Expiry is compared on the same clock that writes it (m.Now, via
+	// $5). Comparing against the database's now() mixed two clocks: with
+	// the app clock behind the database's by more than a TTL, a freshly
+	// written lease already read as expired and a second holder stole it.
 	q := fmt.Sprintf(`update %s
 		set %s = $2,
 		    %s = $3
 		where %s = $1
 		  and %s = $4
-		  and (%s is null or %s < now())
+		  and (%s is null or %s < $5)
 		returning %s, %s`,
 		m.Table, m.LeaseColumn, m.ExpiresColumn,
 		m.IDColumn, m.StateColumn,
@@ -116,7 +120,7 @@ func (m *Manager) Acquire(ctx context.Context, id, expectedState string, ttl tim
 		m.LeaseColumn, m.ExpiresColumn)
 
 	var got dispatch.Lease
-	err := m.DB.QueryRow(ctx, q, id, token, expiresAt, expectedState).
+	err := m.DB.QueryRow(ctx, q, id, token, expiresAt, expectedState, m.Now()).
 		Scan(&got.Token, &got.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return dispatch.Lease{}, dispatch.ErrLeaseConflict
