@@ -372,7 +372,21 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	return entry, nil
 }
 
-// environmentEdgeRules replaces headers/CORS and redirect/rewrite independently
+// EnsureEnvironmentPolicy loads the complete policy set before a stable
+// environment URL may answer any request, including redirects and CORS
+// preflights. A policy-store error must not turn an IP allowlist into a miss.
+func (g *gatewaydEdgeRules) EnsureEnvironmentPolicy(ctx context.Context, host string) error {
+	if _, _, matched := gateway.EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host); !matched {
+		return nil
+	}
+	if g == nil || g.cache == nil {
+		return errors.New("environment edge policy matcher unavailable")
+	}
+	_, err := g.loadHost(ctx, host)
+	return err
+}
+
+// environmentEdgeRules replaces headers/CORS, redirect/rewrite, and IP independently
 // when a named environment owns either policy. A missing row preserves the
 // corresponding application-wide fallback. The
 // existing edge-rule convergence protocol invalidates this host's cache on
@@ -405,6 +419,7 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 		AppByID(context.Context, string) (state.App, error)
 		GetProjectEnvironmentEdgePolicy(context.Context, string, string, string) (state.ProjectEnvironmentEdgePolicy, error)
 		GetProjectEnvironmentRoutingPolicy(context.Context, string, string, string) (state.ProjectEnvironmentEdgePolicy, error)
+		GetProjectEnvironmentIPPolicy(context.Context, string, string, string) (state.ProjectEnvironmentEdgePolicy, error)
 	})
 	if !ok {
 		return nil, errors.New("environment edge policy lookup unavailable")
@@ -444,6 +459,15 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return nil, err
 	}
+	ipPolicy, err := lookup.GetProjectEnvironmentIPPolicy(ctx, environment.AccountID, app.ID, environment.Slug)
+	if err == nil {
+		if !state.ValidProjectEnvironmentIPRules(ipPolicy.Rules) {
+			return nil, errors.New("invalid environment IP policy")
+		}
+		scoped = replaceEnvironmentRuleGroup(scoped, ipPolicy, host, environment.ID, app, "ip", state.EdgeRuleKindIP, state.EdgeRuleKindIP)
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return nil, err
+	}
 	return scoped, nil
 }
 
@@ -459,8 +483,8 @@ func replaceEnvironmentRuleGroup(scoped []state.EdgeRule, policy state.ProjectEn
 			continue
 		}
 		idSeed := environmentID + "/" + app.ID + "/" + strconv.Itoa(i)
-		if group == "routing" {
-			idSeed = environmentID + "/" + app.ID + "/routing/" + strconv.Itoa(i)
+		if group != "headers-cors" {
+			idSeed = environmentID + "/" + app.ID + "/" + group + "/" + strconv.Itoa(i)
 		}
 		id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(idSeed))
 		out = append(out, state.EdgeRule{

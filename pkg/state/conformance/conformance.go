@@ -85,6 +85,7 @@ func Run(t *testing.T, open Open) {
 		{"project_environment_route_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutePolicy},
 		{"project_environment_edge_policy_is_scoped_and_replaceable", testProjectEnvironmentEdgePolicy},
 		{"project_environment_routing_policy_is_scoped_and_replaceable", testProjectEnvironmentRoutingPolicy},
+		{"project_environment_ip_policy_is_scoped_and_replaceable", testProjectEnvironmentIPPolicy},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
@@ -790,6 +791,59 @@ func testProjectEnvironmentRoutingPolicy(t *testing.T, fx *Fixture) {
 		AccountID: uuid.NewString(), ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
 	}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account routing policy update err = %v, want ErrNotFound", err)
+	}
+}
+
+func testProjectEnvironmentIPPolicy(t *testing.T, fx *Fixture) {
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "ip-" + uuid.NewString()[:8],
+		ScanSource: state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, ProjectID: project.ID,
+		Slug: "ip-api-" + uuid.NewString()[:8], WorkloadName: "api", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentIPPolicy(fx.Ctx, fx.Account.ID, app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("missing IP policy err = %v, want ErrNotFound", err)
+	}
+	policy := state.ProjectEnvironmentEdgePolicy{
+		AccountID: fx.Account.ID, ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
+		Rules: []state.ProjectEnvironmentEdgeRule{{
+			Kind: state.EdgeRuleKindIP, MatchPath: "/", Priority: 100, Enabled: true,
+			Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindIP, IP: &state.EdgeRuleIPAction{Allow: []string{"192.0.2.0/24"}}},
+		}},
+	}
+	created, err := fx.Store.PutProjectEnvironmentIPPolicy(fx.Ctx, policy)
+	if err != nil || created.CreatedAt.IsZero() || !reflect.DeepEqual(created.Rules, policy.Rules) {
+		t.Fatalf("created IP policy = %+v, err = %v", created, err)
+	}
+	got, err := fx.Store.GetProjectEnvironmentIPPolicy(fx.Ctx, fx.Account.ID, app.ID, "staging")
+	if err != nil || !reflect.DeepEqual(got.Rules, policy.Rules) {
+		t.Fatalf("stored IP policy = %+v, err = %v", got, err)
+	}
+	if _, err := fx.Store.GetProjectEnvironmentIPPolicy(fx.Ctx, uuid.NewString(), app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account IP policy err = %v, want ErrNotFound", err)
+	}
+	policy.Rules = []state.ProjectEnvironmentEdgeRule{}
+	updated, err := fx.Store.PutProjectEnvironmentIPPolicy(fx.Ctx, policy)
+	if err != nil || len(updated.Rules) != 0 || !updated.CreatedAt.Equal(created.CreatedAt) {
+		t.Fatalf("updated IP policy = %+v, err = %v", updated, err)
+	}
+	if _, err := fx.Store.PutProjectEnvironmentIPPolicy(fx.Ctx, state.ProjectEnvironmentEdgePolicy{
+		AccountID: uuid.NewString(), ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "staging",
+	}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account IP policy update err = %v, want ErrNotFound", err)
 	}
 }
 

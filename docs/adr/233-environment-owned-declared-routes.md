@@ -126,3 +126,23 @@ Cloning an environment deliberately does not copy bound hostnames: DNS
 ownership and certificate verification must be established for each unique
 hostname. A bound domain cannot be the app-wide default, and deleting its
 environment requires removing the domain first.
+
+## Follow-up: environment-owned IP access policies
+
+An independently replaceable `ip` rule group applies to each workload's
+stable environment URL. `PUT .../workloads/{workload}/ip-policies` accepts
+only IP allow/deny rules; `gregale projects environments policies ip set`
+exposes the same complete replacement. An explicit empty list suppresses
+inherited application IP edge rules without changing headers/CORS,
+redirects/rewrites, or the ordinary application hostname.
+
+Clone copies an explicitly owned IP policy transactionally. State and diff
+report `ip_policies` with its ownership, so an inherited app-wide rule is
+not mistaken for a copied one. The gateway filters app-wide wildcard rules
+to the encoded workload and replaces only the IP group. Stable environment
+URLs check the entire edge-policy load before an edge-generated response,
+including redirects and CORS preflights; a policy-store error returns 503
+instead of silently bypassing an IP allowlist. Policy writes use the existing
+convergence fence to prevent stale authorization during invalidation. JWT,
+throttle, and other remaining edge-rule kinds stay application-owned. The
+separate per-app `public_auth` IP allowlist is not changed by this rule group.

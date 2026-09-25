@@ -23,5 +23,6 @@ export type ProjectEnvironmentWorkloadDiffResponse = {
   routes: ProjectEnvironmentRoutePolicyDiffResponse;
   policies: ProjectEnvironmentEdgePolicyDiffResponse;
   routing_policies: ProjectEnvironmentEdgePolicyDiffResponse;
+  ip_policies: ProjectEnvironmentEdgePolicyDiffResponse;
 };
 

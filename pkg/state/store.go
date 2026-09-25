@@ -2278,6 +2278,8 @@ type Store interface {
 	PutProjectEnvironmentEdgePolicy(ctx context.Context, policy ProjectEnvironmentEdgePolicy) (ProjectEnvironmentEdgePolicy, error)
 	GetProjectEnvironmentRoutingPolicy(ctx context.Context, accountID, appID, scope string) (ProjectEnvironmentEdgePolicy, error)
 	PutProjectEnvironmentRoutingPolicy(ctx context.Context, policy ProjectEnvironmentEdgePolicy) (ProjectEnvironmentEdgePolicy, error)
+	GetProjectEnvironmentIPPolicy(ctx context.Context, accountID, appID, scope string) (ProjectEnvironmentEdgePolicy, error)
+	PutProjectEnvironmentIPPolicy(ctx context.Context, policy ProjectEnvironmentEdgePolicy) (ProjectEnvironmentEdgePolicy, error)
 	CreateProjectEnvironmentPromotion(ctx context.Context, promotion ProjectEnvironmentPromotion, workloads []ProjectEnvironmentPromotionWorkload) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error)
 	ProjectEnvironmentPromotionByID(ctx context.Context, accountID, projectSlug, targetEnvironment, id string) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error)
 	ProjectEnvironmentPromotionByIdempotencyKey(ctx context.Context, accountID, projectSlug, idempotencyKey string) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error)

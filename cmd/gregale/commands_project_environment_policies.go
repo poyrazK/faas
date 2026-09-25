@@ -16,7 +16,10 @@ func cmdProjectsEnvironmentPolicies(args []string) int {
 	if len(args) > 0 && args[0] == "routing" {
 		return cmdProjectsEnvironmentRoutingPolicies(args[1:])
 	}
-	const usage = "usage: gregale projects environments policies <set|routing set> <project> <environment> <workload> (--file PATH|--stdin) [--yes]"
+	if len(args) > 0 && args[0] == "ip" {
+		return cmdProjectsEnvironmentIPPolicies(args[1:])
+	}
+	const usage = "usage: gregale projects environments policies <set|routing set|ip set> <project> <environment> <workload> (--file PATH|--stdin) [--yes]"
 	if len(args) == 0 || args[0] != "set" {
 		PrintUsage(os.Stderr, usage, "projects environments")
 		return 1

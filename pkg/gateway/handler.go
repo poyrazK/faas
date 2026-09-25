@@ -5586,6 +5586,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.observe(r, rec.status, "", "", false, Target{})
 		return
 	}
+	// Stable environment URLs carry independently owned IP policies. Resolve
+	// them before any edge-generated response so a store outage cannot turn an
+	// allowlist into an unprotected redirect, preflight, or static answer.
+	if _, _, matched := EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host); matched {
+		guard, ok := h.edgeRules.(interface {
+			EnsureEnvironmentPolicy(context.Context, string) error
+		})
+		if !ok || guard.EnsureEnvironmentPolicy(r.Context(), host) != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+				api.CodeCapacity, "Environment policy unavailable", "retry when the environment edge policy can be checked"))
+			h.observe(r, rec.status, "", "", false, Target{})
+			return
+		}
+	}
 
 	// Issue #561 / ADR-089 PR 3 — consult the per-host
 	// edge-rule matcher BEFORE Backend.Lookup. On a

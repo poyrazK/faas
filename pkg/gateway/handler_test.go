@@ -2092,12 +2092,13 @@ func TestSetupStreamingWriterFlushesOriginalWriterWithoutCycle(t *testing.T) {
 // methods so the interface stays satisfied.
 type stubEdgeRuleMatcher struct {
 	noOpEdgeRuleMatcher
-	rewrite  *EdgeRuleRewriteResolved
-	redirect *EdgeRuleRedirectResolved
-	headers  *EdgeRuleHeadersResolved
-	cors     *EdgeRuleCORSResolved
-	jwt      *EdgeRuleJWTResolved
-	ip       *EdgeRuleIPResolved
+	environmentPolicyErr error
+	rewrite              *EdgeRuleRewriteResolved
+	redirect             *EdgeRuleRedirectResolved
+	headers              *EdgeRuleHeadersResolved
+	cors                 *EdgeRuleCORSResolved
+	jwt                  *EdgeRuleJWTResolved
+	ip                   *EdgeRuleIPResolved
 	// limit (ADR-091 D24): ninth-kind seat on the stub matcher so
 	// the limit-applier handler tests can drive applyEdgeRuleLimit
 	// without a real matcher or LRU cache. Inherits the no-op
@@ -2125,6 +2126,25 @@ type stubEdgeRuleMatcher struct {
 	// MatchValidate from the embedded noOpEdgeRuleMatcher; the
 	// MatchValidate override below returns s.validate verbatim.
 	validate *EdgeRuleValidateResolved
+}
+
+func (s stubEdgeRuleMatcher) EnsureEnvironmentPolicy(context.Context, string) error {
+	return s.environmentPolicyErr
+}
+
+func TestEnvironmentIPPolicyLoadFailureStopsRequestBeforeEdgeResponse(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	h.appsSuffix = ""
+	h.edgeRules = stubEdgeRuleMatcher{environmentPolicyErr: errors.New("policy store unavailable"),
+		redirect: &EdgeRuleRedirectResolved{}}
+	host := BuildEnvironmentHost(wire.DeployWildcardSuffix,
+		"ce1639c6-eec7-4115-a98a-661d910bd3e1", "60f9c408-105e-4617-af50-b4d48bb5d910")
+	req := httptest.NewRequest(http.MethodGet, "http://"+host+"/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || atomic.LoadInt32(&backend.admits) != 0 {
+		t.Fatalf("policy outage response=%d admits=%d body=%s", rec.Code, atomic.LoadInt32(&backend.admits), rec.Body.String())
+	}
 }
 
 func (s stubEdgeRuleMatcher) MatchRewrite(_ context.Context, _, _, _ string) *EdgeRuleRewriteResolved {

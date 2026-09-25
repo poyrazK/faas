@@ -12446,6 +12446,44 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/workloads/{workload}/ip-policies:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project containing the environment-specific IP policy.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Registered environment whose IP rules are replaced.
+        schema: { type: string }
+      - name: workload
+        in: path
+        required: true
+        description: Workload slug receiving the scoped IP-rule replacement.
+        schema: { type: string }
+    put:
+      tags: [projects]
+      operationId: updateProjectEnvironmentIPPolicies
+      summary: Replace IP rules for a workload in one environment.
+      description: An explicit empty list disables inherited IP rules on the stable environment URL. Other rule kinds and ordinary application hosts are unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentIPPolicyRequest' }
+      responses:
+        '200':
+          description: Stored environment-owned IP policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/diff:
     parameters:
       - name: slug
@@ -26952,7 +26990,7 @@ components:
     ProjectEnvironmentStateWorkloadResponse:
       description: Effective configuration and live release state for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies, routing_policies]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies, routing_policies, ip_policies]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -26972,6 +27010,7 @@ components:
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyResponse' }
         policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
         routing_policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
+        ip_policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyResponse' }
 
     ProjectEnvironmentDomainResponse:
       description: Effective custom hostname and its ownership for one workload.
@@ -26988,7 +27027,7 @@ components:
       required: [kind, match_path, priority, enabled, action]
       additionalProperties: false
       properties:
-        kind: { type: string, enum: [headers, cors, redirect, rewrite] }
+        kind: { type: string, enum: [headers, cors, redirect, rewrite, ip] }
         match_path: { type: string }
         match_methods:
           type: array
@@ -27025,6 +27064,17 @@ components:
 
     UpdateProjectEnvironmentRoutingPolicyRequest:
       description: Complete replacement for environment redirect/rewrite rules, independently of headers/CORS rules.
+      type: object
+      required: [rules]
+      additionalProperties: false
+      properties:
+        rules:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/ProjectEnvironmentEdgeRuleResponse' }
+
+    UpdateProjectEnvironmentIPPolicyRequest:
+      description: Complete replacement for environment IP rules, independently of other edge policies.
       type: object
       required: [rules]
       additionalProperties: false
@@ -27138,7 +27188,7 @@ components:
     ProjectEnvironmentWorkloadDiffResponse:
       description: Release, variable, secret, and binding changes for one workload.
       type: object
-      required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies, routing_policies]
+      required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies, routing_policies, ip_policies]
       properties:
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -27158,6 +27208,7 @@ components:
         routes: { $ref: '#/components/schemas/ProjectEnvironmentRoutePolicyDiffResponse' }
         policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyDiffResponse' }
         routing_policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyDiffResponse' }
+        ip_policies: { $ref: '#/components/schemas/ProjectEnvironmentEdgePolicyDiffResponse' }
 
     ProjectEnvironmentDomainChangeResponse:
       description: A hostname added to, removed from, or changed between two environments.

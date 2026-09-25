@@ -414,6 +414,10 @@ func renderProjectEnvironmentDiff(diff api.ProjectEnvironmentDiffResponse) {
 			_, _ = fmt.Fprintf(osStdout, "  routing  %-20s %s -> %s\n", workload.RoutingPolicies.Kind,
 				edgePolicySummary(workload.RoutingPolicies.Before), edgePolicySummary(workload.RoutingPolicies.After))
 		}
+		if workload.IPPolicies.Kind != "unchanged" {
+			_, _ = fmt.Fprintf(osStdout, "  ip       %-20s %s -> %s\n", workload.IPPolicies.Kind,
+				edgePolicySummary(workload.IPPolicies.Before), edgePolicySummary(workload.IPPolicies.After))
+		}
 	}
 	_, _ = fmt.Fprintln(osStdout, "\nSHARED / MIXED RESOURCES")
 	for _, resource := range diff.SharedResources {
