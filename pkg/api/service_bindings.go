@@ -80,9 +80,10 @@ func normalizeServiceNames(raw []string, field string, max int) ([]string, error
 }
 
 const (
-	ServiceBindingEnvPrefix = "GREGALE_SERVICE_"
-	ServiceBindingEnvSuffix = "_URL"
-	ServiceBindingPort      = 10080
+	ServiceBindingEnvPrefix      = "GREGALE_SERVICE_"
+	ServiceBindingEnvSuffix      = "_URL"
+	ServiceBindingHTTPSEnvSuffix = "_HTTPS_URL"
+	ServiceBindingPort           = 10080
 )
 
 // ServiceBindingsForTargets derives platform-owned binding keys from
@@ -115,6 +116,12 @@ func ServiceBindingEnvKey(name string) string {
 	return b.String()
 }
 
+// ServiceBindingHTTPSEnvKey derives the additive HTTPS canary variable for a
+// target. The legacy ServiceBindingEnvKey remains the canonical HTTP URL.
+func ServiceBindingHTTPSEnvKey(name string) string {
+	return strings.TrimSuffix(ServiceBindingEnvKey(name), ServiceBindingEnvSuffix) + ServiceBindingHTTPSEnvSuffix
+}
+
 // ServiceBindingEnv replaces platform-owned URLs while preserving other app
 // environment values. It is shared by project reconciliation and standalone
 // app writes so both surfaces inject the same endpoint contract.
@@ -128,6 +135,7 @@ func ServiceBindingEnv(base map[string]string, bindings []AppServiceBinding) map
 	}
 	for _, binding := range bindings {
 		env[binding.Binding] = fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, ServiceBindingPort)
+		env[ServiceBindingHTTPSEnvKey(binding.Service)] = fmt.Sprintf("https://%s.internal", binding.Service)
 	}
 	if len(env) == 0 {
 		return nil

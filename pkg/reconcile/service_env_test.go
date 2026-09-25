@@ -11,14 +11,20 @@ import (
 
 func TestServiceEnvForWorkload(t *testing.T) {
 	got := serviceEnvForWorkloadWithAvailable(
-		map[string]string{"APP_MODE": "prod", "GREGALE_SERVICE_OLD_URL": "stale"},
+		map[string]string{
+			"APP_MODE":                      "prod",
+			"GREGALE_SERVICE_OLD_URL":       "stale",
+			"GREGALE_SERVICE_OLD_HTTPS_URL": "stale",
+		},
 		reposcan.Workload{Name: "api", DependsOn: []string{"db", "cache"}},
 		map[string]struct{}{"db": {}, "cache": {}},
 	)
 	want := map[string]string{
-		"APP_MODE":                  "prod",
-		"GREGALE_SERVICE_DB_URL":    "http://db.svc.gregale:10080",
-		"GREGALE_SERVICE_CACHE_URL": "http://cache.svc.gregale:10080",
+		"APP_MODE":                        "prod",
+		"GREGALE_SERVICE_DB_URL":          "http://db.svc.gregale:10080",
+		"GREGALE_SERVICE_DB_HTTPS_URL":    "https://db.internal",
+		"GREGALE_SERVICE_CACHE_URL":       "http://cache.svc.gregale:10080",
+		"GREGALE_SERVICE_CACHE_HTTPS_URL": "https://cache.internal",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("service env = %#v, want %#v", got, want)
@@ -59,7 +65,7 @@ func TestDiffFieldsChangedBackfillsServiceBindingReadModel(t *testing.T) {
 		}},
 	}
 	got := diffFieldsChanged(app, workload, "", map[string]struct{}{"api": {}, "db": {}})
-	want := []string{"service_bindings"}
+	want := []string{"service_env", "service_bindings"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("changed fields = %v, want %v", got, want)
 	}

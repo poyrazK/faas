@@ -22518,7 +22518,7 @@ components:
         binding:
           type: string
           pattern: '^GREGALE_SERVICE_[A-Z0-9_]+_URL$'
-          description: "Platform-owned environment key containing the internal service URL."
+          description: "Platform-owned legacy HTTP URL environment key. Bound workloads also receive a companion key with `_HTTPS_URL` in place of `_URL` for explicit private HTTPS canaries."
         service:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]{1,61})[a-z0-9]$'
@@ -22614,7 +22614,7 @@ components:
           description: "Automatic teardown deadline for a preview, when one is configured."
         manifest: { $ref: '#/components/schemas/AppManifest' }
         service_bindings:
-          description: "Declared same-account service dependencies currently injected into this workload. Project workloads derive these from Compose; standalone apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy."
+          description: "Declared same-account service dependencies injected into this workload as legacy `_URL` environment variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy."
           type: array
           items:
             $ref: '#/components/schemas/AppServiceBinding'
@@ -23794,7 +23794,7 @@ components:
           type: array
           maxItems: 100
           items: { type: string }
-          description: "Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs. Targets may be declared before they exist. Omit or [] for no bindings."
+          description: "Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including an additive HTTPS canary variable. Targets may be declared before they exist. Omit or [] for no bindings."
         service_binding_policy:
           type: string
           enum: [account, declared]
@@ -29680,7 +29680,7 @@ components:
         depends_on:
           type: array
           items: { type: string }
-          description: "Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies."
+          description: "Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
