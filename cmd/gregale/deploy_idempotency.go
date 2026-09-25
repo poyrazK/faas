@@ -29,6 +29,7 @@ type deployIdempotencyIntent struct {
 	ResourcesProfile       string `json:"resources_profile,omitempty"`
 	RAMMB                  int    `json:"ram_mb,omitempty"`
 	CPUMillicores          int    `json:"cpu_millicores,omitempty"`
+	MaxInstances           int    `json:"max_instances,omitempty"`
 	Dockerfile             bool   `json:"dockerfile,omitempty"`
 	RequireAuthn           *bool  `json:"require_authn,omitempty"`
 	AppProtocol            string `json:"app_protocol,omitempty"`

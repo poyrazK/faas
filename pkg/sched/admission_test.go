@@ -67,6 +67,65 @@ func TestAdmitEnforcesConcurrency(t *testing.T) {
 	}
 }
 
+func TestAdmitEnforcesPerDeploymentCeilingWithoutWeakeningAppCeiling(t *testing.T) {
+	l := NewLedger()
+	request := proReq("i1", "app1")
+	request.MaxConcurrency = 2
+	request.DeploymentID = "dep-a"
+	request.MaxDeploymentConcurrency = 1
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("admit dep-a instance: %v", err)
+	}
+
+	request.Instance = "i2"
+	if err := l.Admit(request); err == nil {
+		t.Fatal("second instance on dep-a exceeded its per-deployment ceiling")
+	} else {
+		var problem *api.Problem
+		if !errors.As(err, &problem) || problem.Code != api.CodePlanLimitConcur || !strings.Contains(problem.Detail, "deployment allows") {
+			t.Fatalf("dep-a refusal = %v, want deployment concurrency limit", err)
+		}
+	}
+
+	request.Instance = "i2"
+	request.DeploymentID = "dep-b"
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("different deployment should have an independent ceiling: %v", err)
+	}
+
+	request.Instance = "i3"
+	request.DeploymentID = "dep-c"
+	if err := l.Admit(request); err == nil {
+		t.Fatal("third app instance bypassed the aggregate app ceiling")
+	} else {
+		var problem *api.Problem
+		if !errors.As(err, &problem) || problem.Code != api.CodePlanLimitConcur || !strings.Contains(problem.Detail, "max_concurrency") {
+			t.Fatalf("app-ceiling refusal = %v, want aggregate concurrency limit", err)
+		}
+	}
+}
+
+func TestAdmitPerDeploymentOverlapIsBoundedToOne(t *testing.T) {
+	l := NewLedger()
+	request := proReq("i1", "app1")
+	request.MaxConcurrency = 4
+	request.DeploymentID = "dep-a"
+	request.MaxDeploymentConcurrency = 1
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("admit first instance: %v", err)
+	}
+
+	request.Instance = "i2"
+	request.AllowConcurrencyOverlap = true
+	if err := l.Admit(request); err != nil {
+		t.Fatalf("single rollout overlap should be admitted: %v", err)
+	}
+	request.Instance = "i3"
+	if err := l.Admit(request); err == nil {
+		t.Fatal("per-deployment rollout overlap exceeded the single-instance allowance")
+	}
+}
+
 func TestAdmitRefusesAtRAMCeiling(t *testing.T) {
 	l := NewLedger()
 	// Fill to just under the ceiling with 1024 MB Scale instances (1032 each).

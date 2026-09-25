@@ -2116,6 +2116,10 @@ type Deployment struct {
 	// does NOT carry the plan context, so the helper is just
 	// min(0, MinInstances)→0 + raw value.
 	MinInstances int `json:"min_instances,omitempty"`
+	// MaxInstances is the immutable per-deployment serving-instance ceiling.
+	// Zero inherits the app's effective max_instances policy. The app/plan
+	// ceiling remains a separate aggregate limit across all deployments.
+	MaxInstances int `json:"max_instances,omitempty"`
 	// TrafficPercent is the per-deployment traffic-split weight
 	// (issue #556 PR-A). Integer in [0, 100] enforced by the
 	// deployments_traffic_percent_chk CHECK constraint (migration

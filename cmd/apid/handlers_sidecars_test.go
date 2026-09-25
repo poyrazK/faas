@@ -60,6 +60,62 @@ func TestBuildDeploymentForInsert_SnapshotsRevisionResources(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentForInsert_PersistsDeploymentMaxInstances(t *testing.T) {
+	maxInstances := 2
+	app := state.App{ID: "app-max-instances", MinInstances: 1}
+	dep, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{
+		Image: "sha256:test", MaxInstances: &maxInstances,
+	}, nil, testSidecarLimits(), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	if dep.MaxInstances != maxInstances {
+		t.Fatalf("deployment max_instances = %d, want %d", dep.MaxInstances, maxInstances)
+	}
+}
+
+func TestValidateDeploymentMaxInstances(t *testing.T) {
+	proLimits := api.MustLimitsFor(api.PlanPro)
+	freeLimits := api.MustLimitsFor(api.PlanFree)
+	minInstances := 2
+	tooMany := proLimits.MaxConcurrency + 1
+	negative := -1
+	belowFloor := 1
+	valid := 2
+	cases := []struct {
+		name      string
+		requested *int
+		app       state.App
+		plan      api.Plan
+		limits    api.Limits
+		wantCode  string
+	}{
+		{name: "omitted inherits", requested: nil, plan: api.PlanPro, limits: proLimits},
+		{name: "zero inherits", requested: intPointer(0), plan: api.PlanPro, limits: proLimits},
+		{name: "valid cap", requested: &valid, plan: api.PlanPro, limits: proLimits},
+		{name: "free plan gate", requested: intPointer(1), plan: api.PlanFree, limits: freeLimits, wantCode: api.CodePlanMaxInstancesNotAllowed},
+		{name: "negative", requested: &negative, plan: api.PlanPro, limits: proLimits, wantCode: api.CodeInvalidMaxInstances},
+		{name: "above plan limit", requested: &tooMany, plan: api.PlanPro, limits: proLimits, wantCode: api.CodeInvalidMaxInstances},
+		{name: "below reachable floor", requested: &belowFloor, app: state.App{MinInstances: minInstances}, plan: api.PlanPro, limits: proLimits, wantCode: api.CodeInvalidMaxInstances},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := validateDeploymentMaxInstances(tc.requested, tc.app, tc.plan, tc.limits)
+			if tc.wantCode == "" {
+				if problem != nil {
+					t.Fatalf("validateDeploymentMaxInstances: got %s, want success", problem.Code)
+				}
+				return
+			}
+			if problem == nil || problem.Code != tc.wantCode {
+				t.Fatalf("validateDeploymentMaxInstances = %#v, want code %q", problem, tc.wantCode)
+			}
+		})
+	}
+}
+
+func intPointer(value int) *int { return &value }
+
 func TestResolveDeploymentResourcesRejectsInvalidOverrides(t *testing.T) {
 	app := state.App{ID: "app-resources", RAMMB: 256, CPUMillicores: 500, MaxConcurrency: 1}
 	conflictingRAM := 384

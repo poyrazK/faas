@@ -176,6 +176,10 @@ type Request struct {
 	CPUStartupBoostMillicores int
 	CPUStartupBoostUntil      time.Time
 	MaxConcurrency            int // the app's configured max (already validated ≤ plan cap)
+	// MaxDeploymentConcurrency is the immutable revision-specific ceiling;
+	// zero inherits the app's aggregate max. The plan/app ceiling is still
+	// enforced independently.
+	MaxDeploymentConcurrency int
 	// AllowConcurrencyOverlap permits exactly one counted serving instance
 	// above MaxConcurrency. It is reserved for the authenticated deployment
 	// verifier so a candidate can overlap the stable revision during rollout,
@@ -328,6 +332,13 @@ func (l *NodeLedger) Admit(r Request) error {
 		}
 		if have := l.perApp[r.AppID]; have >= maxConc && (!r.AllowConcurrencyOverlap || have >= maxConc+1) {
 			return api.ErrPlanLimitConcurrencyAt(limits, maxConc, have)
+		}
+		if r.DeploymentID != "" && r.MaxDeploymentConcurrency > 0 {
+			key := r.AppID + "\x00" + r.DeploymentID
+			have := l.perAppDeployment[key]
+			if have >= r.MaxDeploymentConcurrency && (!r.AllowConcurrencyOverlap || have >= r.MaxDeploymentConcurrency+1) {
+				return api.ErrDeploymentLimitConcurrencyAt(limits, r.MaxDeploymentConcurrency, have)
+			}
 		}
 	}
 

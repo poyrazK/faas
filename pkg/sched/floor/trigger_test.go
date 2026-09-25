@@ -906,6 +906,32 @@ func TestTickPerDeployment_FloorMetSkips(t *testing.T) {
 	}
 }
 
+func TestTickPerDeployment_CeilingStopsImpossibleFloor(t *testing.T) {
+	app := floorApp("app1", api.PlanHobby, 2)
+	dep := floorDeployment("d1", "app1", 0)
+	dep.MaxInstances = 1
+	appStore := &fakeStore{apps: []state.App{app}}
+	ledger := &fakeLedger{
+		conc:     map[string]int{"app1": 1},
+		depConc:  map[string]int{"app1\x00d1": 1},
+		headroom: 47_600,
+	}
+	engine := &fakeEngine{}
+	resolver := &fakePlanResolver{plans: map[string]api.Plan{"acct1": api.PlanHobby}}
+	depStore := &fakeDeploymentStore{
+		deps: []state.Deployment{dep},
+		apps: map[string]state.App{"app1": app},
+	}
+	tr := withDeploymentStore(t, appStore, depStore, ledger, engine, Options{PlanResolver: resolver})
+
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.calls) != 0 {
+		t.Fatalf("engine.calls = %v, want no admission beyond deployment ceiling", engine.calls)
+	}
+}
+
 // TestTickPerDeployment_OwnerNodeIDRoutesToListDeploymentsByNodeID
 // mirrors TestTick_OwnerNodeIDRoutesToListAppsByNodeID on the
 // per-deployment axis. The trigger's WithOwnerNodeID must flip the

@@ -2008,6 +2008,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
 	resourcesProfile := fs.String("resources-profile", "", "named compute profile for this revision: micro|small|medium|large|xlarge")
+	maxInstances := fs.Int("max-instances", 0, "maximum serving instances for this revision (0 = inherit app limit)")
 	ramMB := fs.Int("ram-mb", 0, "revision RAM override in MiB (must fit the plan)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "revision CPU override in millicores: 250, 500, or 1000")
 	vcpu := fs.Int("vcpu", 0, "assert the plan guest vCPU shape (omit to use the plan default)")
@@ -2337,7 +2338,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "app-protocol", "resources-profile", "ram-mb", "cpu-millicores"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "app-protocol", "resources-profile", "ram-mb", "cpu-millicores", "max-instances"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2400,8 +2401,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if resourcesRequested && (*diff || *dryRun) {
 		return printErr("Invalid flags", errors.New("revision compute overrides are only applied by a deploy; remove --diff/--dry-run"))
 	}
+	if explicit["max-instances"] && *maxInstances < 0 {
+		return printErr("Invalid --max-instances", fmt.Errorf("must be zero (inherit) or a positive count; got %d", *maxInstances))
+	}
+	if explicit["max-instances"] && (*diff || *dryRun) {
+		return printErr("Invalid flags", errors.New("--max-instances is only applied by a deploy; remove --diff/--dry-run"))
+	}
 	if resourcesRequested && *githubSnippet {
 		return printErr("Invalid flags", errors.New("--github emits a generic workflow; add revision compute settings to the workflow's deploy command"))
+	}
+	if explicit["max-instances"] && *githubSnippet {
+		return printErr("Invalid flags", errors.New("--github emits a generic workflow; set max_instances in the workflow's deploy command"))
 	}
 	if *vcpu < 0 {
 		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
@@ -2513,7 +2523,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// overrides here instead of silently dropping them from both
 			// the scan and apply requests.
 			"function", "app", "runtime", "handler", "dockerfile",
-			"vcpu", "profile", "resources-profile", "ram-mb", "cpu-millicores", "require-authn", "no-require-authn",
+			"vcpu", "profile", "resources-profile", "ram-mb", "cpu-millicores", "max-instances", "require-authn", "no-require-authn",
 			"app-protocol", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		} {
 			if explicit[name] {
@@ -2579,6 +2589,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return nil
 		}
 		return &v
+	}
+	var maxInstancesPtr *int
+	if explicit["max-instances"] {
+		value := *maxInstances
+		maxInstancesPtr = &value
 	}
 	slug := *name
 	if slug == "" {
@@ -2682,7 +2697,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		refIntent := deployIdempotencyIntent{
 			Slug: slug, Repo: *repo, Ref: *ref, Reason: *reason, Tag: *tag,
 			ResourcesProfile: *resourcesProfile, RAMMB: *ramMB, CPUMillicores: *cpuMillicores,
-			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
+			MaxInstances: *maxInstances,
+			DeployedBy:   resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
 		}
@@ -2712,6 +2728,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Tag:                    *tag,
 			Environment:            *environment,
 			Resources:              deploymentResources,
+			MaxInstances:           maxInstancesPtr,
 			DeployedBy:             resolveDeployedBy(*deployedBy),
 			PRNumber:               *prNumber,
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
@@ -3340,7 +3357,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Slug: slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler,
 		Image: *image, SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
 		Profile: *profile, ResourcesProfile: *resourcesProfile, RAMMB: *ramMB, CPUMillicores: *cpuMillicores,
-		Dockerfile: *dockerfile, RequireAuthn: requireAuthnPtr,
+		MaxInstances: *maxInstances,
+		Dockerfile:   *dockerfile, RequireAuthn: requireAuthnPtr,
 		AppProtocol: appProtocolIntent, ExecutionMode: *executionMode, RestartPolicy: *restartPolicy,
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
@@ -3672,6 +3690,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			CommitSHA:              commitSHA,
 			Environment:            *environment,
 			Resources:              deploymentResources,
+			MaxInstances:           maxInstancesPtr,
 			Reason:                 *reason,
 			Tag:                    *tag,
 			DeployedBy:             resolveDeployedBy(*deployedBy),
@@ -3709,7 +3728,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
-				Environment: ann.Environment, Resources: ann.Resources, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
+				Environment: ann.Environment, Resources: ann.Resources, MaxInstances: ann.MaxInstances, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
@@ -3836,6 +3855,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	dep, err := client.Deploy(deployCtx, slug, api.CreateDeploymentRequest{
 		Image:                  *image,
 		Resources:              deploymentResources,
+		MaxInstances:           maxInstancesPtr,
 		Scope:                  manifestScope,
 		Environment:            *environment,
 		RollbackOn5xx:          rollbackOn5xxPtr,

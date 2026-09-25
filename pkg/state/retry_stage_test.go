@@ -23,6 +23,7 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 		OverrideMainDependsOn:  json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`),
 		RAMMB:                  384,
 		CPUMillicores:          500,
+		MaxInstances:           4,
 	}
 
 	got, err := retryDeploymentInput(src, now)
@@ -46,5 +47,8 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	}
 	if got.RAMMB != src.RAMMB || got.CPUMillicores != src.CPUMillicores {
 		t.Fatalf("retry compute shape = %d MiB/%d mCPU, want %d MiB/%d mCPU", got.RAMMB, got.CPUMillicores, src.RAMMB, src.CPUMillicores)
+	}
+	if got.MaxInstances != src.MaxInstances {
+		t.Fatalf("retry max_instances = %d, want %d", got.MaxInstances, src.MaxInstances)
 	}
 }

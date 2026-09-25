@@ -44,11 +44,12 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 		       canary_preset = 'custom',
 		       canary_step = 2,
 		       canary_total_steps = 3,
-		       canary_step_started_at = $2,
-		       canary_stages = $3,
-		       rollout_state = 'rolling_out',
-		       rollout_started_at = $2,
-		       traffic_percent = 50
+			   canary_step_started_at = $2,
+			   canary_stages = $3,
+			   rollout_state = 'rolling_out',
+			   rollout_started_at = $2,
+			   traffic_percent = 50,
+			   max_instances = 3
 		 where id = $1`, original.ID, oldStarted, customStages); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +70,9 @@ func TestPgRetryDeployment_PreservesInputsAndQueues(t *testing.T) {
 	}
 	if retry.SourcePath != original.SourcePath || retry.SourceRoot != original.SourceRoot || !retry.FullRootfsAllowAuto || retry.FullRootfsOverride == nil || !*retry.FullRootfsOverride || !jsonEqual(retry.Workflows, original.Workflows) {
 		t.Fatalf("retry lost input settings: %+v", retry)
+	}
+	if retry.MaxInstances != original.MaxInstances || retry.MaxInstances != 3 {
+		t.Fatalf("retry max_instances = %d, want source ceiling %d", retry.MaxInstances, original.MaxInstances)
 	}
 	if !reflect.DeepEqual(retry.ReleaseCommand, original.ReleaseCommand) || retry.ReleaseCommandShell != original.ReleaseCommandShell {
 		t.Fatalf("retry lost release command: %+v", retry)

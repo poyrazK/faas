@@ -127,6 +127,26 @@ func seedLiveDeploy(t *testing.T, s *state.PgStore, ctx context.Context, emailSu
 	return acct.ID, app.ID, dep.ID
 }
 
+func TestPg_DeploymentMaxInstancesRoundtrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx, "deployment-max-instances", "deployment-max-instances")
+	created, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:deployment-max-instances", Status: state.DeployPending,
+		MaxInstances: 3,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	got, err := s.DeploymentByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if got.MaxInstances != 3 {
+		t.Fatalf("max_instances = %d, want 3", got.MaxInstances)
+	}
+}
+
 func TestPg_TriggerDeadLetterNormalizesInvalidJSON(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, _ := seedLiveDeploy(t, s, ctx, "trigger-dlq-json", "trigger-dlq-json")

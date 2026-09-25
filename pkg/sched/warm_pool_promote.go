@@ -25,6 +25,11 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		// consume a warm row or emit a misleading "missing" outcome.
 		return WakeResult{}, false, nil
 	}
+	if dep.MaxInstances > 0 && e.ledger.ConcurrencyForDeployment(app.ID, dep.ID) >= dep.MaxInstances {
+		// Keep the paused row available; the ordinary admission path returns
+		// the typed at-capacity result without consuming warm capacity.
+		return WakeResult{}, false, nil
+	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return WakeResult{}, false, fmt.Errorf("sched: warm pool: list promotion candidates: %w", err)

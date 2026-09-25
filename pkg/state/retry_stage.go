@@ -108,6 +108,7 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 		TrafficPercentExplicit: src.TrafficPercentExplicit,
 		Scope:                  src.Scope,
 		Priority:               src.Priority,
+		MaxInstances:           src.MaxInstances,
 		DeployedVia:            src.DeployedVia,
 		DeployedByUserID:       src.DeployedByUserID,
 		DeployedFromIP:         src.DeployedFromIP,

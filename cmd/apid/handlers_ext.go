@@ -929,6 +929,37 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	if req.MinInstances != nil || req.ScalingPolicy != nil {
+		candidate := app
+		if req.MinInstances != nil {
+			candidate.MinInstances = *req.MinInstances
+		}
+		if req.ScalingPolicy != nil {
+			candidate.ScalingPolicy = policyPtrFromReq(&req)
+		}
+		policy := state.ScalingPolicyOrDefault(candidate.ScalingPolicy)
+		appFloor := candidate.MinInstances
+		if reachableFloor := policy.MaxReachableMinInstances(); reachableFloor > appFloor {
+			appFloor = reachableFloor
+		}
+		live, err := s.store.LiveDeployments(r.Context(), app.ID)
+		if err != nil {
+			writeCustomerInternalProblem(w, r, s.log, "check deployment instance caps",
+				"Gregale could not check this app's live deployments.",
+				"Retry the request in a moment; if it continues, contact support.", err)
+			return
+		}
+		for _, dep := range live {
+			effectiveFloor := appFloor
+			if dep.MinInstances > effectiveFloor {
+				effectiveFloor = dep.MinInstances
+			}
+			if dep.MaxInstances > 0 && effectiveFloor > dep.MaxInstances {
+				api.WriteProblem(w, api.ErrInvalidDeploymentMaxInstances(dep.MaxInstances, effectiveFloor, limits.MaxConcurrency))
+				return
+			}
+		}
+	}
 	// An enabled gate with no explicit route list requires an imported OpenAPI
 	// document. Evaluate the post-PATCH state so clearing a list on an already
 	// enabled app cannot leave the gateway with an unusable contract.
@@ -1784,6 +1815,19 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 	planMax := planMaxFor(acct)
 	if v > planMax {
 		api.WriteProblem(w, api.ErrMaxMinInstancesExceeded(v, planMax))
+		return
+	}
+	policy := state.ScalingPolicyOrDefault(app.ScalingPolicy)
+	appFloor := app.MinInstances
+	if reachableFloor := policy.MaxReachableMinInstances(); reachableFloor > appFloor {
+		appFloor = reachableFloor
+	}
+	effectiveFloor := appFloor
+	if v > effectiveFloor {
+		effectiveFloor = v
+	}
+	if d.MaxInstances > 0 && effectiveFloor > d.MaxInstances {
+		api.WriteProblem(w, api.ErrInvalidDeploymentMaxInstances(d.MaxInstances, effectiveFloor, api.MustLimitsFor(acct.Plan).MaxConcurrency))
 		return
 	}
 	prev := d.MinInstances
@@ -4953,6 +4997,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		SourceSHA256:      d.SourceSHA256,
 		HasOverrides:      hasOverrides,
 		MinInstances:      d.MinInstances,
+		MaxInstances:      d.MaxInstances,
 		// Issue #556 PR-A: traffic_percent echoes the per-deployment
 		// split weight. Σ over live rows for the app is 100 by
 		// construction (CreateDeployment zeros the prior row in the

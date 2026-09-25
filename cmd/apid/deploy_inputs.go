@@ -140,6 +140,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		rollbackOn5xx          *bool
 		disableStartupCPUBoost *bool
 		resources              *api.DeploymentResourcesRequest
+		maxInstances           *int
 		noTriggers             bool
 		ann                    annotationForm
 		stagedManifest         sourceRefManifestStaged
@@ -274,6 +275,19 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			trafficPercent = &value
+		case "max_instances":
+			const maxInstancesFieldBytes = 16
+			b, readErr := io.ReadAll(io.LimitReader(part, maxInstancesFieldBytes+1))
+			if readErr != nil || len(b) > maxInstancesFieldBytes {
+				api.WriteProblem(w, api.ErrValidation("max_instances must be a short integer"))
+				return
+			}
+			value, parseErr := strconv.Atoi(strings.TrimSpace(string(b)))
+			if parseErr != nil {
+				api.WriteProblem(w, api.ErrValidation("max_instances must be an integer"))
+				return
+			}
+			maxInstances = &value
 		case "canary":
 			b, readErr := io.ReadAll(io.LimitReader(part, 64<<10))
 			var spec api.CanaryPresetSpec
@@ -345,7 +359,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, Resources: resources, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, Resources: resources, MaxInstances: maxInstances, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return

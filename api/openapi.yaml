@@ -6153,6 +6153,10 @@ paths:
                 resources:
                   type: string
                   description: "JSON-encoded DeploymentResourcesRequest form field; omitted inherits the app's compute defaults."
+                max_instances:
+                  type: integer
+                  minimum: 0
+                  description: "Immutable serving-instance ceiling for this deployment; 0 or omitted inherits the app's effective ceiling. The app/plan cap still applies across revisions."
                 source_url:
                   type: string
                   maxLength: 1024
@@ -23806,6 +23810,7 @@ components:
         environment:
           { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$', description: "Registered project environment to resolve at upload commit." }
         resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
+        max_instances: { type: [integer, "null"], minimum: 0, description: "At upload commit, set an immutable deployment serving-instance cap. Omit or use 0 to inherit app policy; the app/plan cap still aggregates across revisions." }
         reason: { type: string, maxLength: 280 }
         tag: { type: string }
         deployed_by: { type: string }
@@ -23970,6 +23975,10 @@ components:
           type: integer
           minimum: 0
           description: "Per-deployment cold-wake floor override (issue #557 closure / ADR-072). 0 = inherit from parent app (default); positive value is the deployment's own floor. Effective per-instance floor = max(app.EffectiveMinInstances(), d.EffectiveMinInstances()). Validated against the parent app's plan MaxMinInstances cap on PATCH."
+        max_instances:
+          type: integer
+          minimum: 0
+          description: "Configured immutable per-deployment serving-instance ceiling. 0 means inherit the app's effective ceiling; the app/plan maximum remains an aggregate cap."
         scan:
           oneOf:
             - $ref: '#/components/schemas/ScanResult'
@@ -24234,6 +24243,7 @@ components:
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           description: "Registered project environment to target for this local tarball deployment."
         resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
+        max_instances: { type: [integer, "null"], minimum: 0, description: "Optional revision ceiling for this tarball deployment; 0 leaves the app's inherited limit in force." }
         # Issue #977 / ADR-116 — deployment annotation echo. The four
         # columns stamped at create time are surfaced verbatim so the
         # dashboard, CLI history, and SDK consumers can render the
@@ -25329,6 +25339,10 @@ components:
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           description: "Registered project environment to resolve to the deployment scope. Requires the app to belong to the project; omitted preserves legacy scope behavior."
         resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
+        max_instances:
+          type: [integer, "null"]
+          minimum: 0
+          description: "A deployment-local maximum for live serving VMs. When absent or 0, no stricter revision bound is applied; the app/plan aggregate remains authoritative."
         # Issue #977 / ADR-116 — deployment annotation fields. The
         # githubd bridge + GitHub Action auto-capture DeployedBy +
         # PRNumber; the CLI captures DeployedBy from `git config
@@ -27854,6 +27868,7 @@ components:
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           description: "Registered project environment to target for this source-ref deployment."
         resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
+        max_instances: { type: [integer, "null"], minimum: 0, description: "Optional serving-VM bound recorded on the source-ref deployment; omit or use 0 for the app's effective instance limit." }
         no_triggers:
           type: boolean
           default: false

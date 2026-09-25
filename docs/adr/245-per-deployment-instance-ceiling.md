@@ -1,0 +1,9 @@
+# ADR-245: Per-deployment serving-instance ceiling
+
+- **Status:** proposed
+- **Date:** 2026-09-25
+- **Context:** The app-level `max_concurrency` and scaling-policy `max_instances` protect aggregate capacity, but all live revisions share that budget. During a rollout, a customer cannot independently keep a candidate revision small while the previous revision continues serving.
+- **Decision:** Add an optional immutable `max_instances` to deployment creation. Zero or omission inherits the app's effective ceiling. A positive value is plan-gated, must fit the plan concurrency bound, and must be at least every floor the app can reach. The scheduler enforces the tighter of the app aggregate limit and the target deployment limit. Deployment smoke and runtime-restart overlap retain the existing single-instance overlap exception.
+- **Persistence:** Store the configured value on `deployments.max_instances`; zero is the backward-compatible inherit sentinel. The CLI, JSON, source-ref, multipart, and resumable upload paths carry the same field. App-floor changes and deployment-floor updates are rejected when they would contradict a live deployment's explicit ceiling.
+- **Consequences:** Canary and stable revisions can have independent serving-VM ceilings while remaining inside the app/plan aggregate cap. Warm-pool residents do not count until promotion; jobs and one-off app tasks remain outside serving-concurrency accounting. Existing deployments inherit without backfill changes.
+- **Rejected alternatives:** Reuse `service_replicas.max` / `worker_replicas.max` because those bound workload replicas inside a deployment, not the number of serving VMs. Add a second app-level ceiling, which would not let revisions be isolated. Change the app-wide max when deploying a candidate, which would also constrain the stable revision.

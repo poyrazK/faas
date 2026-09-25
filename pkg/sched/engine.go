@@ -3022,7 +3022,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency, MaxDeploymentConcurrency: dep.MaxInstances,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
@@ -6740,10 +6740,14 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				continue
 			}
 			configuredCPU := effectiveAppCPUMillicores(app)
+			deploymentMaxInstances := 0
 			if ins.DeploymentID != "" {
-				if dep, depErr := e.store.DeploymentByID(ctx, ins.DeploymentID); depErr == nil && dep.CPUMillicores > 0 {
-					configuredCPU = dep.CPUMillicores
-				} else if depErr != nil {
+				if dep, depErr := e.store.DeploymentByID(ctx, ins.DeploymentID); depErr == nil {
+					deploymentMaxInstances = dep.MaxInstances
+					if dep.CPUMillicores > 0 {
+						configuredCPU = dep.CPUMillicores
+					}
+				} else {
 					// Recovery must not under-reserve CPU because a deployment
 					// lookup failed. The closed-set's largest quota is safe.
 					configuredCPU = api.DefaultAppCPUMillicores
@@ -6763,8 +6767,9 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				kind = KindWarmPool
 			}
 			request := Request{
-				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
+				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, Plan: acct.Plan,
 				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, MaxConcurrency: app.MaxConcurrency,
+				MaxDeploymentConcurrency: deploymentMaxInstances,
 				// Recovery must account for the one candidate/stable overlap
 				// that deployment smoke may have admitted before a restart.
 				// This does not authorize new capacity: the rows are already
