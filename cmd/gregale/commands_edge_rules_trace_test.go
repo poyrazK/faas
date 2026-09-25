@@ -338,6 +338,50 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 	}
 }
 
+func TestCmdEdgeRulesTraceResolvesCORSRulePreset(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	presetID := "preset-1"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "cors", AccountID: "acct-1", Enabled: true, Kind: "cors", MatchHost: "example.com", MatchPath: "/", MatchMethods: []string{"GET"},
+				Action: json.RawMessage(`{"cors":{"cors_preset_id":"preset-1"}}`),
+			}})
+		case "/v1/cors-presets":
+			_ = json.NewEncoder(w).Encode(api.CorsPresetListResponse{Presets: []api.CorsPresetResponse{{
+				ID: presetID, AccountID: "acct-1", AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"},
+			}}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRules([]string{"trace", "--app", "demo", "--url", "https://example.com/", "--header", "Origin:https://app.example.com"}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.ResponseHeaderOps) != 2 || result.Simulation.ResponseHeaderOps[0].Value != "https://app.example.com" {
+		t.Fatalf("preset-backed trace result = %#v", result.Simulation)
+	}
+}
+
 func TestCmdEdgeRulesTrace_BodyFileValidatesAndOmitsContents(t *testing.T) {
 	resetJSONEnv(t)
 	jsonOutput = true

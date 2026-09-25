@@ -269,6 +269,109 @@ func TestSimulateCORSPresetIsIncomplete(t *testing.T) {
 	}
 }
 
+func TestSimulateCORSPresetUsesResolvedSettings(t *testing.T) {
+	presetID := "preset-1"
+	rule := corsTraceRule(t, "cors-preset", []string{"GET"}, api.EdgeRuleCORSAction{CorsPresetID: &presetID})
+	rule.AccountID = "acct-1"
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
+		Headers: http.Header{"Origin": []string{"https://app.example.com"}},
+		CorsPresets: []api.CorsPresetResponse{{
+			ID: presetID, AccountID: "acct-1", AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET", "POST"},
+			AllowHeaders: []string{"Content-Type"}, ExposeHeaders: []string{"X-Request-ID"}, AllowCredentials: true, MaxAgeSeconds: 600,
+		}},
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || result.Simulation.Steps[0].Outcome != "cors_applied" {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	want := []api.EdgeRuleHeaderOp{
+		{Action: "set", Name: "Access-Control-Allow-Origin", Value: "https://app.example.com"},
+		{Action: "set", Name: "Access-Control-Allow-Credentials", Value: "true"},
+		{Action: "set", Name: "Access-Control-Allow-Methods", Value: "GET, POST"},
+		{Action: "set", Name: "Access-Control-Allow-Headers", Value: "Content-Type"},
+		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "X-Request-ID"},
+		{Action: "set", Name: "Access-Control-Max-Age", Value: "600"},
+	}
+	if len(result.Simulation.ResponseHeaderOps) != len(want) {
+		t.Fatalf("response header ops = %#v, want %#v", result.Simulation.ResponseHeaderOps, want)
+	}
+	for i := range want {
+		if result.Simulation.ResponseHeaderOps[i] != want[i] {
+			t.Fatalf("response header ops = %#v, want %#v", result.Simulation.ResponseHeaderOps, want)
+		}
+	}
+}
+
+func TestSimulateCORSPresetMergesRuleOverridesAndChecksAccount(t *testing.T) {
+	presetID := "preset-1"
+	rule := corsTraceRule(t, "cors-preset", []string{"GET"}, api.EdgeRuleCORSAction{
+		CorsPresetID: &presetID, AllowMethods: []string{"PATCH"}, AllowHeaders: []string{"X-Rule"}, MaxAgeSeconds: 30,
+	})
+	rule.AccountID = "acct-1"
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
+		Headers: http.Header{"Origin": []string{"https://app.example.com"}},
+		CorsPresets: []api.CorsPresetResponse{{
+			ID: presetID, AccountID: "acct-1", AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"},
+			AllowHeaders: []string{"Content-Type"}, AllowCredentials: true, MaxAgeSeconds: 600,
+		}},
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	ops := result.Simulation.ResponseHeaderOps
+	if len(ops) != 5 || ops[2].Value != "PATCH" || ops[3].Value != "X-Rule" || ops[4].Value != "30" {
+		t.Fatalf("rule overrides were not applied over preset: %#v", ops)
+	}
+
+	input.CorsPresets[0].AccountID = "another-account"
+	result, err = edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate cross-account preset: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_cors_preset" {
+		t.Fatalf("cross-account preset should remain unavailable: %#v", result.Simulation)
+	}
+}
+
+func TestSimulateCORSPresetRejectsWildcardCredentialsMerge(t *testing.T) {
+	presetID := "preset-1"
+	rule := corsTraceRule(t, "cors-preset", []string{"GET"}, api.EdgeRuleCORSAction{CorsPresetID: &presetID})
+	rule.AccountID = "acct-1"
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet, CorsPresets: []api.CorsPresetResponse{{
+		ID: presetID, AccountID: "acct-1", AllowOrigins: []string{"*"}, AllowMethods: []string{"GET"}, AllowCredentials: true,
+	}}}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "invalid_cors_preset_policy" {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+}
+
+func TestRequiresCorsPresetData(t *testing.T) {
+	inline := corsTraceRule(t, "inline", []string{"GET"}, api.EdgeRuleCORSAction{AllowOrigins: []string{"*"}})
+	presetID := "preset-1"
+	preset := corsTraceRule(t, "preset", []string{"GET"}, api.EdgeRuleCORSAction{CorsPresetID: &presetID})
+	if edgeruletrace.RequiresCorsPresetData([]api.EdgeRuleResponse{inline}) {
+		t.Fatal("inline rule unexpectedly requires preset data")
+	}
+	preset.Enabled = false
+	if edgeruletrace.RequiresCorsPresetData([]api.EdgeRuleResponse{preset}) {
+		t.Fatal("disabled rule unexpectedly requires preset data")
+	}
+	preset.Enabled = true
+	if !edgeruletrace.RequiresCorsPresetData([]api.EdgeRuleResponse{inline, preset}) {
+		t.Fatal("preset-backed rule did not require preset data")
+	}
+}
+
 func TestSimulateLimitRuleWithRequestBody(t *testing.T) {
 	tests := []struct {
 		name        string
