@@ -91,6 +91,51 @@ func TestSidecarSpecsFromDeployment_RejectsLayerSetMismatch(t *testing.T) {
 	}
 }
 
+func TestMainWorkloadDependenciesForDeployment(t *testing.T) {
+	sidecars := []fcvm.WorkloadSpec{
+		{Name: "proxy", Type: string(api.SidecarTypeSidecar)},
+		{Name: "migrate", Type: string(api.SidecarTypeInit)},
+	}
+	cases := []struct {
+		name string
+		raw  json.RawMessage
+		want []api.WorkloadDependency
+		bad  string
+	}{
+		{
+			name: "empty-default",
+			raw:  json.RawMessage(`[]`),
+		},
+		{
+			name: "healthy-companion",
+			raw:  json.RawMessage(`[ {"name":"proxy","condition":"healthy"} ]`),
+			want: []api.WorkloadDependency{{Name: "proxy", Condition: api.WorkloadDependencyHealthy}},
+		},
+		{name: "malformed-json", raw: json.RawMessage(`{`), bad: "decode"},
+		{name: "unknown-target", raw: json.RawMessage(`[{"name":"missing"}]`), bad: "unknown companion"},
+		{name: "init-target", raw: json.RawMessage(`[{"name":"migrate"}]`), bad: "long-running companion"},
+		{name: "duplicate-target", raw: json.RawMessage(`[{"name":"proxy"},{"name":"proxy"}]`), bad: "more than once"},
+		{name: "invalid-condition", raw: json.RawMessage(`[{"name":"proxy","condition":"ready"}]`), bad: "invalid condition"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mainWorkloadDependenciesForDeployment(state.Deployment{OverrideMainDependsOn: tc.raw}, sidecars)
+			if tc.bad != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.bad) {
+					t.Fatalf("dependencies error = %v, want text %q", err, tc.bad)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("mainWorkloadDependenciesForDeployment: %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("dependencies = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSidecarSpecsFromDeployment_PreservesSealedEnv(t *testing.T) {
 	ident, err := age.GenerateX25519Identity()
 	if err != nil {

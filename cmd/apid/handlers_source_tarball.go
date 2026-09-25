@@ -225,6 +225,18 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
+	if workloadProblem != nil {
+		api.WriteProblem(w, workloadProblem)
+		return
+	}
+	if workloadsApplied {
+		rollout, rolloutProblem = buildDeploymentForInsert(app, rolloutReq, manifestOverrides, limits, acct.Plan)
+		if rolloutProblem != nil {
+			api.WriteProblem(w, rolloutProblem)
+			return
+		}
+	}
 	releaseCommand, releaseProblem := resolveSourceReleaseCommand(spoolPath, app, manifest)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
@@ -278,6 +290,8 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		CanaryStages:           rollout.CanaryStages,
 		ReleaseCommand:         releaseCommand.command,
 		ReleaseCommandShell:    releaseCommand.shell,
+		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		HostingObserver:        s.ops,
 		HostingFlow:            "first_deploy",
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && sidecar.TrafficPercent == nil && sidecar.Canary == nil,

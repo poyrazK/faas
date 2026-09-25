@@ -59,6 +59,63 @@ func TestLoad_YAMLPresent(t *testing.T) {
 	}
 }
 
+func TestManifestMainWorkloadDependencies(t *testing.T) {
+	manifest, err := ParseBytes([]byte(`main_depends_on:
+  - name: proxy
+    condition: healthy
+companions:
+  - name: proxy
+    image: registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    startup_probe:
+      tcp_socket:
+        port: 8081
+`))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if err := manifest.ValidateForPlan(api.PlanPro); err != nil {
+		t.Fatalf("ValidateForPlan: %v", err)
+	}
+	dependencies := manifest.MainWorkloadDependencies()
+	if len(dependencies) != 1 || dependencies[0].Name != "proxy" || dependencies[0].Condition != api.WorkloadDependencyHealthy {
+		t.Fatalf("MainWorkloadDependencies = %+v, want proxy/healthy", dependencies)
+	}
+}
+
+func TestManifestMainWorkloadDependenciesRejectInvalidGraph(t *testing.T) {
+	manifest, err := ParseBytes([]byte(`main_depends_on:
+  - name: missing
+companions:
+  - name: proxy
+    image: registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+`))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if err := manifest.ValidateForPlan(api.PlanPro); err == nil || !strings.Contains(err.Error(), `unknown companion "missing"`) {
+		t.Fatalf("ValidateForPlan = %v, want unknown dependency target", err)
+	}
+}
+
+func TestParseTOMLMainWorkloadDependencies(t *testing.T) {
+	manifest, err := ParseTOMLBytes([]byte(`main_depends_on = [{name = "proxy", condition = "healthy"}]
+
+[[companions]]
+name = "proxy"
+image = "registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+`))
+	if err != nil {
+		t.Fatalf("ParseTOMLBytes: %v", err)
+	}
+	if err := manifest.ValidateForPlan(api.PlanPro); err != nil {
+		t.Fatalf("ValidateForPlan: %v", err)
+	}
+	dependencies := manifest.MainWorkloadDependencies()
+	if len(dependencies) != 1 || dependencies[0].Name != "proxy" || dependencies[0].Condition != api.WorkloadDependencyHealthy {
+		t.Fatalf("MainWorkloadDependencies = %+v, want proxy/healthy", dependencies)
+	}
+}
+
 func TestLoad_ReleaseCommand(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("release:\n  command: bundle exec rails db:migrate\n"), 0o644); err != nil {
