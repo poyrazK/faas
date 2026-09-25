@@ -116,6 +116,75 @@ image = "registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	}
 }
 
+func TestParseTOMLHostingHealthProbes(t *testing.T) {
+	manifest, err := ParseTOMLBytes([]byte(`[hosting]
+health = "/legacy-health"
+
+[hosting.startup_probe]
+grpc = { service = "grpc.health.v1.Health" }
+interval_s = 5
+timeout_s = 2
+retries = 3
+
+[hosting.readiness_probe]
+path = "/readyz"
+period_s = 7
+failure_threshold = 4
+
+[hosting.liveness_probe]
+grpc = { service = "grpc.health.v1.Health" }
+interval_s = 10
+consecutive_failures = 4
+`))
+	if err != nil {
+		t.Fatalf("ParseTOMLBytes: %v", err)
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if manifest.Hosting == nil || manifest.Hosting.StartupProbe == nil || manifest.Hosting.StartupProbe.GRPC == nil || manifest.Hosting.StartupProbe.GRPC.Service != "grpc.health.v1.Health" {
+		t.Fatalf("startup probe = %+v, want gRPC health probe", manifest.Hosting)
+	}
+	if manifest.Hosting.ReadinessProbe == nil || manifest.Hosting.ReadinessProbe.Path != "/readyz" || manifest.Hosting.ReadinessProbe.FailureThreshold != 4 {
+		t.Fatalf("readiness probe = %+v, want configured path/threshold", manifest.Hosting)
+	}
+	if manifest.Hosting.LivenessProbe == nil || manifest.Hosting.LivenessProbe.GRPC == nil || manifest.Hosting.LivenessProbe.ConsecutiveFailures != 4 {
+		t.Fatalf("liveness probe = %+v, want configured gRPC probe", manifest.Hosting)
+	}
+}
+
+func TestParseYAMLHostingHealthProbes(t *testing.T) {
+	manifest, err := ParseBytes([]byte(`hosting:
+  startup_probe:
+    grpc:
+      service: grpc.health.v1.Health
+    interval_s: 5
+  readiness_probe:
+    path: /readyz
+    period_s: 7
+    failure_threshold: 4
+  liveness_probe:
+    path: /alive
+    interval_s: 10
+    consecutive_failures: 4
+`))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if manifest.Hosting == nil || manifest.Hosting.StartupProbe == nil || manifest.Hosting.StartupProbe.GRPC == nil || manifest.Hosting.StartupProbe.GRPC.Service != "grpc.health.v1.Health" {
+		t.Fatalf("startup probe = %+v, want gRPC health probe", manifest.Hosting)
+	}
+	if manifest.Hosting.ReadinessProbe == nil || manifest.Hosting.ReadinessProbe.Path != "/readyz" || manifest.Hosting.ReadinessProbe.FailureThreshold != 4 {
+		t.Fatalf("readiness probe = %+v, want configured path/threshold", manifest.Hosting)
+	}
+	if manifest.Hosting.LivenessProbe == nil || manifest.Hosting.LivenessProbe.Path != "/alive" || manifest.Hosting.LivenessProbe.ConsecutiveFailures != 4 {
+		t.Fatalf("liveness probe = %+v, want configured path/threshold", manifest.Hosting)
+	}
+}
+
 func TestLoad_ReleaseCommand(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("release:\n  command: bundle exec rails db:migrate\n"), 0o644); err != nil {
@@ -536,7 +605,7 @@ func TestManifestRejectsCompanionsAndExtensionsTogether(t *testing.T) {
 
 func TestLoad_TOMLRejectsUnsupportedField(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "gregale.toml"), []byte("[hosting]\nstart = \"go run ./cmd/api\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "gregale.toml"), []byte("unsupported_setting = true\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	_, _, err := Load(dir)

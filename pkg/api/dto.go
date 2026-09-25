@@ -1926,30 +1926,30 @@ type CreateDeploymentOverrides struct {
 // StartPeriodS. Readiness selection is explicitly HTTP (Path) or
 // standard gRPC (GRPC); the host does not execute Test argv.
 type DeploymentHealthcheck struct {
-	Path         string                     `json:"path"`
-	GRPC         *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
-	IntervalS    int                        `json:"interval_s,omitempty"`
-	TimeoutS     int                        `json:"timeout_s,omitempty"`
-	Retries      int                        `json:"retries,omitempty"`
-	Test         []string                   `json:"test,omitempty"`
-	StartPeriodS int                        `json:"start_period_s,omitempty"`
+	Path         string                     `json:"path" yaml:"path" toml:"path"`
+	GRPC         *DeploymentGRPCHealthcheck `json:"grpc,omitempty" yaml:"grpc,omitempty" toml:"grpc,omitempty"`
+	IntervalS    int                        `json:"interval_s,omitempty" yaml:"interval_s,omitempty" toml:"interval_s,omitempty"`
+	TimeoutS     int                        `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty" toml:"timeout_s,omitempty"`
+	Retries      int                        `json:"retries,omitempty" yaml:"retries,omitempty" toml:"retries,omitempty"`
+	Test         []string                   `json:"test,omitempty" yaml:"test,omitempty" toml:"test,omitempty"`
+	StartPeriodS int                        `json:"start_period_s,omitempty" yaml:"start_period_s,omitempty" toml:"start_period_s,omitempty"`
 }
 
 // DeploymentGRPCHealthcheck selects the standard gRPC health service for
 // primary-app readiness. An empty service checks the overall server health.
 type DeploymentGRPCHealthcheck struct {
-	Service string `json:"service,omitempty"`
+	Service string `json:"service,omitempty" yaml:"service,omitempty" toml:"service,omitempty"`
 }
 
 // DeploymentReadinessProbe is a reversible, steady-state traffic gate for
 // the primary app. It is distinct from Healthcheck (startup admission) and
 // LivenessProbe (which restarts a wedged VM).
 type DeploymentReadinessProbe struct {
-	Path             string                     `json:"path,omitempty"`
-	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
-	PeriodS          int                        `json:"period_s,omitempty"`
-	TimeoutS         int                        `json:"timeout_s,omitempty"`
-	FailureThreshold int                        `json:"failure_threshold,omitempty"`
+	Path             string                     `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
+	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty" yaml:"grpc,omitempty" toml:"grpc,omitempty"`
+	PeriodS          int                        `json:"period_s,omitempty" yaml:"period_s,omitempty" toml:"period_s,omitempty"`
+	TimeoutS         int                        `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty" toml:"timeout_s,omitempty"`
+	FailureThreshold int                        `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty" toml:"failure_threshold,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
@@ -1977,28 +1977,28 @@ type DeploymentLivenessProbe struct {
 	// port (issue #554 §4: default :8080 reuses the runner's existing
 	// `/healthz` surface). Required for HTTP probes (must
 	// start with "/"). Exactly one of Path or GRPC is required.
-	Path string `json:"path,omitempty"`
+	Path string `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
 	// GRPC selects the standard gRPC health.v1 Check action. An
 	// empty service checks overall server health. Pro and Scale
 	// plans may use gRPC liveness probes; Free and Hobby remain
 	// HTTP-only.
-	GRPC *DeploymentGRPCLivenessProbe `json:"grpc,omitempty"`
+	GRPC *DeploymentGRPCLivenessProbe `json:"grpc,omitempty" yaml:"grpc,omitempty" toml:"grpc,omitempty"`
 	// IntervalS is the per-plan poll cadence. 0 = inherit from
 	// the parent app's per-plan default (Hobby/Pro/Scale → 5s).
 	// Clamped to [MinLivenessPeriodSeconds=1, MaxLivenessPeriodSeconds=60]
 	// by Validate.
-	IntervalS int `json:"interval_s,omitempty"`
+	IntervalS int `json:"interval_s,omitempty" yaml:"interval_s,omitempty" toml:"interval_s,omitempty"`
 	// TimeoutS is the per-probe HTTP or gRPC timeout. 0 = inherit the
 	// guest-init default of 2s. Clamped to
 	// [1, 5]. A timeout is treated identically to a non-2xx
 	// response by the failure counter.
-	TimeoutS int `json:"timeout_s,omitempty"`
+	TimeoutS int `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty" toml:"timeout_s,omitempty"`
 	// ConsecutiveFailures is the N at which DestroyForLivenessFailure
 	// fires. 0 = inherit from the per-plan default (3). Clamped to
 	// [1, 10]. The counter is reset to 0 on the first 2xx and
 	// survives an intermittent 5xx across the consecutive window
 	// (AC #2 — flaky app does NOT oscillate).
-	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
+	ConsecutiveFailures int `json:"consecutive_failures,omitempty" yaml:"consecutive_failures,omitempty" toml:"consecutive_failures,omitempty"`
 	// CooldownS (issue #554 / ADR-078) is the per-deployment
 	// override of the vmmd-side cooldown gate. After a successful
 	// DestroyForLivenessFailure, the next liveness-failure fire on
@@ -2012,13 +2012,13 @@ type DeploymentLivenessProbe struct {
 	// Distinct from the schedd-side LivenessWindow which is the
 	// "N restarts in W seconds → park deployment" gate (issue #554
 	// AC #3, pkg/sched/liveness_window.go).
-	CooldownS int `json:"cooldown_s,omitempty"`
+	CooldownS int `json:"cooldown_s,omitempty" yaml:"cooldown_s,omitempty" toml:"cooldown_s,omitempty"`
 }
 
 // DeploymentGRPCLivenessProbe selects a service for the standard gRPC
 // health.v1 Check RPC. An empty service checks overall server health.
 type DeploymentGRPCLivenessProbe struct {
-	Service string `json:"service,omitempty"`
+	Service string `json:"service,omitempty" yaml:"service,omitempty" toml:"service,omitempty"`
 }
 
 // SecretRefPrefix is the wire prefix on env_secrets values that flags the

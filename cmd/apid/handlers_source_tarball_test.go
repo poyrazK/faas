@@ -138,6 +138,19 @@ func TestSourceTarball_PersistsManifestMainWorkloadDependencies(t *testing.T) {
 	manifest := `main_depends_on:
   - name: proxy
     condition: healthy
+hosting:
+  startup_probe:
+    grpc:
+      service: grpc.health.v1.Health
+    interval_s: 5
+  readiness_probe:
+    path: /readyz
+    period_s: 7
+    failure_threshold: 4
+  liveness_probe:
+    path: /alive
+    interval_s: 10
+    consecutive_failures: 4
 companions:
   - name: proxy
     image: registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -175,6 +188,7 @@ companions:
 	if len(dependencies) != 1 || dependencies[0].Name != "proxy" || dependencies[0].Condition != api.WorkloadDependencyHealthy {
 		t.Fatalf("OverrideMainDependsOn = %+v, want proxy/healthy", dependencies)
 	}
+	assertPrimaryManifestHealthProbes(t, deployment)
 }
 
 func assertSourceTarballDeprecationHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
