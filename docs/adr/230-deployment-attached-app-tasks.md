@@ -84,6 +84,10 @@ database state can be rolled back.
   which avoids running non-idempotent migrations twice after a host failure.
 - Release commands must themselves be safe to retry only before dispatch. A
   lost running VM fails the release and leaves the previous deployment live.
+- A deployment carrying release intent fails with `release_phase_unavailable`
+  when imaged has release-phase execution disabled. The command is never
+  silently skipped; deployments without release intent retain the normal
+  snapshot-prime path.
 - Interactive PTYs, detached sessions, retries, schedules, and task fan-out
   are outside this ADR. They may build on the same primitive without changing
   release-phase semantics.
