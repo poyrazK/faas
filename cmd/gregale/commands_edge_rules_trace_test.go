@@ -155,11 +155,125 @@ func TestPreviewEdgeRules_DeterministicActionPreviewIsExplicitlyPerRule(t *testi
 		Action: json.RawMessage(`{"respond":{"status_code":200,"body":{"ok":true}}}`),
 	}
 	got := previewEdgeRules("demo", "example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule})
-	if !strings.Contains(got.Scope, "not combined into a final gateway response") {
-		t.Fatalf("scope does not disclaim combined execution: %q", got.Scope)
+	if !strings.Contains(got.Scope, "not that the app will return successfully") {
+		t.Fatalf("scope does not disclaim app/runtime execution: %q", got.Scope)
 	}
 	if got.Rules[0].Outcome != "fixed_response" || got.Rules[0].ActionPreview == nil || got.Rules[0].ActionPreview.StatusCode != 200 {
 		t.Fatalf("respond preview = %#v", got.Rules[0])
+	}
+	if got.Simulation.Outcome != "fixed_response" || got.Simulation.Status != "incomplete" {
+		t.Fatalf("composed simulation = %#v", got.Simulation)
+	}
+}
+
+func TestSimulateEdgeRuleRequest_ComposesRewriteHeadersAndResponse(t *testing.T) {
+	rules := []api.EdgeRuleResponse{
+		{ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/legacy/*", Priority: 10,
+			Action: json.RawMessage(`{"rewrite":{"from":"/legacy","to":"/v1"}}`)},
+		{ID: "headers", Enabled: true, Kind: "headers", MatchHost: "*", MatchPath: "/v1/*", MatchHeaders: map[string]string{"x-mode": "on"}, Priority: 10,
+			Action: json.RawMessage(`{"headers":{"request_headers":[{"name":"X-Stage","value":"ready","action":"set"}],"response_headers":[{"name":"X-Trace-Preview","value":"yes","action":"add"}]}}`)},
+		{ID: "respond", Enabled: true, Kind: "respond", MatchHost: "*", MatchPath: "/v1/*", MatchHeaders: map[string]string{"x-stage": "ready"}, Priority: 10,
+			Action: json.RawMessage(`{"respond":{"status_code":202,"body":{"accepted":true}}}`)},
+	}
+	requestHeaders := http.Header{"X-Mode": []string{"on"}}
+	got := simulateEdgeRuleRequest("example.com", "/legacy/items", "GET", "", "", rules, requestHeaders)
+	if got.Outcome != "fixed_response" || got.StatusCode != http.StatusAccepted || got.FinalPath != "/v1/items" {
+		t.Fatalf("simulation = %#v", got)
+	}
+	if len(got.Steps) != 3 || got.Steps[0].Phase != "rewrite" || got.Steps[1].Phase != "headers" || got.Steps[2].Phase != "respond" {
+		t.Fatalf("phase order = %#v", got.Steps)
+	}
+	if values := got.RequestHeaders["x-stage"]; len(values) != 1 || values[0] != "ready" {
+		t.Fatalf("simulated request headers = %#v", got.RequestHeaders)
+	}
+	if len(got.ResponseHeaderOps) != 1 || got.ResponseHeaderOps[0].Name != "X-Trace-Preview" {
+		t.Fatalf("simulated response operations = %#v", got.ResponseHeaderOps)
+	}
+	if string(got.Body) != `{"accepted":true}` {
+		t.Fatalf("simulated response body = %s", got.Body)
+	}
+}
+
+func TestSimulateEdgeRuleRequest_StopsAtGatewayShortCircuit(t *testing.T) {
+	rules := []api.EdgeRuleResponse{
+		{ID: "redirect", Enabled: true, Kind: "redirect", MatchHost: "*", MatchPath: "/legacy/*", Priority: 10,
+			Action: json.RawMessage(`{"redirect":{"status_code":307,"to":"/new"}}`)},
+		{ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/legacy/*", Priority: 10,
+			Action: json.RawMessage(`{"rewrite":{"from":"/legacy","to":"/v1"}}`)},
+		{ID: "headers", Enabled: true, Kind: "headers", MatchHost: "*", MatchPath: "/legacy/*", Priority: 10,
+			Action: json.RawMessage(`{"headers":{"request_headers":[{"name":"X-Should-Not-Apply","value":"yes","action":"set"}]}}`)},
+	}
+	got := simulateEdgeRuleRequest("example.com", "/legacy/items", "GET", "", "", rules, nil)
+	if got.Outcome != "redirect" || got.StatusCode != http.StatusTemporaryRedirect || got.Location != "/new" || got.FinalPath != "/legacy/items" {
+		t.Fatalf("simulation = %#v", got)
+	}
+	if len(got.Steps) != 1 || got.Steps[0].RuleID != "redirect" {
+		t.Fatalf("later phases ran after redirect: %#v", got.Steps)
+	}
+}
+
+func TestSimulateEdgeRuleRequest_MaintenanceResponse(t *testing.T) {
+	rule := api.EdgeRuleResponse{ID: "maintenance", Enabled: true, Kind: "maintenance", MatchHost: "*", MatchPath: "/", Priority: 10,
+		Action: json.RawMessage(`{"maintenance":{"message":"back soon","retry_after_seconds":120}}`)}
+	got := simulateEdgeRuleRequest("example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule}, nil)
+	if got.Status != "complete" || got.Outcome != "maintenance" || got.StatusCode != http.StatusServiceUnavailable || got.RetryAfterSeconds != 120 || got.Message != "back soon" {
+		t.Fatalf("simulation = %#v", got)
+	}
+	if len(got.Steps) != 1 || got.Steps[0].Phase != "maintenance" || got.Steps[0].StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("simulation steps = %#v", got.Steps)
+	}
+}
+
+func TestSimulateEdgeRuleRequest_StopsAtUnknownOrAmbiguousPhase(t *testing.T) {
+	t.Run("runtime context barrier", func(t *testing.T) {
+		rules := []api.EdgeRuleResponse{
+			{ID: "jwt", Enabled: true, Kind: "jwt", MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(`{"jwt":{}}`)},
+			{ID: "ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(`{"ip":{"deny":["203.0.113.0/24"]}}`)},
+			{ID: "respond", Enabled: true, Kind: "respond", MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(`{"respond":{"status_code":200}}`)},
+		}
+		got := simulateEdgeRuleRequest("example.com", "/", "GET", "203.0.113.5", "", rules, nil)
+		if got.Status != "incomplete" || got.StoppedAt != "jwt" || len(got.Steps) != 1 {
+			t.Fatalf("simulation crossed a context barrier: %#v", got)
+		}
+	})
+
+	t.Run("priority tie", func(t *testing.T) {
+		rules := []api.EdgeRuleResponse{
+			{ID: "redirect-a", Enabled: true, Kind: "redirect", MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(`{"redirect":{"to":"/a"}}`)},
+			{ID: "redirect-b", Enabled: true, Kind: "redirect", MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(`{"redirect":{"to":"/b"}}`)},
+		}
+		got := simulateEdgeRuleRequest("example.com", "/", "GET", "", "", rules, nil)
+		if got.Status != "incomplete" || got.Outcome != "ambiguous" || got.StoppedAt != "redirect" {
+			t.Fatalf("simulation hid priority tie: %#v", got)
+		}
+	})
+}
+
+func TestSimulateEdgeRuleRequest_EvaluatesExplicitIPAndGeoContext(t *testing.T) {
+	cases := []struct {
+		kind, action, clientIP, country string
+		wantPhase                       string
+	}{
+		{kind: "ip", action: `{"ip":{"deny":["203.0.113.0/24"]}}`, clientIP: "203.0.113.5", wantPhase: "ip"},
+		{kind: "geo", action: `{"geo":{"allow":["US"]}}`, country: "CA", wantPhase: "geo"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			rule := api.EdgeRuleResponse{ID: "gate", Enabled: true, Kind: tc.kind, MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(tc.action)}
+			got := simulateEdgeRuleRequest("example.com", "/", "GET", tc.clientIP, tc.country, []api.EdgeRuleResponse{rule}, nil)
+			if got.Outcome != "blocked" || got.StatusCode != http.StatusForbidden || got.StoppedAt != tc.wantPhase {
+				t.Fatalf("simulation = %#v", got)
+			}
+		})
+	}
+}
+
+func TestSimulateEdgeRuleRequest_RouteNeedsTargetRules(t *testing.T) {
+	rule := api.EdgeRuleResponse{ID: "route", Enabled: true, Kind: "route", MatchHost: "*", MatchPath: "/", Priority: 10,
+		Action: json.RawMessage(`{"route":{"target_app_slug":"other-app"}}`)}
+	got := simulateEdgeRuleRequest("example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule}, nil)
+	if got.Status != "incomplete" || got.Outcome != "route" || got.TargetApp != "other-app" || got.StoppedAt != "route" {
+		t.Fatalf("simulation = %#v", got)
 	}
 }
 
@@ -195,7 +309,10 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/edge-rules" {
 			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{ID: "match", Enabled: true, Kind: "redirect", MatchHost: "example.com", MatchPath: "/api/*"}})
+		_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+			ID: "match", Enabled: true, Kind: "redirect", MatchHost: "example.com", MatchPath: "/api/*",
+			Action: json.RawMessage(`{"redirect":{"to":"/elsewhere"}}`),
+		}})
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
@@ -211,7 +328,7 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Host != "example.com" || result.Path != "/api/items" || result.Method != "POST" || len(result.Rules) != 1 || result.Rules[0].Status != "first_candidate" {
+	if result.Host != "example.com" || result.Path != "/api/items" || result.Method != "POST" || len(result.Rules) != 1 || result.Rules[0].Status != "first_candidate" || result.Simulation.Outcome != "redirect" || result.Simulation.Location != "/elsewhere" {
 		t.Errorf("result = %#v", result)
 	}
 	if strings.Contains(stdout.String(), "private") {

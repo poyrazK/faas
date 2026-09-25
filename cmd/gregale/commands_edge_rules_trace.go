@@ -20,18 +20,55 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleTraceScope = "Host/method/path/header matching is simulated. Header names are case-insensitive and values compare exactly; repeated request-header values are preserved. Per-rule previews cover route, rewrite, redirect, header operations, maintenance, fixed responses, and IP/geo decisions. Previews are not combined into a final gateway response: runtime phase ordering, cross-kind short-circuits, auth, stateful gates, CORS, validation, cache, retry, circuit-breaker, and async behavior are not simulated. IP and geo use supplied --client-ip/--country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+const edgeRuleTraceScope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation below composes deterministic actions in gateway phase order, including rewrite and request-header mutations. It stops as incomplete at a matching rule whose result needs runtime state or unavailable request context. A completed 'continue' outcome means the inspected edge-rule phases did not terminate the request, not that the app will return successfully. App-level maintenance, ingress and auth policy, target app existence and ownership, CORS execution, declared routes, body gates, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. IP and geo use supplied --client-ip/--country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 
 type edgeRuleTraceResult struct {
-	App      string              `json:"app"`
-	Host     string              `json:"host"`
-	Path     string              `json:"path"`
-	Method   string              `json:"method"`
-	ClientIP string              `json:"client_ip,omitempty"`
-	Country  string              `json:"country,omitempty"`
-	Headers  map[string][]string `json:"headers,omitempty"`
-	Scope    string              `json:"scope"`
-	Rules    []edgeRuleTraceRow  `json:"rules"`
+	App        string                  `json:"app"`
+	Host       string                  `json:"host"`
+	Path       string                  `json:"path"`
+	Method     string                  `json:"method"`
+	ClientIP   string                  `json:"client_ip,omitempty"`
+	Country    string                  `json:"country,omitempty"`
+	Headers    map[string][]string     `json:"headers,omitempty"`
+	Scope      string                  `json:"scope"`
+	Rules      []edgeRuleTraceRow      `json:"rules"`
+	Simulation edgeRuleTraceSimulation `json:"simulation"`
+}
+
+type edgeRuleTraceSimulation struct {
+	Status            string                        `json:"status"`
+	Outcome           string                        `json:"outcome"`
+	FinalPath         string                        `json:"final_path"`
+	RequestHeaders    map[string][]string           `json:"request_headers,omitempty"`
+	ResponseHeaderOps []api.EdgeRuleHeaderOp        `json:"response_header_ops,omitempty"`
+	StatusCode        int                           `json:"status_code,omitempty"`
+	Location          string                        `json:"location,omitempty"`
+	RedirectHeaders   map[string]string             `json:"redirect_headers,omitempty"`
+	RetryAfterSeconds int                           `json:"retry_after_seconds,omitempty"`
+	Message           string                        `json:"message,omitempty"`
+	TargetApp         string                        `json:"target_app,omitempty"`
+	Body              json.RawMessage               `json:"body,omitempty"`
+	StoppedAt         string                        `json:"stopped_at,omitempty"`
+	Reason            string                        `json:"reason"`
+	Steps             []edgeRuleTraceSimulationStep `json:"steps"`
+}
+
+type edgeRuleTraceSimulationStep struct {
+	Phase             string                 `json:"phase"`
+	RuleID            string                 `json:"rule_id,omitempty"`
+	Kind              string                 `json:"kind,omitempty"`
+	Outcome           string                 `json:"outcome"`
+	PathBefore        string                 `json:"path_before,omitempty"`
+	PathAfter         string                 `json:"path_after,omitempty"`
+	StatusCode        int                    `json:"status_code,omitempty"`
+	Location          string                 `json:"location,omitempty"`
+	RedirectHeaders   map[string]string      `json:"redirect_headers,omitempty"`
+	RetryAfterSeconds int                    `json:"retry_after_seconds,omitempty"`
+	Message           string                 `json:"message,omitempty"`
+	TargetApp         string                 `json:"target_app,omitempty"`
+	RequestOps        []api.EdgeRuleHeaderOp `json:"request_header_ops,omitempty"`
+	ResponseOps       []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
+	Reason            string                 `json:"reason"`
 }
 
 type edgeRuleTraceRow struct {
@@ -149,6 +186,52 @@ func cmdEdgeRulesTrace(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "%-18s %-16s outcome=%-16s priority=%-5d %s — %s; %s\n", row.Kind, row.Status, row.Outcome, row.Priority, row.ID, row.Reason, row.OutcomeReason)
 		}
 	}
+	_, _ = fmt.Fprintf(osStdout, "simulation: status=%s outcome=%s final_path=%s\n", result.Simulation.Status, result.Simulation.Outcome, result.Simulation.FinalPath)
+	for _, step := range result.Simulation.Steps {
+		_, _ = fmt.Fprintf(osStdout, "  %-12s %-12s %s — %s\n", step.Phase, step.Outcome, step.RuleID, step.Reason)
+	}
+	if result.Simulation.StatusCode != 0 {
+		_, _ = fmt.Fprintf(osStdout, "  response: status=%d", result.Simulation.StatusCode)
+		if result.Simulation.Location != "" {
+			_, _ = fmt.Fprintf(osStdout, " location=%q", result.Simulation.Location)
+		}
+		if result.Simulation.RetryAfterSeconds != 0 {
+			_, _ = fmt.Fprintf(osStdout, " retry_after=%d", result.Simulation.RetryAfterSeconds)
+		}
+		_, _ = fmt.Fprintln(osStdout)
+	}
+	if result.Simulation.Message != "" {
+		_, _ = fmt.Fprintf(osStdout, "  response message: %q\n", result.Simulation.Message)
+	}
+	if len(result.Simulation.RedirectHeaders) > 0 {
+		names := make([]string, 0, len(result.Simulation.RedirectHeaders))
+		for name := range result.Simulation.RedirectHeaders {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			_, _ = fmt.Fprintf(osStdout, "  redirect header: %s=%q\n", name, result.Simulation.RedirectHeaders[name])
+		}
+	}
+	if result.Simulation.TargetApp != "" {
+		_, _ = fmt.Fprintf(osStdout, "  target app: %s\n", result.Simulation.TargetApp)
+	}
+	for _, op := range result.Simulation.ResponseHeaderOps {
+		_, _ = fmt.Fprintf(osStdout, "  response header op: %s %s=%q\n", op.Action, op.Name, op.Value)
+	}
+	finalHeaderNames := make([]string, 0, len(result.Simulation.RequestHeaders))
+	for name := range result.Simulation.RequestHeaders {
+		finalHeaderNames = append(finalHeaderNames, name)
+	}
+	sort.Strings(finalHeaderNames)
+	for _, name := range finalHeaderNames {
+		for _, value := range result.Simulation.RequestHeaders[name] {
+			_, _ = fmt.Fprintf(osStdout, "  simulated request header: %s=%q\n", name, value)
+		}
+	}
+	if result.Simulation.StoppedAt != "" {
+		_, _ = fmt.Fprintf(osStdout, "  simulation stopped at %s: %s\n", result.Simulation.StoppedAt, result.Simulation.Reason)
+	}
 	_, _ = fmt.Fprintln(osStdout, result.Scope)
 	return 0
 }
@@ -218,7 +301,206 @@ func previewEdgeRules(app, host, requestPath, method, clientIP, country string, 
 		row.Outcome, row.OutcomeReason, row.ActionPreview = previewEdgeRuleOutcome(rule, row, clientIP, country, requestPath)
 		result.Rules = append(result.Rules, row)
 	}
+	result.Simulation = simulateEdgeRuleRequest(host, requestPath, method, clientIP, country, sorted, requestHeaders)
 	return result
+}
+
+// simulateEdgeRuleRequest composes the edge-rule phases whose effects can be
+// represented without running gateway dependencies. The phase sequence is
+// pinned to Handler.ServeHTTP: route substitution precedes the app handler;
+// maintenance, redirect, rewrite, and headers run before CORS/auth/IP/geo and
+// later body gates; a fixed response is considered after those gates. If a
+// matched phase needs runtime state, the trace stops there rather than
+// assuming it passes.
+func simulateEdgeRuleRequest(host, requestPath, method, clientIP, country string, rules []api.EdgeRuleResponse, requestHeaders http.Header) edgeRuleTraceSimulation {
+	simulation := edgeRuleTraceSimulation{
+		Status: "complete", Outcome: "continue", FinalPath: requestPath,
+		RequestHeaders: traceHeaderSnapshot(cloneTraceHeaders(requestHeaders)),
+		Reason:         "no simulated edge-rule action terminated the request; downstream app and gateway behavior is outside this simulation",
+		Steps:          make([]edgeRuleTraceSimulationStep, 0, 6),
+	}
+	workingHeaders := cloneTraceHeaders(requestHeaders)
+	stop := func(status, outcome, phase, reason string, rule *api.EdgeRuleResponse) edgeRuleTraceSimulation {
+		simulation.Status = status
+		simulation.Outcome = outcome
+		simulation.StoppedAt = phase
+		simulation.Reason = reason
+		step := edgeRuleTraceSimulationStep{Phase: phase, Outcome: outcome, Reason: reason}
+		if rule != nil {
+			step.RuleID, step.Kind = rule.ID, rule.Kind
+		}
+		simulation.Steps = append(simulation.Steps, step)
+		simulation.FinalPath = requestPath
+		simulation.RequestHeaders = traceHeaderSnapshot(workingHeaders)
+		return simulation
+	}
+
+	phases := []string{"route", "maintenance", "redirect", "rewrite", "headers", "cors", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
+	for _, phase := range phases {
+		rule, tied := firstTracePhaseRule(rules, phase, host, requestPath, method, workingHeaders)
+		if tied {
+			return stop("incomplete", "ambiguous", phase, "equal-priority matching rules have no guaranteed evaluation order", rule)
+		}
+		if rule == nil {
+			continue
+		}
+		row := edgeRuleTraceRow{Status: "first_candidate"}
+		outcome, reason, preview := previewEdgeRuleOutcome(*rule, row, clientIP, country, requestPath)
+		step := edgeRuleTraceSimulationStep{Phase: phase, RuleID: rule.ID, Kind: phase, Outcome: outcome, PathBefore: requestPath, Reason: reason}
+		if preview != nil {
+			step.StatusCode, step.Location, step.TargetApp = preview.StatusCode, preview.Location, preview.TargetApp
+			step.RedirectHeaders = cloneTraceStringMap(preview.RedirectHeaders)
+			step.RetryAfterSeconds, step.Message = preview.RetryAfterSeconds, preview.Message
+			step.RequestOps = append([]api.EdgeRuleHeaderOp(nil), preview.RequestHeaderOps...)
+			step.ResponseOps = append([]api.EdgeRuleHeaderOp(nil), preview.ResponseHeaderOps...)
+		}
+
+		switch phase {
+		case "route":
+			if outcome != "route" {
+				return stop("incomplete", "unknown", phase, reason, rule)
+			}
+			simulation.Status, simulation.Outcome = "incomplete", "route"
+			simulation.TargetApp, simulation.StoppedAt = preview.TargetApp, phase
+			simulation.Reason = "request would be routed to another app; that app's rules are not loaded by this app-scoped trace"
+			step.Reason = simulation.Reason
+			simulation.Steps = append(simulation.Steps, step)
+			simulation.FinalPath = requestPath
+			simulation.RequestHeaders = traceHeaderSnapshot(workingHeaders)
+			return simulation
+		case "maintenance":
+			if outcome != "maintenance" {
+				return stop("incomplete", "unknown", phase, reason, rule)
+			}
+			simulation.Status, simulation.Outcome, simulation.StatusCode = "complete", "maintenance", preview.StatusCode
+			simulation.RetryAfterSeconds, simulation.Message = preview.RetryAfterSeconds, preview.Message
+			simulation.StoppedAt, simulation.Reason = phase, reason
+			simulation.Steps = append(simulation.Steps, step)
+			simulation.FinalPath, simulation.RequestHeaders = requestPath, traceHeaderSnapshot(workingHeaders)
+			return simulation
+		case "redirect":
+			if outcome != "redirect" {
+				return stop("incomplete", "unknown", phase, reason, rule)
+			}
+			simulation.Status, simulation.Outcome = "complete", "redirect"
+			simulation.StatusCode, simulation.Location = preview.StatusCode, preview.Location
+			simulation.RedirectHeaders = cloneTraceStringMap(preview.RedirectHeaders)
+			simulation.StoppedAt, simulation.Reason = phase, reason
+			simulation.Steps = append(simulation.Steps, step)
+			simulation.FinalPath, simulation.RequestHeaders = requestPath, traceHeaderSnapshot(workingHeaders)
+			return simulation
+		case "rewrite":
+			if outcome != "rewrite" && outcome != "not_applied" {
+				return stop("incomplete", "unknown", phase, reason, rule)
+			}
+			if outcome == "rewrite" {
+				requestPath = preview.Path
+			}
+			step.PathAfter = requestPath
+			simulation.Steps = append(simulation.Steps, step)
+		case "headers":
+			if outcome != "headers" {
+				return stop("incomplete", "unknown", phase, reason, rule)
+			}
+			applyTraceHeaderOps(workingHeaders, preview.RequestHeaderOps)
+			simulation.ResponseHeaderOps = append(simulation.ResponseHeaderOps, preview.ResponseHeaderOps...)
+			step.PathAfter = requestPath
+			simulation.Steps = append(simulation.Steps, step)
+		case "ip", "geo":
+			switch outcome {
+			case "allow":
+				simulation.Steps = append(simulation.Steps, step)
+			case "block":
+				simulation.Status, simulation.Outcome, simulation.StatusCode = "complete", "blocked", http.StatusForbidden
+				simulation.StoppedAt, simulation.Reason = phase, reason
+				step.StatusCode = http.StatusForbidden
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, traceHeaderSnapshot(workingHeaders)
+				return simulation
+			default:
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
+		case "respond":
+			if outcome != "fixed_response" {
+				return stop("incomplete", "unknown", phase, reason, rule)
+			}
+			simulation.Status, simulation.Outcome = "incomplete", "fixed_response"
+			simulation.StatusCode, simulation.Body = preview.StatusCode, append(json.RawMessage(nil), preview.Body...)
+			simulation.StoppedAt, simulation.Reason = phase, "edge rule would return this fixed response if prior app authentication and runtime gates pass"
+			step.Reason = simulation.Reason
+			simulation.Steps = append(simulation.Steps, step)
+			simulation.FinalPath, simulation.RequestHeaders = requestPath, traceHeaderSnapshot(workingHeaders)
+			return simulation
+		default:
+			// CORS, JWT, and the body-dependent gates may short-circuit based
+			// on runtime state that this CLI does not collect.
+			return stop("incomplete", "needs_runtime_context", phase, "matching rule depends on gateway runtime state or request data that this trace does not collect", rule)
+		}
+	}
+	simulation.FinalPath = requestPath
+	simulation.RequestHeaders = traceHeaderSnapshot(workingHeaders)
+	return simulation
+}
+
+func firstTracePhaseRule(rules []api.EdgeRuleResponse, kind, host, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
+	var first *api.EdgeRuleResponse
+	for i := range rules {
+		rule := &rules[i]
+		if rule.Kind != kind || !rule.Enabled || !traceHostMatches(rule.MatchHost, host) || !traceMethodMatches(rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+			continue
+		}
+		matched, err := true, error(nil)
+		if rule.MatchPath != "" && rule.MatchPath != "*" {
+			matched, err = path.Match(rule.MatchPath, requestPath)
+		}
+		if err != nil || !matched {
+			continue
+		}
+		if first == nil {
+			first = rule
+			continue
+		}
+		return first, first.Priority == rule.Priority
+	}
+	return first, false
+}
+
+func cloneTraceHeaders(headers http.Header) http.Header {
+	cloned := make(http.Header, len(headers))
+	for name, values := range headers {
+		cloned[name] = append([]string(nil), values...)
+	}
+	return cloned
+}
+
+func cloneTraceStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func applyTraceHeaderOps(headers http.Header, ops []api.EdgeRuleHeaderOp) {
+	for _, op := range ops {
+		switch op.Action {
+		case "remove":
+			headers.Del(op.Name)
+		case "set":
+			if op.Value == "" {
+				headers.Del(op.Name)
+			} else {
+				headers.Set(op.Name, op.Value)
+			}
+		case "add":
+			if op.Value != "" {
+				headers.Add(op.Name, op.Value)
+			}
+		}
+	}
 }
 
 func previewEdgeRuleOutcome(rule api.EdgeRuleResponse, row edgeRuleTraceRow, clientIP, country, requestPath string) (string, string, *edgeRuleTraceActionPreview) {

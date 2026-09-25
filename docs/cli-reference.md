@@ -1385,7 +1385,7 @@ List edge rules
 
 ### edge-rules trace
 
-Preview edge-rule matches and deterministic action outcomes
+Simulate composed edge-rule outcomes for a request
 
 | Flag | Meaning | |
 |---|---|---|
