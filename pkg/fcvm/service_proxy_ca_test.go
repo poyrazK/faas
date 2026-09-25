@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// adr: 244
 func TestPreBootStagesServiceProxyCAOnlyForNetworkedGuests(t *testing.T) {
 	ca := []byte("test-public-ca")
 	writers, firstDigest, err := preBootFileWriters(nil, nil, nil, "10.100.0.1", false, ca)
