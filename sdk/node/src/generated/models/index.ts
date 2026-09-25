@@ -286,6 +286,7 @@ export type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 export type { DeploymentResources } from './DeploymentResources.js';
 export type { DeploymentResourcesRequest } from './DeploymentResourcesRequest.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';
+export type { DeploymentScalingRequest } from './DeploymentScalingRequest.js';
 export type { DeploymentSummaryResponse } from './DeploymentSummaryResponse.js';
 export type { DevPostgresRequest } from './DevPostgresRequest.js';
 export type { DevPostgresResponse } from './DevPostgresResponse.js';

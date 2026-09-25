@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DeploymentResourcesRequest } from './DeploymentResourcesRequest.js';
+import type { DeploymentScalingRequest } from './DeploymentScalingRequest.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
@@ -34,6 +35,7 @@ export type UploadDeployOptions = {
    * At upload commit, set an immutable deployment serving-instance cap. Omit or use 0 to inherit app policy; the app/plan cap still aggregates across revisions.
    */
   max_instances?: number | null;
+  scaling?: DeploymentScalingRequest;
   reason?: string;
   tag?: string;
   deployed_by?: string;

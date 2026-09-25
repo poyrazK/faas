@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 import type { DeploymentResourcesRequest } from './DeploymentResourcesRequest.js';
+import type { DeploymentScalingRequest } from './DeploymentScalingRequest.js';
 /**
  * Body for the informational `sidecar` form field on POST /v1/apps/{slug}/deployments/source-tarball (issue #961 / Mega-A PR-1, ADR-115). The CLI is the trust root for this deploy path; apid does NOT consult `github_installations` and does NOT attempt a server-side git fetch. The sidecar fields are recorded on the build row for provenance only — the build pipeline does NOT use them to fetch upstream.
  */
@@ -29,6 +30,7 @@ export type SourceTarballDeployRequest = {
    * Optional revision ceiling for this tarball deployment; 0 leaves the app's inherited limit in force.
    */
   max_instances?: number | null;
+  scaling?: DeploymentScalingRequest;
   /**
    * Free-form operator note on the tarball deploy request (≤280 chars). Example: 'Emergency rollback after payment provider incident'.
    */

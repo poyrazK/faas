@@ -291,6 +291,7 @@ export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe
 export type { DeploymentResources } from './models/DeploymentResources.js';
 export type { DeploymentResourcesRequest } from './models/DeploymentResourcesRequest.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
+export type { DeploymentScalingRequest } from './models/DeploymentScalingRequest.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
 export type { DeployTokenResponse } from './models/DeployTokenResponse.js';
 export type { DevPostgresRequest } from './models/DevPostgresRequest.js';

@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 import type { DeploymentResourcesRequest } from './DeploymentResourcesRequest.js';
+import type { DeploymentScalingRequest } from './DeploymentScalingRequest.js';
 /**
  * JSON body for POST /v1/apps/{slug}/deployments/source-ref
  * (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
@@ -40,6 +41,7 @@ export type SourceRefDeployRequest = {
    * Optional serving-VM bound recorded on the source-ref deployment; omit or use 0 for the app's effective instance limit.
    */
   max_instances?: number | null;
+  scaling?: DeploymentScalingRequest;
   /**
    * Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed.
    */
