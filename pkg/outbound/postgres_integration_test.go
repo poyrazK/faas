@@ -2,6 +2,9 @@ package outbound_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
 // TestPostgresBackendSharesBudgetAcrossGatewayInstances is the production
@@ -73,6 +77,26 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := workloadidentity.NewSigner(key, workloadidentity.DefaultIssuer, "test-key", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks, err := json.Marshal(signer.JWKS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := outbound.NewWorkloadIdentityVerifier(jwks, workloadidentity.DefaultIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := signer.Mint(time.Now(), account.ID, app.ID, "instance-1", "gregale:outbound:"+integration.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	handlers := make([]*outbound.Handler, 20)
 	for i := range handlers {
 		handlers[i], err = outbound.NewHandler(resolver, backend, provider.Client())
@@ -82,6 +106,7 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 		if err := handlers[i].SetManagedAuthorizations(map[string]string{integration.ID: "Bearer provider-secret"}); err != nil {
 			t.Fatal(err)
 		}
+		handlers[i].IdentityVerifier = verifier
 	}
 
 	responses := make(chan int, len(handlers))
@@ -91,8 +116,7 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 		go func(h *outbound.Handler) {
 			defer wg.Done()
 			req := httptest.NewRequest(http.MethodGet, "http://gateway.test/i/"+integration.ID+"/v1/items", nil)
-			req.Header.Set(outbound.TokenHeader, "secret")
-			req.Header.Set(outbound.AppHeader, app.ID)
+			req.Header.Set(outbound.WorkloadIdentityHeader, assertion.AccessToken)
 			rr := httptest.NewRecorder()
 			h.ServeHTTP(rr, req)
 			responses <- rr.Code

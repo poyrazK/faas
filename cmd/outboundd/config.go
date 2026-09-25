@@ -11,6 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
 type Config struct {
@@ -18,13 +19,44 @@ type Config struct {
 	// MetricsAddr is the private bind address for the operator-only
 	// Prometheus endpoint. Keep it loopback unless a firewall explicitly
 	// restricts the scrape network.
-	MetricsAddr  string                       `toml:"metrics_addr"`
-	DBURL        string                       `toml:"db_url"`
-	MaxBodyBytes int64                        `toml:"max_body_bytes"`
-	ReadTimeout  time.Duration                `toml:"read_timeout"`
-	WriteTimeout time.Duration                `toml:"write_timeout"`
-	IdleTimeout  time.Duration                `toml:"idle_timeout"`
-	Integrations map[string]IntegrationConfig `toml:"integrations"`
+	MetricsAddr              string                       `toml:"metrics_addr"`
+	DBURL                    string                       `toml:"db_url"`
+	MaxBodyBytes             int64                        `toml:"max_body_bytes"`
+	ReadTimeout              time.Duration                `toml:"read_timeout"`
+	WriteTimeout             time.Duration                `toml:"write_timeout"`
+	IdleTimeout              time.Duration                `toml:"idle_timeout"`
+	Integrations             map[string]IntegrationConfig `toml:"integrations"`
+	WorkloadIdentityJWKSPath string                       `toml:"workload_identity_jwks_path"`
+	WorkloadIdentityIssuer   string                       `toml:"workload_identity_issuer"`
+}
+
+func (c *Config) IdentityVerifier(items []configuredIntegration) (outbound.IdentityVerifier, error) {
+	managed := false
+	for _, item := range items {
+		if item.Record.Policy.ProviderAuthMode == outbound.ProviderAuthManaged {
+			managed = true
+			break
+		}
+	}
+	if !managed {
+		return nil, nil
+	}
+	if c.WorkloadIdentityJWKSPath == "" {
+		return nil, errors.New("managed outbound integrations require workload_identity_jwks_path")
+	}
+	data, err := os.ReadFile(c.WorkloadIdentityJWKSPath)
+	if err != nil {
+		return nil, fmt.Errorf("read outbound workload identity JWKS: %w", err)
+	}
+	issuer := c.WorkloadIdentityIssuer
+	if issuer == "" {
+		issuer = workloadidentity.DefaultIssuer
+	}
+	verifier, err := outbound.NewWorkloadIdentityVerifier(data, issuer)
+	if err != nil {
+		return nil, err
+	}
+	return verifier, nil
 }
 
 type IntegrationConfig struct {

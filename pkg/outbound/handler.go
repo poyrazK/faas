@@ -49,6 +49,7 @@ type Handler struct {
 	MaxResponseBytes       int64
 	MaxResponseHeaderBytes int64
 	MaxResponseHeaders     int
+	IdentityVerifier       IdentityVerifier
 	managedAuthorization   map[string]string
 }
 
@@ -154,11 +155,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_integration_unavailable", "Outbound integration is unavailable", "1")
 		return
 	}
-	if !validToken(r.Header.Get(TokenHeader), integration.TokenHash) {
-		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound token is invalid", "")
+	appID, ok := h.callerAppID(w, r, integration)
+	if !ok {
 		return
 	}
-	appID := r.Header.Get(AppHeader)
 	if !integration.AllowsApp(appID) {
 		writeProblem(w, http.StatusForbidden, "outbound_app_not_attached", "The app is not attached to this outbound integration", "")
 		return
@@ -292,6 +292,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
 		panic(http.ErrAbortHandler)
 	}
+}
+
+func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
+	if integration.ProviderAuthMode == ProviderAuthManaged {
+		if h.IdentityVerifier == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "outbound_identity_unavailable", "Outbound workload identity is unavailable", "1")
+			return "", false
+		}
+		identity, err := h.IdentityVerifier.Verify(r.Header.Get(WorkloadIdentityHeader), integration.ID)
+		if err != nil {
+			writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound workload identity is invalid", "")
+			return "", false
+		}
+		return identity.AppID, true
+	}
+	if !validToken(r.Header.Get(TokenHeader), integration.TokenHash) {
+		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound token is invalid", "")
+		return "", false
+	}
+	return r.Header.Get(AppHeader), true
 }
 
 func responseHeadersWithinBounds(headers http.Header, maxBytes int64, maxCount int) bool {

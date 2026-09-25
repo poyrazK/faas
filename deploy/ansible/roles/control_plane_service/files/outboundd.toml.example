@@ -1,7 +1,8 @@
 # Explicit outbound gateway. Workloads call the guest-reachable address that
 # the deployment routes to this listener:
 #   http://<outbound-gateway-address>:8095/i/<integration-uuid>/v1/resource
-# and send X-Gregale-Outbound-Token plus X-Gregale-App-ID.
+# and send X-Gregale-Workload-Identity for managed credentials, or the
+# legacy X-Gregale-Outbound-Token plus X-Gregale-App-ID otherwise.
 #
 # This gateway never transparently intercepts encrypted egress and never
 # retries a provider request. Admission is shared through Postgres.
@@ -20,13 +21,22 @@ metrics_addr = "127.0.0.1:9108"
 # write_timeout = "2m"
 # idle_timeout = "2m"
 
+# Required if any integration has provider_authorization_env. Install a
+# public JWKS published by vmmd (never its signing private key) at this path.
+# The issuer must exactly match vmmd's configured workload-identity issuer.
+# workload_identity_jwks_path = "/etc/faas/workload-identity.jwks.json"
+# workload_identity_issuer = "https://identity.gregale.dev"
+
 # Each key is only a local config label. The id must be a UUID and account/app
 # ownership is checked by the database trigger. The raw Gregale gateway token
 # is read once from the named environment variable and only its SHA-256 digest
 # is stored. By default, provider authentication headers are supplied by the
 # application and forwarded (except X-Gregale-* control headers). Set
 # provider_authorization_env to keep one provider Authorization value in
-# outboundd instead; the gateway replaces any app-supplied Authorization.
+# outboundd instead; the gateway replaces any app-supplied Authorization and
+# requires a signed workload identity token rather than the gateway token.
+# token_env remains required for the existing schema, but do not expose its
+# value to an app using a managed integration.
 #
 # [integrations.payments]
 # id = "00000000-0000-0000-0000-000000000001"

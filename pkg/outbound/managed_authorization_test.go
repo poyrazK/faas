@@ -11,6 +11,9 @@ import (
 func TestManagedAuthorizationOverridesGuestOnlyForConfiguredIntegration(t *testing.T) {
 	var received []string
 	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(WorkloadIdentityHeader) != "" || r.Header.Get(TokenHeader) != "" || r.Header.Get(AppHeader) != "" {
+			t.Error("internal identity headers reached provider")
+		}
 		received = append(received, r.Header.Get("Authorization"))
 		_, _ = w.Write([]byte("ok"))
 	}))
@@ -37,6 +40,13 @@ func TestManagedAuthorizationOverridesGuestOnlyForConfiguredIntegration(t *testi
 	if err := handler.SetManagedAuthorizations(authorizations); err != nil {
 		t.Fatal(err)
 	}
+	signer, jwks := testWorkloadSigner(t, "https://identity.gregale.dev")
+	verifier, err := NewWorkloadIdentityVerifier(jwks, "https://identity.gregale.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.IdentityVerifier = verifier
+	identityToken := testWorkloadToken(t, signer, time.Now(), "app-1", managed.ID)
 	authorizations["managed"] = "Bearer changed-after-configuration"
 
 	unauthorized := httptest.NewRecorder()
@@ -44,17 +54,37 @@ func TestManagedAuthorizationOverridesGuestOnlyForConfiguredIntegration(t *testi
 	if unauthorized.Code != http.StatusUnauthorized || len(received) != 0 {
 		t.Fatalf("unauthorized request status=%d provider calls=%d", unauthorized.Code, len(received))
 	}
+	noVerifier, err := NewHandler(resolver, NewMemoryBackend(), provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := noVerifier.SetManagedAuthorizations(map[string]string{"managed": "Bearer provider-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	noVerifierRequest := gatewayRequest(Prefix+managed.ID+"/v1/items", "managed-token", "app-1", http.MethodGet, nil)
+	noVerifierRequest.Header.Set(WorkloadIdentityHeader, identityToken)
+	noVerifierResponse := httptest.NewRecorder()
+	noVerifier.ServeHTTP(noVerifierResponse, noVerifierRequest)
+	if noVerifierResponse.Code != http.StatusServiceUnavailable || len(received) != 0 {
+		t.Fatalf("missing verifier status=%d provider calls=%d", noVerifierResponse.Code, len(received))
+	}
 	unconfiguredHandler, err := NewHandler(resolver, NewMemoryBackend(), provider.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
 	unconfigured := httptest.NewRecorder()
-	unconfiguredHandler.ServeHTTP(unconfigured, gatewayRequest(Prefix+managed.ID+"/v1/items", "managed-token", "app-1", http.MethodGet, nil))
+	unconfiguredHandler.IdentityVerifier = verifier
+	unconfiguredRequest := gatewayRequest(Prefix+managed.ID+"/v1/items", "managed-token", "app-1", http.MethodGet, nil)
+	unconfiguredRequest.Header.Set(WorkloadIdentityHeader, identityToken)
+	unconfiguredHandler.ServeHTTP(unconfigured, unconfiguredRequest)
 	if unconfigured.Code != http.StatusServiceUnavailable || len(received) != 0 {
 		t.Fatalf("unconfigured replica status=%d provider calls=%d", unconfigured.Code, len(received))
 	}
 
 	managedRequest := gatewayRequest(Prefix+managed.ID+"/v1/items", "managed-token", "app-1", http.MethodGet, nil)
+	managedRequest.Header.Del(TokenHeader)
+	managedRequest.Header.Set(AppHeader, "spoofed-app")
+	managedRequest.Header.Set(WorkloadIdentityHeader, identityToken)
 	managedRequest.Header.Set("Authorization", "Bearer guest-supplied")
 	managedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(managedResponse, managedRequest)
@@ -63,6 +93,13 @@ func TestManagedAuthorizationOverridesGuestOnlyForConfiguredIntegration(t *testi
 	}
 	if strings.Contains(managedResponse.Body.String(), "provider-secret") || strings.Contains(managedResponse.Header().Get("Authorization"), "provider-secret") {
 		t.Fatal("provider credential leaked into gateway response")
+	}
+	otherApp := gatewayRequest(Prefix+managed.ID+"/v1/items", "managed-token", "app-1", http.MethodGet, nil)
+	otherApp.Header.Set(WorkloadIdentityHeader, testWorkloadToken(t, signer, time.Now(), "other-app", managed.ID))
+	forbidden := httptest.NewRecorder()
+	handler.ServeHTTP(forbidden, otherApp)
+	if forbidden.Code != http.StatusForbidden || len(received) != 1 {
+		t.Fatalf("unattached app status=%d provider calls=%d", forbidden.Code, len(received))
 	}
 
 	legacyRequest := gatewayRequest(Prefix+legacy.ID+"/v1/items", "legacy-token", "app-1", http.MethodGet, nil)

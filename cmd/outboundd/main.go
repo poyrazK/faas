@@ -52,6 +52,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	identityVerifier, err := cfg.IdentityVerifier(configured)
+	if err != nil {
+		return fmt.Errorf("outboundd: workload identity: %w", err)
+	}
 	managedAuthorizations := make(map[string]string)
 	for _, item := range configured {
 		if err := outbound.EnsureIntegration(ctx, pool, item.Record); err != nil {
@@ -76,6 +80,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := handler.SetManagedAuthorizations(managedAuthorizations); err != nil {
 		return fmt.Errorf("outboundd: managed provider authorization: %w", err)
 	}
+	handler.IdentityVerifier = identityVerifier
 	outboundMetrics, err := outbound.NewMetrics(ops.Registry())
 	if err != nil {
 		return fmt.Errorf("outboundd: register metrics: %w", err)
