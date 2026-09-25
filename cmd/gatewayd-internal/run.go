@@ -3437,7 +3437,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Track every *http.Server we spin up so the shutdown path can drain
 	// them in parallel. sslib guidance is "call Shutdown on each" rather
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
-	errc := make(chan error, 5)
+	errc := make(chan error, 6)
 	var servers []*http.Server
 	var serviceDiscoveryServers []*dns.Server
 	addSrv := func(s *http.Server) { servers = append(servers, s) }
@@ -3599,11 +3599,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	serviceProxyAddr := strings.TrimSpace(cfg.ServiceProxyListen)
+	serviceProxyTLS, tlsErr := serviceProxyHTTPSConfig(cfg)
+	if tlsErr != nil {
+		return tlsErr
+	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
 			return err
 		}
 		if guestServiceProxy == nil {
+			if serviceProxyTLS != nil {
+				return errors.New("gatewayd: private service HTTPS requires an available guest service proxy")
+			}
 			log.Warn("gatewayd guest service proxy disabled; dependencies are unavailable", "addr", serviceProxyAddr)
 		} else {
 			srv := deps.newSrv(serviceProxyAddr, guestServiceProxy)
@@ -3635,6 +3642,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					errc <- err
 				}
 			}()
+			if serviceProxyTLS != nil {
+				httpsAddr := strings.TrimSpace(cfg.ServiceProxyHTTPSListen)
+				httpsSrv := deps.newSrv(httpsAddr, serviceProxyHTTPSHandler(guestServiceProxy))
+				httpsSrv.Addr = httpsAddr
+				httpsSrv.TLSConfig = serviceProxyTLS
+				httpsSrv.Protocols = new(http.Protocols)
+				httpsSrv.Protocols.SetHTTP1(true)
+				httpsSrv.Protocols.SetHTTP2(true)
+				httpsSrv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
+				httpsSrv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+				addSrv(httpsSrv)
+				httpsListener, listenErr := deps.listen("tcp", httpsAddr)
+				if listenErr != nil {
+					return fmt.Errorf("gatewayd guest service HTTPS listen %s: %w", httpsAddr, listenErr)
+				}
+				go func() {
+					log.Info("gatewayd guest service HTTPS listening", "addr", httpsAddr)
+					if err := httpsSrv.ServeTLS(httpsListener, "", ""); err != nil && err != http.ErrServerClosed {
+						errc <- err
+					}
+				}()
+			}
 			bridgeIP, bridgeErr := serviceProxyBridgeIP(serviceProxyAddr)
 			if bridgeErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS bridge address: %w", bridgeErr)

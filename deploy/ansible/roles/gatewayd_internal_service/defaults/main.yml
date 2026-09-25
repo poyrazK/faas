@@ -23,6 +23,10 @@ gatewayd_apps_domain: gregale.dev
 # lateral-movement deny. Split-box inventories may override the address when
 # their host_bridge_cidr differs from the legacy 10.100.0.0/16 default.
 gatewayd_service_proxy_listen: "{{ faas_gatewayd_service_proxy_listen | default('10.100.0.1:10080') }}"
+gatewayd_service_proxy_https_listen: ""
+gatewayd_service_proxy_tls_cert_path: ""
+gatewayd_service_proxy_tls_key_path: ""
+gatewayd_service_proxy_tls_ca_path: ""
 
 # Path of the rendered config file on the box. The alertmanager role
 # uses the same shape (am_config_path) for the alertmanager.yml drop.

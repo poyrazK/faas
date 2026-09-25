@@ -336,6 +336,11 @@ type DaemonConfig struct {
 	EgressTLS         *TLSMaterial `yaml:"egress_tls,omitempty"`
 	ScheddClientTLS   *TLSMaterial `yaml:"schedd_client_tls,omitempty"`
 	AdvisoryClientTLS *TLSMaterial `yaml:"advisory_client_tls,omitempty"`
+	// Opt-in guest service HTTPS uses a dedicated certificate trust domain,
+	// never the daemon-to-daemon TLS material above.
+	ServiceProxyHTTPSListen string       `yaml:"service_proxy_https_listen,omitempty"`
+	ServiceProxyTLS         *TLSMaterial `yaml:"service_proxy_tls,omitempty"`
+	ServiceProxyCAPath      string       `yaml:"service_proxy_ca_path,omitempty"`
 
 	// Outbound is the dial target. On a single-box install this is
 	// the unix socket; on a split-box fleet it's the tcp://
