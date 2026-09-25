@@ -183,6 +183,18 @@ that existed when the policy shipped were migration-backed to `allow_marked`
 to avoid changing live traffic. All projects otherwise default to previews
 enabled, a 7-day TTL, no ignored paths, and the repository root.
 
+Projects can additionally opt into durable project-environment previews by
+setting `preview_environment_from` to an existing environment slug. For
+example, `gregale github setup checkout --preview-environment-from staging`
+creates an isolated `pr-<number>` environment from `staging` when a same-repo
+PR opens, refreshes its recorded head and lease on updates, and starts the
+normal close-grace cleanup when the PR closes. Cloning stays in apid, where
+sealed customer secrets and managed resource bindings can be copied safely.
+Use `--no-preview-environment` to clear this setting. The existing app-level
+PR preview deployment remains responsible for building and serving the PR's
+exact source; this setting currently reconciles the cloned environment and
+does not deploy that artifact into it.
+
 When all changed files match ignored paths, githubd records the delivery as a
 successful no-op and does not enqueue builds. Compare-API failures still use
 the existing safe full-fan-out fallback, because an unavailable GitHub API

@@ -24,6 +24,11 @@ class GitHubDeploymentPolicy:
     """Repository-relative root used when the project has a root workload."""
     ignored_paths: list[str]
     """Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds."""
+    preview_environment_from: str
+    """When non-empty, same-repository pull requests create a durable
+    `pr-N` project environment cloned from this environment. Empty
+    disables durable project-environment previews.
+    """
     preview_enabled: bool = True
     preview_ttl_hours: int = 168
     preview_service_policy: GitHubDeploymentPolicyPreviewServicePolicy = "deny"
@@ -48,6 +53,8 @@ class GitHubDeploymentPolicy:
 
         preview_service_policy: str = self.preview_service_policy
 
+        preview_environment_from = self.preview_environment_from
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,6 +65,7 @@ class GitHubDeploymentPolicy:
                 "preview_enabled": preview_enabled,
                 "preview_ttl_hours": preview_ttl_hours,
                 "preview_service_policy": preview_service_policy,
+                "preview_environment_from": preview_environment_from,
             }
         )
 
@@ -78,6 +86,8 @@ class GitHubDeploymentPolicy:
 
         preview_service_policy = check_git_hub_deployment_policy_preview_service_policy(d.pop("preview_service_policy"))
 
+        preview_environment_from = d.pop("preview_environment_from")
+
         git_hub_deployment_policy = cls(
             project_id=project_id,
             root_dir=root_dir,
@@ -85,6 +95,7 @@ class GitHubDeploymentPolicy:
             preview_enabled=preview_enabled,
             preview_ttl_hours=preview_ttl_hours,
             preview_service_policy=preview_service_policy,
+            preview_environment_from=preview_environment_from,
         )
 
         git_hub_deployment_policy.additional_properties = d

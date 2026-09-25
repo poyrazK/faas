@@ -24,7 +24,9 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
+	"math"
 
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -47,6 +49,7 @@ import (
 // interface with a function-field fake.
 type ApidBridgeClient interface {
 	EnqueueBuild(ctx context.Context, in *githubdpb.EnqueueBuildRequest) (*githubdpb.EnqueueBuildResponse, error)
+	ReconcileProjectPreviewEnvironment(ctx context.Context, accountID string, installationID int64, repoFullName string, prNumber int, headSHA, action string) error
 	Close() error
 }
 
@@ -68,6 +71,10 @@ type stubApidBridgeClient struct{}
 // the production wiring with a live client.
 func (stubApidBridgeClient) EnqueueBuild(context.Context, *githubdpb.EnqueueBuildRequest) (*githubdpb.EnqueueBuildResponse, error) {
 	return nil, errApidBridgeNotReady
+}
+
+func (stubApidBridgeClient) ReconcileProjectPreviewEnvironment(context.Context, string, int64, string, int, string, string) error {
+	return errApidBridgeNotReady
 }
 
 // Close is a no-op for the stub.
@@ -101,6 +108,17 @@ func (l *liveApidBridgeClient) Close() error {
 // Mirrors the cmd/apid/githubd_client.go liveClient pattern.
 func (l *liveApidBridgeClient) EnqueueBuild(ctx context.Context, in *githubdpb.EnqueueBuildRequest) (*githubdpb.EnqueueBuildResponse, error) {
 	return l.c.EnqueueBuild(ctx, in)
+}
+
+func (l *liveApidBridgeClient) ReconcileProjectPreviewEnvironment(ctx context.Context, accountID string, installationID int64, repoFullName string, prNumber int, headSHA, action string) error {
+	if prNumber <= 0 || prNumber > math.MaxInt32 {
+		return fmt.Errorf("githubd apid bridge: pull request number %d is outside int32 range", prNumber)
+	}
+	_, err := l.c.ReconcileProjectPreviewEnvironment(ctx, &githubdpb.ReconcileProjectPreviewEnvironmentRequest{
+		AccountId: accountID, InstallationId: installationID, RepoFullName: repoFullName,
+		PullRequestNumber: int32(prNumber), HeadSha: headSHA, Action: action,
+	})
+	return err
 }
 
 // newApidBridgeClient is the dial constructor. Returns the stub

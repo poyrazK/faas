@@ -9216,7 +9216,7 @@ paths:
         required: false
         schema:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9])?$'
         description: |
           ADR-098 amendment (issue #954). Optional server-side filter
           that narrows the list to one deployment. Omitted = return
@@ -9331,7 +9331,7 @@ paths:
         required: false
         schema:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9])?$'
         description: "Optional deployment scope filter from the ADR-098 issue #954 overlay."
     get:
       tags: [upstreams]
@@ -20405,7 +20405,7 @@ components:
     GitHubDeploymentPolicy:
       description: Customer-owned project-level GitHub deployment behaviour.
       type: object
-      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, preview_service_policy]
+      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours, preview_service_policy, preview_environment_from]
       properties:
         project_id: { type: string, format: uuid }
         root_dir:
@@ -20429,6 +20429,13 @@ components:
             `allow_marked` permits it and marks the request as preview-origin
             traffic. Projects created before this policy was introduced are
             migration-backed to `allow_marked`.
+        preview_environment_from:
+          type: string
+          pattern: '^([a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?)?$'
+          description: |
+            When non-empty, same-repository pull requests create a durable
+            `pr-N` project environment cloned from this environment. Empty
+            disables durable project-environment previews.
 
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
@@ -20445,6 +20452,10 @@ components:
         preview_service_policy:
           type: string
           enum: [deny, allow_marked]
+        preview_environment_from:
+          type: string
+          pattern: '^([a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?)?$'
+          description: Set to an empty string to disable durable project-environment previews.
 
     GitHubInstallMutationRequest:
       description: |

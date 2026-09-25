@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -60,7 +61,10 @@ type GitHubDeployPolicy struct {
 	PreviewEnabled       bool
 	PreviewTTLHours      int
 	PreviewServicePolicy PreviewServicePolicy
-	UpdatedAt            time.Time
+	// PreviewEnvironmentFrom opts the project into durable, cloned PR
+	// environments. Empty keeps the existing app-preview-only behavior.
+	PreviewEnvironmentFrom string
+	UpdatedAt              time.Time
 }
 
 // DefaultGitHubDeployPolicy returns the safe policy for a project that has
@@ -127,6 +131,9 @@ func (p GitHubDeployPolicy) Validate() error {
 	}
 	if !p.PreviewServicePolicy.Valid() {
 		return fmt.Errorf("state: preview_service_policy must be %q or %q", PreviewServicePolicyDeny, PreviewServicePolicyAllowMarked)
+	}
+	if p.PreviewEnvironmentFrom != "" && !api.ValidProjectEnvironmentSlug(p.PreviewEnvironmentFrom) {
+		return errors.New("state: preview_environment_from must be a valid project environment slug")
 	}
 	return nil
 }
@@ -203,11 +210,11 @@ func (s *PgStore) GetGitHubDeployPolicy(ctx context.Context, projectID, accountI
 	var updatedAt time.Time
 	err := s.pool.QueryRow(ctx, `
 		select project_id, account_id, root_dir, ignored_paths, preview_enabled,
-		       preview_ttl_hours, preview_service_policy, updated_at
+		       preview_ttl_hours, preview_service_policy, preview_environment_from, updated_at
 		  from github_deploy_policies
 		 where project_id = $1 and account_id = $2`, projectID, accountID).Scan(
 		&policy.ProjectID, &policy.AccountID, &policy.RootDir, &raw,
-		&policy.PreviewEnabled, &policy.PreviewTTLHours, &policy.PreviewServicePolicy, &updatedAt)
+		&policy.PreviewEnabled, &policy.PreviewTTLHours, &policy.PreviewServicePolicy, &policy.PreviewEnvironmentFrom, &updatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return DefaultGitHubDeployPolicy(projectID, accountID), nil
@@ -237,8 +244,8 @@ func (s *PgStore) UpsertGitHubDeployPolicy(ctx context.Context, policy GitHubDep
 	err = s.pool.QueryRow(ctx, `
 		insert into github_deploy_policies
 		    (project_id, account_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours,
-		     preview_service_policy, updated_at)
-		values ($1, $2, $3, $4::jsonb, $5, $6, $7, now())
+		     preview_service_policy, preview_environment_from, updated_at)
+		values ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, now())
 		on conflict (project_id) do update set
 		    account_id = excluded.account_id,
 		    root_dir = excluded.root_dir,
@@ -246,13 +253,14 @@ func (s *PgStore) UpsertGitHubDeployPolicy(ctx context.Context, policy GitHubDep
 		    preview_enabled = excluded.preview_enabled,
 		    preview_ttl_hours = excluded.preview_ttl_hours,
 		    preview_service_policy = excluded.preview_service_policy,
+		    preview_environment_from = excluded.preview_environment_from,
 		    updated_at = now()
 		returning project_id, account_id, root_dir, ignored_paths, preview_enabled,
-		          preview_ttl_hours, preview_service_policy, updated_at`,
+		          preview_ttl_hours, preview_service_policy, preview_environment_from, updated_at`,
 		policy.ProjectID, policy.AccountID, policy.RootDir, raw,
-		policy.PreviewEnabled, policy.PreviewTTLHours, policy.PreviewServicePolicy).Scan(
+		policy.PreviewEnabled, policy.PreviewTTLHours, policy.PreviewServicePolicy, policy.PreviewEnvironmentFrom).Scan(
 		&stored.ProjectID, &stored.AccountID, &stored.RootDir, &storedRaw,
-		&stored.PreviewEnabled, &stored.PreviewTTLHours, &stored.PreviewServicePolicy, &stored.UpdatedAt)
+		&stored.PreviewEnabled, &stored.PreviewTTLHours, &stored.PreviewServicePolicy, &stored.PreviewEnvironmentFrom, &stored.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubDeployPolicy{}, ErrNotFound

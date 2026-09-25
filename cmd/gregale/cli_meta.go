@@ -558,6 +558,8 @@ var cliCommands = []cliCommand{
 				{Name: "no-preview", Short: "disable pull-request previews"},
 				{Name: "preview-ttl-hours", Short: "preview lease in hours (1-720)", Value: "HOURS"},
 				{Name: "preview-service-policy", Short: "preview-to-production service calls: deny|allow_marked", Value: "POLICY", ClosedSet: []string{"deny", "allow_marked"}},
+				{Name: "preview-environment-from", Short: "clone this project environment for same-repository PR previews", Value: "SLUG"},
+				{Name: "no-preview-environment", Short: "disable durable project-environment PR previews"},
 				{Name: "root-dir", Short: "repository-relative source root for the root workload", Value: "DIR"},
 				{Name: "ignore", Short: "comma-separated ignored change paths", Value: "PATHS"},
 				{Name: "rollout", Short: "production rollout mode: standard|safe (safe requires Pro/Scale)", Value: "MODE", ClosedSet: []string{"standard", "safe"}},

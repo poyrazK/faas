@@ -53,13 +53,15 @@ func cmdGithubSetup(args []string) int {
 	noPreview := fs.Bool("no-preview", false, "disable pull-request previews")
 	previewTTLHours := fs.Int("preview-ttl-hours", 0, "preview lease in hours (1-720)")
 	previewServicePolicy := fs.String("preview-service-policy", "", "preview-to-production service calls: deny|allow_marked")
+	previewEnvironmentFrom := fs.String("preview-environment-from", "", "create durable PR environments by cloning this project environment")
+	noPreviewEnvironment := fs.Bool("no-preview-environment", false, "disable durable PR environments")
 	rootDir := fs.String("root-dir", "", "repository-relative source root for the root workload")
 	ignore := fs.String("ignore", "", "comma-separated ignored change paths")
 	rollout := fs.String("rollout", githubSetupRolloutStandard, "production rollout mode: standard|safe (safe requires Pro/Scale)")
 	dryRun := fs.Bool("dry-run", false, "show the workflow without writing or changing remote state")
 	force := fs.Bool("force", false, "overwrite an existing workflow file")
 
-	flags, positional := splitArgsForFlags(args, "preview", "no-preview", "dry-run", "force")
+	flags, positional := splitArgsForFlags(args, "preview", "no-preview", "no-preview-environment", "dry-run", "force")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -69,6 +71,12 @@ func cmdGithubSetup(args []string) int {
 	}
 	if *preview && *noPreview {
 		return printErr("Invalid preview flags", errors.New("--preview and --no-preview cannot be used together"))
+	}
+	if *previewEnvironmentFrom != "" && *noPreviewEnvironment {
+		return printErr("Invalid preview environment flags", errors.New("--preview-environment-from and --no-preview-environment cannot be used together"))
+	}
+	if *previewEnvironmentFrom != "" && !api.ValidProjectEnvironmentSlug(*previewEnvironmentFrom) {
+		return printErr("Invalid --preview-environment-from", errors.New("must be a valid project environment slug"))
 	}
 	if *previewTTLHours != 0 && (*previewTTLHours < 1 || *previewTTLHours > 720) {
 		return printErr("Invalid --preview-ttl-hours", errors.New("must be between 1 and 720 hours"))
@@ -115,7 +123,7 @@ func cmdGithubSetup(args []string) int {
 		return printErr("Could not locate the Git repository", err)
 	}
 	workflowFile := filepath.Join(root, workflowPath)
-	policyPatch := githubSetupPolicyPatch(*preview, *noPreview, *previewTTLHours, *rootDir, ignoredPaths, *previewServicePolicy)
+	policyPatch := githubSetupPolicyPatch(*preview, *noPreview, *previewTTLHours, *rootDir, ignoredPaths, *previewServicePolicy, *previewEnvironmentFrom, *noPreviewEnvironment)
 	if *dryRun {
 		if repoName == "" {
 			return printErr("Dry run needs --repo", errors.New("pass --repo OWNER/NAME so the workflow can be rendered without reading remote state"))
@@ -261,8 +269,8 @@ func parseGithubSetupIgnoredPaths(raw string) ([]string, error) {
 	return out, nil
 }
 
-func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ignored []string, previewServicePolicy string) *api.GitHubDeploymentPolicyPatch {
-	if !preview && !noPreview && ttl == 0 && rootDir == "" && ignored == nil && previewServicePolicy == "" {
+func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ignored []string, previewServicePolicy, previewEnvironmentFrom string, noPreviewEnvironment bool) *api.GitHubDeploymentPolicyPatch {
+	if !preview && !noPreview && ttl == 0 && rootDir == "" && ignored == nil && previewServicePolicy == "" && previewEnvironmentFrom == "" && !noPreviewEnvironment {
 		return nil
 	}
 	patch := &api.GitHubDeploymentPolicyPatch{}
@@ -281,6 +289,12 @@ func githubSetupPolicyPatch(preview, noPreview bool, ttl int, rootDir string, ig
 	}
 	if previewServicePolicy != "" {
 		patch.PreviewServicePolicy = &previewServicePolicy
+	}
+	if previewEnvironmentFrom != "" || noPreviewEnvironment {
+		if noPreviewEnvironment {
+			previewEnvironmentFrom = ""
+		}
+		patch.PreviewEnvironmentFrom = &previewEnvironmentFrom
 	}
 	return patch
 }
@@ -466,6 +480,9 @@ func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exist
 	if receipt.Policy != nil {
 		_, _ = fmt.Fprintf(osStdout, "  previews:          %t (%dh TTL)\n", receipt.Policy.PreviewEnabled, receipt.Policy.PreviewTTLHours)
 		_, _ = fmt.Fprintf(osStdout, "  preview_services:  %s\n", receipt.Policy.PreviewServicePolicy)
+		if receipt.Policy.PreviewEnvironmentFrom != "" {
+			_, _ = fmt.Fprintf(osStdout, "  preview_env_from:  %s\n", receipt.Policy.PreviewEnvironmentFrom)
+		}
 	}
 	if receipt.DryRun {
 		_, _ = fmt.Fprintln(osStdout)

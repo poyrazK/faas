@@ -32,23 +32,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Githubd_GetInstallState_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/GetInstallState"
-	Githubd_ExchangeOAuthCode_FullMethodName        = "/onebox.faas.githubd.v1.Githubd/ExchangeOAuthCode"
-	Githubd_ListInstallableRepos_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/ListInstallableRepos"
-	Githubd_BindAppRepo_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/BindAppRepo"
-	Githubd_UnbindAppRepo_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/UnbindAppRepo"
-	Githubd_GetAppBinding_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/GetAppBinding"
-	Githubd_GetAppActivity_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/GetAppActivity"
-	Githubd_CreateDeploymentFromPush_FullMethodName = "/onebox.faas.githubd.v1.Githubd/CreateDeploymentFromPush"
-	Githubd_EnqueueBuild_FullMethodName             = "/onebox.faas.githubd.v1.Githubd/EnqueueBuild"
-	Githubd_WriteCheck_FullMethodName               = "/onebox.faas.githubd.v1.Githubd/WriteCheck"
-	Githubd_VerifyInstallation_FullMethodName       = "/onebox.faas.githubd.v1.Githubd/VerifyInstallation"
-	Githubd_MintInstallationToken_FullMethodName    = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
-	Githubd_StreamSourceRef_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
-	Githubd_ListRecoveryQueueItems_FullMethodName   = "/onebox.faas.githubd.v1.Githubd/ListRecoveryQueueItems"
-	Githubd_RetryWebhookDelivery_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/RetryWebhookDelivery"
-	Githubd_RetryCheckUpdate_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/RetryCheckUpdate"
-	Githubd_RetryAppActivity_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/RetryAppActivity"
+	Githubd_GetInstallState_FullMethodName                    = "/onebox.faas.githubd.v1.Githubd/GetInstallState"
+	Githubd_ExchangeOAuthCode_FullMethodName                  = "/onebox.faas.githubd.v1.Githubd/ExchangeOAuthCode"
+	Githubd_ListInstallableRepos_FullMethodName               = "/onebox.faas.githubd.v1.Githubd/ListInstallableRepos"
+	Githubd_BindAppRepo_FullMethodName                        = "/onebox.faas.githubd.v1.Githubd/BindAppRepo"
+	Githubd_UnbindAppRepo_FullMethodName                      = "/onebox.faas.githubd.v1.Githubd/UnbindAppRepo"
+	Githubd_GetAppBinding_FullMethodName                      = "/onebox.faas.githubd.v1.Githubd/GetAppBinding"
+	Githubd_GetAppActivity_FullMethodName                     = "/onebox.faas.githubd.v1.Githubd/GetAppActivity"
+	Githubd_CreateDeploymentFromPush_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/CreateDeploymentFromPush"
+	Githubd_EnqueueBuild_FullMethodName                       = "/onebox.faas.githubd.v1.Githubd/EnqueueBuild"
+	Githubd_WriteCheck_FullMethodName                         = "/onebox.faas.githubd.v1.Githubd/WriteCheck"
+	Githubd_VerifyInstallation_FullMethodName                 = "/onebox.faas.githubd.v1.Githubd/VerifyInstallation"
+	Githubd_MintInstallationToken_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
+	Githubd_StreamSourceRef_FullMethodName                    = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
+	Githubd_ListRecoveryQueueItems_FullMethodName             = "/onebox.faas.githubd.v1.Githubd/ListRecoveryQueueItems"
+	Githubd_RetryWebhookDelivery_FullMethodName               = "/onebox.faas.githubd.v1.Githubd/RetryWebhookDelivery"
+	Githubd_RetryCheckUpdate_FullMethodName                   = "/onebox.faas.githubd.v1.Githubd/RetryCheckUpdate"
+	Githubd_RetryAppActivity_FullMethodName                   = "/onebox.faas.githubd.v1.Githubd/RetryAppActivity"
+	Githubd_ReconcileProjectPreviewEnvironment_FullMethodName = "/onebox.faas.githubd.v1.Githubd/ReconcileProjectPreviewEnvironment"
 )
 
 // GithubdClient is the client API for Githubd service.
@@ -194,6 +195,11 @@ type GithubdClient interface {
 	// updates for one account-owned app. The customer-facing action returns
 	// counts only; queue identifiers, payloads, and worker errors stay private.
 	RetryAppActivity(ctx context.Context, in *RetryAppActivityRequest, opts ...grpc.CallOption) (*RetryAppActivityResponse, error)
+	// ReconcileProjectPreviewEnvironment mirrors a verified, same-repository
+	// pull_request event into a durable project environment. The apid receiver
+	// owns cloning so customer secrets and managed resource credentials remain
+	// inside the control plane.
+	ReconcileProjectPreviewEnvironment(ctx context.Context, in *ReconcileProjectPreviewEnvironmentRequest, opts ...grpc.CallOption) (*ReconcileProjectPreviewEnvironmentResponse, error)
 }
 
 type githubdClient struct {
@@ -383,6 +389,16 @@ func (c *githubdClient) RetryAppActivity(ctx context.Context, in *RetryAppActivi
 	return out, nil
 }
 
+func (c *githubdClient) ReconcileProjectPreviewEnvironment(ctx context.Context, in *ReconcileProjectPreviewEnvironmentRequest, opts ...grpc.CallOption) (*ReconcileProjectPreviewEnvironmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReconcileProjectPreviewEnvironmentResponse)
+	err := c.cc.Invoke(ctx, Githubd_ReconcileProjectPreviewEnvironment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GithubdServer is the server API for Githubd service.
 // All implementations must embed UnimplementedGithubdServer
 // for forward compatibility.
@@ -526,6 +542,11 @@ type GithubdServer interface {
 	// updates for one account-owned app. The customer-facing action returns
 	// counts only; queue identifiers, payloads, and worker errors stay private.
 	RetryAppActivity(context.Context, *RetryAppActivityRequest) (*RetryAppActivityResponse, error)
+	// ReconcileProjectPreviewEnvironment mirrors a verified, same-repository
+	// pull_request event into a durable project environment. The apid receiver
+	// owns cloning so customer secrets and managed resource credentials remain
+	// inside the control plane.
+	ReconcileProjectPreviewEnvironment(context.Context, *ReconcileProjectPreviewEnvironmentRequest) (*ReconcileProjectPreviewEnvironmentResponse, error)
 	mustEmbedUnimplementedGithubdServer()
 }
 
@@ -586,6 +607,9 @@ func (UnimplementedGithubdServer) RetryCheckUpdate(context.Context, *RetryCheckU
 }
 func (UnimplementedGithubdServer) RetryAppActivity(context.Context, *RetryAppActivityRequest) (*RetryAppActivityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetryAppActivity not implemented")
+}
+func (UnimplementedGithubdServer) ReconcileProjectPreviewEnvironment(context.Context, *ReconcileProjectPreviewEnvironmentRequest) (*ReconcileProjectPreviewEnvironmentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReconcileProjectPreviewEnvironment not implemented")
 }
 func (UnimplementedGithubdServer) mustEmbedUnimplementedGithubdServer() {}
 func (UnimplementedGithubdServer) testEmbeddedByValue()                 {}
@@ -907,6 +931,24 @@ func _Githubd_RetryAppActivity_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_ReconcileProjectPreviewEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReconcileProjectPreviewEnvironmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).ReconcileProjectPreviewEnvironment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_ReconcileProjectPreviewEnvironment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).ReconcileProjectPreviewEnvironment(ctx, req.(*ReconcileProjectPreviewEnvironmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Githubd_ServiceDesc is the grpc.ServiceDesc for Githubd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -977,6 +1019,10 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RetryAppActivity",
 			Handler:    _Githubd_RetryAppActivity_Handler,
+		},
+		{
+			MethodName: "ReconcileProjectPreviewEnvironment",
+			Handler:    _Githubd_ReconcileProjectPreviewEnvironment_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
