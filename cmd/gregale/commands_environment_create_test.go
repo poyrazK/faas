@@ -53,3 +53,26 @@ func TestEnvCreatePlanIsReadOnly(t *testing.T) {
 		t.Fatalf("request method=%s path=%s?%s, want read-only clone preview", f.sawMethod, f.sawPath, f.sawQuery)
 	}
 }
+
+func TestEnvCreateDeployBlocksBeforeCreateWhenSourceHasNoLiveRelease(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"production","to_environment":"staging","can_clone":true,"can_promote":false,"workload_count":1,"actions":[],"blocking_reasons":[],"warnings":[]}`, http.StatusOK)
+	root := t.TempDir()
+	if _, err := saveProjectContext(root, localProjectContext{Version: projectContextVersion, Project: "shop"}); err != nil {
+		t.Fatal(err)
+	}
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join(root, ".gregale")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	if code := envCreate([]string{"--deploy", "--yes", "staging", "--from", "production"}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/clone-preview" {
+		t.Fatalf("request method=%s path=%s; blocked bring-up must not create the environment", f.sawMethod, f.sawPath)
+	}
+}

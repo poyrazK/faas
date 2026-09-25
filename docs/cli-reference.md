@@ -1454,6 +1454,11 @@ Clone a project environment with isolated managed data by default
 | `--protected` | protect the new environment |  |
 | `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
 | `--plan` | show a read-only clone plan without creating the environment |  |
+| `--deploy` | clone and promote the source live releases into the new environment |  |
+| `--yes` | confirm clone and deployment in non-interactive use |  |
+| `--idempotency-key <KEY>` | stable key for retrying clone/deployment operations |  |
+| `--progress` | print deployment transitions while waiting (requires --deploy) |  |
+| `--timeout <SECONDS>` | maximum seconds to wait for deployment readiness |  |
 
 ### env pull
 
