@@ -60,6 +60,12 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()
 	}
+	presets, presetErr := s.store.ListCorsPresetsForAccount(ctx, acct.ID)
+	if presetErr != nil {
+		log.Warn("dashboard edge rules: list CORS presets", "account_id", acct.ID, "app_id", app.ID, "err", presetErr)
+	} else {
+		data.CorsPresets = projectDashboardCorsPresets(presets, app.ID)
+	}
 	if traceForm != nil {
 		data.Trace = *traceForm
 	}
@@ -75,11 +81,15 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			}
 		}
 		if traceInput != nil {
+			traceContext := *traceInput
+			if presetErr == nil {
+				traceContext.CorsPresets = corsPresetResponsesFromRows(presets)
+			}
 			apiRules := make([]api.EdgeRuleResponse, 0, len(rules))
 			for _, rule := range rules {
 				apiRules = append(apiRules, edgeRuleResponse(rule))
 			}
-			result, traceErr := edgeruletrace.Simulate(*traceInput, apiRules)
+			result, traceErr := edgeruletrace.Simulate(traceContext, apiRules)
 			if traceErr != nil {
 				data.Trace.ErrorMessage = "The request could not be simulated. Check the request fields and try again."
 			} else {
@@ -88,11 +98,6 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		} else if data.Trace.Submitted && data.Trace.ErrorMessage == "" && data.ErrorMessage != "" {
 			data.Trace.ErrorMessage = "Edge rules are temporarily unavailable, so this request could not be traced."
 		}
-	}
-	if presets, listErr := s.store.ListCorsPresetsForAccount(ctx, acct.ID); listErr != nil {
-		log.Warn("dashboard edge rules: list CORS presets", "account_id", acct.ID, "app_id", app.ID, "err", listErr)
-	} else {
-		data.CorsPresets = projectDashboardCorsPresets(presets, app.ID)
 	}
 	if s.sessions != nil {
 		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)

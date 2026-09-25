@@ -21,7 +21,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline edge-rule CORS is simulated from Origin and preflight request headers; preset-backed CORS rules are incomplete because resolved preset settings are not returned to the trace. App-level default CORS, app-level maintenance, ingress/auth policy, target-app rules after routing, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS are simulated from Origin, preflight request headers, and supplied preset data; preset-backed rules remain incomplete when that data is unavailable or invalid. App-level default CORS, app-level maintenance, ingress/auth policy, target-app rules after routing, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 // Input is the request context that can be simulated without contacting the
@@ -35,6 +35,10 @@ type Input struct {
 	Country  string
 	Headers  http.Header
 	Body     []byte
+	// CorsPresets supplies caller-resolved presets for preset-backed CORS
+	// rules. Missing or cross-account presets remain incomplete instead of
+	// being guessed.
+	CorsPresets []api.CorsPresetResponse
 	// BodyProvided distinguishes an intentionally empty body from omitted
 	// request-body context. Validate rules remain incomplete when omitted.
 	BodyProvided bool
@@ -209,6 +213,21 @@ func Simulate(input Input, rules []api.EdgeRuleResponse) (Result, error) {
 		return Result{}, err
 	}
 	return previewNormalized(normalized, rules), nil
+}
+
+// RequiresCorsPresetData reports whether any CORS rule references a preset so
+// callers can avoid fetching preset configuration for inline-only traces.
+func RequiresCorsPresetData(rules []api.EdgeRuleResponse) bool {
+	for _, rule := range rules {
+		if !rule.Enabled || rule.Kind != "cors" {
+			continue
+		}
+		action, ok := decodeAction[api.EdgeRuleCORSAction](rule.Action, "cors")
+		if ok && action.CorsPresetID != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
@@ -404,7 +423,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 				simulation.Steps = append(simulation.Steps, step)
 				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
 				return simulation
-			case "needs_cors_preset":
+			case "needs_cors_preset", "invalid_cors_preset_policy":
 				return stop("incomplete", outcome, phase, reason, rule)
 			default:
 				return stop("incomplete", outcome, phase, reason, rule)
@@ -611,7 +630,7 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 // rule against Access-Control-Request-Method, but only when Origin is present.
 func corsMatchMethod(method string, headers http.Header) (matchMethod, requestedMethod string) {
 	matchMethod = method
-	if method == http.MethodOptions && headers.Get("Origin") != "" {
+	if method == http.MethodOptions && strings.TrimSpace(headers.Get("Origin")) != "" {
 		requestedMethod = strings.TrimSpace(headers.Get("Access-Control-Request-Method"))
 		if requestedMethod != "" {
 			matchMethod = requestedMethod
@@ -626,7 +645,11 @@ func previewCORSRule(rule api.EdgeRuleResponse, input Input) (string, string, *A
 		return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
 	}
 	if action.CorsPresetID != nil {
-		return "needs_cors_preset", "CORS policy references a preset whose resolved settings are not included in the edge-rule response", nil
+		var outcome, reason string
+		action, outcome, reason = resolveCORSPreset(rule, action, input.CorsPresets)
+		if reason != "" {
+			return outcome, reason, nil
+		}
 	}
 
 	_, requestedMethod := corsMatchMethod(input.Method, input.Headers)
@@ -645,7 +668,7 @@ func previewCORSRule(rule api.EdgeRuleResponse, input Input) (string, string, *A
 		}
 	}
 
-	origin := input.Headers.Get("Origin")
+	origin := strings.TrimSpace(input.Headers.Get("Origin"))
 	allowedOrigin := api.MatchEdgeRuleCORSOrigin(action.AllowOrigins, origin)
 	if origin != "" && allowedOrigin == "" {
 		return "cors_origin_not_allowed", preflightContext + "Origin is not allowed, so the gateway adds no CORS headers and continues the request", &ActionPreview{Type: "cors"}
@@ -678,6 +701,50 @@ func previewCORSRule(rule api.EdgeRuleResponse, input Input) (string, string, *A
 		return "cors_no_origin", "CORS rule matches but the request has no Origin header, so no CORS response headers are added", preview
 	}
 	return "cors_applied", fmt.Sprintf("would apply %d CORS response-header operation(s)", len(preview.ResponseHeaderOps)), preview
+}
+
+// resolveCORSPreset mirrors state.MergeCorsPresetIntoRule's zero-value
+// fallback and account guard without coupling this shared simulator to state.
+func resolveCORSPreset(rule api.EdgeRuleResponse, action *api.EdgeRuleCORSAction, presets []api.CorsPresetResponse) (*api.EdgeRuleCORSAction, string, string) {
+	presetID := *action.CorsPresetID
+	var preset *api.CorsPresetResponse
+	for i := range presets {
+		if presets[i].ID == presetID && presets[i].AccountID == rule.AccountID {
+			preset = &presets[i]
+			break
+		}
+	}
+	if preset == nil {
+		return nil, "needs_cors_preset", "referenced CORS preset is not available to this trace or is not visible to the rule's account"
+	}
+
+	resolved := *action
+	if len(resolved.AllowOrigins) == 0 {
+		resolved.AllowOrigins = append([]string(nil), preset.AllowOrigins...)
+	}
+	if len(resolved.AllowMethods) == 0 {
+		resolved.AllowMethods = append([]string(nil), preset.AllowMethods...)
+	}
+	if len(resolved.AllowHeaders) == 0 {
+		resolved.AllowHeaders = append([]string(nil), preset.AllowHeaders...)
+	}
+	if len(resolved.ExposeHeaders) == 0 {
+		resolved.ExposeHeaders = append([]string(nil), preset.ExposeHeaders...)
+	}
+	if !resolved.AllowCredentials {
+		resolved.AllowCredentials = preset.AllowCredentials
+	}
+	if resolved.MaxAgeSeconds == 0 {
+		resolved.MaxAgeSeconds = preset.MaxAgeSeconds
+	}
+	if resolved.AllowCredentials {
+		for _, origin := range resolved.AllowOrigins {
+			if origin == "*" {
+				return nil, "invalid_cors_preset_policy", "merged CORS preset policy combines wildcard origin * with credentials; gateway compilation drops this rule"
+			}
+		}
+	}
+	return &resolved, "", ""
 }
 
 func previewValidateRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {

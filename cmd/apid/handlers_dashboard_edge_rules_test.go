@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -148,6 +149,52 @@ func TestDashboardEdgeRuleTraceIsReadOnlyAndRequiresNamedCSRF(t *testing.T) {
 	}
 	if len(rules) != 1 || rules[0].Action.Redirect.To != "/new" {
 		t.Fatalf("trace changed edge rules: %+v", rules)
+	}
+}
+
+func TestDashboardEdgeRuleTraceResolvesCORSPreset(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	if err := store.UpdateAccountPlan(t.Context(), acct.ID, api.PlanPro); err != nil {
+		t.Fatalf("UpdateAccountPlan: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "edge-trace-cors-preset", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	presetID := "trace-preset-1"
+	_, err = store.CreateCorsPresetIfUnderQuota(t.Context(), state.CorsPreset{
+		ID: presetID, AccountID: acct.ID, Name: "trace-default", AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"},
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatalf("CreateCorsPresetIfUnderQuota: %v", err)
+	}
+	_, err = store.CreateEdgeRule(t.Context(), state.CreateEdgeRuleParams{
+		AccountID: acct.ID, AppID: app.ID, MatchHost: "edge.example.com", MatchPath: "/", MatchMethods: []string{"GET"}, Priority: 10, Enabled: true,
+		Kind: state.EdgeRuleKindCORSA, Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindCORSA, CORS: &state.EdgeRuleCORSAction{CorsPresetID: &presetID}},
+	})
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-cors-preset/edge-rules/trace", map[string]string{
+		middleware.FormFieldName: token,
+		"trace_host":             "edge.example.com", "trace_path": "/", "trace_method": "GET",
+		"trace_headers": "Origin: https://app.example.com",
+	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"Simulation: complete · continue", "cors_applied", "Access-Control-Allow-Origin: https://app.example.com"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("trace response missing %q\n%s", want, rec.Body.String())
+		}
 	}
 }
 

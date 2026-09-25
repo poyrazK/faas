@@ -88,6 +88,13 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
+	if edgeruletrace.RequiresCorsPresetData(rules) {
+		presets, presetErr := client.ListCorsPresets(context.Background(), "")
+		if presetErr != nil {
+			return printErr("CORS preset lookup failed", presetErr)
+		}
+		input.CorsPresets = presets.Presets
+	}
 	result, err := edgeruletrace.Simulate(input, rules)
 	if err != nil {
 		return printErr("Invalid trace input", err)
