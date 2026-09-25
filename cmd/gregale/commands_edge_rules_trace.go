@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -79,6 +80,20 @@ func cmdEdgeRulesTrace(args []string) int {
 	}
 	input.AppMaintenanceLoaded = true
 	input.AppMaintenanceMode = app.MaintenanceMode
+	input.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
+	input.DeclaredRoutes = append([]api.DeclaredRoute(nil), app.DeclaredRoutes...)
+	if input.OnlyAllowDeclaredRoutes && len(input.DeclaredRoutes) == 0 {
+		doc, docErr := client.GetAppOpenAPI(context.Background(), input.App, "manual_import")
+		if docErr == nil {
+			input.DeclaredRouteDocumentLoaded = true
+			input.DeclaredRouteOpenAPIDoc = append([]byte(nil), doc...)
+		} else {
+			var apiErr *api.APIError
+			if errors.As(docErr, &apiErr) && apiErr.Problem.Status == http.StatusNotFound {
+				input.DeclaredRouteDocumentMissing = true
+			}
+		}
+	}
 	input.AppCORSDefaultsLoaded = true
 	input.CORSDefaultEnabled = app.CORSDefaultEnabled
 	input.CORSDefaultOrigins = append([]string(nil), app.CORSDefaultOrigins...)

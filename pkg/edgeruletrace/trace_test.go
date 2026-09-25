@@ -252,6 +252,138 @@ func TestSimulateAppMaintenanceRequiresMetadataAndFollowsRouting(t *testing.T) {
 	}
 }
 
+func TestSimulateDeclaredRoutesMatchOpenAPIStylePathsAndMethods(t *testing.T) {
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/users/42/", Method: http.MethodHead,
+		AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true,
+		DeclaredRoutes: []api.DeclaredRoute{{Path: "/users/{user_id}", Methods: []string{"get"}}},
+	}
+	result, err := edgeruletrace.Simulate(input, nil)
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	step := result.Simulation.Steps[0]
+	if step.Phase != "declared_routes" || step.Outcome != "allowed" || step.PathBefore != "/users/42/" || step.PathAfter != "/users/42/" {
+		t.Fatalf("declared-route step = %#v", step)
+	}
+}
+
+func TestSimulateDeclaredRouteGateUsesOriginalPathAfterRewrite(t *testing.T) {
+	rewrite := api.EdgeRuleResponse{
+		ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/legacy/*",
+		Action: json.RawMessage(`{"rewrite":{"from":"/legacy","to":"/internal"}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/legacy/42", Method: http.MethodGet,
+		AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true,
+		DeclaredRoutes: []api.DeclaredRoute{{Path: "/internal/{id}", Methods: []string{"GET"}}},
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rewrite})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Outcome != "undeclared_route" || result.Simulation.StatusCode != http.StatusNotFound || result.Simulation.ProblemCode != api.CodeUndeclaredRoute {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	if result.Simulation.FinalPath != "/internal/42" || result.Simulation.Message != "GET /legacy/42 is not declared for this app" {
+		t.Fatalf("declared-route response = %#v", result.Simulation)
+	}
+	if len(result.Simulation.Steps) != 2 || result.Simulation.Steps[0].Phase != "rewrite" || result.Simulation.Steps[1].PathBefore != "/legacy/42" || result.Simulation.Steps[1].PathAfter != "/internal/42" {
+		t.Fatalf("simulation steps = %#v", result.Simulation.Steps)
+	}
+}
+
+func TestSimulateDeclaredRouteRejectsUndeclaredMethodAndPath(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, method string
+	}{
+		{name: "path", path: "/admin", method: http.MethodGet},
+		{name: "method", path: "/health", method: http.MethodPost},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := edgeruletrace.Input{
+				App: "demo", Host: "example.com", Path: tc.path, Method: tc.method,
+				AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true,
+				DeclaredRoutes: []api.DeclaredRoute{{Path: "/health", Methods: []string{"GET"}}},
+			}
+			result, err := edgeruletrace.Simulate(input, nil)
+			if err != nil {
+				t.Fatalf("Simulate: %v", err)
+			}
+			if result.Simulation.Status != "complete" || result.Simulation.Outcome != "undeclared_route" || result.Simulation.StatusCode != http.StatusNotFound || result.Simulation.ProblemCode != api.CodeUndeclaredRoute || result.Simulation.Message != tc.method+" "+tc.path+" is not declared for this app" {
+				t.Fatalf("simulation = %#v", result.Simulation)
+			}
+			if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].StatusCode != http.StatusNotFound || result.Simulation.Steps[0].ProblemCode != api.CodeUndeclaredRoute {
+				t.Fatalf("declared-route step = %#v", result.Simulation.Steps)
+			}
+		})
+	}
+}
+
+func TestSimulateDeclaredRouteOpenAPIFallbackAndUnavailablePolicy(t *testing.T) {
+	base := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/widgets/42", Method: http.MethodHead,
+		AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true,
+	}
+	base.DeclaredRouteDocumentLoaded = true
+	base.DeclaredRouteOpenAPIDoc = []byte(`openapi: 3.1.0
+info:
+  title: demo
+  version: v1
+paths:
+  /widgets/{id}:
+    get:
+      responses: {}
+`)
+	result, err := edgeruletrace.Simulate(base, nil)
+	if err != nil {
+		t.Fatalf("Simulate OpenAPI fallback: %v", err)
+	}
+	if result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "allowed" {
+		t.Fatalf("OpenAPI fallback = %#v", result.Simulation)
+	}
+
+	base.DeclaredRouteDocumentLoaded = false
+	base.DeclaredRouteOpenAPIDoc = nil
+	result, err = edgeruletrace.Simulate(base, nil)
+	if err != nil {
+		t.Fatalf("Simulate unavailable document: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_declared_route_policy" {
+		t.Fatalf("unloaded document = %#v", result.Simulation)
+	}
+
+	base.DeclaredRouteDocumentMissing = true
+	result, err = edgeruletrace.Simulate(base, nil)
+	if err != nil {
+		t.Fatalf("Simulate missing document: %v", err)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "declared_route_policy_unavailable" || result.Simulation.StatusCode != http.StatusServiceUnavailable || result.Simulation.ProblemCode != api.CodeDeclaredRoutePolicyUnavailable {
+		t.Fatalf("missing document = %#v", result.Simulation)
+	}
+}
+
+func TestSimulateDeclaredRouteGateFollowsCORSPreflight(t *testing.T) {
+	rule := corsTraceRule(t, "cors-rule", []string{"GET"}, api.EdgeRuleCORSAction{
+		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"}, AllowHeaders: []string{"Content-Type"},
+	})
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/not-declared", Method: http.MethodOptions,
+		Headers:              http.Header{"Origin": []string{"https://app.example.com"}, "Access-Control-Request-Method": []string{"GET"}},
+		AppMaintenanceLoaded: true, OnlyAllowDeclaredRoutes: true, DeclaredRouteDocumentMissing: true,
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Outcome != "cors_preflight" || result.Simulation.StatusCode != http.StatusNoContent || result.Simulation.StoppedAt != "cors" {
+		t.Fatalf("CORS preflight did not short-circuit route gate: %#v", result.Simulation)
+	}
+}
+
 func TestSimulateAppCORSDefaultFallback(t *testing.T) {
 	enabled := true
 	for _, tc := range []struct {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgevalidate"
+	"github.com/onebox-faas/faas/pkg/openapidiff"
 )
 
 const (
@@ -21,7 +22,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Ingress/auth policy, target-app rules after routing, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. Ingress/auth policy, target-app rules after routing, environment-scoped route policies, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 // Input is the request context that can be simulated without contacting the
@@ -52,6 +53,16 @@ type Input struct {
 	// maintenance and later edge-rule phases.
 	AppMaintenanceLoaded bool
 	AppMaintenanceMode   bool
+	// OnlyAllowDeclaredRoutes enables the same pre-auth route gate used by the
+	// gateway. Explicit routes take precedence over the imported OpenAPI doc.
+	OnlyAllowDeclaredRoutes bool
+	DeclaredRoutes          []api.DeclaredRoute
+	// DeclaredRouteDocumentLoaded distinguishes a loaded OpenAPI document from
+	// a caller that could not retrieve it. A missing document is tracked
+	// separately because the gateway treats that configured policy as a 503.
+	DeclaredRouteDocumentLoaded  bool
+	DeclaredRouteDocumentMissing bool
+	DeclaredRouteOpenAPIDoc      []byte
 	// BodyProvided distinguishes an intentionally empty body from omitted
 	// request-body context. Validate rules remain incomplete when omitted.
 	BodyProvided bool
@@ -334,7 +345,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		Status: "complete", Outcome: "continue", FinalPath: input.Path,
 		RequestHeaders: headerSnapshot(cloneHeaders(input.Headers)),
 		Reason:         "no simulated edge-rule action terminated the request; downstream app and gateway behavior is outside this simulation",
-		Steps:          make([]SimulationStep, 0, 6),
+		Steps:          make([]SimulationStep, 0, 7),
 	}
 	workingHeaders := cloneHeaders(input.Headers)
 	requestPath := input.Path
@@ -353,7 +364,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
-	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
+	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "respond"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
 			if !input.AppMaintenanceLoaded {
@@ -380,6 +391,42 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
 				return simulation
 			}
+			continue
+		}
+		if phase == "declared_routes" {
+			if !input.OnlyAllowDeclaredRoutes {
+				continue
+			}
+			allowed, unavailable, loaded := declaredRouteAllowed(input, input.Path, input.Method)
+			if !loaded {
+				stopped := stop("incomplete", "needs_declared_route_policy", phase, "declared-route policy data was not loaded, so the gateway route gate cannot be evaluated", nil)
+				stopped.Steps[len(stopped.Steps)-1].Kind = phase
+				return stopped
+			}
+			if unavailable {
+				message := "the configured OpenAPI document or route list could not be loaded"
+				reason := fmt.Sprintf("the gateway would return HTTP %d because the enabled declared-route policy is unavailable", http.StatusServiceUnavailable)
+				stopped := stop("complete", "declared_route_policy_unavailable", phase, reason, nil)
+				stopped.ProblemCode, stopped.StatusCode, stopped.Message = api.CodeDeclaredRoutePolicyUnavailable, http.StatusServiceUnavailable, message
+				step := &stopped.Steps[len(stopped.Steps)-1]
+				step.Kind, step.StatusCode, step.ProblemCode, step.Message = phase, http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable, message
+				return stopped
+			}
+			if !allowed {
+				message := fmt.Sprintf("%s %s is not declared for this app", input.Method, input.Path)
+				reason := fmt.Sprintf("the original public request does not match the enabled app route contract; the gateway would return HTTP %d before authentication or wake", http.StatusNotFound)
+				stopped := stop("complete", "undeclared_route", phase, reason, nil)
+				stopped.ProblemCode, stopped.StatusCode, stopped.Message = api.CodeUndeclaredRoute, http.StatusNotFound, message
+				step := &stopped.Steps[len(stopped.Steps)-1]
+				step.Kind, step.PathBefore, step.PathAfter = phase, input.Path, requestPath
+				step.StatusCode, step.ProblemCode, step.Message = http.StatusNotFound, api.CodeUndeclaredRoute, message
+				return stopped
+			}
+			simulation.Steps = append(simulation.Steps, SimulationStep{
+				Phase: phase, Kind: phase, Outcome: "allowed",
+				PathBefore: input.Path, PathAfter: requestPath,
+				Reason: "the original public request matches the declared route contract; request continues to authentication and later gateway gates",
+			})
 			continue
 		}
 		matchMethod := input.Method
@@ -551,6 +598,131 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 	simulation.FinalPath = requestPath
 	simulation.RequestHeaders = headerSnapshot(workingHeaders)
 	return simulation
+}
+
+// declaredRouteAllowed mirrors gatewayd-internal's declared route matcher.
+// The public path/method are supplied separately from the rewritten path so
+// edge rewrites cannot change the app's public contract.
+func declaredRouteAllowed(input Input, requestPath, requestMethod string) (allowed, unavailable, loaded bool) {
+	if len(input.DeclaredRoutes) > 0 {
+		allowed, err := matchDeclaredRoutes(input.DeclaredRoutes, requestPath, requestMethod)
+		return allowed, err != nil, true
+	}
+	if input.DeclaredRouteDocumentMissing {
+		return false, true, true
+	}
+	if !input.DeclaredRouteDocumentLoaded {
+		return false, false, false
+	}
+	routes, err := declaredRoutesFromOpenAPI(input.DeclaredRouteOpenAPIDoc)
+	if err != nil {
+		return false, true, true
+	}
+	allowed, err = matchDeclaredRoutes(routes, requestPath, requestMethod)
+	return allowed, err != nil, true
+}
+
+func declaredRoutesFromOpenAPI(doc []byte) ([]api.DeclaredRoute, error) {
+	spec, err := openapidiff.LoadBytes(doc)
+	if err != nil {
+		return nil, err
+	}
+	routes := make([]api.DeclaredRoute, 0, len(spec.Paths))
+	for routePath, item := range spec.Paths {
+		if item == nil {
+			continue
+		}
+		methods := make([]string, 0, len(item.Methods))
+		for method := range item.Methods {
+			methods = append(methods, strings.ToUpper(method))
+		}
+		routes = append(routes, api.DeclaredRoute{Path: routePath, Methods: methods})
+	}
+	return routes, nil
+}
+
+func matchDeclaredRoutes(routes []api.DeclaredRoute, requestPath, requestMethod string) (bool, error) {
+	type compiledRoute struct {
+		path    string
+		methods map[string]struct{}
+	}
+	compiled := make([]compiledRoute, 0, len(routes))
+	for _, route := range routes {
+		routePath := normalizeDeclaredPath(route.Path)
+		if routePath == "" {
+			return false, fmt.Errorf("declared route path must start with '/': %q", route.Path)
+		}
+		methods := make(map[string]struct{}, len(route.Methods))
+		for _, method := range route.Methods {
+			method = strings.ToUpper(strings.TrimSpace(method))
+			if method != "" {
+				methods[method] = struct{}{}
+			}
+		}
+		if len(methods) == 0 {
+			return false, fmt.Errorf("declared route %q has no HTTP methods", routePath)
+		}
+		compiled = append(compiled, compiledRoute{path: routePath, methods: methods})
+	}
+	requestPath = normalizeDeclaredPath(requestPath)
+	if requestPath == "" {
+		return false, nil
+	}
+	method := strings.ToUpper(strings.TrimSpace(requestMethod))
+	for _, route := range compiled {
+		if _, ok := route.methods[method]; !ok {
+			// HEAD is implicitly allowed wherever GET is declared, matching
+			// gateway behavior for ordinary net/http handlers.
+			if method != http.MethodHead {
+				continue
+			}
+			if _, ok := route.methods[http.MethodGet]; !ok {
+				continue
+			}
+		}
+		if declaredPathMatches(route.path, requestPath) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func normalizeDeclaredPath(routePath string) string {
+	routePath = strings.TrimSpace(routePath)
+	if routePath == "" || !strings.HasPrefix(routePath, "/") || strings.ContainsAny(routePath, "?#") {
+		return ""
+	}
+	if routePath != "/" {
+		routePath = strings.TrimRight(routePath, "/")
+	}
+	return routePath
+}
+
+func declaredPathMatches(template, request string) bool {
+	templateParts := splitDeclaredPath(template)
+	requestParts := splitDeclaredPath(request)
+	if len(templateParts) != len(requestParts) {
+		return false
+	}
+	for i, segment := range templateParts {
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") && len(segment) > 2 {
+			if requestParts[i] == "" {
+				return false
+			}
+			continue
+		}
+		if segment != requestParts[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func splitDeclaredPath(routePath string) []string {
+	if routePath == "/" {
+		return nil
+	}
+	return strings.Split(strings.TrimPrefix(routePath, "/"), "/")
 }
 
 // previewAppCORSDefault mirrors the gateway's soft app-level CORS fallback:
