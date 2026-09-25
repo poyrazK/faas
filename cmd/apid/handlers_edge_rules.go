@@ -541,6 +541,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			out.JWT = &state.EdgeRuleJWTAction{
 				Issuer: a.Issuer, Audience: a.Audience, JWKSURL: a.JWKSURL,
 				Algorithms: a.Algorithms, RequiredClaims: a.RequiredClaims,
+				PlatformTenantExternalRefClaim: a.PlatformTenantExternalRefClaim,
 			}
 		}
 	case state.EdgeRuleKindIP:

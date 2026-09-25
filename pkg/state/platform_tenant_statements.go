@@ -27,6 +27,7 @@ type PlatformTenantStatementLine struct {
 	AppID                  string    `json:"app_id"`
 	ConsumerID             string    `json:"consumer_id,omitempty"`
 	SurfaceID              string    `json:"surface_id,omitempty"`
+	JWTAuthorizationRuleID string    `json:"jwt_authorization_rule_id,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`
@@ -113,22 +114,40 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 		if _, err := uuid.Parse(line.AppID); err != nil {
 			return ErrInvalidArgument
 		}
-		if (line.ConsumerID == "") == (line.SurfaceID == "") {
+		sources := 0
+		if line.ConsumerID != "" {
+			sources++
+		}
+		if line.SurfaceID != "" {
+			sources++
+		}
+		if line.JWTAuthorizationRuleID != "" {
+			sources++
+		}
+		if sources != 1 {
 			return ErrInvalidArgument
 		}
 		if line.ConsumerID != "" {
 			if _, err := uuid.Parse(line.ConsumerID); err != nil {
 				return ErrInvalidArgument
 			}
-		} else if _, err := uuid.Parse(line.SurfaceID); err != nil {
-			return ErrInvalidArgument
+		}
+		if line.SurfaceID != "" {
+			if _, err := uuid.Parse(line.SurfaceID); err != nil {
+				return ErrInvalidArgument
+			}
+		}
+		if line.JWTAuthorizationRuleID != "" {
+			if _, err := uuid.Parse(line.JWTAuthorizationRuleID); err != nil {
+				return ErrInvalidArgument
+			}
 		}
 		if line.WindowStart.Before(in.PeriodStart) || !line.WindowStart.Before(in.PeriodEnd) ||
 			!line.WindowStart.Equal(line.WindowStart.UTC().Truncate(time.Minute)) ||
 			line.BillableUnits < 0 || line.AmountMillicents < 0 || line.PriceMillicentsPerUnit < 0 {
 			return ErrInvalidArgument
 		}
-		key := line.AppID + "\x00" + line.ConsumerID + "\x00" + line.SurfaceID + "\x00" + line.WindowStart.Format(time.RFC3339)
+		key := line.AppID + "\x00" + line.ConsumerID + "\x00" + line.SurfaceID + "\x00" + line.JWTAuthorizationRuleID + "\x00" + line.WindowStart.Format(time.RFC3339)
 		if seen[key] {
 			return ErrInvalidArgument
 		}

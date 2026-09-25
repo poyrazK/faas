@@ -15,7 +15,10 @@ T = TypeVar("T", bound="PlatformTenantUsageBucketResponse")
 
 @_attrs_define
 class PlatformTenantUsageBucketResponse:
-    """One UTC day of durable tenant-attributed usage. Exactly one of consumer_id or surface_id is present."""
+    """One UTC day of durable tenant-attributed usage. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id
+    is present.
+
+    """
 
     app_id: UUID
     window_start: datetime.datetime
@@ -24,6 +27,7 @@ class PlatformTenantUsageBucketResponse:
     billable_units: int
     consumer_id: UUID | Unset = UNSET
     surface_id: UUID | Unset = UNSET
+    jwt_authorization_rule_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +49,10 @@ class PlatformTenantUsageBucketResponse:
         if not isinstance(self.surface_id, Unset):
             surface_id = str(self.surface_id)
 
+        jwt_authorization_rule_id: str | Unset = UNSET
+        if not isinstance(self.jwt_authorization_rule_id, Unset):
+            jwt_authorization_rule_id = str(self.jwt_authorization_rule_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,6 +68,8 @@ class PlatformTenantUsageBucketResponse:
             field_dict["consumer_id"] = consumer_id
         if surface_id is not UNSET:
             field_dict["surface_id"] = surface_id
+        if jwt_authorization_rule_id is not UNSET:
+            field_dict["jwt_authorization_rule_id"] = jwt_authorization_rule_id
 
         return field_dict
 
@@ -90,6 +100,13 @@ class PlatformTenantUsageBucketResponse:
         else:
             surface_id = UUID(_surface_id)
 
+        _jwt_authorization_rule_id = d.pop("jwt_authorization_rule_id", UNSET)
+        jwt_authorization_rule_id: UUID | Unset
+        if isinstance(_jwt_authorization_rule_id, Unset):
+            jwt_authorization_rule_id = UNSET
+        else:
+            jwt_authorization_rule_id = UUID(_jwt_authorization_rule_id)
+
         platform_tenant_usage_bucket_response = cls(
             app_id=app_id,
             window_start=window_start,
@@ -98,6 +115,7 @@ class PlatformTenantUsageBucketResponse:
             billable_units=billable_units,
             consumer_id=consumer_id,
             surface_id=surface_id,
+            jwt_authorization_rule_id=jwt_authorization_rule_id,
         )
 
         platform_tenant_usage_bucket_response.additional_properties = d

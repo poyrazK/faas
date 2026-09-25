@@ -66,6 +66,7 @@ message ConsumerUsageEvent {
   int64 error_count = 8;
   int64 billable_units = 9;
   string platform_tenant_surface_id = 10; // anonymous traffic on a verified surface only
+  string platform_tenant_jwt_authorization_rule_id = 11; // anonymous traffic attributed by this verified JWT rule
 }
 
 message ConsumerUsageReceipt {
@@ -74,6 +75,7 @@ message ConsumerUsageReceipt {
   // An older apid cannot acknowledge surface attribution. The gateway must
   // retain the event in its outbox until this is true for surface events.
   bool surface_attribution_supported = 2;
+  bool jwt_tenant_attribution_supported = 3;
 }
 
 // IncrementRequestTelemetryRequest is one collapsed telemetry row
@@ -207,6 +209,7 @@ message IncrementRequestTelemetryRequest {
   // New receivers skip their legacy ledger write for this debugger row.
   bool usage_outboxed = 30;
   string platform_tenant_surface_id = 31;
+  string platform_tenant_jwt_authorization_rule_id = 32;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

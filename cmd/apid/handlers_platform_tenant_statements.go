@@ -20,7 +20,7 @@ func platformTenantStatementResponse(s state.PlatformTenantStatement) api.Platfo
 		Lines: make([]api.PlatformTenantStatementLineResponse, 0, len(s.Lines))}
 	for _, line := range s.Lines {
 		out.Lines = append(out.Lines, api.PlatformTenantStatementLineResponse{
-			AppID: line.AppID, ConsumerID: line.ConsumerID, SurfaceID: line.SurfaceID, WindowStart: line.WindowStart,
+			AppID: line.AppID, ConsumerID: line.ConsumerID, SurfaceID: line.SurfaceID, JWTAuthorizationRuleID: line.JWTAuthorizationRuleID, WindowStart: line.WindowStart,
 			BillableUnits: line.BillableUnits, RateCardID: line.RateCardID, Currency: line.Currency,
 			PriceMillicentsPerUnit: line.PriceMillicentsPerUnit, AmountMillicents: line.AmountMillicents,
 		})
@@ -136,7 +136,7 @@ func sameTenantStatementSnapshot(existing state.PlatformTenantStatement, input s
 	}
 	for i, line := range existing.Lines {
 		other := input.Lines[i]
-		if line.AppID != other.AppID || line.ConsumerID != other.ConsumerID || line.SurfaceID != other.SurfaceID || !line.WindowStart.Equal(other.WindowStart) ||
+		if line.AppID != other.AppID || line.ConsumerID != other.ConsumerID || line.SurfaceID != other.SurfaceID || line.JWTAuthorizationRuleID != other.JWTAuthorizationRuleID || !line.WindowStart.Equal(other.WindowStart) ||
 			line.BillableUnits != other.BillableUnits || line.RateCardID != other.RateCardID || line.Currency != other.Currency ||
 			line.PriceMillicentsPerUnit != other.PriceMillicentsPerUnit || line.AmountMillicents != other.AmountMillicents {
 			return false

@@ -48,12 +48,21 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 			return fmt.Errorf("consumer usage: platform_tenant_surface_id must be a UUID: %w", err)
 		}
 	}
-	if event.ConsumerKey == AnonymousConsumerKey {
-		if (event.PlatformTenantID == "") != (event.PlatformTenantSurfaceID == "") {
-			return fmt.Errorf("consumer usage: anonymous tenant attribution requires both tenant and surface")
+	if event.PlatformTenantJWTAuthorizationRuleID != "" {
+		if _, err := uuid.Parse(event.PlatformTenantJWTAuthorizationRuleID); err != nil {
+			return fmt.Errorf("consumer usage: platform_tenant_jwt_authorization_rule_id must be a UUID: %w", err)
 		}
-	} else if event.PlatformTenantSurfaceID != "" {
-		return fmt.Errorf("consumer usage: a consumer event cannot claim a tenant surface")
+	}
+	if event.ConsumerKey == AnonymousConsumerKey {
+		if event.PlatformTenantID == "" {
+			if event.PlatformTenantSurfaceID != "" || event.PlatformTenantJWTAuthorizationRuleID != "" {
+				return fmt.Errorf("consumer usage: anonymous source attribution requires a tenant")
+			}
+		} else if (event.PlatformTenantSurfaceID == "") == (event.PlatformTenantJWTAuthorizationRuleID == "") {
+			return fmt.Errorf("consumer usage: anonymous tenant attribution requires exactly one surface or JWT rule")
+		}
+	} else if event.PlatformTenantSurfaceID != "" || event.PlatformTenantJWTAuthorizationRuleID != "" {
+		return fmt.Errorf("consumer usage: consumer events cannot claim an anonymous tenant source")
 	}
 	if event.WindowStart.IsZero() {
 		return fmt.Errorf("consumer usage: window_start is required")
@@ -115,6 +124,8 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 		subject := event.ConsumerKey
 		if event.PlatformTenantSurfaceID != "" {
 			subject = "surface:" + event.PlatformTenantSurfaceID
+		} else if event.PlatformTenantJWTAuthorizationRuleID != "" {
+			subject = "jwt:" + event.PlatformTenantJWTAuthorizationRuleID
 		}
 		tenantKey := platformTenantUsageBucketKey(event.AccountID, event.PlatformTenantID, event.AppID, subject, event.WindowStart)
 		tenantBucket := m.platformTenantUsage[tenantKey]
@@ -123,6 +134,8 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 				WindowStart: event.WindowStart.UTC()}
 			if event.PlatformTenantSurfaceID != "" {
 				tenantBucket.SurfaceID = event.PlatformTenantSurfaceID
+			} else if event.PlatformTenantJWTAuthorizationRuleID != "" {
+				tenantBucket.JWTAuthorizationRuleID = event.PlatformTenantJWTAuthorizationRuleID
 			} else {
 				tenantBucket.ConsumerKey = event.ConsumerKey
 			}

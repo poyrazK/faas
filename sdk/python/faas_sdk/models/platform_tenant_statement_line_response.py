@@ -15,8 +15,8 @@ T = TypeVar("T", bound="PlatformTenantStatementLineResponse")
 
 @_attrs_define
 class PlatformTenantStatementLineResponse:
-    """Immutable tenant-attributed UTC minute priced with one app's rate-card version. Exactly one of consumer_id or
-    surface_id is present.
+    """Immutable tenant-attributed UTC minute priced with one app's rate-card version. Exactly one of consumer_id,
+    surface_id, or jwt_authorization_rule_id is present.
 
     """
 
@@ -26,6 +26,7 @@ class PlatformTenantStatementLineResponse:
     amount_millicents: int
     consumer_id: UUID | Unset = UNSET
     surface_id: UUID | Unset = UNSET
+    jwt_authorization_rule_id: UUID | Unset = UNSET
     rate_card_id: UUID | Unset = UNSET
     currency: str | Unset = UNSET
     price_millicents_per_unit: int | Unset = UNSET
@@ -47,6 +48,10 @@ class PlatformTenantStatementLineResponse:
         surface_id: str | Unset = UNSET
         if not isinstance(self.surface_id, Unset):
             surface_id = str(self.surface_id)
+
+        jwt_authorization_rule_id: str | Unset = UNSET
+        if not isinstance(self.jwt_authorization_rule_id, Unset):
+            jwt_authorization_rule_id = str(self.jwt_authorization_rule_id)
 
         rate_card_id: str | Unset = UNSET
         if not isinstance(self.rate_card_id, Unset):
@@ -70,6 +75,8 @@ class PlatformTenantStatementLineResponse:
             field_dict["consumer_id"] = consumer_id
         if surface_id is not UNSET:
             field_dict["surface_id"] = surface_id
+        if jwt_authorization_rule_id is not UNSET:
+            field_dict["jwt_authorization_rule_id"] = jwt_authorization_rule_id
         if rate_card_id is not UNSET:
             field_dict["rate_card_id"] = rate_card_id
         if currency is not UNSET:
@@ -104,6 +111,13 @@ class PlatformTenantStatementLineResponse:
         else:
             surface_id = UUID(_surface_id)
 
+        _jwt_authorization_rule_id = d.pop("jwt_authorization_rule_id", UNSET)
+        jwt_authorization_rule_id: UUID | Unset
+        if isinstance(_jwt_authorization_rule_id, Unset):
+            jwt_authorization_rule_id = UNSET
+        else:
+            jwt_authorization_rule_id = UUID(_jwt_authorization_rule_id)
+
         _rate_card_id = d.pop("rate_card_id", UNSET)
         rate_card_id: UUID | Unset
         if isinstance(_rate_card_id, Unset):
@@ -122,6 +136,7 @@ class PlatformTenantStatementLineResponse:
             amount_millicents=amount_millicents,
             consumer_id=consumer_id,
             surface_id=surface_id,
+            jwt_authorization_rule_id=jwt_authorization_rule_id,
             rate_card_id=rate_card_id,
             currency=currency,
             price_millicents_per_unit=price_millicents_per_unit,

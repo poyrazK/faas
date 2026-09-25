@@ -35,6 +35,9 @@ func (m *MemStore) ListPlatformTenantUsageMinutes(_ context.Context, accountID, 
 		if out[i].SurfaceID != out[j].SurfaceID {
 			return out[i].SurfaceID < out[j].SurfaceID
 		}
+		if out[i].JWTAuthorizationRuleID != out[j].JWTAuthorizationRuleID {
+			return out[i].JWTAuthorizationRuleID < out[j].JWTAuthorizationRuleID
+		}
 		return out[i].WindowStart.Before(out[j].WindowStart)
 	})
 	return out, nil
@@ -150,6 +153,18 @@ func tenantStatementIncludesSurface(statement PlatformTenantStatement, appID, su
 	return false
 }
 
+func tenantStatementIncludesJWTAuthorizationRule(statement PlatformTenantStatement, appID, ruleID string) bool {
+	if ruleID == "" {
+		return false
+	}
+	for _, line := range statement.Lines {
+		if line.AppID == appID && line.JWTAuthorizationRuleID == ruleID {
+			return true
+		}
+	}
+	return false
+}
+
 func windowsOverlap(aStart, aEnd, bStart, bEnd time.Time) bool {
 	return aStart.Before(bEnd) && aEnd.After(bStart)
 }
@@ -197,7 +212,8 @@ func (m *MemStore) CreatePlatformTenantStatementHandoff(_ context.Context, in Pl
 		}
 		for _, line := range statement.Lines {
 			if tenantStatementIncludesConsumer(other, line.AppID, line.ConsumerID) ||
-				tenantStatementIncludesSurface(other, line.AppID, line.SurfaceID) {
+				tenantStatementIncludesSurface(other, line.AppID, line.SurfaceID) ||
+				tenantStatementIncludesJWTAuthorizationRule(other, line.AppID, line.JWTAuthorizationRuleID) {
 				return PlatformTenantStatementHandoff{}, false, ErrConflict
 			}
 		}

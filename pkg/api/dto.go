@@ -7346,11 +7346,12 @@ var edgeRuleJWTAllowedAlgs = map[string]struct{}{
 
 // EdgeRuleJWTAction validates an inbound Bearer JWT.
 type EdgeRuleJWTAction struct {
-	Issuer         string            `json:"issuer"`
-	Audience       []string          `json:"audience,omitempty"`
-	JWKSURL        string            `json:"jwks_url"`
-	Algorithms     []string          `json:"algorithms"`
-	RequiredClaims map[string]string `json:"required_claims,omitempty"`
+	Issuer                         string            `json:"issuer"`
+	Audience                       []string          `json:"audience,omitempty"`
+	JWKSURL                        string            `json:"jwks_url"`
+	Algorithms                     []string          `json:"algorithms"`
+	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes
@@ -7399,6 +7400,13 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 	for _, alg := range a.Algorithms {
 		if _, ok := edgeRuleJWTAllowedAlgs[alg]; !ok {
 			return ErrValidation(fmt.Sprintf("jwt action algorithm %q is not in the closed vocabulary (RS256/RS384/RS512/ES256/ES384/ES512)", alg))
+		}
+	}
+	claim := a.PlatformTenantExternalRefClaim
+	if claim != "" {
+		if len(claim) > 128 || strings.TrimSpace(claim) != claim || strings.ContainsAny(claim, " \t\r\n\x00") ||
+			claim == "iss" || claim == "aud" || claim == "sub" || claim == "exp" || claim == "nbf" || claim == "iat" || claim == "jti" {
+			return ErrValidation("platform_tenant_external_ref_claim must name a custom JWT claim (1-128 characters, no whitespace), not a registered JWT claim")
 		}
 	}
 	return nil
