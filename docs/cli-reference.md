@@ -662,6 +662,14 @@ Update one cron rule
 
 Delete one cron rule
 
+### crons run
+
+Fire one cron immediately
+
+### crons fire-now
+
+Show the status of a manual fire request
+
 ### crons runs
 
 Show execution history
@@ -671,6 +679,10 @@ Show execution history
 | `--before <CURSOR>` | pagination cursor for older runs |  |
 | `--limit <N>` | max runs to show (1..100) |  |
 | `--run <TASK-ID>` | show details and captured output for one command run |  |
+
+### crons cancel
+
+Request cancellation of one command-cron run
 
 
 ## triggers

@@ -268,6 +268,61 @@ export class CronsService {
     });
   }
   /**
+   * Request cancellation of one command-cron run.
+   * Requests cancellation of one queued or active command-cron run and
+   * returns its current durable app-task receipt. A queued run becomes
+   * cancelled immediately; an active run records `cancel_requested_at`
+   * and is stopped by its worker. Repeating the request is safe. Runs
+   * belonging to another cron, HTTP cron runs, and runs owned by another
+   * account return the same 404.
+   *
+   * Scoped to `deploy:write` (or `admin`) and subject to the app-task API
+   * capability gate. An optional `Idempotency-Key` replays the stored
+   * response for the account/key pair.
+   *
+   * @returns AppTaskResponse Cancellation accepted; the receipt may remain active while the worker stops.
+   * @throws ApiError
+   */
+  public static cancelCronCommandRun({
+    id,
+    runId,
+    idempotencyKey,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Command-cron task identifier to cancel.
+     */
+    runId: string,
+    /**
+     * Replay token for a duplicate cancellation request.
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppTaskResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/crons/{id}/runs/{run_id}/cancel',
+      path: {
+        'id': id,
+        'run_id': runId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
    * Manually fire a cron now (bypasses the schedule boundary).
    * Inserts a pending row into
    * `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;

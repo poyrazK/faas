@@ -4408,7 +4408,7 @@ func cmdDomains(args []string) int {
 func cmdCrons(args []string) int {
 	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons <list|add|update|rm|runs> [args]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|cancel> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
@@ -4547,6 +4547,8 @@ func cmdCrons(args []string) int {
 		return cmdCronsInfo(args[1:])
 	case subRuns:
 		return cmdCronsRuns(args[1:])
+	case "cancel":
+		return cmdCronsCancel(args[1:])
 	case subRm:
 		if len(args) != 2 {
 			PrintUsage(os.Stderr, "usage: gregale crons rm <id>", "crons")
