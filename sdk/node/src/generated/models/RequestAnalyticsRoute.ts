@@ -18,5 +18,10 @@ export type RequestAnalyticsRoute = {
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
+  /**
+   * Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level included allowance and egress.
+   */
+  estimated_compute_cost_millicents?: number;
+  request_share_pct?: number;
 };
 

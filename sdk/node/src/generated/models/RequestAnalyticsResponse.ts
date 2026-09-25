@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RequestAnalyticsComputeCost } from './RequestAnalyticsComputeCost.js';
 import type { RequestAnalyticsGroup } from './RequestAnalyticsGroup.js';
 import type { RequestAnalyticsRoute } from './RequestAnalyticsRoute.js';
 /**
@@ -54,6 +55,7 @@ export type RequestAnalyticsResponse = {
    * True when more route rows matched than routes_limit.
    */
   routes_truncated: boolean;
+  compute_cost?: RequestAnalyticsComputeCost;
   /**
    * RFC3339Nano UTC assembly timestamp.
    */

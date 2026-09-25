@@ -661,6 +661,7 @@ export type { RecoverRolloutRequest } from './models/RecoverRolloutRequest.js';
 export type { RekeyProgress } from './models/RekeyProgress.js';
 export type { RenameAppRequest } from './models/RenameAppRequest.js';
 export type { RepoResponse } from './models/RepoResponse.js';
+export type { RequestAnalyticsComputeCost } from './models/RequestAnalyticsComputeCost.js';
 export type { RequestAnalyticsGroup } from './models/RequestAnalyticsGroup.js';
 export type { RequestAnalyticsResponse } from './models/RequestAnalyticsResponse.js';
 export type { RequestAnalyticsRoute } from './models/RequestAnalyticsRoute.js';
