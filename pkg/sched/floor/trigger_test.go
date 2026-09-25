@@ -906,6 +906,7 @@ func TestTickPerDeployment_FloorMetSkips(t *testing.T) {
 	}
 }
 
+// spec: §6.2 — a deployment ceiling blocks admission once the ceiling is reached.
 func TestTickPerDeployment_CeilingStopsImpossibleFloor(t *testing.T) {
 	app := floorApp("app1", api.PlanHobby, 2)
 	dep := floorDeployment("d1", "app1", 0)
