@@ -117,6 +117,10 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 		ConsumerKey: consumerKey, PlatformTenantID: req.GetPlatformTenantId(),
 		WindowStart:  time.UnixMilli(req.GetWindowStartUnixMs()).UTC(),
 		RequestCount: req.GetRequestCount(), ErrorCount: req.GetErrorCount(), BillableUnits: req.GetBillableUnits(),
+		DiscoveredRoute: req.GetDiscoveredRoute(),
+	}
+	if req.GetDiscoveredAtUnixMs() != 0 {
+		event.DiscoveredAt = time.UnixMilli(req.GetDiscoveredAtUnixMs()).UTC()
 	}
 	if audit := req.GetAudit(); audit != nil {
 		event.Audit = &state.RequestAuditEvidence{
@@ -139,7 +143,7 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "record consumer usage: %v", err)
 	}
-	return &apidpb.ConsumerUsageReceipt{Applied: applied, AuditRecorded: event.Audit != nil}, nil
+	return &apidpb.ConsumerUsageReceipt{Applied: applied, AuditRecorded: event.Audit != nil, DiscoveryRecorded: event.DiscoveredRoute != ""}, nil
 }
 
 // IncrementRequestTelemetry streams per-record telemetry rows

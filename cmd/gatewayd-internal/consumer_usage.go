@@ -81,7 +81,9 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 					ConsumerId: event.ConsumerID, PlatformTenantId: event.PlatformTenantID,
 					WindowStartUnixMs: event.WindowStart.UnixMilli(), RequestCount: event.RequestCount,
 					ErrorCount: event.ErrorCount, BillableUnits: event.BillableUnits,
-					Audit: audit,
+					Audit:              audit,
+					DiscoveredRoute:    event.DiscoveredRoute,
+					DiscoveredAtUnixMs: event.DiscoveredAtUnixMs,
 				})
 				cancel()
 				if err == nil && receipt == nil {
@@ -89,6 +91,9 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 				}
 				if err == nil && audit != nil && !receipt.GetAuditRecorded() {
 					err = fmt.Errorf("request audit evidence not acknowledged by receiver")
+				}
+				if err == nil && event.DiscoveredRoute != "" && !receipt.GetDiscoveryRecorded() {
+					err = fmt.Errorf("discovered route not acknowledged by receiver")
 				}
 				if err == nil {
 					err = q.Ack(item)

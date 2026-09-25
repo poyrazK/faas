@@ -105,6 +105,27 @@ func TestRestartPreservesOptionalAuditEvidence(t *testing.T) {
 	}
 }
 
+func TestRestartPreservesDiscoveryWithoutAudit(t *testing.T) {
+	root := t.TempDir()
+	q, err := Open(root, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := testEvent(uuid.NewString())
+	event.DiscoveredRoute, event.DiscoveredAtUnixMs = "GET /profiles/{id}", time.Now().UTC().UnixMilli()
+	if err := q.Enqueue(event); err != nil {
+		t.Fatal(err)
+	}
+	q, err = Open(root, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok, err := q.Next()
+	if err != nil || !ok || item.Event.Audit != nil || item.Event.DiscoveredRoute != event.DiscoveredRoute || item.Event.DiscoveredAtUnixMs != event.DiscoveredAtUnixMs {
+		t.Fatalf("replayed discovery=%+v ok=%t err=%v", item.Event, ok, err)
+	}
+}
+
 func TestConcurrentGroupCommitPersistsEveryEvent(t *testing.T) {
 	root := t.TempDir()
 	q, err := Open(root, 1<<20)

@@ -5360,25 +5360,25 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /v1/apps/{slug}/audit/routes:
+  /v1/apps/{slug}/discovered-routes:
     parameters:
       - $ref: '#/components/parameters/Slug'
     get:
       tags: [apps]
-      operationId: getAppDiscoveredAuditRoutes
-      summary: Persisted API route candidates from audited traffic
+      operationId: getAppDiscoveredRoutes
+      summary: Persisted, bounded API route inventory
       description: |
-        Returns up to 500 distinct observed method/template labels from the
-        exact request audit store. Unlike the live per-route metrics surface,
-        this inventory remains available during a gateway or metrics outage.
-        It only includes traffic observed while audit collection was enabled
-        and still within the 30-day request-audit retention window.
+        Returns up to 500 distinct observed method/template candidates with
+        first/last seen times and replay-safe request counts. Discovery has
+        its own operator opt-in, independent of exact request audit and its
+        30-day retention. Undeclared paths can retain literal segments, so
+        operators must review path privacy before enabling discovery.
       responses:
         '200':
           description: Persisted discovered route candidates.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DiscoveredAuditRoutesResponse' }
+              schema: { $ref: '#/components/schemas/DiscoveredRoutesResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -32124,15 +32124,28 @@ components:
         since: { type: string, format: date-time }
         until: { type: string, format: date-time }
 
-    DiscoveredAuditRoutesResponse:
+    DiscoveredAPIRoute:
       type: object
-      description: Initial bounded route inventory from exact audit events.
+      description: One durable, replay-safe observed route candidate.
+      required: [route_template, first_seen, last_seen, request_count]
+      properties:
+        route_template: { type: string, maxLength: 256 }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        request_count: { type: integer, format: int64, minimum: 1 }
+
+    DiscoveredRoutesResponse:
+      type: object
+      description: Bounded API route inventory independent of exact audit retention.
       required: [app_id, routes, cap_hit, source]
       properties:
         app_id: { type: string, format: uuid }
-        routes: { type: array, items: { type: string }, maxItems: 500 }
-        cap_hit: { type: boolean }
-        source: { type: string, enum: [request_audit] }
+        routes:
+          type: array
+          maxItems: 500
+          items: { $ref: '#/components/schemas/DiscoveredAPIRoute' }
+        cap_hit: { type: boolean, description: True once new candidates overflow the 500-route cap. }
+        source: { type: string, enum: [usage_outbox] }
 
     ThrottleSuggestionRow:
       description: |

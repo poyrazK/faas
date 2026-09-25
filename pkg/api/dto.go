@@ -5462,13 +5462,22 @@ type RequestAuditListResponse struct {
 	Until   time.Time            `json:"until"`
 }
 
-// DiscoveredAuditRoutesResponse is the initial audit-backed inventory read.
-// A stacked follow-up replaces it with an audit-independent inventory.
-type DiscoveredAuditRoutesResponse struct {
-	AppID  string   `json:"app_id"`
-	Routes []string `json:"routes"`
-	CapHit bool     `json:"cap_hit"`
-	Source string   `json:"source"`
+// DiscoveredAPIRoute is one bounded, durable route candidate. Counts are
+// idempotent delivered requests, independent of exact audit retention.
+type DiscoveredAPIRoute struct {
+	RouteTemplate string    `json:"route_template"`
+	FirstSeen     time.Time `json:"first_seen"`
+	LastSeen      time.Time `json:"last_seen"`
+	RequestCount  int64     `json:"request_count"`
+}
+
+// DiscoveredRoutesResponse is the bounded inventory read independent of
+// exact request-audit retention.
+type DiscoveredRoutesResponse struct {
+	AppID  string               `json:"app_id"`
+	Routes []DiscoveredAPIRoute `json:"routes"`
+	CapHit bool                 `json:"cap_hit"`
+	Source string               `json:"source"`
 }
 
 const (

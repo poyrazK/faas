@@ -58,8 +58,12 @@ type ConsumerUsageEvent struct {
 	ErrorCount        int64                  `protobuf:"varint,8,opt,name=error_count,json=errorCount,proto3" json:"error_count,omitempty"`
 	BillableUnits     int64                  `protobuf:"varint,9,opt,name=billable_units,json=billableUnits,proto3" json:"billable_units,omitempty"`
 	Audit             *RequestAuditEvidence  `protobuf:"bytes,10,opt,name=audit,proto3" json:"audit,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// A normalized route candidate. Independent of the optional exact audit
+	// record; the receiver persists it idempotently with the usage event.
+	DiscoveredRoute    string `protobuf:"bytes,11,opt,name=discovered_route,json=discoveredRoute,proto3" json:"discovered_route,omitempty"`
+	DiscoveredAtUnixMs int64  `protobuf:"varint,12,opt,name=discovered_at_unix_ms,json=discoveredAtUnixMs,proto3" json:"discovered_at_unix_ms,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageEvent) Reset() {
@@ -162,6 +166,20 @@ func (x *ConsumerUsageEvent) GetAudit() *RequestAuditEvidence {
 	return nil
 }
 
+func (x *ConsumerUsageEvent) GetDiscoveredRoute() string {
+	if x != nil {
+		return x.DiscoveredRoute
+	}
+	return ""
+}
+
+func (x *ConsumerUsageEvent) GetDiscoveredAtUnixMs() int64 {
+	if x != nil {
+		return x.DiscoveredAtUnixMs
+	}
+	return 0
+}
+
 type ConsumerUsageReceipt struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// False means the event was committed by an earlier attempt.
@@ -170,8 +188,11 @@ type ConsumerUsageReceipt struct {
 	// Old apid versions return false, preventing an audit-enabled gateway from
 	// acknowledging and discarding an event before a compatible receiver exists.
 	AuditRecorded bool `protobuf:"varint,2,opt,name=audit_recorded,json=auditRecorded,proto3" json:"audit_recorded,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// True only after the optional discovered route was committed. A gateway
+	// retains the outbox item when talking to a receiver that ignores field 11.
+	DiscoveryRecorded bool `protobuf:"varint,3,opt,name=discovery_recorded,json=discoveryRecorded,proto3" json:"discovery_recorded,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageReceipt) Reset() {
@@ -214,6 +235,13 @@ func (x *ConsumerUsageReceipt) GetApplied() bool {
 func (x *ConsumerUsageReceipt) GetAuditRecorded() bool {
 	if x != nil {
 		return x.AuditRecorded
+	}
+	return false
+}
+
+func (x *ConsumerUsageReceipt) GetDiscoveryRecorded() bool {
+	if x != nil {
+		return x.DiscoveryRecorded
 	}
 	return false
 }
@@ -756,7 +784,7 @@ var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\x93\x03\n" +
+	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xf1\x03\n" +
 	"\x12ConsumerUsageEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -771,10 +799,13 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"errorCount\x12%\n" +
 	"\x0ebillable_units\x18\t \x01(\x03R\rbillableUnits\x12?\n" +
 	"\x05audit\x18\n" +
-	" \x01(\v2).onebox.faas.apid.v1.RequestAuditEvidenceR\x05audit\"W\n" +
+	" \x01(\v2).onebox.faas.apid.v1.RequestAuditEvidenceR\x05audit\x12)\n" +
+	"\x10discovered_route\x18\v \x01(\tR\x0fdiscoveredRoute\x121\n" +
+	"\x15discovered_at_unix_ms\x18\f \x01(\x03R\x12discoveredAtUnixMs\"\x86\x01\n" +
 	"\x14ConsumerUsageReceipt\x12\x18\n" +
 	"\aapplied\x18\x01 \x01(\bR\aapplied\x12%\n" +
-	"\x0eaudit_recorded\x18\x02 \x01(\bR\rauditRecorded\"\xdf\x02\n" +
+	"\x0eaudit_recorded\x18\x02 \x01(\bR\rauditRecorded\x12-\n" +
+	"\x12discovery_recorded\x18\x03 \x01(\bR\x11discoveryRecorded\"\xdf\x02\n" +
 	"\x14RequestAuditEvidence\x12%\n" +
 	"\x0eroute_template\x18\x01 \x01(\tR\rrouteTemplate\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +

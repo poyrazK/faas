@@ -33,9 +33,9 @@ func TestPgRequestAuditReplayAndAccountScopedRead(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].SourceIP != "203.0.113.42" {
 		t.Fatalf("audit rows=%+v err=%v", rows, err)
 	}
-	routes, err := store.ListDiscoveredAuditRoutes(ctx, accountID, appID, 100)
-	if err != nil || len(routes) != 1 || routes[0] != "GET /orders/{id}" {
-		t.Fatalf("routes=%+v err=%v", routes, err)
+	routes, capHit, err := store.ListDiscoveredAPIRoutes(ctx, accountID, appID, 100)
+	if err != nil || capHit || len(routes) != 1 || routes[0].RouteTemplate != "GET /orders/{id}" || routes[0].RequestCount != 1 {
+		t.Fatalf("routes=%+v capHit=%t err=%v", routes, capHit, err)
 	}
 	other, err := store.ListRequestAudit(ctx, uuid.NewString(), appID, now.Add(-time.Minute), now.Add(time.Minute), 100)
 	if err != nil || len(other) != 0 {

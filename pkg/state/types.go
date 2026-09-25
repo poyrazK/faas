@@ -698,6 +698,17 @@ type APIConsumerUsageEvent struct {
 	ErrorCount       int64
 	BillableUnits    int64
 	Audit            *RequestAuditEvidence
+	DiscoveredRoute  string // optional normalized method/template; independent of exact audit
+	DiscoveredAt     time.Time
+}
+
+// DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
+// distinct delivered usage event IDs, not debugger samples or audit retention.
+type DiscoveredAPIRoute struct {
+	RouteTemplate string    `json:"route_template"`
+	FirstSeen     time.Time `json:"first_seen"`
+	LastSeen      time.Time `json:"last_seen"`
+	RequestCount  int64     `json:"request_count"`
 }
 
 // RequestAuditEvidence is a verified gateway observation for one completed

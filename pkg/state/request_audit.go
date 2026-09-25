@@ -13,7 +13,6 @@ import (
 // not require unrelated test stores to implement this read surface.
 type RequestAuditStore interface {
 	ListRequestAudit(context.Context, string, string, time.Time, time.Time, int) ([]RequestAuditRecord, error)
-	ListDiscoveredAuditRoutes(context.Context, string, string, int) ([]string, error)
 }
 
 func (m *MemStore) recordRequestAuditLocked(event APIConsumerUsageEvent) {
@@ -52,29 +51,6 @@ func (m *MemStore) ListRequestAudit(_ context.Context, accountID, appID string, 
 		}
 		return out[i].OccurredAt.After(out[j].OccurredAt)
 	})
-	if len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
-}
-
-func (m *MemStore) ListDiscoveredAuditRoutes(_ context.Context, accountID, appID string, limit int) ([]string, error) {
-	if err := validateAuditQuery(accountID, appID, limit); err != nil {
-		return nil, err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	seen := make(map[string]struct{})
-	for _, record := range m.requestAuditEvents {
-		if record.AccountID == accountID && record.AppID == appID && record.RouteTemplate != "__route_other__" {
-			seen[record.RouteTemplate] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for route := range seen {
-		out = append(out, route)
-	}
-	sort.Strings(out)
 	if len(out) > limit {
 		out = out[:limit]
 	}

@@ -74,6 +74,21 @@ func TestConsumerUsageAuditReceiptRequiresEvidence(t *testing.T) {
 	}
 }
 
+func TestConsumerUsageDiscoveryReceiptWithoutAudit(t *testing.T) {
+	store := &consumerTelemetryStore{}
+	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	now := time.Now().UTC()
+	event := &apidpb.ConsumerUsageEvent{
+		EventId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
+		WindowStartUnixMs: now.Truncate(time.Minute).UnixMilli(), RequestCount: 1, BillableUnits: 1,
+		DiscoveredRoute: "GET /profiles/{id}", DiscoveredAtUnixMs: now.UnixMilli(),
+	}
+	receipt, err := receiver.RecordConsumerUsage(context.Background(), event)
+	if err != nil || !receipt.GetDiscoveryRecorded() || receipt.GetAuditRecorded() || len(store.usage) != 1 || store.usage[0].DiscoveredRoute != event.DiscoveredRoute {
+		t.Fatalf("discovery receipt=%+v usage=%+v err=%v", receipt, store.usage, err)
+	}
+}
+
 func TestOutboxedDebuggerRowDoesNotWriteSecondUsageFact(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
 	receiver := newRequestTelemetryReceiver(store, nil, nil, true)

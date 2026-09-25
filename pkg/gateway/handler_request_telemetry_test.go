@@ -81,6 +81,23 @@ func TestHandlerObserveEnqueuesAuditEvidenceWithoutDebugger(t *testing.T) {
 	}
 }
 
+// adr: 244
+func TestHandlerObserveEnqueuesDiscoveryWithoutExactAudit(t *testing.T) {
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{usageOutbox: q, apiDiscoveryEnabled: true}
+	acct, app := uuid.New(), uuid.New()
+	r := withAppAndAccount(httptest.NewRequest(http.MethodGet, "/profiles/238?token=secret", nil), acct, app)
+	r = withAuditRoute(r, "GET /profiles/{id}")
+	h.observe(r, 200, app.String(), string(api.PlanPro), false, Target{})
+	item, ok, err := q.Next()
+	if err != nil || !ok || item.Event.Audit != nil || item.Event.DiscoveredRoute != "GET /profiles/{id}" || item.Event.DiscoveredAtUnixMs == 0 {
+		t.Fatalf("discovery item=%+v ok=%t err=%v", item.Event, ok, err)
+	}
+}
+
 func TestHandlerObserveOutboxAndDebuggerShareEventIDWithoutDoubleUsage(t *testing.T) {
 	q, err := usageoutbox.Open(t.TempDir(), 4096)
 	if err != nil {

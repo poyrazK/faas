@@ -41,6 +41,13 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 			if err := insertRequestAuditTx(ctx, tx, event); err != nil {
 				return false, err
 			}
+		}
+		if discoveredRouteFor(event) != "" {
+			if err := recordDiscoveredRouteTx(ctx, tx, event); err != nil {
+				return false, err
+			}
+		}
+		if event.Audit != nil || discoveredRouteFor(event) != "" {
 			if err := tx.Commit(ctx); err != nil {
 				return false, err
 			}
@@ -85,6 +92,11 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 	}
 	if event.Audit != nil {
 		if err := insertRequestAuditTx(ctx, tx, event); err != nil {
+			return false, err
+		}
+	}
+	if discoveredRouteFor(event) != "" {
+		if err := recordDiscoveredRouteTx(ctx, tx, event); err != nil {
 			return false, err
 		}
 	}

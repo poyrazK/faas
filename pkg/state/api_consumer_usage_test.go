@@ -88,9 +88,9 @@ func TestRequestAuditReplayFillsMissingEvidenceWithoutDoubleUsage(t *testing.T) 
 	if err != nil || len(usage) != 1 || usage[0].RequestCount != 1 {
 		t.Fatalf("usage=%+v err=%v", usage, err)
 	}
-	routes, err := store.ListDiscoveredAuditRoutes(context.Background(), event.AccountID, event.AppID, 100)
-	if err != nil || len(routes) != 1 || routes[0] != "POST /payments" {
-		t.Fatalf("routes=%+v err=%v", routes, err)
+	routes, capHit, err := store.ListDiscoveredAPIRoutes(context.Background(), event.AccountID, event.AppID, 100)
+	if err != nil || capHit || len(routes) != 1 || routes[0].RouteTemplate != "POST /payments" || routes[0].RequestCount != 1 {
+		t.Fatalf("routes=%+v capHit=%t err=%v", routes, capHit, err)
 	}
 	other, err := store.ListRequestAudit(context.Background(), uuid.NewString(), event.AppID, now, now.Add(time.Minute), 100)
 	if err != nil || len(other) != 0 {

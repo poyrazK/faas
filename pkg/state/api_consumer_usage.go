@@ -90,6 +90,21 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 			}
 		}
 	}
+	if route := discoveredRouteFor(event); route != "" {
+		if route == discoveredRouteOverflow {
+			return fmt.Errorf("api discovery: overflow label is reserved")
+		}
+		if event.RequestCount != 1 || len(route) > 256 || strings.ContainsAny(route, "?#\r\n\t") {
+			return fmt.Errorf("api discovery: invalid request count or route")
+		}
+		method, path, ok := strings.Cut(route, " ")
+		if !ok || len(method) == 0 || len(method) > 16 || !strings.HasPrefix(path, "/") || len(path) == 0 {
+			return fmt.Errorf("api discovery: invalid method/template")
+		}
+		if event.Audit != nil && event.DiscoveredRoute != "" && event.Audit.RouteTemplate != event.DiscoveredRoute {
+			return fmt.Errorf("api discovery: route conflicts with audit evidence")
+		}
+	}
 	return nil
 }
 
@@ -111,9 +126,14 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.apiConsumerUsageEvents[event.EventID]; exists {
+		identity := m.apiConsumerUsageEvents[event.EventID]
+		if identity.accountID != event.AccountID || identity.appID != event.AppID {
+			return false, fmt.Errorf("consumer usage: event ID belongs to another account or app")
+		}
 		if event.Audit != nil {
 			m.recordRequestAuditLocked(event)
 		}
+		m.recordDiscoveredRouteLocked(event)
 		return false, nil
 	}
 	if event.PlatformTenantID != "" {
@@ -146,10 +166,11 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 		tenantBucket.BillableUnits += event.BillableUnits
 		m.platformTenantUsage[tenantKey] = tenantBucket
 	}
-	m.apiConsumerUsageEvents[event.EventID] = struct{}{}
+	m.apiConsumerUsageEvents[event.EventID] = usageEventIdentity{accountID: event.AccountID, appID: event.AppID}
 	if event.Audit != nil {
 		m.recordRequestAuditLocked(event)
 	}
+	m.recordDiscoveredRouteLocked(event)
 	return true, nil
 }
 
