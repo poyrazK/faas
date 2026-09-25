@@ -315,6 +315,7 @@ var dtoExclude = map[string]bool{
 	// decode; these structs are not standalone HTTP request/response DTOs.
 	"ServiceBindingProbeCheck":  true,
 	"ServiceBindingProbeReport": true,
+	"ServiceBindingSmokeReport": true,
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
 	// pkg/api ↔ pkg/state seam. The wire DTOs are OrgResponse /
 	// OrgMemberResponse / OrgInvitationResponse; the *Row types
