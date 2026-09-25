@@ -1014,6 +1014,7 @@ from .outbound_integration_offer_credential_source import OutboundIntegrationOff
 from .outbound_integration_offer_list import OutboundIntegrationOfferList
 from .outbound_integration_offer_owner_kind import OutboundIntegrationOfferOwnerKind
 from .outbound_integration_usage_response import OutboundIntegrationUsageResponse
+from .outbound_request_policy import OutboundRequestPolicy
 from .parked_deployment_ref import ParkedDeploymentRef
 from .parked_deployment_ref_parked_reason import ParkedDeploymentRefParkedReason
 from .password_forgot_response_200 import PasswordForgotResponse200
@@ -1250,6 +1251,7 @@ from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
+from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -2573,6 +2575,7 @@ __all__ = (
     "OutboundIntegrationOfferList",
     "OutboundIntegrationOfferOwnerKind",
     "OutboundIntegrationUsageResponse",
+    "OutboundRequestPolicy",
     "ParkedDeploymentRef",
     "ParkedDeploymentRefParkedReason",
     "PasswordForgotResponse200",
@@ -2789,6 +2792,7 @@ __all__ = (
     "PutJobRegistryCredentialRequest",
     "PutOutboundCredentialRequest",
     "PutOutboundDailyRequestBudgetRequest",
+    "PutOutboundRequestPolicyRequest",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",

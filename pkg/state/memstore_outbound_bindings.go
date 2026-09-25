@@ -128,6 +128,9 @@ func (m *MemStore) SeedOutboundIntegrationOffer(offer OutboundIntegrationOffer) 
 }
 
 func (m *MemStore) CreateOutboundIntegration(_ context.Context, offer OutboundIntegrationOffer) (OutboundIntegrationOffer, error) {
+	if offer.RequestPolicy == (api.OutboundRequestPolicy{}) {
+		offer.RequestPolicy = api.DefaultOutboundRequestPolicy()
+	}
 	if err := validateCustomerOutboundIntegration(offer); err != nil {
 		return OutboundIntegrationOffer{}, err
 	}

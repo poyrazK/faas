@@ -28,9 +28,24 @@ func TestPgStore_OutboundBindingCustomerLifecycle(t *testing.T) {
 	if err != nil || created.ID != offer.ID {
 		t.Fatalf("CreateOutboundIntegration = %+v, %v", created, err)
 	}
+	if created.RequestPolicy != api.DefaultOutboundRequestPolicy() {
+		t.Fatalf("default request policy = %+v", created.RequestPolicy)
+	}
+	requestPolicy := api.OutboundRequestPolicy{RatePerSecond: 50, Burst: 250, MaxInFlight: 100, RequestTimeoutMS: 60_000}
+	if err := s.SetOutboundRequestPolicy(ctx, accountID, offer.ID, requestPolicy); err != nil {
+		t.Fatalf("SetOutboundRequestPolicy: %v", err)
+	}
+	tooHighPolicy := requestPolicy
+	tooHighPolicy.RatePerSecond = 101
+	if err := s.SetOutboundRequestPolicy(ctx, accountID, offer.ID, tooHighPolicy); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("over-plan request policy = %v, want ErrInvalidArgument", err)
+	}
+	if err := s.SetOutboundRequestPolicy(ctx, uuid.NewString(), offer.ID, requestPolicy); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account request policy = %v, want ErrNotFound", err)
+	}
 
 	listed, err := s.ListOutboundIntegrationOffers(ctx, accountID)
-	if err != nil || len(listed) != 1 || listed[0].ID != offer.ID || listed[0].DailyRequestLimit == nil || *listed[0].DailyRequestLimit != limit {
+	if err != nil || len(listed) != 1 || listed[0].ID != offer.ID || listed[0].DailyRequestLimit == nil || *listed[0].DailyRequestLimit != limit || listed[0].RequestPolicy != requestPolicy {
 		t.Fatalf("ListOutboundIntegrationOffers = %+v, %v", listed, err)
 	}
 	if cross, err := s.ListOutboundIntegrationOffers(ctx, uuid.NewString()); err != nil || len(cross) != 0 {

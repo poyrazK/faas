@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -12,12 +12,19 @@ from ..models.create_outbound_integration_request_allowed_methods_item import (
 )
 from ..types import UNSET, Unset
 
+if TYPE_CHECKING:
+    from ..models.outbound_request_policy import OutboundRequestPolicy
+
+
 T = TypeVar("T", bound="CreateOutboundIntegrationRequest")
 
 
 @_attrs_define
 class CreateOutboundIntegrationRequest:
-    """A fixed public HTTPS destination, maximum HTTP route policy, and optional daily admitted-request limit."""
+    """A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-
+    request limit.
+
+    """
 
     name: str
     origin: str
@@ -25,6 +32,8 @@ class CreateOutboundIntegrationRequest:
     allowed_path_prefixes: list[str]
     daily_request_limit: int | None | Unset = UNSET
     """Optional per-integration daily admitted-request limit; account plan ceilings may be lower."""
+    request_policy: OutboundRequestPolicy | Unset = UNSET
+    """Effective customer-selected per-integration policy, bounded by the account plan."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +54,10 @@ class CreateOutboundIntegrationRequest:
         else:
             daily_request_limit = self.daily_request_limit
 
+        request_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.request_policy, Unset):
+            request_policy = self.request_policy.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -57,11 +70,15 @@ class CreateOutboundIntegrationRequest:
         )
         if daily_request_limit is not UNSET:
             field_dict["daily_request_limit"] = daily_request_limit
+        if request_policy is not UNSET:
+            field_dict["request_policy"] = request_policy
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.outbound_request_policy import OutboundRequestPolicy
+
         d = dict(src_dict)
         name = d.pop("name")
 
@@ -87,12 +104,20 @@ class CreateOutboundIntegrationRequest:
 
         daily_request_limit = _parse_daily_request_limit(d.pop("daily_request_limit", UNSET))
 
+        _request_policy = d.pop("request_policy", UNSET)
+        request_policy: OutboundRequestPolicy | Unset
+        if isinstance(_request_policy, Unset):
+            request_policy = UNSET
+        else:
+            request_policy = OutboundRequestPolicy.from_dict(_request_policy)
+
         create_outbound_integration_request = cls(
             name=name,
             origin=origin,
             allowed_methods=allowed_methods,
             allowed_path_prefixes=allowed_path_prefixes,
             daily_request_limit=daily_request_limit,
+            request_policy=request_policy,
         )
 
         create_outbound_integration_request.additional_properties = d

@@ -145,6 +145,9 @@ func (s *PgStore) ListOutboundAppBindings(ctx context.Context, accountID, appID 
 }
 
 func (s *PgStore) CreateOutboundIntegration(ctx context.Context, offer OutboundIntegrationOffer) (OutboundIntegrationOffer, error) {
+	if offer.RequestPolicy == (api.OutboundRequestPolicy{}) {
+		offer.RequestPolicy = api.DefaultOutboundRequestPolicy()
+	}
 	if err := validateCustomerOutboundIntegration(offer); err != nil {
 		return OutboundIntegrationOffer{}, err
 	}

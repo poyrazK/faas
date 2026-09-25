@@ -10,6 +10,7 @@ import type { OutboundIntegrationOfferList } from '../models/OutboundIntegration
 import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegrationUsageResponse.js';
 import type { PutOutboundCredentialRequest } from '../models/PutOutboundCredentialRequest.js';
 import type { PutOutboundDailyRequestBudgetRequest } from '../models/PutOutboundDailyRequestBudgetRequest.js';
+import type { PutOutboundRequestPolicyRequest } from '../models/PutOutboundRequestPolicyRequest.js';
 import type { UpdateOutboundBindingPolicyRequest } from '../models/UpdateOutboundBindingPolicyRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -147,6 +148,41 @@ export class OutboundService {
     return __request(OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/budget',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a customer-owned integration's rate, burst, concurrency, and timeout policy.
+   * Requires MFA and deploy-write scope. Every value must fit the account plan ceiling. Changes are enforced on subsequent admissions without an outboundd restart; already-admitted calls keep their existing deadline.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundIntegrationRequestPolicy({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * UUID of the customer-owned integration whose request policy is being changed.
+     */
+    integration: string,
+    requestBody: PutOutboundRequestPolicyRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/request-policy',
       path: {
         'integration': integration,
       },

@@ -92,6 +92,25 @@ func TestMemStore_OutboundCustomerIntegrationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateOutboundIntegration: %v", err)
 	}
+	if created.RequestPolicy != api.DefaultOutboundRequestPolicy() {
+		t.Fatalf("default request policy = %+v", created.RequestPolicy)
+	}
+	requestPolicy := api.OutboundRequestPolicy{RatePerSecond: 50, Burst: 250, MaxInFlight: 100, RequestTimeoutMS: 60_000}
+	if err := m.SetOutboundRequestPolicy(ctx, account.ID, created.ID, requestPolicy); err != nil {
+		t.Fatalf("SetOutboundRequestPolicy: %v", err)
+	}
+	tooHighPolicy := requestPolicy
+	tooHighPolicy.RatePerSecond = 101
+	if err := m.SetOutboundRequestPolicy(ctx, account.ID, created.ID, tooHighPolicy); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("over-plan request policy = %v, want ErrInvalidArgument", err)
+	}
+	if err := m.SetOutboundRequestPolicy(ctx, uuid.NewString(), created.ID, requestPolicy); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-account request policy = %v, want ErrNotFound", err)
+	}
+	updatedOffers, err := m.ListOutboundIntegrationOffers(ctx, account.ID)
+	if err != nil || len(updatedOffers) != 1 || updatedOffers[0].RequestPolicy != requestPolicy {
+		t.Fatalf("request policy after update = %+v, %v", updatedOffers, err)
+	}
 	// The store owns copies of all caller-provided slices and pointers.
 	offer.AllowedMethods[0] = "DELETE"
 	*offer.DailyRequestLimit = 3
