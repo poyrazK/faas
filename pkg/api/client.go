@@ -4323,11 +4323,11 @@ func (c *Client) GetAppsSlugAuditRequests(ctx context.Context, slug string, sinc
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
-// GetAppsSlugAuditRoutes returns observed candidates within exact-audit
-// retention. A stacked follow-up moves this to an independent surface.
-func (c *Client) GetAppsSlugAuditRoutes(ctx context.Context, slug string) (DiscoveredAuditRoutesResponse, error) {
-	var out DiscoveredAuditRoutesResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/audit/routes", nil, &out)
+// GetAppsSlugDiscoveredRoutes returns the durable, bounded route inventory
+// independently of exact request-audit retention.
+func (c *Client) GetAppsSlugDiscoveredRoutes(ctx context.Context, slug string) (DiscoveredRoutesResponse, error) {
+	var out DiscoveredRoutesResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/discovered-routes", nil, &out)
 }
 
 // StreamingCapRequest identifies the request shape used to resolve a

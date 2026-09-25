@@ -18,8 +18,8 @@ func TestClientRequestAuditAndDiscoveredRoutes(t *testing.T) {
 				t.Errorf("audit query=%s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`{"app_id":"app","records":[{"event_id":"event","route_template":"POST /payments","method":"POST","http_status":201,"latency_ms":381,"occurred_at":"2026-09-25T12:00:00Z"}],"since":"2026-09-25T12:00:00Z","until":"2026-09-25T13:00:00Z"}`))
-		case "/v1/apps/acme/audit/routes":
-			_, _ = w.Write([]byte(`{"app_id":"app","routes":["POST /payments"],"cap_hit":false,"source":"request_audit"}`))
+		case "/v1/apps/acme/discovered-routes":
+			_, _ = w.Write([]byte(`{"app_id":"app","routes":[{"route_template":"POST /payments","first_seen":"2026-09-25T12:00:00Z","last_seen":"2026-09-25T12:00:00Z","request_count":1}],"cap_hit":false,"source":"usage_outbox"}`))
 		default:
 			t.Errorf("unexpected SDK path %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -31,8 +31,8 @@ func TestClientRequestAuditAndDiscoveredRoutes(t *testing.T) {
 	if err != nil || len(records.Records) != 1 || records.Records[0].HTTPStatus != 201 {
 		t.Fatalf("audit records=%+v err=%v", records, err)
 	}
-	routes, err := c.GetAppsSlugAuditRoutes(context.Background(), "acme")
-	if err != nil || len(routes.Routes) != 1 || routes.Routes[0] != "POST /payments" {
-		t.Fatalf("audit routes=%+v err=%v", routes, err)
+	routes, err := c.GetAppsSlugDiscoveredRoutes(context.Background(), "acme")
+	if err != nil || len(routes.Routes) != 1 || routes.Routes[0].RouteTemplate != "POST /payments" || routes.Routes[0].RequestCount != 1 || routes.Source != "usage_outbox" {
+		t.Fatalf("discovered routes=%+v err=%v", routes, err)
 	}
 }

@@ -35,7 +35,7 @@ import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
-import type { DiscoveredAuditRoutesResponse } from '../models/DiscoveredAuditRoutesResponse.js';
+import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
@@ -1087,27 +1087,27 @@ export class AppsService {
     });
   }
   /**
-   * Persisted API route candidates from audited traffic
-   * Returns up to 500 distinct observed method/template labels from the
-   * exact request audit store. Unlike the live per-route metrics surface,
-   * this inventory remains available during a gateway or metrics outage.
-   * It only includes traffic observed while audit collection was enabled
-   * and still within the 30-day request-audit retention window.
+   * Persisted, bounded API route inventory
+   * Returns up to 500 distinct observed method/template candidates with
+   * first/last seen times and replay-safe request counts. Discovery has
+   * its own operator opt-in, independent of exact request audit and its
+   * 30-day retention. Undeclared paths can retain literal segments, so
+   * operators must review path privacy before enabling discovery.
    *
-   * @returns DiscoveredAuditRoutesResponse Persisted discovered route candidates.
+   * @returns DiscoveredRoutesResponse Persisted discovered route candidates.
    * @throws ApiError
    */
-  public static getAppDiscoveredAuditRoutes({
+  public static getAppDiscoveredRoutes({
     slug,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
-  }): CancelablePromise<DiscoveredAuditRoutesResponse> {
+  }): CancelablePromise<DiscoveredRoutesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
-      url: '/v1/apps/{slug}/audit/routes',
+      url: '/v1/apps/{slug}/discovered-routes',
       path: {
         'slug': slug,
       },
