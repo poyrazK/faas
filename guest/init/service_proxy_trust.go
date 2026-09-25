@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -117,13 +120,16 @@ func writeFileUnderRoot(rootPath, relativePath string, contents []byte) error {
 	}
 	defer func() { _ = root.Close() }()
 	name := filepath.FromSlash(relativePath)
-	// A restarted workload may have planted a symlink at this well-known path
-	// in /tmp. Remove the entry itself, then create exclusively so the write
-	// never follows it.
-	if err := root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+	// Publish through a same-directory temporary file: workload restarts can
+	// overlap, and the application may have planted a symlink at the final path.
+	// A random exclusive temp name avoids clobbering another writer; Rename
+	// atomically replaces the final entry itself without following symlinks.
+	var nonce [12]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return fmt.Errorf("generate service trust temp name: %w", err)
 	}
-	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o444)
+	tempName := name + "." + hex.EncodeToString(nonce[:]) + ".tmp"
+	file, err := root.OpenFile(tempName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o444)
 	if err != nil {
 		return err
 	}
@@ -133,12 +139,16 @@ func writeFileUnderRoot(rootPath, relativePath string, contents []byte) error {
 	}
 	closeErr := file.Close()
 	if writeErr != nil {
-		_ = root.Remove(name)
+		_ = root.Remove(tempName)
 		return writeErr
 	}
 	if closeErr != nil {
-		_ = root.Remove(name)
+		_ = root.Remove(tempName)
 		return closeErr
+	}
+	if err := root.Rename(tempName, name); err != nil {
+		_ = root.Remove(tempName)
+		return err
 	}
 	return nil
 }

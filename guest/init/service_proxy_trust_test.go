@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -99,6 +100,48 @@ func TestPrepareServiceProxyTrustReplacesTmpSymlinkWithoutFollowingIt(t *testing
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		t.Fatal("generated bundle path is still a symlink")
+	}
+}
+
+func TestPrepareServiceProxyTrustIsSafeForConcurrentRestarts(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "etc/faas"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, serviceProxyCAPath), []byte("PRIVATE-CA\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errCh := make(chan error, 8)
+	for i := 0; i < cap(errCh); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := prepareServiceProxyTrust(root, root)
+			errCh <- err
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent prepareServiceProxyTrust: %v", err)
+		}
+	}
+	for _, path := range []string{serviceProxyCABundleEnvPath, serviceProxyCANodeEnvPath} {
+		if _, err := os.Stat(filepath.Join(root, strings.TrimPrefix(path, "/"))); err != nil {
+			t.Errorf("generated file %s: %v", path, err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("tmp contains %d entries after concurrent writes, want only the two bundles", len(entries))
 	}
 }
 
