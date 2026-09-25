@@ -132,7 +132,6 @@ CreateDeploymentScopeExclusion
 CreateEdgeRule
 CreateEdgeRuleIfUnderQuota
 CreateInstanceWithMode
-CreateJobInstance
 CreateOrg
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
