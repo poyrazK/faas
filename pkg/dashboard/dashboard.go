@@ -1811,6 +1811,7 @@ type RequestAnalyticsView struct {
 	GroupsTruncated       bool
 	RoutesLimit           int
 	RoutesTruncated       bool
+	ComputeCost           *RequestAnalyticsComputeCostView
 	AsOf                  string
 	Bucket                string
 	SelectedRoute         string
@@ -1823,6 +1824,17 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+}
+
+type RequestAnalyticsComputeCostView struct {
+	EstimatedEUR               string
+	AllocatedEUR               string
+	UnallocatedEUR             string
+	OtherRoutesEUR             string
+	OtherRoutesRequests        int64
+	OtherRoutesRequestSharePct float64
+	RateEUR                    string
+	RequestCount               int64
 }
 
 type RequestAnalyticsGroupView struct {
@@ -1838,16 +1850,18 @@ type RequestAnalyticsGroupView struct {
 }
 
 type RequestAnalyticsRouteView struct {
-	Route         string
-	Method        string
-	Requests      int64
-	ErrorRequests int64
-	ErrorRatePct  float64
-	ColdBoots     int64
-	P50MS         int
-	P95MS         int
-	P99MS         int
-	TrendURL      string
+	Route                   string
+	Method                  string
+	Requests                int64
+	ErrorRequests           int64
+	ErrorRatePct            float64
+	ColdBoots               int64
+	P50MS                   int
+	P95MS                   int
+	P99MS                   int
+	EstimatedComputeCostEUR string
+	RequestSharePct         float64
+	TrendURL                string
 	// DebugURL opens the read-only request explorer filtered to this route.
 	DebugURL string
 }

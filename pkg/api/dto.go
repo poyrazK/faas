@@ -9868,6 +9868,29 @@ type RequestAnalyticsRoute struct {
 	P50MS         int     `json:"p50_ms"`
 	P95MS         int     `json:"p95_ms"`
 	P99MS         int     `json:"p99_ms"`
+	// EstimatedComputeCostMillicents allocates this app's estimated raw
+	// RAM-hour value to the route by its share of observed requests. It is
+	// an estimate at the current compute overage rate, not an invoice line.
+	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents,omitempty"`
+	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
+}
+
+// RequestAnalyticsComputeCost describes the estimated compute value used by
+// route cost allocation. Raw RAM-hours are valued at the current overage rate;
+// account-level included allowances and egress are deliberately excluded.
+// Allocations use request_telemetry counts for the same analytics window.
+type RequestAnalyticsComputeCost struct {
+	EstimatedMillicents       int64   `json:"estimated_millicents"`
+	AllocatedMillicents       int64   `json:"allocated_millicents"`
+	UnallocatedMillicents     int64   `json:"unallocated_millicents"`
+	OtherRouteMillicents      int64   `json:"other_route_millicents"`
+	OtherRouteRequests        int64   `json:"other_route_requests"`
+	OtherRouteRequestSharePct float64 `json:"other_route_request_share_pct"`
+	RateMillicentsPerGBHour   int64   `json:"rate_millicents_per_gb_hour"`
+	Currency                  string  `json:"currency"`
+	AllocationMethod          string  `json:"allocation_method"`
+	Basis                     string  `json:"basis"`
+	RequestCount              int64   `json:"request_count"`
 }
 
 // RequestAnalyticsGroup is one top-N aggregate for the selected analytics
@@ -9891,26 +9914,27 @@ type RequestAnalyticsGroup struct {
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
-	Slug            string                  `json:"slug"`
-	Since           string                  `json:"since"`
-	From            string                  `json:"from"`
-	Until           string                  `json:"until"`
-	WindowClamped   bool                    `json:"window_clamped"`
-	Requests        int64                   `json:"requests"`
-	ErrorRequests   int64                   `json:"error_requests"`
-	ErrorRatePct    float64                 `json:"error_rate_pct"`
-	ColdBoots       int64                   `json:"cold_boots"`
-	P50MS           int                     `json:"p50_ms"`
-	P95MS           int                     `json:"p95_ms"`
-	P99MS           int                     `json:"p99_ms"`
-	GroupBy         string                  `json:"group_by"`
-	Groups          []RequestAnalyticsGroup `json:"groups"`
-	GroupsLimit     int                     `json:"groups_limit"`
-	GroupsTruncated bool                    `json:"groups_truncated"`
-	Routes          []RequestAnalyticsRoute `json:"routes"`
-	RoutesLimit     int                     `json:"routes_limit"`
-	RoutesTruncated bool                    `json:"routes_truncated"`
-	AsOf            string                  `json:"as_of"`
+	Slug            string                       `json:"slug"`
+	Since           string                       `json:"since"`
+	From            string                       `json:"from"`
+	Until           string                       `json:"until"`
+	WindowClamped   bool                         `json:"window_clamped"`
+	Requests        int64                        `json:"requests"`
+	ErrorRequests   int64                        `json:"error_requests"`
+	ErrorRatePct    float64                      `json:"error_rate_pct"`
+	ColdBoots       int64                        `json:"cold_boots"`
+	P50MS           int                          `json:"p50_ms"`
+	P95MS           int                          `json:"p95_ms"`
+	P99MS           int                          `json:"p99_ms"`
+	GroupBy         string                       `json:"group_by"`
+	Groups          []RequestAnalyticsGroup      `json:"groups"`
+	GroupsLimit     int                          `json:"groups_limit"`
+	GroupsTruncated bool                         `json:"groups_truncated"`
+	Routes          []RequestAnalyticsRoute      `json:"routes"`
+	RoutesLimit     int                          `json:"routes_limit"`
+	RoutesTruncated bool                         `json:"routes_truncated"`
+	ComputeCost     *RequestAnalyticsComputeCost `json:"compute_cost,omitempty"`
+	AsOf            string                       `json:"as_of"`
 }
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned

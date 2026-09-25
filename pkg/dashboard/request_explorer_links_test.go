@@ -20,8 +20,12 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 			App: dashboard.AppListItem{Slug: "demo", AppID: "demo-uuid", Status: "active"},
 			RequestAnalytics: &dashboard.RequestAnalyticsView{
 				GroupBy: "route", Since: "24h", Requests: 3,
+				ComputeCost: &dashboard.RequestAnalyticsComputeCostView{
+					EstimatedEUR: "1.23456", AllocatedEUR: "1.23456", RateEUR: "0.01000", RequestCount: 3,
+				},
 				Routes: []dashboard.RequestAnalyticsRouteView{{
 					Route: "/checkout", Method: "GET", Requests: 3,
+					EstimatedComputeCostEUR: "1.23456", RequestSharePct: 100,
 					TrendURL: "/dashboard/apps/demo?analytics_method=GET&analytics_route=%2Fcheckout",
 					DebugURL: "/dashboard/apps/demo/debug?route=%2Fcheckout&since=24h",
 				}},
@@ -34,6 +38,9 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"Top routes",
+		"Estimated compute value for this window: €1.23456",
+		"Est. compute",
+		"€1.23456",
 		"Inspect requests",
 		"/dashboard/apps/demo/debug?route=%2Fcheckout&amp;since=24h",
 		"?analytics_by=consumer_id",

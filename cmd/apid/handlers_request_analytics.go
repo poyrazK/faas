@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
+	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -264,6 +265,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	groups := make([]api.RequestAnalyticsGroup, 0, len(groupRows))
 	routes := make([]api.RequestAnalyticsRoute, 0, len(groupRows))
 	groupsTruncated := false
+	var otherRouteRequests int64
 	for _, row := range groupRows {
 		value := requestAnalyticsDimensionString(row.Dimension)
 		method := requestAnalyticsDimensionString(row.Method)
@@ -281,6 +283,9 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		groups = append(groups, group)
 		if group.Value == "__other__" {
 			groupsTruncated = true
+			if groupBy == "route" {
+				otherRouteRequests = group.Requests
+			}
 			continue
 		}
 		if groupBy == "route" {
@@ -295,6 +300,38 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 				P95MS:         group.P95MS,
 				P99MS:         group.P99MS,
 			})
+		}
+	}
+
+	var computeCost *api.RequestAnalyticsComputeCost
+	if groupBy == "route" {
+		// Usage and request analytics use the exact same bounded window. The
+		// app's raw RAM-hours are valued at Gregale's current compute overage
+		// rate, then distributed across the observed route request counts. This
+		// intentionally excludes the account's shared included allowance and
+		// any egress charge: it is a cost allocation estimate, not invoice math.
+		usage, _, err := meter.BuildAppWindowSummary(ctx, s.store, acct.ID, app.ID, window.From, window.Until)
+		if err != nil {
+			return api.RequestAnalyticsResponse{}, err
+		}
+		estimatedMillicents := api.OverageMillicentsForBillableMBSeconds(usage.MBSeconds)
+		requestCount, allocatedMillicents, otherRouteMillicents := allocateRequestAnalyticsRouteCost(routes, otherRouteRequests, estimatedMillicents)
+		otherRouteRequestSharePct := 0.0
+		if requestCount > 0 {
+			otherRouteRequestSharePct = float64(otherRouteRequests) * 100 / float64(requestCount)
+		}
+		computeCost = &api.RequestAnalyticsComputeCost{
+			EstimatedMillicents:       estimatedMillicents,
+			AllocatedMillicents:       allocatedMillicents,
+			UnallocatedMillicents:     estimatedMillicents - allocatedMillicents,
+			OtherRouteMillicents:      otherRouteMillicents,
+			OtherRouteRequests:        otherRouteRequests,
+			OtherRouteRequestSharePct: otherRouteRequestSharePct,
+			RateMillicentsPerGBHour:   api.OverageMillicentsPerGBHour,
+			Currency:                  "EUR",
+			AllocationMethod:          "request_share",
+			Basis:                     "raw_ram_hours_at_current_overage_rate_before_allowance",
+			RequestCount:              requestCount,
 		}
 	}
 
@@ -318,6 +355,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		Routes:          routes,
 		RoutesLimit:     requestAnalyticsRouteLimit,
 		RoutesTruncated: groupsTruncated && groupBy == "route",
+		ComputeCost:     computeCost,
 		AsOf:            window.AsOf.Format(time.RFC3339Nano),
 	}, nil
 }
@@ -475,17 +513,19 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		debugQuery.Set("since", response.Since)
 		debugQuery.Set("route", route.Route)
 		routes = append(routes, dashboard.RequestAnalyticsRouteView{
-			Route:         route.Route,
-			Method:        route.Method,
-			Requests:      route.Requests,
-			ErrorRequests: route.ErrorRequests,
-			ErrorRatePct:  route.ErrorRatePct,
-			ColdBoots:     route.ColdBoots,
-			P50MS:         route.P50MS,
-			P95MS:         route.P95MS,
-			P99MS:         route.P99MS,
-			TrendURL:      "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),
-			DebugURL:      "/dashboard/apps/" + app.Slug + "/debug?" + debugQuery.Encode(),
+			Route:                   route.Route,
+			Method:                  route.Method,
+			Requests:                route.Requests,
+			ErrorRequests:           route.ErrorRequests,
+			ErrorRatePct:            route.ErrorRatePct,
+			ColdBoots:               route.ColdBoots,
+			P50MS:                   route.P50MS,
+			P95MS:                   route.P95MS,
+			P99MS:                   route.P99MS,
+			EstimatedComputeCostEUR: millicentsAsEUR(route.EstimatedComputeCostMillicents),
+			RequestSharePct:         route.RequestSharePct,
+			TrendURL:                "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),
+			DebugURL:                "/dashboard/apps/" + app.Slug + "/debug?" + debugQuery.Encode(),
 		})
 	}
 	selectedQuery := url.Values{}
@@ -524,6 +564,7 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		GroupsTruncated: response.GroupsTruncated,
 		RoutesLimit:     response.RoutesLimit,
 		RoutesTruncated: response.RoutesTruncated,
+		ComputeCost:     requestAnalyticsComputeCostView(response.ComputeCost),
 		AsOf:            response.AsOf,
 		SelectedRoute:   selectedRoute,
 		SelectedMethod:  selectedMethod,
@@ -559,6 +600,31 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		view.ColdBootSparklineHTML = views.RenderColdBootRateSparkline(coldBootPoints, 480, 100)
 	}
 	return view
+}
+
+func requestAnalyticsComputeCostView(cost *api.RequestAnalyticsComputeCost) *dashboard.RequestAnalyticsComputeCostView {
+	if cost == nil {
+		return nil
+	}
+	return &dashboard.RequestAnalyticsComputeCostView{
+		EstimatedEUR:               millicentsAsEUR(cost.EstimatedMillicents),
+		AllocatedEUR:               millicentsAsEUR(cost.AllocatedMillicents),
+		UnallocatedEUR:             millicentsAsEUR(cost.UnallocatedMillicents),
+		OtherRoutesEUR:             millicentsAsEUR(cost.OtherRouteMillicents),
+		OtherRoutesRequests:        cost.OtherRouteRequests,
+		OtherRoutesRequestSharePct: cost.OtherRouteRequestSharePct,
+		RateEUR:                    millicentsAsEUR(cost.RateMillicentsPerGBHour),
+		RequestCount:               cost.RequestCount,
+	}
+}
+
+// One euro is 100,000 millicents (1/1000 of a cent). Integer formatting keeps
+// these small estimates precise without floating-point rounding in templates.
+func millicentsAsEUR(value int64) string {
+	if value < 0 {
+		return fmt.Sprintf("-%d.%05d", -(value / 100_000), -(value % 100_000))
+	}
+	return fmt.Sprintf("%d.%05d", value/100_000, value%100_000)
 }
 
 func requestAnalyticsGroupViews(groups []api.RequestAnalyticsGroup) []dashboard.RequestAnalyticsGroupView {
