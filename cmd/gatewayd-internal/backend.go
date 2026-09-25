@@ -615,6 +615,31 @@ type deploymentCompanionRoute struct {
 	ReadinessProbe *api.SidecarProbe `json:"readiness_probe,omitempty"`
 }
 
+func readinessSourcesForDeployment(deployment state.Deployment) ([]string, error) {
+	sources := make([]string, 0, 2)
+	if len(deployment.OverrideReadinessProbe) > 0 {
+		var probe api.DeploymentReadinessProbe
+		if err := json.Unmarshal(deployment.OverrideReadinessProbe, &probe); err != nil {
+			return nil, fmt.Errorf("decode primary app readiness probe: %w", err)
+		}
+		if probe.Path != "" || probe.GRPC != nil {
+			sources = append(sources, "primary_app")
+		}
+	}
+	var companions []deploymentCompanionRoute
+	if len(deployment.Sidecars) > 0 && string(deployment.Sidecars) != "[]" {
+		if err := json.Unmarshal(deployment.Sidecars, &companions); err != nil {
+			return nil, fmt.Errorf("decode deployment companions: %w", err)
+		}
+	}
+	for _, companion := range companions {
+		if companion.Type == api.SidecarTypeSidecar && companion.PrimaryIngress && companion.ReadinessProbe != nil && companion.Name != "" {
+			sources = append(sources, "sidecar:"+companion.Name)
+		}
+	}
+	return sources, nil
+}
+
 // gatewayCompanionRoutes projects deployment-local companion specs into a
 // rollout-safe app route. Named companion routes are the intersection of all
 // traffic-bearing live deployments. Primary ingress is stricter: any mismatch
@@ -976,6 +1001,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		var p struct {
 			AppID      string    `json:"app_id"`
 			InstanceID string    `json:"instance_id"`
+			Source     string    `json:"source"`
 			Status     string    `json:"status"`
 			At         time.Time `json:"at"`
 			EventID    int64     `json:"event_id"`
@@ -985,6 +1011,10 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			return
 		}
 		if setter, ok := inv.(interface {
+			SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64)
+		}); ok {
+			setter.SetInstanceReadinessSource(p.AppID, p.InstanceID, p.Source, p.Status, p.At, p.EventID)
+		} else if setter, ok := inv.(interface {
 			SetInstanceReadiness(appID, instanceID, status string, at time.Time, eventID int64)
 		}); ok {
 			setter.SetInstanceReadiness(p.AppID, p.InstanceID, p.Status, p.At, p.EventID)
