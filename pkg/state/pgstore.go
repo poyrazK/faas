@@ -6987,7 +6987,8 @@ func (s *PgStore) CountLiveInstancesByDeployment(ctx context.Context, deployment
 func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error) {
 	row := s.pool.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
-		 from deployments where app_id = $1 and status = 'superseded'
+		 from deployments where app_id = $1 and (status = 'superseded' or (status = 'live' and traffic_percent = 0
+		   and exists (select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now())))
 		 order by created_at desc limit 1`, appID)
 	return scanDeployment(row)
 }
@@ -7486,9 +7487,38 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	}
 	newWeights := RedistributeTraffic(siblings, 100-params.TrafficPercent)
 	if terminal {
-		if _, err := tx.Exec(ctx,
-			`update deployments set status = 'superseded', traffic_percent = 0
-			  where app_id = $1 and status = 'live' and id != $2`, dep.AppID, dep.ID); err != nil {
+		var manifestJSON []byte
+		if err := tx.QueryRow(ctx, `select coalesce(manifest, '{}'::jsonb) from apps where id = $1`, dep.AppID).Scan(&manifestJSON); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: advance canary load app manifest: %w", err)
+		}
+		var manifest AppManifest
+		if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: advance canary decode app manifest: %w", err)
+		}
+		if manifest.RevisionPinTTLSeconds > 0 && manifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
+			if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
+				select id, app_id, now() + ($3::integer * interval '1 second')
+				  from deployments where app_id = $1 and scope = $4 and status = 'live' and id <> $2 and traffic_percent > 0
+				on conflict (deployment_id) do nothing`, dep.AppID, dep.ID, manifest.RevisionPinTTLSeconds, normalizedDeploymentScope(dep.Scope)); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: advance canary retain siblings: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `update deployments
+				set status = case when exists (
+					select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now()
+				) or exists (
+					select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
+					where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
+				) then 'live' else 'superseded' end,
+				traffic_percent = 0
+				where app_id = $1 and scope = $3 and status = 'live' and id <> $2`, dep.AppID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: advance canary retain live siblings: %w", err)
+			}
+		} else if _, err := tx.Exec(ctx,
+			`update deployments set status = case when exists (
+				select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
+				where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
+			) then 'live' else 'superseded' end, traffic_percent = 0
+			  where app_id = $1 and scope = $3 and status = 'live' and id != $2`, dep.AppID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: advance canary supersede siblings: %w", err)
 		}
 	}
@@ -8455,8 +8485,8 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("state: mark deployment live resolve app: %w", err)
 	}
-	var locked int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {
+	var appManifestJSON []byte
+	if err := tx.QueryRow(ctx, `select coalesce(manifest, '{}'::jsonb) from apps where id = $1 for update`, appID).Scan(&appManifestJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -8579,12 +8609,43 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		// every live revision in this scope and activate the replacement in
 		// one transaction, so readers observe either the old or the new live
 		// row and never an empty routing set.
-		if _, err := tx.Exec(ctx,
-			`update deployments
-			    set status = 'superseded', traffic_percent = 0
-			  where app_id = $1 and scope = $2 and status = 'live' and id <> $3`,
-			dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
-			return fmt.Errorf("state: mark stable live supersede siblings: %w", err)
+		var appManifest AppManifest
+		if err := json.Unmarshal(appManifestJSON, &appManifest); err != nil {
+			return fmt.Errorf("state: decode app manifest for revision pin: %w", err)
+		}
+		if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
+			// Only traffic-bearing siblings receive a new deadline. Already
+			// retained revisions keep the original cutover deadline.
+			if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
+				select id, app_id, now() + ($4::integer * interval '1 second')
+				  from deployments
+				 where app_id = $1 and scope = $2 and status = 'live' and id <> $3 and traffic_percent > 0
+				on conflict (deployment_id) do nothing`, dep.AppID, normalizedDeploymentScope(dep.Scope), id, appManifest.RevisionPinTTLSeconds); err != nil {
+				return fmt.Errorf("state: retain replaced revisions: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `update deployments
+				set status = case when exists (
+					select 1 from deployment_revision_pins p
+					 where p.deployment_id = deployments.id and p.expires_at > now()
+				) or exists (
+					select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
+					where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
+				) then 'live' else 'superseded' end,
+				traffic_percent = 0
+				where app_id = $1 and scope = $2 and status = 'live' and id <> $3`, dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
+				return fmt.Errorf("state: mark stable live retain siblings: %w", err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx,
+				`update deployments
+				    set status = case when exists (
+						select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
+						where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
+					) then 'live' else 'superseded' end, traffic_percent = 0
+				  where app_id = $1 and scope = $2 and status = 'live' and id <> $3`,
+				dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
+				return fmt.Errorf("state: mark stable live supersede siblings: %w", err)
+			}
 		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set
@@ -9683,8 +9744,10 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	// target.
 	var targetID string
 	err = tx.QueryRow(ctx, `
-		select id from deployments
-		 where app_id = $1 and scope = $3 and status = 'superseded' and id <> $2
+		 select id from deployments
+		 where app_id = $1 and scope = $3 and id <> $2
+		   and (status = 'superseded' or (status = 'live' and traffic_percent = 0
+		     and exists (select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now())))
 		 order by created_at desc
 		 limit 1
 		 for update`, appID, currentDeploymentID, scope).Scan(&targetID)

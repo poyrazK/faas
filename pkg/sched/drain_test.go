@@ -190,6 +190,52 @@ func TestDrain_DispatchesDueRow(t *testing.T) {
 	}
 }
 
+func TestDrain_RevisionPinWakesRetainedDeployment(t *testing.T) {
+	d, store, _, _, synth := newDrainHarness(t, api.PlanPro, true)
+	ctx := context.Background()
+	apps, err := store.ListAllApps(ctx)
+	if err != nil || len(apps) != 1 {
+		t.Fatalf("apps = %d, %v", len(apps), err)
+	}
+	app := apps[0]
+	manifest := app.Manifest
+	manifest.RevisionPinTTLSeconds = 3600
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	old, err := store.LiveDeployment(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:new-drain-revision"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, newer.ID); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := store.EnqueueInvocation(ctx, state.Invocation{
+		AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationAsyncInvoke,
+		Method: "POST", Path: "/checkout", Headers: json.RawMessage(`{"X-Gregale-Revision":"` + old.ID + `"}`),
+		DueAt: time.Now().Add(-time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Tick(ctx)
+	got, err := store.InvocationByID(ctx, inv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.InvocationCompleted || got.InstanceID == "" || synth.calls.Load() != 1 {
+		t.Fatalf("dispatch = state %q instance %q calls %d", got.State, got.InstanceID, synth.calls.Load())
+	}
+	instance, err := store.InstanceByID(ctx, got.InstanceID)
+	if err != nil || instance.DeploymentID != old.ID {
+		t.Fatalf("pinned invocation ran on %q, want %q: %v", instance.DeploymentID, old.ID, err)
+	}
+}
+
 func TestDrain_ObservesDelayedTaskLagAndSuccess(t *testing.T) {
 	t.Parallel()
 	d, store, _, _, synth := newDrainHarness(t, api.PlanHobby, true)

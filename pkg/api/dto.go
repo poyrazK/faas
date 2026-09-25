@@ -243,6 +243,7 @@ type CreateAppRequest struct {
 	// VersionAffinityCookie derives rollout affinity from this browser cookie.
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -515,6 +516,7 @@ type UpdateAppRequest struct {
 	// VersionAffinityCookie replaces the cookie source; empty disables it.
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1340,6 +1342,7 @@ type AppResponse struct {
 	SessionAffinity              bool   `json:"session_affinity"`
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"

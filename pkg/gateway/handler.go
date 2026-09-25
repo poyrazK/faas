@@ -355,6 +355,8 @@ type App struct {
 	// VersionAffinityManagedCookie lets the edge issue an opaque, host-only
 	// rollout cookie. It is mutually exclusive with VersionAffinityCookie.
 	VersionAffinityManagedCookie bool
+	RevisionPinTTLSeconds        int
+	ProjectID                    string
 }
 
 type concurrencyAdmissionConfig struct {
@@ -786,6 +788,16 @@ type affinityPicker interface {
 // deployment: verification must either reach the requested candidate or fail.
 type deploymentTargetPicker interface {
 	PickForDeployment(appID, deploymentID string) PickResult
+}
+
+// revisionPinResolver verifies an exact public client pin against the app,
+// environment, deployment state and durable expiry before the cache or wake.
+type revisionPinResolver interface {
+	ResolveRevisionPin(context.Context, string, string, string) (bool, error)
+}
+
+type projectReleaseResolver interface {
+	ResolveProjectRelease(context.Context, string, string, string) (string, string, error)
 }
 
 // deploymentSmokeTargetResolver looks up a RUNNING snapshotting candidate
@@ -2619,9 +2631,9 @@ func splitScheme(origin string) (scheme, rest string, ok bool) {
 // lower-cased + matched by matchOrigin) so the response
 // always echoes the matched entry verbatim.
 //
-// ADR-102: Streaming-Status + Streaming-Status-Accept-Hint are
-// custom (non-simple) response headers, so a CORS client cannot
-// read them unless the server whitelists them via
+// ADR-102: Streaming-Status + Streaming-Status-Accept-Hint, along with
+// revision/release pins, are custom (non-simple) response headers, so a CORS
+// client cannot read them unless the server whitelists them via
 // Access-Control-Expose-Headers. The default uncredentialed path
 // appends both header names so browser clients see the
 // discoverability signal without the customer authoring a
@@ -2633,7 +2645,7 @@ func corsDefaultOps(allowedOrigin string) []EdgeRuleHeaderOp {
 		{Action: "set", Name: "Access-Control-Allow-Origin", Value: allowedOrigin},
 		{Action: "set", Name: "Access-Control-Allow-Methods", Value: "GET, POST, OPTIONS"},
 		{Action: "set", Name: "Access-Control-Allow-Headers", Value: "*"},
-		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "Streaming-Status, Streaming-Status-Accept-Hint"},
+		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "Streaming-Status, Streaming-Status-Accept-Hint, " + api.RevisionHeader + ", " + api.ReleaseHeader},
 	}
 }
 
@@ -5994,9 +6006,103 @@ haveApp:
 	// while the selected cold bucket is waking; never cache that fallback in
 	// the selected deployment's partition.
 	servedDeploymentID := ""
+	clientRevisionID := ""
+	projectReleaseID := ""
+	projectReleaseDeploymentID := ""
+	projectReleaseScope := app.Scope
+	if projectReleaseScope == "" && app.ProjectID != "" && !app.IsPreview {
+		projectReleaseScope = "production"
+	}
 	var asyncRule *EdgeRuleAsyncResolved
 	if !deploymentSmoke {
 		asyncRule = h.matchAsyncRoute(r, sidecarName)
+	}
+	if !deploymentSmoke {
+		_, revisionPresent := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]
+		_, releasePresent := r.Header[http.CanonicalHeaderKey(api.ReleaseHeader)]
+		if revisionPresent && releasePresent {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Conflicting version pins", "send either X-Gregale-Revision or X-Gregale-Release"))
+			return
+		}
+		if releasePresent || (app.ProjectID != "" && !app.IsPreview && !revisionPresent && asyncRule == nil) {
+			values := r.Header.Values(api.ReleaseHeader)
+			if releasePresent && (len(values) != 1 || len(values[0]) != 36) {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid release pin", "X-Gregale-Release must contain one release ID"))
+				return
+			}
+			requested := ""
+			if releasePresent {
+				parsed, parseErr := uuid.Parse(values[0])
+				if parseErr != nil {
+					api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+						"Invalid release pin", "X-Gregale-Release must contain one release ID"))
+					return
+				}
+				requested = parsed.String()
+			}
+			if (app.PinnedDeploymentID != "" || app.IsPreview) && releasePresent {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Release pin unavailable", "deployment preview hosts do not accept release pins"))
+				return
+			}
+			if app.PinnedDeploymentID == "" && !app.IsPreview {
+				resolver, ok := h.backend.(projectReleaseResolver)
+				if !ok {
+					api.WriteProblem(w, api.ErrCapacity("project release resolution is unavailable"))
+					return
+				}
+				var releaseErr error
+				projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				if releaseErr != nil {
+					status := http.StatusServiceUnavailable
+					if errors.Is(releaseErr, ErrReleaseGone) {
+						status = http.StatusGone
+					}
+					api.WriteProblem(w, api.NewProblem(status, api.CodeCapacity,
+						"Project release unavailable", "the requested release is expired, incomplete, or temporarily unavailable"))
+					return
+				}
+				if projectReleaseID != "" {
+					r.Header.Set(api.ReleaseHeader, projectReleaseID)
+					w.Header().Set(api.ReleaseHeader, projectReleaseID)
+					versionDeploymentID = projectReleaseDeploymentID
+					r = r.WithContext(withVersionAffinityDeployment(r.Context(), projectReleaseDeploymentID))
+				}
+			}
+		}
+		if values, present := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]; present {
+			if len(values) != 1 || len(values[0]) != 36 {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid revision pin", "X-Gregale-Revision must contain one deployment ID"))
+				return
+			}
+			parsed, parseErr := uuid.Parse(values[0])
+			if parseErr != nil || app.RevisionPinTTLSeconds <= 0 || app.PinnedDeploymentID != "" {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Revision pin unavailable", "this app or hostname does not permit revision pins"))
+				return
+			}
+			resolver, ok := h.backend.(revisionPinResolver)
+			if !ok {
+				api.WriteProblem(w, api.ErrCapacity("revision pin validation is unavailable"))
+				return
+			}
+			clientRevisionID = parsed.String()
+			valid, resolveErr := resolver.ResolveRevisionPin(r.Context(), app.ID, projectReleaseScope, clientRevisionID)
+			if resolveErr != nil {
+				api.WriteProblem(w, api.ErrCapacity("revision pin validation failed"))
+				return
+			}
+			if !valid {
+				api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeValidation,
+					"Revision pin expired", "the requested revision is no longer available"))
+				return
+			}
+			versionDeploymentID = clientRevisionID
+			r = r.WithContext(withVersionAffinityDeployment(r.Context(), clientRevisionID))
+		}
 	}
 	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule); served {
 		return
@@ -6236,6 +6342,20 @@ haveApp:
 		exactDeploymentTrigger = sched.TriggerGateway
 		exactUnavailableTitle = "Deployment preview unavailable"
 		exactUnavailableDetail = "the requested deployment is not ready to serve preview traffic"
+	}
+	if !deploymentSmoke && clientRevisionID != "" {
+		exactDeploymentID = clientRevisionID
+		exactDeploymentScope = projectReleaseScope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Revision pin unavailable"
+		exactUnavailableDetail = "the requested revision has no routable target"
+	}
+	if !deploymentSmoke && projectReleaseDeploymentID != "" {
+		exactDeploymentID = projectReleaseDeploymentID
+		exactDeploymentScope = projectReleaseScope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Project release unavailable"
+		exactUnavailableDetail = "the selected release member has no routable target"
 	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
@@ -6548,6 +6668,9 @@ haveApp:
 	defer vmRelease()
 	target := pick.Target
 	servedDeploymentID = target.DeploymentID
+	if !deploymentSmoke && app.RevisionPinTTLSeconds > 0 && target.DeploymentID != "" {
+		w.Header().Set(api.RevisionHeader, target.DeploymentID)
+	}
 	if app.SessionAffinity {
 		if _, ok := h.backend.(affinityPicker); ok {
 			h.setSessionAffinityCookie(w, app.ID, target.InstanceID)

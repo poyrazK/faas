@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -562,16 +563,43 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 
+	var version state.InvocationVersion
+	inv, version, err = state.ResolveInvocationVersion(ctx, d.store, inv)
+	if err != nil {
+		retryAfter := d.invocationRetryDelay(inv)
+		if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrConflict) {
+			retryAfter = 0
+		}
+		budget := d.invocationAttemptBudget(ctx, inv)
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err)); failErr == nil && retryAfter == 0 {
+			d.emitInvocationDestination(ctx, inv, state.OutcomeFailed, nil, err.Error())
+			d.emitDone(ctx, inv, state.InvocationFailed)
+		}
+		return
+	}
 	// 3. EnsureWake coalesces same-app wake attempts while the bounded
 	// dispatch pool lets different apps progress concurrently. Returns
 	// the live instance handle on success; the drain stamps it onto the
 	// row so the meter's per-instance count is non-zero for this minute.
-	coord, err := d.engine.EnsureWake(ctx, inv.AppID, TriggerMeterd)
-	if err == nil && coord.Err != nil {
-		err = coord.Err
-	}
-	if err == nil && coord.Instance == nil {
-		err = errors.New("sched: ensure wake returned no instance")
+	var wakeRes WakeResult
+	if version.DeploymentID != "" {
+		wakeRes, err = d.engine.Wake(ctx, inv.AppID, version.DeploymentID, version.Scope, TriggerMeterd)
+		if err == nil && (wakeRes.AtCapacity || wakeRes.InstanceID == "" || wakeRes.DeploymentID != version.DeploymentID) {
+			err = fmt.Errorf("%w: selected deployment is no longer wakeable", ErrPermanentWake)
+		}
+	} else {
+		coord, wakeErr := d.engine.EnsureWake(ctx, inv.AppID, TriggerMeterd)
+		err = wakeErr
+		if err == nil && coord.Err != nil {
+			err = coord.Err
+		}
+		if err == nil && coord.Instance == nil {
+			err = errors.New("sched: ensure wake returned no instance")
+		}
+		if err == nil {
+			wakeRes = WakeResult{InstanceID: coord.Instance.InstanceID, NodeID: coord.Instance.NodeID,
+				DeploymentID: coord.Instance.DeploymentID, WakeID: coord.Instance.WakeID, Port: int(coord.Instance.Port)}
+		}
 	}
 	if err != nil {
 		retryAfter := d.invocationRetryDelay(inv)
@@ -595,13 +623,6 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
 		return
-	}
-	wakeRes := WakeResult{
-		InstanceID:   coord.Instance.InstanceID,
-		NodeID:       coord.Instance.NodeID,
-		DeploymentID: coord.Instance.DeploymentID,
-		WakeID:       coord.Instance.WakeID,
-		Port:         int(coord.Instance.Port),
 	}
 	// 4. Stamp the live instance handle. Failure here is non-fatal —
 	// the dispatch can still proceed; the meter just under-counts

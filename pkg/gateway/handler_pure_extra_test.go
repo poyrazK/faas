@@ -223,7 +223,7 @@ func TestCorsDefaultOps(t *testing.T) {
 		"Access-Control-Allow-Origin":   "https://app.example.com",
 		"Access-Control-Allow-Methods":  "GET, POST, OPTIONS",
 		"Access-Control-Allow-Headers":  "*",
-		"Access-Control-Expose-Headers": "Streaming-Status, Streaming-Status-Accept-Hint",
+		"Access-Control-Expose-Headers": "Streaming-Status, Streaming-Status-Accept-Hint, X-Gregale-Revision, X-Gregale-Release",
 	}
 	seen := map[string]bool{}
 	for _, op := range ops {
