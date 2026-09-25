@@ -10708,9 +10708,13 @@ func (m *MemStore) CreateCronWithOptions(_ context.Context, appID, schedule, pat
 		return Cron{}, fmt.Errorf("state: cron for unknown app %q", appID)
 	}
 	opts = normalizeCronOptions(opts)
+	if err := validateCronCreateRetryOptions(opts); err != nil {
+		return Cron{}, err
+	}
 	c := Cron{ID: newID(), AppID: appID, Schedule: schedule, Path: path,
 		Command: append([]string(nil), opts.Command...), CommandShell: opts.CommandShell,
 		CommandTimeoutSeconds: opts.CommandTimeoutSeconds, CommandMaxOutputBytes: opts.CommandMaxOutputBytes,
+		RetryMax: opts.RetryMax, RetryBackoffSeconds: opts.RetryBackoffSeconds,
 		Enabled: enabled, Timezone: opts.Timezone, SkipIfRunning: opts.SkipIfRunning, CreatedAt: time.Now()}
 	m.crons[c.ID] = c
 	return c, nil
@@ -10740,13 +10744,17 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 		return Cron{}, ErrNotFound
 	}
 	opts = normalizeCronOptions(opts)
+	if err := validateCronCreateRetryOptions(opts); err != nil {
+		return Cron{}, err
+	}
 	// Match PgStore: an identical retry returns the durable row before quota
 	// checks, so reapplying at the exact cap remains idempotent.
 	for _, c := range m.crons {
 		if c.AppID == appID && c.Schedule == schedule && c.Path == path && sameCronCommand(c.Command, opts.Command) &&
 			c.Enabled == enabled && c.Timezone == opts.Timezone && c.SkipIfRunning == opts.SkipIfRunning &&
 			c.CommandShell == opts.CommandShell && c.CommandTimeoutSeconds == opts.CommandTimeoutSeconds &&
-			c.CommandMaxOutputBytes == opts.CommandMaxOutputBytes {
+			c.CommandMaxOutputBytes == opts.CommandMaxOutputBytes && c.RetryMax == opts.RetryMax &&
+			c.RetryBackoffSeconds == opts.RetryBackoffSeconds {
 			return c, nil
 		}
 	}
@@ -10793,6 +10801,8 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 		CommandShell:          opts.CommandShell,
 		CommandTimeoutSeconds: opts.CommandTimeoutSeconds,
 		CommandMaxOutputBytes: opts.CommandMaxOutputBytes,
+		RetryMax:              opts.RetryMax,
+		RetryBackoffSeconds:   opts.RetryBackoffSeconds,
 		Enabled:               enabled,
 		Timezone:              opts.Timezone,
 		SkipIfRunning:         opts.SkipIfRunning,
@@ -10819,7 +10829,7 @@ func (m *MemStore) UpdateCron(ctx context.Context, id string, schedule, path *st
 // UpdateCronWithOptions updates both the original cron fields and optional
 // timezone/overlap policy fields. A nil pointer leaves a field unchanged;
 // passing a non-nil empty timezone resets it to UTC.
-func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time) (Cron, error) {
+func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time, retryOptions ...CronOptions) (Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.crons[id]
@@ -10846,6 +10856,17 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	}
 	if createdAt != nil {
 		c.CreatedAt = *createdAt
+	}
+	if len(retryOptions) > 0 {
+		opts := normalizeCronOptions(retryOptions[0])
+		if err := validateCronRetryOptions(opts); err != nil {
+			return Cron{}, err
+		}
+		if opts.RetryMax > 0 && len(c.Command) == 0 {
+			return Cron{}, fmt.Errorf("%w: cron retries require a deployment command", ErrInvalidArgument)
+		}
+		c.RetryMax = opts.RetryMax
+		c.RetryBackoffSeconds = opts.RetryBackoffSeconds
 	}
 	m.crons[id] = c
 	return c, nil

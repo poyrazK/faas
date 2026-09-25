@@ -3507,46 +3507,52 @@ type AddTenantHostnameRequest struct {
 // deployment-attached command. Timezone and SkipIfRunning expose scheduling
 // controls; LastFiredAt is the most recent fire stamp written by schedd.
 type CronResponse struct {
-	ID              string   `json:"id"`
-	AppID           string   `json:"app_id"`
-	Kind            string   `json:"kind"`
-	Schedule        string   `json:"schedule"`
-	Path            string   `json:"path,omitempty"`
-	Command         []string `json:"command,omitempty"`
-	CommandShell    bool     `json:"command_shell,omitempty"`
-	TimeoutSeconds  int      `json:"timeout_seconds,omitempty"`
-	MaxOutputBytes  int      `json:"max_output_bytes,omitempty"`
-	Enabled         bool     `json:"enabled"`
-	SuspendedReason string   `json:"suspended_reason,omitempty"`
-	Timezone        string   `json:"timezone"`
-	SkipIfRunning   bool     `json:"skip_if_running"`
-	CreatedAt       string   `json:"created_at"`
-	LastFiredAt     string   `json:"last_fired_at,omitempty"`
+	ID                  string   `json:"id"`
+	AppID               string   `json:"app_id"`
+	Kind                string   `json:"kind"`
+	Schedule            string   `json:"schedule"`
+	Path                string   `json:"path,omitempty"`
+	Command             []string `json:"command,omitempty"`
+	CommandShell        bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
+	RetryMax            int      `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
+	Enabled             bool     `json:"enabled"`
+	SuspendedReason     string   `json:"suspended_reason,omitempty"`
+	Timezone            string   `json:"timezone"`
+	SkipIfRunning       bool     `json:"skip_if_running"`
+	CreatedAt           string   `json:"created_at"`
+	LastFiredAt         string   `json:"last_fired_at,omitempty"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
 // deployment-attached command schedule. Command and Path are mutually
 // exclusive; omitting both keeps the HTTP default path of "/".
 type CreateCronRequest struct {
-	AppID          string   `json:"app_id"`
-	Schedule       string   `json:"schedule"`
-	Path           string   `json:"path,omitempty"`
-	Command        []string `json:"command,omitempty"`
-	CommandShell   bool     `json:"command_shell,omitempty"`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-	MaxOutputBytes int      `json:"max_output_bytes,omitempty"`
-	Enabled        *bool    `json:"enabled,omitempty"`
-	Timezone       string   `json:"timezone,omitempty"`
-	SkipIfRunning  *bool    `json:"skip_if_running,omitempty"`
+	AppID               string   `json:"app_id"`
+	Schedule            string   `json:"schedule"`
+	Path                string   `json:"path,omitempty"`
+	Command             []string `json:"command,omitempty"`
+	CommandShell        bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
+	RetryMax            int      `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
+	Enabled             *bool    `json:"enabled,omitempty"`
+	Timezone            string   `json:"timezone,omitempty"`
+	SkipIfRunning       *bool    `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
 type UpdateCronRequest struct {
-	Schedule      *string `json:"schedule,omitempty"`
-	Path          *string `json:"path,omitempty"`
-	Enabled       *bool   `json:"enabled,omitempty"`
-	Timezone      *string `json:"timezone,omitempty"`
-	SkipIfRunning *bool   `json:"skip_if_running,omitempty"`
+	Schedule            *string `json:"schedule,omitempty"`
+	Path                *string `json:"path,omitempty"`
+	Enabled             *bool   `json:"enabled,omitempty"`
+	Timezone            *string `json:"timezone,omitempty"`
+	SkipIfRunning       *bool   `json:"skip_if_running,omitempty"`
+	RetryMax            *int    `json:"retry_max,omitempty"`
+	RetryBackoffSeconds *int    `json:"retry_backoff_seconds,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).

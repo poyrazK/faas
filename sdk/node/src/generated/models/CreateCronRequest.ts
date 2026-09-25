@@ -40,5 +40,13 @@ export type CreateCronRequest = {
    * Skip a scheduled fire when an earlier cron invocation is still running.
    */
   skip_if_running?: boolean | null;
+  /**
+   * Additional command attempts after failure or timeout; command crons only.
+   */
+  retry_max?: number;
+  /**
+   * Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only.
+   */
+  retry_backoff_seconds?: number;
 };
 

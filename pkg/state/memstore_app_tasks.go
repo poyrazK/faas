@@ -44,23 +44,25 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 
 	now := resolved.CreatedAt
 	task := AppTask{
-		ID:              uuid.NewString(),
-		AccountID:       resolved.AccountID,
-		AppID:           resolved.AppID,
-		DeploymentID:    resolved.DeploymentID,
-		CronID:          resolved.CronID,
-		ScheduledFor:    cloneAppTaskTimePtr(resolved.ScheduledFor),
-		Kind:            resolved.Kind,
-		Command:         append([]string(nil), resolved.Command...),
-		CommandShell:    resolved.CommandShell,
-		DeploymentScope: normalizedDeploymentScope(deployment.Scope),
-		ArtifactKey:     deployment.RootfsKey,
-		ImageDigest:     deployment.ImageDigest,
-		Status:          AppTaskQueued,
-		TimeoutSeconds:  resolved.TimeoutSeconds,
-		MaxOutputBytes:  resolved.MaxOutputBytes,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:                  uuid.NewString(),
+		AccountID:           resolved.AccountID,
+		AppID:               resolved.AppID,
+		DeploymentID:        resolved.DeploymentID,
+		CronID:              resolved.CronID,
+		ScheduledFor:        cloneAppTaskTimePtr(resolved.ScheduledFor),
+		Kind:                resolved.Kind,
+		Command:             append([]string(nil), resolved.Command...),
+		CommandShell:        resolved.CommandShell,
+		DeploymentScope:     normalizedDeploymentScope(deployment.Scope),
+		ArtifactKey:         deployment.RootfsKey,
+		ImageDigest:         deployment.ImageDigest,
+		Status:              AppTaskQueued,
+		TimeoutSeconds:      resolved.TimeoutSeconds,
+		MaxOutputBytes:      resolved.MaxOutputBytes,
+		RetryMax:            resolved.RetryMax,
+		RetryBackoffSeconds: resolved.RetryBackoffSeconds,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	m.appTasks[task.ID] = task
 	return cloneAppTask(task), nil
@@ -109,6 +111,7 @@ func (m *MemStore) CreateScheduledCronAppTask(_ context.Context, cronID string, 
 		DeploymentScope: normalizedDeploymentScope(deployment.Scope), ArtifactKey: deployment.RootfsKey,
 		ImageDigest: deployment.ImageDigest, Status: AppTaskQueued,
 		TimeoutSeconds: cron.CommandTimeoutSeconds, MaxOutputBytes: cron.CommandMaxOutputBytes,
+		RetryMax: cron.RetryMax, RetryBackoffSeconds: cron.RetryBackoffSeconds,
 		CreatedAt: firedAt, UpdatedAt: firedAt,
 	}
 	m.appTasks[task.ID] = task
@@ -227,15 +230,23 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 	m.ensureAppTasksLocked()
 
 	var selected *AppTask
+	var selectedPriority time.Time
 	for id, candidate := range m.appTasks {
-		if candidate.Status != AppTaskQueued || candidate.CancelRequested != nil || candidate.CreatedAt.After(claimedAt) {
+		if candidate.Status != AppTaskQueued || candidate.CancelRequested != nil || candidate.CreatedAt.After(claimedAt) ||
+			(candidate.RetryAt != nil && candidate.RetryAt.After(claimedAt)) {
 			continue
 		}
-		if selected == nil || candidate.CreatedAt.Before(selected.CreatedAt) ||
-			(candidate.CreatedAt.Equal(selected.CreatedAt) && candidate.ID < selected.ID) {
+		priority := candidate.CreatedAt
+		if candidate.RetryAt != nil {
+			priority = *candidate.RetryAt
+		}
+		if selected == nil || priority.Before(selectedPriority) ||
+			(priority.Equal(selectedPriority) && (candidate.CreatedAt.Before(selected.CreatedAt) ||
+				(candidate.CreatedAt.Equal(selected.CreatedAt) && candidate.ID < selected.ID))) {
 			copyCandidate := candidate
 			copyCandidate.ID = id
 			selected = &copyCandidate
+			selectedPriority = priority
 		}
 	}
 	if selected == nil {
@@ -248,6 +259,13 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 	selected.LeaseToken = &token
 	selected.LeaseOwner = &ownerCopy
 	selected.LeaseExpiresAt = &expires
+	selected.RetryAt = nil
+	selected.StdoutTail = ""
+	selected.StderrTail = ""
+	selected.OutputTruncated = false
+	selected.ExitCode = nil
+	selected.FailureCode = nil
+	selected.FailureMessage = nil
 	selected.UpdatedAt = claimedAt
 	m.appTasks[selected.ID] = *selected
 	return cloneAppTask(*selected), nil
@@ -270,6 +288,14 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	}
 	task.Status = AppTaskRunning
 	task.StartedAt = appTaskTimePtr(startedAt)
+	task.AttemptCount++
+	task.RetryAt = nil
+	task.StdoutTail = ""
+	task.StderrTail = ""
+	task.OutputTruncated = false
+	task.ExitCode = nil
+	task.FailureCode = nil
+	task.FailureMessage = nil
 	task.UpdatedAt = startedAt
 	m.appTasks[task.ID] = task
 	return cloneAppTask(task), nil
@@ -316,6 +342,9 @@ func (m *MemStore) RequestAppTaskCancellation(_ context.Context, accountID, appI
 	if task.Status == AppTaskQueued {
 		task.Status = AppTaskCancelled
 		task.FinishedAt = appTaskTimePtr(requestedAt)
+		task.RetryAt = nil
+		task.FailureCode = nil
+		task.FailureMessage = nil
 	} else if task.CancelRequested == nil {
 		task.CancelRequested = appTaskTimePtr(requestedAt)
 	}
@@ -346,14 +375,24 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	if finishedAt.Before(task.CreatedAt) {
 		return AppTask{}, ErrAppTaskInvalid
 	}
+	retryAt := cronAppTaskRetryAt(task, task.Status, params.Status, finishedAt)
 	task.Status = params.Status
+	if retryAt != nil {
+		task.Status = AppTaskQueued
+		task.RetryAt = retryAt
+	}
 	task.StdoutTail = params.StdoutTail
 	task.StderrTail = params.StderrTail
 	task.OutputTruncated = params.OutputTruncated
 	task.ExitCode = cloneAppTaskIntPtr(params.ExitCode)
 	task.FailureCode = cloneAppTaskStringPtr(params.FailureCode)
 	task.FailureMessage = cloneAppTaskStringPtr(params.FailureMessage)
-	task.FinishedAt = appTaskTimePtr(finishedAt)
+	if retryAt == nil {
+		task.FinishedAt = appTaskTimePtr(finishedAt)
+	} else {
+		task.FinishedAt = nil
+		task.StartedAt = nil
+	}
 	task.UpdatedAt = finishedAt
 	task.LeaseToken = nil
 	task.LeaseOwner = nil

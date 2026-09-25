@@ -84,6 +84,9 @@ func renderCronInfo(w io.Writer, c api.CronResponse) {
 	}
 	_, _ = fmt.Fprintf(w, "  timezone: %s\n", c.Timezone)
 	_, _ = fmt.Fprintf(w, "  skip_if_running: %t\n", c.SkipIfRunning)
+	if c.Kind == "command" {
+		_, _ = fmt.Fprintf(w, "  retries: %d (base delay %ds)\n", c.RetryMax, c.RetryBackoffSeconds)
+	}
 	_, _ = fmt.Fprintf(w, "  app:      %s\n", c.AppID)
 	last := c.LastFiredAt
 	if last == "" {

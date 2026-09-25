@@ -2706,6 +2706,7 @@ func TestCreateCron_CommandRunRoundTrip(t *testing.T) {
 	rec := e.do(t, "POST", "/v1/crons", api.CreateCronRequest{
 		AppID: "cron-command", Schedule: "0 2 * * *",
 		Command: []string{"bin/reindex", "--delta"}, TimeoutSeconds: 180, MaxOutputBytes: 8192,
+		RetryMax: 2, RetryBackoffSeconds: 15,
 	}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST command cron = %d: %s", rec.Code, rec.Body)
@@ -2715,12 +2716,47 @@ func TestCreateCron_CommandRunRoundTrip(t *testing.T) {
 		t.Fatalf("decode command cron: %v", err)
 	}
 	if out.Kind != "command" || out.Path != "" || strings.Join(out.Command, "|") != "bin/reindex|--delta" ||
-		out.TimeoutSeconds != 180 || out.MaxOutputBytes != 8192 {
+		out.TimeoutSeconds != 180 || out.MaxOutputBytes != 8192 || out.RetryMax != 2 || out.RetryBackoffSeconds != 15 {
 		t.Fatalf("command cron response = %+v", out)
 	}
 	stored, err := e.store.CronByID(context.Background(), out.ID)
-	if err != nil || strings.Join(stored.Command, "|") != "bin/reindex|--delta" {
+	if err != nil || strings.Join(stored.Command, "|") != "bin/reindex|--delta" || stored.RetryMax != 2 || stored.RetryBackoffSeconds != 15 {
 		t.Fatalf("stored command cron = %+v, %v", stored, err)
+	}
+}
+
+func TestCreateCron_RetryOptionsRequireCommandCron(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-http-retry")
+	rec := e.do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{
+		AppID: appID, Schedule: "0 2 * * *", Path: "/heartbeat", RetryMax: 1,
+	}, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+}
+
+func TestUpdateCommandCronRetryPolicyRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	app, _ := seedAppTaskDeployment(t, e, "cron-command-retry-update")
+	cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, "0 2 * * *", "/", true, state.CronOptions{
+		Command: []string{"bin/maintenance"}, RetryMax: 1, RetryBackoffSeconds: 10,
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	retryMax, backoff := 3, 25
+	rec := e.do(t, http.MethodPatch, "/v1/crons/"+cron.ID, api.UpdateCronRequest{
+		RetryMax: &retryMax, RetryBackoffSeconds: &backoff,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH retry policy = %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode updated cron: %v", err)
+	}
+	if out.RetryMax != retryMax || out.RetryBackoffSeconds != backoff {
+		t.Fatalf("updated retry policy = max %d, backoff %d", out.RetryMax, out.RetryBackoffSeconds)
 	}
 }
 

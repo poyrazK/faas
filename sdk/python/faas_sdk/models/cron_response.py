@@ -39,6 +39,10 @@ class CronResponse:
     """Per-fire command deadline."""
     max_output_bytes: int | Unset = UNSET
     """Combined stdout/stderr tail cap for command runs."""
+    retry_max: int | Unset = UNSET
+    """Additional attempts after an execution fails or times out; zero disables retries."""
+    retry_backoff_seconds: int | Unset = UNSET
+    """Base retry delay. Each subsequent retry doubles the delay, capped at 24 hours."""
     suspended_reason: CronResponseSuspendedReason | Unset = UNSET
     """Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment."""
     last_fired_at: datetime.datetime | None | Unset = UNSET
@@ -72,6 +76,10 @@ class CronResponse:
         timeout_seconds = self.timeout_seconds
 
         max_output_bytes = self.max_output_bytes
+
+        retry_max = self.retry_max
+
+        retry_backoff_seconds = self.retry_backoff_seconds
 
         suspended_reason: str | Unset = UNSET
         if not isinstance(self.suspended_reason, Unset):
@@ -109,6 +117,10 @@ class CronResponse:
             field_dict["timeout_seconds"] = timeout_seconds
         if max_output_bytes is not UNSET:
             field_dict["max_output_bytes"] = max_output_bytes
+        if retry_max is not UNSET:
+            field_dict["retry_max"] = retry_max
+        if retry_backoff_seconds is not UNSET:
+            field_dict["retry_backoff_seconds"] = retry_backoff_seconds
         if suspended_reason is not UNSET:
             field_dict["suspended_reason"] = suspended_reason
         if last_fired_at is not UNSET:
@@ -144,6 +156,10 @@ class CronResponse:
         timeout_seconds = d.pop("timeout_seconds", UNSET)
 
         max_output_bytes = d.pop("max_output_bytes", UNSET)
+
+        retry_max = d.pop("retry_max", UNSET)
+
+        retry_backoff_seconds = d.pop("retry_backoff_seconds", UNSET)
 
         _suspended_reason = d.pop("suspended_reason", UNSET)
         suspended_reason: CronResponseSuspendedReason | Unset
@@ -183,6 +199,8 @@ class CronResponse:
             command_shell=command_shell,
             timeout_seconds=timeout_seconds,
             max_output_bytes=max_output_bytes,
+            retry_max=retry_max,
+            retry_backoff_seconds=retry_backoff_seconds,
             suspended_reason=suspended_reason,
             last_fired_at=last_fired_at,
         )
