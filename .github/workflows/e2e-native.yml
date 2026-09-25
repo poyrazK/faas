@@ -431,12 +431,13 @@ jobs:
 
       # Every phase runs with continue-on-error so one broken layer cannot hide
       # the state of the others — that is the whole point of the split. This
-      # step is what actually fails the job, and it is also where the
-      # WHOLE-SUITE required-test contract is applied: those eight tests span
-      # several phases, so no single phase can check it.
+      # step is what actually fails the job. Full runs apply the platform-wide
+      # required-test contract; bounded dispatch lanes require every selected
+      # lane test to pass.
       - name: Verdict
         if: always() && steps.compute-node.conclusion == 'success'
         env:
+          LANE: ${{ inputs.lane }}
           PHASE_OUTCOMES: >-
             smoke=${{ steps.phase_smoke.outcome }}
             fixtures=${{ steps.phase_fixtures.outcome }}
@@ -455,7 +456,7 @@ jobs:
           # ship-blocking. Keep its result visible without hiding regressions
           # in the established phases; remove this exception after verification.
           nonblocking="jobs"
-          if [[ "${{ inputs.lane }}" == "jobs-only" ]]; then
+          if [[ "${LANE:-}" == "jobs-only" ]]; then
             nonblocking=""
           fi
 
@@ -488,7 +489,33 @@ jobs:
           if [[ -f "$log" ]]; then
             # shellcheck source=scripts/ci/native-e2e-verdict.sh
             source scripts/ci/native-e2e-verdict.sh
-            native_e2e_verdict "$log" || rc=1
+            case "${LANE:-full}" in
+              smoke)
+                # A bounded lane is not the whole platform suite. Verify its
+                # exact selected tests instead of requiring tests it omitted.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests smoke "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "smoke lane" "${lane_tests[@]}" || rc=1
+                ;;
+              jobs-only)
+                # Derive the required list from the Jobs phase files so new
+                # acceptance tests automatically become qualification gates.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_phase_tests jobs "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "jobs-only lane" "${lane_tests[@]}" || rc=1
+                ;;
+              *)
+                native_e2e_verdict "$log" || rc=1
+                ;;
+            esac
           else
             echo "::error::no combined log was collected; cannot apply the required-test contract"
             rc=1
