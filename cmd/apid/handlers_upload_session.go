@@ -178,6 +178,12 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		s.notFound(w, "no such app")
 		return
 	}
+	if req.DeployOptions != nil {
+		if prob := validateDeploymentMaxInstances(req.DeployOptions.MaxInstances, app, acct.Plan, limits); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 
 	acctUUID := pgtypeFromUUIDString(acct.ID)
 	// Keep the cap and budget checks together with the INSERT. The
@@ -599,7 +605,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			s.log.Warn("upload-session manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, Resources: opts.Resources, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, Resources: opts.Resources, MaxInstances: opts.MaxInstances, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
 	limits := api.MustLimitsFor(acct.Plan)
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)

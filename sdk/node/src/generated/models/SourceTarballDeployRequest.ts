@@ -26,6 +26,10 @@ export type SourceTarballDeployRequest = {
   environment?: string;
   resources?: DeploymentResourcesRequest;
   /**
+   * Optional revision ceiling for this tarball deployment; 0 leaves the app's inherited limit in force.
+   */
+  max_instances?: number | null;
+  /**
    * Free-form operator note on the tarball deploy request (≤280 chars). Example: 'Emergency rollback after payment provider incident'.
    */
   reason?: string;

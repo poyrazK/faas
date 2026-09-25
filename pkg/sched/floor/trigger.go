@@ -66,10 +66,9 @@ const (
 	// OutcomeDisabled: floor==0, the plan gate is off, or the app
 	// is worker-class. No-op.
 	OutcomeDisabled Outcome = "disabled"
-	// OutcomeAtCapacity: concurrency >= plan MaxConcurrency, OR
-	// Engine.AdmitInstance returned AtCapacity=true. The engine
-	// already rejected; the trigger records the outcome and moves
-	// on.
+	// OutcomeAtCapacity: concurrency >= the plan/app/deployment ceiling, OR
+	// engine admission returned AtCapacity=true. The engine already
+	// rejected; the trigger records the outcome and moves on.
 	OutcomeAtCapacity Outcome = "at_capacity"
 	// OutcomeRamCeiling: the §6.2-2 47,600 MB ceiling would be
 	// crossed by admitting this app. The trigger yields to live
@@ -512,6 +511,10 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 		}
 		if conc >= effective {
 			t.observe(d.AppID, OutcomeFloorMet)
+			continue
+		}
+		if d.MaxInstances > 0 && conc >= d.MaxInstances {
+			t.observe(d.AppID, OutcomeAtCapacity)
 			continue
 		}
 		if conc >= effectiveMaxConcurrency(app, plan) {

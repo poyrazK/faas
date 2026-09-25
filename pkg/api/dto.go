@@ -1693,6 +1693,10 @@ type CreateDeploymentRequest struct {
 	// Omitted fields inherit the app's current RAM/CPU configuration. Values
 	// are validated against the account plan and frozen on the deployment row.
 	Resources *DeploymentResourcesRequest `json:"resources,omitempty"`
+	// MaxInstances is an optional immutable cap for serving instances on this
+	// deployment. Zero/omitted inherits the app ceiling; the app/plan ceiling
+	// still applies across all deployments.
+	MaxInstances *int `json:"max_instances,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -2606,6 +2610,9 @@ type DeploymentResponse struct {
 	// deployment's own floor. Effective per-instance floor =
 	// max(app.EffectiveMinInstances(), d.EffectiveMinInstances()).
 	MinInstances int `json:"min_instances"`
+	// MaxInstances is the configured immutable per-deployment ceiling. Zero
+	// means the deployment inherits the app's effective ceiling.
+	MaxInstances int `json:"max_instances"`
 	// Scan is the per-deploy grype CVE scan surface (issue #464
 	// / ADR-055, PR-1). nil for pre-feature rows (the migration
 	// backfilled scan_status='skipped' + scan_result={reason:
@@ -5923,10 +5930,11 @@ type ProjectApplyRequest struct {
 // reserved for future wire shapes (zipball, git bundle); v1
 // only ships "tarball". Empty Format defaults to "tarball".
 type SourceRefDeployRequest struct {
-	Repo      string                      `json:"repo"`
-	Ref       string                      `json:"ref"`
-	Format    string                      `json:"format,omitempty"`
-	Resources *DeploymentResourcesRequest `json:"resources,omitempty"`
+	Repo         string                      `json:"repo"`
+	Ref          string                      `json:"ref"`
+	Format       string                      `json:"format,omitempty"`
+	Resources    *DeploymentResourcesRequest `json:"resources,omitempty"`
+	MaxInstances *int                        `json:"max_instances,omitempty"`
 	// Environment selects a registered project environment. The server
 	// resolves it to the deployment's env scope before enqueueing the build.
 	Environment string `json:"environment,omitempty"`
@@ -5957,10 +5965,11 @@ type SourceRefDeployRequest struct {
 // upstream. The tarball itself is uploaded as the multipart `tarball`
 // field. See docs/adr/0XX-local-tarball-deploy-trust-root.md.
 type SourceTarballDeployRequest struct {
-	Repo       string                      `json:"repo,omitempty"`
-	Ref        string                      `json:"ref,omitempty"`
-	NoTriggers bool                        `json:"no_triggers,omitempty"`
-	Resources  *DeploymentResourcesRequest `json:"resources,omitempty"`
+	Repo         string                      `json:"repo,omitempty"`
+	Ref          string                      `json:"ref,omitempty"`
+	NoTriggers   bool                        `json:"no_triggers,omitempty"`
+	Resources    *DeploymentResourcesRequest `json:"resources,omitempty"`
+	MaxInstances *int                        `json:"max_instances,omitempty"`
 	// Environment selects a registered project environment for this upload.
 	Environment string `json:"environment,omitempty"`
 	// Annotation fields (issue #977 / ADR-116). All four are

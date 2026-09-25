@@ -2386,6 +2386,20 @@ func ErrPlanLimitConcurrencyAt(l Limits, effectiveMax, observed int) *Problem {
 		WithDocs(docsBase + "/plans#concurrency")
 }
 
+// ErrDeploymentLimitConcurrencyAt is the same stable 429 admission surface
+// as the app concurrency limit, with details identifying the immutable
+// per-deployment ceiling that rejected the wake.
+func ErrDeploymentLimitConcurrencyAt(l Limits, effectiveMax, observed int) *Problem {
+	if effectiveMax <= 0 || effectiveMax > l.MaxConcurrency {
+		effectiveMax = l.MaxConcurrency
+	}
+	return NewProblem(http.StatusTooManyRequests, CodePlanLimitConcur,
+		"Deployment concurrency limit reached",
+		fmt.Sprintf("this deployment allows %d live instance(s); %d already live.", effectiveMax, observed)).
+		WithLimit(int64(effectiveMax), int64(observed)).
+		WithDocs(docsBase + "/plans#concurrency")
+}
+
 // ErrCapacity is returned when admission is refused for lack of box capacity
 // (RAM headroom or vCPU slots, spec §4.3). This should be near-impossible in
 // practice — admission alerts fire long before customers see it (spec §12) — so
@@ -5253,7 +5267,7 @@ func ErrCompanionPresetUnavailable(preset string) *Problem {
 func ErrPlanMaxInstancesNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanMaxInstancesNotAllowed,
 		"Plan doesn't allow a max_instances ceiling",
-		fmt.Sprintf("the %s plan does not expose a per-app max_instances; upgrade to Hobby or higher to set it.", p)).
+		fmt.Sprintf("the %s plan does not expose a max_instances ceiling; upgrade to Hobby or higher to set it.", p)).
 		WithDocs(docsBase + "/apps#max-instances")
 }
 
@@ -5267,6 +5281,16 @@ func ErrInvalidMaxInstances(got, minInstances, maxConcur int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidMaxInstances,
 		"Invalid max_instances",
 		fmt.Sprintf("max_instances must be in [%d, %d] (plan max_concurrency); got %d.", minInstances, maxConcur, got)).
+		WithLimit(int64(maxConcur), int64(got)).
+		WithDocs(docsBase + "/apps#max-instances")
+}
+
+// ErrInvalidDeploymentMaxInstances reports a deployment ceiling that is
+// negative, above the plan limit, or below a floor the app can require.
+func ErrInvalidDeploymentMaxInstances(got, minInstances, maxConcur int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidMaxInstances,
+		"Invalid deployment max_instances",
+		fmt.Sprintf("deployment max_instances must be 0 (inherit) or in [%d, %d]; got %d.", minInstances, maxConcur, got)).
 		WithLimit(int64(maxConcur), int64(got)).
 		WithDocs(docsBase + "/apps#max-instances")
 }

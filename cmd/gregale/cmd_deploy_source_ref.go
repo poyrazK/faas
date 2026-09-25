@@ -115,6 +115,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		Format:                 "tarball",
 		Environment:            ann.Environment,
 		Resources:              ann.Resources,
+		MaxInstances:           ann.MaxInstances,
 		Reason:                 ann.Reason,
 		Tag:                    ann.Tag,
 		DeployedBy:             ann.DeployedBy,

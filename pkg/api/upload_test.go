@@ -40,6 +40,9 @@ func TestResumableUploadClient_WireContract(t *testing.T) {
 			if req.DeployOptions.RollbackOn5xx == nil || !*req.DeployOptions.RollbackOn5xx {
 				t.Errorf("rollback option = %+v, want explicit true", req.DeployOptions.RollbackOn5xx)
 			}
+			if req.DeployOptions.MaxInstances == nil || *req.DeployOptions.MaxInstances != 4 {
+				t.Errorf("max_instances option = %+v, want explicit 4", req.DeployOptions.MaxInstances)
+			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(resumableUploadStartResponse{
 				UploadID: "upload-1", ChunkSize: 3, TotalSize: 6, ExpiresAt: "2030-01-01T00:00:00Z",
@@ -65,10 +68,12 @@ func TestResumableUploadClient_WireContract(t *testing.T) {
 	c := NewClient(srv.URL, "fp_test").SetCompletionCache(nil)
 	ctx := context.Background()
 	rollback := true
+	maxInstances := 4
 	session, err := c.StartUpload(ctx, "demo", 6, "", UploadDeployOptions{
 		SourceRoot:    "apps/api",
 		SourceURL:     "github://acme/demo@0123456789abcdef0123456789abcdef01234567",
 		CommitSHA:     "0123456789abcdef0123456789abcdef01234567",
+		MaxInstances:  &maxInstances,
 		RollbackOn5xx: &rollback,
 	})
 	if err != nil {

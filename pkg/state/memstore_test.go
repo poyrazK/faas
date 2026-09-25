@@ -6032,6 +6032,7 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 		OverridePort:        9090,
 		TrafficPercent:      50,
 		MinInstances:        1,
+		MaxInstances:        4,
 		Priority:            7,
 		Scope:               "staging",
 		OverrideEntrypoint:  []string{"node", "server.js"},
@@ -6073,6 +6074,9 @@ func TestMemStoreRetryDeploymentFromStage(t *testing.T) {
 	}
 	if got.Kind != failed.Kind {
 		t.Errorf("Kind not copied: got %q, want %q", got.Kind, failed.Kind)
+	}
+	if got.MaxInstances != failed.MaxInstances {
+		t.Errorf("MaxInstances not copied: got %d, want %d", got.MaxInstances, failed.MaxInstances)
 	}
 	if got.SourceRoot != failed.SourceRoot {
 		t.Errorf("SourceRoot not copied: got %q, want %q", got.SourceRoot, failed.SourceRoot)

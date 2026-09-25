@@ -30,6 +30,10 @@ export type UploadDeployOptions = {
    */
   environment?: string;
   resources?: DeploymentResourcesRequest;
+  /**
+   * At upload commit, set an immutable deployment serving-instance cap. Omit or use 0 to inherit app policy; the app/plan cap still aggregates across revisions.
+   */
+  max_instances?: number | null;
   reason?: string;
   tag?: string;
   deployed_by?: string;

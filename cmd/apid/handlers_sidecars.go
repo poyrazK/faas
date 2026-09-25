@@ -458,9 +458,15 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	if resourceProblem != nil {
 		return state.Deployment{}, resourceProblem
 	}
+	if problem := validateDeploymentMaxInstances(req.MaxInstances, app, plan, limits); problem != nil {
+		return state.Deployment{}, problem
+	}
 	dep := state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
 		RAMMB: ramMB, CPUMillicores: cpuMillicores,
+	}
+	if req.MaxInstances != nil {
+		dep.MaxInstances = *req.MaxInstances
 	}
 	if req.RollbackOn5xx != nil {
 		dep.RollbackOn5xx = *req.RollbackOn5xx
@@ -601,6 +607,25 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	}
 	dep.Sidecars = sealed
 	return dep, nil
+}
+
+func validateDeploymentMaxInstances(requested *int, app state.App, plan api.Plan, limits api.Limits) *api.Problem {
+	if requested == nil {
+		return nil
+	}
+	value := *requested
+	policy := state.ScalingPolicyOrDefault(app.ScalingPolicy)
+	reachableMin := app.MinInstances
+	if policyFloor := policy.MaxReachableMinInstances(); policyFloor > reachableMin {
+		reachableMin = policyFloor
+	}
+	if value > 0 && !plan.MaxInstancesAllowed() {
+		return api.ErrPlanMaxInstancesNotAllowed(plan)
+	}
+	if value < 0 || value > limits.MaxConcurrency || (value > 0 && value < reachableMin) {
+		return api.ErrInvalidDeploymentMaxInstances(value, reachableMin, limits.MaxConcurrency)
+	}
+	return nil
 }
 
 // emitSidecarSetAudit fires the sidecar.set audit row when the

@@ -4346,6 +4346,30 @@ func TestUpdateAppScalingPolicy_MaxBelowMin(t *testing.T) {
 	assertProblem(t, rec, 422, api.CodeInvalidMaxInstances)
 }
 
+func TestDeploymentMaxInstancesRejectsConflictingFloorUpdates(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "pro-deployment-max-floor")
+	dep, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: appID, ImageDigest: "sha256:deployment-max-floor",
+		Kind: state.DeploymentKindImage, Status: state.DeployLive,
+		MaxInstances: 1, MinInstances: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+
+	appFloor := 2
+	appRec := e.do(t, "PATCH", "/v1/apps/pro-deployment-max-floor", api.UpdateAppRequest{
+		MinInstances: &appFloor,
+	}, nil)
+	assertProblem(t, appRec, 422, api.CodeInvalidMaxInstances)
+
+	depRec := e.do(t, "PATCH", "/v1/deployments/"+dep.ID, api.UpdateDeploymentRequest{
+		MinInstances: intPointer(2),
+	}, nil)
+	assertProblem(t, depRec, 422, api.CodeInvalidMaxInstances)
+}
+
 // TestUpdateAppScalingPolicy_CooldownBelowFloor pins the
 // self-DoS guard: a customer who sets scale_out_cooldown_s=0
 // gets 422 invalid_cooldown (the floor is 1 s, see

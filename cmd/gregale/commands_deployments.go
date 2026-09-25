@@ -566,6 +566,9 @@ func cmdDeploymentGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "status:", d.Status)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "created_at:", d.CreatedAt)
 	renderDeploymentResources(osStdout, d.Resources)
+	if d.MaxInstances > 0 {
+		_, _ = fmt.Fprintf(osStdout, "%-14s %d\n", "max_instances:", d.MaxInstances)
+	}
 	// Issue #977 / ADR-116: annotation block. Each field is
 	// conditional on non-empty so pre-feature rows render the
 	// same shape as before (no `-` placeholders for legacy data).

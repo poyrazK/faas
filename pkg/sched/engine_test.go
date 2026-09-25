@@ -2940,6 +2940,16 @@ func TestEngineSeedLedger(t *testing.T) {
 	if got := e.Ledger().ResidentRAM(); got != 512+api.PerVMOverheadMB {
 		t.Errorf("resident = %d, want %d (running instance re-accounted)", got, 512+api.PerVMOverheadMB)
 	}
+	if got := e.Ledger().ConcurrencyForDeployment(app.ID, dep.ID); got != 1 {
+		t.Errorf("deployment concurrency after restart = %d, want 1", got)
+	}
+	if err := e.Ledger().Admit(Request{
+		Instance: "second-on-deployment", AppID: app.ID, DeploymentID: dep.ID,
+		Plan: api.PlanPro, RAMMB: 512, VCPU: 2, MaxConcurrency: app.MaxConcurrency,
+		MaxDeploymentConcurrency: 1,
+	}); err == nil {
+		t.Fatal("admission after restart bypassed the deployment instance ceiling")
+	}
 	if got := e.Ledger().UsedCPUMillicoresForNode(ins.NodeID); got != api.DefaultAppCPUMillicores {
 		t.Errorf("CPU reservation after restart = %d, want active startup peak %d", got, api.DefaultAppCPUMillicores)
 	}

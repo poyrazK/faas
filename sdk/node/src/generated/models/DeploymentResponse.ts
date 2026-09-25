@@ -128,6 +128,10 @@ export type DeploymentResponse = {
    */
   min_instances?: number;
   /**
+   * Configured immutable per-deployment serving-instance ceiling. 0 means inherit the app's effective ceiling; the app/plan maximum remains an aggregate cap.
+   */
+  max_instances?: number;
+  /**
    * Per-deploy grype CVE scan surface (issue #464 / ADR-055). nil on pre-feature rows (the migration backfilled scan_status='skipped' + scan_result={reason: 'pre-feature'} on those; the apid read path returns nil so the dashboard / CLI see a clean absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil for post-feature rows in any of the {pending, complete, failed, skipped} states. With security_policy=enforce, the deployment is promoted only after a complete, digest-matched scan with no HIGH, CRITICAL, or UNKNOWN findings; off/warn remain advisory.
    */
   scan?: (ScanResult | null);

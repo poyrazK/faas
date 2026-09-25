@@ -13,6 +13,7 @@ func boolPtr(v bool) *bool { return &v }
 func TestMultipartDeployPreservesRolloutAndEnvironment(t *testing.T) {
 	zero := 0
 	ramMB, cpuMillicores := 256, 500
+	maxInstances := 3
 	profile := "small"
 	for _, tc := range []struct {
 		name      string
@@ -24,6 +25,7 @@ func TestMultipartDeployPreservesRolloutAndEnvironment(t *testing.T) {
 		{name: "canary", ann: DeployAnnotations{Canary: &CanaryPresetSpec{Preset: "balanced"}}, wantField: "canary", wantValue: `{"preset":"balanced"}`},
 		{name: "scope", ann: DeployAnnotations{Scope: "production"}, wantField: "scope", wantValue: "production"},
 		{name: "environment", ann: DeployAnnotations{Environment: "staging"}, wantField: "environment", wantValue: "staging"},
+		{name: "deployment instance ceiling", ann: DeployAnnotations{MaxInstances: &maxInstances}, wantField: "max_instances", wantValue: "3"},
 		{name: "revision resources", ann: DeployAnnotations{Resources: &DeploymentResourcesRequest{RAMMB: &ramMB, CPUMillicores: &cpuMillicores, ResourceProfile: &profile}}, wantField: "resources", wantValue: `{"ram_mb":256,"cpu_millicores":500,"resource_profile":"small"}`},
 		{name: "rollback enabled", ann: DeployAnnotations{RollbackOn5xx: boolPtr(true)}, wantField: "rollback_on_5xx", wantValue: "true"},
 		{name: "rollback explicitly disabled", ann: DeployAnnotations{RollbackOn5xx: boolPtr(false)}, wantField: "rollback_on_5xx", wantValue: "false"},
