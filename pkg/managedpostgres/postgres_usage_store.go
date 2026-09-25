@@ -10,15 +10,32 @@ import (
 
 var _ UsageStore = (*PostgresStore)(nil)
 
-func (s *PostgresStore) ListUsageDatabases(ctx context.Context, limit int) ([]Database, error) {
+func (s *PostgresStore) ListUsageDatabases(ctx context.Context, after UsageDatabaseCursor, limit int) ([]Database, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrInvalid
 	}
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
-		 WHERE state = 'ready' AND provider_resource_id IS NOT NULL
-		 ORDER BY updated_at, id LIMIT $1`, limit,
+	var (
+		rows pgx.Rows
+		err  error
 	)
+	if after.isZero() {
+		rows, err = s.pool.Query(ctx,
+			`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
+			 WHERE state = 'ready' AND provider_resource_id IS NOT NULL
+			 ORDER BY updated_at, id LIMIT $1`, limit,
+		)
+	} else {
+		afterID, idErr := postgresUUID(after.ID)
+		if idErr != nil {
+			return nil, idErr
+		}
+		rows, err = s.pool.Query(ctx,
+			`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
+			 WHERE state = 'ready' AND provider_resource_id IS NOT NULL
+			   AND (updated_at, id) > ($1, $2)
+			 ORDER BY updated_at, id LIMIT $3`, after.UpdatedAt, afterID, limit,
+		)
+	}
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}

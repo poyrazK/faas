@@ -15,7 +15,7 @@ type usageKey struct {
 
 var _ UsageStore = (*MemoryStore)(nil)
 
-func (s *MemoryStore) ListUsageDatabases(_ context.Context, limit int) ([]Database, error) {
+func (s *MemoryStore) ListUsageDatabases(_ context.Context, after UsageDatabaseCursor, limit int) ([]Database, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrInvalid
 	}
@@ -23,9 +23,14 @@ func (s *MemoryStore) ListUsageDatabases(_ context.Context, limit int) ([]Databa
 	defer s.mu.Unlock()
 	items := make([]Database, 0)
 	for _, database := range s.databases {
-		if database.State == StateReady && database.ProviderResourceID != "" {
-			items = append(items, cloneDatabase(database))
+		if database.State != StateReady || database.ProviderResourceID == "" {
+			continue
 		}
+		if !after.isZero() && (database.UpdatedAt.Before(after.UpdatedAt) ||
+			(database.UpdatedAt.Equal(after.UpdatedAt) && database.ID <= after.ID)) {
+			continue
+		}
+		items = append(items, cloneDatabase(database))
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {

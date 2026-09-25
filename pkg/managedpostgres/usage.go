@@ -124,37 +124,56 @@ func (c *UsageCollector) Collect(ctx context.Context) (summary UsageCollectionSu
 		return summary, ErrInvalid
 	}
 	from := to.Add(-c.policy.Window)
-	databases, err := c.store.ListUsageDatabases(ctx, c.batchSize)
-	if err != nil {
-		return summary, err
+	// Page through every ready database. A single ListUsageDatabases call
+	// returned the same oldest-updated batch on every sweep — recording
+	// usage does not touch updated_at — so any database past the first
+	// batchSize was never metered, billed, or held to its monthly caps.
+	var after UsageDatabaseCursor
+	for {
+		databases, err := c.store.ListUsageDatabases(ctx, after, c.batchSize)
+		if err != nil {
+			return summary, errors.Join(sweepErr, err)
+		}
+		summary.Discovered += len(databases)
+		for _, database := range databases {
+			if err := ctx.Err(); err != nil {
+				return summary, err
+			}
+			sweepErr = errors.Join(sweepErr, c.collectOne(ctx, database, from, to, now, &summary))
+		}
+		if len(databases) < c.batchSize {
+			return summary, sweepErr
+		}
+		last := databases[len(databases)-1]
+		after = UsageDatabaseCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
 	}
-	summary.Discovered = len(databases)
-	for _, database := range databases {
-		if err := ctx.Err(); err != nil {
-			return summary, err
-		}
-		outcome := "recorded"
-		backend, resolveErr := c.registry.Resolve(database.BackendID, database.BackendFingerprint)
-		includedInSource := resolveErr == nil && database.State == StateReady && database.ProviderResourceID != "" &&
-			database.RestoreSourceDatabaseID != "" && backend.Capabilities.RestoreUsageIncludedInSource
-		if includedInSource {
-			// The source resource reports a provider-shared aggregate. Recording
-			// it against every restore descendant would multiply COGS and could
-			// make admission decisions depend on how many targets were restored.
-			outcome = "included_in_source"
-			summary.IncludedInSourceUsage++
-		} else if err := c.collectDatabase(ctx, database, from, to, now); err != nil {
-			outcome = "deferred"
-			summary.Deferred++
-			sweepErr = errors.Join(sweepErr, err)
-		} else {
-			summary.Recorded++
-		}
-		if c.observe != nil {
-			c.observe(UsageCollectionObservation{DatabaseID: database.ID, Outcome: outcome})
-		}
+}
+
+// collectOne meters one database for the window and records the outcome in
+// summary. It returns the collection error for a deferred database.
+func (c *UsageCollector) collectOne(ctx context.Context, database Database, from, to, now time.Time, summary *UsageCollectionSummary) error {
+	var collectErr error
+	outcome := "recorded"
+	backend, resolveErr := c.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	includedInSource := resolveErr == nil && database.State == StateReady && database.ProviderResourceID != "" &&
+		database.RestoreSourceDatabaseID != "" && backend.Capabilities.RestoreUsageIncludedInSource
+	if includedInSource {
+		// The source resource reports a provider-shared aggregate. Recording
+		// it against every restore descendant would multiply COGS and could
+		// make admission decisions depend on how many targets were restored.
+		outcome = "included_in_source"
+		summary.IncludedInSourceUsage++
+	} else if err := c.collectDatabase(ctx, database, from, to, now); err != nil {
+		outcome = "deferred"
+		summary.Deferred++
+		collectErr = err
+	} else {
+		summary.Recorded++
 	}
-	return summary, sweepErr
+	if c.observe != nil {
+		c.observe(UsageCollectionObservation{DatabaseID: database.ID, Outcome: outcome})
+	}
+	return collectErr
 }
 
 func (c *UsageCollector) collectDatabase(ctx context.Context, database Database, from, to, observedAt time.Time) error {
