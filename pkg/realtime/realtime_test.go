@@ -273,7 +273,7 @@ func TestManagerReRegisterKeepsEndpointConnectionLimit(t *testing.T) {
 	defer server.Close()
 	url := "ws" + strings.TrimPrefix(server.URL, "http") + ManagedPathPrefix + "ep"
 
-	first, _, err := websocket.DefaultDialer.Dial(url, nil)
+	first, _, err := dialClosingResponse(url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,13 +283,13 @@ func TestManagerReRegisterKeepsEndpointConnectionLimit(t *testing.T) {
 		if err := manager.RegisterEndpoint(endpoint); err != nil {
 			t.Fatal(err)
 		}
-		extra, resp, err := websocket.DefaultDialer.Dial(url, nil)
+		extra, status, err := dialClosingResponse(url)
 		if err == nil {
 			_ = extra.Close()
 			t.Fatalf("round %d: max_connections=1 admitted a second socket after re-registration", round)
 		}
-		if resp == nil || resp.StatusCode != http.StatusTooManyRequests {
-			t.Fatalf("round %d: second dial err=%v resp=%v, want 429", round, err, resp)
+		if status != http.StatusTooManyRequests {
+			t.Fatalf("round %d: second dial err=%v status=%d, want 429", round, err, status)
 		}
 	}
 
@@ -298,7 +298,7 @@ func TestManagerReRegisterKeepsEndpointConnectionLimit(t *testing.T) {
 	_ = first.Close()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		next, _, err := websocket.DefaultDialer.Dial(url, nil)
+		next, _, err := dialClosingResponse(url)
 		if err == nil {
 			_ = next.Close()
 			return
@@ -308,4 +308,18 @@ func TestManagerReRegisterKeepsEndpointConnectionLimit(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// dialClosingResponse dials url and closes the handshake response body,
+// returning the handshake status (0 when there was no response).
+func dialClosingResponse(url string) (*websocket.Conn, int, error) {
+	conn, response, err := websocket.DefaultDialer.Dial(url, nil)
+	status := 0
+	if response != nil {
+		status = response.StatusCode
+		if response.Body != nil {
+			_ = response.Body.Close()
+		}
+	}
+	return conn, status, err
 }
