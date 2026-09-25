@@ -139,26 +139,27 @@ func TestJobsE2E_CancelRunning(t *testing.T) {
 	h.MustWaitTaskStatus(t, run, 0, "cancelled", 60*time.Second)
 }
 
-// TestJobsE2E_NodeLoss exercises lease expiry: kill schedd
-// after a task is claimed but before its exit is observed. A
-// fresh schedd MUST re-claim the task after lease_expires_at
-// elapses, and the re-dispatched task must complete (or be
-// reaped, depending on the workload).
+// TestJobsE2E_NodeLoss exercises durable lease recovery: stop schedd
+// after a task is claimed, expire its persisted lease, then start a
+// fresh schedd. The reaper must consume the bounded retry and the new
+// attempt must complete; merely reaching any terminal state is not enough.
 func TestJobsE2E_NodeLoss(t *testing.T) {
 	h := newMetalHarness(t)
 	defer h.Close()
 	h.MustSeedFakeImage(t, "busybox:job-nodeloss")
-	h.MustSetEnv(t, "FAAS_JOBS_LEASE_TTL_SECONDS", "5")
-	job := h.MustCreateJob(t, "nodeloss-job", "busybox:job-nodeloss", []string{"/job-fixture", "sleep", "60s"}, 512)
+	job := h.MustCreateJob(t, "nodeloss-job", "busybox:job-nodeloss", []string{"/job-fixture", "sleep", "30s"}, 512)
+	job = h.MustUpdateJob(t, job, func(p *api.UpdateJobRequest) {
+		n := 1
+		p.RetryMax = &n
+	})
 	run := h.MustDispatchRun(t, job, 1)
 	h.MustWaitTaskStatus(t, run, 0, "claimed", 5*time.Minute)
 	h.MustKillSchedd(t)
+	h.MustExpireTaskLease(t, run, 0)
 	h.MustRestartSchedd(t)
-	// After the lease TTL + reaper sweep, the task either
-	// succeeds (the original VM's exit was already in flight)
-	// or is marked timeout by the reaper. Either is acceptable;
-	// run MUST reach a terminal status.
-	h.MustWaitRunTerminal(t, run, "any-terminal", 5*time.Minute)
+	h.MustWaitTaskAttempt(t, run, 0, 2, "succeeded", 5*time.Minute)
+	h.MustWaitRunTerminal(t, run, "succeeded", 30*time.Second)
+	h.MustAssertRunDeadLetter(t, run, 0)
 }
 
 // TestJobsE2E_BillingRollup pins the §4.7 metering contract:

@@ -296,6 +296,25 @@ func (h *MetalJobHarness) MustWaitTaskAttempt(t *testing.T, run *api.JobRunRespo
 	t.Fatalf("task %d did not reach attempt=%d status=%q within %s", taskIndex, wantAttempt, wantStatus, timeout)
 }
 
+// MustExpireTaskLease makes a claimed task immediately eligible for the real
+// schedd reaper. The KVM node-loss acceptance uses this after stopping schedd
+// so it tests recovery deterministically without waiting for the production
+// task-timeout lease (task timeout plus boot/cleanup grace) to elapse.
+func (h *MetalJobHarness) MustExpireTaskLease(t *testing.T, run *api.JobRunResponse, taskIndex int) {
+	t.Helper()
+	tag, err := h.Pool.Exec(context.Background(), `
+		UPDATE job_tasks
+		SET lease_expires_at = now() - interval '1 minute'
+		WHERE run_id = $1::uuid AND task_index = $2 AND status = 'claimed'`,
+		run.ID, taskIndex)
+	if err != nil {
+		t.Fatalf("expire task %d lease for run %s: %v", taskIndex, run.ID, err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("expire task %d lease for run %s: updated %d rows, want 1 claimed task", taskIndex, run.ID, tag.RowsAffected())
+	}
+}
+
 func (h *MetalJobHarness) MustCancelRun(t *testing.T, run *api.JobRunResponse) {
 	name := h.runName(t, run)
 	path := "/v1/jobs/" + name + "/runs/" + run.ID + "/cancel"
