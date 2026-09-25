@@ -39,6 +39,46 @@ func TestCloneProjectEnvironmentQuotaFailureLeavesNoTarget(t *testing.T) {
 	}
 }
 
+func TestCloneProjectEnvironmentCarriesUniquePRPreviewIdentity(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	account, err := store.CreateAccount(ctx, "clone-preview-identity@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, Project{AccountID: account.ID, Slug: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	created, _, err := store.CloneProjectEnvironment(ctx, ProjectEnvironmentClone{
+		AccountID: account.ID, ProjectID: project.ID, SourceSlug: "production", TargetSlug: "pr-381",
+		PreviewPRNumber: 381, PreviewHeadSHA: sha,
+	}, api.Limits{SecretCountMax: 10, EnvVarsMax: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.PreviewPRNumber != 381 || created.PreviewHeadSHA != sha {
+		t.Fatalf("created preview identity = PR %d SHA %q", created.PreviewPRNumber, created.PreviewHeadSHA)
+	}
+	byPR, err := store.ProjectEnvironmentByPreviewPR(ctx, account.ID, project.ID, 381)
+	if err != nil || byPR.ID != created.ID {
+		t.Fatalf("environment by preview PR = %+v err=%v", byPR, err)
+	}
+	if _, _, err := store.CloneProjectEnvironment(ctx, ProjectEnvironmentClone{
+		AccountID: account.ID, ProjectID: project.ID, SourceSlug: "production", TargetSlug: "pr-381-copy",
+		PreviewPRNumber: 381, PreviewHeadSHA: sha,
+	}, api.Limits{SecretCountMax: 10, EnvVarsMax: 10}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate PR preview clone err = %v, want ErrConflict", err)
+	}
+	if _, _, err := store.CloneProjectEnvironment(ctx, ProjectEnvironmentClone{
+		AccountID: account.ID, ProjectID: project.ID, SourceSlug: "production", TargetSlug: "protected-pr",
+		TargetProtected: true, PreviewPRNumber: 382, PreviewHeadSHA: sha,
+	}, api.Limits{SecretCountMax: 10, EnvVarsMax: 10}); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("protected PR preview clone err = %v, want ErrInvalidArgument", err)
+	}
+}
+
 func TestCloneProjectEnvironmentDoesNotClaimSharedOpenAPIRoutes(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()

@@ -55,14 +55,16 @@ type ProjectDeletePreviewResponse struct {
 
 // ProjectEnvironmentResponse is one durable environment registry entry.
 type ProjectEnvironmentResponse struct {
-	ID         string                           `json:"id"`
-	ProjectID  string                           `json:"project_id"`
-	Slug       string                           `json:"slug"`
-	Protected  bool                             `json:"protected"`
-	CreatedAt  string                           `json:"created_at"`
-	UpdatedAt  string                           `json:"updated_at"`
-	ClonedFrom string                           `json:"cloned_from,omitempty"`
-	Clone      *ProjectEnvironmentCloneResponse `json:"clone,omitempty"`
+	ID              string                           `json:"id"`
+	ProjectID       string                           `json:"project_id"`
+	Slug            string                           `json:"slug"`
+	Protected       bool                             `json:"protected"`
+	PreviewPRNumber int                              `json:"preview_pr_number,omitempty"`
+	PreviewHeadSHA  string                           `json:"preview_head_sha,omitempty"`
+	CreatedAt       string                           `json:"created_at"`
+	UpdatedAt       string                           `json:"updated_at"`
+	ClonedFrom      string                           `json:"cloned_from,omitempty"`
+	Clone           *ProjectEnvironmentCloneResponse `json:"clone,omitempty"`
 }
 
 // ProjectEnvironmentCloneResponse reports non-secret counts copied by an
@@ -86,6 +88,7 @@ type ProjectEnvironmentClonePlanResponse struct {
 	ProjectSlug     string                                      `json:"project_slug"`
 	FromEnvironment string                                      `json:"from_environment"`
 	ToEnvironment   string                                      `json:"to_environment"`
+	PreviewPRNumber int                                         `json:"preview_pr_number,omitempty"`
 	ShareResources  bool                                        `json:"share_resources"`
 	CanClone        bool                                        `json:"can_clone"`
 	CanPromote      bool                                        `json:"can_promote"`
@@ -361,6 +364,8 @@ type CreateProjectEnvironmentRequest struct {
 	Protected       *bool  `json:"protected,omitempty"`
 	FromEnvironment string `json:"from_environment,omitempty"`
 	ShareResources  bool   `json:"share_resources,omitempty"`
+	PreviewPRNumber int    `json:"preview_pr_number,omitempty"`
+	PreviewHeadSHA  string `json:"preview_head_sha,omitempty"`
 }
 
 // UpdateProjectEnvironmentRequest changes only environment protection.

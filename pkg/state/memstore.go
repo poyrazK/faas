@@ -2942,6 +2942,21 @@ func (m *MemStore) ProjectEnvironmentBySlug(_ context.Context, accountID, projec
 	return ProjectEnvironment{}, ErrNotFound
 }
 
+func (m *MemStore) ProjectEnvironmentByPreviewPR(_ context.Context, accountID, projectID string, prNumber int) (ProjectEnvironment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	project, ok := m.projects[projectID]
+	if !ok || project.AccountID != accountID || prNumber <= 0 {
+		return ProjectEnvironment{}, ErrNotFound
+	}
+	for _, environment := range m.projectEnvironments {
+		if environment.ProjectID == projectID && environment.PreviewPRNumber == prNumber {
+			return environment, nil
+		}
+	}
+	return ProjectEnvironment{}, ErrNotFound
+}
+
 func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (ProjectEnvironment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2960,12 +2975,18 @@ func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (Project
 func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !validProjectEnvironmentPreviewIdentity(env.PreviewPRNumber, env.PreviewHeadSHA, env.Protected) {
+		return ProjectEnvironment{}, ErrInvalidArgument
+	}
 	project, ok := m.projects[env.ProjectID]
 	if !ok || project.AccountID != env.AccountID {
 		return ProjectEnvironment{}, ErrNotFound
 	}
 	for _, existing := range m.projectEnvironments {
 		if existing.ProjectID == env.ProjectID && existing.Slug == env.Slug {
+			return ProjectEnvironment{}, ErrConflict
+		}
+		if env.PreviewPRNumber > 0 && existing.ProjectID == env.ProjectID && existing.PreviewPRNumber == env.PreviewPRNumber {
 			return ProjectEnvironment{}, ErrConflict
 		}
 	}
@@ -2981,6 +3002,18 @@ func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnviro
 	return env, nil
 }
 
+func (m *MemStore) projectEnvironmentPreviewExistsLocked(projectID string, prNumber int) bool {
+	if prNumber <= 0 {
+		return false
+	}
+	for _, existing := range m.projectEnvironments {
+		if existing.ProjectID == projectID && existing.PreviewPRNumber == prNumber {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2990,6 +3023,9 @@ func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, account
 	}
 	for id, env := range m.projectEnvironments {
 		if env.ProjectID == projectID && env.Slug == slug {
+			if protected && env.PreviewPRNumber > 0 {
+				return ProjectEnvironment{}, ErrConflict
+			}
 			env.Protected = protected
 			env.UpdatedAt = time.Now()
 			m.projectEnvironments[id] = env

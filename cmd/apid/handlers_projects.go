@@ -313,6 +313,11 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.PreviewPRNumber > 0 && (project.RepoFullName == "" || project.InstallID <= 0) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Project repository required", "PR preview environments require a project linked to an installed GitHub repository"))
+		return
+	}
 	environment, clone, err := s.persistProjectEnvironment(r, acct, project, req)
 	if err != nil {
 		writeCreateProjectEnvironmentError(w, project.Slug, req, acct, err)
@@ -322,6 +327,7 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		"project_id": project.ID, "project_slug": project.Slug,
 		"environment_id": environment.ID, "environment_slug": environment.Slug,
 		"protected": environment.Protected, "cloned_from": req.FromEnvironment,
+		"preview_pr_number": environment.PreviewPRNumber, "preview_head_sha": environment.PreviewHeadSHA,
 		"variables_copied": clone.VariablesCopied, "secrets_copied": clone.SecretsCopied,
 		"bindings_copied": clone.BindingsCopied, "routes_copied": clone.RoutesCopied, "policies_copied": clone.PoliciesCopied,
 	})
@@ -345,6 +351,7 @@ func decodeCreateProjectEnvironmentRequest(r *http.Request) (api.CreateProjectEn
 		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error())
 	}
 	req.Slug, req.FromEnvironment = strings.TrimSpace(req.Slug), strings.TrimSpace(req.FromEnvironment)
+	req.PreviewHeadSHA = strings.ToLower(strings.TrimSpace(req.PreviewHeadSHA))
 	if !api.ValidProjectEnvironmentSlug(req.Slug) {
 		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid environment slug", "slug must contain 1-33 lowercase letters, numbers, or internal hyphens")
@@ -357,6 +364,21 @@ func decodeCreateProjectEnvironmentRequest(r *http.Request) (api.CreateProjectEn
 		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid resource sharing option", "share_resources is only valid when cloning with from_environment")
 	}
+	if req.PreviewPRNumber < 0 || int64(req.PreviewPRNumber) > int64(^uint32(0)>>1) ||
+		(req.PreviewPRNumber == 0) != (req.PreviewHeadSHA == "") {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid preview identity", "preview_pr_number and preview_head_sha must be supplied together")
+	}
+	if req.PreviewPRNumber > 0 {
+		if req.FromEnvironment == "" || (req.Protected != nil && *req.Protected) {
+			return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid preview environment", "PR preview identity requires --from and cannot be protected")
+		}
+		if !isCanonicalCommitSHA(req.PreviewHeadSHA) {
+			return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid preview commit", "preview_head_sha must be a full 40-character commit SHA")
+		}
+	}
 	return req, nil
 }
 
@@ -366,6 +388,7 @@ func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, 
 	if req.FromEnvironment == "" {
 		environment, err := s.store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 			AccountID: acct.ID, ProjectID: project.ID, Slug: req.Slug, Protected: protected,
+			PreviewPRNumber: req.PreviewPRNumber, PreviewHeadSHA: req.PreviewHeadSHA,
 		})
 		return environment, state.ProjectEnvironmentCloneResult{}, err
 	}
@@ -393,7 +416,9 @@ func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, 
 	}
 	clone := state.ProjectEnvironmentClone{
 		AccountID: acct.ID, ProjectID: project.ID, SourceSlug: req.FromEnvironment,
-		TargetSlug: req.Slug, TargetProtected: protected, ShareResources: req.ShareResources,
+		TargetSlug: req.Slug, TargetProtected: protected,
+		PreviewPRNumber: req.PreviewPRNumber, PreviewHeadSHA: req.PreviewHeadSHA,
+		ShareResources:            req.ShareResources,
 		ManagedBindingsPrepared:   len(preparedBindingIDs) > 0,
 		PreparedManagedBindingIDs: preparedBindingIDs, PreparedManagedSecretCount: preparedSecretCount,
 	}
@@ -473,8 +498,12 @@ func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug strin
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, projectNotFound(projectSlug))
 	case errors.Is(err, state.ErrConflict):
+		title, detail := "Environment already exists", "the project already has an environment with this slug"
+		if req.PreviewPRNumber > 0 {
+			title, detail = "Environment or preview already exists", "the environment slug is already in use, or this pull request already has a preview environment in the project"
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Environment already exists", "the project already has an environment with this slug"))
+			title, detail))
 	default:
 		api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
 	}
@@ -499,6 +528,9 @@ func (s *server) updateProjectEnvironment(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, r.PathValue("environment")))
+		} else if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Preview environment cannot be protected", "PR preview environments are transient and cannot be protected"))
 		} else {
 			api.WriteProblem(w, api.ErrCapacity("could not update project environment"))
 		}
@@ -599,9 +631,10 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 func projectEnvironmentResponse(environment state.ProjectEnvironment) api.ProjectEnvironmentResponse {
 	return api.ProjectEnvironmentResponse{
 		ID: environment.ID, ProjectID: environment.ProjectID, Slug: environment.Slug,
-		Protected: environment.Protected,
-		CreatedAt: environment.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt: environment.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		Protected: environment.Protected, PreviewPRNumber: environment.PreviewPRNumber,
+		PreviewHeadSHA: environment.PreviewHeadSHA,
+		CreatedAt:      environment.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:      environment.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 

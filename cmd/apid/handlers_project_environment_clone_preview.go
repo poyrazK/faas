@@ -31,6 +31,16 @@ func (s *server) previewProjectEnvironmentClone(w http.ResponseWriter, r *http.R
 		}
 		shareResources = parsed
 	}
+	previewPRNumber := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("preview_pr_number")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || int64(parsed) > int64(^uint32(0)>>1) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid preview identity", "preview_pr_number must be a positive 32-bit integer"))
+			return
+		}
+		previewPRNumber = parsed
+	}
 
 	project, ok := s.loadProject(w, r, acct)
 	if !ok {
@@ -43,7 +53,8 @@ func (s *server) previewProjectEnvironmentClone(w http.ResponseWriter, r *http.R
 	}
 	plan := api.ProjectEnvironmentClonePlanResponse{
 		ProjectSlug: projectSlug, FromEnvironment: source, ToEnvironment: target,
-		ShareResources: shareResources, CanClone: true, CanPromote: len(snapshot.Workloads) > 0,
+		PreviewPRNumber: previewPRNumber, ShareResources: shareResources,
+		CanClone: true, CanPromote: len(snapshot.Workloads) > 0,
 		WorkloadCount: len(snapshot.Workloads), Actions: []api.ProjectEnvironmentClonePlanActionResponse{},
 		BlockingReasons: []string{}, Warnings: []string{},
 	}
@@ -53,6 +64,15 @@ func (s *server) previewProjectEnvironmentClone(w http.ResponseWriter, r *http.R
 	} else if !errors.Is(err, state.ErrNotFound) {
 		api.WriteProblem(w, api.ErrCapacity("could not check the target environment"))
 		return
+	}
+	if previewPRNumber > 0 {
+		if _, err := s.store.ProjectEnvironmentByPreviewPR(r.Context(), acct.ID, project.ID, previewPRNumber); err == nil {
+			plan.CanClone = false
+			plan.BlockingReasons = append(plan.BlockingReasons, "This pull request already has a project preview environment.")
+		} else if !errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrCapacity("could not check the pull request preview identity"))
+			return
+		}
 	}
 
 	if snapshot.Configuration.Version > 0 {

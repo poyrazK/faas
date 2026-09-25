@@ -1130,6 +1130,8 @@ var cliCommands = []cliCommand{
 			{Name: "create", Short: "Clone a project environment with isolated managed data by default", Flags: []cliFlag{
 				{Name: "from", Short: "source environment", Value: "ENV", Req: true},
 				{Name: "project", Short: "project slug (defaults to linked project)", Value: "SLUG"},
+				{Name: "preview-pr", Short: "associate the clone with a GitHub pull request", Value: "NUMBER"},
+				{Name: "preview-sha", Short: "exact pull request head commit SHA (requires --preview-pr)", Value: "SHA"},
 				{Name: "protected", Short: "protect the new environment"},
 				{Name: "share-resources", Short: "use source managed data with fresh target credentials instead of isolating it"},
 				{Name: "plan", Short: "show a read-only clone plan without creating the environment"},

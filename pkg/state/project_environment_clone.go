@@ -4,10 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func validProjectEnvironmentPreviewIdentity(prNumber int, headSHA string, protected bool) bool {
+	if prNumber == 0 {
+		return headSHA == ""
+	}
+	if prNumber < 0 || prNumber > int(^uint32(0)>>1) || protected || len(headSHA) != 40 {
+		return false
+	}
+	for _, r := range strings.ToLower(headSHA) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return headSHA == strings.ToLower(headSHA)
+}
 
 var (
 	ErrProjectEnvironmentCloneManagedBindings = errors.New("state: project environment clone requires managed binding recreation")
@@ -22,6 +38,8 @@ type ProjectEnvironmentClone struct {
 	SourceSlug                 string
 	TargetSlug                 string
 	TargetProtected            bool
+	PreviewPRNumber            int
+	PreviewHeadSHA             string
 	ShareResources             bool
 	ManagedBindingsPrepared    bool
 	PreparedManagedBindingIDs  []string
@@ -74,6 +92,9 @@ func (e *ProjectEnvironmentCloneQuotaError) Unwrap() error {
 func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !validProjectEnvironmentPreviewIdentity(clone.PreviewPRNumber, clone.PreviewHeadSHA, clone.TargetProtected) {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrInvalidArgument
+	}
 	project, ok := m.projects[clone.ProjectID]
 	if !ok || project.AccountID != clone.AccountID {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrNotFound
@@ -82,6 +103,9 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	if _, err := m.projectEnvironmentBySlugLocked(clone.ProjectID, clone.TargetSlug); err == nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+	}
+	if m.projectEnvironmentPreviewExistsLocked(clone.ProjectID, clone.PreviewPRNumber) {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
 	}
 	apps := m.projectCloneAppsLocked(clone.ProjectID)
@@ -149,6 +173,7 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	created := ProjectEnvironment{
 		ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
 		Slug: clone.TargetSlug, Protected: clone.TargetProtected,
+		PreviewPRNumber: clone.PreviewPRNumber, PreviewHeadSHA: clone.PreviewHeadSHA,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	m.projectEnvironments[created.ID] = created

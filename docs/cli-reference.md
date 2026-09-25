@@ -1451,6 +1451,8 @@ Clone a project environment with isolated managed data by default
 |---|---|---|
 | `--from <ENV>` | source environment | required |
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
+| `--preview-pr <NUMBER>` | associate the clone with a GitHub pull request |  |
+| `--preview-sha <SHA>` | exact pull request head commit SHA (requires `--preview-pr`) |  |
 | `--protected` | protect the new environment |  |
 | `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
 | `--plan` | show a read-only clone plan without creating the environment |  |
@@ -1459,6 +1461,8 @@ Clone a project environment with isolated managed data by default
 | `--idempotency-key <KEY>` | stable key for retrying clone/deployment operations |  |
 | `--progress` | print deployment transitions while waiting (requires --deploy) |  |
 | `--timeout <SECONDS>` | maximum seconds to wait for deployment readiness |  |
+
+`--preview-pr` and `--preview-sha` pin the clone to one PR identity. They do not yet refresh from GitHub events or expire automatically. Do not combine them with `--deploy`: that option promotes the source environment's existing releases; deploy the exact PR checkout with `gregale deploy --environment <environment>`.
 
 ### env pull
 
