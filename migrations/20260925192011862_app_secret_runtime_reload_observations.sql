@@ -2,7 +2,7 @@
 -- +goose StatementBegin
 -- Keep guest-init refresh outcomes per runtime instead of allowing the most
 -- recent runtime to overwrite every other runtime's status on app_secrets.
-CREATE TABLE app_secret_runtime_reload_observations (
+CREATE TABLE IF NOT EXISTS app_secret_runtime_reload_observations (
     app_id uuid NOT NULL,
     scope text NOT NULL,
     key text NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE app_secret_runtime_reload_observations (
     )
 );
 
-CREATE INDEX app_secret_runtime_reload_observations_instance_idx
+CREATE INDEX IF NOT EXISTS app_secret_runtime_reload_observations_instance_idx
     ON app_secret_runtime_reload_observations (instance_id);
 -- +goose StatementEnd
 
