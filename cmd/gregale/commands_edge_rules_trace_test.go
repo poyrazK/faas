@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 )
 
 func TestPreviewEdgeRules(t *testing.T) {
@@ -308,13 +309,21 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 	jsonOutput = true
 	defer resetJSONEnv(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/edge-rules" {
+		if r.Method != http.MethodGet {
 			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
-			ID: "match", Enabled: true, Kind: "redirect", MatchHost: "example.com", MatchPath: "/api/*",
-			Action: json.RawMessage(`{"redirect":{"to":"/elsewhere"}}`),
-		}})
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "match", Enabled: true, Kind: "redirect", MatchHost: "example.com", MatchPath: "/api/*",
+				Action: json.RawMessage(`{"redirect":{"to":"/elsewhere"}}`),
+			}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
@@ -338,6 +347,128 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 	}
 }
 
+func TestCmdEdgeRulesTraceSimulatesAppMaintenance(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{MaintenanceMode: true})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "redirect", Enabled: true, Kind: "redirect", MatchHost: "example.com", MatchPath: "*",
+				Action: json.RawMessage(`{"redirect":{"to":"/new"}}`),
+			}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/"}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Simulation.Outcome != "app_maintenance" || result.Simulation.StatusCode != http.StatusServiceUnavailable || result.Simulation.ProblemCode != api.CodeAppMaintenance || result.Simulation.RetryAfterSeconds != api.EdgeRuleMaintenanceRetryAfterSeconds {
+		t.Fatalf("app maintenance trace = %#v", result.Simulation)
+	}
+}
+
+func TestCmdEdgeRulesTraceLoadsDeclaredRouteOpenAPIFallback(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{OnlyAllowDeclaredRoutes: true})
+		case "/v1/apps/demo/openapi":
+			if got := r.URL.Query().Get("source"); got != "manual_import" {
+				t.Errorf("OpenAPI source = %q, want manual_import", got)
+			}
+			w.Header().Set("Content-Type", "application/yaml")
+			_, _ = w.Write([]byte("openapi: 3.1.0\ninfo:\n  title: demo\n  version: v1\npaths:\n  /widgets/{id}:\n    get:\n      responses: {}\n"))
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/widgets/42", "--method", "HEAD"}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Phase != "declared_routes" || result.Simulation.Steps[0].Outcome != "allowed" {
+		t.Fatalf("declared-route OpenAPI trace = %#v", result.Simulation)
+	}
+}
+
+func TestCmdEdgeRulesTraceReportsMissingDeclaredRouteDocument(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{OnlyAllowDeclaredRoutes: true})
+		case "/v1/apps/demo/openapi":
+			http.NotFound(w, r)
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/widgets/42"}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "declared_route_policy_unavailable" || result.Simulation.StatusCode != http.StatusServiceUnavailable || result.Simulation.ProblemCode != api.CodeDeclaredRoutePolicyUnavailable {
+		t.Fatalf("missing declared-route document trace = %#v", result.Simulation)
+	}
+}
+
 func TestCmdEdgeRulesTraceResolvesCORSRulePreset(t *testing.T) {
 	resetJSONEnv(t)
 	jsonOutput = true
@@ -348,6 +479,8 @@ func TestCmdEdgeRulesTraceResolvesCORSRulePreset(t *testing.T) {
 			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
 		}
 		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{})
 		case "/v1/apps/demo/edge-rules":
 			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
 				ID: "cors", AccountID: "acct-1", Enabled: true, Kind: "cors", MatchHost: "example.com", MatchPath: "/", MatchMethods: []string{"GET"},
@@ -379,6 +512,47 @@ func TestCmdEdgeRulesTraceResolvesCORSRulePreset(t *testing.T) {
 	}
 	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.ResponseHeaderOps) != 2 || result.Simulation.ResponseHeaderOps[0].Value != "https://app.example.com" {
 		t.Fatalf("preset-backed trace result = %#v", result.Simulation)
+	}
+}
+
+func TestCmdEdgeRulesTraceLoadsAppCORSDefaults(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	enabled := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{
+				CORSDefaultEnabled: &enabled, CORSDefaultOrigins: []string{"https://*.example.com"},
+			})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/", "--header", "Origin:https://app.example.com"}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "cors_default_applied" || len(result.Simulation.ResponseHeaderOps) != 4 {
+		t.Fatalf("app-default CORS trace = %#v", result.Simulation)
 	}
 }
 
@@ -428,6 +602,82 @@ func TestCmdEdgeRulesTrace_BodyFileValidatesAndOmitsContents(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "private-value") || strings.Contains(stdout.String(), body) {
 		t.Fatalf("trace output leaked request body: %s", stdout.String())
+	}
+}
+
+func TestCmdEdgeRulesTrace_LoadsScenarioConfig(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	const configSecret = "scenario-auth-sentinel-27491"
+	config := `{"version":1,"app":"demo","request":{"url":"https://example.com/submit","method":"POST","headers":["Content-Type: application/json","X-Repeat: first","X-Repeat: second","Authorization: Bearer ` + configSecret + `"],"body":"{\"count\":\"private-value\"}"}}`
+	configPath := filepath.Join(t.TempDir(), "trace.json")
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatalf("WriteFile scenario: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{EffectiveLimits: api.AppEffectiveLimits{RequestBodyMaxBytes: 1 << 20}})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "validate", Enabled: true, Kind: "validate", ValidateMode: api.ValidateModeBlock,
+				MatchHost: "example.com", MatchPath: "/submit",
+				Action: json.RawMessage(`{"validate":{"schema":{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]},"content_types":["application/json"]}}`),
+			}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--config", configPath}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if result.App != "demo" || result.Method != http.MethodPost || result.Host != "example.com" || result.Path != "/submit" {
+		t.Fatalf("trace request = %#v", result)
+	}
+	if !result.BodyProvided || result.BodyBytes != len(`{"count":"private-value"}`) || result.Simulation.Outcome != "validation_failed" {
+		t.Fatalf("trace simulation = %#v", result.Simulation)
+	}
+	if got := result.Headers["x-repeat"]; len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("repeated scenario headers = %#v", got)
+	}
+	if got := result.Headers["authorization"]; len(got) != 1 || got[0] != "[REDACTED]" {
+		t.Fatalf("scenario credential output = %#v", got)
+	}
+	if strings.Contains(stdout.String(), configSecret) || strings.Contains(stdout.String(), "private-value") {
+		t.Fatalf("trace output exposed scenario credentials or body: %s", stdout.String())
+	}
+}
+
+func TestReadEdgeRuleTraceConfigFromStdin(t *testing.T) {
+	oldStdin := osStdin
+	osStdin = strings.NewReader(`{"version":1,"app":"demo","request":{"url":"https://example.com"}}`)
+	defer func() { osStdin = oldStdin }()
+	config, err := readEdgeRuleTraceConfig("-")
+	if err != nil {
+		t.Fatalf("readEdgeRuleTraceConfig stdin: %v", err)
+	}
+	input, err := edgeruletrace.ParseScenarioConfig(config)
+	if err != nil {
+		t.Fatalf("ParseScenarioConfig stdin: %v", err)
+	}
+	if input.App != "demo" || input.Host != "example.com" {
+		t.Fatalf("stdin scenario = %#v", input)
 	}
 }
 

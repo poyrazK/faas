@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
@@ -25,6 +27,7 @@ func cmdEdgeRulesTrace(args []string) int {
 	fs := newFlagSet("edge-rules trace", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug")
 	rawURL := fs.String("url", "", "absolute HTTP(S) request URL")
+	scenarioFile := fs.String("config", "", "load a versioned trace scenario JSON file (or - for stdin)")
 	method := fs.String("method", http.MethodGet, "request method (default GET)")
 	clientIP := fs.String("client-ip", "", "simulated client IP for kind=ip rules")
 	country := fs.String("country", "", "simulated ISO 3166-1 alpha-2 country for kind=geo rules")
@@ -37,52 +40,93 @@ func cmdEdgeRulesTrace(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	if *slug == "" || *rawURL == "" {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules trace --app <slug> --url <http(s)://host/path> [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--body-file <path|->]", "edge-rules")
-		return 1
-	}
-	u, err := url.Parse(*rawURL)
-	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.Opaque != "" {
-		return printErr("Invalid --url", fmt.Errorf("expected an absolute HTTP(S) URL without credentials or fragment"))
-	}
-	requestPath := u.Path
-	if requestPath == "" {
-		requestPath = "/"
-	}
-	requestHeaders, err := edgeruletrace.ParseRequestHeaders(headerArgs)
-	if err != nil {
-		return printErr("Invalid --header", err)
-	}
-	var requestBody []byte
-	bodyProvided := *bodyFile != ""
-	if bodyProvided {
-		requestBody, err = readEdgeRuleTraceBody(*bodyFile)
-		if err != nil {
-			return printErr("Invalid --body-file", err)
+	var input edgeruletrace.Input
+	var err error
+	if *scenarioFile != "" {
+		var conflictingFlags []string
+		fs.Visit(func(parsed *flag.Flag) {
+			if parsed.Name != "config" {
+				conflictingFlags = append(conflictingFlags, "--"+parsed.Name)
+			}
+		})
+		if len(conflictingFlags) > 0 {
+			return printErr("Invalid --config", fmt.Errorf("cannot combine --config with request flags %s", strings.Join(conflictingFlags, ", ")))
 		}
-	}
-	input, err := edgeruletrace.NormalizeInput(edgeruletrace.Input{
-		App: *slug, Host: u.Hostname(), Path: requestPath, Method: *method,
-		ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
-		Body: requestBody, BodyProvided: bodyProvided,
-	})
-	if err != nil {
-		return printErr("Invalid trace input", err)
+		configBytes, readErr := readEdgeRuleTraceConfig(*scenarioFile)
+		if readErr != nil {
+			return printErr("Invalid --config", readErr)
+		}
+		input, err = edgeruletrace.ParseScenarioConfig(configBytes)
+		if err != nil {
+			return printErr("Invalid --config", err)
+		}
+	} else {
+		if *slug == "" || *rawURL == "" {
+			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--body-file <path|->])", "edge-rules")
+			return 1
+		}
+		u, parseErr := url.Parse(*rawURL)
+		if parseErr != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.Opaque != "" {
+			return printErr("Invalid --url", fmt.Errorf("expected an absolute HTTP(S) URL without credentials or fragment"))
+		}
+		requestPath := u.Path
+		if requestPath == "" {
+			requestPath = "/"
+		}
+		requestHeaders, parseErr := edgeruletrace.ParseRequestHeaders(headerArgs)
+		if parseErr != nil {
+			return printErr("Invalid --header", parseErr)
+		}
+		var requestBody []byte
+		bodyProvided := *bodyFile != ""
+		if bodyProvided {
+			requestBody, err = readEdgeRuleTraceBody(*bodyFile)
+			if err != nil {
+				return printErr("Invalid --body-file", err)
+			}
+		}
+		input, err = edgeruletrace.NormalizeInput(edgeruletrace.Input{
+			App: *slug, Host: u.Hostname(), Path: requestPath, Method: *method,
+			ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
+			Body: requestBody, BodyProvided: bodyProvided,
+		})
+		if err != nil {
+			return printErr("Invalid trace input", err)
+		}
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	app, appErr := client.GetApp(context.Background(), input.App)
+	if appErr != nil {
+		return printErr("App lookup failed", appErr)
+	}
+	input.AppMaintenanceLoaded = true
+	input.AppMaintenanceMode = app.MaintenanceMode
+	input.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
+	input.DeclaredRoutes = append([]api.DeclaredRoute(nil), app.DeclaredRoutes...)
+	if input.OnlyAllowDeclaredRoutes && len(input.DeclaredRoutes) == 0 {
+		doc, docErr := client.GetAppOpenAPI(context.Background(), input.App, "manual_import")
+		if docErr == nil {
+			input.DeclaredRouteDocumentLoaded = true
+			input.DeclaredRouteOpenAPIDoc = append([]byte(nil), doc...)
+		} else {
+			var apiErr *api.APIError
+			if errors.As(docErr, &apiErr) && apiErr.Problem.Status == http.StatusNotFound {
+				input.DeclaredRouteDocumentMissing = true
+			}
+		}
+	}
+	input.AppCORSDefaultsLoaded = true
+	input.CORSDefaultEnabled = app.CORSDefaultEnabled
+	input.CORSDefaultOrigins = append([]string(nil), app.CORSDefaultOrigins...)
 	if input.BodyProvided {
-		app, appErr := client.GetApp(context.Background(), input.App)
-		if appErr != nil {
-			return printErr("App lookup failed", appErr)
-		}
 		input.RequestBodyMaxBytes = app.EffectiveLimits.RequestBodyMaxBytes
-		input, err = edgeruletrace.NormalizeInput(input)
-		if err != nil {
-			return printErr("Invalid trace input", err)
-		}
+	}
+	input, err = edgeruletrace.NormalizeInput(input)
+	if err != nil {
+		return printErr("Invalid trace input", err)
 	}
 	rules, err := client.ListEdgeRulesForApp(context.Background(), input.App)
 	if err != nil {
@@ -129,10 +173,17 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 	}
 	_, _ = fmt.Fprintf(osStdout, "simulation: status=%s outcome=%s final_path=%s\n", result.Simulation.Status, result.Simulation.Outcome, result.Simulation.FinalPath)
 	for _, step := range result.Simulation.Steps {
-		_, _ = fmt.Fprintf(osStdout, "  %-12s %-12s %s — %s\n", step.Phase, step.Outcome, step.RuleID, step.Reason)
+		label := step.RuleID
+		if label == "" {
+			label = step.Kind
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %-12s %-12s %s — %s\n", step.Phase, step.Outcome, label, step.Reason)
 	}
 	if result.Simulation.StatusCode != 0 {
 		_, _ = fmt.Fprintf(osStdout, "  response: status=%d", result.Simulation.StatusCode)
+		if result.Simulation.ProblemCode != "" {
+			_, _ = fmt.Fprintf(osStdout, " problem_code=%s", result.Simulation.ProblemCode)
+		}
 		if result.Simulation.Location != "" {
 			_, _ = fmt.Fprintf(osStdout, " location=%q", result.Simulation.Location)
 		}
@@ -186,6 +237,28 @@ func readEdgeRuleTraceBody(path string) ([]byte, error) {
 	return body, nil
 }
 
+func readEdgeRuleTraceConfig(path string) ([]byte, error) {
+	reader := osStdin
+	var file *os.File
+	if path != "-" {
+		opened, err := openCustomerFile(path)
+		if err != nil {
+			return nil, err
+		}
+		file = opened
+		defer func() { _ = file.Close() }()
+		reader = file
+	}
+	config, err := io.ReadAll(io.LimitReader(reader, int64(edgeruletrace.MaxScenarioConfigBytes)+1))
+	if err != nil {
+		return nil, fmt.Errorf("could not read trace scenario config")
+	}
+	if len(config) > edgeruletrace.MaxScenarioConfigBytes {
+		return nil, fmt.Errorf("trace scenario config exceeds the %d-byte limit", edgeruletrace.MaxScenarioConfigBytes)
+	}
+	return config, nil
+}
+
 func sortedHeaderNames(headers map[string][]string) []string {
 	names := make([]string, 0, len(headers))
 	for name := range headers {
@@ -212,7 +285,7 @@ func previewEdgeRules(app, host, requestPath, method, clientIP, country string, 
 		headers = suppliedHeaders[0]
 	}
 	result, _ := edgeruletrace.Simulate(edgeruletrace.Input{
-		App: app, Host: host, Path: requestPath, Method: method, ClientIP: clientIP, Country: country, Headers: headers,
+		App: app, Host: host, Path: requestPath, Method: method, ClientIP: clientIP, Country: country, Headers: headers, AppMaintenanceLoaded: true,
 	}, rules)
 	return result
 }
