@@ -190,6 +190,7 @@ export type { CreateObjectStorageComputeBindingRequest } from './CreateObjectSto
 export type { CreateObjectUploadRouteRequest } from './CreateObjectUploadRouteRequest.js';
 export type { CreateOrgAPIKeyRequest } from './CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './CreateOrgRequest.js';
+export type { CreateOutboundIntegrationRequest } from './CreateOutboundIntegrationRequest.js';
 export type { CreatePlatformTenantRequest } from './CreatePlatformTenantRequest.js';
 export type { CreatePreviewRequest } from './CreatePreviewRequest.js';
 export type { CreatePrivateNetworkPeeringRequest } from './CreatePrivateNetworkPeeringRequest.js';
@@ -513,6 +514,11 @@ export type { OrgMembershipExportResponse } from './OrgMembershipExportResponse.
 export type { OrgResponse } from './OrgResponse.js';
 export type { OrgSlug } from './OrgSlug.js';
 export type { OrgWithRole } from './OrgWithRole.js';
+export type { OutboundAppBinding } from './OutboundAppBinding.js';
+export type { OutboundAppBindingList } from './OutboundAppBindingList.js';
+export type { OutboundIntegrationOffer } from './OutboundIntegrationOffer.js';
+export type { OutboundIntegrationOfferList } from './OutboundIntegrationOfferList.js';
+export type { OutboundIntegrationUsageResponse } from './OutboundIntegrationUsageResponse.js';
 export type { ParkedDeploymentRef } from './ParkedDeploymentRef.js';
 export type { PasswordLoginRequest } from './PasswordLoginRequest.js';
 export type { PasswordLoginResponse } from './PasswordLoginResponse.js';
@@ -633,6 +639,8 @@ export type { PutAppRegistryCredentialRequest } from './PutAppRegistryCredential
 export type { PutAppSecretRequest } from './PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './PutDataUpstreamRequest.js';
 export type { PutJobRegistryCredentialRequest } from './PutJobRegistryCredentialRequest.js';
+export type { PutOutboundCredentialRequest } from './PutOutboundCredentialRequest.js';
+export type { PutOutboundDailyRequestBudgetRequest } from './PutOutboundDailyRequestBudgetRequest.js';
 export type { QueueBindingResponse } from './QueueBindingResponse.js';
 export type { QueueBindingStatusResponse } from './QueueBindingStatusResponse.js';
 export type { QueueCursorBefore } from './QueueCursorBefore.js';
@@ -766,6 +774,7 @@ export type { UpdateInboundWebhookEndpointRequest } from './UpdateInboundWebhook
 export type { UpdateJobRequest } from './UpdateJobRequest.js';
 export type { UpdateManagedRealtimeEndpointRequest } from './UpdateManagedRealtimeEndpointRequest.js';
 export type { UpdateMirrorRuleRequest } from './UpdateMirrorRuleRequest.js';
+export type { UpdateOutboundBindingPolicyRequest } from './UpdateOutboundBindingPolicyRequest.js';
 export type { UpdatePrivateNetworkPolicyRequest } from './UpdatePrivateNetworkPolicyRequest.js';
 export type { UpdateProjectEnvironmentConfigRequest } from './UpdateProjectEnvironmentConfigRequest.js';
 export type { UpdateProjectEnvironmentEdgePolicyRequest } from './UpdateProjectEnvironmentEdgePolicyRequest.js';

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // PostgresResolver loads policies from the outbound integration tables. It is
@@ -30,15 +31,28 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		return Integration{}, ErrIntegrationNotFound
 	}
 	var origin string
+	var accountID uuid.UUID
+	var plan string
+	var providerAuthMode string
+	var credentialSource string
+	var ownerKind string
+	var allowedMethods, allowedPathPrefixes []string
 	var tokenHash []byte
 	var rate float64
+	var dailyRequestLimitValue int64
 	var burst, maxInFlight, timeoutMS int
 	var enabled bool
 	err = r.pool.QueryRow(ctx, `
-		SELECT origin, token_hash, rate_per_second, burst, max_in_flight,
-		       request_timeout_ms, enabled
-		FROM outbound_integrations WHERE id = $1`, integrationID).
-		Scan(&origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled)
+		SELECT integration.account_id, account.plan, integration.origin, integration.token_hash,
+		       integration.rate_per_second, integration.burst, integration.max_in_flight,
+		       integration.request_timeout_ms, integration.enabled, integration.provider_auth_mode,
+		       integration.credential_source, integration.allowed_methods,
+		       integration.allowed_path_prefixes, integration.owner_kind,
+		       COALESCE(integration.daily_request_limit, 0)
+		  FROM outbound_integrations integration
+		  JOIN accounts account ON account.id = integration.account_id
+		 WHERE integration.id = $1`, integrationID).
+		Scan(&accountID, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -57,25 +71,60 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	}
 	var hash [sha256.Size]byte
 	copy(hash[:], tokenHash)
-	rows, err := r.pool.Query(ctx, `SELECT app_id::text FROM outbound_integration_apps WHERE integration_id = $1`, integrationID)
+	var dailyRequestLimit *int64
+	if dailyRequestLimitValue > 0 {
+		maxForPlan, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
+		if !ok {
+			return Integration{}, fmt.Errorf("%w: account plan has no outbound request budget ceiling", ErrInvalidIntegration)
+		}
+		if dailyRequestLimitValue > maxForPlan {
+			dailyRequestLimitValue = maxForPlan
+		}
+		dailyRequestLimit = &dailyRequestLimitValue
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT attachment.app_id::text, NULL::text[], NULL::text[], true
+		  FROM outbound_integration_apps attachment
+		  JOIN apps app ON app.id = attachment.app_id
+		 WHERE attachment.integration_id = $1 AND app.account_id = $3 AND app.status <> 'deleted'
+		UNION ALL
+		SELECT binding.app_id::text, binding.allowed_methods, binding.allowed_path_prefixes, false
+		  FROM outbound_app_bindings binding
+		  JOIN apps app ON app.id = binding.app_id
+		 WHERE binding.integration_id = $1 AND binding.account_id = $3
+		   AND app.account_id = $3 AND app.status <> 'deleted'
+		   AND $2 = 'managed'`, integrationID, providerAuthMode, accountID)
 	if err != nil {
 		return Integration{}, err
 	}
 	defer rows.Close()
 	apps := make(map[string]struct{})
+	operatorApps := make(map[string]struct{})
+	customerRoutes := make(map[string]RoutePolicy)
 	for rows.Next() {
 		var appID string
-		if err := rows.Scan(&appID); err != nil {
+		var methods, paths []string
+		var operator bool
+		if err := rows.Scan(&appID, &methods, &paths, &operator); err != nil {
 			return Integration{}, err
 		}
 		apps[appID] = struct{}{}
+		if operator {
+			operatorApps[appID] = struct{}{}
+		} else if methods != nil || paths != nil {
+			customerRoutes[appID] = RoutePolicy{AllowedMethods: methods, AllowedPathPrefixes: paths}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return Integration{}, err
 	}
 	i := Integration{ID: id, Origin: u, TokenHash: hash, AppIDs: apps,
+		OperatorAppIDs: operatorApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
-		RequestTimeout: time.Duration(timeoutMS) * time.Millisecond, Enabled: true}
+		DailyRequestLimit: dailyRequestLimit,
+		RequestTimeout:    time.Duration(timeoutMS) * time.Millisecond,
+		ProviderAuthMode:  providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
+		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
 	}

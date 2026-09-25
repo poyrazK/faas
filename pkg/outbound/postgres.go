@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // PostgresBackend provides the cross-process admission boundary. The
@@ -31,6 +32,9 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if spec.IntegrationID == "" || math.IsNaN(spec.RatePerSecond) || math.IsInf(spec.RatePerSecond, 0) || spec.RatePerSecond <= 0 || spec.Burst < 1 || spec.MaxInFlight < 1 {
 		return Decision{}, fmt.Errorf("%w: invalid admission spec", ErrInvalidIntegration)
 	}
+	if spec.DailyRequestLimit != nil && (*spec.DailyRequestLimit < 1 || *spec.DailyRequestLimit > api.MaxOutboundRequestsPerDay) {
+		return Decision{}, fmt.Errorf("%w: daily request limit is outside the supported range", ErrInvalidIntegration)
+	}
 	integrationID, err := uuid.Parse(spec.IntegrationID)
 	if err != nil {
 		return Decision{}, fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
@@ -49,6 +53,35 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
 		return Decision{}, err
 	}
+	// Re-read the durable customer-selected cap under a row lock. A concurrent
+	// API update and this admission are therefore ordered: once a lower limit
+	// update returns, a request cannot be admitted against a stale resolver
+	// snapshot. The plan ceiling is read in the same statement so downgrades
+	// also constrain subsequent admissions immediately.
+	var plan string
+	var storedDailyRequestLimit int64
+	err = tx.QueryRow(ctx, `
+		SELECT account.plan,
+		       COALESCE(integration.daily_request_limit, 0)
+		  FROM outbound_integrations integration
+		  JOIN accounts account ON account.id = integration.account_id
+		 WHERE integration.id = $1
+		 FOR SHARE OF integration, account`, integrationID).
+		Scan(&plan, &storedDailyRequestLimit)
+	if err != nil {
+		return Decision{}, err
+	}
+	var dailyRequestLimit *int64
+	if storedDailyRequestLimit > 0 {
+		maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
+		if !ok {
+			return Decision{}, fmt.Errorf("%w: account plan has no outbound request budget ceiling", ErrInvalidIntegration)
+		}
+		if storedDailyRequestLimit > maximum {
+			storedDailyRequestLimit = maximum
+		}
+		dailyRequestLimit = &storedDailyRequestLimit
+	}
 	// The state row is created lazily. The lock below serializes all admissions
 	// for this integration; leases are still deleted by expiry during admission.
 	if _, err := tx.Exec(ctx, `
@@ -58,12 +91,20 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}
 	var tokens float64
 	var lastRefill time.Time
+	var usageDate time.Time
+	var dailyRequestCount int64
 	if err := tx.QueryRow(ctx, `
-		SELECT tokens, last_refill
+		SELECT tokens, last_refill, daily_usage_date, daily_request_count
 		FROM outbound_admission_state
 		WHERE integration_id = $1
-		FOR UPDATE`, integrationID).Scan(&tokens, &lastRefill); err != nil {
+		FOR UPDATE`, integrationID).Scan(&tokens, &lastRefill, &usageDate, &dailyRequestCount); err != nil {
 		return Decision{}, err
+	}
+	utcNow := now.UTC()
+	today := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
+	if !usageDate.UTC().Truncate(24 * time.Hour).Equal(today) {
+		usageDate = today
+		dailyRequestCount = 0
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND expires_at <= $2`, integrationID, now); err != nil {
 		return Decision{}, err
@@ -77,7 +118,9 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}
 	// Persist refill progress even when the request is rejected. This prevents
 	// repeated callers from repeatedly receiving a stale Retry-After value.
-	if _, err := tx.Exec(ctx, `UPDATE outbound_admission_state SET tokens = $2, last_refill = $3 WHERE integration_id = $1`, integrationID, tokens, lastRefill); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE outbound_admission_state
+		SET tokens = $2, last_refill = $3, daily_usage_date = $4, daily_request_count = $5
+		WHERE integration_id = $1`, integrationID, tokens, lastRefill, today, dailyRequestCount); err != nil {
 		return Decision{}, err
 	}
 	var inFlight int
@@ -110,12 +153,25 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		}
 		return Decision{RetryAfter: retry, Reason: ReasonRate}, nil
 	}
+	if dailyRequestLimit != nil && dailyRequestCount >= *dailyRequestLimit {
+		retry := today.Add(24 * time.Hour).Sub(utcNow)
+		if retry < time.Millisecond {
+			retry = time.Millisecond
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Decision{}, err
+		}
+		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit}, nil
+	}
 	tokens--
+	dailyRequestCount++
 	leaseID := uuid.New()
 	if _, err := tx.Exec(ctx, `INSERT INTO outbound_admission_leases (lease_id, integration_id, expires_at) VALUES ($1, $2, $3)`, leaseID, integrationID, now.Add(ttl)); err != nil {
 		return Decision{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE outbound_admission_state SET tokens = $2, last_refill = $3 WHERE integration_id = $1`, integrationID, tokens, lastRefill); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE outbound_admission_state
+		SET tokens = $2, last_refill = $3, daily_usage_date = $4, daily_request_count = $5
+		WHERE integration_id = $1`, integrationID, tokens, lastRefill, today, dailyRequestCount); err != nil {
 		return Decision{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -36,6 +36,8 @@ servers:
         description: Public hostname (one-box FaaS).
 
 tags:
+  - name: outbound
+    description: Bind apps to account-owned, operator-provisioned managed outbound integrations without exposing provider credentials.
   - name: storage
     description: Private customer object-storage preview, separate from runtime snapshots and image layers.
   - name: managed_postgres
@@ -318,6 +320,210 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/outbound/integrations:
+    get:
+      tags: [outbound]
+      operationId: listOutboundIntegrationOffers
+      summary: List managed outbound integrations available to this account.
+      description: Provider credentials and gateway tokens are never returned.
+      responses:
+        '200':
+          description: Available managed integrations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundIntegrationOfferList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundIntegration
+      summary: Create a customer-owned managed outbound integration.
+      description: Requires MFA and deploy-write scope. The origin must resolve only to globally reachable addresses. Provider Authorization is uploaded separately and sealed at rest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundIntegrationRequest' }
+      responses:
+        '201':
+          description: Customer integration created without credential material.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: The account already has an integration with this name. }
+        '429': { description: The account has reached its customer integration limit. }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/credential:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of an account-owned customer-sealed integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: putOutboundCredential
+      summary: Set or rotate a customer-held outbound provider credential.
+      description: The Authorization value is sealed at rest and never returned. Requires MFA and deploy-write scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundCredentialRequest' }
+      responses:
+        '204': { description: Credential saved; no secret is returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundCredential
+      summary: Revoke a customer-held outbound provider credential.
+      description: Idempotent for an existing integration; subsequent gateway calls fail closed.
+      responses:
+        '204': { description: Credential absent. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/budget:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose daily budget is being changed.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundIntegrationDailyBudget
+      summary: Set or clear a customer-owned integration's daily request limit.
+      description: Requires MFA and deploy-write scope. The configured value cannot exceed the account plan's per-integration ceiling. Set daily_request_limit to null to clear the customer-selected limit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundDailyRequestBudgetRequest' }
+      responses:
+        '204': { description: Daily request limit updated; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/usage:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose current usage is being read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundIntegrationUsage
+      summary: Read the integration's current UTC-day outbound request usage.
+      description: Requires MFA and read-surface scope. Counts requests admitted by the gateway, including provider calls that later fail. Usage resets at the returned UTC midnight timestamp.
+      responses:
+        '200':
+          description: Current UTC-day request count and configured limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundIntegrationUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of a customer-owned managed integration.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundIntegration
+      summary: Delete a customer-owned managed outbound integration.
+      description: Requires MFA and deploy-write scope. Deletes the integration, its sealed credential, app bindings, and admission state. Operator-provisioned integrations cannot be deleted here.
+      responses:
+        '204': { description: Integration deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/outbound-bindings:
+    get:
+      tags: [outbound]
+      operationId: listOutboundAppBindings
+      summary: List an app's managed outbound bindings.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: Current app bindings, without credential material.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAppBindingList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/outbound-bindings/{integration}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: integration
+        in: path
+        required: true
+        description: UUID of an account-owned managed integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: bindOutboundIntegration
+      summary: Bind an app to an existing managed outbound integration.
+      description: Idempotent. The integration is operator-provisioned; this request never carries a provider key.
+      responses:
+        '200':
+          description: Binding stored; a customer-sealed integration also needs a configured credential to serve traffic.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAppBinding' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    patch:
+      tags: [outbound]
+      operationId: updateOutboundBindingPolicy
+      summary: Narrow an app's managed outbound route policy.
+      description: Methods and paths must remain within the operator-approved integration policy. Requires MFA and deploy-write scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateOutboundBindingPolicyRequest' }
+      responses:
+        '204': { description: Binding route policy updated. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: unbindOutboundIntegration
+      summary: Remove an app's managed outbound binding.
+      description: Idempotent; returns 204 even when the binding is already absent.
+      responses:
+        '204': { description: Binding absent. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/status:
     get:
       tags: [status]
@@ -19478,6 +19684,136 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    OutboundIntegrationOffer:
+      type: object
+      description: Account-owned managed integration metadata; never contains a provider key or gateway token.
+      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled, credential_source, credential_configured, owner_kind, daily_request_limit]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        origin: { type: string, format: uri }
+        allowed_methods:
+          type: array
+          items: { type: string }
+        allowed_path_prefixes:
+          type: array
+          items: { type: string }
+        enabled: { type: boolean }
+        credential_source:
+          type: string
+          enum: [operator_env, customer_sealed]
+          description: Who supplies the provider Authorization value.
+        credential_configured:
+          type: boolean
+          description: Whether the selected source currently has a credential; never reveals its value.
+        owner_kind:
+          type: string
+          enum: [operator, customer]
+          description: Whether the integration is operator-provisioned or customer-created.
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+          description: Effective per-integration UTC-day admitted-request limit; null means no configured limit.
+    CreateOutboundIntegrationRequest:
+      type: object
+      description: A fixed public HTTPS destination, maximum HTTP route policy, and optional daily admitted-request limit.
+      required: [name, origin, allowed_methods, allowed_path_prefixes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        origin: { type: string, format: uri }
+        allowed_methods:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          maxItems: 6
+          items: { type: string, enum: [GET, HEAD, POST, PUT, PATCH, DELETE] }
+        allowed_path_prefixes:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          maxItems: 32
+          items: { type: string, maxLength: 512 }
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+          description: Optional per-integration daily admitted-request limit; account plan ceilings may be lower.
+    PutOutboundDailyRequestBudgetRequest:
+      type: object
+      description: Set a lower per-integration daily request limit or clear it with null.
+      required: [daily_request_limit]
+      properties:
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+    OutboundIntegrationUsageResponse:
+      type: object
+      description: Current UTC-day admitted-request count and the effective optional request limit.
+      required: [daily_request_count, daily_request_limit, usage_date, resets_at]
+      properties:
+        daily_request_count: { type: integer, format: int64, minimum: 0 }
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+        usage_date: { type: string, format: date }
+        resets_at: { type: string, format: date-time }
+    PutOutboundCredentialRequest:
+      type: object
+      description: Provider Authorization header value, accepted once and never returned.
+      required: [authorization]
+      properties:
+        authorization: { type: string, minLength: 1, maxLength: 8192 }
+    OutboundIntegrationOfferList:
+      type: object
+      description: Enabled managed integrations this account may bind to its apps.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
+    OutboundAppBinding:
+      type: object
+      description: An app's customer-owned attachment to a managed integration.
+      required: [integration, app_id, allowed_methods, allowed_path_prefixes, created_at]
+      properties:
+        integration: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
+        app_id: { type: string, format: uuid }
+        allowed_methods:
+          type: array
+          description: App-specific methods, bounded by the integration ceiling.
+          items: { type: string }
+        allowed_path_prefixes:
+          type: array
+          description: App-specific path prefixes, bounded by the integration ceiling.
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+    UpdateOutboundBindingPolicyRequest:
+      type: object
+      description: Explicit nonempty method and path subsets for a bound app.
+      required: [allowed_methods, allowed_path_prefixes]
+      properties:
+        allowed_methods:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items: { type: string }
+        allowed_path_prefixes:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: { type: string }
+    OutboundAppBindingList:
+      type: object
+      description: Customer-owned outbound attachments for one app.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAppBinding' }
+
     PreflightLevel:
       type: string
       enum: [green, amber, red]
