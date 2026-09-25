@@ -328,6 +328,7 @@ from .create_app_request_eviction_priority import CreateAppRequestEvictionPriori
 from .create_app_request_execution_mode import CreateAppRequestExecutionMode
 from .create_app_request_restart_policy import CreateAppRequestRestartPolicy
 from .create_app_request_runtime import CreateAppRequestRuntime
+from .create_app_request_service_binding_policy import CreateAppRequestServiceBindingPolicy
 from .create_app_request_type import CreateAppRequestType
 from .create_app_request_visibility import CreateAppRequestVisibility
 from .create_app_task_request import CreateAppTaskRequest
@@ -1527,6 +1528,9 @@ from .update_app_request_execution_mode_type_3_type_1 import UpdateAppRequestExe
 from .update_app_request_restart_policy_type_1 import UpdateAppRequestRestartPolicyType1
 from .update_app_request_restart_policy_type_2_type_1 import UpdateAppRequestRestartPolicyType2Type1
 from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRestartPolicyType3Type1
+from .update_app_request_service_binding_policy_type_1 import UpdateAppRequestServiceBindingPolicyType1
+from .update_app_request_service_binding_policy_type_2_type_1 import UpdateAppRequestServiceBindingPolicyType2Type1
+from .update_app_request_service_binding_policy_type_3_type_1 import UpdateAppRequestServiceBindingPolicyType3Type1
 from .update_app_request_visibility_type_1 import UpdateAppRequestVisibilityType1
 from .update_app_request_visibility_type_2_type_1 import UpdateAppRequestVisibilityType2Type1
 from .update_app_request_visibility_type_3_type_1 import UpdateAppRequestVisibilityType3Type1
@@ -1953,6 +1957,7 @@ __all__ = (
     "CreateAppRequestExecutionMode",
     "CreateAppRequestRestartPolicy",
     "CreateAppRequestRuntime",
+    "CreateAppRequestServiceBindingPolicy",
     "CreateAppRequestType",
     "CreateAppRequestVisibility",
     "CreateAppTaskRequest",
@@ -3110,6 +3115,9 @@ __all__ = (
     "UpdateAppRequestRestartPolicyType1",
     "UpdateAppRequestRestartPolicyType2Type1",
     "UpdateAppRequestRestartPolicyType3Type1",
+    "UpdateAppRequestServiceBindingPolicyType1",
+    "UpdateAppRequestServiceBindingPolicyType2Type1",
+    "UpdateAppRequestServiceBindingPolicyType3Type1",
     "UpdateAppRequestVisibilityType1",
     "UpdateAppRequestVisibilityType2Type1",
     "UpdateAppRequestVisibilityType3Type1",

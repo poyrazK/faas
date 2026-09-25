@@ -192,14 +192,20 @@ type CreateAppRequest struct {
 	// AllowedServiceCallers restricts internal callers to these logical app
 	// names. Omitted/null preserves same-account access; [] denies all.
 	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
-	Type                  string    `json:"type,omitempty"`             // "app" (default) | "function"
-	Runtime               string    `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB                 int       `json:"ram_mb,omitempty"`           // 0 => plan default
-	VCPU                  int       `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
-	CPUMillicores         int       `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
-	ResourceProfile       string    `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
-	MaxConcurrency        int       `json:"max_concurrency,omitempty"`
-	IdleTimeoutS          int       `json:"idle_timeout_s,omitempty"`
+	// ServiceBindingTargets declares outbound same-account services for a
+	// standalone app. The platform derives binding keys and internal URLs.
+	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceBindingPolicy defaults to account for standalone apps; declared
+	// opts into gateway enforcement of ServiceBindingTargets.
+	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	Type                 string                `json:"type,omitempty"`             // "app" (default) | "function"
+	Runtime              string                `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB                int                   `json:"ram_mb,omitempty"`           // 0 => plan default
+	VCPU                 int                   `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
+	CPUMillicores        int                   `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
+	ResourceProfile      string                `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
+	MaxConcurrency       int                   `json:"max_concurrency,omitempty"`
+	IdleTimeoutS         int                   `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
@@ -473,11 +479,17 @@ type UpdateAppRequest struct {
 	// omitted (unchanged), null (same-account access), array (replace, with
 	// [] denying all). The handler validates and normalizes the array.
 	AllowedServiceCallers json.RawMessage `json:"allowed_service_callers,omitempty"`
-	RAMMB                 *int            `json:"ram_mb,omitempty"`
-	CPUMillicores         *int            `json:"cpu_millicores,omitempty"`
-	ResourceProfile       *string         `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
-	IdleTimeoutS          *int            `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency        *int            `json:"max_concurrency,omitempty"`
+	// ServiceBindingTargets replaces the standalone outbound target list.
+	// Omitted/null leaves it unchanged; [] clears every binding.
+	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
+	// ServiceBindingPolicy switches caller-side authorization. Omitted/null
+	// leaves it unchanged; set account to restore legacy same-account access.
+	ServiceBindingPolicy *ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
+	RAMMB                *int                  `json:"ram_mb,omitempty"`
+	CPUMillicores        *int                  `json:"cpu_millicores,omitempty"`
+	ResourceProfile      *string               `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
+	IdleTimeoutS         *int                  `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency       *int                  `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
 	// replaces the full policy; use min=max=desired=0 to scale a service to
 	// zero. desired must fit the app's max_concurrency; include both fields
@@ -1294,7 +1306,7 @@ type AppResponse struct {
 	// The DTO reuses the existing api.AppManifest (defined in
 	// appmanifest.go) so the wire shape stays a single source of truth.
 	Manifest AppManifest `json:"manifest"`
-	// ServiceBindings are the repository-declared same-account app
+	// ServiceBindings are declared same-account app
 	// dependencies currently injected into this workload. They are a read-only
 	// discovery projection; authorization applies them only when
 	// ServiceBindingPolicy is "declared".

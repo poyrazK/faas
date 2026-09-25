@@ -901,6 +901,21 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Service caller policy is source-managed", "edit x-gregale-allow-callers in the project source; preview policies inherit from their source app"))
 		return
 	}
+	if (req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil) && (app.ProjectID != "" || app.PreviewOfSlug != "") {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Service bindings are source-managed", "edit depends_on or x-gregale-service-policy in the project source; preview bindings inherit from their source app"))
+		return
+	}
+	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, app.Slug)
+	if bindingsProblem != nil {
+		api.WriteProblem(w, bindingsProblem)
+		return
+	}
+	servicePolicy, servicePolicyProblem := standaloneServicePolicy(req.ServiceBindingPolicy)
+	if servicePolicyProblem != nil {
+		api.WriteProblem(w, servicePolicyProblem)
+		return
+	}
 	if prob := resolveUpdateResourceProfile(&req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1089,6 +1104,19 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			lifecycleManifest = &copyOfManifest
 		}
 		lifecycleManifest.AllowedServiceCallers = allowedCallers
+	}
+	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		if req.ServiceBindingTargets != nil {
+			lifecycleManifest.ServiceBindings = bindings
+			lifecycleManifest.Env = api.ServiceBindingEnv(app.Manifest.Env, bindings)
+		}
+		if req.ServiceBindingPolicy != nil {
+			lifecycleManifest.ServiceBindingPolicy = servicePolicy
+		}
 	}
 	retryPolicyJSON, retryPolicyProblem := marshalAppRetryPolicy(req.RetryPolicy)
 	if retryPolicyProblem != nil {
@@ -1450,6 +1478,14 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if callerPolicySet {
 		oldApp["allowed_service_callers"] = app.Manifest.AllowedServiceCallers
 		newApp["allowed_service_callers"] = updated.Manifest.AllowedServiceCallers
+	}
+	if req.ServiceBindingTargets != nil {
+		oldApp["service_bindings"] = app.Manifest.ServiceBindings
+		newApp["service_bindings"] = updated.Manifest.ServiceBindings
+	}
+	if req.ServiceBindingPolicy != nil {
+		oldApp["service_binding_policy"] = app.Manifest.EffectiveServiceBindingPolicy()
+		newApp["service_binding_policy"] = updated.Manifest.EffectiveServiceBindingPolicy()
 	}
 	if lifecycleChanged {
 		oldApp["lifecycle"] = apiManifestFromState(app.Manifest)
