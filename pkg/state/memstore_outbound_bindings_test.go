@@ -33,7 +33,7 @@ func memCustomerOutboundOffer(accountID, name string) OutboundIntegrationOffer {
 	return OutboundIntegrationOffer{
 		ID: uuid.NewString(), AccountID: accountID, Name: name, Origin: "https://api.example.com",
 		AllowedMethods: []string{"GET", "POST"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
-		CredentialSource: "customer_sealed", OwnerKind: "customer",
+		CredentialSource: "customer_sealed", OwnerKind: "customer", RequestPolicy: api.DefaultOutboundRequestPolicy(),
 	}
 }
 
@@ -50,6 +50,7 @@ func TestOutboundIntegrationValidation(t *testing.T) {
 		{"disabled", func(o *OutboundIntegrationOffer) { o.Enabled = false }},
 		{"wrong credential source", func(o *OutboundIntegrationOffer) { o.CredentialSource = "operator_env" }},
 		{"already configured", func(o *OutboundIntegrationOffer) { o.CredentialConfigured = true }},
+		{"zero request policy", func(o *OutboundIntegrationOffer) { o.RequestPolicy = api.OutboundRequestPolicy{} }},
 		{"zero daily limit", func(o *OutboundIntegrationOffer) { n := int64(0); o.DailyRequestLimit = &n }},
 		{"oversized daily limit", func(o *OutboundIntegrationOffer) { o.DailyRequestLimit = &tooMany }},
 		{"uppercase name", func(o *OutboundIntegrationOffer) { o.Name = "Stripe" }},
@@ -88,6 +89,8 @@ func TestMemStore_OutboundCustomerIntegrationLifecycle(t *testing.T) {
 	offer := memCustomerOutboundOffer(account.ID, "stripe")
 	limit := int64(1000)
 	offer.DailyRequestLimit = &limit
+	// Exercise the store's fallback for an omitted request policy.
+	offer.RequestPolicy = api.OutboundRequestPolicy{}
 	created, err := m.CreateOutboundIntegration(ctx, offer)
 	if err != nil {
 		t.Fatalf("CreateOutboundIntegration: %v", err)

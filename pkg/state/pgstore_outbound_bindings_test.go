@@ -14,7 +14,7 @@ func pgCustomerOutboundOffer(accountID, name string) state.OutboundIntegrationOf
 	return state.OutboundIntegrationOffer{
 		ID: uuid.NewString(), AccountID: accountID, Name: name, Origin: "https://api.example.com",
 		AllowedMethods: []string{"GET", "POST"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
-		CredentialSource: "customer_sealed", OwnerKind: "customer",
+		CredentialSource: "customer_sealed", OwnerKind: "customer", RequestPolicy: api.DefaultOutboundRequestPolicy(),
 	}
 }
 
@@ -24,6 +24,8 @@ func TestPgStore_OutboundBindingCustomerLifecycle(t *testing.T) {
 	offer := pgCustomerOutboundOffer(accountID, "stripe")
 	limit := int64(1000)
 	offer.DailyRequestLimit = &limit
+	// Exercise the store's fallback for an omitted request policy.
+	offer.RequestPolicy = api.OutboundRequestPolicy{}
 	created, err := s.CreateOutboundIntegration(ctx, offer)
 	if err != nil || created.ID != offer.ID {
 		t.Fatalf("CreateOutboundIntegration = %+v, %v", created, err)
