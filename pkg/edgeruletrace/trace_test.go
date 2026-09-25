@@ -142,6 +142,22 @@ func TestNormalizeInputPreservesEffectivePlanBodyLimit(t *testing.T) {
 	}
 }
 
+func TestParseRequestHeadersTrimsHTTPOptionalWhitespace(t *testing.T) {
+	headers, err := edgeruletrace.ParseRequestHeaders([]string{
+		"Origin: \thttps://app.example.com ",
+		"X-Mode: exact value",
+	})
+	if err != nil {
+		t.Fatalf("ParseRequestHeaders: %v", err)
+	}
+	if got := headers.Get("Origin"); got != "https://app.example.com" {
+		t.Fatalf("Origin = %q, want trimmed field value", got)
+	}
+	if got := headers.Get("X-Mode"); got != "exact value" {
+		t.Fatalf("X-Mode = %q, want interior whitespace retained", got)
+	}
+}
+
 func TestSimulateInlineCORSRuleAppliesResponseHeaders(t *testing.T) {
 	rule := corsTraceRule(t, "cors-rule", []string{"GET"}, api.EdgeRuleCORSAction{
 		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET", "POST"},
@@ -174,6 +190,127 @@ func TestSimulateInlineCORSRuleAppliesResponseHeaders(t *testing.T) {
 	}
 }
 
+func TestSimulateAppCORSDefaultFallback(t *testing.T) {
+	enabled := true
+	for _, tc := range []struct {
+		name   string
+		method string
+	}{
+		{name: "ordinary request", method: http.MethodGet},
+		{name: "preflight continues to app", method: http.MethodOptions},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			headers := http.Header{"Origin": []string{"https://app.example.com"}}
+			if tc.method == http.MethodOptions {
+				headers.Set("Access-Control-Request-Method", http.MethodGet)
+			}
+			input := edgeruletrace.Input{
+				App: "demo", Host: "example.com", Path: "/", Method: tc.method, Headers: headers,
+				AppCORSDefaultsLoaded: true, CORSDefaultEnabled: &enabled,
+				CORSDefaultOrigins: []string{"https://app.example.com"},
+			}
+			result, err := edgeruletrace.Simulate(input, nil)
+			if err != nil {
+				t.Fatalf("Simulate: %v", err)
+			}
+			if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || result.Simulation.StatusCode != 0 || len(result.Simulation.Steps) != 1 {
+				t.Fatalf("simulation = %#v", result.Simulation)
+			}
+			step := result.Simulation.Steps[0]
+			if step.Kind != "app_default_cors" || step.Outcome != "cors_default_applied" || len(step.ResponseOps) != 4 {
+				t.Fatalf("CORS default step = %#v", step)
+			}
+			if tc.method == http.MethodOptions && !strings.Contains(step.Reason, "not short-circuited") {
+				t.Fatalf("preflight reason = %q, want pass-through explanation", step.Reason)
+			}
+			want := []api.EdgeRuleHeaderOp{
+				{Action: "set", Name: "Access-Control-Allow-Origin", Value: "https://app.example.com"},
+				{Action: "set", Name: "Access-Control-Allow-Methods", Value: "GET, POST, OPTIONS"},
+				{Action: "set", Name: "Access-Control-Allow-Headers", Value: "*"},
+				{Action: "set", Name: "Access-Control-Expose-Headers", Value: "Streaming-Status, Streaming-Status-Accept-Hint"},
+			}
+			if len(result.Simulation.ResponseHeaderOps) != len(want) {
+				t.Fatalf("response header ops = %#v, want %#v", result.Simulation.ResponseHeaderOps, want)
+			}
+			for i := range want {
+				if result.Simulation.ResponseHeaderOps[i] != want[i] || step.ResponseOps[i] != want[i] {
+					t.Fatalf("response header ops = %#v, step ops = %#v; want %#v", result.Simulation.ResponseHeaderOps, step.ResponseOps, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSimulateAppCORSDefaultIncompleteWithoutAppMetadata(t *testing.T) {
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
+		Headers: http.Header{"Origin": []string{"https://app.example.com"}},
+	}
+	result, err := edgeruletrace.Simulate(input, nil)
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_app_cors_defaults" || result.Simulation.StoppedAt != "cors" || result.Simulation.Steps[0].Kind != "app_default_cors" {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+}
+
+func TestSimulateAppCORSDefaultMissesAndEdgeRulePrecedence(t *testing.T) {
+	allowed, disabled := true, false
+	for _, tc := range []struct {
+		name        string
+		enabled     *bool
+		origins     []string
+		origin      string
+		wantOutcome string
+	}{
+		{name: "disabled", enabled: &disabled, origins: []string{"https://app.example.com"}, origin: "https://app.example.com", wantOutcome: "cors_default_disabled"},
+		{name: "empty allowlist", enabled: &allowed, origin: "https://app.example.com", wantOutcome: "cors_default_disabled"},
+		{name: "origin denied", enabled: &allowed, origins: []string{"https://other.example.com"}, origin: "https://app.example.com", wantOutcome: "cors_default_origin_not_allowed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := edgeruletrace.Input{
+				App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
+				Headers:               http.Header{"Origin": []string{tc.origin}},
+				AppCORSDefaultsLoaded: true, CORSDefaultEnabled: tc.enabled, CORSDefaultOrigins: tc.origins,
+			}
+			result, err := edgeruletrace.Simulate(input, nil)
+			if err != nil {
+				t.Fatalf("Simulate: %v", err)
+			}
+			if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.ResponseHeaderOps) != 0 || len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != tc.wantOutcome {
+				t.Fatalf("simulation = %#v", result.Simulation)
+			}
+		})
+	}
+
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/", Method: http.MethodGet,
+		Headers:               http.Header{"Origin": []string{"https://app.example.com"}},
+		AppCORSDefaultsLoaded: true, CORSDefaultEnabled: &allowed,
+		CORSDefaultOrigins: []string{"https://app.example.com"},
+	}
+	rule := corsTraceRule(t, "cors-rule", []string{"GET"}, api.EdgeRuleCORSAction{
+		AllowOrigins: []string{"https://other.example.com"}, AllowMethods: []string{"GET"},
+	})
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate edge-rule precedence: %v", err)
+	}
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "cors_origin_not_allowed" || len(result.Simulation.ResponseHeaderOps) != 0 {
+		t.Fatalf("matching edge-rule CORS must suppress app-default fallback: %#v", result.Simulation)
+	}
+}
+
+func TestRequiresAppCORSDefaultData(t *testing.T) {
+	if edgeruletrace.RequiresAppCORSDefaultData(nil) || edgeruletrace.RequiresAppCORSDefaultData(http.Header{"Origin": []string{""}}) {
+		t.Fatal("empty Origin should not require app CORS metadata")
+	}
+	if !edgeruletrace.RequiresAppCORSDefaultData(http.Header{"Origin": []string{"https://app.example.com"}}) {
+		t.Fatal("non-empty Origin should require app CORS metadata")
+	}
+}
+
 func TestSimulateCORSPreflightUsesRequestedMethodToSelectRule(t *testing.T) {
 	rule := corsTraceRule(t, "cors-get", []string{"GET"}, api.EdgeRuleCORSAction{
 		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"}, AllowHeaders: []string{"Content-Type"},
@@ -202,12 +339,12 @@ func TestSimulateCORSPreflightMethodSelectorRemainsCaseSensitive(t *testing.T) {
 	})
 	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/", Method: http.MethodOptions, Headers: http.Header{
 		"Origin": []string{"https://app.example.com"}, "Access-Control-Request-Method": []string{"get"},
-	}}
+	}, AppCORSDefaultsLoaded: true}
 	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
 	if err != nil {
 		t.Fatalf("Simulate: %v", err)
 	}
-	if result.Rules[0].Status != "skipped" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 0 {
+	if result.Rules[0].Status != "skipped" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "cors_default_disabled" {
 		t.Fatalf("lowercase preflight method should not select GET CORS rule: rows=%#v simulation=%#v", result.Rules, result.Simulation)
 	}
 }

@@ -198,6 +198,43 @@ func TestDashboardEdgeRuleTraceResolvesCORSPreset(t *testing.T) {
 	}
 }
 
+func TestDashboardEdgeRuleTraceUsesAppCORSDefault(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "edge-trace-app-cors", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	enabled := true
+	origins := []string{"https://app.example.com"}
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{
+		CORSDefaultEnabled: &enabled, SetCORSDefaultEnabled: true,
+		CORSDefaultOrigins: &origins, SetCORSDefaultOrigins: true,
+	}); err != nil {
+		t.Fatalf("UpdateApp default CORS: %v", err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-app-cors/edge-rules/trace", map[string]string{
+		middleware.FormFieldName: token,
+		"trace_host":             "edge.example.com", "trace_path": "/", "trace_method": "OPTIONS",
+		"trace_headers": "Origin: https://app.example.com\nAccess-Control-Request-Method: GET",
+	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"Simulation: complete · continue", "app_default_cors", "cors_default_applied", "not short-circuited", "Access-Control-Allow-Origin: https://app.example.com"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("trace response missing %q\n%s", want, rec.Body.String())
+		}
+	}
+}
+
 func TestDashboardEdgeRuleTraceRendersValidationErrorWithoutMutation(t *testing.T) {
 	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")

@@ -21,7 +21,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS are simulated from Origin, preflight request headers, and supplied preset data; preset-backed rules remain incomplete when that data is unavailable or invalid. App-level default CORS, app-level maintenance, ingress/auth policy, target-app rules after routing, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance, ingress/auth policy, target-app rules after routing, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 // Input is the request context that can be simulated without contacting the
@@ -39,6 +39,13 @@ type Input struct {
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
 	CorsPresets []api.CorsPresetResponse
+	// AppCORSDefaultsLoaded distinguishes a known-disabled app setting from
+	// app metadata that was not available to the caller. When a request has an
+	// Origin but no matching edge-rule CORS rule, missing app settings stop the
+	// trace as incomplete instead of silently skipping the gateway fallback.
+	AppCORSDefaultsLoaded bool
+	CORSDefaultEnabled    *bool
+	CORSDefaultOrigins    []string
 	// BodyProvided distinguishes an intentionally empty body from omitted
 	// request-body context. Validate rules remain incomplete when omitted.
 	BodyProvided bool
@@ -185,8 +192,9 @@ func NormalizeInput(input Input) (Input, error) {
 	return input, nil
 }
 
-// ParseRequestHeaders parses repeated Name:Value inputs. It retains repeated
-// values and compares their bytes exactly, as edge-rule selectors do.
+// ParseRequestHeaders parses repeated Name:Value inputs. It trims HTTP optional
+// whitespace around each field value as a wire parser does, retains repeated
+// values, and compares the resulting bytes exactly as edge-rule selectors do.
 func ParseRequestHeaders(items []string) (http.Header, error) {
 	headers := make(http.Header)
 	for _, raw := range items {
@@ -195,6 +203,7 @@ func ParseRequestHeaders(items []string) (http.Header, error) {
 			return nil, fmt.Errorf("%q: expected Name:Value", raw)
 		}
 		name, value := raw[:index], raw[index+1:]
+		value = strings.Trim(value, " \t")
 		normalized, err := api.NormalizeEdgeRuleMatchHeaders(map[string]string{name: value})
 		if err != nil {
 			return nil, err
@@ -228,6 +237,13 @@ func RequiresCorsPresetData(rules []api.EdgeRuleResponse) bool {
 		}
 	}
 	return false
+}
+
+// RequiresAppCORSDefaultData reports whether a trace request includes an
+// Origin header. The app-level CORS fallback only has an effect for such a
+// request, so callers need not load app metadata for ordinary requests.
+func RequiresAppCORSDefaultData(headers http.Header) bool {
+	return headers.Get("Origin") != ""
 }
 
 func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
@@ -340,6 +356,17 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			return stop("incomplete", "ambiguous", phase, "equal-priority matching rules have no guaranteed evaluation order", rule)
 		}
 		if rule == nil {
+			if phase == "cors" && RequiresAppCORSDefaultData(workingHeaders) {
+				if !input.AppCORSDefaultsLoaded {
+					stopped := stop("incomplete", "needs_app_cors_defaults", phase, "app CORS defaults were not loaded, so the gateway fallback cannot be evaluated", nil)
+					stopped.Steps[len(stopped.Steps)-1].Kind = "app_default_cors"
+					return stopped
+				}
+				step, responseOps := previewAppCORSDefault(input, workingHeaders)
+				step.PathBefore, step.PathAfter = requestPath, requestPath
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.ResponseHeaderOps = append(simulation.ResponseHeaderOps, responseOps...)
+			}
 			continue
 		}
 		row := RuleRow{Status: "first_candidate"}
@@ -489,6 +516,38 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 	simulation.FinalPath = requestPath
 	simulation.RequestHeaders = headerSnapshot(workingHeaders)
 	return simulation
+}
+
+// previewAppCORSDefault mirrors the gateway's soft app-level CORS fallback:
+// it runs only after an edge-rule CORS miss, stamps response headers when the
+// origin is allowed, and never short-circuits an OPTIONS preflight.
+func previewAppCORSDefault(input Input, headers http.Header) (SimulationStep, []api.EdgeRuleHeaderOp) {
+	step := SimulationStep{Phase: "cors", Kind: "app_default_cors"}
+	if input.CORSDefaultEnabled == nil || !*input.CORSDefaultEnabled || len(input.CORSDefaultOrigins) == 0 {
+		step.Outcome = "cors_default_disabled"
+		step.Reason = "no enabled per-app default CORS allowlist is configured; request continues without default CORS headers"
+		return step, nil
+	}
+	origin := headers.Get("Origin")
+	allowedOrigin := api.MatchEdgeRuleCORSOrigin(input.CORSDefaultOrigins, origin)
+	if allowedOrigin == "" {
+		step.Outcome = "cors_default_origin_not_allowed"
+		step.Reason = fmt.Sprintf("Origin %q is not in the per-app default CORS allowlist; request continues without default CORS headers", origin)
+		return step, nil
+	}
+	responseOps := []api.EdgeRuleHeaderOp{
+		{Action: "set", Name: "Access-Control-Allow-Origin", Value: allowedOrigin},
+		{Action: "set", Name: "Access-Control-Allow-Methods", Value: "GET, POST, OPTIONS"},
+		{Action: "set", Name: "Access-Control-Allow-Headers", Value: "*"},
+		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "Streaming-Status, Streaming-Status-Accept-Hint"},
+	}
+	step.Outcome = "cors_default_applied"
+	step.ResponseOps = append([]api.EdgeRuleHeaderOp(nil), responseOps...)
+	step.Reason = fmt.Sprintf("would stamp %d per-app default CORS response-header operation(s) and continue the request to the app", len(responseOps))
+	if input.Method == http.MethodOptions {
+		step.Reason += "; OPTIONS is not short-circuited by the app-level default"
+	}
+	return step, responseOps
 }
 
 func firstPhaseRule(rules []api.EdgeRuleResponse, kind, host, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {

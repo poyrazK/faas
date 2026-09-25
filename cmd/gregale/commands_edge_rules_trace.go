@@ -73,12 +73,17 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if input.BodyProvided {
+	if input.BodyProvided || edgeruletrace.RequiresAppCORSDefaultData(input.Headers) {
 		app, appErr := client.GetApp(context.Background(), input.App)
 		if appErr != nil {
 			return printErr("App lookup failed", appErr)
 		}
-		input.RequestBodyMaxBytes = app.EffectiveLimits.RequestBodyMaxBytes
+		input.AppCORSDefaultsLoaded = true
+		input.CORSDefaultEnabled = app.CORSDefaultEnabled
+		input.CORSDefaultOrigins = append([]string(nil), app.CORSDefaultOrigins...)
+		if input.BodyProvided {
+			input.RequestBodyMaxBytes = app.EffectiveLimits.RequestBodyMaxBytes
+		}
 		input, err = edgeruletrace.NormalizeInput(input)
 		if err != nil {
 			return printErr("Invalid trace input", err)
@@ -129,7 +134,11 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 	}
 	_, _ = fmt.Fprintf(osStdout, "simulation: status=%s outcome=%s final_path=%s\n", result.Simulation.Status, result.Simulation.Outcome, result.Simulation.FinalPath)
 	for _, step := range result.Simulation.Steps {
-		_, _ = fmt.Fprintf(osStdout, "  %-12s %-12s %s — %s\n", step.Phase, step.Outcome, step.RuleID, step.Reason)
+		label := step.RuleID
+		if label == "" {
+			label = step.Kind
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %-12s %-12s %s — %s\n", step.Phase, step.Outcome, label, step.Reason)
 	}
 	if result.Simulation.StatusCode != 0 {
 		_, _ = fmt.Fprintf(osStdout, "  response: status=%d", result.Simulation.StatusCode)

@@ -82,6 +82,9 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		}
 		if traceInput != nil {
 			traceContext := *traceInput
+			traceContext.AppCORSDefaultsLoaded = true
+			traceContext.CORSDefaultEnabled = app.CORSDefaultEnabled
+			traceContext.CORSDefaultOrigins = append([]string(nil), app.CORSDefaultOrigins...)
 			if presetErr == nil {
 				traceContext.CorsPresets = corsPresetResponsesFromRows(presets)
 			}
