@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -9,6 +10,8 @@ import (
 )
 
 const maxInt64 = int64(1<<63 - 1)
+
+var ErrMixedAPIConsumerRateCardCurrency = errors.New("billing: API consumer rate cards use multiple currencies")
 
 // APIConsumerUsageChargeBucket is the priced form of one durable usage
 // minute. RateCardID is empty when no card was effective for that minute.
@@ -64,7 +67,7 @@ func QuoteAPIConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APIC
 		if quote.Currency == "" {
 			quote.Currency = card.Currency
 		} else if quote.Currency != card.Currency {
-			return APIConsumerUsageQuote{}, fmt.Errorf("billing: API consumer rate cards use multiple currencies")
+			return APIConsumerUsageQuote{}, ErrMixedAPIConsumerRateCardCurrency
 		}
 	}
 

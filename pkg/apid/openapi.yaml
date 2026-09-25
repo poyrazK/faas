@@ -3784,6 +3784,161 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantUsageResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/platform-tenants/{id}/usage-statements:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose cross-app statements are requested.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantStatements
+      summary: List revisions of a customer's cross-app usage statement for one period.
+      parameters:
+        - name: period_start
+          in: query
+          required: true
+          description: Inclusive UTC-minute start of the statement period.
+          schema: { type: string, format: date-time }
+        - name: period_end
+          in: query
+          required: true
+          description: Exclusive UTC-minute end of the statement period.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Immutable statement revisions, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantStatement
+      summary: Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
+      description: A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed currencies are rejected.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerUsageStatementRequest' }
+      responses:
+        '200':
+          description: Existing draft or latest unchanged revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementResponse' }
+        '201':
+          description: New immutable statement revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/usage-statements/{statement_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant owning the statement.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Immutable cross-app statement revision UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantStatement
+      summary: Read an immutable cross-app statement revision.
+      responses:
+        '200':
+          description: Statement snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/finalize:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose statement revision is finalized.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Statement revision to finalize.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [platform-tenants]
+      operationId: finalizePlatformTenantStatement
+      summary: Finalize a fully priced, single-currency statement revision.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Finalized statement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose external billing receipt is requested.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Finalized statement revision to hand off.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantStatementHandoff
+      summary: Read the immutable external billing receipt.
+      responses:
+        '200':
+          description: Handoff receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementHandoffResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: claimPlatformTenantStatement
+      summary: Record one provider-neutral external billing handoff.
+      description: Rejects consumer windows already claimed by overlapping app-local statements. Adjustment revisions for this exact tenant and period may each be handed off once.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimAPIConsumerUsageStatementRequest' }
+      responses:
+        '200':
+          description: Existing identical handoff receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementHandoffResponse' }
+        '201':
+          description: New handoff receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementHandoffResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/account/platform-tenants/{id}/credentials:
     parameters:
       - name: id
@@ -22047,6 +22202,63 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantUsageBucketResponse' }
         as_of: { type: string, format: date-time }
+
+    PlatformTenantStatementLineResponse:
+      description: Immutable tenant-attributed UTC minute priced with one app's rate-card version.
+      type: object
+      required: [app_id, consumer_id, window_start, billable_units, amount_millicents]
+      properties:
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        window_start: { type: string, format: date-time }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        rate_card_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+
+    PlatformTenantStatementResponse:
+      description: One immutable initial or additive adjustment revision for a cross-app customer period.
+      type: object
+      required: [id, tenant_id, period_start, period_end, revision, status, billable_units, unpriced_units, amount_millicents, lines, as_of, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [draft, finalized, superseded] }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantStatementLineResponse' }
+        as_of: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        finalized_at: { type: string, format: date-time }
+
+    PlatformTenantStatementListResponse:
+      description: Immutable statement revisions for one tenant and period.
+      type: object
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantStatementResponse' }
+
+    PlatformTenantStatementHandoffResponse:
+      description: Provider-neutral receipt for a finalized cross-app statement revision.
+      type: object
+      required: [id, statement_id, external_invoice_id, currency, amount_millicents, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        statement_id: { type: string, format: uuid }
+        external_invoice_id: { type: string, minLength: 1, maxLength: 255 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
 
     CreateAPIConsumerRequest:
       description: "Stable customer identity to which consumer credentials can be attached."

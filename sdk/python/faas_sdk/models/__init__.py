@@ -1046,6 +1046,11 @@ from .platform_tenant_detail_response_status import PlatformTenantDetailResponse
 from .platform_tenant_list_response import PlatformTenantListResponse
 from .platform_tenant_response import PlatformTenantResponse
 from .platform_tenant_response_status import PlatformTenantResponseStatus
+from .platform_tenant_statement_handoff_response import PlatformTenantStatementHandoffResponse
+from .platform_tenant_statement_line_response import PlatformTenantStatementLineResponse
+from .platform_tenant_statement_list_response import PlatformTenantStatementListResponse
+from .platform_tenant_statement_response import PlatformTenantStatementResponse
+from .platform_tenant_statement_response_status import PlatformTenantStatementResponseStatus
 from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
 from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
 from .platform_tenant_usage_response import PlatformTenantUsageResponse
@@ -2578,6 +2583,11 @@ __all__ = (
     "PlatformTenantListResponse",
     "PlatformTenantResponse",
     "PlatformTenantResponseStatus",
+    "PlatformTenantStatementHandoffResponse",
+    "PlatformTenantStatementLineResponse",
+    "PlatformTenantStatementListResponse",
+    "PlatformTenantStatementResponse",
+    "PlatformTenantStatementResponseStatus",
     "PlatformTenantSurfaceResponse",
     "PlatformTenantUsageBucketResponse",
     "PlatformTenantUsageResponse",

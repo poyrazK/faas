@@ -60,6 +60,23 @@ The older app-local key-create endpoint still returns plaintext once, but no lon
 
 `GET /v1/account/platform-tenants/{id}` shows the linked consumers and surfaces. `GET /v1/account/platform-tenants?limit=100&offset=0` pages the registry. `GET /v1/account/platform-tenants/{id}/usage?since=…&until=…` sums durable request, error, and billable-unit facts attributed to that tenant **when each request occurred**, grouped by UTC day, app, and consumer. Linking a consumer later does not import its earlier traffic. Historical rows and requests from older gateways without a tenant claim remain unassigned; Gregale never guesses their owner from the current link. This is raw usage, not an invoice or a cross-app price quote.
 
+## Consolidate usage across apps
+
+Create a statement for an explicit UTC-minute period after configuring each app's versioned API-consumer rate cards:
+
+```http
+POST /v1/account/platform-tenants/{id}/usage-statements
+Content-Type: application/json
+
+{"period_start":"2026-09-01T00:00:00Z","period_end":"2026-10-01T00:00:00Z"}
+```
+
+The draft contains one frozen line per tenant-attributed app/consumer/minute with its effective rate-card ID, price, units, and amount. Its total is in one currency; mixed-currency apps return 422 rather than an invented converted total. Usage without an effective card remains explicitly unpriced and prevents finalization. Periods are at most 90 days, and one statement is limited to 20,000 minute lines; split larger periods. A period with no new billable usage does not create an empty statement.
+
+Use `GET /v1/account/platform-tenants/{id}/usage-statements?period_start=…&period_end=…` for all revisions, or `GET .../usage-statements/{statement_id}` for one snapshot. `POST .../{statement_id}/finalize` freezes the billable lifecycle once every unit is priced in a single currency. `POST .../{statement_id}/handoff` with `{"external_invoice_id":"your-invoice-123"}` records one provider-neutral receipt for your billing system; `GET` on the same path retrieves it. Gregale does not collect payment. A handoff conflicts if the same app consumer has already had an overlapping app-local statement handed off (or vice versa), and the same external invoice ID cannot be used on both paths.
+
+If rates or usage change while a draft is open, repeating create makes a new snapshot revision and marks the old draft `superseded`; unchanged drafts replay. A superseded draft cannot be finalized or handed off. If more events are delivered **after finalization**, repeat the original create request. Gregale returns the next revision containing **only the new units**, which can be finalized and handed off as an explicit adjustment. Repeating without new units returns the latest existing revision. Prior lines, prices, and external invoice references are never edited. These statements use the event-time tenant attribution, not the consumer's current link. See [ADR-238](adr/238-cross-app-platform-tenant-statements.md) for the overlap and reconciliation boundaries.
+
 New gateways keep unacknowledged usage in a local fsynced outbox and replay it after apid outages or restarts; disabling the optional request debugger no longer disables usage recording. Operators should monitor `gateway_consumer_usage_outbox_pending_records`, `_pending_bytes`, `_failures_total`, and `gateway_consumer_usage_delivery_failures_total`. Do not remove the spool to clear a backlog. This improves delivery after an event reaches the gateway exit funnel, but a crash before that event is fsynced can still miss a served request; see [ADR-234](adr/234-durable-consumer-usage-delivery.md) before using totals for customer invoices.
 
 To temporarily stop the linked credential and hostname paths, send `PATCH /v1/account/platform-tenants/{id}` with `{"status":"suspended"}`. New keys cannot be issued for its linked consumers while suspended. Linked hostnames are blocked when tenant-surface routing is enabled. Send `{"status":"active"}` to resume. Existing keys are not revoked or rotated by either transition.

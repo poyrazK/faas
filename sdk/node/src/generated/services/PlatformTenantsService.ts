@@ -7,6 +7,8 @@ import type { ApplyPlatformTenantCredentialsRequest } from '../models/ApplyPlatf
 import type { ApplyPlatformTenantCredentialsResponse } from '../models/ApplyPlatformTenantCredentialsResponse.js';
 import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRequest.js';
 import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
+import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
+import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
@@ -15,6 +17,9 @@ import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenant
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
 import type { PlatformTenantResponse } from '../models/PlatformTenantResponse.js';
+import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformTenantStatementHandoffResponse.js';
+import type { PlatformTenantStatementListResponse } from '../models/PlatformTenantStatementListResponse.js';
+import type { PlatformTenantStatementResponse } from '../models/PlatformTenantStatementResponse.js';
 import type { PlatformTenantSurfaceResponse } from '../models/PlatformTenantSurfaceResponse.js';
 import type { PlatformTenantUsageResponse } from '../models/PlatformTenantUsageResponse.js';
 import type { SetPlatformTenantStatusRequest } from '../models/SetPlatformTenantStatusRequest.js';
@@ -267,6 +272,231 @@ export class PlatformTenantsService {
       },
       errors: {
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List revisions of a customer's cross-app usage statement for one period.
+   * @returns PlatformTenantStatementListResponse Immutable statement revisions, oldest first.
+   * @throws ApiError
+   */
+  public static listPlatformTenantStatements({
+    id,
+    periodStart,
+    periodEnd,
+  }: {
+    /**
+     * Platform tenant whose cross-app statements are requested.
+     */
+    id: string,
+    /**
+     * Inclusive UTC-minute start of the statement period.
+     */
+    periodStart: string,
+    /**
+     * Exclusive UTC-minute end of the statement period.
+     */
+    periodEnd: string,
+  }): CancelablePromise<PlatformTenantStatementListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/usage-statements',
+      path: {
+        'id': id,
+      },
+      query: {
+        'period_start': periodStart,
+        'period_end': periodEnd,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
+   * A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed currencies are rejected.
+   * @returns PlatformTenantStatementResponse Existing draft or latest unchanged revision.
+   * @throws ApiError
+   */
+  public static createPlatformTenantStatement({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Platform tenant whose cross-app statements are requested.
+     */
+    id: string,
+    requestBody: CreateAPIConsumerUsageStatementRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/usage-statements',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read an immutable cross-app statement revision.
+   * @returns PlatformTenantStatementResponse Statement snapshot.
+   * @throws ApiError
+   */
+  public static getPlatformTenantStatement({
+    id,
+    statementId,
+  }: {
+    /**
+     * Platform tenant owning the statement.
+     */
+    id: string,
+    /**
+     * Immutable cross-app statement revision UUID.
+     */
+    statementId: string,
+  }): CancelablePromise<PlatformTenantStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Finalize a fully priced, single-currency statement revision.
+   * @returns PlatformTenantStatementResponse Finalized statement.
+   * @throws ApiError
+   */
+  public static finalizePlatformTenantStatement({
+    id,
+    statementId,
+    idempotencyKey,
+  }: {
+    /**
+     * Platform tenant whose statement revision is finalized.
+     */
+    id: string,
+    /**
+     * Statement revision to finalize.
+     */
+    statementId: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/finalize',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read the immutable external billing receipt.
+   * @returns PlatformTenantStatementHandoffResponse Handoff receipt.
+   * @throws ApiError
+   */
+  public static getPlatformTenantStatementHandoff({
+    id,
+    statementId,
+  }: {
+    /**
+     * Platform tenant whose external billing receipt is requested.
+     */
+    id: string,
+    /**
+     * Finalized statement revision to hand off.
+     */
+    statementId: string,
+  }): CancelablePromise<PlatformTenantStatementHandoffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Record one provider-neutral external billing handoff.
+   * Rejects consumer windows already claimed by overlapping app-local statements. Adjustment revisions for this exact tenant and period may each be handed off once.
+   * @returns PlatformTenantStatementHandoffResponse Existing identical handoff receipt.
+   * @throws ApiError
+   */
+  public static claimPlatformTenantStatement({
+    id,
+    statementId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Platform tenant whose external billing receipt is requested.
+     */
+    id: string,
+    /**
+     * Finalized statement revision to hand off.
+     */
+    statementId: string,
+    requestBody: ClaimAPIConsumerUsageStatementRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantStatementHandoffResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff',
+      path: {
+        'id': id,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 func (c *Client) ListPlatformTenants(ctx context.Context, limit, offset int) (PlatformTenantListResponse, error) {
@@ -71,4 +72,39 @@ func (c *Client) GetPlatformTenantUsage(ctx context.Context, id string, opts API
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func platformTenantStatementsPath(tenantID string) string {
+	return "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/usage-statements"
+}
+
+func (c *Client) CreatePlatformTenantStatement(ctx context.Context, tenantID string, req CreateAPIConsumerUsageStatementRequest) (PlatformTenantStatementResponse, error) {
+	var out PlatformTenantStatementResponse
+	return out, c.do(ctx, "POST", platformTenantStatementsPath(tenantID), req, &out)
+}
+
+func (c *Client) ListPlatformTenantStatements(ctx context.Context, tenantID string, start, end time.Time) (PlatformTenantStatementListResponse, error) {
+	var out PlatformTenantStatementListResponse
+	q := url.Values{"period_start": {start.UTC().Format(time.RFC3339)}, "period_end": {end.UTC().Format(time.RFC3339)}}
+	return out, c.do(ctx, "GET", platformTenantStatementsPath(tenantID)+"?"+q.Encode(), nil, &out)
+}
+
+func (c *Client) GetPlatformTenantStatement(ctx context.Context, tenantID, statementID string) (PlatformTenantStatementResponse, error) {
+	var out PlatformTenantStatementResponse
+	return out, c.do(ctx, "GET", platformTenantStatementsPath(tenantID)+"/"+url.PathEscape(statementID), nil, &out)
+}
+
+func (c *Client) FinalizePlatformTenantStatement(ctx context.Context, tenantID, statementID string) (PlatformTenantStatementResponse, error) {
+	var out PlatformTenantStatementResponse
+	return out, c.do(ctx, "POST", platformTenantStatementsPath(tenantID)+"/"+url.PathEscape(statementID)+"/finalize", struct{}{}, &out)
+}
+
+func (c *Client) ClaimPlatformTenantStatement(ctx context.Context, tenantID, statementID string, req ClaimAPIConsumerUsageStatementRequest) (PlatformTenantStatementHandoffResponse, error) {
+	var out PlatformTenantStatementHandoffResponse
+	return out, c.do(ctx, "POST", platformTenantStatementsPath(tenantID)+"/"+url.PathEscape(statementID)+"/handoff", req, &out)
+}
+
+func (c *Client) GetPlatformTenantStatementHandoff(ctx context.Context, tenantID, statementID string) (PlatformTenantStatementHandoffResponse, error) {
+	var out PlatformTenantStatementHandoffResponse
+	return out, c.do(ctx, "GET", platformTenantStatementsPath(tenantID)+"/"+url.PathEscape(statementID)+"/handoff", nil, &out)
 }
