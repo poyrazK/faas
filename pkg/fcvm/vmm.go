@@ -1179,6 +1179,41 @@ var loopMountSession = func(drive, prefix string, fn func(mountRoot string) erro
 	return fn(mp)
 }
 
+// openDriveRoot opens a mounted drive as an os.Root and returns target
+// relative to it. The drive is tenant-writable — the guest writes it at
+// runtime and the customer image seeds it — while vmmd writes it as root on
+// the host. Every write therefore resolves through os.Root: a symlink that
+// leaves the mount fails the write instead of redirecting it onto a host
+// path.
+func openDriveRoot(mountRoot, target string) (*os.Root, string, error) {
+	rel, err := filepath.Rel(mountRoot, target)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return nil, "", fmt.Errorf("drive path %q is outside mount %q", target, mountRoot)
+	}
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return nil, "", fmt.Errorf("open drive root: %w", err)
+	}
+	return root, rel, nil
+}
+
+// clearNonRegular removes a symlink or other non-regular entry at rel so the
+// write that follows creates a fresh file rather than following a link the
+// tenant planted, even one that stays inside the drive.
+func clearNonRegular(root *os.Root, rel string) error {
+	info, err := root.Lstat(rel)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode().IsRegular() {
+		return nil
+	}
+	return root.Remove(rel)
+}
+
 // writeDriveFile writes one file beneath a mounted drive, resolving the
 // full-rootfs marker the same way every Stage* method always has.
 func writeDriveFile(mountRoot, optimizedPath string, blob []byte, mode os.FileMode, label string) error {
@@ -1186,10 +1221,18 @@ func writeDriveFile(mountRoot, optimizedPath string, blob []byte, mode os.FileMo
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	root, rel, err := openDriveRoot(mountRoot, target)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", strings.TrimPrefix(filepath.Dir(optimizedPath), "upper/"), err)
 	}
-	if err := os.WriteFile(target, blob, mode); err != nil {
+	if err := clearNonRegular(root, rel); err != nil {
+		return fmt.Errorf("write %s: %w", label, err)
+	}
+	if err := root.WriteFile(rel, blob, mode); err != nil {
 		return fmt.Errorf("write %s: %w", label, err)
 	}
 	return nil
@@ -1208,11 +1251,18 @@ func writeWorkloadEnv(mountRoot, workloadName string, blob []byte) error {
 	if err != nil {
 		return err
 	}
-	target := filepath.Join(base, workloadName, "env.json")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	root, rel, err := openDriveRoot(mountRoot, filepath.Join(base, workloadName, "env.json"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return fmt.Errorf("mkdir workload env: %w", err)
 	}
-	if err := os.WriteFile(target, blob, 0o400); err != nil {
+	if err := clearNonRegular(root, rel); err != nil {
+		return fmt.Errorf("write workload env: %w", err)
+	}
+	if err := root.WriteFile(rel, blob, 0o400); err != nil {
 		return fmt.Errorf("write workload env: %w", err)
 	}
 	return nil
@@ -1235,13 +1285,18 @@ func writeServiceDiscoveryResolver(mountRoot string, ip netip.Addr) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	root, rel, err := openDriveRoot(mountRoot, target)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return fmt.Errorf("mkdir resolver directory: %w", err)
 	}
-	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove existing resolver file: %w", err)
 	}
-	if err := os.WriteFile(target, serviceDiscoveryResolverContents(ip), serviceDiscoveryResolverMode); err != nil {
+	if err := root.WriteFile(rel, serviceDiscoveryResolverContents(ip), serviceDiscoveryResolverMode); err != nil {
 		return fmt.Errorf("write resolver file: %w", err)
 	}
 	return nil
@@ -3598,8 +3653,16 @@ const apiEnvPath = "upper/etc/faas/env.json"
 // platform builder, so a malformed value fails closed instead of silently
 // writing state to a path guest-init will never read.
 func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
-	marker := filepath.Join(mountRoot, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
-	info, err := os.Lstat(marker)
+	// The marker lives on the tenant-writable drive, so it resolves through
+	// os.Root like every write: a symlinked parent directory cannot point
+	// the read at a host file.
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return "", fmt.Errorf("open drive root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	marker := strings.TrimPrefix(api.FullRootfsMarkerPath, "/")
+	info, err := root.Lstat(marker)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return filepath.Join(mountRoot, optimizedPath), nil
@@ -3609,7 +3672,10 @@ func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return "", fmt.Errorf("full-rootfs marker is not a regular file")
 	}
-	data, err := os.ReadFile(marker)
+	if info.Size() != int64(len(api.FullRootfsMarkerValue)) {
+		return "", fmt.Errorf("invalid full-rootfs marker payload")
+	}
+	data, err := root.ReadFile(marker)
 	if err != nil {
 		return "", fmt.Errorf("read full-rootfs marker: %w", err)
 	}
