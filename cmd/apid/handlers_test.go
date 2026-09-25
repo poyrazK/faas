@@ -405,6 +405,7 @@ func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
 			TimeoutS:  2,
 			Retries:   3,
 		},
+		ReadinessProbe: &api.DeploymentReadinessProbe{Path: "/readyz"},
 	}
 	rec := e.do(t, "POST", "/v1/apps/dep-app/deployments",
 		api.CreateDeploymentRequest{Image: "r/x@" + digest, Overrides: overrides}, nil)
@@ -444,6 +445,9 @@ func TestCreateDeployment_Overrides_HappyPath(t *testing.T) {
 	}
 	if resp.OverrideHealthcheck == nil || resp.OverrideHealthcheck.Path != "/healthz" {
 		t.Errorf("OverrideHealthcheck = %+v, want path=/healthz", resp.OverrideHealthcheck)
+	}
+	if resp.OverrideReadinessProbe == nil || resp.OverrideReadinessProbe.Path != "/readyz" {
+		t.Errorf("OverrideReadinessProbe = %+v, want path=/readyz", resp.OverrideReadinessProbe)
 	}
 }
 

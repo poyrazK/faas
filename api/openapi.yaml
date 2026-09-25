@@ -23927,7 +23927,12 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DeploymentHealthcheck'
             - type: 'null'
-          description: "Readiness-probe override. Persisted verbatim; the actual HTTP probe is a follow-up — today waitReady stays a bare TCP accept."
+          description: "Startup readiness-probe override echoed verbatim."
+        override_readiness_probe:
+          oneOf:
+            - $ref: '#/components/schemas/DeploymentReadinessProbe'
+            - type: 'null'
+          description: "Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing and restored after recovery; the VM is not restarted."
         override_liveness_probe:
           oneOf:
             - $ref: '#/components/schemas/DeploymentLivenessProbe'
@@ -25220,7 +25225,7 @@ components:
         payload: {}
 
     CreateDeploymentRequest:
-      description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients."
+      description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients."
       type: object
       properties:
         image:
@@ -25230,7 +25235,7 @@ components:
           oneOf:
             - $ref: '#/components/schemas/CreateDeploymentOverrides'
             - type: 'null'
-          description: "Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck). nil/omitted = deploy the image as-is."
+          description: "Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck, readiness_probe, liveness_probe). nil/omitted = deploy the image as-is."
         # Issue #472 / ADR-054: per-deploy require_signed opt-in.
         # Only honoured when effective app signature enforcement is
         # already false (i.e. the customer is volunteering to gate
@@ -25342,10 +25347,9 @@ components:
 
     CreateDeploymentOverrides:
       description: |
-        Fargate-shaped deploy-time override object on `POST /v1/apps/{slug}/deployments`
-        (issue #460 / ADR-053). Field list is FROZEN — six fields, no more. Any extra
-        field on this object 400s the request. ADR-053 §Decision 1 documents the freeze;
-        the handler enforces it via `DisallowUnknownFields` on the JSON decoder.
+        Deploy-time override object on `POST /v1/apps/{slug}/deployments`
+        (issue #460 / ADR-053). Unknown fields 400 the request; each supported
+        field has an explicit persistence and runtime contract.
 
         - `entrypoint` replaces the OCI image's ENTRYPOINT/CMD argv at exec time.
         - `cmd` is appended to `entrypoint` (mirrors the OCI runtime contract).
@@ -25357,8 +25361,9 @@ components:
         - `env` + `env_secrets` share the plan `EnvVarsMax` quota — no bypass by
           mixing the two surfaces.
         - `port` is per-deployment (1..65535; 0 = absent / fall back to image default).
-        - `healthcheck` is the readiness-probe shape; the actual HTTP probe ships
-          in a follow-up ADR.
+        - `healthcheck` configures startup readiness admission.
+        - `readiness_probe` is an optional recurring traffic gate, independent of
+          the one-shot startup check and VM liveness policy.
       type: object
       properties:
         entrypoint:
@@ -25390,7 +25395,12 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DeploymentHealthcheck'
             - type: 'null'
-          description: "Readiness-probe shape. Persisted today; the HTTP probe variant ships in a follow-up ADR."
+          description: "Startup readiness-probe shape. The selected action gates instance startup before it becomes available."
+        readiness_probe:
+          oneOf:
+            - $ref: '#/components/schemas/DeploymentReadinessProbe'
+            - type: 'null'
+          description: "Optional recurring primary-app traffic gate. Failed probes withdraw a running instance from routing; successful probes restore it without restarting the VM."
         liveness_probe:
           oneOf:
             - $ref: '#/components/schemas/DeploymentLivenessProbe'
@@ -25564,10 +25574,10 @@ components:
 
     DeploymentHealthcheck:
       description: |
-        Readiness-probe shape on the deploy-time override object (issue #460 /
+        Startup healthcheck shape on the deploy-time override object (issue #460 /
         ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
-        Check) selects the readiness action. The gRPC probe uses the app's
-        published port; an empty service checks overall server health.
+        Check) selects the startup admission action. The gRPC probe uses the
+        app's published port; an empty service checks overall server health.
 
         Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
         - Exactly one of `path` and `grpc` must be set.
@@ -25600,6 +25610,24 @@ components:
       description: "Standard gRPC health.v1 readiness probe. An omitted or empty service checks overall server health."
       properties:
         service: { type: string, maxLength: 256, description: "Service passed to the health.v1 Check request; omit it to query the server rather than a named service." }
+
+    DeploymentReadinessProbe:
+      description: |
+        Continuous primary-app readiness policy. It is evaluated only after
+        startup readiness succeeds. Once `failure_threshold` consecutive checks
+        fail, the running instance is removed from request routing. A successful
+        check restores routing; readiness failures never restart the VM.
+
+        Defaults are period 5 seconds, timeout 2 seconds, and failure threshold
+        3. Zero means use the corresponding default. Exactly one of `path`
+        (HTTP) and `grpc` (standard gRPC health.v1 Check) is required.
+      type: object
+      properties:
+        path: { type: string, pattern: '^/', description: "HTTP path requested on the app's runtime port; must start with `/`. Set exactly one of path or grpc." }
+        grpc: { $ref: '#/components/schemas/DeploymentGRPCHealthcheck', description: "Use standard gRPC health.v1 Check. Set exactly one of path or grpc." }
+        period_s: { type: integer, minimum: 0, maximum: 60, description: "Probe interval in seconds; 0 = default (5)." }
+        timeout_s: { type: integer, minimum: 0, maximum: 5, description: "Per-probe timeout in seconds; 0 = default (2)." }
+        failure_threshold: { type: integer, minimum: 0, maximum: 10, description: "Consecutive failures before traffic is withdrawn; 0 = default (3). A passing probe immediately restores routing." }
 
     DeploymentLivenessProbe:
       description: |

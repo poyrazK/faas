@@ -546,6 +546,7 @@ from .deployment_live_webhook_payload import DeploymentLiveWebhookPayload
 from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayloadStatus
 from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
+from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
@@ -2079,6 +2080,7 @@ __all__ = (
     "DeploymentLiveWebhookPayload",
     "DeploymentLiveWebhookPayloadStatus",
     "DeploymentPreviewURL",
+    "DeploymentReadinessProbe",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",

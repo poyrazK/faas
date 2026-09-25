@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from ..models.build_plan import BuildPlan
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+    from ..models.deployment_readiness_probe import DeploymentReadinessProbe
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
@@ -134,8 +135,10 @@ class DeploymentResponse:
     override_port: int | Unset = UNSET
     """Listen-port override; 0 = absent (fall back to image default)."""
     override_healthcheck: DeploymentHealthcheck | None | Unset = UNSET
-    """Readiness-probe override. Persisted verbatim; the actual HTTP probe is a follow-up — today waitReady stays a
-    bare TCP accept."""
+    """Startup readiness-probe override echoed verbatim."""
+    override_readiness_probe: DeploymentReadinessProbe | None | Unset = UNSET
+    """Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing
+    and restored after recovery; the VM is not restarted."""
     override_liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
     """Liveness-probe override echoed verbatim (issue #554 / ADR-078). nil when the deployment used the per-plan
     default (Hobby/Pro/Scale → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so
@@ -256,6 +259,7 @@ class DeploymentResponse:
         from ..models.build_plan import BuildPlan
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_readiness_probe import DeploymentReadinessProbe
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
@@ -376,6 +380,14 @@ class DeploymentResponse:
             override_healthcheck = self.override_healthcheck.to_dict()
         else:
             override_healthcheck = self.override_healthcheck
+
+        override_readiness_probe: dict[str, Any] | None | Unset
+        if isinstance(self.override_readiness_probe, Unset):
+            override_readiness_probe = UNSET
+        elif isinstance(self.override_readiness_probe, DeploymentReadinessProbe):
+            override_readiness_probe = self.override_readiness_probe.to_dict()
+        else:
+            override_readiness_probe = self.override_readiness_probe
 
         override_liveness_probe: dict[str, Any] | None | Unset
         if isinstance(self.override_liveness_probe, Unset):
@@ -606,6 +618,8 @@ class DeploymentResponse:
             field_dict["override_port"] = override_port
         if override_healthcheck is not UNSET:
             field_dict["override_healthcheck"] = override_healthcheck
+        if override_readiness_probe is not UNSET:
+            field_dict["override_readiness_probe"] = override_readiness_probe
         if override_liveness_probe is not UNSET:
             field_dict["override_liveness_probe"] = override_liveness_probe
         if min_instances is not UNSET:
@@ -672,6 +686,7 @@ class DeploymentResponse:
         from ..models.build_plan import BuildPlan
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_readiness_probe import DeploymentReadinessProbe
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
@@ -834,6 +849,23 @@ class DeploymentResponse:
             return cast(DeploymentHealthcheck | None | Unset, data)
 
         override_healthcheck = _parse_override_healthcheck(d.pop("override_healthcheck", UNSET))
+
+        def _parse_override_readiness_probe(data: object) -> DeploymentReadinessProbe | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                override_readiness_probe_type_0 = DeploymentReadinessProbe.from_dict(data)
+
+                return override_readiness_probe_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DeploymentReadinessProbe | None | Unset, data)
+
+        override_readiness_probe = _parse_override_readiness_probe(d.pop("override_readiness_probe", UNSET))
 
         def _parse_override_liveness_probe(data: object) -> DeploymentLivenessProbe | None | Unset:
             if data is None:
@@ -1229,6 +1261,7 @@ class DeploymentResponse:
             override_env_secret_refs=override_env_secret_refs,
             override_port=override_port,
             override_healthcheck=override_healthcheck,
+            override_readiness_probe=override_readiness_probe,
             override_liveness_probe=override_liveness_probe,
             min_instances=min_instances,
             scan=scan,

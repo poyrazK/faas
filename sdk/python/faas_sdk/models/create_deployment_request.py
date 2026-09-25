@@ -34,17 +34,18 @@ T = TypeVar("T", bound="CreateDeploymentRequest")
 class CreateDeploymentRequest:
     """Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload.
     The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
-    different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional
-    `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse
-    proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
+    different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe
+    without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an
+    OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for
+    existing clients.
 
     """
 
     image: str | Unset = UNSET
     """registry.gregale.dev/...@sha256:... — digest-pinned OCI reference."""
     overrides: CreateDeploymentOverrides | None | Unset = UNSET
-    """Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck). nil/omitted = deploy the image
-    as-is."""
+    """Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck, readiness_probe,
+    liveness_probe). nil/omitted = deploy the image as-is."""
     require_signed: bool | None | Unset = UNSET
     """Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit the app's effective signature
     policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid

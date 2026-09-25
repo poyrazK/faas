@@ -287,6 +287,7 @@ export type { DeploymentListResponse } from './models/DeploymentListResponse.js'
 export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.js';
 export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
+export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
 export type { DeployTokenResponse } from './models/DeployTokenResponse.js';

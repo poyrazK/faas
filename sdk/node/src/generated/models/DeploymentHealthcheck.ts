@@ -4,10 +4,10 @@
 /* eslint-disable */
 import type { DeploymentGRPCHealthcheck } from './DeploymentGRPCHealthcheck.js';
 /**
- * Readiness-probe shape on the deploy-time override object (issue #460 /
+ * Startup healthcheck shape on the deploy-time override object (issue #460 /
  * ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
- * Check) selects the readiness action. The gRPC probe uses the app's
- * published port; an empty service checks overall server health.
+ * Check) selects the startup admission action. The gRPC probe uses the
+ * app's published port; an empty service checks overall server health.
  *
  * Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
  * - Exactly one of `path` and `grpc` must be set.
