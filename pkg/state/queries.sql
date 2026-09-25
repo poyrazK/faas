@@ -2142,6 +2142,35 @@ JOIN percentiles USING (route, method)
 ORDER BY totals.requests DESC, totals.method ASC, totals.route ASC
 LIMIT $5;
 
+-- name: RequestTelemetryAnalyticsByDeployment :many
+-- Bounded deployment cost allocation for the customer request analytics
+-- window. Request counts are weighted by the publisher's collapsed `count`.
+-- The window total is computed before LIMIT so the handler can allocate the
+-- omitted deployments into a visible __other__ bucket without an unbounded
+-- response.
+WITH per_deployment AS (
+    SELECT deployment_id::text AS deployment_id,
+           COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
+           COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
+           COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
+           SUM(count)::bigint AS requests
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+    GROUP BY deployment_id
+)
+SELECT deployment_id,
+       commit_sha,
+       deployment_tag,
+       deployment_created_at,
+       requests,
+       SUM(requests) OVER ()::bigint AS total_requests
+FROM per_deployment
+ORDER BY requests DESC, deployment_id ASC
+LIMIT $5;
+
 -- name: RequestTelemetryAnalyticsByDimension :many
 -- Top-N customer analytics grouped by one of the bounded dimensions. Rows
 -- outside the top-N are folded into __other__ so a customer cannot turn this

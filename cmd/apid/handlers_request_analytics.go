@@ -34,6 +34,7 @@ import (
 
 const requestAnalyticsRouteLimit = 50
 const requestAnalyticsGroupLimit = 50
+const requestAnalyticsDeploymentLimit = 50
 
 const requestAnalyticsRouteMaxLength = 256
 
@@ -44,6 +45,10 @@ var requestAnalyticsMethods = map[string]struct{}{
 
 var requestAnalyticsGroupBys = map[string]struct{}{
 	"route": {}, "country": {}, "referrer_host": {}, "ua_family": {}, "status": {}, "consumer_id": {},
+}
+
+type requestAnalyticsDeploymentReader interface {
+	RequestTelemetryAnalyticsByDeployment(context.Context, sqlc.RequestTelemetryAnalyticsByDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error)
 }
 
 // getAppRequestAnalytics serves the bounded, aggregated request analytics
@@ -304,6 +309,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	}
 
 	var computeCost *api.RequestAnalyticsComputeCost
+	var deploymentCosts *api.RequestAnalyticsDeploymentCostBreakdown
 	if groupBy == "route" {
 		// Usage and request analytics use the exact same bounded window. The
 		// app's raw RAM-hours are valued at Gregale's current compute overage
@@ -333,6 +339,65 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			Basis:                     "raw_ram_hours_at_current_overage_rate_before_allowance",
 			RequestCount:              requestCount,
 		}
+
+		if deploymentStore, ok := s.store.(requestAnalyticsDeploymentReader); ok {
+			deploymentRows, err := deploymentStore.RequestTelemetryAnalyticsByDeployment(ctx, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
+				AppID:        params.AppID,
+				AccountID:    params.AccountID,
+				ReceivedAt:   params.ReceivedAt,
+				ReceivedAt_2: params.ReceivedAt_2,
+				Limit:        requestAnalyticsDeploymentLimit,
+			})
+			if err != nil {
+				return api.RequestAnalyticsResponse{}, err
+			}
+			var totalDeploymentRequests int64
+			if len(deploymentRows) > 0 {
+				totalDeploymentRequests = deploymentRows[0].TotalRequests
+			}
+			deploymentCounts := make([]int64, len(deploymentRows)+1)
+			var listedRequests int64
+			for i, row := range deploymentRows {
+				deploymentCounts[i] = row.Requests
+				listedRequests += row.Requests
+			}
+			if totalDeploymentRequests < listedRequests {
+				totalDeploymentRequests = listedRequests
+			}
+			otherDeploymentRequests := totalDeploymentRequests - listedRequests
+			deploymentCounts[len(deploymentRows)] = otherDeploymentRequests
+			deploymentAllocations, deploymentRequestCount, deploymentAllocatedMillicents := allocateRequestShareMillicents(deploymentCounts, estimatedMillicents)
+			deployments := make([]api.RequestAnalyticsDeploymentCost, 0, len(deploymentRows))
+			for i, row := range deploymentRows {
+				sharePct := 0.0
+				if deploymentRequestCount > 0 {
+					sharePct = float64(row.Requests) * 100 / float64(deploymentRequestCount)
+				}
+				deployments = append(deployments, api.RequestAnalyticsDeploymentCost{
+					DeploymentID:                   row.DeploymentID,
+					CommitSHA:                      requestAnalyticsDimensionString(row.CommitSha),
+					DeploymentTag:                  requestAnalyticsDimensionString(row.DeploymentTag),
+					DeploymentCreatedAt:            requestAnalyticsDimensionString(row.DeploymentCreatedAt),
+					Requests:                       row.Requests,
+					RequestSharePct:                sharePct,
+					EstimatedComputeCostMillicents: deploymentAllocations[i],
+				})
+			}
+			otherSharePct := 0.0
+			if deploymentRequestCount > 0 {
+				otherSharePct = float64(otherDeploymentRequests) * 100 / float64(deploymentRequestCount)
+			}
+			deploymentCosts = &api.RequestAnalyticsDeploymentCostBreakdown{
+				EstimatedMillicents:   estimatedMillicents,
+				AllocatedMillicents:   deploymentAllocatedMillicents,
+				UnallocatedMillicents: estimatedMillicents - deploymentAllocatedMillicents,
+				OtherMillicents:       deploymentAllocations[len(deploymentRows)],
+				OtherRequests:         otherDeploymentRequests,
+				OtherRequestSharePct:  otherSharePct,
+				RequestCount:          deploymentRequestCount,
+				Deployments:           deployments,
+			}
+		}
 	}
 
 	return api.RequestAnalyticsResponse{
@@ -356,6 +421,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		RoutesLimit:     requestAnalyticsRouteLimit,
 		RoutesTruncated: groupsTruncated && groupBy == "route",
 		ComputeCost:     computeCost,
+		DeploymentCosts: deploymentCosts,
 		AsOf:            window.AsOf.Format(time.RFC3339Nano),
 	}, nil
 }
@@ -565,6 +631,7 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		RoutesLimit:     response.RoutesLimit,
 		RoutesTruncated: response.RoutesTruncated,
 		ComputeCost:     requestAnalyticsComputeCostView(response.ComputeCost),
+		DeploymentCosts: requestAnalyticsDeploymentCostBreakdownView(response.DeploymentCosts),
 		AsOf:            response.AsOf,
 		SelectedRoute:   selectedRoute,
 		SelectedMethod:  selectedMethod,
@@ -615,6 +682,38 @@ func requestAnalyticsComputeCostView(cost *api.RequestAnalyticsComputeCost) *das
 		OtherRoutesRequestSharePct: cost.OtherRouteRequestSharePct,
 		RateEUR:                    millicentsAsEUR(cost.RateMillicentsPerGBHour),
 		RequestCount:               cost.RequestCount,
+	}
+}
+
+func requestAnalyticsDeploymentCostBreakdownView(cost *api.RequestAnalyticsDeploymentCostBreakdown) *dashboard.RequestAnalyticsDeploymentCostBreakdownView {
+	if cost == nil {
+		return nil
+	}
+	deployments := make([]dashboard.RequestAnalyticsDeploymentCostView, 0, len(cost.Deployments))
+	for _, deployment := range cost.Deployments {
+		revision := deployment.CommitSHA
+		if revision == "" {
+			revision = deployment.DeploymentID
+		}
+		deployments = append(deployments, dashboard.RequestAnalyticsDeploymentCostView{
+			DeploymentID:    deployment.DeploymentID,
+			Revision:        revision,
+			Tag:             deployment.DeploymentTag,
+			CreatedAt:       deployment.DeploymentCreatedAt,
+			Requests:        deployment.Requests,
+			RequestSharePct: deployment.RequestSharePct,
+			EstimatedEUR:    millicentsAsEUR(deployment.EstimatedComputeCostMillicents),
+		})
+	}
+	return &dashboard.RequestAnalyticsDeploymentCostBreakdownView{
+		EstimatedEUR:   millicentsAsEUR(cost.EstimatedMillicents),
+		AllocatedEUR:   millicentsAsEUR(cost.AllocatedMillicents),
+		UnallocatedEUR: millicentsAsEUR(cost.UnallocatedMillicents),
+		OtherEUR:       millicentsAsEUR(cost.OtherMillicents),
+		OtherRequests:  cost.OtherRequests,
+		OtherSharePct:  cost.OtherRequestSharePct,
+		RequestCount:   cost.RequestCount,
+		Deployments:    deployments,
 	}
 }
 

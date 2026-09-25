@@ -689,6 +689,28 @@
                   {{end}}
                 </tbody>
               </table>
+              {{with .Data.RequestAnalytics.DeploymentCosts}}
+                <h3>Estimated compute by deployment</h3>
+                <p class="muted">€{{.EstimatedEUR}} for this app and window, split across immutable deployments by request share. Allocated: €{{.AllocatedEUR}}; this is the same raw-compute estimate shown above, not a separate charge.</p>
+                {{if .Deployments}}
+                  <table aria-label="Estimated compute by deployment">
+                    <thead><tr><th>Deployment</th><th>Revision</th><th>Requests</th><th>Request share</th><th>Est. compute</th></tr></thead>
+                    <tbody>
+                      {{range .Deployments}}
+                        <tr>
+                          <td><code>{{printf "%.12s" .DeploymentID}}</code>{{if .CreatedAt}}<small class="muted"> · {{.CreatedAt}}</small>{{end}}</td>
+                          <td>{{if .Tag}}<code>{{.Tag}}</code>{{else}}<code>{{printf "%.12s" .Revision}}</code>{{end}}</td>
+                          <td>{{.Requests}}</td>
+                          <td>{{printf "%.2f" .RequestSharePct}}%</td>
+                          <td>€{{.EstimatedEUR}}</td>
+                        </tr>
+                      {{end}}
+                    </tbody>
+                  </table>
+                {{end}}
+                {{if gt .OtherRequests 0}}<p class="muted">Other deployments (outside the top list): {{.OtherRequests}} requests ({{printf "%.2f" .OtherSharePct}}%), allocated €{{.OtherEUR}}.</p>{{end}}
+                {{if ne .UnallocatedEUR "0.00000"}}<p class="muted">€{{.UnallocatedEUR}} remains unallocated because no deployment requests were observed.</p>{{end}}
+              {{end}}
               {{if .Data.RequestAnalytics.RoutesTruncated}}<p class="muted">Showing the top {{.Data.RequestAnalytics.RoutesLimit}} route/method combinations. Use the JSON endpoint for the same bounded result.</p>{{end}}
               {{end}}
             {{else if .Data.RequestAnalytics.Groups}}

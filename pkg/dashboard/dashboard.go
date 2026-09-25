@@ -1812,6 +1812,7 @@ type RequestAnalyticsView struct {
 	RoutesLimit           int
 	RoutesTruncated       bool
 	ComputeCost           *RequestAnalyticsComputeCostView
+	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdownView
 	AsOf                  string
 	Bucket                string
 	SelectedRoute         string
@@ -1835,6 +1836,27 @@ type RequestAnalyticsComputeCostView struct {
 	OtherRoutesRequestSharePct float64
 	RateEUR                    string
 	RequestCount               int64
+}
+
+type RequestAnalyticsDeploymentCostBreakdownView struct {
+	EstimatedEUR   string
+	AllocatedEUR   string
+	UnallocatedEUR string
+	OtherEUR       string
+	OtherRequests  int64
+	OtherSharePct  float64
+	RequestCount   int64
+	Deployments    []RequestAnalyticsDeploymentCostView
+}
+
+type RequestAnalyticsDeploymentCostView struct {
+	DeploymentID    string
+	Revision        string
+	Tag             string
+	CreatedAt       string
+	Requests        int64
+	RequestSharePct float64
+	EstimatedEUR    string
 }
 
 type RequestAnalyticsGroupView struct {

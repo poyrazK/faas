@@ -9893,6 +9893,31 @@ type RequestAnalyticsComputeCost struct {
 	RequestCount              int64   `json:"request_count"`
 }
 
+// RequestAnalyticsDeploymentCost is the estimated share of this app's compute
+// value attributed to one immutable deployment by its observed request share.
+type RequestAnalyticsDeploymentCost struct {
+	DeploymentID                   string  `json:"deployment_id"`
+	CommitSHA                      string  `json:"commit_sha,omitempty"`
+	DeploymentTag                  string  `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt            string  `json:"deployment_created_at,omitempty"`
+	Requests                       int64   `json:"requests"`
+	RequestSharePct                float64 `json:"request_share_pct"`
+	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents"`
+}
+
+// RequestAnalyticsDeploymentCostBreakdown is the bounded deployment split of
+// this app's estimated raw compute value for one analytics window.
+type RequestAnalyticsDeploymentCostBreakdown struct {
+	EstimatedMillicents   int64                            `json:"estimated_millicents"`
+	AllocatedMillicents   int64                            `json:"allocated_millicents"`
+	UnallocatedMillicents int64                            `json:"unallocated_millicents"`
+	OtherMillicents       int64                            `json:"other_millicents"`
+	OtherRequests         int64                            `json:"other_requests"`
+	OtherRequestSharePct  float64                          `json:"other_request_share_pct"`
+	RequestCount          int64                            `json:"request_count"`
+	Deployments           []RequestAnalyticsDeploymentCost `json:"deployments"`
+}
+
 // RequestAnalyticsGroup is one top-N aggregate for the selected analytics
 // dimension. Value is a route for group_by=route, an ISO country, hostname,
 // normalized user-agent family, status code, or stable API consumer UUID for
@@ -9914,27 +9939,28 @@ type RequestAnalyticsGroup struct {
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
-	Slug            string                       `json:"slug"`
-	Since           string                       `json:"since"`
-	From            string                       `json:"from"`
-	Until           string                       `json:"until"`
-	WindowClamped   bool                         `json:"window_clamped"`
-	Requests        int64                        `json:"requests"`
-	ErrorRequests   int64                        `json:"error_requests"`
-	ErrorRatePct    float64                      `json:"error_rate_pct"`
-	ColdBoots       int64                        `json:"cold_boots"`
-	P50MS           int                          `json:"p50_ms"`
-	P95MS           int                          `json:"p95_ms"`
-	P99MS           int                          `json:"p99_ms"`
-	GroupBy         string                       `json:"group_by"`
-	Groups          []RequestAnalyticsGroup      `json:"groups"`
-	GroupsLimit     int                          `json:"groups_limit"`
-	GroupsTruncated bool                         `json:"groups_truncated"`
-	Routes          []RequestAnalyticsRoute      `json:"routes"`
-	RoutesLimit     int                          `json:"routes_limit"`
-	RoutesTruncated bool                         `json:"routes_truncated"`
-	ComputeCost     *RequestAnalyticsComputeCost `json:"compute_cost,omitempty"`
-	AsOf            string                       `json:"as_of"`
+	Slug            string                                   `json:"slug"`
+	Since           string                                   `json:"since"`
+	From            string                                   `json:"from"`
+	Until           string                                   `json:"until"`
+	WindowClamped   bool                                     `json:"window_clamped"`
+	Requests        int64                                    `json:"requests"`
+	ErrorRequests   int64                                    `json:"error_requests"`
+	ErrorRatePct    float64                                  `json:"error_rate_pct"`
+	ColdBoots       int64                                    `json:"cold_boots"`
+	P50MS           int                                      `json:"p50_ms"`
+	P95MS           int                                      `json:"p95_ms"`
+	P99MS           int                                      `json:"p99_ms"`
+	GroupBy         string                                   `json:"group_by"`
+	Groups          []RequestAnalyticsGroup                  `json:"groups"`
+	GroupsLimit     int                                      `json:"groups_limit"`
+	GroupsTruncated bool                                     `json:"groups_truncated"`
+	Routes          []RequestAnalyticsRoute                  `json:"routes"`
+	RoutesLimit     int                                      `json:"routes_limit"`
+	RoutesTruncated bool                                     `json:"routes_truncated"`
+	ComputeCost     *RequestAnalyticsComputeCost             `json:"compute_cost,omitempty"`
+	DeploymentCosts *RequestAnalyticsDeploymentCostBreakdown `json:"deployment_costs,omitempty"`
+	AsOf            string                                   `json:"as_of"`
 }
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned

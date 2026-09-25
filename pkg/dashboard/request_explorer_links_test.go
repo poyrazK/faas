@@ -23,6 +23,13 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 				ComputeCost: &dashboard.RequestAnalyticsComputeCostView{
 					EstimatedEUR: "1.23456", AllocatedEUR: "1.23456", RateEUR: "0.01000", RequestCount: 3,
 				},
+				DeploymentCosts: &dashboard.RequestAnalyticsDeploymentCostBreakdownView{
+					EstimatedEUR: "1.23456", AllocatedEUR: "1.23456", RequestCount: 3,
+					Deployments: []dashboard.RequestAnalyticsDeploymentCostView{{
+						DeploymentID: "deploy-1234567890", Revision: "abcdef1234567890", Tag: "v39",
+						Requests: 3, RequestSharePct: 100, EstimatedEUR: "1.23456",
+					}},
+				},
 				Routes: []dashboard.RequestAnalyticsRouteView{{
 					Route: "/checkout", Method: "GET", Requests: 3,
 					EstimatedComputeCostEUR: "1.23456", RequestSharePct: 100,
@@ -41,6 +48,8 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 		"Estimated compute value for this window: €1.23456",
 		"Est. compute",
 		"€1.23456",
+		"Estimated compute by deployment",
+		"v39",
 		"Inspect requests",
 		"/dashboard/apps/demo/debug?route=%2Fcheckout&amp;since=24h",
 		"?analytics_by=consumer_id",

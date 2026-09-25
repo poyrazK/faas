@@ -32940,6 +32940,35 @@ components:
         basis: { type: string, enum: [raw_ram_hours_at_current_overage_rate_before_allowance] }
         request_count: { type: integer, format: int64, minimum: 0 }
 
+    RequestAnalyticsDeploymentCost:
+      type: object
+      description: "One deployment's estimated share of app raw compute value, allocated by its observed request share."
+      required: [deployment_id, requests, request_share_pct, estimated_compute_cost_millicents]
+      properties:
+        deployment_id: { type: string, description: "Immutable deployment UUID." }
+        commit_sha: { type: string }
+        deployment_tag: { type: string }
+        deployment_created_at: { type: string }
+        requests: { type: integer, format: int64, minimum: 0 }
+        request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0 }
+
+    RequestAnalyticsDeploymentCostBreakdown:
+      type: object
+      description: "Bounded deployment allocation of the app's estimated raw compute value for the analytics window. It is not an invoice amount."
+      required: [estimated_millicents, allocated_millicents, unallocated_millicents, other_millicents, other_requests, other_request_share_pct, request_count, deployments]
+      properties:
+        estimated_millicents: { type: integer, format: int64, minimum: 0 }
+        allocated_millicents: { type: integer, format: int64, minimum: 0 }
+        unallocated_millicents: { type: integer, format: int64, minimum: 0 }
+        other_millicents: { type: integer, format: int64, minimum: 0, description: "Value allocated to deployments outside the top-N list." }
+        other_requests: { type: integer, format: int64, minimum: 0 }
+        other_request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        deployments:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAnalyticsDeploymentCost' }
+
     RequestAnalyticsGroup:
       type: object
       description: "Bounded aggregate for a selected analytics dimension. Value is a route, country, hostname, normalized client family, status code, stable consumer UUID, __anonymous__, or __other__."
@@ -32988,6 +33017,8 @@ components:
         routes_truncated: { type: boolean, description: "True when more route rows matched than routes_limit." }
         compute_cost:
           $ref: '#/components/schemas/RequestAnalyticsComputeCost'
+        deployment_costs:
+          $ref: '#/components/schemas/RequestAnalyticsDeploymentCostBreakdown'
         as_of: { type: string, format: date-time, description: "RFC3339Nano UTC assembly timestamp." }
 
     RequestAnalyticsTimeseriesPoint:
