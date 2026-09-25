@@ -124,9 +124,10 @@ func TestSidecars_Validate_Dependencies(t *testing.T) {
 	limits := testSidecarLimits()
 	image := "ghcr.io/me/x@sha256:" + strings.Repeat("a", 64)
 	cases := []struct {
-		name string
-		ss   Sidecars
-		want string
+		name             string
+		ss               Sidecars
+		mainDependencies []WorkloadDependency
+		want             string
 	}{
 		{
 			name: "valid-main-and-init",
@@ -154,10 +155,41 @@ func TestSidecars_Validate_Dependencies(t *testing.T) {
 			}}},
 			want: "max is",
 		},
+		{
+			name: "primary-depends-on-healthy-long-running-companion",
+			ss:   Sidecars{{Name: "proxy", Image: image, Type: SidecarTypeSidecar}},
+			mainDependencies: []WorkloadDependency{
+				{Name: "proxy", Condition: WorkloadDependencyHealthy},
+			},
+		},
+		{
+			name: "primary-depends-on-unknown-companion",
+			mainDependencies: []WorkloadDependency{
+				{Name: "missing", Condition: WorkloadDependencyHealthy},
+			},
+			want: "unknown companion",
+		},
+		{
+			name: "primary-cannot-explicitly-depend-on-init-companion",
+			ss:   Sidecars{{Name: "migrate", Image: image, Type: SidecarTypeInit}},
+			mainDependencies: []WorkloadDependency{
+				{Name: "migrate", Condition: WorkloadDependencyCompletedSuccessfully},
+			},
+			want: "init companions already gate primary startup",
+		},
+		{
+			name: "primary-companion-cycle-is-rejected",
+			ss: Sidecars{{Name: "proxy", Image: image, Type: SidecarTypeSidecar,
+				DependsOn: []WorkloadDependency{{Name: "main", Condition: WorkloadDependencyStarted}}}},
+			mainDependencies: []WorkloadDependency{
+				{Name: "proxy", Condition: WorkloadDependencyHealthy},
+			},
+			want: "cycle",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := tc.ss.Validate(limits)
+			p := tc.ss.ValidateWithMainDependencies(tc.mainDependencies, limits)
 			if tc.want == "" {
 				if p != nil {
 					t.Fatalf("Validate() = %v, want nil", p)

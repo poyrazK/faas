@@ -4929,7 +4929,8 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		len(d.OverrideEnvSecrets) > 0 ||
 		d.OverridePort != 0 ||
 		len(d.OverrideHealthcheck) > 0 ||
-		len(d.OverrideReadinessProbe) > 0
+		len(d.OverrideReadinessProbe) > 0 ||
+		len(d.OverrideMainDependsOn) > 0
 	resp := api.DeploymentResponse{
 		StageState:        append(json.RawMessage(nil), d.StageState...),
 		ID:                d.ID,
@@ -5069,6 +5070,12 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		var rp api.DeploymentReadinessProbe
 		if err := json.Unmarshal(d.OverrideReadinessProbe, &rp); err == nil {
 			resp.OverrideReadinessProbe = &rp
+		}
+	}
+	if len(d.OverrideMainDependsOn) > 0 {
+		var dependencies []api.WorkloadDependency
+		if err := json.Unmarshal(d.OverrideMainDependsOn, &dependencies); err == nil {
+			resp.OverrideMainDependsOn = dependencies
 		}
 	}
 	// Liveness probe override (issue #554 / ADR-078). The

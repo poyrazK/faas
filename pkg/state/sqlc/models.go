@@ -839,6 +839,7 @@ type Deployment struct {
 	ScannedAt                pgtype.Timestamptz
 	OverrideLivenessProbe    []byte
 	OverrideReadinessProbe   []byte
+	OverrideMainDependsOn    []byte
 	ParkedReason             pgtype.Text
 	ParkedAt                 pgtype.Timestamptz
 	TrafficPercent           int32

@@ -23933,6 +23933,11 @@ components:
             - $ref: '#/components/schemas/DeploymentReadinessProbe'
             - type: 'null'
           description: "Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing and restored after recovery; the VM is not restarted."
+        override_main_depends_on:
+          type: array
+          maxItems: 6
+          items: { $ref: '#/components/schemas/WorkloadDependency' }
+          description: "Primary workload startup dependencies echoed verbatim. Init companions remain implicit prerequisites."
         override_liveness_probe:
           oneOf:
             - $ref: '#/components/schemas/DeploymentLivenessProbe'
@@ -25364,6 +25369,8 @@ components:
         - `healthcheck` configures startup readiness admission.
         - `readiness_probe` is an optional recurring traffic gate, independent of
           the one-shot startup check and VM liveness policy.
+        - `main_depends_on` gates the primary workload on named long-running
+          companions; init companions already run before the primary workload.
       type: object
       properties:
         entrypoint:
@@ -25401,6 +25408,11 @@ components:
             - $ref: '#/components/schemas/DeploymentReadinessProbe'
             - type: 'null'
           description: "Optional recurring primary-app traffic gate. Failed probes withdraw a running instance from routing; successful probes restore it without restarting the VM."
+        main_depends_on:
+          type: array
+          maxItems: 6
+          items: { $ref: '#/components/schemas/WorkloadDependency' }
+          description: "Companions that must reach the specified lifecycle condition before the primary workload starts. Targets must be declared long-running companions; init companions already gate startup."
         liveness_probe:
           oneOf:
             - $ref: '#/components/schemas/DeploymentLivenessProbe'
