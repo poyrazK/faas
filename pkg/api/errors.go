@@ -1780,6 +1780,7 @@ const (
 	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
 	CodeWorkflowCallbackExpired         = "workflow_callback_expired"
 	CodeWorkflowCallbackPayloadConflict = "workflow_callback_payload_conflict"
+	CodeWorkflowCallbackBindingConflict = "workflow_callback_binding_conflict"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -1879,7 +1880,7 @@ func StatusForCode(code string) int {
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
-		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict,
+		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
@@ -3777,6 +3778,11 @@ func ErrWorkflowCallbackExpired() *Problem {
 func ErrWorkflowCallbackPayloadConflict() *Problem {
 	return NewProblem(http.StatusConflict, CodeWorkflowCallbackPayloadConflict,
 		"Workflow callback payload conflict", "this callback was already completed with a different payload.")
+}
+
+func ErrWorkflowCallbackBindingConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowCallbackBindingConflict,
+		"Workflow callback binding conflict", "the callback or provider event already has a different binding.")
 }
 
 // ErrJobTaskNotFound marks a 404 on (run_id, task_index) lookups

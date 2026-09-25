@@ -8,3 +8,7 @@
 - **Rejected alternatives:** A public callback URL backed only by an unguessable token would require separate token lifecycle, abuse control, rotation, and provider-signature policy; event-name-only callbacks permit accidental cross-run matches; checking for events and parking in separate transactions can lose a simultaneous arrival; deleting old events from active runs can erase an early callback.
 
 This extends ADR-081 and ADR-262, but is still a declarative DAG, not checkpoint/replay of one long-lived function. Callbacks are accepted at most once in the logical ledger; downstream handler execution remains at least once and must be idempotent.
+
+ADR-264 adds a Stripe-specific path from an existing provider-verified inbound
+webhook endpoint to this callback ledger. The authenticated completion API
+remains the provider-neutral path.

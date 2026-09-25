@@ -806,6 +806,11 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 			delete(m.workflowRuns, id)
 			delete(m.workflowSteps, id)
 			delete(m.workflowEvents, id)
+			for bindingID, binding := range m.workflowCallbackWebhookBindings {
+				if binding.RunID == id {
+					delete(m.workflowCallbackWebhookBindings, bindingID)
+				}
+			}
 			deleted++
 		}
 	}

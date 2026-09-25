@@ -11958,6 +11958,75 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow run that owns the callback binding.
+      - name: callback_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Stable callback handle to bind to one verified provider event.
+    put:
+      tags: [workflows]
+      operationId: putWorkflowCallbackWebhookBinding
+      summary: Bind one verified Stripe object event to a workflow callback.
+      description: |
+        Requires account workflow-write authorization and a Stripe inbound
+        webhook endpoint owned by the same app. Repeating the identical
+        binding is safe; another callback cannot claim the same endpoint,
+        event type, and object ID. The endpoint's existing URL and signing
+        secret are reused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWorkflowCallbackWebhookBindingRequest' }
+      responses:
+        '200':
+          description: The durable binding, whether newly created or already present.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowCallbackWebhookBindingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '409':
+          description: The callback is closed, or the callback/provider event already has a different binding.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+    get:
+      tags: [workflows]
+      operationId: getWorkflowCallbackWebhookBinding
+      summary: Read the callback's verified webhook binding.
+      responses:
+        '200':
+          description: The bound provider event. No endpoint URL or secret is returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowCallbackWebhookBindingResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+    delete:
+      tags: [workflows]
+      operationId: deleteWorkflowCallbackWebhookBinding
+      summary: Stop routing the provider event to this callback.
+      description: Later verified provider events resume ordinary app delivery; an already verified in-flight request may still complete the callback.
+      responses:
+        '204': { description: Binding deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/workflows/runs/{id}/events:
     parameters:
       - name: id
@@ -15638,9 +15707,10 @@ paths:
       description: |
         This route does not use a Gregale bearer key. The opaque URL and the
         provider signature are the trust boundary. For Stripe, the exact raw
-        body is verified against Stripe-Signature. A 202 is returned only after
-        the deterministic invocation receipt commits. Provider retries return
-        the same receipt with duplicate=true.
+        body is verified against Stripe-Signature. An exact workflow callback
+        binding completes its callback durably instead of enqueuing an app
+        invocation. Unmatched events keep the ordinary invocation path.
+        Terminal callbacks are acknowledged as ignored after verification.
       security: []
       parameters:
         - name: Stripe-Signature
@@ -15655,10 +15725,13 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         '202':
-          description: Verified and durably accepted, or an already accepted provider retry.
+          description: Verified and durably accepted, duplicated, or ignored after callback closure.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/InboundWebhookReceiptResponse' }
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/InboundWebhookReceiptResponse'
+                  - $ref: '#/components/schemas/WorkflowCallbackWebhookReceiptResponse'
         '400': { $ref: '#/components/responses/InboundWebhookInvalid' }
         '404': { $ref: '#/components/responses/NotFound' }
         '413': { $ref: '#/components/responses/InboundWebhookTooLarge' }
@@ -26679,6 +26752,37 @@ components:
       required: [status, duplicate]
       properties:
         status: { type: string, enum: [received] }
+        duplicate: { type: boolean }
+
+    CreateWorkflowCallbackWebhookBindingRequest:
+      description: Exact Stripe event/object correlation for one callback on an existing signed inbound endpoint.
+      type: object
+      required: [endpoint_id, event_type, object_id]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        event_type: { type: string, maxLength: 256, pattern: '^[a-z][a-z0-9_.]*$', example: payment_intent.succeeded }
+        object_id: { type: string, maxLength: 256, pattern: '^[A-Za-z0-9_-]+$', example: pi_123 }
+
+    WorkflowCallbackWebhookBindingResponse:
+      description: Persisted binding metadata without the endpoint's URL or secret.
+      type: object
+      required: [id, run_id, step_name, endpoint_id, event_type, object_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        step_name: { type: string }
+        endpoint_id: { type: string, format: uuid }
+        event_type: { type: string }
+        object_id: { type: string }
+        created_at: { type: string, format: date-time }
+
+    WorkflowCallbackWebhookReceiptResponse:
+      description: Acknowledgement after a verified webhook completes or cannot change a callback.
+      type: object
+      required: [callback_id, status, duplicate]
+      properties:
+        callback_id: { type: string, format: uuid }
+        status: { type: string, enum: [received, ignored] }
         duplicate: { type: boolean }
 
     CreateDeploymentRequest:

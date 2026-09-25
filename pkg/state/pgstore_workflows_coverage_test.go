@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -10,6 +11,69 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestPgStore_WorkflowCallbackWebhookBinding(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "wf-webhook-binding@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "wf-webhook-binding", RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := s.CreateInboundWebhookEndpointIfUnderQuota(ctx, state.InboundWebhookEndpoint{
+		AppID: app.ID, AccountID: acct.ID, Name: "stripe",
+		Provider: state.InboundWebhookProviderStripe, TokenHash: bytes.Repeat([]byte{1}, 32),
+		SigningSecretSealed: []byte{1}, DeliveryPath: "/", Enabled: true,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, WorkflowName: "callback", DefinitionSnapshot: json.RawMessage("{\"name\":\"callback\"}")}
+	if err := s.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	binding := state.WorkflowCallbackWebhookBinding{
+		ID: api.WorkflowCallbackID(run.ID, "await"), EndpointID: endpoint.ID,
+		RunID: run.ID, StepName: "await", EventType: "payment_intent.succeeded", ObjectID: "pi_1",
+	}
+	created, err := s.CreateWorkflowCallbackWebhookBinding(ctx, binding)
+	if err != nil || created.CreatedAt.IsZero() {
+		t.Fatalf("create binding = %#v, err=%v", created, err)
+	}
+	if repeated, err := s.CreateWorkflowCallbackWebhookBinding(ctx, binding); err != nil || repeated.ID != created.ID {
+		t.Fatalf("idempotent binding = %#v, err=%v", repeated, err)
+	}
+	changed := binding
+	changed.ObjectID = "pi_2"
+	if _, err := s.CreateWorkflowCallbackWebhookBinding(ctx, changed); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("changed binding = %v", err)
+	}
+	matched, err := s.WorkflowCallbackWebhookBindingByMatch(ctx, endpoint.ID, binding.EventType, binding.ObjectID)
+	if err != nil || matched.ID != binding.ID {
+		t.Fatalf("match binding = %#v, err=%v", matched, err)
+	}
+	otherRun := &state.WorkflowRun{AppID: app.ID, WorkflowName: "callback", DefinitionSnapshot: json.RawMessage("{\"name\":\"callback\"}")}
+	if err := s.CreateWorkflowRun(ctx, otherRun); err != nil {
+		t.Fatal(err)
+	}
+	claimed := binding
+	claimed.RunID = otherRun.ID
+	claimed.ID = api.WorkflowCallbackID(otherRun.ID, claimed.StepName)
+	if _, err := s.CreateWorkflowCallbackWebhookBinding(ctx, claimed); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("same provider event claimed by second run = %v", err)
+	}
+	if _, err := s.WorkflowCallbackWebhookBindingByMatch(ctx, endpoint.ID, binding.EventType, "pi_other"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unmatched binding = %v", err)
+	}
+	if err := s.DeleteWorkflowCallbackWebhookBinding(ctx, binding.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WorkflowCallbackWebhookBindingByID(ctx, binding.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("deleted binding = %v", err)
+	}
+}
 
 func TestPgStore_WorkflowCallbackAndEventParking(t *testing.T) {
 	s, _, ctx := pgStoreWithPool(t)

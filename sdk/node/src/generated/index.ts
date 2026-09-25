@@ -213,6 +213,7 @@ export type { CreateTenantSurfaceRequest } from './models/CreateTenantSurfaceReq
 export type { CreateTriggerBatchRequest } from './models/CreateTriggerBatchRequest.js';
 export type { CreateTriggerBatchResponse } from './models/CreateTriggerBatchResponse.js';
 export type { CreateTriggerRequest } from './models/CreateTriggerRequest.js';
+export type { CreateWorkflowCallbackWebhookBindingRequest } from './models/CreateWorkflowCallbackWebhookBindingRequest.js';
 export type { CronResponse } from './models/CronResponse.js';
 export type { CronRun } from './models/CronRun.js';
 export type { CSRFTokenResponse } from './models/CSRFTokenResponse.js';
@@ -833,6 +834,8 @@ export type { WakeTimelineJSONRow } from './models/WakeTimelineJSONRow.js';
 export type { WakeTimelineResponse } from './models/WakeTimelineResponse.js';
 export type { WorkerScaling } from './models/WorkerScaling.js';
 export type { WorkflowCallbackResponse } from './models/WorkflowCallbackResponse.js';
+export type { WorkflowCallbackWebhookBindingResponse } from './models/WorkflowCallbackWebhookBindingResponse.js';
+export type { WorkflowCallbackWebhookReceiptResponse } from './models/WorkflowCallbackWebhookReceiptResponse.js';
 export type { WorkflowRetrySpec } from './models/WorkflowRetrySpec.js';
 export type { WorkflowRunResponse } from './models/WorkflowRunResponse.js';
 export type { WorkflowSpec } from './models/WorkflowSpec.js';

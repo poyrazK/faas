@@ -1,6 +1,17 @@
 package api
 
-import "time"
+import (
+	"regexp"
+	"time"
+)
+
+var stripeWorkflowCallbackEventType = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,255}$`)
+var stripeWorkflowCallbackObjectID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
+
+func ValidStripeWorkflowCallbackMatch(eventType, objectID string) bool {
+	return stripeWorkflowCallbackEventType.MatchString(eventType) &&
+		stripeWorkflowCallbackObjectID.MatchString(objectID)
+}
 
 const (
 	InboundWebhookTokenPrefix           = "gwh_"
@@ -78,4 +89,31 @@ type InboundWebhookReceiptResponse struct {
 	Status     string `json:"status"`
 	Duplicate  bool   `json:"duplicate"`
 	AcceptedAt string `json:"accepted_at"`
+}
+
+// CreateWorkflowCallbackWebhookBindingRequest correlates one provider-verified
+// Stripe object event with one callback step. The endpoint already owns the
+// public URL and sealed Stripe signing secret.
+type CreateWorkflowCallbackWebhookBindingRequest struct {
+	EndpointID string `json:"endpoint_id"`
+	EventType  string `json:"event_type"`
+	ObjectID   string `json:"object_id"`
+}
+
+type WorkflowCallbackWebhookBindingResponse struct {
+	ID         string `json:"id"`
+	RunID      string `json:"run_id"`
+	StepName   string `json:"step_name"`
+	EndpointID string `json:"endpoint_id"`
+	EventType  string `json:"event_type"`
+	ObjectID   string `json:"object_id"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// WorkflowCallbackWebhookReceiptResponse is the public, signed-ingress
+// acknowledgement. Ignored means the callback can no longer be completed.
+type WorkflowCallbackWebhookReceiptResponse struct {
+	CallbackID string `json:"callback_id"`
+	Status     string `json:"status"`
+	Duplicate  bool   `json:"duplicate"`
 }

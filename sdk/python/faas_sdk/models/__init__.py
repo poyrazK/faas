@@ -425,6 +425,7 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
     CreateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
+from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
 from .cron_response import CronResponse
 from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
@@ -1605,6 +1606,9 @@ from .wake_timeline_response import WakeTimelineResponse
 from .worker_scaling import WorkerScaling
 from .worker_scaling_metric import WorkerScalingMetric
 from .workflow_callback_response import WorkflowCallbackResponse
+from .workflow_callback_webhook_binding_response import WorkflowCallbackWebhookBindingResponse
+from .workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
+from .workflow_callback_webhook_receipt_response_status import WorkflowCallbackWebhookReceiptResponseStatus
 from .workflow_retry_spec import WorkflowRetrySpec
 from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
 from .workflow_run_response import WorkflowRunResponse
@@ -2038,6 +2042,7 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType2Type1",
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
+    "CreateWorkflowCallbackWebhookBindingRequest",
     "CronResponse",
     "CronResponseSuspendedReason",
     "CronRun",
@@ -3176,6 +3181,9 @@ __all__ = (
     "WorkerScaling",
     "WorkerScalingMetric",
     "WorkflowCallbackResponse",
+    "WorkflowCallbackWebhookBindingResponse",
+    "WorkflowCallbackWebhookReceiptResponse",
+    "WorkflowCallbackWebhookReceiptResponseStatus",
     "WorkflowRetrySpec",
     "WorkflowRetrySpecBackoff",
     "WorkflowRunResponse",

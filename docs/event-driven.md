@@ -67,11 +67,35 @@ The workflow stays parked between callbacks; no application instance is
 reserved for the wait. The callback ID is not an authentication token:
 both requests need the owning account's API authorization.
 
-For an external provider, receive and verify its webhook in your own handler,
+For an unsupported external provider, receive and verify its webhook in your own handler,
 then use that authenticated Gregale API to complete the callback. Do not give
-the provider your Gregale API key. There is no direct public callback URL yet.
+the provider your Gregale API key. There is no per-callback public URL.
 For repeatable or broadcast signals, continue using `wait_for_event` and
 `POST /v1/workflows/runs/{id}/events` with a stable `Idempotency-Key`.
+
+Stripe can instead complete a callback without waking your app. Create a
+[durable inbound Stripe webhook endpoint](inbound-webhooks.md) for the
+same app and configure its one-time-disclosed URL in Stripe. Then bind the
+known Stripe object to a callback:
+
+```http
+PUT /v1/workflows/runs/RUN_ID/callbacks/CALLBACK_ID/webhook-binding
+Authorization: Bearer GREGALE_API_KEY
+Content-Type: application/json
+
+{"endpoint_id":"ENDPOINT_ID","event_type":"payment_intent.succeeded","object_id":"pi_123"}
+```
+
+The existing endpoint verifies Stripe's signature over the raw body. Only an
+exact event-type and object-ID match consumes the callback; other events still
+enter the app's ordinary durable webhook inbox. A matching verified event
+completes the workflow callback directly and returns `202` after persistence.
+Provider retries are deduplicated, and a late event for a closed callback is
+acknowledged as ignored. Bind before the provider event arrives; an event
+received earlier follows the normal app-delivery path. Use the binding's
+`GET` and `DELETE` operations to inspect or revoke it. This first adapter
+supports Stripe only; other providers still need a verifying application
+handler.
 
 This is a declarative workflow, not a replayed single function: handlers are
 separate at-least-once invocations and must make external side effects
