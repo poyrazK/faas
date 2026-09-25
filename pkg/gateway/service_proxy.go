@@ -532,7 +532,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if releaseID != "" {
-			r = r.WithContext(context.WithValue(r.Context(), serviceReleaseContextKey{}, releaseID))
+			r = r.WithContext(context.WithValue(dependencyCtx, serviceReleaseContextKey{}, releaseID))
 			dispatchWriter.Header().Set(api.ReleaseHeader, releaseID)
 		}
 	}

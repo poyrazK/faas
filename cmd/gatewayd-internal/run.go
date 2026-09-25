@@ -1712,8 +1712,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			if version.DeploymentID != "" {
 				_, checked, checkErr := state.ResolveInvocationVersion(ctx, pgStore, inv)
-				if checkErr != nil || checked.DeploymentID != version.DeploymentID || checked.ReleaseID != version.ReleaseID {
-					return inv, 0, fmt.Errorf("synth invoke release changed during wake: %v", checkErr)
+				if checkErr != nil {
+					return inv, 0, fmt.Errorf("synth invoke release changed during wake: %w", checkErr)
+				}
+				if checked.DeploymentID != version.DeploymentID || checked.ReleaseID != version.ReleaseID {
+					return inv, 0, fmt.Errorf("synth invoke release changed during wake: expected %s/%s, got %s/%s",
+						version.ReleaseID, version.DeploymentID, checked.ReleaseID, checked.DeploymentID)
 				}
 				instance, lookupErr := pgStore.InstanceByID(ctx, instanceID)
 				if lookupErr != nil || instance.AppID != appID || instance.DeploymentID != version.DeploymentID || instance.NodeID != nodeID || instance.State != string(state.StateRunning) {
