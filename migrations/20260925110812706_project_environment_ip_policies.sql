@@ -1,3 +1,5 @@
+-- filename: 20260925110812706_project_environment_ip_policies.sql
+
 -- +goose Up
 CREATE TABLE IF NOT EXISTS project_environment_ip_policies (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
