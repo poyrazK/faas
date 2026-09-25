@@ -21543,6 +21543,7 @@ components:
       enum: [allow, deny]
 
     RuntimePolicyStatusResponse:
+      description: Fresh serving-gateway application status for app-cache and deployment traffic changes.
       type: object
       required: [app_id, desired_revision, state, coverage, serving_gateways, applied_gateways, pending_gateways, stale_gateways]
       properties:

@@ -16,6 +16,8 @@ T = TypeVar("T", bound="RuntimePolicyStatusResponse")
 
 @_attrs_define
 class RuntimePolicyStatusResponse:
+    """Fresh serving-gateway application status for app-cache and deployment traffic changes."""
+
     app_id: str
     desired_revision: int
     state: RuntimePolicyStatusResponseState

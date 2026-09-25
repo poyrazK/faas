@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Fresh serving-gateway application status for app-cache and deployment traffic changes.
+ */
 export type RuntimePolicyStatusResponse = {
   app_id: string;
   desired_revision: number;
