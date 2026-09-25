@@ -11,8 +11,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// updateProjectEnvironmentIPPolicies replaces only IP rules on a stable
-// environment URL. An explicit empty list suppresses inherited app IP rules.
+// updateProjectEnvironmentIPPolicies replaces only IP rules for a stable
+// environment URL and its bound custom domains. An explicit empty list
+// suppresses inherited app IP rules on those hostnames.
 func (s *server) updateProjectEnvironmentIPPolicies(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, environment, _, problem := s.loadProjectEnvironmentConfig(r.Context(), acct, r.PathValue("slug"), r.PathValue("environment"))
 	if problem != nil {
@@ -69,7 +70,12 @@ func (s *server) updateProjectEnvironmentIPPolicies(w http.ResponseWriter, r *ht
 			Priority: priority, Enabled: enabled, Action: actionFromBody(check.Kind, check.Action),
 		})
 	}
-	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_ip_policy_updated", host)
+	hosts, err := s.projectEnvironmentPolicyHosts(r.Context(), app.ID, environment.ID, host)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not inspect environment-bound domains; no IP policy was changed"))
+		return
+	}
+	convergence, err := s.prepareEdgeRuleMutation(r.Context(), app.ID, "", "environment_ip_policy_updated", hosts...)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-policy fleet convergence is unavailable; no IP policy was changed"))
 		return

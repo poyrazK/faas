@@ -5586,21 +5586,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.observe(r, rec.status, "", "", false, Target{})
 		return
 	}
-	// Stable environment URLs carry independently owned IP policies. Resolve
-	// them before any edge-generated response so a store outage cannot turn an
-	// allowlist into an unprotected redirect, preflight, or static answer.
-	if _, _, matched := EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host); matched {
-		guard, ok := h.edgeRules.(interface {
-			EnsureEnvironmentPolicy(context.Context, string) error
-		})
-		if !ok || guard.EnsureEnvironmentPolicy(r.Context(), host) != nil {
-			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
-				api.CodeCapacity, "Environment policy unavailable", "retry when the environment edge policy can be checked"))
-			h.observe(r, rec.status, "", "", false, Target{})
-			return
-		}
-	}
-
 	// Issue #561 / ADR-089 PR 3 — consult the per-host
 	// edge-rule matcher BEFORE Backend.Lookup. On a
 	// `kind=route` hit the matcher overwrites `app` with
@@ -5641,6 +5626,22 @@ haveApp:
 			"the live deployment has blocking or unavailable image-scan evidence; remediate the image before serving traffic"))
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
+	}
+	// Stable environment URLs and environment-bound custom domains carry
+	// independently owned IP policies. Check them before any edge-generated
+	// response so a store outage cannot turn an allowlist into an unprotected
+	// redirect, preflight, or static answer.
+	_, _, stableEnvironmentHost := EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host)
+	if stableEnvironmentHost || app.DynamicRoute {
+		guard, ok := h.edgeRules.(interface {
+			EnsureEnvironmentPolicy(context.Context, string) error
+		})
+		if !ok || guard.EnsureEnvironmentPolicy(r.Context(), host) != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
+				api.CodeCapacity, "Environment policy unavailable", "retry when the environment edge policy can be checked"))
+			h.observe(r, rec.status, "", "", false, Target{})
+			return
+		}
 	}
 	// Preserve the customer-facing route identity before any edge rewrite.
 	// Declared-route matching is against the public OpenAPI contract, not the

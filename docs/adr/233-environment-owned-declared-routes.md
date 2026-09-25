@@ -130,11 +130,12 @@ environment requires removing the domain first.
 ## Follow-up: environment-owned IP access policies
 
 An independently replaceable `ip` rule group applies to each workload's
-stable environment URL. `PUT .../workloads/{workload}/ip-policies` accepts
-only IP allow/deny rules; `gregale projects environments policies ip set`
-exposes the same complete replacement. An explicit empty list suppresses
-inherited application IP edge rules without changing headers/CORS,
-redirects/rewrites, or the ordinary application hostname.
+stable environment URL and its verified environment-bound custom domains.
+`PUT .../workloads/{workload}/ip-policies` accepts only IP allow/deny rules;
+`gregale projects environments policies ip set` exposes the same complete
+replacement. An explicit empty list suppresses inherited application IP edge
+rules on those hostnames without changing headers/CORS, redirects/rewrites,
+or the ordinary application hostname.
 
 Clone copies an explicitly owned IP policy transactionally. State and diff
 report `ip_policies` with its ownership, so an inherited app-wide rule is
@@ -143,6 +144,7 @@ to the encoded workload and replaces only the IP group. Stable environment
 URLs check the entire edge-policy load before an edge-generated response,
 including redirects and CORS preflights; a policy-store error returns 503
 instead of silently bypassing an IP allowlist. Policy writes use the existing
-convergence fence to prevent stale authorization during invalidation. JWT,
+convergence fence to prevent stale authorization during invalidation on both
+platform and environment-bound custom hostnames. JWT,
 throttle, and other remaining edge-rule kinds stay application-owned. The
 separate per-app `public_auth` IP allowlist is not changed by this rule group.

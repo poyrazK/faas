@@ -2135,11 +2135,27 @@ func (s stubEdgeRuleMatcher) EnsureEnvironmentPolicy(context.Context, string) er
 func TestEnvironmentIPPolicyLoadFailureStopsRequestBeforeEdgeResponse(t *testing.T) {
 	h, backend, _ := newTestHandler(t)
 	h.appsSuffix = ""
-	h.edgeRules = stubEdgeRuleMatcher{environmentPolicyErr: errors.New("policy store unavailable"),
-		redirect: &EdgeRuleRedirectResolved{}}
 	host := BuildEnvironmentHost(wire.DeployWildcardSuffix,
 		"ce1639c6-eec7-4115-a98a-661d910bd3e1", "60f9c408-105e-4617-af50-b4d48bb5d910")
+	backend.host = host
+	h.edgeRules = stubEdgeRuleMatcher{environmentPolicyErr: errors.New("policy store unavailable"),
+		redirect: &EdgeRuleRedirectResolved{}}
 	req := httptest.NewRequest(http.MethodGet, "http://"+host+"/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || atomic.LoadInt32(&backend.admits) != 0 {
+		t.Fatalf("policy outage response=%d admits=%d body=%s", rec.Code, atomic.LoadInt32(&backend.admits), rec.Body.String())
+	}
+}
+
+func TestEnvironmentBoundDomainIPPolicyLoadFailureStopsRequestBeforeEdgeResponse(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	h.appsSuffix = ""
+	backend.host = "stage.example.test"
+	backend.app.DynamicRoute = true
+	h.edgeRules = stubEdgeRuleMatcher{environmentPolicyErr: errors.New("policy store unavailable"),
+		redirect: &EdgeRuleRedirectResolved{}}
+	req := httptest.NewRequest(http.MethodGet, "http://stage.example.test/", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable || atomic.LoadInt32(&backend.admits) != 0 {
