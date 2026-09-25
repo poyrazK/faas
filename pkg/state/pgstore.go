@@ -14454,6 +14454,61 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 	return out, nil
 }
 
+// InvocationDueCursor is the (due_at, id) keyset position of the last due
+// invocation a drain tick listed. The zero value lists from the beginning.
+type InvocationDueCursor struct {
+	DueAt time.Time
+	ID    string
+}
+
+// ListDueInvocationsAfter is ListDueInvocations ordered by (due_at, id) and
+// resumed strictly after the cursor. The drain pages through the whole due
+// backlog with it once per tick, so rows it cannot claim (another node's
+// app, an account at its async cap) no longer pin the head of every page
+// and starve the rows behind them.
+func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, after InvocationDueCursor, limit int) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+	afterDue, afterID := time.Time{}, "00000000-0000-0000-0000-000000000000"
+	if after.ID != "" {
+		afterDue, afterID = after.DueAt.UTC(), after.ID
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("state: invocations begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		select `+invocationSelectCols+`
+		  from invocations i
+		 where i.state = 'pending' and i.due_at <= $1
+		   and (i.source <> 'queue' or i.queue_name = '')
+		   and not exists (
+		       select 1
+		         from triggers t
+		        where t.app_id = i.app_id
+		          and t.kind = 'queue'
+		          and t.enabled
+		          and t.source = i.source
+		   )
+		   and ($3::boolean or (i.due_at, i.id) > ($4::timestamptz, $5::uuid))
+		 order by i.due_at, i.id
+		 for update skip locked
+		 limit $2`, now.UTC(), limit, after.ID == "", afterDue, afterID)
+	if err != nil {
+		return nil, fmt.Errorf("state: invocations list-due-after: %w", err)
+	}
+	out, err := scanInvocations(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("state: invocations list-due-after commit: %w", err)
+	}
+	return out, nil
+}
+
 // ClaimInvocation transitions pending → dispatching, stamps the
 // lease, and writes the live instance handle (when known — empty
 // string from the drain's first pass is overwritten by

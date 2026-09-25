@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -304,14 +305,40 @@ func (d *Drain) Tick(ctx context.Context) {
 			d.log.Warn("drain: reclaimed expired invocations", "count", reclaimed)
 		}
 	}
-	for {
-		rows, err := d.store.ListDueInvocations(ctx, d.now(), d.batchSize)
+	// Page through the due backlog with a (due_at, id) cursor. Rows this
+	// scheduler cannot claim — another node's app, an account at its async
+	// cap — stay pending with an unchanged due_at. Re-listing from the head
+	// returned the same full page forever: the tick spun on the database
+	// and every row behind that page, for every other tenant, starved.
+	pager, paged := d.store.(dueInvocationPager)
+	now := d.now()
+	var after state.InvocationDueCursor
+	var prevPage string
+	for page := 0; ; page++ {
+		var (
+			rows []state.Invocation
+			err  error
+		)
+		if paged {
+			rows, err = pager.ListDueInvocationsAfter(ctx, now, after, d.batchSize)
+		} else {
+			rows, err = d.store.ListDueInvocations(ctx, d.now(), d.batchSize)
+		}
 		if err != nil {
 			d.log.Warn("drain: list-due", "err", err)
 			return
 		}
 		if len(rows) == 0 {
 			return
+		}
+		if !paged {
+			// A store without a cursor can only re-list from the head;
+			// an identical page means nothing in it could be claimed.
+			key := invocationPageKey(rows)
+			if key == prevPage {
+				return
+			}
+			prevPage = key
 		}
 		// Tenant-fairness: bucket by app so a 1,000-row queue for
 		// one app doesn't starve a 1-row queue for another (the
@@ -362,7 +389,33 @@ func (d *Drain) Tick(ctx context.Context) {
 		if len(rows) < d.batchSize {
 			return
 		}
+		if paged {
+			if page+1 >= maxDuePagesPerTick {
+				return
+			}
+			last := rows[len(rows)-1]
+			after = state.InvocationDueCursor{DueAt: last.DueAt, ID: last.ID}
+		}
 	}
+}
+
+// maxDuePagesPerTick bounds one tick's walk of the due backlog; the next
+// tick starts again from the head.
+const maxDuePagesPerTick = 32
+
+// dueInvocationPager is implemented by stores that can resume the due walk
+// after a keyset cursor (PgStore, MemStore).
+type dueInvocationPager interface {
+	ListDueInvocationsAfter(ctx context.Context, now time.Time, after state.InvocationDueCursor, limit int) ([]state.Invocation, error)
+}
+
+func invocationPageKey(rows []state.Invocation) string {
+	var b strings.Builder
+	for _, r := range rows {
+		b.WriteString(r.ID)
+		b.WriteByte(',')
+	}
+	return b.String()
 }
 
 func (d *Drain) queueSourceBound(ctx context.Context, appID string, source state.InvocationSource, cache map[string]map[state.InvocationSource]bool) bool {

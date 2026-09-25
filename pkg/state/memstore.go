@@ -11565,6 +11565,50 @@ func (m *MemStore) InvocationByID(_ context.Context, id string) (Invocation, err
 func (m *MemStore) ListDueInvocations(_ context.Context, now time.Time, limit int) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	out := m.dueInvocationsLocked(now)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DueAt.Equal(out[j].DueAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].DueAt.Before(out[j].DueAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ListDueInvocationsAfter mirrors PgStore: (due_at, id) order, resumed
+// strictly after the cursor.
+func (m *MemStore) ListDueInvocationsAfter(_ context.Context, now time.Time, after InvocationDueCursor, limit int) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	all := m.dueInvocationsLocked(now)
+	out := all[:0]
+	for _, inv := range all {
+		if after.ID != "" && (inv.DueAt.Before(after.DueAt) || (inv.DueAt.Equal(after.DueAt) && inv.ID <= after.ID)) {
+			continue
+		}
+		out = append(out, inv)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DueAt.Equal(out[j].DueAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].DueAt.Before(out[j].DueAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// dueInvocationsLocked returns the unsorted pending rows the legacy drain
+// owns that are due at now. Caller holds m.mu.
+func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 	var out []Invocation
 	for _, inv := range m.invocations {
 		if inv.State != InvocationPending {
@@ -11593,16 +11637,7 @@ func (m *MemStore) ListDueInvocations(_ context.Context, now time.Time, limit in
 		}
 		out = append(out, inv)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].DueAt.Equal(out[j].DueAt) {
-			return out[i].CreatedAt.Before(out[j].CreatedAt)
-		}
-		return out[i].DueAt.Before(out[j].DueAt)
-	})
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return out
 }
 
 // ClaimInvocation atomically transitions pending → dispatching and

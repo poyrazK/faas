@@ -749,3 +749,72 @@ func TestDrain_ReactivatesAfterSuspension(t *testing.T) {
 		t.Errorf("tick 2 synth calls = %d, want 1 (reactivated)", got)
 	}
 }
+
+// TestDrain_UnclaimableHeadDoesNotStarveOrSpin — rows this scheduler cannot
+// claim (here: another node's app) stay pending with an unchanged due_at.
+// Tick re-listed from the head until it saw a short page, so a full page of
+// them made it spin on the store forever while every due row behind them —
+// this node's own work, other tenants' work — starved. Tick must return and
+// still dispatch the owned row that sorts after the foreign page.
+func TestDrain_UnclaimableHeadDoesNotStarveOrSpin(t *testing.T) {
+	t.Parallel()
+	d, store, _, _, ds := newDrainHarness(t, api.PlanHobby, true)
+	ctx := context.Background()
+	apps, err := store.ListAllApps(ctx)
+	if err != nil || len(apps) != 1 {
+		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+	}
+	owned := apps[0]
+	foreign, err := store.CreateApp(ctx, state.App{
+		AccountID: owned.AccountID, Slug: "foreign-app", RAMMB: 256, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	if err := store.SetAppNodeID(ctx, foreign.ID, "node-a"); err != nil {
+		t.Fatalf("SetAppNodeID foreign: %v", err)
+	}
+	if err := store.SetAppNodeID(ctx, owned.ID, "node-b"); err != nil {
+		t.Fatalf("SetAppNodeID owned: %v", err)
+	}
+	d.engine.WithOwnerNodeID("node-b")
+
+	head := time.Now().Add(-time.Minute)
+	for i := 0; i < 2*64+5; i++ {
+		if _, err := store.EnqueueInvocation(ctx, state.Invocation{
+			AppID: foreign.ID, AccountID: foreign.AccountID, Source: state.InvocationAsyncInvoke,
+			Method: "POST", Path: "/x", DueAt: head,
+		}); err != nil {
+			t.Fatalf("EnqueueInvocation foreign: %v", err)
+		}
+	}
+	mine, err := store.EnqueueInvocation(ctx, state.Invocation{
+		AppID: owned.ID, AccountID: owned.AccountID, Source: state.InvocationAsyncInvoke,
+		Method: "POST", Path: "/x", DueAt: time.Now().Add(-time.Second),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation owned: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.Tick(ctx)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Tick did not return: it spins re-listing a head page it cannot claim")
+	}
+
+	if got := ds.calls.Load(); got != 1 {
+		t.Fatalf("synth calls = %d, want 1 for the owned row behind the foreign page", got)
+	}
+	got, err := store.InvocationByID(ctx, mine.ID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if got.State != state.InvocationCompleted {
+		t.Fatalf("owned row state = %q, want completed", got.State)
+	}
+}
