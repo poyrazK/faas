@@ -285,7 +285,17 @@ is never disabled. The raw CA also remains available at
 The legacy generated binding URLs remain unchanged. See [ADR-274](adr/274-additive-https-service-binding-urls.md)
 for the explicit HTTPS canary variable, [ADR-272](adr/272-private-https-service-bindings.md)
 for listener rollout, and [ADR-273](adr/273-workload-scoped-service-ca-trust.md)
-for guest trust and CA requirements. The alias is never a public ingress
+for guest trust and CA requirements. See [ADR-275](adr/275-https-service-binding-canary.md)
+for caller-side verification.
+
+`gregale bindings verify <app> <service>` runs a platform-owned HTTPS canary
+inside a disposable task guest attached to the caller's deployment. It checks
+the `.internal` DNS alias, verifies the gateway certificate against the
+workload-scoped CA bundle, and exercises the same binding and target
+authorization path as a real request. The final routing check only consults
+the healthy endpoint registry: it does not wake an idle target or invoke its
+handler. The probe has no HTTP fallback.
+The alias is never a public ingress
 hostname.
 
 Calls are authorized by the platform, not by your code. The caller is

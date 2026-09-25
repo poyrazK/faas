@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 275 | [Caller-side HTTPS service-binding canary](275-https-service-binding-canary.md) | accepted | Verify DNS, certificate trust, authorization, and live endpoint routing from a deployment-attached caller task without waking or invoking the target |
 | 274 | [Additive HTTPS service-binding URLs](274-additive-https-service-binding-urls.md) | accepted | Preserve generated HTTP URLs while adding explicit HTTPS canaries for every bound service |
 | 273 | [Workload-scoped trust for private service bindings](273-workload-scoped-service-ca-trust.md) | accepted | Per-workload CA bundle, common runtime trust variables, and required `.internal` CA name constraints |
 | 272 | [Opt-in private HTTPS for service bindings](272-private-https-service-bindings.md) | accepted | Dedicated private CA, bridge-only TLS listener, and guest CA bundle without changing generated URLs |

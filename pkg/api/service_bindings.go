@@ -84,7 +84,52 @@ const (
 	ServiceBindingEnvSuffix      = "_URL"
 	ServiceBindingHTTPSEnvSuffix = "_HTTPS_URL"
 	ServiceBindingPort           = 10080
+
+	// ServiceBindingProbePath is reserved by the gateway for the HTTPS canary
+	// sent by `gregale bindings verify`. The gateway only intercepts it when a
+	// caller sends the probe marker over a bound .internal alias.
+	ServiceBindingProbePath = "/.well-known/gregale/service-binding-probe"
+	// ServiceBindingProbeRequestHeader marks a HEAD request as a platform
+	// probe rather than an application request. Ordinary requests to the same
+	// path are still forwarded to the target application.
+	ServiceBindingProbeRequestHeader = "X-Gregale-Service-Binding-Probe"
+	// ServiceBindingProbeResponseHeader echoes the request marker only when
+	// the gateway recognizes and handles a platform probe.
+	ServiceBindingProbeResponseHeader = "X-Gregale-Service-Binding-Probe"
+	// ServiceBindingProbeStageHeader reports the last gateway stage reached.
+	ServiceBindingProbeStageHeader = "X-Gregale-Service-Binding-Probe-Stage"
+	// ServiceBindingProbeVersion versions the probe marker and response.
+	ServiceBindingProbeVersion = "v1"
 )
+
+// ServiceBindingProbeCheck is one independently observable stage in an
+// HTTPS service-binding canary.
+type ServiceBindingProbeCheck struct {
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// ServiceBindingProbeReport contains only bounded, non-secret diagnostics
+// from a canary executed in the caller's deployment-attached task guest.
+type ServiceBindingProbeReport struct {
+	App           string                   `json:"app,omitempty"`
+	Service       string                   `json:"service"`
+	URL           string                   `json:"url"`
+	TaskID        string                   `json:"task_id,omitempty"`
+	DeploymentID  string                   `json:"deployment_id,omitempty"`
+	DNS           ServiceBindingProbeCheck `json:"dns"`
+	TLS           ServiceBindingProbeCheck `json:"tls"`
+	Authorization ServiceBindingProbeCheck `json:"authorization"`
+	Routing       ServiceBindingProbeCheck `json:"routing"`
+	HTTPStatus    int                      `json:"http_status,omitempty"`
+	Error         string                   `json:"error,omitempty"`
+}
+
+// Passed reports whether every canary stage succeeded.
+func (r ServiceBindingProbeReport) Passed() bool {
+	return r.DNS.Status == "passed" && r.TLS.Status == "passed" &&
+		r.Authorization.Status == "passed" && r.Routing.Status == "passed"
+}
 
 // ServiceBindingsForTargets derives platform-owned binding keys from
 // normalized target names. The caller should validate names first.

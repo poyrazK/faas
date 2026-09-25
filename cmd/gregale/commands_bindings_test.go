@@ -8,7 +8,102 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestCmdBindingsVerifyRunsInBoundAppTaskAndReportsStages(t *testing.T) {
+	report := api.ServiceBindingProbeReport{
+		Service:       "billing",
+		URL:           "https://billing.internal",
+		DNS:           api.ServiceBindingProbeCheck{Status: "passed", Detail: "resolved to 1 address(es)"},
+		TLS:           api.ServiceBindingProbeCheck{Status: "passed", Detail: "TLS 1.3; certificate verified"},
+		Authorization: api.ServiceBindingProbeCheck{Status: "passed"},
+		Routing:       api.ServiceBindingProbeCheck{Status: "passed"},
+	}
+	reportJSON, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal := api.AppTaskResponse{
+		ID: "task-1", AppID: "app-1", DeploymentID: "deployment-1", Kind: api.AppTaskKindManual,
+		Status: api.AppTaskStatusSucceeded, StdoutTail: string(reportJSON), MaxOutputBytes: 4096,
+	}
+	var createCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api","service_bindings":[{"binding":"GREGALE_SERVICE_BILLING_URL","service":"billing"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
+			createCalls++
+			var request api.CreateAppTaskRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode create task: %v", err)
+			}
+			if len(request.Command) != 2 || request.Command[0] != api.AppTaskServiceBindingProbeCommand || request.Command[1] != "billing" || request.CommandShell {
+				t.Errorf("task command = %+v", request)
+			}
+			if request.TimeoutSeconds != bindingProbeTaskTimeoutSeconds || request.MaxOutputBytes != 4096 {
+				t.Errorf("task limits = %+v", request)
+			}
+			queued := api.AppTaskResponse{ID: "task-1", Status: api.AppTaskStatusQueued}
+			_ = json.NewEncoder(w).Encode(queued)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/tasks/task-1":
+			_ = json.NewEncoder(w).Encode(terminal)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	previousJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = previousJSON })
+	var out bytes.Buffer
+	previousOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+	if code := run([]string{"bindings", "verify", "api", "billing", "--poll-interval", "1ms", "--wait-timeout", "1s"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	if createCalls != 1 {
+		t.Fatalf("create task calls = %d, want one", createCalls)
+	}
+	var got api.ServiceBindingProbeReport
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode report: %v; output=%s", err, out.String())
+	}
+	if !got.Passed() || got.App != "api" || got.Service != "billing" || got.TLS.Status != "passed" ||
+		got.TaskID != "task-1" || got.DeploymentID != "deployment-1" {
+		t.Fatalf("report = %+v", got)
+	}
+}
+
+func TestCmdBindingsVerifyRejectsUndeclaredServiceBeforeTaskAdmission(t *testing.T) {
+	var createCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api" {
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api","service_bindings":[]}`))
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks" {
+			createCalls++
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	if code := run([]string{"bindings", "verify", "api", "billing"}); code == 0 {
+		t.Fatal("undeclared service unexpectedly verified")
+	}
+	if createCalls != 0 {
+		t.Fatalf("created %d task(s) for an undeclared service", createCalls)
+	}
+}
 
 func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

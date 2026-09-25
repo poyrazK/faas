@@ -61,6 +61,9 @@ type appBindingInventoryClient interface {
 }
 
 func cmdBindings(args []string) int {
+	if len(args) > 0 && args[0] == "verify" {
+		return cmdBindingsVerify(args[1:])
+	}
 	fs := newFlagSet("bindings", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(strings.TrimSpace(fs.Arg(0))) {
 		PrintUsage(osStderr, "usage: gregale bindings <app>", "bindings")

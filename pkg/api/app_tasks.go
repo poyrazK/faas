@@ -43,9 +43,13 @@ func (s AppTaskStatus) Terminal() bool {
 const (
 	AppTaskDefaultTimeoutSeconds = 600
 	AppTaskDefaultMaxOutputBytes = 1024 * 1024
-	AppTaskMaxCommandArgs        = 64
-	AppTaskMaxCommandArgBytes    = 4096
-	AppTaskMaxCommandBytes       = 16384
+	// AppTaskServiceBindingProbeCommand is a reserved argv[0] handled directly
+	// by guest-init. It runs a bounded HTTPS canary without requiring utilities
+	// or a language runtime in the customer image.
+	AppTaskServiceBindingProbeCommand = "__gregale_service_binding_probe_v1__"
+	AppTaskMaxCommandArgs             = 64
+	AppTaskMaxCommandArgBytes         = 4096
+	AppTaskMaxCommandBytes            = 16384
 	// AppTaskRequestMaxBytes permits JSON escaping overhead while the decoded
 	// command remains bounded by AppTaskMaxCommandBytes.
 	AppTaskRequestMaxBytes int64 = 128 * 1024
@@ -53,7 +57,9 @@ const (
 
 // CreateAppTaskRequest is the public admission contract. Kind and deployment
 // are not caller-selected: public requests are always manual and apid pins the
-// app's current live deployment before persistence.
+// app's current live deployment before persistence. The reserved
+// AppTaskServiceBindingProbeCommand argv[0] is handled by guest-init for the
+// `gregale bindings verify` operation and is not an image executable.
 type CreateAppTaskRequest struct {
 	Command        []string `json:"command"`
 	CommandShell   bool     `json:"command_shell,omitempty"`
