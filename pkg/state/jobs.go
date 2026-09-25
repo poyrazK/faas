@@ -352,11 +352,12 @@ type JobStore interface {
 	//
 	// Failure modes:
 	//   - ErrNotFound on missing row.
+	//   - ErrConflict while any task from an existing run is queued or claimed.
 	//   - mapErr-wrapped CHECK violations if any of the values
 	//     violate the schema constraint.
 	JobUpdate(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string) (Job, error)
 	// JobSoftDelete flips status='active'|'paused' to status='deleted'
-	// iff no live (waking, cold_booting, or running) job_task instance exists
+	// iff no queued/claimed job task or live job_task instance exists
 	// for the job. Implemented via the soft_delete_job_if_no_live_instances()
 	// PL/pgSQL helper (migrations/00576) on PgStore; memstore mirrors
 	// the predicate directly.
@@ -543,6 +544,10 @@ type JobStore interface {
 	// and calls JobTaskRetry (or JobTaskMarkTerminal if attempt has
 	// exhausted retry_max) per row.
 	JobTaskFindStuck(ctx context.Context, ttl time.Duration) ([]JobTask, error)
+	// JobTaskReapClaimed fences a stale lease by token and expiry, then
+	// atomically retries or times out the task and accounts for dead letter.
+	// ErrNotFound means the lease was renewed or another owner settled it.
+	JobTaskReapClaimed(ctx context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (retryScheduled bool, err error)
 	// JobTaskGet returns ErrNotFound when (run_id, task_index) does
 	// not resolve.
 	JobTaskGet(ctx context.Context, runID string, taskIndex int) (JobTask, error)

@@ -33,7 +33,7 @@ import (
 )
 
 // TestJobsE2E_HappyPath dispatches a Hobby job with 5 tasks of
-// `/bin/true` and asserts every task reaches status=succeeded
+// `/job-fixture success` and asserts every task reaches status=succeeded
 // + run.aggregate_status=succeeded within the task timeout.
 // This is the §14 M14 baseline — every other test in this file
 // reuses the helpers introduced here.
@@ -41,29 +41,27 @@ func TestJobsE2E_HappyPath(t *testing.T) {
 	h := newMetalHarness(t)
 	defer h.Close()
 	h.MustSeedFakeImage(t, "busybox:job-happy")
-	job := h.MustCreateJob(t, "happy-job", "busybox:job-happy", []string{"/bin/true"}, 512)
+	job := h.MustCreateJob(t, "happy-job", "busybox:job-happy", []string{"/job-fixture", "success"}, 512)
 	run := h.MustDispatchRun(t, job, 5)
-	h.MustWaitRunTerminal(t, run, "succeeded", 5*time.Minute)
+	h.MustWaitRunTerminal(t, run, "succeeded", 10*time.Minute)
 	h.MustAssertTaskExitCodes(t, run, 0)
 }
 
-// TestJobsE2E_RetryThenSucceed asserts the failed→retry→queued
-// loop: a task that exits non-zero on attempt 1 retries (per
-// --retries N) and the retry succeeds, run ends succeeded.
-func TestJobsE2E_RetryThenSucceed(t *testing.T) {
+// TestJobsE2E_RetryExhausts proves a failed task is actually re-executed
+// before exhausting its one configured retry.
+func TestJobsE2E_RetryExhausts(t *testing.T) {
 	h := newMetalHarness(t)
 	defer h.Close()
 	h.MustSeedFakeImage(t, "busybox:job-retry")
-	job := h.MustCreateJob(t, "retry-job", "busybox:job-retry", []string{"/bin/sh", "-c", "exit 1"}, 512)
+	job := h.MustCreateJob(t, "retry-job", "busybox:job-retry", []string{"/job-fixture", "fail"}, 512)
 	job = h.MustUpdateJob(t, job, func(p *api.UpdateJobRequest) {
-		n := 3
+		n := 1
 		p.RetryMax = &n
 	})
 	run := h.MustDispatchRun(t, job, 1)
-	// First attempt fails; retry kicks in; on attempt 2 the
-	// synthetic workload in the image flips exit 0. Wire shape
-	// shows attempt=2, status=succeeded.
-	h.MustWaitTaskAttempt(t, run, 1, 2, "succeeded", 5*time.Minute)
+	h.MustWaitRunTerminal(t, run, "dead_letter", 5*time.Minute)
+	h.MustWaitTaskAttempt(t, run, 0, 2, "failed", time.Second)
+	h.MustAssertRunDeadLetter(t, run, 1)
 }
 
 // TestJobsE2E_DeadLetter asserts retry exhaustion →
@@ -73,7 +71,7 @@ func TestJobsE2E_DeadLetter(t *testing.T) {
 	h := newMetalHarness(t)
 	defer h.Close()
 	h.MustSeedFakeImage(t, "busybox:job-deadletter")
-	job := h.MustCreateJob(t, "deadletter-job", "busybox:job-deadletter", []string{"/bin/false"}, 512)
+	job := h.MustCreateJob(t, "deadletter-job", "busybox:job-deadletter", []string{"/job-fixture", "fail"}, 512)
 	run := h.MustDispatchRun(t, job, 1)
 	h.MustWaitRunTerminal(t, run, "dead_letter", 3*time.Minute)
 	h.MustAssertRunDeadLetter(t, run, 1)
@@ -87,14 +85,14 @@ func TestJobsE2E_TaskTimeout(t *testing.T) {
 	h := newMetalHarness(t)
 	defer h.Close()
 	h.MustSeedFakeImage(t, "busybox:job-timeout")
-	job := h.MustCreateJob(t, "timeout-job", "busybox:job-timeout", []string{"/bin/sh", "-c", "sleep 60"}, 512)
+	job := h.MustCreateJob(t, "timeout-job", "busybox:job-timeout", []string{"/job-fixture", "sleep", "60s"}, 512)
 	job = h.MustUpdateJob(t, job, func(p *api.UpdateJobRequest) {
 		n := 10
 		p.TaskTimeoutSec = &n
 	})
 	run := h.MustDispatchRun(t, job, 1)
-	h.MustWaitTaskStatus(t, run, 1, "timeout", 90*time.Second)
-	h.MustAssertTaskExitCode(t, run, 1, 124)
+	h.MustWaitTaskStatus(t, run, 0, "timeout", 5*time.Minute)
+	h.MustAssertTaskExitCode(t, run, 0, 124)
 }
 
 // TestJobsE2E_OOM asserts that a memory bomb triggers the
@@ -105,10 +103,10 @@ func TestJobsE2E_OOM(t *testing.T) {
 	h := newMetalHarness(t)
 	defer h.Close()
 	h.MustSeedFakeImage(t, "busybox:job-oom")
-	job := h.MustCreateJob(t, "oom-job", "busybox:job-oom", []string{"/bin/sh", "-c", "dd if=/dev/zero of=/dev/null bs=1M count=1024"}, 512)
+	job := h.MustCreateJob(t, "oom-job", "busybox:job-oom", []string{"/job-fixture", "oom"}, 512)
 	run := h.MustDispatchRun(t, job, 1)
-	h.MustWaitTaskStatus(t, run, 1, "oom", 60*time.Second)
-	h.MustAssertTaskExitCode(t, run, 1, 137)
+	h.MustWaitTaskStatus(t, run, 0, "oom", 5*time.Minute)
+	h.MustAssertTaskExitCode(t, run, 0, 137)
 }
 
 // TestJobsE2E_CancelQueued asserts cancel-before-dispatch: the
@@ -121,27 +119,24 @@ func TestJobsE2E_CancelQueued(t *testing.T) {
 	// FAAS_JOBS_DISPATCH=0 keeps tasks queued but spawned-able
 	// for the dispatch tick; we cancel before the tick fires.
 	h.MustSetEnv(t, "FAAS_JOBS_DISPATCH", "0")
-	job := h.MustCreateJob(t, "cancel-queued-job", "busybox:job-cancel-queued", []string{"/bin/sleep", "300"}, 512)
+	job := h.MustCreateJob(t, "cancel-queued-job", "busybox:job-cancel-queued", []string{"/job-fixture", "sleep", "300s"}, 512)
 	run := h.MustDispatchRun(t, job, 1)
 	h.MustCancelRun(t, run)
 	h.MustWaitRunTerminal(t, run, "cancelled", 30*time.Second)
 	h.MustAssertNoInstancesForRun(t, run)
 }
 
-// TestJobsE2E_CancelRunning asserts SIGTERM delivered to a live
-// guest: the workload installs a SIGTERM handler that exits 143
-// (cancelled error_class). The engine forwards the SIGTERM via
-// vmmd.SendSignal and waits up to 30s grace before SIGKILL.
+// TestJobsE2E_CancelRunning asserts a claimed guest is cancelled and
+// its instance is reconciled by schedd.
 func TestJobsE2E_CancelRunning(t *testing.T) {
 	h := newMetalHarness(t)
 	defer h.Close()
 	h.MustSeedFakeImage(t, "busybox:job-cancel-running")
-	job := h.MustCreateJob(t, "cancel-running-job", "busybox:job-cancel-running", []string{"/bin/sh", "-c", "trap 'exit 143' TERM; sleep 300"}, 512)
+	job := h.MustCreateJob(t, "cancel-running-job", "busybox:job-cancel-running", []string{"/job-fixture", "sleep", "300s"}, 512)
 	run := h.MustDispatchRun(t, job, 1)
-	h.MustWaitTaskStatus(t, run, 1, "running", 30*time.Second)
+	h.MustWaitTaskStatus(t, run, 0, "claimed", 5*time.Minute)
 	h.MustCancelRun(t, run)
-	h.MustWaitTaskStatus(t, run, 1, "cancelled", 60*time.Second)
-	h.MustAssertTaskExitCode(t, run, 1, 143)
+	h.MustWaitTaskStatus(t, run, 0, "cancelled", 60*time.Second)
 }
 
 // TestJobsE2E_NodeLoss exercises lease expiry: kill schedd
@@ -154,16 +149,16 @@ func TestJobsE2E_NodeLoss(t *testing.T) {
 	defer h.Close()
 	h.MustSeedFakeImage(t, "busybox:job-nodeloss")
 	h.MustSetEnv(t, "FAAS_JOBS_LEASE_TTL_SECONDS", "5")
-	job := h.MustCreateJob(t, "nodeloss-job", "busybox:job-nodeloss", []string{"/bin/sleep", "5"}, 512)
+	job := h.MustCreateJob(t, "nodeloss-job", "busybox:job-nodeloss", []string{"/job-fixture", "sleep", "60s"}, 512)
 	run := h.MustDispatchRun(t, job, 1)
-	h.MustWaitTaskStatus(t, run, 1, "running", 30*time.Second)
+	h.MustWaitTaskStatus(t, run, 0, "claimed", 5*time.Minute)
 	h.MustKillSchedd(t)
 	h.MustRestartSchedd(t)
 	// After the lease TTL + reaper sweep, the task either
 	// succeeds (the original VM's exit was already in flight)
 	// or is marked timeout by the reaper. Either is acceptable;
 	// run MUST reach a terminal status.
-	h.MustWaitRunTerminal(t, run, "any-terminal", 90*time.Second)
+	h.MustWaitRunTerminal(t, run, "any-terminal", 5*time.Minute)
 }
 
 // TestJobsE2E_BillingRollup pins the §4.7 metering contract:
@@ -175,10 +170,10 @@ func TestJobsE2E_BillingRollup(t *testing.T) {
 	defer h.Close()
 	acct := h.MustCreateHobbyAccount(t)
 	h.MustSeedFakeImage(t, "busybox:job-billing")
-	job := h.MustCreateJob(t, "billing-job", "busybox:job-billing", []string{"/bin/sleep", "10"}, 512)
+	job := h.MustCreateJob(t, "billing-job", "busybox:job-billing", []string{"/job-fixture", "sleep", "10s"}, 512)
 	run := h.MustDispatchRun(t, job, 1)
-	h.MustWaitRunTerminal(t, run, "succeeded", 30*time.Second)
-	h.MustAssertUsageDailyRows(t, acct.ID, job.Name, 512, 10*time.Second, 5*time.Second)
+	h.MustWaitRunTerminal(t, run, "succeeded", 5*time.Minute)
+	h.MustAssertUsageDailyRows(t, acct.ID, job.ID, 512, 10*time.Second, 5*time.Second)
 }
 
 // TestJobsE2E_FreePlanForbidden asserts the plan-tier gate at

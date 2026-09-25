@@ -48,12 +48,13 @@ const (
 	workAppReconcile        workKind = "app_reconcile"
 	workDeploymentReconcile workKind = "deployment_reconcile"
 	workJobCancel           workKind = "job_cancel"
+	workJobDispatch         workKind = "job_dispatch"
 	workPrimeRecovery       workKind = "prime_recovery"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
 var workKinds = []workKind{
-	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workPrimeRecovery,
+	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -93,6 +94,7 @@ var workSpecs = map[workKind]workSpec{
 	workAppReconcile:        {slots: 8, overflow: overflowDrop},
 	workDeploymentReconcile: {slots: 8, overflow: overflowDrop},
 	workJobCancel:           {slots: 8, overflow: overflowDrop},
+	workJobDispatch:         {slots: 1, overflow: overflowDrop},
 	workPrimeRecovery:       {slots: 1, overflow: overflowDrop},
 }
 

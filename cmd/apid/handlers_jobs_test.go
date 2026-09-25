@@ -57,6 +57,28 @@ func seedJobRun(t *testing.T, e testEnv, jobName string, tasks int) string {
 	return run.ID
 }
 
+func TestJobImageFailureAndActiveRunConflicts(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	name := seedJob(t, e, "image-failure-conflict", "registry.example/worker:v1")
+	seedJobRun(t, e, name, 1)
+	newRAM := 256
+	rec := e.do(t, http.MethodPatch, "/v1/jobs/"+name, api.UpdateJobRequest{RAMMB: &newRAM}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("PATCH with queued run = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	job, err := e.store.JobGetByName(context.Background(), e.acct.ID, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.JobSetImageMaterialization(context.Background(), job.ID, job.ImageRef, "failed", "", "", "registry image not found"); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, http.MethodPost, "/v1/jobs/"+name+"/runs", api.CreateJobRunRequest{Tasks: 1}, nil)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "image_ref") {
+		t.Fatalf("POST run with failed image = %d, want actionable 409: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestCreateJob_HappyPath pins the basic create flow. Hobby plan
 // is the smallest tier that allows jobs (Free → 402).
 func TestCreateJob_HappyPath(t *testing.T) {

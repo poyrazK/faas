@@ -223,7 +223,10 @@ func TestMemStoreJobs_JobUpdate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	ms := NewMemStore()
-	created, _, _ := newJobAndRun(t, ms, "acct-U", "upd")
+	created, err := ms.JobCreate(ctx, "acct-U", "upd", "app", "oci://x@sha256:1", []string{"/bin/sh"}, 128, 60, 2, 0, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
 
 	newImg := "oci://x@sha256:2"
 	newRAM := 512

@@ -360,7 +360,7 @@ jobs:
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
             --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=30m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
 
-      - name: Phase 9 — jobs (unimplemented stubs, #2569)
+      - name: Phase 9 — jobs (awaiting native verification, #2569)
         id: phase_jobs
         if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
@@ -434,10 +434,9 @@ jobs:
             jobs=${{ steps.phase_jobs.outcome }}
         run: |
           set -uo pipefail
-          # jobs is the only non-blocking phase: its 11 tests are unimplemented
-          # stubs (#2569). Reported, never fatal, so 11 known failures cannot
-          # bury a real regression in another phase. Flip it to blocking when
-          # the stubs are implemented.
+          # Jobs still needs a successful dedicated-KVM run before it can be
+          # ship-blocking. Keep its result visible without hiding regressions
+          # in the established phases; remove this exception after verification.
           nonblocking="jobs"
 
           rc=0

@@ -95,8 +95,8 @@ func newMetalHarness(t *testing.T) *MetalJobHarness {
 	return jh
 }
 
-// MustSeedFakeImage installs one minimal OCI image under the supplied logical
-// ref and remembers the digest-pinned URL used by subsequent job creation.
+// MustSeedFakeImage installs a scratch-style image with a real static job
+// executable and remembers the digest-pinned URL for subsequent creation.
 func (h *MetalJobHarness) MustSeedFakeImage(t *testing.T, imageRef string) {
 	t.Helper()
 	if h == nil || h.registry == nil {
@@ -106,7 +106,7 @@ func (h *MetalJobHarness) MustSeedFakeImage(t *testing.T, imageRef string) {
 	if i := strings.IndexAny(repo, ":@"); i >= 0 {
 		repo = repo[:i]
 	}
-	img, _ := e2etest.HelloImage(repo, "")
+	img, _ := e2etest.JobImage(repo)
 	pinned := h.registry.AddImage(repo, img)
 	h.mu.Lock()
 	h.imageRefs[imageRef] = pinned

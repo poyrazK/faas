@@ -59,7 +59,12 @@ func (s *PgStore) JobFinishLegacyArtifactVerification(ctx context.Context, id, s
 	if !found && reason == "" {
 		return Job{}, fmt.Errorf("state: missing legacy job artifact requires a reason")
 	}
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update jobs set
 		   image_materialization_status = case when $4::boolean then 'ready' else 'failed' end,
 		   image_storage_key = case when $4::boolean then $6::text else null end,
@@ -78,6 +83,14 @@ func (s *PgStore) JobFinishLegacyArtifactVerification(ctx context.Context, id, s
 	job, err := scanJob(row)
 	if err != nil {
 		return Job{}, fmt.Errorf("state: finish legacy job artifact verification %s: %w", id, err)
+	}
+	if !found {
+		if err := settleJobImageFailure(ctx, tx, id, reason); err != nil {
+			return Job{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Job{}, err
 	}
 	return job, nil
 }

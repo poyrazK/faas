@@ -276,6 +276,24 @@ func (s *PgStore) JobListByAccount(ctx context.Context, accountID string, limit,
 //   - ErrNotFound when the row is missing or soft-deleted.
 //   - mapErr-wrapped CHECK violations on bad values.
 func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string) (Job, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var lockedID string
+	if err := tx.QueryRow(ctx, `select id::text from jobs where id = $1::uuid and status <> 'deleted' for update`, id).Scan(&lockedID); err != nil {
+		return Job{}, mapErr(err)
+	}
+	var active bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from job_runs r
+	    join job_tasks t on t.run_id = r.id
+	    where r.job_id = $1::uuid and t.status in ('queued','claimed'))`, id).Scan(&active); err != nil {
+		return Job{}, err
+	}
+	if active {
+		return Job{}, ErrConflict
+	}
 	// jsonb needs a non-nil byte slice for the COALESCE branch to
 	// type-match (passing nil to a $N::jsonb column throws a
 	// type-mismatch error). Empty json.RawMessage → nil-byte-slice
@@ -284,7 +302,7 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 	if len(envOverrides) > 0 {
 		envOverridesArg = []byte(envOverrides)
 	}
-	row := s.pool.QueryRow(ctx,
+	row := tx.QueryRow(ctx,
 		`update jobs set
 		   command         = coalesce($2::text[],  command),
 		   image_ref       = coalesce($3,          image_ref),
@@ -308,7 +326,14 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 		 returning `+jobSelectCols,
 		id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax,
 		envOverridesArg, status)
-	return scanJob(row)
+	job, err := scanJob(row)
+	if err != nil {
+		return Job{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Job{}, err
+	}
+	return job, nil
 }
 
 // JobListPendingImageMaterialization returns active jobs whose source image
@@ -409,7 +434,12 @@ func (s *PgStore) JobSetImageMaterialization(ctx context.Context, id, sourceRef,
 	if status == "ready" && (resolvedDigest == "" || storageKey == "") {
 		return Job{}, fmt.Errorf("state: ready job image materialization requires digest and storage key")
 	}
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update jobs set
 		   image_materialization_status = $3,
 		   image_resolved_digest = nullif($4, ''),
@@ -423,7 +453,19 @@ func (s *PgStore) JobSetImageMaterialization(ctx context.Context, id, sourceRef,
 		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
 		 returning `+jobSelectCols,
 		id, sourceRef, status, resolvedDigest, storageKey, failure)
-	return scanJob(row)
+	job, err := scanJob(row)
+	if err != nil {
+		return Job{}, err
+	}
+	if status == "failed" {
+		if err := settleJobImageFailure(ctx, tx, id, failure); err != nil {
+			return Job{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Job{}, err
+	}
+	return job, nil
 }
 
 // JobRecordImageMaterializationFailure records a failed attempt and keeps the
@@ -434,7 +476,12 @@ func (s *PgStore) JobRecordImageMaterializationFailure(ctx context.Context, id, 
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update jobs set
 		   image_materialization_status = case when image_materialization_attempts >= $6 then 'failed' else 'pending' end,
 		   image_materialization_error = nullif($4, ''),
@@ -447,82 +494,95 @@ func (s *PgStore) JobRecordImageMaterializationFailure(ctx context.Context, id, 
 		   and image_materialization_lease_owner = $3
 		 returning `+jobSelectCols,
 		id, sourceRef, owner, reason, retryAt.UTC(), maxAttempts)
-	return scanJob(row)
+	job, err := scanJob(row)
+	if err != nil {
+		return Job{}, err
+	}
+	if job.ImageMaterializationStatus == "failed" {
+		if err := settleJobImageFailure(ctx, tx, id, reason); err != nil {
+			return Job{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Job{}, err
+	}
+	return job, nil
 }
 
-// JobSoftDelete flips status='active'|'paused' to status='deleted'
-// iff no live job_task instance exists for the job. Implemented as:
-//  1. SELECT count(*) of live (waking/cold_booting/running) instances
-//     with kind='job_task' for this job (defensive — the helper
-//     ALSO checks this predicate, but the explicit count lets us
-//     distinguish "already deleted" from "live instances exist"
-//     without a second SELECT after the helper).
-//  2. SELECT soft_delete_job_if_no_live_instances($1) — returns
-//     TRUE if it flipped a row, FALSE if missing or live.
-//  3. If the helper returned TRUE → (deleted=true, hasLiveInstances=false).
-//     If FALSE but the row exists with status<>'deleted' →
-//     (deleted=false, hasLiveInstances=true) — caller maps to
-//     CodeJobHasLiveInstances.
-//     If FALSE and the row doesn't exist → ErrNotFound.
-//     If FALSE and the row exists with status='deleted' →
-//     (deleted=false, hasLiveInstances=false) — idempotent re-call.
-//
-// Two queries instead of one because the helper's single boolean
-// return conflates "missing" with "live" with "no-op success" — the
-// explicit count + status check disambiguates without modifying the
-// helper signature.
-func (s *PgStore) JobSoftDelete(ctx context.Context, id string) (deleted bool, hasLiveInstances bool, err error) {
-	// 1. Live-instance count. The helper's predicate mirrors this
-	//    exactly (kind='job_task' AND state IN ('waking','cold_booting','running'))
-	//    so a non-zero count means the helper will refuse the flip.
-	var liveCount int
-	if err := s.pool.QueryRow(ctx,
-		`select count(*) from instances
-		  where job_id = $1::uuid
-		    and kind   = 'job_task'
-		    and state in ('waking', 'cold_booting', 'running')`,
-		id,
-	).Scan(&liveCount); err != nil {
-		return false, false, fmt.Errorf("state: count live instances for job %s: %w", id, err)
-	}
-
-	// 2. Invoke the helper.
-	var flipped bool
-	if err := s.pool.QueryRow(ctx,
-		`select soft_delete_job_if_no_live_instances($1::uuid)`,
-		id,
-	).Scan(&flipped); err != nil {
-		return false, false, fmt.Errorf("state: soft delete job %s: %w", id, err)
-	}
-	if flipped {
-		return true, false, nil
-	}
-
-	// 3. Helper refused the flip — distinguish the three reasons.
-	//    status<>'deleted'  + liveCount==0  → row is missing (deleted
-	//                                         before we got here).
-	//    status<>'deleted'  + liveCount>0   → live instances exist;
-	//                                         the cap was tripped
-	//                                         between our count and
-	//                                         the helper call (rare
-	//                                         race; surface as
-	//                                         hasLiveInstances=true).
-	//    status='deleted'                   → idempotent re-call.
-	var currentStatus string
-	err = s.pool.QueryRow(ctx,
-		`select status from jobs where id = $1::uuid`, id,
-	).Scan(&currentStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, false, ErrNotFound
-	}
+// settleJobImageFailure closes queued work in the same transaction as the
+// terminal image transition. A run cannot otherwise be dispatched or finish.
+func settleJobImageFailure(ctx context.Context, tx pgx.Tx, jobID, reason string) error {
+	rows, err := tx.Query(ctx, `update job_tasks t set status = 'failed', exit_code = 1,
+	    error_class = 'infra', error_message = $2, finished_at = now(), next_attempt_at = null
+	    from job_runs r where t.run_id = r.id and r.job_id = $1::uuid
+	    and t.status = 'queued' returning t.run_id::text`, jobID, reason)
 	if err != nil {
-		return false, false, fmt.Errorf("state: read job status after soft delete: %w", err)
+		return err
+	}
+	runIDs := make(map[string]struct{})
+	for rows.Next() {
+		var runID string
+		if err := rows.Scan(&runID); err != nil {
+			rows.Close()
+			return err
+		}
+		runIDs[runID] = struct{}{}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for runID := range runIDs {
+		if _, err := queryJobRunRecompute(ctx, tx, runID, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// JobSoftDelete holds the job row lock, preventing a concurrent run-create
+// from slipping between the active-work check and the status change. Queued
+// runs are protected as well as live instances; both would be stranded by
+// deleting the template. The existing database helper retains its own
+// live-instance guard as a final defense.
+func (s *PgStore) JobSoftDelete(ctx context.Context, id string) (deleted bool, hasLiveInstances bool, err error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var currentStatus string
+	if err := tx.QueryRow(ctx, `select status from jobs where id = $1::uuid for update`, id).Scan(&currentStatus); err != nil {
+		return false, false, mapErr(err)
 	}
 	if currentStatus == "deleted" {
-		return false, false, nil // idempotent re-call
+		return false, false, nil
 	}
-	// status<>'deleted' + flipped=false → live instances blocked the flip.
-	return false, liveCount > 0, nil
+	// The job row lock serializes this check with JobRunCreate. A queued run
+	// has no instance yet, but deleting its template would strand it forever.
+	var active bool
+	if err := tx.QueryRow(ctx, `select
+	    exists(select 1 from job_runs r join job_tasks t on t.run_id = r.id
+	      where r.job_id = $1::uuid and t.status in ('queued','claimed'))
+	    or exists(select 1 from instances where job_id = $1::uuid and kind = 'job_task'
+	      and state in ('waking','cold_booting','running'))`, id).Scan(&active); err != nil {
+		return false, false, err
+	}
+	if active {
+		return false, true, nil
+	}
+	var flipped bool
+	if err := tx.QueryRow(ctx, `select soft_delete_job_if_no_live_instances($1::uuid)`, id).Scan(&flipped); err != nil {
+		return false, false, err
+	}
+	if !flipped {
+		return false, true, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, false, err
+	}
+	return true, false, nil
 }
 
 // JobCountByAccount counts the non-deleted jobs on the account.
@@ -587,6 +647,14 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		return JobRun{}, nil, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	var imageStatus string
+	if err := tx.QueryRow(ctx, `select image_materialization_status from jobs
+	    where id = $1::uuid and account_id = $2::uuid and status <> 'deleted' for update`, jobID, accountID).Scan(&imageStatus); err != nil {
+		return JobRun{}, nil, mapErr(err)
+	}
+	if imageStatus == "failed" {
+		return JobRun{}, nil, ErrConflict
+	}
 
 	// 1. Insert the run row. Parallelism is NOT NULL on job_runs, so a
 	// nil per-run override must be materialized from jobs.max_parallelism.
@@ -745,22 +813,10 @@ func queryJobRunRecompute(ctx context.Context, q pgxQueryRower, runID string, pr
 	row := q.QueryRow(ctx,
 		`with counts as (
 		   select
-		     -- 00571 broadened the terminal vocabulary to
-		     -- succeeded/failed/timeout/cancelled/oom. CR-E /
-		     -- code-review #2 round-5: the previous SUM arms did
-		     -- NOT include 'timeout' or 'oom', so reaped tasks
-		     -- (reaper_jobs.go::ReapStuckJobTasks flips status to
-		     -- 'timeout') contributed 0 to every bucket and the
-		     -- aggregate_status fell into the ELSE 'succeeded'
-		     -- arm, masking every timeout in the dashboard as a
-		     -- green run. Memstore mirror folds timeout/oom into
-		     -- canc (memstore_jobs.go:385); align the pgstore
-		     -- SQL to match. The retry-eligible statuses
-		     -- (failed/timeout/oom) are NOT folded into canc —
-		     -- only the dead-letter-tally statuses are.
+		     -- Timeout and OOM are failures, not customer cancellations.
 		     sum(case when status = 'succeeded' then 1 else 0 end) as succ,
-		     sum(case when status = 'failed' then 1 else 0 end) as fail,
-		     sum(case when status in ('cancelled','timeout','oom') then 1 else 0 end) as canc,
+		     sum(case when status in ('failed','timeout','oom') then 1 else 0 end) as fail,
+		     sum(case when status = 'cancelled' then 1 else 0 end) as canc,
 		     sum(case when status = 'claimed' then 1 else 0 end) as running,
 		     sum(case when status = 'queued' then 1 else 0 end) as queued_or_claimed
 		   from job_tasks where run_id = $1::uuid
@@ -1281,6 +1337,57 @@ func (s *PgStore) JobTaskFindStuck(ctx context.Context, ttl time.Duration) ([]Jo
 	}
 	defer rows.Close()
 	return scanJobTasks(rows)
+}
+
+// JobTaskReapClaimed is a fenced, atomic retry/dead-letter transition.
+// Expiry is checked again so a heartbeat after JobTaskFindStuck wins safely.
+func (s *PgStore) JobTaskReapClaimed(ctx context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var retryScheduled bool
+	err = tx.QueryRow(ctx, `update job_tasks set
+	      status = case when attempt <= $5 then 'queued' else 'timeout' end,
+	      attempt = case when attempt <= $5 then attempt + 1 else attempt end,
+	      instance_id = case when attempt <= $5 then null else instance_id end,
+	      next_attempt_at = case when attempt <= $5 then $6::timestamptz else null end,
+	      started_at = case when attempt <= $5 then null else started_at end,
+	      finished_at = case when attempt <= $5 then null else now() end,
+	      exit_code = case when attempt <= $5 then null else 124 end,
+	      error_class = case when attempt <= $5 then null else 'infra' end,
+	      error_message = case when attempt <= $5 then null else 'reaper reclaimed stale lease' end,
+	      log_content = case when attempt <= $5 then '' else log_content end,
+	      log_truncated = case when attempt <= $5 then false else log_truncated end,
+	      lease_token = null, lease_expires_at = null, last_lease_node = null
+	    where run_id = $1::uuid and task_index = $2 and status = 'claimed'
+	      and lease_token = $3 and lease_expires_at < $4::timestamptz
+	    returning status = 'queued'`,
+		runID, taskIndex, leaseToken, cutoff.UTC(), retryMax, nextAttemptAt.UTC()).Scan(&retryScheduled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("state: reap job task (%s, %d): %w", runID, taskIndex, err)
+	}
+	// Recompute the denormalized counters before incrementing dead letter:
+	// job_runs enforces dead_letter_count <= tasks_failed and total <= tasks.
+	if _, err := queryJobRunRecompute(ctx, tx, runID, false); err != nil {
+		return false, err
+	}
+	if !retryScheduled {
+		if _, err := tx.Exec(ctx, `update job_runs set dead_letter_count = dead_letter_count + 1 where id = $1::uuid`, runID); err != nil {
+			return false, err
+		}
+		if _, err := queryJobRunRecompute(ctx, tx, runID, false); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return retryScheduled, nil
 }
 
 // JobTaskGet returns ErrNotFound when (run_id, task_index) does not

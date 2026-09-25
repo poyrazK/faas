@@ -809,6 +809,11 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 		req.RAMMB, req.TaskTimeoutSec, req.MaxParallelism, req.RetryMax,
 		envOverrides, req.Status)
 	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Job has active runs", "wait for active runs to finish or cancel them before updating this job"))
+			return
+		}
 		s.log.Error("update job failed", "job", j.ID, "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not update job"))
 		return
@@ -852,8 +857,8 @@ func (s *server) deleteJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if hasLiveInstances {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeJobHasLiveInstances,
-			"Job has live instances",
-			fmt.Sprintf("job %q has live instances — cancel/wait before deleting", j.Name)))
+			"Job has active work",
+			fmt.Sprintf("job %q has queued or running tasks — cancel/wait before deleting", j.Name)))
 		return
 	}
 	s.audit.Emit(r.Context(), "job.deleted", &acct.ID, map[string]any{
@@ -899,6 +904,11 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 	if j.Status == "paused" {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Job paused", "job is paused — set status='active' via PATCH to run again"))
+		return
+	}
+	if j.ImageMaterializationStatus == "failed" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Job image unavailable", "update image_ref to retry materialization before creating a run"))
 		return
 	}
 	if req.Tasks < 1 {
@@ -958,6 +968,11 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 	run, _, err := s.store.JobRunCreate(r.Context(), j.ID, acct.ID, "manual",
 		req.Parallelism, req.RetryMax, req.TaskTimeoutSec, envOverrides, req.Tasks)
 	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Job image unavailable", "update image_ref to retry materialization before creating a run"))
+			return
+		}
 		s.log.Error("create job run failed", "job", j.ID, "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not create run"))
 		return
