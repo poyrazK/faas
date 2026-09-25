@@ -130,6 +130,87 @@ func TestNormalizeInputRejectsOversizedTraceBody(t *testing.T) {
 	}
 }
 
+func TestNormalizeInputPreservesEffectivePlanBodyLimit(t *testing.T) {
+	input := validateTraceInput("body")
+	input.RequestBodyMaxBytes = 250 << 20
+	normalized, err := edgeruletrace.NormalizeInput(input)
+	if err != nil {
+		t.Fatalf("NormalizeInput: %v", err)
+	}
+	if normalized.RequestBodyMaxBytes != input.RequestBodyMaxBytes {
+		t.Fatalf("effective plan request cap = %d, want %d", normalized.RequestBodyMaxBytes, input.RequestBodyMaxBytes)
+	}
+}
+
+func TestSimulateLimitRuleWithRequestBody(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		bodySet     bool
+		planCap     int64
+		buffered    int
+		streaming   int
+		status      string
+		outcome     string
+		stepOutcome string
+		wantReason  string
+		statusCode  int
+	}{
+		{name: "within buffered and streaming caps", body: "123", bodySet: true, planCap: 1 << 20, buffered: 4, streaming: 10, status: "complete", outcome: "continue", stepOutcome: "within_limit"},
+		{name: "streaming cap clamps to platform limit", body: "123", bodySet: true, planCap: 250 << 20, buffered: 4, streaming: 200 << 20, status: "complete", outcome: "continue", stepOutcome: "within_limit", wantReason: "streaming limit (104857600 bytes)"},
+		{name: "body exceeds buffered cap but streaming context is unknown", body: "12345", bodySet: true, planCap: 1 << 20, buffered: 4, streaming: 10, status: "incomplete", outcome: "needs_streaming_context", stepOutcome: "needs_streaming_context"},
+		{name: "body exceeds both possible caps", body: "12345678901", bodySet: true, planCap: 1 << 20, buffered: 4, streaming: 10, status: "complete", outcome: "body_too_large", stepOutcome: "body_too_large", statusCode: http.StatusRequestEntityTooLarge},
+		{name: "plan cap is lower than rule cap", body: "12345", bodySet: true, planCap: 4, buffered: 10, status: "complete", outcome: "body_too_large", stepOutcome: "body_too_large", statusCode: http.StatusRequestEntityTooLarge},
+		{name: "missing body context", planCap: 1 << 20, buffered: 4, status: "incomplete", outcome: "needs_request_body", stepOutcome: "needs_request_body"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			input := validateTraceInput(tc.body)
+			input.BodyProvided = tc.bodySet
+			input.RequestBodyMaxBytes = tc.planCap
+			rule := limitTraceRule(t, "limit-rule", tc.buffered, tc.streaming)
+			result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+			if err != nil {
+				t.Fatalf("Simulate: %v", err)
+			}
+			if result.Simulation.Status != tc.status || result.Simulation.Outcome != tc.outcome || result.Simulation.StatusCode != tc.statusCode {
+				t.Fatalf("simulation = %#v, want status=%q outcome=%q status_code=%d", result.Simulation, tc.status, tc.outcome, tc.statusCode)
+			}
+			if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Phase != "limit" {
+				t.Fatalf("simulation steps = %#v, want a single limit evaluation", result.Simulation.Steps)
+			}
+			if result.Simulation.Steps[0].Outcome != tc.stepOutcome {
+				t.Fatalf("limit step outcome = %q, want %q", result.Simulation.Steps[0].Outcome, tc.stepOutcome)
+			}
+			if tc.wantReason != "" && !strings.Contains(result.Simulation.Steps[0].Reason, tc.wantReason) {
+				t.Fatalf("limit step reason = %q, want substring %q", result.Simulation.Steps[0].Reason, tc.wantReason)
+			}
+			if tc.outcome == "needs_streaming_context" && !strings.Contains(result.Simulation.Reason, "buffered limit is 4 bytes and streaming limit is 10 bytes") {
+				t.Fatalf("ambiguous cap reason = %q", result.Simulation.Reason)
+			}
+		})
+	}
+}
+
+func TestSimulateLimitRuleDoesNotExposeSubmittedBody(t *testing.T) {
+	body := "private-limit-body"
+	rule := limitTraceRule(t, "limit-rule", 4, 0)
+	result, err := edgeruletrace.Simulate(validateTraceInput(body), []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Outcome != "body_too_large" || result.Simulation.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("simulation = %#v", result.Simulation)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), body) {
+		t.Fatalf("result leaked submitted request body: %s", encoded)
+	}
+}
+
 func validateTraceInput(body string) edgeruletrace.Input {
 	return edgeruletrace.Input{
 		App: "demo", Host: "example.com", Path: "/", Method: http.MethodPost,
@@ -149,5 +230,18 @@ func validateTraceRule(t *testing.T, id, mode, schema string, contentTypes []str
 	return api.EdgeRuleResponse{
 		ID: id, Enabled: true, Kind: "validate", MatchHost: "*", MatchPath: "*",
 		ValidateMode: mode, Action: encodedAction,
+	}
+}
+
+func limitTraceRule(t *testing.T, id string, buffered, streaming int) api.EdgeRuleResponse {
+	t.Helper()
+	encodedAction, err := json.Marshal(map[string]any{"limit": api.EdgeRuleLimitAction{
+		MaxBodyBytes: buffered, MaxBodyBytesStreaming: streaming,
+	}})
+	if err != nil {
+		t.Fatalf("Marshal limit action: %v", err)
+	}
+	return api.EdgeRuleResponse{
+		ID: id, Enabled: true, Kind: "limit", MatchHost: "*", MatchPath: "*", Action: encodedAction,
 	}
 }

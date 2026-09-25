@@ -21,7 +21,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate rules; its contents are never included in the result. The trace stops as incomplete where runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. App-level maintenance, ingress/auth policy, target-app rules after routing, CORS execution, declared routes, explicit limit rules, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. A supplied body is limited to 1 MiB and is evaluated only for validate and limit rules; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. App-level maintenance, ingress/auth policy, target-app rules after routing, CORS execution, declared routes, throttle state, cache, retry, circuit-breaker, async behavior, wake, and backend response are not simulated. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 // Input is the request context that can be simulated without contacting the
@@ -149,7 +149,7 @@ func NormalizeInput(input Input) (Input, error) {
 	if len(input.Body) > 0 {
 		input.BodyProvided = true
 	}
-	if input.RequestBodyMaxBytes <= 0 || input.RequestBodyMaxBytes > api.MaxRequestBodyBytes {
+	if input.RequestBodyMaxBytes <= 0 {
 		input.RequestBodyMaxBytes = api.MaxRequestBodyBytes
 	}
 	if !strings.HasPrefix(input.Path, "/") || len(input.Path) > 2048 {
@@ -388,6 +388,20 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			default:
 				return stop("incomplete", outcome, phase, reason, rule)
 			}
+		case "limit":
+			switch outcome {
+			case "within_limit":
+				step.PathAfter = requestPath
+				simulation.Steps = append(simulation.Steps, step)
+			case "body_too_large":
+				simulation.Status, simulation.Outcome, simulation.StatusCode = "complete", outcome, preview.StatusCode
+				simulation.StoppedAt, simulation.Reason = phase, reason
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			default:
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
 		case "respond":
 			if outcome != "fixed_response" {
 				return stop("incomplete", "unknown", phase, reason, rule)
@@ -549,6 +563,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		return outcome, reason, nil
 	case "validate":
 		return previewValidateRule(rule, input)
+	case "limit":
+		return previewLimitRule(rule, input)
 	default:
 		return "not_simulated", "this rule kind has runtime behavior outside the action preview", nil
 	}
@@ -609,6 +625,56 @@ func previewValidateRule(rule api.EdgeRuleResponse, input Input) (string, string
 		preview.StatusCode = http.StatusUnprocessableEntity
 		return "validation_failed", validationFailureReason(fieldErr), preview
 	}
+}
+
+func previewLimitRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleLimitAction](rule.Action, "limit")
+	if !ok {
+		return "unavailable", "rule action is missing or invalid; gateway compilation would drop it", nil
+	}
+	preview := &ActionPreview{Type: "limit"}
+	if !input.BodyProvided {
+		return "needs_request_body", "supply a request body to evaluate the limit rule", preview
+	}
+
+	bufferedCap := int64(action.MaxBodyBytes)
+	if bufferedCap <= 0 || bufferedCap > api.MaxRequestBodyBytes {
+		bufferedCap = api.MaxRequestBodyBytes
+	}
+	if input.RequestBodyMaxBytes < bufferedCap {
+		bufferedCap = input.RequestBodyMaxBytes
+	}
+
+	streamingCap := int64(action.MaxBodyBytesStreaming)
+	if streamingCap > 0 {
+		if streamingCap > api.RawStreamMaxRequestBytes {
+			streamingCap = api.RawStreamMaxRequestBytes
+		}
+		streamingPlanCap := input.RequestBodyMaxBytes
+		if streamingPlanCap > api.RawStreamMaxRequestBytes {
+			streamingPlanCap = api.RawStreamMaxRequestBytes
+		}
+		if streamingPlanCap < streamingCap {
+			streamingCap = streamingPlanCap
+		}
+	}
+
+	bodyBytes := int64(len(input.Body))
+	if streamingCap <= 0 || streamingCap == bufferedCap {
+		if bodyBytes > bufferedCap {
+			preview.StatusCode = http.StatusRequestEntityTooLarge
+			return "body_too_large", fmt.Sprintf("request body is %d bytes; the effective limit is %d bytes", bodyBytes, bufferedCap), preview
+		}
+		return "within_limit", fmt.Sprintf("request body is %d bytes; the effective limit is %d bytes", bodyBytes, bufferedCap), preview
+	}
+	if bodyBytes <= min(bufferedCap, streamingCap) {
+		return "within_limit", fmt.Sprintf("request body is %d bytes; it is within both the buffered limit (%d bytes) and streaming limit (%d bytes)", bodyBytes, bufferedCap, streamingCap), preview
+	}
+	if bodyBytes > max(bufferedCap, streamingCap) {
+		preview.StatusCode = http.StatusRequestEntityTooLarge
+		return "body_too_large", fmt.Sprintf("request body is %d bytes; it exceeds both the buffered limit (%d bytes) and streaming limit (%d bytes)", bodyBytes, bufferedCap, streamingCap), preview
+	}
+	return "needs_streaming_context", fmt.Sprintf("request body is %d bytes; the buffered limit is %d bytes and streaming limit is %d bytes, so the outcome depends on unavailable gateway streaming context", bodyBytes, bufferedCap, streamingCap), preview
 }
 
 func validationFailureReason(fieldErr *edgevalidate.FieldError) string {
