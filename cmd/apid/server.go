@@ -2191,9 +2191,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateQueueBinding))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteQueueBinding))))
 
-	// Customer intent for operator-provisioned managed outbound integrations.
-	// apid owns these binding rows; outboundd only reads them for admission.
+	// Customer intent for managed outbound integrations. Customer integration
+	// rows and app bindings are account-scoped; outboundd resolves both live.
 	mux.HandleFunc("GET /v1/outbound/integrations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOutboundIntegrationOffers))))
+	mux.HandleFunc("POST /v1/outbound/integrations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createOutboundIntegration))))
+	mux.HandleFunc("DELETE /v1/outbound/integrations/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteOutboundIntegration))))
 	mux.HandleFunc("GET /v1/apps/{slug}/outbound-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOutboundAppBindings))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundAppBinding))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/outbound-bindings/{integration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateOutboundBindingPolicy))))

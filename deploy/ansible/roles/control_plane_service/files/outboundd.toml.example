@@ -21,10 +21,12 @@ metrics_addr = "127.0.0.1:9108"
 # write_timeout = "2m"
 # idle_timeout = "2m"
 
-# Required if any integration has provider_authorization_env or
-# credential_source = "customer_sealed". Install a
+# Required for managed integrations, including integrations customers create
+# through the API. Install a
 # public JWKS published by vmmd (never its signing private key) at this path.
 # The issuer must exactly match vmmd's configured workload-identity issuer.
+# Configure this before customers create integrations; live rows resolve
+# without restarting outboundd, but JWKS changes do require a restart.
 # workload_identity_jwks_path = "/etc/faas/workload-identity.jwks.json"
 # workload_identity_issuer = "https://identity.gregale.dev"
 

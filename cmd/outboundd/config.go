@@ -38,7 +38,7 @@ func (c *Config) IdentityVerifier(items []configuredIntegration) (outbound.Ident
 			break
 		}
 	}
-	if !managed {
+	if !managed && c.WorkloadIdentityJWKSPath == "" {
 		return nil, nil
 	}
 	if c.WorkloadIdentityJWKSPath == "" {

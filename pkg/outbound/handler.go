@@ -173,6 +173,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_integration_unavailable", "Outbound integration is unavailable", "1")
 		return
 	}
+	metricIntegrationID := integration.MetricLabel()
 	appID, ok := h.callerAppID(w, r, integration)
 	if !ok {
 		return
@@ -208,21 +209,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		LeaseTTL: integration.RequestTimeout,
 	})
 	if err != nil {
-		h.Metrics.ObserveAdmission(integration.ID, "error")
-		h.Metrics.ObserveRejection(integration.ID, "backend_unavailable")
+		h.Metrics.ObserveAdmission(metricIntegrationID, "error")
+		h.Metrics.ObserveRejection(metricIntegrationID, "backend_unavailable")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_admission_unavailable", "Outbound admission is temporarily unavailable", "1")
 		return
 	}
 	if !decision.Granted {
-		h.Metrics.ObserveAdmission(integration.ID, "rejected")
-		h.Metrics.ObserveRejection(integration.ID, decision.Reason)
+		h.Metrics.ObserveAdmission(metricIntegrationID, "rejected")
+		h.Metrics.ObserveRejection(metricIntegrationID, decision.Reason)
 		retry := retryAfterSeconds(decision.RetryAfter)
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
 		writeProblem(w, http.StatusTooManyRequests, "outbound_budget_exhausted", "Outbound integration budget is exhausted", retry)
 		return
 	}
-	h.Metrics.ObserveAdmission(integration.ID, "granted")
-	h.Metrics.IncInFlight(integration.ID)
+	h.Metrics.ObserveAdmission(metricIntegrationID, "granted")
+	h.Metrics.IncInFlight(metricIntegrationID)
 
 	ctx := r.Context()
 	if integration.RequestTimeout > 0 {
@@ -231,7 +232,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 	}
 	defer func() {
-		h.Metrics.DecInFlight(integration.ID)
+		h.Metrics.DecInFlight(metricIntegrationID)
 		_ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID)
 	}()
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource == CredentialSourceCustomerSealed {
@@ -248,7 +249,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upstreamStarted := time.Now()
 	upstreamURL, err := targetURL(integration.Origin, path, r.URL.RawQuery)
 	if err != nil {
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_target_invalid", "Outbound integration target is invalid", "")
 		return
 	}
@@ -258,7 +259,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "request construction failed")
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_request_invalid", "Outbound request could not be constructed", "")
 		return
 	}
@@ -279,7 +280,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "upstream request failed")
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
@@ -292,15 +293,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode >= http.StatusBadRequest {
 		dependencySpan.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
 	}
-	h.Metrics.ObserveUpstream(integration.ID, resp.StatusCode, time.Since(upstreamStarted))
+	h.Metrics.ObserveUpstream(metricIntegrationID, resp.StatusCode, time.Since(upstreamStarted))
 	defer func() { _ = resp.Body.Close() }()
 	if !responseHeadersWithinBounds(resp.Header, h.MaxResponseHeaderBytes, h.MaxResponseHeaders) {
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_response_headers_too_large", "Outbound provider response headers exceed the gateway limit", "")
 		return
 	}
 	if r.Method != http.MethodHead && resp.StatusCode != http.StatusNotModified && h.MaxResponseBytes > 0 && resp.ContentLength > h.MaxResponseBytes {
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
 		return
 	}
@@ -322,7 +323,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// mark a truncated chunked response as a complete success. Abort the
 		// downstream stream, as ReverseProxy does on copy failures, so callers
 		// can detect the incomplete response without a second error envelope.
-		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
+		h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(upstreamStarted))
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
 		panic(http.ErrAbortHandler)

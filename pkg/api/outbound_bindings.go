@@ -13,6 +13,16 @@ type OutboundIntegrationOffer struct {
 	Enabled              bool     `json:"enabled"`
 	CredentialSource     string   `json:"credential_source"`
 	CredentialConfigured bool     `json:"credential_configured"`
+	OwnerKind            string   `json:"owner_kind"`
+}
+
+// CreateOutboundIntegrationRequest creates a customer-owned managed
+// integration. Its provider Authorization value is uploaded separately.
+type CreateOutboundIntegrationRequest struct {
+	Name                string   `json:"name"`
+	Origin              string   `json:"origin"`
+	AllowedMethods      []string `json:"allowed_methods"`
+	AllowedPathPrefixes []string `json:"allowed_path_prefixes"`
 }
 
 // PutOutboundCredentialRequest sets or rotates the provider Authorization

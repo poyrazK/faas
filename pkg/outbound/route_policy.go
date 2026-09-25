@@ -7,8 +7,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/outbound/routepolicy"
 )
 
-// RoutePolicy is a customer's app-specific narrowing of an operator-approved
-// integration. The gateway intersects it with the live integration ceiling.
+// RoutePolicy is a customer's app-specific narrowing of an integration's route
+// policy. The gateway intersects it with the live integration ceiling.
 type RoutePolicy = routepolicy.Policy
 
 func (i Integration) validateRoutePolicy() error {
@@ -36,7 +36,7 @@ func (i Integration) AllowsRequest(method, escapedPath string) bool {
 	return (RoutePolicy{AllowedMethods: i.AllowedMethods, AllowedPathPrefixes: i.AllowedPathPrefixes}).AllowsRequest(method, escapedPath)
 }
 
-// AllowsAppRequest applies the operator ceiling and then any customer app
+// AllowsAppRequest applies the integration ceiling and then any customer app
 // narrowing. An explicit operator attachment retains the full ceiling.
 func (i Integration) AllowsAppRequest(appID, method, escapedPath string) bool {
 	if !i.AllowsApp(appID) || !i.AllowsRequest(method, escapedPath) {

@@ -334,6 +334,27 @@ paths:
               schema: { $ref: '#/components/schemas/OutboundIntegrationOfferList' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundIntegration
+      summary: Create a customer-owned managed outbound integration.
+      description: Requires MFA and deploy-write scope. The origin must resolve only to globally reachable addresses. Provider Authorization is uploaded separately and sealed at rest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundIntegrationRequest' }
+      responses:
+        '201':
+          description: Customer integration created without credential material.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: The account already has an integration with this name. }
+        '429': { description: The account has reached its customer integration limit. }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/outbound/integrations/{integration}/credential:
     parameters:
@@ -370,6 +391,24 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of a customer-owned managed integration.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundIntegration
+      summary: Delete a customer-owned managed outbound integration.
+      description: Requires MFA and deploy-write scope. Deletes the integration, its sealed credential, app bindings, and admission state. Operator-provisioned integrations cannot be deleted here.
+      responses:
+        '204': { description: Integration deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps/{slug}/outbound-bindings:
     get:
       tags: [outbound]
@@ -19601,7 +19640,7 @@ components:
     OutboundIntegrationOffer:
       type: object
       description: Account-owned managed integration metadata; never contains a provider key or gateway token.
-      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled, credential_source, credential_configured]
+      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled, credential_source, credential_configured, owner_kind]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -19620,6 +19659,29 @@ components:
         credential_configured:
           type: boolean
           description: Whether the selected source currently has a credential; never reveals its value.
+        owner_kind:
+          type: string
+          enum: [operator, customer]
+          description: Whether the integration is operator-provisioned or customer-created.
+    CreateOutboundIntegrationRequest:
+      type: object
+      description: A fixed public HTTPS destination and its maximum HTTP route policy.
+      required: [name, origin, allowed_methods, allowed_path_prefixes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        origin: { type: string, format: uri }
+        allowed_methods:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          maxItems: 6
+          items: { type: string, enum: [GET, HEAD, POST, PUT, PATCH, DELETE] }
+        allowed_path_prefixes:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          maxItems: 32
+          items: { type: string, maxLength: 512 }
     PutOutboundCredentialRequest:
       type: object
       description: Provider Authorization header value, accepted once and never returned.

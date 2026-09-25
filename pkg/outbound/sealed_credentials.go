@@ -18,14 +18,14 @@ const ManagedAuthorizationMaxBytes = 8192
 // in outboundd. A database read on every request makes rotation/revocation
 // effective without restart; the gateway never caches old plaintext.
 type PostgresSealedCredentialResolver struct {
-	pool       *pgxpool.Pool
-	identities []*age.X25519Identity
-	allowedIDs map[string]struct{}
+	pool          *pgxpool.Pool
+	identities    []*age.X25519Identity
+	configuredIDs []string
 }
 
 func NewPostgresSealedCredentialResolver(pool *pgxpool.Pool, identities []*age.X25519Identity, integrationIDs []string) (*PostgresSealedCredentialResolver, error) {
-	if pool == nil || len(identities) == 0 || len(integrationIDs) == 0 {
-		return nil, errors.New("outbound credential database, identity, and configured integrations are required")
+	if pool == nil || len(identities) == 0 {
+		return nil, errors.New("outbound credential database and identity are required")
 	}
 	for _, identity := range identities {
 		if identity == nil {
@@ -40,16 +40,19 @@ func NewPostgresSealedCredentialResolver(pool *pgxpool.Pool, identities []*age.X
 		}
 		allowed[id.String()] = struct{}{}
 	}
-	return &PostgresSealedCredentialResolver{pool: pool, identities: append([]*age.X25519Identity(nil), identities...), allowedIDs: allowed}, nil
+	configuredIDs := make([]string, 0, len(allowed))
+	for id := range allowed {
+		configuredIDs = append(configuredIDs, id)
+	}
+	return &PostgresSealedCredentialResolver{
+		pool: pool, identities: append([]*age.X25519Identity(nil), identities...), configuredIDs: configuredIDs,
+	}, nil
 }
 
 func (r *PostgresSealedCredentialResolver) Authorization(ctx context.Context, integrationID string) (string, error) {
 	id, err := uuid.Parse(integrationID)
 	if err != nil {
 		return "", errors.New("outbound credential integration ID is invalid")
-	}
-	if _, configured := r.allowedIDs[id.String()]; !configured {
-		return "", errors.New("outbound credential integration is not configured")
 	}
 	var sealed []byte
 	err = r.pool.QueryRow(ctx, `
@@ -58,7 +61,8 @@ func (r *PostgresSealedCredentialResolver) Authorization(ctx context.Context, in
 		  JOIN outbound_integrations integration ON integration.id = credential.integration_id
 		 WHERE credential.integration_id = $1 AND credential.account_id = integration.account_id
 		   AND integration.enabled AND integration.provider_auth_mode = 'managed'
-		   AND integration.credential_source = 'customer_sealed'`, id).Scan(&sealed)
+		   AND integration.credential_source = 'customer_sealed'
+		   AND (integration.owner_kind = 'customer' OR integration.id::text = ANY($2::text[]))`, id, r.configuredIDs).Scan(&sealed)
 	if err != nil {
 		return "", fmt.Errorf("outbound credential unavailable: %w", err)
 	}

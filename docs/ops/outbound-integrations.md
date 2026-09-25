@@ -17,10 +17,11 @@ The daemon also exposes an operator-only Prometheus endpoint on
 `127.0.0.1:9108` by default (override with `metrics_addr`). It publishes
 `outbound_admissions_total`, `outbound_rejections_total`,
 `outbound_in_flight`, `outbound_upstream_requests_total`, and
-`outbound_upstream_latency_seconds`, all labelled only by configured
-integration ID and bounded outcome/rejection vocabularies. The in-flight gauge
-is per gateway process; the Postgres-backed admission decision remains the
-authoritative fleet-wide limit.
+`outbound_upstream_latency_seconds`. Operator integrations use their
+configuration-owned IDs; all customer-created integrations share the bounded
+`customer_managed` label. Outcomes and rejection reasons also use bounded
+vocabularies. The in-flight gauge is per gateway process; the Postgres-backed
+admission decision remains the authoritative fleet-wide limit.
 
 The daemon's default upstream transport resolves provider names immediately
 before opening a socket, rejects the entire DNS answer if any address is
@@ -73,17 +74,19 @@ After binding, an account can narrow that app's HTTP routes with
 ```
 
 Both arrays are required and nonempty. Each method and whole-segment path
-prefix must be contained in the operator-configured integration allowlist.
-The binding initially inherits the full operator policy, and a repeated `PUT`
-does not reset a narrowed binding. `GET` on the app's bindings reports both
-the integration ceiling and the app-specific route policy. The gateway
-intersects them on every request, so later operator tightening takes effect
-without editing the customer binding. An explicit operator `app_ids` attachment
-continues to grant the full operator ceiling even if a customer binding for
-the same app is narrower. The PATCH route requires MFA and deploy-write scope.
+prefix must be contained in the integration's configured route ceiling. The
+binding initially inherits that ceiling, and a repeated `PUT` does not reset a
+narrowed binding. `GET` on the app's bindings reports both the integration
+ceiling and the app-specific route policy. The gateway intersects them on
+every request, so later policy tightening takes effect without editing the
+customer binding. For operator-provisioned integrations, an explicit operator
+`app_ids` attachment continues to grant the full operator ceiling even if a
+customer binding for the same app is narrower. The PATCH route requires MFA
+and deploy-write scope.
 See [ADR-244](../adr/244-customer-outbound-binding-route-policy.md).
 
-For a customer-held provider credential, provision the managed integration with
+For a customer-held provider credential on an operator-provisioned integration,
+configure the managed integration with
 `credential_source = "customer_sealed"` and **omit** `provider_authorization_env`.
 Keep the explicit method/path allowlist, workload-identity JWKS, and gateway
 token configuration. The account can then `PUT
@@ -98,6 +101,45 @@ The ciphertext is fetched and opened for each admitted route request, so a
 rotation or deletion takes effect without restarting the gateway. A missing,
 corrupt, or revoked key fails closed with 503 before the provider call. See
 [ADR-243](../adr/243-customer-sealed-outbound-credentials.md).
+
+An account can create its own integration without an operator pre-provisioning
+the origin. Before enabling this workflow, configure
+`workload_identity_jwks_path` with vmmd's public signing keys and ensure the
+`outboundd` service has the fleet age private identity. `apid` must have the
+matching fleet age public recipient. The shipped systemd unit loads the private
+identity as a systemd credential; the private key is never placed in the app or
+its environment. A newly-created integration will not require an `outboundd`
+restart, but changing its JWKS or systemd credential configuration does.
+
+Create the integration with a fixed public HTTPS origin and the maximum routes
+any attached app may use:
+
+```json
+{
+  "name": "payments",
+  "origin": "https://api.stripe.com",
+  "allowed_methods": ["GET", "POST"],
+  "allowed_path_prefixes": ["/v1/customers", "/v1/payment_intents"]
+}
+```
+
+Send that to `POST /v1/outbound/integrations`, then set the provider header
+value with `PUT /v1/outbound/integrations/{id}/credential`, and attach the
+integration with `PUT /v1/apps/{slug}/outbound-bindings/{id}`. The creation,
+credential, and binding calls require MFA and deploy-write scope. Origin DNS is
+checked before it is stored and checked again on every new gateway connection;
+private, loopback, and special-use destinations are rejected. The customer's
+method/path policy is the integration-wide ceiling; each app binding can narrow
+it further. Customer-created integrations have a fixed 10 requests/second,
+burst 20, 10 concurrent requests, and 30-second timeout, with a maximum of 25
+enabled customer integrations per account. The credential remains unavailable
+until uploaded and the gateway fails closed if it is missing or revoked.
+
+Delete a customer-owned integration with
+`DELETE /v1/outbound/integrations/{id}`. This permanently removes its sealed
+credential, app bindings, and admission state. This endpoint cannot delete
+operator-provisioned integrations. See
+[ADR-246](../adr/246-customer-created-outbound-integrations.md).
 
 For every managed integration, set `allowed_methods` (uppercase `GET`, `HEAD`,
 `POST`, `PUT`, `PATCH`, or `DELETE`) and `allowed_path_prefixes`. A prefix
@@ -114,11 +156,12 @@ credentials. This is an HTTP route guard, not a substitute for provider-side
 authorization: query parameters and request bodies can still change a
 provider operation.
 
-After applying the route-policy migration, existing managed integration rows
-with empty permissions fail closed until `outboundd` provisions explicit rules
-from its config. Configure rules before restarting the daemon. Application-
-owned integrations keep their existing behavior and do not accept these
-managed-only route fields.
+After applying the route-policy migration, existing managed operator rows with
+empty permissions fail closed until `outboundd` provisions explicit rules from
+its config. New customer-created rows persist explicit rules through `apid`.
+Configure operator rules before restarting the daemon. Application-owned
+integrations keep their existing behavior and do not accept these managed-only
+route fields.
 
 Managed integrations require a vmmd-signed workload identity assertion. Copy
 the public JWKS published by the configured vmmd signer to a local file readable
@@ -130,14 +173,15 @@ remove the old key after all assertions signed with it have expired. Drain
 older gateway binaries before exposing a managed integration: they may still
 accept the legacy shared token.
 
-Origins and the maximum route policy remain operator-configured. Customers
-cannot create arbitrary origins yet: outboundd does not enforce the public
-destination and DNS/rebinding protections required before exposing that
-capability. A bound app can use the provider
+Customer-created origins are fixed at integration creation and must resolve
+only to globally reachable addresses. The gateway's connection-time DNS guard
+also prevents later DNS changes from redirecting a connection to a private
+destination. A bound app can use the provider
 credential through the gateway within its configured HTTP routes, but an
 external provider could echo a credential in its own response. Scope provider
-keys accordingly. See [ADR-239](../adr/239-platform-held-outbound-provider-authorization.md)
-and [ADR-241](../adr/241-managed-outbound-route-policy.md).
+keys accordingly. See [ADR-239](../adr/239-platform-held-outbound-provider-authorization.md),
+[ADR-241](../adr/241-managed-outbound-route-policy.md), and
+[ADR-245](../adr/245-public-destination-dialing.md).
 
 An application calls the gateway explicitly. For a managed integration, fetch
 an assertion from the guest-local identity endpoint using the integration's
@@ -176,8 +220,9 @@ headers have been sent, the gateway aborts the response stream. Callers must
 treat the resulting read error as an incomplete response, not a successful
 download of the received prefix.
 
-The loopback listener also serves `/metrics` and `/readyz` on port `8095` by
-default. Prometheus records bounded request status classes (`1xx` through
-`5xx`), request latency, readiness, and the standard OTLP exporter health
-metrics. The request metrics intentionally do not include integration IDs,
-URLs, or raw provider status codes as labels.
+The listener also serves `/metrics` and `/readyz` on port `8095` by default.
+Daemon HTTP request metrics record bounded status classes (`1xx` through `5xx`),
+request latency, readiness, and standard OTLP exporter health. The outbound
+integration metrics described above use only operator-owned integration IDs or
+the shared `customer_managed` label; they never include URLs or raw provider
+status codes.

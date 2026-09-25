@@ -22,11 +22,62 @@ func copyOutboundOffer(in OutboundIntegrationOffer) OutboundIntegrationOffer {
 func (m *MemStore) SeedOutboundIntegrationOffer(offer OutboundIntegrationOffer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if offer.OwnerKind == "" {
+		offer.OwnerKind = "operator"
+	}
 	if offer.CredentialSource == "" {
 		offer.CredentialSource = "operator_env"
 		offer.CredentialConfigured = true
 	}
 	m.outboundIntegrationOffers[offer.ID] = copyOutboundOffer(offer)
+}
+
+func (m *MemStore) CreateOutboundIntegration(_ context.Context, offer OutboundIntegrationOffer) (OutboundIntegrationOffer, error) {
+	if err := validateCustomerOutboundIntegration(offer); err != nil {
+		return OutboundIntegrationOffer{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[offer.AccountID]; !ok {
+		return OutboundIntegrationOffer{}, ErrNotFound
+	}
+	active := 0
+	for _, existing := range m.outboundIntegrationOffers {
+		if existing.AccountID != offer.AccountID {
+			continue
+		}
+		if existing.Name == offer.Name {
+			return OutboundIntegrationOffer{}, ErrConflict
+		}
+		if existing.OwnerKind == "customer" && existing.Enabled {
+			active++
+		}
+	}
+	if active >= MaxCustomerOutboundIntegrations {
+		return OutboundIntegrationOffer{}, ErrOutboundIntegrationLimit
+	}
+	if _, exists := m.outboundIntegrationOffers[offer.ID]; exists {
+		return OutboundIntegrationOffer{}, ErrConflict
+	}
+	m.outboundIntegrationOffers[offer.ID] = copyOutboundOffer(offer)
+	return copyOutboundOffer(offer), nil
+}
+
+func (m *MemStore) DeleteOutboundIntegration(_ context.Context, accountID, integrationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID || offer.OwnerKind != "customer" {
+		return ErrNotFound
+	}
+	delete(m.outboundIntegrationOffers, integrationID)
+	delete(m.outboundCredentials, integrationID)
+	for key, binding := range m.outboundAppBindings {
+		if binding.ID == integrationID {
+			delete(m.outboundAppBindings, key)
+		}
+	}
+	return nil
 }
 
 func (m *MemStore) SetOutboundCredential(_ context.Context, accountID, integrationID string, sealed []byte) error {

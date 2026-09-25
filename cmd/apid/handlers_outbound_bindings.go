@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"filippo.io/age"
 	"github.com/google/uuid"
@@ -24,6 +26,7 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		Enabled:              offer.Enabled,
 		CredentialSource:     offer.CredentialSource,
 		CredentialConfigured: offer.CredentialConfigured,
+		OwnerKind:            offer.OwnerKind,
 	}
 }
 
@@ -64,6 +67,64 @@ func (s *server) listOutboundIntegrationOffers(w http.ResponseWriter, r *http.Re
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, api.OutboundIntegrationOfferList{Items: items})
+}
+
+func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	var req api.CreateOutboundIntegrationRequest
+	if err := decodeJSONSized(r, &req, 32<<10); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "A valid outbound integration is required")
+		return
+	}
+	origin, err := url.Parse(req.Origin)
+	if err != nil || strings.ContainsAny(req.Origin, "?#") || outbound.ValidatePublicOrigin(r.Context(), origin) != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Origin must resolve only to public addresses over HTTPS")
+		return
+	}
+	store, ok := s.outboundBindingStore(w)
+	if !ok {
+		return
+	}
+	offer := state.OutboundIntegrationOffer{
+		ID: uuid.NewString(), AccountID: acct.ID, Name: req.Name, Origin: origin.String(),
+		AllowedMethods:      append([]string(nil), req.AllowedMethods...),
+		AllowedPathPrefixes: append([]string(nil), req.AllowedPathPrefixes...),
+		Enabled:             true, CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: "customer",
+	}
+	created, err := store.CreateOutboundIntegration(r.Context(), offer)
+	switch {
+	case errors.Is(err, state.ErrInvalidArgument):
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Integration name, methods, or paths are invalid")
+	case errors.Is(err, state.ErrConflict):
+		outboundBindingProblem(w, http.StatusConflict, api.CodeConflict, "An outbound integration with this name already exists")
+	case errors.Is(err, state.ErrOutboundIntegrationLimit):
+		outboundBindingProblem(w, http.StatusTooManyRequests, "outbound_integration_limit", "The account has reached its outbound integration limit")
+	case err != nil:
+		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_binding_unavailable", "Outbound integration could not be created")
+	default:
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusCreated, outboundOfferResponse(created))
+	}
+}
+
+func (s *server) deleteOutboundIntegration(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	integrationID := r.PathValue("integration")
+	if _, err := uuid.Parse(integrationID); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Integration ID must be a UUID")
+		return
+	}
+	store, ok := s.outboundBindingStore(w)
+	if !ok {
+		return
+	}
+	if err := store.DeleteOutboundIntegration(r.Context(), acct.ID, integrationID); errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "customer outbound integration not found")
+		return
+	} else if err != nil {
+		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_binding_unavailable", "Outbound integration could not be deleted")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) listOutboundAppBindings(w http.ResponseWriter, r *http.Request, acct state.Account) {

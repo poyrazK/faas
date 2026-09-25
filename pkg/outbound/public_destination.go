@@ -34,7 +34,7 @@ func NewPublicDestinationDialer() *PublicDestinationDialer {
 // so a later DNS change cannot redirect the socket into a private network.
 func ValidatePublicOrigin(ctx context.Context, origin *url.URL) error {
 	if origin == nil || origin.Scheme != "https" || origin.Hostname() == "" ||
-		origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" {
+		origin.User != nil || origin.ForceQuery || origin.RawQuery != "" || origin.Fragment != "" || origin.RawFragment != "" {
 		return fmt.Errorf("%w: origin must be an https URL without credentials, query, or fragment", ErrUnsafeDestination)
 	}
 	port := origin.Port()

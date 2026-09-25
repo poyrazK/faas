@@ -33,6 +33,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var accountID uuid.UUID
 	var providerAuthMode string
 	var credentialSource string
+	var ownerKind string
 	var allowedMethods, allowedPathPrefixes []string
 	var tokenHash []byte
 	var rate float64
@@ -41,9 +42,9 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	err = r.pool.QueryRow(ctx, `
 		SELECT account_id, origin, token_hash, rate_per_second, burst, max_in_flight,
 		       request_timeout_ms, enabled, provider_auth_mode, credential_source,
-		       allowed_methods, allowed_path_prefixes
+		       allowed_methods, allowed_path_prefixes, owner_kind
 		FROM outbound_integrations WHERE id = $1`, integrationID).
-		Scan(&accountID, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &credentialSource, &allowedMethods, &allowedPathPrefixes)
+		Scan(&accountID, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &enabled, &providerAuthMode, &credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -102,7 +103,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		OperatorAppIDs: operatorApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
 		RequestTimeout:   time.Duration(timeoutMS) * time.Millisecond,
-		ProviderAuthMode: providerAuthMode, CredentialSource: credentialSource, AllowedMethods: allowedMethods,
+		ProviderAuthMode: providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
 		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err

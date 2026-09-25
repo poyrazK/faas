@@ -17,10 +17,9 @@ type IntegrationRecord struct {
 	Policy    Integration
 }
 
-// EnsureIntegration atomically upserts an integration policy and its app
-// bindings. It is intentionally kept in this package so outboundd remains the
-// sole writer for these tables; apid can call the same owner through a future
-// API adapter rather than writing the tables directly.
+// EnsureIntegration atomically upserts an operator-owned integration policy
+// and its app bindings. Customer-owned integrations are created by apid and
+// cannot be overwritten by this operator reconciliation path.
 func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record IntegrationRecord) error {
 	if pool == nil {
 		return fmt.Errorf("outbound postgres pool is required")
@@ -44,8 +43,8 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		INSERT INTO outbound_integrations
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst,
 		     max_in_flight, request_timeout_ms, enabled, provider_auth_mode,
-		     allowed_methods, allowed_path_prefixes, credential_source)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		     allowed_methods, allowed_path_prefixes, credential_source, owner_kind)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'operator')
 		ON CONFLICT (id) DO UPDATE SET
 		    account_id = EXCLUDED.account_id, name = EXCLUDED.name,
 		    origin = EXCLUDED.origin, token_hash = EXCLUDED.token_hash,
@@ -57,7 +56,8 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		    allowed_path_prefixes = EXCLUDED.allowed_path_prefixes,
 		    credential_source = EXCLUDED.credential_source,
 		    updated_at = now()
-		WHERE outbound_integrations.account_id = EXCLUDED.account_id`,
+		WHERE outbound_integrations.account_id = EXCLUDED.account_id
+		  AND outbound_integrations.owner_kind = 'operator'`,
 		integrationID, record.AccountID, record.Name, record.Policy.Origin.String(),
 		record.Policy.TokenHash[:], record.Policy.RatePerSecond, record.Policy.Burst,
 		record.Policy.MaxInFlight, record.Policy.RequestTimeout.Milliseconds(), record.Policy.Enabled,

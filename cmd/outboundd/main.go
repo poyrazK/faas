@@ -88,11 +88,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := handler.SetManagedAuthorizations(managedAuthorizations); err != nil {
 		return fmt.Errorf("outboundd: managed provider authorization: %w", err)
 	}
-	if needCustomerCredentials {
-		identityPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
-		if identityPath == "" {
-			return errors.New("outboundd: customer-sealed credentials require FAAS_FLEET_AGE_IDENTITY_PATH")
-		}
+	identityPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
+	if identityPath != "" {
 		identity, err := secretbox.LoadHostKey(identityPath)
 		if err != nil {
 			return fmt.Errorf("outboundd: load fleet credential identity: %w", err)
@@ -102,6 +99,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("outboundd: customer credential resolver: %w", err)
 		}
 		handler.CredentialResolver = credentialResolver
+	} else if needCustomerCredentials {
+		return errors.New("outboundd: customer-sealed credentials require FAAS_FLEET_AGE_IDENTITY_PATH")
 	}
 	handler.IdentityVerifier = identityVerifier
 	outboundMetrics, err := outbound.NewMetrics(ops.Registry())

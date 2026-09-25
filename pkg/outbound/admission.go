@@ -30,10 +30,13 @@ const (
 	ProviderAuthManaged            = "managed"
 	CredentialSourceOperatorEnv    = "operator_env"
 	CredentialSourceCustomerSealed = "customer_sealed"
+	IntegrationOwnerOperator       = "operator"
+	IntegrationOwnerCustomer       = "customer"
 )
 
 // Integration is the immutable policy used for one provider. TokenHash is a
-// SHA-256 digest; the raw bearer token is intentionally never stored or logged.
+// SHA-256 digest for application-auth integrations; managed integrations use
+// workload identity and may leave it zero. Raw bearer tokens are never logged.
 type Integration struct {
 	ID                  string
 	Origin              *url.URL
@@ -47,6 +50,7 @@ type Integration struct {
 	RequestTimeout      time.Duration
 	ProviderAuthMode    string
 	CredentialSource    string
+	OwnerKind           string
 	AllowedMethods      []string
 	AllowedPathPrefixes []string
 	Enabled             bool
@@ -79,6 +83,7 @@ func NewIntegration(id, origin, token string, appIDs []string, ratePerSecond flo
 		MaxInFlight:      maxInFlight,
 		RequestTimeout:   requestTimeout,
 		ProviderAuthMode: ProviderAuthApplication,
+		OwnerKind:        IntegrationOwnerOperator,
 		Enabled:          true,
 	}
 	if err := i.Validate(); err != nil {
@@ -91,7 +96,7 @@ func (i Integration) Validate() error {
 	if strings.TrimSpace(i.ID) == "" || i.Origin == nil {
 		return fmt.Errorf("%w: id and origin are required", ErrInvalidIntegration)
 	}
-	if i.TokenHash == ([32]byte{}) {
+	if i.TokenHash == ([32]byte{}) && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: token hash is required", ErrInvalidIntegration)
 	}
 	if i.Origin.Scheme != "https" || i.Origin.Host == "" || i.Origin.User != nil || i.Origin.RawQuery != "" || i.Origin.Fragment != "" {
@@ -112,10 +117,26 @@ func (i Integration) Validate() error {
 	if i.CredentialSource != "" && i.CredentialSource != CredentialSourceOperatorEnv && i.CredentialSource != CredentialSourceCustomerSealed {
 		return fmt.Errorf("%w: credential source is invalid", ErrInvalidIntegration)
 	}
+	if i.OwnerKind != "" && i.OwnerKind != IntegrationOwnerOperator && i.OwnerKind != IntegrationOwnerCustomer {
+		return fmt.Errorf("%w: integration owner is invalid", ErrInvalidIntegration)
+	}
 	if i.CredentialSource == CredentialSourceCustomerSealed && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: customer credential source requires managed authentication", ErrInvalidIntegration)
 	}
+	if i.OwnerKind == IntegrationOwnerCustomer && (i.ProviderAuthMode != ProviderAuthManaged || i.CredentialSource != CredentialSourceCustomerSealed) {
+		return fmt.Errorf("%w: customer-owned integration requires managed customer credentials", ErrInvalidIntegration)
+	}
 	return i.validateRoutePolicy()
+}
+
+// MetricLabel bounds Prometheus cardinality for customer-created integrations.
+// Operator IDs remain configuration-owned and customer integrations share one
+// label regardless of how many customers create.
+func (i Integration) MetricLabel() string {
+	if i.OwnerKind == IntegrationOwnerCustomer {
+		return "customer_managed"
+	}
+	return i.ID
 }
 
 func (i Integration) AllowsApp(appID string) bool {
