@@ -424,9 +424,9 @@ func (s *PgStore) JobClaimPendingImageMaterialization(ctx context.Context, limit
 	return scanJobs(rows)
 }
 
-// JobSetImageMaterialization atomically publishes the resolved digest and
-// storage key, or records a failed attempt. A ready row must carry both
-// immutable identifiers; failed/pending rows clear the materialized timestamp.
+// JobSetImageMaterialization is the general materialization state setter for
+// setup and non-claiming compatibility callers. A ready row must carry both
+// immutable identifiers; claimed workers use JobPublishImageMaterialization.
 func (s *PgStore) JobSetImageMaterialization(ctx context.Context, id, sourceRef, status, resolvedDigest, storageKey, failure string) (Job, error) {
 	if status != "pending" && status != "ready" && status != "failed" {
 		return Job{}, fmt.Errorf("state: invalid job image materialization status %q", status)
@@ -451,16 +451,78 @@ func (s *PgStore) JobSetImageMaterialization(ctx context.Context, id, sourceRef,
 		   image_materialization_lease_until = null,
 		   updated_at = now()
 		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
+		   and ($3 <> 'ready' or image_materialization_lease_owner is null)
 		 returning `+jobSelectCols,
 		id, sourceRef, status, resolvedDigest, storageKey, failure)
 	job, err := scanJob(row)
 	if err != nil {
+		if status == "ready" && errors.Is(err, ErrNotFound) {
+			var claimed bool
+			if checkErr := tx.QueryRow(ctx, `select exists(select 1 from jobs
+				where id = $1::uuid and image_ref = $2 and status <> 'deleted'
+				  and image_materialization_lease_owner is not null)`, id, sourceRef).Scan(&claimed); checkErr != nil {
+				return Job{}, checkErr
+			}
+			if claimed {
+				return Job{}, ErrConflict
+			}
+		}
 		return Job{}, err
 	}
 	if status == "failed" {
 		if err := settleJobImageFailure(ctx, tx, id, failure); err != nil {
 			return Job{}, err
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Job{}, err
+	}
+	return job, nil
+}
+
+// JobPublishImageMaterialization publishes a materialized image only if the
+// worker still owns the live claim generation it built for. Stale attempts
+// return ErrConflict and must discard their own per-attempt artifact.
+func (s *PgStore) JobPublishImageMaterialization(ctx context.Context, id, sourceRef, owner string, attempt int, resolvedDigest, storageKey string) (Job, error) {
+	if resolvedDigest == "" || storageKey == "" {
+		return Job{}, fmt.Errorf("state: ready job image materialization requires digest and storage key")
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
+		`update jobs set
+		   image_materialization_status = 'ready',
+		   image_resolved_digest = $5,
+		   image_storage_key = $6,
+		   image_materialization_error = null,
+		   image_materialized_at = now(),
+		   image_materialization_next_attempt_at = null,
+		   image_materialization_lease_owner = null,
+		   image_materialization_lease_until = null,
+		   updated_at = now()
+		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
+		   and image_materialization_status = 'pending'
+		   and image_materialization_attempts = $4
+		   and image_materialization_lease_owner = $3
+		   and image_materialization_lease_until > now()
+		 returning `+jobSelectCols,
+		id, sourceRef, owner, attempt, resolvedDigest, storageKey)
+	job, err := scanJob(row)
+	if errors.Is(err, ErrNotFound) {
+		var exists bool
+		if checkErr := tx.QueryRow(ctx, `select exists(select 1 from jobs where id = $1::uuid and status <> 'deleted')`, id).Scan(&exists); checkErr != nil {
+			return Job{}, checkErr
+		}
+		if !exists {
+			return Job{}, ErrNotFound
+		}
+		return Job{}, ErrConflict
+	}
+	if err != nil {
+		return Job{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Job{}, err
@@ -492,6 +554,7 @@ func (s *PgStore) JobRecordImageMaterializationFailure(ctx context.Context, id, 
 		   updated_at = now()
 		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
 		   and image_materialization_lease_owner = $3
+		   and image_materialization_lease_until > now()
 		 returning `+jobSelectCols,
 		id, sourceRef, owner, reason, retryAt.UTC(), maxAttempts)
 	job, err := scanJob(row)

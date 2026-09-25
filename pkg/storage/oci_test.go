@@ -420,6 +420,15 @@ func TestPlan_JobsKey(t *testing.T) {
 	if got, ok := o.unplan(repo, tag); !ok || got != key {
 		t.Fatalf("unplan = (%q,%t), want (%q,true)", got, ok, key)
 	}
+	attemptUUID := "660e8400-e29b-41d4-a716-446655440001"
+	attemptKey := "jobs/" + jobUUID + "__" + attemptUUID + ".ext4"
+	repo, tag, err = o.plan(attemptKey)
+	if err != nil || repo != "jobs" || tag != jobUUID+"__"+attemptUUID {
+		t.Fatalf("plan attempt key = (%q,%q,%v)", repo, tag, err)
+	}
+	if got, ok := o.unplan(repo, tag); !ok || got != attemptKey {
+		t.Fatalf("unplan attempt key = (%q,%t), want (%q,true)", got, ok, attemptKey)
+	}
 }
 
 func TestPlan_BaseKey(t *testing.T) {
@@ -510,16 +519,17 @@ func TestPlan_InvalidKeys(t *testing.T) {
 		"apps/slug/dep",        // missing .ext4
 		"apps/slug/dep.tar.gz", // wrong extension
 		"snap/abcd1234/mem",    // bare-hex dep no longer accepted (UUID only)
-		"snap/550e8400-e29b-41d4-a716-44665544000z/mem",   // non-hex UUID char
-		"snap/550e8400-e29b-41d4-a716-446655440000/bogus", // wrong segment
-		"base/runner.ext4.digest.digest",                  // double-suffix
-		"layers/abc.txt",                                  // wrong extension
-		"jobs/not-a-uuid.ext4",                            // job key needs UUID
-		"scans/runner-node22-amd64.ext4",                  // missing scan suffix
-		"sigs/base",                                       // missing signature namespace
-		"sources/not-a-uuid.tar.gz",                       // source key needs build UUID
-		"unknown/foo/bar",                                 // unknown namespace
-		"apps/slug!/dep.ext4",                             // bang is not in tag charset
+		"snap/550e8400-e29b-41d4-a716-44665544000z/mem",              // non-hex UUID char
+		"snap/550e8400-e29b-41d4-a716-446655440000/bogus",            // wrong segment
+		"base/runner.ext4.digest.digest",                             // double-suffix
+		"layers/abc.txt",                                             // wrong extension
+		"jobs/not-a-uuid.ext4",                                       // job key needs UUID
+		"jobs/550e8400-e29b-41d4-a716-446655440000__not-a-uuid.ext4", // attempt key needs UUID
+		"scans/runner-node22-amd64.ext4",                             // missing scan suffix
+		"sigs/base",                                                  // missing signature namespace
+		"sources/not-a-uuid.tar.gz",                                  // source key needs build UUID
+		"unknown/foo/bar",                                            // unknown namespace
+		"apps/slug!/dep.ext4",                                        // bang is not in tag charset
 	}
 	for _, k := range tests {
 		t.Run(k, func(t *testing.T) {
@@ -569,6 +579,7 @@ func TestOCIRoundTrip(t *testing.T) {
 		"base/runner-node22.ext4.digest",
 		"layers/" + dep2 + ".ext4",
 		"jobs/" + dep1 + ".ext4",
+		"jobs/" + dep1 + "__" + dep2 + ".ext4",
 		"kernel/v1.10.0",
 	}
 	bodies := [][]byte{
@@ -579,6 +590,7 @@ func TestOCIRoundTrip(t *testing.T) {
 		[]byte("sha256:0000000000000000000000000000000000000000000000000000000000000000"),
 		[]byte("legacy layer bytes"),
 		[]byte("job rootfs bytes"),
+		[]byte("job attempt rootfs bytes"),
 		[]byte("firecracker kernel bytes"),
 	}
 
@@ -1281,12 +1293,14 @@ func TestOCIListUnderJobs(t *testing.T) {
 	ctx := context.Background()
 	job1 := "550e8400-e29b-41d4-a716-446655440000"
 	job2 := "660e8400-e29b-41d4-a716-446655440001"
+	attempt := "770e8400-e29b-41d4-a716-446655440002"
 	for _, item := range []struct {
 		key  string
 		body string
 	}{
 		{"jobs/" + job1 + ".ext4", "one"},
 		{"jobs/" + job2 + ".ext4", "two"},
+		{"jobs/" + job1 + "__" + attempt + ".ext4", "attempt"},
 	} {
 		if err := be.Put(ctx, item.key, bytes.NewReader([]byte(item.body))); err != nil {
 			t.Fatalf("Put %s: %v", item.key, err)
@@ -1297,8 +1311,9 @@ func TestOCIListUnderJobs(t *testing.T) {
 		t.Fatalf("List jobs: %v", err)
 	}
 	want := map[string]bool{
-		"jobs/" + job1 + ".ext4": true,
-		"jobs/" + job2 + ".ext4": true,
+		"jobs/" + job1 + ".ext4":                  true,
+		"jobs/" + job2 + ".ext4":                  true,
+		"jobs/" + job1 + "__" + attempt + ".ext4": true,
 	}
 	for _, key := range got {
 		delete(want, key)

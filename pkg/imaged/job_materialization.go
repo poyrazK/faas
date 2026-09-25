@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -23,9 +24,9 @@ const (
 )
 
 // MaterializeJob resolves a job's source OCI reference, builds a complete
-// ext4 rootfs, and publishes it under sched.JobLayerKey. The source reference
-// is re-read at the final state update; if a customer changed image_ref while
-// the build was running, the stale artifact is not marked ready.
+// ext4 rootfs, and publishes it under a unique job-attempt key. The source
+// reference and live claim are rechecked at publication; a stale artifact is
+// never marked ready.
 func (h *Handler) MaterializeJob(ctx context.Context, jobID string) error {
 	images, ok := h.store.(state.JobImageMaterializationStore)
 	if !ok {
@@ -41,8 +42,9 @@ func (h *Handler) MaterializeJob(ctx context.Context, jobID string) error {
 	if job.ImageMaterializationStatus == "failed" {
 		return fmt.Errorf("imaged: job %s image materialization is terminally failed", jobID)
 	}
+	owner := h.jobMaterializationClaimOwner()
 	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
-		claimed, claimErr := claimer.JobClaimImageMaterialization(ctx, jobID, h.jobMaterializationOwner(), jobMaterializationLease)
+		claimed, claimErr := claimer.JobClaimImageMaterialization(ctx, jobID, owner, jobMaterializationLease)
 		if claimErr != nil {
 			if errors.Is(claimErr, state.ErrNotFound) {
 				return nil // another worker owns the live lease, or backoff is active
@@ -51,10 +53,10 @@ func (h *Handler) MaterializeJob(ctx context.Context, jobID string) error {
 		}
 		job = claimed
 	}
-	return h.materializeClaimedJob(ctx, images, job)
+	return h.materializeClaimedJob(ctx, images, job, owner)
 }
 
-func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobImageMaterializationStore, job state.Job) (err error) {
+func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobImageMaterializationStore, job state.Job, owner string) (err error) {
 	started := time.Now()
 	outcome := "error"
 	defer func() {
@@ -70,20 +72,20 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 		}
 	}()
 	if job.ImageRef == "" {
-		return h.failJobMaterialization(ctx, images, job, "image_ref is empty")
+		return h.failJobMaterialization(ctx, images, job, owner, "image_ref is empty")
 	}
 	mp, ok := h.oci.(oci.ManifestPuller)
 	if !ok {
-		return h.failJobMaterialization(ctx, images, job,
+		return h.failJobMaterialization(ctx, images, job, owner,
 			fmt.Sprintf("OCI puller %T does not implement ManifestPuller", h.oci))
 	}
 	ref, err := oci.ParseReference(job.ImageRef)
 	if err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("parse image_ref: %v", err))
+		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("parse image_ref: %v", err))
 	}
 	jobAuth, err := h.resolveJobRegistryAuth(ctx, job, ref.APIHost())
 	if err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("registry credential: %v", err))
+		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("registry credential: %v", err))
 	}
 	if jobAuth != nil {
 		defer func() { jobAuth.Password = "" }()
@@ -91,16 +93,16 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 
 	digest, err := pullDigestWithAuth(ctx, h.oci, job.ImageRef, jobAuth)
 	if err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("resolve image: %v", err))
+		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("resolve image: %v", err))
 	}
 	resolvedRef := (oci.Reference{Registry: ref.Registry, Repository: ref.Repository, Digest: digest}).String()
 	manifest, err := pullManifestWithAuth(ctx, mp, resolvedRef, jobAuth)
 	if err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("pull manifest: %v", err))
+		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("pull manifest: %v", err))
 	}
 	config, err := pullImageConfigWithAuth(ctx, h.oci, resolvedRef, jobAuth)
 	if err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("pull image config: %v", err))
+		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("pull image config: %v", err))
 	}
 	// A job's command is staged later in job.json, but BuildFullRootfs also
 	// injects the stable app.json contract. Use the job command only when the
@@ -110,12 +112,12 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 	}
 	appManifest, err := manifestFromImageConfig(config)
 	if err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("image config: %v", err))
+		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("image config: %v", err))
 	}
 
 	repo := repoWithHost(resolvedRef)
 	if repo == "" {
-		return h.failJobMaterialization(ctx, images, job, "cannot derive image repository")
+		return h.failJobMaterialization(ctx, images, job, owner, "cannot derive image repository")
 	}
 	readers := make([]io.Reader, 0, len(manifest.Layers))
 	closers := make([]io.Closer, 0, len(manifest.Layers))
@@ -128,20 +130,20 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 	for _, layer := range manifest.Layers {
 		rc, pullErr := pullBlobWithAuth(ctx, mp, repo, layer.Digest, jobAuth)
 		if pullErr != nil {
-			return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("pull layer %s: %v", layer.Digest, pullErr))
+			return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("pull layer %s: %v", layer.Digest, pullErr))
 		}
 		closers = append(closers, rc)
 		readers = append(readers, rc)
 	}
 	acct, err := h.store.AccountByID(ctx, job.AccountID)
 	if err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("load account: %v", err))
+		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("load account: %v", err))
 	}
 	be, err := h.storageFor()
 	if err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("storage backend: %v", err))
+		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("storage backend: %v", err))
 	}
-	key := sched.JobLayerKey(job.ID)
+	key := sched.JobLayerAttemptKey(job.ID, uuid.NewString())
 	if _, err := h.builder.BuildFullRootfs(ctx, rootfs.BuildFullRootfsInput{
 		Layers:        readers,
 		Manifest:      appManifest,
@@ -150,22 +152,24 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 		Storage:       be,
 		StorageKey:    key,
 	}); err != nil {
-		return h.failJobMaterialization(ctx, images, job, fmt.Sprintf("build ext4: %v", err))
+		h.cleanupJobMaterializationArtifact(be, key)
+		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("build ext4: %v", err))
 	}
-	if _, err := images.JobSetImageMaterialization(ctx, job.ID, job.ImageRef, "ready", digest, key, ""); err != nil {
-		// The build completed, but the source row may have been deleted or
-		// changed while the worker was pulling layers. The conditional state
-		// update fences that stale worker from publishing readiness; remove
-		// the artifact it just wrote so the fixed jobs/<id>.ext4 key cannot
-		// become an orphan. Use a detached, bounded context because a caller
-		// cancellation must not skip cleanup after a successful Put.
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		cleanupErr := be.Delete(cleanupCtx, key)
-		cancel()
-		if cleanupErr != nil && !storage.IsNotFound(cleanupErr) {
-			h.log.Warn("imaged: cleanup stale job materialization", "job", job.ID, "key", key, "err", cleanupErr)
-		}
-		return fmt.Errorf("imaged: publish job %s materialization state: %w", job.ID, err)
+	var publishErr error
+	_, claimAware := h.store.(state.JobImageMaterializationClaimer)
+	if publisher, ok := h.store.(state.JobImageMaterializationPublisher); ok && claimAware {
+		_, publishErr = publisher.JobPublishImageMaterialization(ctx, job.ID, job.ImageRef, owner, job.ImageMaterializationAttempts, digest, key)
+	} else if claimAware {
+		publishErr = fmt.Errorf("claim-aware job materialization store does not support fenced publication")
+	} else {
+		_, publishErr = images.JobSetImageMaterialization(ctx, job.ID, job.ImageRef, "ready", digest, key, "")
+	}
+	if publishErr != nil {
+		h.cleanupJobMaterializationArtifact(be, key)
+		return fmt.Errorf("imaged: publish job %s materialization state: %w", job.ID, publishErr)
+	}
+	if cleanupErr := h.cleanupSupersededJobArtifacts(ctx, job.ID, key); cleanupErr != nil {
+		h.log.Warn("imaged: cleanup superseded job materialization artifacts", "job", job.ID, "keep_key", key, "err", cleanupErr)
 	}
 	h.markJobRegistryCredentialUsed(ctx, job, ref.APIHost(), jobAuth)
 	h.log.Info("imaged: materialized job image", "job", job.ID, "digest", digest, "key", key)
@@ -188,8 +192,9 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 	started := time.Now()
 	var jobs []state.Job
 	var err error
+	owner := h.jobMaterializationClaimOwner()
 	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
-		jobs, err = claimer.JobClaimPendingImageMaterialization(ctx, jobMaterializationBatchSize, h.jobMaterializationOwner(), jobMaterializationLease)
+		jobs, err = claimer.JobClaimPendingImageMaterialization(ctx, jobMaterializationBatchSize, owner, jobMaterializationLease)
 	} else {
 		jobs, err = images.JobListPendingImageMaterialization(ctx, jobMaterializationBatchSize)
 	}
@@ -200,7 +205,7 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 		return err
 	}
 	for _, job := range jobs {
-		if err := h.materializeClaimedJob(ctx, images, job); err != nil {
+		if err := h.materializeClaimedJob(ctx, images, job, owner); err != nil {
 			h.log.Warn("imaged: pending job image materialization failed", "job", job.ID, "err", err)
 		}
 	}
@@ -281,10 +286,10 @@ func (h *Handler) retryLegacyJobArtifact(ctx context.Context, verifier state.Job
 	h.log.Warn("imaged: legacy job artifact verification deferred", "job", job.ID, "reason", reason)
 }
 
-func (h *Handler) failJobMaterialization(ctx context.Context, images state.JobImageMaterializationStore, job state.Job, reason string) error {
+func (h *Handler) failJobMaterialization(ctx context.Context, images state.JobImageMaterializationStore, job state.Job, owner, reason string) error {
 	if claimer, ok := h.store.(state.JobImageMaterializationClaimer); ok {
 		delay := jobMaterializationRetryDelay(job.ImageMaterializationAttempts)
-		updated, err := claimer.JobRecordImageMaterializationFailure(ctx, job.ID, job.ImageRef, h.jobMaterializationOwner(), reason, time.Now().Add(delay), jobMaterializationMaxAttempts)
+		updated, err := claimer.JobRecordImageMaterializationFailure(ctx, job.ID, job.ImageRef, owner, reason, time.Now().Add(delay), jobMaterializationMaxAttempts)
 		if err != nil {
 			return fmt.Errorf("imaged: job %s materialization failed (%s), recording retry: %w", job.ID, reason, err)
 		}
@@ -304,6 +309,18 @@ func (h *Handler) jobMaterializationOwner() string {
 		return h.nodeName
 	}
 	return "imaged"
+}
+
+func (h *Handler) jobMaterializationClaimOwner() string {
+	return h.jobMaterializationOwner() + "/" + uuid.NewString()
+}
+
+func (h *Handler) cleanupJobMaterializationArtifact(be storage.StorageBackend, key string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := be.Delete(cleanupCtx, key); err != nil && !storage.IsNotFound(err) {
+		h.log.Warn("imaged: cleanup job materialization artifact", "key", key, "err", err)
+	}
 }
 
 func jobMaterializationRetryDelay(attempt int) time.Duration {
