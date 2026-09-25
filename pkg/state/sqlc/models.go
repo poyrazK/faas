@@ -1537,6 +1537,22 @@ type ObjectStorageBucketUsage struct {
 	Token         string
 }
 
+type ObjectStorageCustomerUsageReportsV2 struct {
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Source             string
+	Version            int16
+	PeriodStart        pgtype.Timestamptz
+	CoverageEnd        pgtype.Timestamptz
+	ObservedAt         pgtype.Timestamptz
+	EvidenceDigest     string
+	StoredByteHours    int64
+	ReadOperations     int64
+	WriteOperations    int64
+	EgressBytes        pgtype.Int8
+}
+
 type ObjectStorageInventorySample struct {
 	Token      string
 	BucketID   pgtype.UUID

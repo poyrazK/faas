@@ -148,6 +148,7 @@ type MemStore struct {
 	objectUsage               map[string]ObjectBucketUsage
 	objectGrants              map[string]map[string]int64
 	objectReports             []api.ObjectStorageUsageReport
+	objectCustomerReportsV2   []api.ObjectStorageCustomerUsageReportV2
 	objectAuthorizations      map[string]int64
 	objectProviderRequests    map[string]int64
 	objectAccessGrants        map[string]ObjectBucketAccessGrant

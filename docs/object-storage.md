@@ -598,6 +598,15 @@ customer-billing contract keeps direct transfers and requires qualified
 evidence for each charged dimension; it is not enabled by the current report
 format. See [ADR-237](adr/237-provider-neutral-object-storage-billing.md).
 
+An additive v2 customer-usage report ledger is available to provider adapters
+for shadow evidence. It stores cumulative stored byte-hours, read and write
+operations, and nullable egress bytes without any provider-cost field. Its
+coverage interval, observation time, source, and evidence digest are recorded
+per account, backend, and UTC month. The v2 ledger is **not** yet an admission
+or month-close input: the existing v1 report, including its required provider
+cost, continues to fail closed for signed URLs and billing. Importing v2 data
+alone does not enable object storage or paid billing.
+
 ## Provider configuration
 
 Use `driver: "s3"` for S3-compatible services and `driver: "gcs"` for native
