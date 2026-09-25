@@ -10,6 +10,7 @@ import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
 import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnvironmentApprovalResponse.js';
 import type { ProjectEnvironmentApprovalStatusResponse } from '../models/ProjectEnvironmentApprovalStatusResponse.js';
+import type { ProjectEnvironmentClonePlanResponse } from '../models/ProjectEnvironmentClonePlanResponse.js';
 import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
 import type { ProjectEnvironmentDiffResponse } from '../models/ProjectEnvironmentDiffResponse.js';
@@ -320,8 +321,12 @@ export class ProjectsService {
    * customer secrets. Managed PostgreSQL and object-storage bindings receive
    * fresh target-scoped credentials and isolated data by default. Set
    * share_resources to attach fresh credentials to the source resources
-   * instead. Provider-issued credential bytes are never copied. Domains,
-   * routes, and policies remain application-scoped and are shared.
+   * instead. Provider-issued credential bytes are never copied. Explicitly
+   * environment-owned routes and edge-policy groups are copied; application-
+   * owned fallbacks remain shared. Bound custom domains are not copied because
+   * DNS ownership and certificate verification are hostname-specific. Live
+   * releases are not copied by create; use environment promotion to deploy
+   * the same immutable source artifacts into the new environment.
    *
    * @returns ProjectEnvironmentResponse Project environment created.
    * @throws ApiError
@@ -631,6 +636,62 @@ export class ProjectsService {
         'environment': environment,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Preflight an environment clone without creating resources.
+   * Reports non-secret resource actions, known provider blockers, and
+   * whether every source workload has a live release available for a later
+   * promotion. Account quotas are rechecked during create and are not
+   * reserved by this read-only endpoint. Secret values and keys are never
+   * included.
+   *
+   * @returns ProjectEnvironmentClonePlanResponse Read-only environment clone plan.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentClonePreview({
+    slug,
+    environment,
+    to,
+    shareResources = false,
+  }: {
+    /**
+     * Project whose environment clone is preflighted.
+     */
+    slug: string,
+    /**
+     * Source environment to clone.
+     */
+    environment: string,
+    /**
+     * New target environment slug.
+     */
+    to: string,
+    /**
+     * Plan fresh target credentials over shared database and object data instead of isolated copies.
+     */
+    shareResources?: boolean,
+  }): CancelablePromise<ProjectEnvironmentClonePlanResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/clone-preview',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'to': to,
+        'share_resources': shareResources,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses

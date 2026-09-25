@@ -563,6 +563,8 @@ export type { ProjectEnvironmentApprovalResponse } from './ProjectEnvironmentApp
 export type { ProjectEnvironmentApprovalStatusResponse } from './ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentClonePlanActionResponse } from './ProjectEnvironmentClonePlanActionResponse.js';
+export type { ProjectEnvironmentClonePlanResponse } from './ProjectEnvironmentClonePlanResponse.js';
 export type { ProjectEnvironmentCloneResponse } from './ProjectEnvironmentCloneResponse.js';
 export type { ProjectEnvironmentConfigChange } from './ProjectEnvironmentConfigChange.js';
 export type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';

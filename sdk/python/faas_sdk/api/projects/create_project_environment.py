@@ -97,8 +97,12 @@ def sync_detailed(
     customer secrets. Managed PostgreSQL and object-storage bindings receive
     fresh target-scoped credentials and isolated data by default. Set
     share_resources to attach fresh credentials to the source resources
-    instead. Provider-issued credential bytes are never copied. Domains,
-    routes, and policies remain application-scoped and are shared.
+    instead. Provider-issued credential bytes are never copied. Explicitly
+    environment-owned routes and edge-policy groups are copied; application-
+    owned fallbacks remain shared. Bound custom domains are not copied because
+    DNS ownership and certificate verification are hostname-specific. Live
+    releases are not copied by create; use environment promotion to deploy
+    the same immutable source artifacts into the new environment.
 
     Args:
         slug (str):
@@ -138,8 +142,12 @@ def sync(
     customer secrets. Managed PostgreSQL and object-storage bindings receive
     fresh target-scoped credentials and isolated data by default. Set
     share_resources to attach fresh credentials to the source resources
-    instead. Provider-issued credential bytes are never copied. Domains,
-    routes, and policies remain application-scoped and are shared.
+    instead. Provider-issued credential bytes are never copied. Explicitly
+    environment-owned routes and edge-policy groups are copied; application-
+    owned fallbacks remain shared. Bound custom domains are not copied because
+    DNS ownership and certificate verification are hostname-specific. Live
+    releases are not copied by create; use environment promotion to deploy
+    the same immutable source artifacts into the new environment.
 
     Args:
         slug (str):
@@ -174,8 +182,12 @@ async def asyncio_detailed(
     customer secrets. Managed PostgreSQL and object-storage bindings receive
     fresh target-scoped credentials and isolated data by default. Set
     share_resources to attach fresh credentials to the source resources
-    instead. Provider-issued credential bytes are never copied. Domains,
-    routes, and policies remain application-scoped and are shared.
+    instead. Provider-issued credential bytes are never copied. Explicitly
+    environment-owned routes and edge-policy groups are copied; application-
+    owned fallbacks remain shared. Bound custom domains are not copied because
+    DNS ownership and certificate verification are hostname-specific. Live
+    releases are not copied by create; use environment promotion to deploy
+    the same immutable source artifacts into the new environment.
 
     Args:
         slug (str):
@@ -213,8 +225,12 @@ async def asyncio(
     customer secrets. Managed PostgreSQL and object-storage bindings receive
     fresh target-scoped credentials and isolated data by default. Set
     share_resources to attach fresh credentials to the source resources
-    instead. Provider-issued credential bytes are never copied. Domains,
-    routes, and policies remain application-scoped and are shared.
+    instead. Provider-issued credential bytes are never copied. Explicitly
+    environment-owned routes and edge-policy groups are copied; application-
+    owned fallbacks remain shared. Bound custom domains are not copied because
+    DNS ownership and certificate verification are hostname-specific. Live
+    releases are not copied by create; use environment promotion to deploy
+    the same immutable source artifacts into the new environment.
 
     Args:
         slug (str):
