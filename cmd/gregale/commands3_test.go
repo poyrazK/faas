@@ -38,6 +38,21 @@ func TestSecretRuntimeReloadLabelSummarizesReportsWithoutClaimingConvergence(t *
 	}
 }
 
+func TestSecretRuntimeReloadLabelSeparatesApplicationAcknowledgement(t *testing.T) {
+	got := secretRuntimeReloadLabel(2, 1, "updated", "sent", "instance-old", []api.SecretRuntimeReloadObservation{
+		{InstanceID: "instance-current", Version: 2, Projection: "updated", Signal: "sent", ApplicationAckVersion: 2, ApplicationAck: "applied"},
+		{InstanceID: "instance-old", Version: 1, Projection: "updated", Signal: "sent", ApplicationAckVersion: 1, ApplicationAck: "failed"},
+	})
+	for _, want := range []string{"app ack: 1 applied, 0 failed, 1 stale", "instance-old"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("runtime summary %q does not contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "app applied") {
+		t.Errorf("runtime summary should distinguish the app acknowledgement from guest status: %q", got)
+	}
+}
+
 func TestSetProjectDeploySecrets(t *testing.T) {
 	var paths []string
 	var bodies []api.PutAppSecretRequest

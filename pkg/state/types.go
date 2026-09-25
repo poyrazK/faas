@@ -5954,6 +5954,13 @@ const (
 	SecretReloadSignalNotAttempted SecretReloadSignalStatus = "not_attempted"
 )
 
+type SecretApplicationReloadAckStatus string
+
+const (
+	SecretApplicationReloadAckApplied SecretApplicationReloadAckStatus = "applied"
+	SecretApplicationReloadAckFailed  SecretApplicationReloadAckStatus = "failed"
+)
+
 // AppSecretRuntimeReloadResult records guest-init's local projection and
 // signal outcome for an exact set of secret versions. It is deliberately not
 // an application acknowledgement: the process may still fail to apply them.
@@ -5969,19 +5976,36 @@ type AppSecretRuntimeReloadResult struct {
 	Candidates  []AppSecretDeliveryCandidate
 }
 
+// AppSecretRuntimeReloadAckResult records an application-owned outcome for
+// the current secret revision. It attests only what the application reports.
+type AppSecretRuntimeReloadAckResult struct {
+	AccountID   string
+	AppID       string
+	InstanceID  string
+	Revision    string
+	Status      SecretApplicationReloadAckStatus
+	ErrorCode   string
+	AttemptedAt time.Time
+	Candidates  []AppSecretDeliveryCandidate
+}
+
 // AppSecretRuntimeReloadObservation is the latest guest-init projection and
-// signal outcome for one secret version on one currently active runtime. It
-// intentionally excludes secret values and does not claim application-level
-// acknowledgement.
+// signal outcome for one secret version on one active runtime, plus an
+// optional separately-versioned application self-attestation. It contains no
+// secret values and does not independently verify the app's internal state.
 type AppSecretRuntimeReloadObservation struct {
-	Scope      string
-	Key        string
-	InstanceID string
-	Version    int64
-	Projection SecretReloadProjectionStatus
-	Signal     SecretReloadSignalStatus
-	ObservedAt time.Time
-	ErrorCode  string
+	Scope                   string
+	Key                     string
+	InstanceID              string
+	Version                 int64
+	Projection              SecretReloadProjectionStatus
+	Signal                  SecretReloadSignalStatus
+	ObservedAt              time.Time
+	ErrorCode               string
+	ApplicationAckVersion   int64
+	ApplicationAck          SecretApplicationReloadAckStatus
+	ApplicationAckAt        *time.Time
+	ApplicationAckErrorCode string
 }
 
 // AccountAppSecret is the per-row shape returned by

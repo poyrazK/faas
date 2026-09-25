@@ -344,8 +344,12 @@ func boot() error {
 	var rotatingSecrets *runtimeSecretsState
 	if manifest.SecretReloadSignal != "" {
 		rotatingSecrets = newRuntimeSecretsState(secrets)
-		if err := writeRuntimeSecretsProjection(secretReloadFilePath, lookupUID(manifest.EffectiveUser()), secrets); err != nil {
+		secretUID := lookupUID(manifest.EffectiveUser())
+		if err := writeRuntimeSecretsProjection(secretReloadFilePath, secretUID, secrets); err != nil {
 			return fmt.Errorf("prepare runtime secret file: %w", err)
+		}
+		if err := writeRuntimeSecretRevisionProjection(secretReloadRevisionFilePath, secretUID, ""); err != nil {
+			return fmt.Errorf("prepare runtime secret revision file: %w", err)
 		}
 	}
 	supRef.Start = func() error {

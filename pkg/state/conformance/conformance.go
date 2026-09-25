@@ -2614,6 +2614,23 @@ func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	if current.DeliveryVersion != 2 || current.LastRuntimeReloadVersion != 1 {
 		t.Fatalf("stale runtime reload changed current metadata = current %d observed %d, want 2/1", current.DeliveryVersion, current.LastRuntimeReloadVersion)
 	}
+	result.Candidates[0].Version = 2
+	result.Revision = strings.Repeat("b", 64)
+	if updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload(v2): updated=%d err=%v", updated, err)
+	}
+	ack := state.AppSecretRuntimeReloadAckResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: result.Revision, Status: state.SecretApplicationReloadAckApplied,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 2}},
+	}
+	if updated, err := fx.Store.RecordAppSecretRuntimeReloadAck(fx.Ctx, ack); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReloadAck(v2): updated=%d err=%v", updated, err)
+	}
+	observations, err = fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(observations) != 1 || observations[0].ApplicationAckVersion != 2 || observations[0].ApplicationAck != state.SecretApplicationReloadAckApplied {
+		t.Fatalf("ListAppSecretRuntimeReloadObservations(app ack) = %+v, %v", observations, err)
+	}
 }
 
 func testVmmdUpsertPreservesOperatorState(t *testing.T, fx *Fixture) {

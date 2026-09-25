@@ -30978,7 +30978,7 @@ components:
           items: { $ref: '#/components/schemas/SecretRuntimeReloadObservation' }
 
     SecretRuntimeReloadObservation:
-      description: "Non-sensitive guest-init projection/signal outcome for one secret version on one active runtime. Not an application acknowledgement."
+      description: "Non-sensitive guest-init projection/signal outcome and optional application-owned reload acknowledgement for one runtime. An application acknowledgement is a self-attestation, not independent verification."
       type: object
       required: [instance_id, version, projection, signal, observed_at]
       properties:
@@ -30988,6 +30988,10 @@ components:
         signal: { type: string, enum: [sent, queued, failed, not_attempted] }
         observed_at: { type: string, format: date-time }
         error_code: { type: string, enum: [projection_failed, signal_failed] }
+        application_ack_version: { type: integer, format: int64, minimum: 1, description: "Secret version the application claims to have applied; compare with delivery_version, independently of the guest-init report version." }
+        application_ack: { type: string, enum: [applied, failed], description: "Explicit application-owned outcome after rereading and applying FAAS_SECRETS_FILE. Missing means unknown, not failed." }
+        application_ack_at: { type: string, format: date-time }
+        application_ack_error_code: { type: string, enum: [application_reload_failed], description: "Closed, non-sensitive application-reported failure code." }
 
     # ADR-092 PR-B: per-row shape for the nested secrets_by_scope
     # response (mirror of ScopedAppEnvResponse). Reserved for the

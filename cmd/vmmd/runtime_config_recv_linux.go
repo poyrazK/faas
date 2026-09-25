@@ -36,12 +36,14 @@ const runtimeConfigCacheTTL = 5 * time.Second
 const VsockRuntimeConfigHostPort uint32 = fcvm.VsockRuntimeConfigHostPort
 
 type runtimeConfigRequest struct {
-	Kind       string `json:"kind,omitempty"`
-	Scope      string `json:"scope"`
-	Revision   string `json:"revision,omitempty"`
-	Projection string `json:"projection,omitempty"`
-	Signal     string `json:"signal,omitempty"`
-	ErrorCode  string `json:"error_code,omitempty"`
+	Kind                    string `json:"kind,omitempty"`
+	Scope                   string `json:"scope"`
+	Revision                string `json:"revision,omitempty"`
+	Projection              string `json:"projection,omitempty"`
+	Signal                  string `json:"signal,omitempty"`
+	ErrorCode               string `json:"error_code,omitempty"`
+	ApplicationAck          string `json:"application_ack,omitempty"`
+	ApplicationAckErrorCode string `json:"application_ack_error_code,omitempty"`
 }
 
 type runtimeConfigResponse struct {
@@ -64,6 +66,10 @@ type runtimeSecretsStore interface {
 
 type runtimeSecretReloadStore interface {
 	RecordAppSecretRuntimeReload(context.Context, state.AppSecretRuntimeReloadResult) (int, error)
+}
+
+type runtimeSecretReloadAckStore interface {
+	RecordAppSecretRuntimeReloadAck(context.Context, state.AppSecretRuntimeReloadAckResult) (int, error)
 }
 
 type runtimeConfigReceiver struct {
@@ -231,18 +237,29 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 		if req.Scope != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "unsupported_scope"})
 		}
-		if !validRuntimeSecretRevision(req.Revision) || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" {
+		if !validRuntimeSecretRevision(req.Revision) || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" ||
+			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
 		return r.handleRuntimeSecrets(instance, req.Revision, conn)
 	}
 	if req.Kind == "secret_reload_status" {
-		if req.Scope != "" || !validRuntimeSecretRevision(req.Revision) || req.Revision == "" || !validRuntimeSecretReloadRequest(req) {
+		if req.Scope != "" || !validRuntimeSecretRevision(req.Revision) || req.Revision == "" || !validRuntimeSecretReloadRequest(req) ||
+			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
 		return r.handleRuntimeSecretReloadStatus(instance, req, conn)
 	}
-	if (req.Kind != "" && req.Kind != "env") || req.Revision != "" || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" {
+	if req.Kind == "secret_reload_ack" {
+		if req.Scope != "" || !state.ValidSecretApplicationReloadAck(req.Revision,
+			state.SecretApplicationReloadAckStatus(req.ApplicationAck), req.ApplicationAckErrorCode) ||
+			req.Projection != "" || req.Signal != "" || req.ErrorCode != "" {
+			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
+		}
+		return r.handleRuntimeSecretReloadAck(instance, req, conn)
+	}
+	if (req.Kind != "" && req.Kind != "env") || req.Revision != "" || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" ||
+		req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" {
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 	}
 	if r.store == nil || r.mgr == nil {
@@ -331,6 +348,45 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadStatus(instance string,
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secret_reload_stale"})
 		}
 		r.log.Debug("runtime secret reload status write failed", "instance", instance, "err_kind", "state_write_failed")
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+	}
+	return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Accepted: true, Revision: req.Revision})
+}
+
+func (r *runtimeConfigReceiver) handleRuntimeSecretReloadAck(instance string, req runtimeConfigRequest, conn net.Conn) (string, error) {
+	store, ok := r.store.(runtimeSecretsStore)
+	ackStore, ackOK := r.store.(runtimeSecretReloadAckStore)
+	if !ok || !ackOK || r.mgr == nil {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+	}
+	deploymentID, appID, accountID, err := r.mgr.InstanceRuntimeSecretIdentity(instance)
+	if err != nil || deploymentID == "" || appID == "" || accountID == "" {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+	}
+	requestCtx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
+	defer cancel()
+	selection, err := selectRuntimeSecretRows(requestCtx, store, deploymentID, appID, accountID)
+	if err != nil {
+		r.log.Debug("runtime secret application ack unavailable", "instance", instance, "err_kind", runtimeSecretErrorKind(err))
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+	}
+	if selection.Revision != req.Revision {
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secret_reload_stale"})
+	}
+	candidates := make([]state.AppSecretDeliveryCandidate, 0, len(selection.Rows))
+	for _, row := range selection.Rows {
+		candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
+	}
+	_, err = ackStore.RecordAppSecretRuntimeReloadAck(requestCtx, state.AppSecretRuntimeReloadAckResult{
+		AccountID: accountID, AppID: appID, InstanceID: instance, Revision: req.Revision,
+		Status: state.SecretApplicationReloadAckStatus(req.ApplicationAck), ErrorCode: req.ApplicationAckErrorCode,
+		AttemptedAt: time.Now().UTC(), Candidates: candidates,
+	})
+	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secret_reload_stale"})
+		}
+		r.log.Debug("runtime secret application ack write failed", "instance", instance, "err_kind", "state_write_failed")
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
 	}
 	return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Accepted: true, Revision: req.Revision})

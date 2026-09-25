@@ -61,6 +61,24 @@ runtime that has reported. A missing runtime report is unknown (not proof that
 the runtime lacks access), and these observations do not claim that the
 application applied the new credentials.
 
+An opted-in app may make that last step explicit. After rereading
+`FAAS_SECRETS_FILE` and successfully applying the new credentials to its own
+clients, it can POST the non-sensitive revision from
+`FAAS_SECRETS_REVISION_FILE` to `FAAS_SECRETS_RELOAD_ACK_ENDPOINT`:
+
+```json
+{"revision":"<64 lowercase hex characters>","status":"applied"}
+```
+
+If it cannot apply the new credentials, use `{"revision":"…","status":"failed"}`.
+The platform accepts only those closed outcomes and does not accept arbitrary
+error text or secret values. The response is `202` when recorded, `409` when
+the revision is stale (reread and apply the latest projection), and `503` when
+the host is temporarily unavailable (retry the same acknowledgement). Read the
+revision before and after reading the secrets file; if it changed, reread so
+the values and revision describe the same rotation. An acknowledgement is an
+application self-attestation, not independent proof of its internal state.
+
 `gregale secrets list` reports delivery for each key:
 
 - `pending` means the current version has not yet reached a successfully
@@ -79,6 +97,8 @@ stale. Text output summarizes active runtime reports and flags failures; JSON
 includes each reporting instance ID. The report count is not a denominator for
 all active or authorized instances: runtimes with no report remain unknown.
 A successful signal means only that guest-init's signal operation succeeded,
-not that the app handled it. The API exposes only opaque versions, status,
-timestamps, and runtime correlation IDs; it never places plaintext or
-ciphertext in delivery metadata or audit events.
+not that the app handled it. An explicit app acknowledgement is shown
+separately from guest-init's signal result; missing acknowledgements are
+unknown. The API exposes only opaque versions, status, timestamps, and runtime
+correlation IDs; it never places plaintext or ciphertext in delivery metadata
+or audit events.

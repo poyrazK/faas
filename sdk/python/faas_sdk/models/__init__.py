@@ -1341,6 +1341,10 @@ from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
 from .secret_runtime_reload_observation import SecretRuntimeReloadObservation
+from .secret_runtime_reload_observation_application_ack import SecretRuntimeReloadObservationApplicationAck
+from .secret_runtime_reload_observation_application_ack_error_code import (
+    SecretRuntimeReloadObservationApplicationAckErrorCode,
+)
 from .secret_runtime_reload_observation_error_code import SecretRuntimeReloadObservationErrorCode
 from .secret_runtime_reload_observation_projection import SecretRuntimeReloadObservationProjection
 from .secret_runtime_reload_observation_signal import SecretRuntimeReloadObservationSignal
@@ -2866,6 +2870,8 @@ __all__ = (
     "SecretFinding",
     "SecretFindingSeverity",
     "SecretRuntimeReloadObservation",
+    "SecretRuntimeReloadObservationApplicationAck",
+    "SecretRuntimeReloadObservationApplicationAckErrorCode",
     "SecretRuntimeReloadObservationErrorCode",
     "SecretRuntimeReloadObservationProjection",
     "SecretRuntimeReloadObservationSignal",

@@ -20,15 +20,19 @@ type PutAppSecretRequest struct {
 	Value string `json:"value"`
 }
 
-// SecretRuntimeReloadObservation is guest-init's latest projection/signal
-// outcome for one secret version on one runtime. It is not an app-level ack.
+// SecretRuntimeReloadObservation combines guest-init's latest projection/
+// signal outcome with an optional separately-versioned application ack.
 type SecretRuntimeReloadObservation struct {
-	InstanceID string `json:"instance_id"`
-	Version    int64  `json:"version"`
-	Projection string `json:"projection"`
-	Signal     string `json:"signal"`
-	ObservedAt string `json:"observed_at"`
-	ErrorCode  string `json:"error_code,omitempty"`
+	InstanceID              string `json:"instance_id"`
+	Version                 int64  `json:"version"`
+	Projection              string `json:"projection"`
+	Signal                  string `json:"signal"`
+	ObservedAt              string `json:"observed_at"`
+	ErrorCode               string `json:"error_code,omitempty"`
+	ApplicationAckVersion   int64  `json:"application_ack_version,omitempty"`
+	ApplicationAck          string `json:"application_ack,omitempty"`
+	ApplicationAckAt        string `json:"application_ack_at,omitempty"`
+	ApplicationAckErrorCode string `json:"application_ack_error_code,omitempty"`
 }
 
 // Validate enforces the byte cap against maxBytes. Used by apid's PUT
