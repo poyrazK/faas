@@ -94,7 +94,7 @@ func literalSQLStatements(t *testing.T, roots ...string) []sqlLiteral {
 			}
 			f, err := parser.ParseFile(fset, path, src, 0)
 			if err != nil {
-				return nil // build-tagged or generated oddities: not our concern here
+				return fmt.Errorf("parse %s: %w", path, err)
 			}
 			ast.Inspect(f, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
