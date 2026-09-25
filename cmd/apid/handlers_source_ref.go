@@ -292,6 +292,9 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		Workflows:              marshalWorkflowDefinitions(workflowDefs),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideReadinessProbe: append(json.RawMessage(nil), rollout.OverrideReadinessProbe...),
+		OverrideLivenessProbe:  append(json.RawMessage(nil), rollout.OverrideLivenessProbe...),
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
 	if err != nil {

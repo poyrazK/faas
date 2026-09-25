@@ -210,6 +210,9 @@ type EnqueueParams struct {
 	// shape as image deploys.
 	Sidecars               json.RawMessage
 	OverrideMainDependsOn  json.RawMessage
+	OverrideHealthcheck    json.RawMessage
+	OverrideReadinessProbe json.RawMessage
+	OverrideLivenessProbe  json.RawMessage
 	TrafficPercent         int
 	TrafficPercentExplicit bool
 	RollbackOn5xx          bool
@@ -482,6 +485,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		Workflows:              append(json.RawMessage(nil), p.Workflows...),
 		Sidecars:               append(json.RawMessage(nil), p.Sidecars...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), p.OverrideMainDependsOn...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), p.OverrideHealthcheck...),
+		OverrideReadinessProbe: append(json.RawMessage(nil), p.OverrideReadinessProbe...),
+		OverrideLivenessProbe:  append(json.RawMessage(nil), p.OverrideLivenessProbe...),
 		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:         p.TrafficPercent,
 		TrafficPercentExplicit: p.TrafficPercentExplicit,

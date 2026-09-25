@@ -709,6 +709,19 @@ func TestSourceRef_PersistsPrimaryWorkloadManifestDependencies(t *testing.T) {
 	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `main_depends_on:
   - name: proxy
     condition: healthy
+hosting:
+  startup_probe:
+    grpc:
+      service: grpc.health.v1.Health
+    interval_s: 5
+  readiness_probe:
+    path: /readyz
+    period_s: 7
+    failure_threshold: 4
+  liveness_probe:
+    path: /alive
+    interval_s: 10
+    consecutive_failures: 4
 companions:
   - name: proxy
     image: registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -735,6 +748,32 @@ companions:
 	}
 	if len(deployment.Sidecars) == 0 {
 		t.Fatal("Sidecars is empty; the declared proxy companion was not persisted")
+	}
+	assertPrimaryManifestHealthProbes(t, deployment)
+}
+
+func assertPrimaryManifestHealthProbes(t *testing.T, deployment state.Deployment) {
+	t.Helper()
+	var startup api.DeploymentHealthcheck
+	if err := json.Unmarshal(deployment.OverrideHealthcheck, &startup); err != nil {
+		t.Fatalf("unmarshal OverrideHealthcheck %q: %v", deployment.OverrideHealthcheck, err)
+	}
+	if startup.GRPC == nil || startup.GRPC.Service != "grpc.health.v1.Health" || startup.IntervalS != 5 {
+		t.Fatalf("OverrideHealthcheck = %+v, want configured gRPC startup probe", startup)
+	}
+	var readiness api.DeploymentReadinessProbe
+	if err := json.Unmarshal(deployment.OverrideReadinessProbe, &readiness); err != nil {
+		t.Fatalf("unmarshal OverrideReadinessProbe %q: %v", deployment.OverrideReadinessProbe, err)
+	}
+	if readiness.Path != "/readyz" || readiness.PeriodS != 7 || readiness.FailureThreshold != 4 {
+		t.Fatalf("OverrideReadinessProbe = %+v, want configured path/threshold", readiness)
+	}
+	var liveness api.DeploymentLivenessProbe
+	if err := json.Unmarshal(deployment.OverrideLivenessProbe, &liveness); err != nil {
+		t.Fatalf("unmarshal OverrideLivenessProbe %q: %v", deployment.OverrideLivenessProbe, err)
+	}
+	if liveness.Path != "/alive" || liveness.IntervalS != 10 || liveness.ConsecutiveFailures != 4 {
+		t.Fatalf("OverrideLivenessProbe = %+v, want configured path/threshold", liveness)
 	}
 }
 

@@ -1,7 +1,7 @@
 // Package gregalemanifest — loader for the `gregale.yaml` /
 // `gregale.yml` declarative manifest (issue #791 PR-C / ADR-090,
-// extended by issue #757 / ADR-0NN) and the event-only `gregale.toml`
-// subscription surface (ADR-182).
+// extended by issue #757 / ADR-0NN) and the strict `gregale.toml`
+// deployment subset, initially introduced for subscriptions (ADR-182).
 //
 // Scope (ADR-0NN widens PR-C): the `triggers:` key now recognises six
 // kinds — cron (the existing synthetic-wake path, unchanged from
@@ -15,8 +15,8 @@
 // File discovery: the loader takes a project dir and looks for
 // `gregale.yaml` first, then `gregale.yml`, and finally `gregale.toml`.
 // YAML remains the full deployment manifest, including the `event_triggers`
-// declaration; TOML is strict and accepts event subscriptions plus extension
-// declarations.
+// declaration; TOML is strict and accepts hosting overrides, event
+// subscriptions, companions, and primary-workload dependencies.
 //
 // Why a shared package, not `cmd/gregale/manifest.go`: the long-term
 // plan (per the plan's "loader location" section) is to also validate
@@ -1414,6 +1414,7 @@ func parseManifest(b []byte) (*Manifest, error) {
 
 type tomlManifest struct {
 	SchemaVersion int                   `toml:"schema_version"`
+	Hosting       *hostingconfig.Config `toml:"hosting"`
 	Triggers      tomlTriggers          `toml:"triggers"`
 	Companions    []CompanionSpec       `toml:"companions"`
 	MainDependsOn []ExtensionDependency `toml:"main_depends_on"`
@@ -1439,6 +1440,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 	}
 	return &Manifest{
 		SchemaVersion: raw.SchemaVersion,
+		Hosting:       raw.Hosting,
 		EventTriggers: raw.Triggers.Event,
 		Companions:    raw.Companions,
 		MainDependsOn: raw.MainDependsOn,

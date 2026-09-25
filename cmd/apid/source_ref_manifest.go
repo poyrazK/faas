@@ -85,8 +85,8 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	return m, nil
 }
 
-// applyManifestWorkloads carries manifest companions and primary-workload
-// startup gates into the deployment request shared by source deploy paths.
+// applyManifestWorkloads carries manifest companions, primary startup gates,
+// and primary health probes into the request shared by source deploy paths.
 // The bool reports whether the caller must rebuild its deployment row after
 // applying the manifest fields.
 func (s *server) applyManifestWorkloads(
@@ -99,7 +99,9 @@ func (s *server) applyManifestWorkloads(
 		return nil, false, nil
 	}
 	dependencies := manifest.MainWorkloadDependencies()
-	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 {
+	hosting := manifest.Hosting
+	hasPrimaryProbes := hosting != nil && (hosting.StartupProbe != nil || hosting.ReadinessProbe != nil || hosting.LivenessProbe != nil)
+	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 && !hasPrimaryProbes {
 		return nil, false, nil
 	}
 	if problem := req.NormalizeCompanions(); problem != nil {
@@ -114,8 +116,24 @@ func (s *server) applyManifestWorkloads(
 			req.Sidecars = sidecars
 		}
 	}
+	if req.Overrides == nil {
+		req.Overrides = &api.CreateDeploymentOverrides{}
+	}
 	if len(dependencies) > 0 {
-		req.Overrides = &api.CreateDeploymentOverrides{MainDependsOn: dependencies}
+		req.Overrides.MainDependsOn = dependencies
+	}
+	if hosting != nil {
+		// A request-level override remains authoritative for one deployment;
+		// otherwise the checked-in manifest supplies the probe contract.
+		if req.Overrides.Healthcheck == nil {
+			req.Overrides.Healthcheck = hosting.StartupProbe
+		}
+		if req.Overrides.ReadinessProbe == nil {
+			req.Overrides.ReadinessProbe = hosting.ReadinessProbe
+		}
+		if req.Overrides.LivenessProbe == nil {
+			req.Overrides.LivenessProbe = hosting.LivenessProbe
+		}
 	}
 	overrides, problem := validateOverrides(req, limits, acct.Plan)
 	if problem != nil {

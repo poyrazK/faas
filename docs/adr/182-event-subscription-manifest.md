@@ -33,11 +33,15 @@ type = "invoice.paid"
 filter = '{ "data": { "amount": { "$gt": 100 } } }'
 ```
 
-The YAML decoder remains strict, and the TOML parser rejects every other TOML
-key so unsupported configuration cannot be silently ignored. Filters remain
-JSON strings and are validated by the canonical `pkg/events` matcher. `app` is
-optional at parse time for a single-app deploy; the authenticated apply path
-must bind it to an app before persistence.
+The YAML decoder remains strict, and the TOML parser rejects keys outside its
+declared subset (`schema_version`, `hosting`, `companions`, legacy
+`extensions`, `main_depends_on`, and `triggers.event`) so unsupported
+configuration cannot be silently ignored.
+Hosting includes the same startup, readiness, and liveness probe overrides as
+the YAML manifest. Filters remain JSON strings and are validated by the
+canonical `pkg/events` matcher. `app` is optional at parse time for a
+single-app deploy; the authenticated apply path must bind it to an app before
+persistence.
 
 Existing `gregale.yaml`/`gregale.yml` trigger entries are unchanged; the new
 `event_triggers` list is additive. Persistence, account ownership assignment,

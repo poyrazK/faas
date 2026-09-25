@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,9 +19,12 @@ import (
 // shell command: this is the same contract used by the profile fallback when
 // an OCI artifact has no entrypoint or command.
 type Config struct {
-	Start  string `yaml:"start,omitempty"`
-	Port   int    `yaml:"port,omitempty"`
-	Health string `yaml:"health,omitempty"`
+	Start          string                        `yaml:"start,omitempty" toml:"start,omitempty"`
+	Port           int                           `yaml:"port,omitempty" toml:"port,omitempty"`
+	Health         string                        `yaml:"health,omitempty" toml:"health,omitempty"`
+	StartupProbe   *api.DeploymentHealthcheck    `yaml:"startup_probe,omitempty" toml:"startup_probe,omitempty"`
+	ReadinessProbe *api.DeploymentReadinessProbe `yaml:"readiness_probe,omitempty" toml:"readiness_probe,omitempty"`
+	LivenessProbe  *api.DeploymentLivenessProbe  `yaml:"liveness_probe,omitempty" toml:"liveness_probe,omitempty"`
 }
 
 // Validate checks the explicit values before they can affect a deployment.
@@ -47,7 +51,44 @@ func (c Config) Validate() error {
 			return fmt.Errorf("health must be at most 1024 characters")
 		}
 	}
+	for _, probe := range []struct{ field, path string }{
+		{field: "startup_probe.path", path: probePath(c.StartupProbe)},
+		{field: "readiness_probe.path", path: readinessPath(c.ReadinessProbe)},
+		{field: "liveness_probe.path", path: livenessPath(c.LivenessProbe)},
+	} {
+		if probe.path != "" && (strings.ContainsAny(probe.path, "\x00\r\n") || len(probe.path) > 1024) {
+			return fmt.Errorf("%s contains control characters or exceeds 1024 characters", probe.field)
+		}
+	}
+	if problem := (&api.CreateDeploymentOverrides{
+		Healthcheck:    c.StartupProbe,
+		ReadinessProbe: c.ReadinessProbe,
+		LivenessProbe:  c.LivenessProbe,
+	}).Validate(api.Limits{}); problem != nil {
+		return fmt.Errorf("%s", problem.Detail)
+	}
 	return nil
+}
+
+func probePath(probe *api.DeploymentHealthcheck) string {
+	if probe == nil {
+		return ""
+	}
+	return probe.Path
+}
+
+func readinessPath(probe *api.DeploymentReadinessProbe) string {
+	if probe == nil {
+		return ""
+	}
+	return probe.Path
+}
+
+func livenessPath(probe *api.DeploymentLivenessProbe) string {
+	if probe == nil {
+		return ""
+	}
+	return probe.Path
 }
 
 // Load finds gregale.yaml or gregale.yml in fsys. The returned bool reports

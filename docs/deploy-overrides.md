@@ -28,3 +28,33 @@ For API deployments, `overrides.readiness_probe` optionally configures a recurri
   }
 }
 ```
+
+Source deployments can keep the primary app's probe contract beside the code
+in `gregale.yaml` (the same `hosting.*_probe` fields are accepted in
+`gregale.toml`):
+
+```yaml
+hosting:
+  startup_probe:
+    path: /startupz
+    interval_s: 5
+    timeout_s: 2
+    retries: 3
+  readiness_probe:
+    path: /readyz
+    period_s: 5
+    timeout_s: 2
+    failure_threshold: 3
+  liveness_probe:
+    path: /livez
+    interval_s: 10
+    timeout_s: 2
+    consecutive_failures: 3
+```
+
+Startup probes accept either `path` or `grpc`; readiness and liveness probes
+accept the same HTTP-path or standard gRPC health-check choice as their API
+override fields. Values are validated with the deployment API's existing
+bounds and plan gates. The older `hosting.health: /path` setting remains
+available for inferred HTTP health paths. An explicit per-deploy API override
+takes precedence over the corresponding manifest probe.
