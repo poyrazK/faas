@@ -77,9 +77,10 @@ func (s *PgStore) ListControlPlaneChangesAfter(ctx context.Context, afterID int6
 	return changes, nil
 }
 
-// PruneControlPlaneChangeLog bounds retained history. A gateway that is
-// already serving has its own cursor; a restarted gateway starts with an
-// empty cache and baselines to the current high-water mark.
+// PruneControlPlaneChangeLog bounds retained history without deleting changes
+// a serving gateway has not replayed. A restarted gateway has empty caches
+// and baselines to the current high-water mark. An unobserved serving gateway
+// holds pruning at zero until it publishes a watermark or leaves the fleet.
 func (s *PgStore) PruneControlPlaneChangeLog(ctx context.Context, before time.Time) (int64, error) {
 	if s == nil || s.pool == nil {
 		return 0, fmt.Errorf("state: control-plane change log has nil pool")
@@ -87,7 +88,19 @@ func (s *PgStore) PruneControlPlaneChangeLog(ctx context.Context, before time.Ti
 	if before.IsZero() {
 		return 0, fmt.Errorf("state: control-plane change log prune requires cutoff")
 	}
-	tag, err := s.pool.Exec(ctx, `DELETE FROM control_plane_change_log WHERE created_at < $1`, before.UTC())
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM control_plane_change_log
+		WHERE created_at < $1
+		  AND id <= COALESCE((
+		      SELECT MIN(COALESCE(w.last_change_id, 0))
+		      FROM compute_nodes n
+		      LEFT JOIN gateway_control_plane_watermarks w ON w.node_name = n.name
+		      WHERE n.active = true
+		        AND n.role IN ('compute-only', 'compute-node')
+		        AND n.gateway_target_url IS NOT NULL
+		        AND btrim(n.gateway_target_url) <> ''
+		  ), 9223372036854775807::bigint)
+	`, before.UTC())
 	if err != nil {
 		return 0, fmt.Errorf("state: prune control-plane change log: %w", err)
 	}
