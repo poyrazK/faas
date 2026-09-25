@@ -585,6 +585,13 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
 						return
 					}
+					if !m.deployTokenBoundTo(r, key) {
+						// Same 404 shape LoadApp returns for a cross-app or
+						// cross-account slug probe.
+						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+							"Not found", "no such app"))
+						return
+					}
 					if !acct.Active() {
 						if acct.Status != state.AccountDeletedPending || !isAccountScopedPath(r.URL.Path) {
 							api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
@@ -1239,6 +1246,21 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 		return state.App{}, false
 	}
 	return app, true
+}
+
+// deployTokenBoundTo reports whether the matched route's {slug} names the
+// app the deploy token is bound to. The binding is enforced here, at
+// authentication, rather than only in LoadApp: many /v1/apps/{slug}
+// handlers resolve the app with a direct store lookup and never reach
+// LoadApp's AppID check. A route without a {slug} (the account-wide
+// /v1/apps/metrics) is outside a deploy token's reach.
+func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) bool {
+	slug := r.PathValue("slug")
+	if slug == "" || key.AppID == "" {
+		return false
+	}
+	app, err := m.Authn.AppBySlug(r.Context(), slug)
+	return err == nil && app.ID == key.AppID
 }
 
 // --- scope helpers -------------------------------------------------------
