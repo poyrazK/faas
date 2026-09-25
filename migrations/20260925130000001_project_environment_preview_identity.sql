@@ -3,6 +3,7 @@ ALTER TABLE project_environments
     ADD COLUMN IF NOT EXISTS preview_pr_number integer,
     ADD COLUMN IF NOT EXISTS preview_head_sha text;
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -21,6 +22,7 @@ BEGIN
             );
     END IF;
 END $$;
+-- +goose StatementEnd
 
 CREATE UNIQUE INDEX IF NOT EXISTS project_environments_preview_pr_uniq
     ON project_environments (project_id, preview_pr_number)
