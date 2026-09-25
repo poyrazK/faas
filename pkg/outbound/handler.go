@@ -97,7 +97,18 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		return nil, errors.New("outbound resolver and backend are required")
 	}
 	if client == nil {
-		client = &http.Client{Transport: http.DefaultTransport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			defaultTransport = &http.Transport{}
+		}
+		transport := defaultTransport.Clone()
+		// Do not inherit HTTP(S)_PROXY from the daemon environment: a proxy
+		// would resolve the destination outside this process's public-IP guard.
+		transport.Proxy = nil
+		transport.DialContext = NewPublicDestinationDialer().DialContext
+		transport.DialTLSContext = nil
+		transport.TLSClientConfig = nil
+		client = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	} else {
 		clone := *client
 		// A shared cookie jar could leak one integration's provider session to

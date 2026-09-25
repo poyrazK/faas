@@ -22,6 +22,15 @@ integration ID and bounded outcome/rejection vocabularies. The in-flight gauge
 is per gateway process; the Postgres-backed admission decision remains the
 authoritative fleet-wide limit.
 
+The daemon's default upstream transport resolves provider names immediately
+before opening a socket, rejects the entire DNS answer if any address is
+private, reserved, loopback, link-local, or otherwise not globally reachable,
+and connects directly to one of the checked public IPs. TLS still verifies
+the configured hostname. Redirects and environment-configured HTTP proxies
+are disabled so a redirect or proxy cannot move resolution outside this
+check. Private and special-use provider addresses are not supported by the
+default gateway transport.
+
 Create `/etc/faas/outboundd.toml` from the Ansible example. Each integration
 specifies a UUID, a fixed `https://` origin, attached app UUIDs, a rate/burst,
 and `max_in_flight`. Put the raw Gregale gateway token in the named environment
