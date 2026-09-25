@@ -50,6 +50,10 @@ export type CreateDeploymentRequest = {
   environment?: string;
   resources?: DeploymentResourcesRequest;
   /**
+   * A deployment-local maximum for live serving VMs. When absent or 0, no stricter revision bound is applied; the app/plan aggregate remains authoritative.
+   */
+  max_instances?: number | null;
+  /**
    * Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280.
    */
   reason?: string | null;

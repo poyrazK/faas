@@ -37,6 +37,10 @@ export type SourceRefDeployRequest = {
   environment?: string;
   resources?: DeploymentResourcesRequest;
   /**
+   * Optional serving-VM bound recorded on the source-ref deployment; omit or use 0 for the app's effective instance limit.
+   */
+  max_instances?: number | null;
+  /**
    * Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed.
    */
   no_triggers?: boolean;
