@@ -702,6 +702,42 @@ release:
 	}
 }
 
+func TestSourceRef_PersistsPrimaryWorkloadManifestDependencies(t *testing.T) {
+	withTestSidecarRecipient(t)
+
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `main_depends_on:
+  - name: proxy
+    condition: healthy
+companions:
+  - name: proxy
+    image: registry.example.com/proxy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    startup_probe:
+      tcp_socket:
+        port: 8081
+`))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	deployment, err := e.store.LatestDeployment(context.Background(), e.appID)
+	if err != nil {
+		t.Fatalf("LatestDeployment: %v", err)
+	}
+	var dependencies []api.WorkloadDependency
+	if err := json.Unmarshal(deployment.OverrideMainDependsOn, &dependencies); err != nil {
+		t.Fatalf("unmarshal OverrideMainDependsOn %q: %v", deployment.OverrideMainDependsOn, err)
+	}
+	if len(dependencies) != 1 || dependencies[0].Name != "proxy" || dependencies[0].Condition != api.WorkloadDependencyHealthy {
+		t.Fatalf("OverrideMainDependsOn = %+v, want proxy/healthy", dependencies)
+	}
+	if len(deployment.Sidecars) == 0 {
+		t.Fatal("Sidecars is empty; the declared proxy companion was not persisted")
+	}
+}
+
 func TestSourceRef_PinsProcfileReleaseCommand(t *testing.T) {
 	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
 	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithEntries(t, map[string]string{
