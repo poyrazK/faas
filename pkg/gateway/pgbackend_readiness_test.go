@@ -54,11 +54,65 @@ func TestPGBackendReadinessWithdrawsAndRestoresTarget(t *testing.T) {
 	// Even after the short pre-admission event cache expires, an old event may
 	// not roll a live target back to a state already superseded in the target.
 	b.tgtMu.Lock()
-	delete(b.readinessState, staleTargetKey("app", "instance"))
+	delete(b.readinessState, readinessStateKey("app", "instance", ""))
 	b.tgtMu.Unlock()
 	b.SetInstanceReadiness("app", "instance", "unready", unreadyAt, 2)
 	if got := b.Pick("app"); !got.OK {
 		t.Fatal("stale event regressed a live target after event-cache expiry")
+	}
+}
+
+func TestPGBackendReadinessRequiresEveryConfiguredSource(t *testing.T) {
+	b := NewPGBackend(nil, nil, nil)
+	target := Target{
+		AppID:             "app",
+		NodeID:            "node",
+		InstanceID:        "instance",
+		RequiresReadiness: true,
+		ReadinessGates:    &ReadinessGates{RequiredSources: []string{"primary_app", "sidecar:proxy"}},
+	}
+	b.RecordTarget("app", target)
+	at := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	b.SetInstanceReadinessSource("app", "instance", "primary_app", "ready", at, 1)
+	if got := b.Pick("app"); got.OK {
+		t.Fatal("primary app recovery bypassed unready ingress companion")
+	}
+	b.SetInstanceReadinessSource("app", "instance", "sidecar:proxy", "ready", at.Add(time.Second), 2)
+	if got := b.Pick("app"); !got.OK {
+		t.Fatal("target did not route after every readiness source became ready")
+	}
+	b.SetInstanceReadinessSource("app", "instance", "primary_app", "unready", at.Add(2*time.Second), 3)
+	if got := b.Pick("app"); got.OK {
+		t.Fatal("unready primary app remained routable")
+	}
+	b.SetInstanceReadinessSource("app", "instance", "sidecar:proxy", "ready", at.Add(3*time.Second), 4)
+	if got := b.Pick("app"); got.OK {
+		t.Fatal("sidecar event masked the still-unready primary app")
+	}
+	b.SetInstanceReadinessSource("app", "instance", "primary_app", "ready", at.Add(4*time.Second), 5)
+	if got := b.Pick("app"); !got.OK {
+		t.Fatal("target did not recover after the primary app returned to ready")
+	}
+}
+
+func TestPGBackendReadinessBySourceHydratesBeforeTarget(t *testing.T) {
+	b := NewPGBackend(nil, nil, nil)
+	at := time.Now().UTC().Truncate(time.Second)
+	b.SetInstanceReadinessSource("app", "instance", "primary_app", "unready", at, 1)
+	b.SetInstanceReadinessSource("app", "instance", "sidecar:proxy", "ready", at.Add(time.Second), 2)
+	b.RecordTarget("app", Target{
+		AppID:             "app",
+		NodeID:            "node",
+		InstanceID:        "instance",
+		RequiresReadiness: true,
+		ReadinessGates:    &ReadinessGates{RequiredSources: []string{"primary_app", "sidecar:proxy"}},
+	})
+	if got := b.Pick("app"); got.OK {
+		t.Fatal("hydrated ready companion bypassed the primary app's unready state")
+	}
+	b.SetInstanceReadinessSource("app", "instance", "primary_app", "ready", at.Add(2*time.Second), 3)
+	if got := b.Pick("app"); !got.OK {
+		t.Fatal("hydrated target did not route after both readiness sources became ready")
 	}
 }
 
