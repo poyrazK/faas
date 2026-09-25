@@ -86,8 +86,8 @@ export type AppMetricsResponse = {
    * on, no traffic" (empty array). Each row is the bounded
    * detail from the gatewayd-internal in-memory reader: max
    * 50 distinct routes + the `__route_other__` wildcard-path
-   * overflow bucket. The route label is method + raw path
-   * (pre-rewrite, ADR-093 D6).
+   * overflow bucket. The route label is method + declared template
+   * when available, otherwise a best-effort inferred public path.
    *
    */
   routes?: Array<RouteRow>;

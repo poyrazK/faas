@@ -5454,6 +5454,23 @@ type RequestAuditRecord struct {
 	SourceIP         string    `json:"source_ip,omitempty"`
 }
 
+// RequestAuditListResponse is a bounded, exact gateway-request window.
+type RequestAuditListResponse struct {
+	AppID   string               `json:"app_id"`
+	Records []RequestAuditRecord `json:"records"`
+	Since   time.Time            `json:"since"`
+	Until   time.Time            `json:"until"`
+}
+
+// DiscoveredAuditRoutesResponse is the initial audit-backed inventory read.
+// A stacked follow-up replaces it with an audit-independent inventory.
+type DiscoveredAuditRoutesResponse struct {
+	AppID  string   `json:"app_id"`
+	Routes []string `json:"routes"`
+	CapHit bool     `json:"cap_hit"`
+	Source string   `json:"source"`
+}
+
 const (
 	AppRoutesSourceLive        = "live"
 	AppRoutesSourcePartial     = "partial"

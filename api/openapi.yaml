@@ -5355,16 +5355,7 @@ paths:
           description: Bounded exact request evidence, newest first.
           content:
             application/json:
-              schema:
-                type: object
-                required: [app_id, records, since, until]
-                properties:
-                  app_id: { type: string, format: uuid }
-                  since: { type: string, format: date-time }
-                  until: { type: string, format: date-time }
-                  records:
-                    type: array
-                    items: { $ref: '#/components/schemas/RequestAuditRecord' }
+              schema: { $ref: '#/components/schemas/RequestAuditListResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -5387,14 +5378,7 @@ paths:
           description: Persisted discovered route candidates.
           content:
             application/json:
-              schema:
-                type: object
-                required: [app_id, routes, cap_hit, source]
-                properties:
-                  app_id: { type: string, format: uuid }
-                  routes: { type: array, items: { type: string } }
-                  cap_hit: { type: boolean }
-                  source: { type: string, enum: [request_audit] }
+              schema: { $ref: '#/components/schemas/DiscoveredAuditRoutesResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -32127,6 +32111,28 @@ components:
         occurred_at: { type: string, format: date-time }
         request_id: { type: string }
         source_ip: { type: string, description: Verified public-gateway client IP when available. }
+
+    RequestAuditListResponse:
+      type: object
+      description: Bounded exact gateway-request audit window, newest first.
+      required: [app_id, records, since, until]
+      properties:
+        app_id: { type: string, format: uuid }
+        records:
+          type: array
+          items: { $ref: '#/components/schemas/RequestAuditRecord' }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+
+    DiscoveredAuditRoutesResponse:
+      type: object
+      description: Initial bounded route inventory from exact audit events.
+      required: [app_id, routes, cap_hit, source]
+      properties:
+        app_id: { type: string, format: uuid }
+        routes: { type: array, items: { type: string }, maxItems: 500 }
+        cap_hit: { type: boolean }
+        source: { type: string, enum: [request_audit] }
 
     ThrottleSuggestionRow:
       description: |

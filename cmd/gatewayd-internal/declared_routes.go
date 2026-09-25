@@ -232,7 +232,7 @@ func compileDeclaredRoutes(routes []gateway.DeclaredRoute) (declaredRoutePolicy,
 		}
 		staticSegments := 0
 		for _, segment := range splitDeclaredPath(path) {
-			if !(strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}")) {
+			if !strings.HasPrefix(segment, "{") || !strings.HasSuffix(segment, "}") {
 				staticSegments++
 			}
 		}
@@ -250,11 +250,6 @@ func normalizeDeclaredPath(path string) string {
 		path = strings.TrimRight(path, "/")
 	}
 	return path
-}
-
-func policyMatches(routes []compiledDeclaredRoute, requestPath, requestMethod string) bool {
-	_, matched := matchingDeclaredTemplate(routes, requestPath, requestMethod)
-	return matched
 }
 
 // Prefer the most specific declared path when a static route overlaps a

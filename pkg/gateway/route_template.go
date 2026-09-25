@@ -46,9 +46,13 @@ func observedIdentifier(segment string) bool {
 		if ch < '0' || ch > '9' {
 			digits = false
 		}
-		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+		if !isObservedHexDigit(ch) {
 			hex = false
 		}
 	}
 	return digits || hex
+}
+
+func isObservedHexDigit(ch rune) bool {
+	return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
 }

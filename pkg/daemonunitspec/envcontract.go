@@ -408,6 +408,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REKEY_ENABLED", Owners: []string{"apid"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_REKEY_PROGRESS_FILE", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_RELEASE_PHASE_ENABLED", Owners: []string{"imaged"}, Source: EnvSourceDefault, Note: "exact opt-in for pre-boot release commands; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd"},
+	{Name: "FAAS_REQUEST_AUDIT_ENABLED", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "exact request audit is off by default until the receiver rollout and path-privacy review are complete (ADR-242)"},
 	{Name: "FAAS_REQUEST_TELEMETRY_ENABLED", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REQUIRE_SHARED_ARTIFACTS", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_RESIDENCY_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},

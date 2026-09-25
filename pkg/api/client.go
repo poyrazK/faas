@@ -4302,6 +4302,34 @@ func (c *Client) GetAppRoutes(ctx context.Context, slug string) (AppRoutesRespon
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/routes", nil, &out)
 }
 
+// GetAppsSlugAuditRequests reads a bounded exact-request window. Zero times
+// use the server defaults; limit 0 uses the server default of 100.
+func (c *Client) GetAppsSlugAuditRequests(ctx context.Context, slug string, since, until time.Time, limit int) (RequestAuditListResponse, error) {
+	var out RequestAuditListResponse
+	q := url.Values{}
+	if !since.IsZero() {
+		q.Set("since", since.UTC().Format(time.RFC3339Nano))
+	}
+	if !until.IsZero() {
+		q.Set("until", until.UTC().Format(time.RFC3339Nano))
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + slug + "/audit/requests"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppsSlugAuditRoutes returns observed candidates within exact-audit
+// retention. A stacked follow-up moves this to an independent surface.
+func (c *Client) GetAppsSlugAuditRoutes(ctx context.Context, slug string) (DiscoveredAuditRoutesResponse, error) {
+	var out DiscoveredAuditRoutesResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/audit/routes", nil, &out)
+}
+
 // StreamingCapRequest identifies the request shape used to resolve a
 // per-edge-rule streaming response cap. A zero value preserves the
 // plan-level probe and avoids the gatewayd control-listener hop.
