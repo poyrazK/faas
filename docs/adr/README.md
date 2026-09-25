@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 277 | [Pinned service-binding handler smoke test](277-pinned-service-binding-smoke-test.md) | accepted | Invoke one explicit service path on an exact live target deployment from the caller over verified HTTPS |
 | 276 | [HTTPS-first service-binding transport](276-https-first-service-binding-transport.md) | accepted | Opt-in canonical HTTPS binding URLs with gateway-enforced no-downgrade behavior while preserving the legacy HTTP default |
 | 275 | [Caller-side HTTPS service-binding canary](275-https-service-binding-canary.md) | accepted | Verify DNS, certificate trust, authorization, and live endpoint routing from a deployment-attached caller task without waking or invoking the target |
 | 274 | [Additive HTTPS service-binding URLs](274-additive-https-service-binding-urls.md) | accepted | Preserve generated HTTP URLs while adding explicit HTTPS canaries for every bound service |

@@ -380,18 +380,34 @@ deployment can belong to multiple live release sets.
 
 ### Smoke-test a downstream deployment
 
-To test a live deployment of a bound service before giving it traffic, send
-its deployment ID on that managed service request:
+`gregale bindings verify` checks the private transport and current route
+availability without invoking customer code. To exercise a handler on one
+exact deployment, use an explicit smoke request from the caller:
+
+```bash
+gregale bindings smoke public-api billing \
+  --deployment DEPLOYMENT_ID \
+  --path /health
+```
+
+Find the ID with `gregale traffic status billing`. This command sends one GET
+over the caller's verified `https://billing.internal` binding and accepts any
+2xx response by default; `--expect-status 204` requires one exact status. It
+does not follow redirects, retain the response body, or include the request
+query in its report. This is an active smoke test: a parked selected deployment
+is woken before forwarding, so its handler may have application-level side
+effects. Use `bindings verify` for a no-wake infrastructure preflight.
+
+The equivalent raw request sends that same target override explicitly:
 
 ```bash
 curl -H 'Gregale-Target-Deployment: DEPLOYMENT_ID' \
-  http://billing.svc.gregale:10080/health
+  'https://billing.internal/health'
 ```
 
-Find the ID with `gregale traffic status billing`. This works for a live
-deployment at 0% traffic: the service proxy wakes that exact deployment if
-needed. The override wins over `Gregale-Version-Key` for this one service hop,
-but the version key remains available to the target app. The override header
+This works for a live deployment at 0% traffic: the service proxy wakes that
+exact deployment if needed. The override wins over `Gregale-Version-Key` for
+this one service hop, but the version key remains available to the target app. The override header
 is removed before forwarding, so it cannot accidentally pin a later call to
 another service. Only deployments belonging to the authorized target app are
 accepted; malformed IDs return 400 and non-live or wrong-app IDs return 422

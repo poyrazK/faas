@@ -62,12 +62,17 @@ type appBindingInventoryClient interface {
 }
 
 func cmdBindings(args []string) int {
-	if len(args) > 0 && args[0] == "verify" {
-		return cmdBindingsVerify(args[1:])
+	if len(args) > 0 {
+		switch args[0] {
+		case "verify":
+			return cmdBindingsVerify(args[1:])
+		case "smoke":
+			return cmdBindingsSmoke(args[1:])
+		}
 	}
 	fs := newFlagSet("bindings", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(strings.TrimSpace(fs.Arg(0))) {
-		PrintUsage(osStderr, "usage: gregale bindings <app>", "bindings")
+		PrintUsage(osStderr, "usage: gregale bindings <app> | gregale bindings verify <app> <service>|--all | gregale bindings smoke <app> <service> --deployment <id> --path </path>", "bindings")
 		return 1
 	}
 	client, err := authedClient()
