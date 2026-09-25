@@ -9,14 +9,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func (m *MemStore) CreateAccountReleaseWebhookIfUnderQuota(_ context.Context, in AppWebhook, limits api.Limits) (AppWebhook, error) {
-	if in.AppID != "" || (in.Scope != "" && in.Scope != AppWebhookScopeAccount) ||
-		!validAccountReleaseWebhookFilter(in.EventFilter) {
+func (m *MemStore) CreatePlatformTenantWebhookIfUnderQuota(_ context.Context, in AppWebhook, limits api.Limits) (AppWebhook, error) {
+	if in.AccountID == "" || in.PlatformTenantID == "" || in.AppID != "" ||
+		(in.Scope != "" && in.Scope != AppWebhookScopePlatformTenant) ||
+		!validPlatformTenantWebhookFilter(in.EventFilter) {
 		return AppWebhook{}, ErrInvalidAppWebhookScope
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[in.AccountID]; !ok {
+	tenant, ok := m.platformTenants[in.PlatformTenantID]
+	if !ok || tenant.AccountID != in.AccountID {
 		return AppWebhook{}, ErrNotFound
 	}
 	count := 0
@@ -24,26 +26,24 @@ func (m *MemStore) CreateAccountReleaseWebhookIfUnderQuota(_ context.Context, in
 		if hook.AccountID != in.AccountID {
 			continue
 		}
+		if hook.Scope == AppWebhookScopePlatformTenant && hook.PlatformTenantID == in.PlatformTenantID && hook.TargetURL == in.TargetURL {
+			return AppWebhook{}, ErrConflict
+		}
 		if hook.Scope == AppWebhookScopeAccount || hook.Scope == AppWebhookScopePlatformTenant {
-			if hook.Scope == AppWebhookScopeAccount && hook.TargetURL == in.TargetURL {
-				return AppWebhook{}, ErrConflict
-			}
 			count++
 			continue
 		}
-		if app, ok := m.apps[hook.AppID]; ok && app.Status != AppDeleted && app.AccountID == in.AccountID {
+		if app, exists := m.apps[hook.AppID]; exists && app.Status != AppDeleted && app.AccountID == in.AccountID {
 			count++
 		}
 	}
 	if count >= limits.WebhookPerAccount {
-		return AppWebhook{}, &AppWebhookQuotaError{
-			Scope: AppWebhookQuotaScopeAccount, Limit: limits.WebhookPerAccount, Observed: count,
-		}
+		return AppWebhook{}, &AppWebhookQuotaError{Scope: AppWebhookQuotaScopeAccount, Limit: limits.WebhookPerAccount, Observed: count}
 	}
 	if in.ID == "" {
 		in.ID = newID()
 	}
-	in.Scope = AppWebhookScopeAccount
+	in.Scope = AppWebhookScopePlatformTenant
 	in.EventFilter = append([]string(nil), in.EventFilter...)
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
@@ -52,18 +52,18 @@ func (m *MemStore) CreateAccountReleaseWebhookIfUnderQuota(_ context.Context, in
 		in.DeliveryFormat = AppWebhookDeliveryFormatJSON
 	}
 	if in.CreatedAt.IsZero() {
-		in.CreatedAt = time.Now()
+		in.CreatedAt = time.Now().UTC()
 	}
 	in.UpdatedAt = in.CreatedAt
 	m.appWebhooks[in.ID] = in
 	return in, nil
 }
 
-func (m *MemStore) ListAccountReleaseWebhookDeliveries(_ context.Context, accountID, webhookID string, pageSize int, pageToken string) ([]AppWebhookDelivery, string, error) {
+func (m *MemStore) ListPlatformTenantWebhookDeliveries(_ context.Context, accountID, tenantID, webhookID string, pageSize int, pageToken string) ([]AppWebhookDelivery, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	hook, ok := m.appWebhooks[webhookID]
-	if !ok || hook.Scope != AppWebhookScopeAccount || hook.AccountID != accountID {
+	if !ok || hook.Scope != AppWebhookScopePlatformTenant || hook.AccountID != accountID || hook.PlatformTenantID != tenantID {
 		return []AppWebhookDelivery{}, "", nil
 	}
 	out := make([]AppWebhookDelivery, 0)
@@ -73,9 +73,6 @@ func (m *MemStore) ListAccountReleaseWebhookDeliveries(_ context.Context, accoun
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		// Page tokens carry wall-clock nanoseconds, not Go's monotonic
-		// component. Compare that same representation when ordering rows:
-		// rapid inserts can share a wall timestamp but differ monotonically.
 		left, right := out[i].CreatedAt.UTC(), out[j].CreatedAt.UTC()
 		if left.Equal(right) {
 			return out[i].ID > out[j].ID
@@ -83,8 +80,8 @@ func (m *MemStore) ListAccountReleaseWebhookDeliveries(_ context.Context, accoun
 		return left.After(right)
 	})
 	if pageToken != "" {
-		ts, id, ok := decodePageToken(pageToken)
-		if !ok {
+		ts, id, valid := decodePageToken(pageToken)
+		if !valid {
 			return nil, "", fmt.Errorf("state: invalid page token")
 		}
 		filtered := out[:0]
@@ -100,9 +97,7 @@ func (m *MemStore) ListAccountReleaseWebhookDeliveries(_ context.Context, accoun
 	}
 	if len(out) > pageSize {
 		last := out[pageSize-1]
-		next := encodePageToken(last.CreatedAt, last.ID)
-		out = out[:pageSize]
-		return out, next, nil
+		return out[:pageSize], encodePageToken(last.CreatedAt, last.ID), nil
 	}
 	return out, "", nil
 }

@@ -191,6 +191,60 @@ type APIConsumerUsageStatementFinalizedWebhookPayload struct {
 	FinalizedAt      time.Time                                 `json:"finalized_at"`
 }
 
+// PlatformTenantStatementFinalizedWebhookPayload is the cross-app billing
+// snapshot emitted once a platform tenant statement becomes payable.
+type PlatformTenantStatementFinalizedWebhookPayload struct {
+	PlatformTenantID string                                `json:"platform_tenant_id"`
+	ExternalRef      string                                `json:"external_ref"`
+	StatementID      string                                `json:"statement_id"`
+	Revision         int                                   `json:"revision"`
+	Status           string                                `json:"status"`
+	PeriodStart      time.Time                             `json:"period_start"`
+	PeriodEnd        time.Time                             `json:"period_end"`
+	Currency         string                                `json:"currency"`
+	BillableUnits    int64                                 `json:"billable_units"`
+	UnpricedUnits    int64                                 `json:"unpriced_units"`
+	AmountMillicents int64                                 `json:"amount_millicents"`
+	Priced           bool                                  `json:"priced"`
+	Lines            []PlatformTenantStatementLineResponse `json:"lines"`
+	AsOf             time.Time                             `json:"as_of"`
+	FinalizedAt      time.Time                             `json:"finalized_at"`
+}
+
+type CreatePlatformTenantWebhookRequest struct {
+	TargetURL      string `json:"target_url"`
+	WebhookSecret  string `json:"webhook_secret"`
+	RetryPolicy    string `json:"retry_policy,omitempty"`
+	DeliveryFormat string `json:"delivery_format,omitempty"`
+	Enabled        *bool  `json:"enabled,omitempty"`
+}
+
+type UpdatePlatformTenantWebhookRequest struct {
+	TargetURL      *string `json:"target_url,omitempty"`
+	RetryPolicy    *string `json:"retry_policy,omitempty"`
+	DeliveryFormat *string `json:"delivery_format,omitempty"`
+	Enabled        *bool   `json:"enabled,omitempty"`
+}
+
+type PlatformTenantWebhookResponse struct {
+	ID                        string   `json:"id"`
+	Scope                     string   `json:"scope"`
+	PlatformTenantID          string   `json:"platform_tenant_id"`
+	AccountID                 string   `json:"account_id"`
+	TargetURL                 string   `json:"target_url"`
+	WebhookSecretSealedMasked string   `json:"webhook_secret_sealed_masked"`
+	EventFilter               []string `json:"event_filter"`
+	RetryPolicy               string   `json:"retry_policy"`
+	DeliveryFormat            string   `json:"delivery_format"`
+	Enabled                   bool     `json:"enabled"`
+	CreatedAt                 string   `json:"created_at"`
+	UpdatedAt                 string   `json:"updated_at"`
+}
+
+type PlatformTenantWebhookListResponse struct {
+	Webhooks []PlatformTenantWebhookResponse `json:"webhooks"`
+}
+
 // AppWebhookEventFilterLenMax bounds the number of distinct events a
 // single webhook can subscribe to. 32 covers the full closed-set today
 // and leaves headroom for future expansion.
@@ -348,7 +402,7 @@ var AppWebhookDeliveryStatus = []string{
 type AppWebhookDeliveryResponse struct {
 	ID               string `json:"id"`
 	WebhookID        string `json:"webhook_id"`
-	AppID            string `json:"app_id"`
+	AppID            string `json:"app_id,omitempty"`
 	AccountID        string `json:"account_id"`
 	Event            string `json:"event"`
 	Payload          []byte `json:"payload,omitempty"`

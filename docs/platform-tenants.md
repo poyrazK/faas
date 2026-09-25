@@ -92,6 +92,23 @@ Use `GET /v1/account/platform-tenants/{id}/usage-statements?period_start=…&per
 
 If rates or usage change while a draft is open, repeating create makes a new snapshot revision and marks the old draft `superseded`; unchanged drafts replay. A superseded draft cannot be finalized or handed off. If more events are delivered **after finalization**, repeat the original create request. Gregale returns the next revision containing **only the new units**, which can be finalized and handed off as an explicit adjustment. Repeating without new units returns the latest existing revision. Prior lines, prices, and external invoice references are never edited. These statements use event-time tenant attribution, not current consumer or surface links. See [ADR-238](adr/238-cross-app-platform-tenant-statements.md) and [ADR-239](adr/239-platform-tenant-surface-usage.md) for the overlap and reconciliation boundaries.
 
+Subscribe your billing service to finalized revisions at the tenant level so a customer spanning apps produces one event, not one callback per app:
+
+```http
+POST /v1/account/platform-tenants/{id}/webhooks
+Content-Type: application/json
+
+{
+  "target_url": "https://billing.example.com/gregale/events",
+  "webhook_secret": "<secret-from-your-secret-manager>",
+  "delivery_format": "cloudevents"
+}
+```
+
+The event filter is fixed to `platform_tenant.statement.finalized`, subject to your plan's shared account webhook quota. The target must pass Gregale's HTTPS and egress checks. Store your secret before submitting it; Gregale returns only a masked value. The default `json` format remains available, while `cloudevents` sends a CloudEvents 1.0 structured event whose `source` is `urn:gregale:platform-tenant:<uuid>` and whose `data` contains the full statement snapshot and stable `external_ref`. The delivery is enqueued in the same database transaction that finalizes the statement: one durable row is created per subscription and statement revision. Webhook delivery is retryable and at-least-once, so deduplicate using the CloudEvents `id` / `X-Faas-Delivery-Id` and verify `X-Faas-Webhook-Signature` with the configured secret.
+
+Use `GET /v1/account/platform-tenants/{id}/webhooks` to manage subscription IDs, `PATCH` or `DELETE /{webhook_id}` to update or remove one, and `POST /{webhook_id}/rotate-secret` to rotate its signing key. `GET /{webhook_id}/deliveries` lists durable delivery attempts newest first; retry a dead delivery with `POST /{webhook_id}/deliveries/{delivery_id}/retry`. New subscriptions do not backfill statements that were already finalized. See [ADR-245](adr/245-platform-tenant-statement-webhooks.md).
+
 New gateways keep unacknowledged usage in a local fsynced outbox and replay it after apid outages or restarts; disabling the optional request debugger no longer disables usage recording. Operators should monitor `gateway_consumer_usage_outbox_pending_records`, `_pending_bytes`, `_failures_total`, and `gateway_consumer_usage_delivery_failures_total`. Do not remove the spool to clear a backlog. This improves delivery after an event reaches the gateway exit funnel, but a crash before that event is fsynced can still miss a served request; see [ADR-234](adr/234-durable-consumer-usage-delivery.md) before using totals for customer invoices.
 
 To temporarily stop the linked credential and hostname paths, send `PATCH /v1/account/platform-tenants/{id}` with `{"status":"suspended"}`. New keys cannot be issued for its linked consumers while suspended. Linked hostnames are blocked when tenant-surface routing is enabled. Send `{"status":"active"}` to resume. Existing keys are not revoked or rotated by either transition.

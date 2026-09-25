@@ -3183,8 +3183,8 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 // Outbound webhook delivery (issue #476 / ADR-076)
 //
-// AppWebhook is the per-app subscription; AppWebhookDelivery is the
-// persistent ledger row drained by cmd/schedd's
+// AppWebhook is an app-, account-, or platform-tenant subscription;
+// AppWebhookDelivery is the persistent ledger row drained by cmd/schedd's
 // pkg/webhook.Dispatcher. The wire format, signing scheme, and
 // per-account fairness algorithm live on the dispatcher side; the
 // Store only owns the durable shape.
@@ -3203,32 +3203,34 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
-// An empty filter ([]) means "all platform events"; non-empty filters accept
-// events whose name appears in the array. The delivery ledger also stores
-// bounded custom event names from explicitly addressed application-outbox
-// calls; those names never participate in subscription fan-out matching.
+// An empty filter ([]) means all eligible events for that subscription scope;
+// non-empty filters accept events whose name appears in the array. The delivery
+// ledger also stores bounded custom event names from explicitly addressed
+// application-outbox calls; those names never participate in subscription
+// fan-out matching.
 type AppWebhookEvent string
 
 const (
-	AppWebhookEventCronFired               AppWebhookEvent = "cron.fired"
-	AppWebhookEventCronFiredManually       AppWebhookEvent = "cron.fired.manually"
-	AppWebhookEventAppCreated              AppWebhookEvent = "app.created"
-	AppWebhookEventAppDeleted              AppWebhookEvent = "app.deleted"
-	AppWebhookEventAppDeployed             AppWebhookEvent = "app.deployed"
-	AppWebhookEventAppScaled               AppWebhookEvent = "app.scaled"
-	AppWebhookEventAppParked               AppWebhookEvent = "app.parked"
-	AppWebhookEventAppWoken                AppWebhookEvent = "app.woken"
-	AppWebhookEventBuildSucceeded          AppWebhookEvent = "build.succeeded"
-	AppWebhookEventBuildFailed             AppWebhookEvent = "build.failed"
-	AppWebhookEventDeploymentLive          AppWebhookEvent = "deployment.live"
-	AppWebhookEventDeploymentFailed        AppWebhookEvent = "deployment.failed"
-	AppWebhookEventRolloutCompleted        AppWebhookEvent = "rollout.completed"
-	AppWebhookEventRolloutAborted          AppWebhookEvent = "rollout.aborted"
-	AppWebhookEventErrorNew                AppWebhookEvent = "error.new"
-	AppWebhookEventJobFinished             AppWebhookEvent = "job.finished"
-	AppWebhookEventPreviewCreated          AppWebhookEvent = "preview.created"
-	AppWebhookEventBudgetThreshold         AppWebhookEvent = "budget.threshold"
-	AppWebhookEventUsageStatementFinalized AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventCronFired                        AppWebhookEvent = "cron.fired"
+	AppWebhookEventCronFiredManually                AppWebhookEvent = "cron.fired.manually"
+	AppWebhookEventAppCreated                       AppWebhookEvent = "app.created"
+	AppWebhookEventAppDeleted                       AppWebhookEvent = "app.deleted"
+	AppWebhookEventAppDeployed                      AppWebhookEvent = "app.deployed"
+	AppWebhookEventAppScaled                        AppWebhookEvent = "app.scaled"
+	AppWebhookEventAppParked                        AppWebhookEvent = "app.parked"
+	AppWebhookEventAppWoken                         AppWebhookEvent = "app.woken"
+	AppWebhookEventBuildSucceeded                   AppWebhookEvent = "build.succeeded"
+	AppWebhookEventBuildFailed                      AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentLive                   AppWebhookEvent = "deployment.live"
+	AppWebhookEventDeploymentFailed                 AppWebhookEvent = "deployment.failed"
+	AppWebhookEventRolloutCompleted                 AppWebhookEvent = "rollout.completed"
+	AppWebhookEventRolloutAborted                   AppWebhookEvent = "rollout.aborted"
+	AppWebhookEventErrorNew                         AppWebhookEvent = "error.new"
+	AppWebhookEventJobFinished                      AppWebhookEvent = "job.finished"
+	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
+	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
+	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3254,6 +3256,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
+	AppWebhookEventPlatformTenantStatementFinalized,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -3327,13 +3330,13 @@ type UpdateAppWebhookParams struct {
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 }
 
-// AppWebhookScope is the closed storage vocabulary for ADR-224. Existing
-// subscriptions are app-scoped; account scope is not yet publicly creatable.
+// AppWebhookScope is the closed storage vocabulary for outbound subscriptions.
 type AppWebhookScope string
 
 const (
-	AppWebhookScopeApp     AppWebhookScope = "app"
-	AppWebhookScopeAccount AppWebhookScope = "account"
+	AppWebhookScopeApp            AppWebhookScope = "app"
+	AppWebhookScopeAccount        AppWebhookScope = "account"
+	AppWebhookScopePlatformTenant AppWebhookScope = "platform_tenant"
 )
 
 // ErrInvalidAppWebhookScope prevents the app-only creation path from silently
@@ -3343,18 +3346,19 @@ var ErrInvalidAppWebhookScope = errors.New("state: invalid app webhook scope")
 // AppWebhook is a subscription row (ADR-076, ADR-224). Its sealed secret is
 // never surfaced on a read; the apid response carries a masked constant.
 type AppWebhook struct {
-	ID             string
-	Scope          AppWebhookScope
-	AppID          string
-	AccountID      string
-	TargetURL      string
-	SecretSealed   []byte // age/X25519 ciphertext; never logged
-	EventFilter    []string
-	RetryPolicy    AppWebhookRetryPolicy
-	DeliveryFormat AppWebhookDeliveryFormat
-	Enabled        bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	Scope            AppWebhookScope
+	AppID            string
+	PlatformTenantID string
+	AccountID        string
+	TargetURL        string
+	SecretSealed     []byte // age/X25519 ciphertext; never logged
+	EventFilter      []string
+	RetryPolicy      AppWebhookRetryPolicy
+	DeliveryFormat   AppWebhookDeliveryFormat
+	Enabled          bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // ManagedRealtimeEndpoint is the durable control-plane description of one

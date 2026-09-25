@@ -13,7 +13,10 @@
 export type AppWebhookDeliveryResponse = {
   id: string;
   webhook_id: string;
-  app_id: string;
+  /**
+   * Omitted for events sourced from a platform tenant rather than one app.
+   */
+  app_id?: string;
   account_id: string;
   /**
    * Platform event name or explicitly delivered custom outbox event type.

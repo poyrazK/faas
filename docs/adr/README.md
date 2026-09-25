@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 245 | [Durable webhooks for platform tenant statements](245-platform-tenant-statement-webhooks.md) | proposed | One signed, retryable tenant event per immutable finalized statement revision |
 | 240 | [Cross-app platform tenant request budgets](240-platform-tenant-request-budgets.md) | accepted | Synchronously enforce optional customer-wide minute/day admission ceilings across apps and gateway replicas |
 | 256 | [Customer-created outbound integrations](256-customer-created-outbound-integrations.md) | accepted | Account-owned public HTTPS destinations, sealed provider Authorization, bounded admission defaults, live gateway resolution, and deletion cascade |
 | 239 | [Verified tenant-surface usage attribution](239-platform-tenant-surface-usage.md) | accepted | Bill anonymous requests on verified customer hostnames without conflating them with consumer-key usage |

@@ -7,9 +7,12 @@ import type { ApplyPlatformTenantCredentialsRequest } from '../models/ApplyPlatf
 import type { ApplyPlatformTenantCredentialsResponse } from '../models/ApplyPlatformTenantCredentialsResponse.js';
 import type { ApplyPlatformTenantRequest } from '../models/ApplyPlatformTenantRequest.js';
 import type { ApplyPlatformTenantResponse } from '../models/ApplyPlatformTenantResponse.js';
+import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
+import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreatePlatformTenantRequest } from '../models/CreatePlatformTenantRequest.js';
+import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatformTenantWebhookRequest.js';
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
 import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
@@ -23,8 +26,13 @@ import type { PlatformTenantStatementListResponse } from '../models/PlatformTena
 import type { PlatformTenantStatementResponse } from '../models/PlatformTenantStatementResponse.js';
 import type { PlatformTenantSurfaceResponse } from '../models/PlatformTenantSurfaceResponse.js';
 import type { PlatformTenantUsageResponse } from '../models/PlatformTenantUsageResponse.js';
+import type { PlatformTenantWebhookListResponse } from '../models/PlatformTenantWebhookListResponse.js';
+import type { PlatformTenantWebhookResponse } from '../models/PlatformTenantWebhookResponse.js';
+import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
+import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
 import type { SetPlatformTenantRequestBudgetRequest } from '../models/SetPlatformTenantRequestBudgetRequest.js';
 import type { SetPlatformTenantStatusRequest } from '../models/SetPlatformTenantStatusRequest.js';
+import type { UpdatePlatformTenantWebhookRequest } from '../models/UpdatePlatformTenantWebhookRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -550,6 +558,281 @@ export class PlatformTenantsService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List a platform tenant's statement event receivers.
+   * @returns PlatformTenantWebhookListResponse Tenant-scoped webhook subscriptions.
+   * @throws ApiError
+   */
+  public static listPlatformTenantWebhooks({
+    id,
+  }: {
+    /**
+     * Platform tenant whose billing event receiver is managed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantWebhookListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks',
+      path: {
+        'id': id,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Subscribe to finalized cross-app tenant statements.
+   * Creates a signed, retryable receiver scoped to this tenant. Finalization is durably enqueued with the statement transition; one delivery is created per statement revision.
+   * @returns PlatformTenantWebhookResponse Receiver created. The plaintext secret is not returned.
+   * @throws ApiError
+   */
+  public static createPlatformTenantWebhook({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Platform tenant whose billing event receiver is managed.
+     */
+    id: string,
+    requestBody: CreatePlatformTenantWebhookRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<PlatformTenantWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/webhooks',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Read a tenant webhook subscription.
+   * @returns PlatformTenantWebhookResponse Subscription metadata; the secret remains masked.
+   * @throws ApiError
+   */
+  public static getPlatformTenantWebhook({
+    id,
+    webhookId,
+  }: {
+    /**
+     * Tenant that owns the subscription being inspected or changed.
+     */
+    id: string,
+    /**
+     * Tenant-scoped webhook subscription to inspect or change.
+     */
+    webhookId: string,
+  }): CancelablePromise<PlatformTenantWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Update a tenant webhook destination or delivery policy.
+   * @returns PlatformTenantWebhookResponse Updated subscription metadata.
+   * @throws ApiError
+   */
+  public static updatePlatformTenantWebhook({
+    id,
+    webhookId,
+    requestBody,
+  }: {
+    /**
+     * Tenant that owns the subscription being inspected or changed.
+     */
+    id: string,
+    /**
+     * Tenant-scoped webhook subscription to inspect or change.
+     */
+    webhookId: string,
+    requestBody: UpdatePlatformTenantWebhookRequest,
+  }): CancelablePromise<PlatformTenantWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Delete a tenant webhook and its remaining delivery history.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePlatformTenantWebhook({
+    id,
+    webhookId,
+  }: {
+    /**
+     * Tenant that owns the subscription being inspected or changed.
+     */
+    id: string,
+    /**
+     * Tenant-scoped webhook subscription to inspect or change.
+     */
+    webhookId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Rotate the signing secret for a tenant webhook.
+   * @returns RotateAppWebhookSecretResponse Secret rotated; plaintext is not returned.
+   * @throws ApiError
+   */
+  public static rotatePlatformTenantWebhookSecret({
+    id,
+    webhookId,
+    requestBody,
+  }: {
+    /**
+     * Tenant context used to authorize secret rotation.
+     */
+    id: string,
+    /**
+     * Subscription whose signing secret is rotated.
+     */
+    webhookId: string,
+    requestBody: RotateAppWebhookSecretRequest,
+  }): CancelablePromise<RotateAppWebhookSecretResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/rotate-secret',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Inspect tenant statement webhook deliveries.
+   * @returns AppWebhookDeliveryListResponse Durable delivery history, newest first.
+   * @throws ApiError
+   */
+  public static listPlatformTenantWebhookDeliveries({
+    id,
+    webhookId,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * Tenant context used to scope delivery history.
+     */
+    id: string,
+    /**
+     * Subscription whose delivery attempts are listed.
+     */
+    webhookId: string,
+    /**
+     * Maximum number of delivery rows to return, from 1 to 100.
+     */
+    pageSize?: number,
+    /**
+     * Opaque cursor returned by the previous page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Retry one dead tenant webhook delivery.
+   * @returns AppWebhookRetryDeliveryResponse Delivery requeued.
+   * @throws ApiError
+   */
+  public static retryPlatformTenantWebhookDelivery({
+    id,
+    webhookId,
+    did,
+  }: {
+    /**
+     * Tenant context used to authorize delivery replay.
+     */
+    id: string,
+    /**
+     * Subscription that owns the delivery to replay.
+     */
+    webhookId: string,
+    /**
+     * Dead delivery to retry.
+     */
+    did: string,
+  }): CancelablePromise<AppWebhookRetryDeliveryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/retry',
+      path: {
+        'id': id,
+        'webhook_id': webhookId,
+        'did': did,
+      },
       errors: {
         404: `code: not_found`,
         409: `code: conflict`,

@@ -197,6 +197,7 @@ export type { CreateOrgAPIKeyRequest } from './models/CreateOrgAPIKeyRequest.js'
 export type { CreateOrgRequest } from './models/CreateOrgRequest.js';
 export type { CreateOutboundIntegrationRequest } from './models/CreateOutboundIntegrationRequest.js';
 export type { CreatePlatformTenantRequest } from './models/CreatePlatformTenantRequest.js';
+export type { CreatePlatformTenantWebhookRequest } from './models/CreatePlatformTenantWebhookRequest.js';
 export type { CreatePreviewRequest } from './models/CreatePreviewRequest.js';
 export type { CreatePrivateNetworkPeeringRequest } from './models/CreatePrivateNetworkPeeringRequest.js';
 export type { CreatePrivateNetworkRequest } from './models/CreatePrivateNetworkRequest.js';
@@ -550,6 +551,7 @@ export type { PlatformTenantDetailResponse } from './models/PlatformTenantDetail
 export type { PlatformTenantListResponse } from './models/PlatformTenantListResponse.js';
 export type { PlatformTenantRequestBudgetResponse } from './models/PlatformTenantRequestBudgetResponse.js';
 export type { PlatformTenantResponse } from './models/PlatformTenantResponse.js';
+export type { PlatformTenantStatementFinalizedWebhookPayload } from './models/PlatformTenantStatementFinalizedWebhookPayload.js';
 export type { PlatformTenantStatementHandoffResponse } from './models/PlatformTenantStatementHandoffResponse.js';
 export type { PlatformTenantStatementLineResponse } from './models/PlatformTenantStatementLineResponse.js';
 export type { PlatformTenantStatementListResponse } from './models/PlatformTenantStatementListResponse.js';
@@ -557,6 +559,8 @@ export type { PlatformTenantStatementResponse } from './models/PlatformTenantSta
 export type { PlatformTenantSurfaceResponse } from './models/PlatformTenantSurfaceResponse.js';
 export type { PlatformTenantUsageBucketResponse } from './models/PlatformTenantUsageBucketResponse.js';
 export type { PlatformTenantUsageResponse } from './models/PlatformTenantUsageResponse.js';
+export type { PlatformTenantWebhookListResponse } from './models/PlatformTenantWebhookListResponse.js';
+export type { PlatformTenantWebhookResponse } from './models/PlatformTenantWebhookResponse.js';
 export type { PreflightFinding } from './models/PreflightFinding.js';
 export type { PreflightLevel } from './models/PreflightLevel.js';
 export type { PreflightPlanBudget } from './models/PreflightPlanBudget.js';
@@ -781,6 +785,7 @@ export type { UpdateJobRequest } from './models/UpdateJobRequest.js';
 export type { UpdateManagedRealtimeEndpointRequest } from './models/UpdateManagedRealtimeEndpointRequest.js';
 export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.js';
 export type { UpdateOutboundBindingPolicyRequest } from './models/UpdateOutboundBindingPolicyRequest.js';
+export type { UpdatePlatformTenantWebhookRequest } from './models/UpdatePlatformTenantWebhookRequest.js';
 export type { UpdatePrivateNetworkPolicyRequest } from './models/UpdatePrivateNetworkPolicyRequest.js';
 export type { UpdateProjectEnvironmentConfigRequest } from './models/UpdateProjectEnvironmentConfigRequest.js';
 export type { UpdateProjectEnvironmentEdgePolicyRequest } from './models/UpdateProjectEnvironmentEdgePolicyRequest.js';

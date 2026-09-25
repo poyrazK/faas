@@ -33,7 +33,7 @@ func (s *PgStore) CreateAccountReleaseWebhookIfUnderQuota(ctx context.Context, i
 		select count(*) from app_webhooks w
 		 left join apps a on a.id = w.app_id
 		 where w.account_id = $1
-		   and (w.scope = 'account' or
+		   and (w.scope in ('account', 'platform_tenant') or
 		        (w.scope = 'app' and a.account_id = $1 and a.status <> 'deleted'))
 	`, in.AccountID).Scan(&count); err != nil {
 		return AppWebhook{}, fmt.Errorf("state: count webhooks for account %s: %w", in.AccountID, err)
@@ -54,7 +54,7 @@ func (s *PgStore) CreateAccountReleaseWebhookIfUnderQuota(ctx context.Context, i
 			(app_id, account_id, scope, target_url, secret_sealed,
 			 event_filter, retry_policy, delivery_format, enabled)
 		values (null, $1, 'account', $2, $3, $4::text[], $5, $6, $7)
-		returning id, app_id::text, account_id, target_url, secret_sealed,
+		returning id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, in.AccountID, in.TargetURL, in.SecretSealed, in.EventFilter,
