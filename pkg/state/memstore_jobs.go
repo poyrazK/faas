@@ -295,7 +295,31 @@ func (m *MemStore) JobClaimPendingImageMaterialization(_ context.Context, limit 
 	return out, nil
 }
 
-// JobSetImageMaterialization mirrors the atomic PostgreSQL publication path.
+// JobRenewImageMaterializationLease extends only the current live claim. An
+// expired lease cannot be revived after another worker becomes eligible.
+func (m *MemStore) JobRenewImageMaterializationLease(_ context.Context, id, sourceRef, owner string, attempt int, lease time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if lease <= 0 {
+		lease = 15 * time.Minute
+	}
+	j, ok := m.jobs[id]
+	claim, claimed := m.jobMaterializationClaims[id]
+	if !ok || j.Status == "deleted" || j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" ||
+		j.ImageMaterializationAttempts != attempt || !claimed || claim.owner != owner || !claim.leaseUntil.After(time.Now()) {
+		return ErrConflict
+	}
+	now := time.Now().UTC()
+	claim.leaseUntil = now.Add(lease)
+	j.UpdatedAt = now
+	m.jobMaterializationClaims[id] = claim
+	m.jobs[id] = j
+	return nil
+}
+
+// JobSetImageMaterialization is the general state setter used by setup and
+// non-claiming compatibility callers. Claimed workers publish through the
+// claim-fenced JobPublishImageMaterialization method below.
 func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, status, resolvedDigest, storageKey, failure string) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -311,6 +335,11 @@ func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, 
 	}
 	if j.ImageRef != sourceRef {
 		return Job{}, ErrConflict
+	}
+	if status == "ready" {
+		if _, claimed := m.jobMaterializationClaims[id]; claimed {
+			return Job{}, ErrConflict
+		}
 	}
 	j.ImageMaterializationStatus = status
 	j.ImageResolvedDigest = resolvedDigest
@@ -331,6 +360,39 @@ func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, 
 	return j, nil
 }
 
+// JobPublishImageMaterialization only lets the current live claim publish its
+// unique artifact. ImageMaterializationAttempts is the generation and owner is
+// unique per claim, so ref changes and lease takeovers both fence stale workers.
+func (m *MemStore) JobPublishImageMaterialization(_ context.Context, id, sourceRef, owner string, attempt int, resolvedDigest, storageKey string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if resolvedDigest == "" || storageKey == "" {
+		return Job{}, fmt.Errorf("state: ready job image materialization requires digest and storage key")
+	}
+	j, ok := m.jobs[id]
+	if !ok || j.Status == "deleted" {
+		return Job{}, ErrNotFound
+	}
+	if j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" || j.ImageMaterializationAttempts != attempt {
+		return Job{}, ErrConflict
+	}
+	claim, ok := m.jobMaterializationClaims[id]
+	if !ok || claim.owner != owner || !claim.leaseUntil.After(time.Now()) {
+		return Job{}, ErrConflict
+	}
+	now := time.Now().UTC()
+	j.ImageMaterializationStatus = "ready"
+	j.ImageResolvedDigest = resolvedDigest
+	j.ImageStorageKey = storageKey
+	j.ImageMaterializationError = ""
+	j.ImageMaterializedAt = &now
+	j.ImageMaterializationNextAttemptAt = nil
+	j.UpdatedAt = now
+	delete(m.jobMaterializationClaims, id)
+	m.jobs[id] = j
+	return j, nil
+}
+
 // JobRecordImageMaterializationFailure mirrors the durable retry transition.
 // Attempts are incremented by JobClaimPendingImageMaterialization; once the
 // bounded budget is exhausted the row becomes terminally failed.
@@ -348,7 +410,7 @@ func (m *MemStore) JobRecordImageMaterializationFailure(_ context.Context, id, s
 		return Job{}, ErrConflict
 	}
 	claim, ok := m.jobMaterializationClaims[id]
-	if !ok || claim.owner != owner {
+	if !ok || claim.owner != owner || !claim.leaseUntil.After(time.Now()) {
 		return Job{}, ErrConflict
 	}
 	terminal := j.ImageMaterializationAttempts >= maxAttempts

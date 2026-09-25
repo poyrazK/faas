@@ -10253,7 +10253,7 @@ type JobResponse struct {
 	// ImageResolvedDigest is the immutable manifest selected from image_ref
 	// by imaged. It is empty while the image is pending materialization.
 	ImageResolvedDigest string `json:"image_resolved_digest,omitempty"`
-	// ImageStorageKey is the canonical ext4 artifact vmmd boots.
+	// ImageStorageKey is the immutable ext4 artifact vmmd boots.
 	ImageStorageKey string `json:"image_storage_key,omitempty"`
 	// ImageMaterializationStatus is pending, verifying_legacy, ready, or failed.
 	ImageMaterializationStatus string            `json:"image_materialization_status"`

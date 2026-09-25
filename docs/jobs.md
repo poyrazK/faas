@@ -13,11 +13,15 @@ Image pulls may use account-owned private-registry credentials configured with
 `gregale jobs registry`; passwords are sealed at rest and never returned by
 the API. Imaged retries bounded pull/build failures across restarts, and
 schedd does not dispatch a task until the job's ext4 artifact is ready.
+Each materialization attempt writes a unique `jobs/<job-id>__<attempt-id>.ext4`
+object, then publishes it only if its worker still owns the live claim. A
+losing attempt cannot overwrite or delete the winner; reconciliation removes
+unpublished and superseded objects.
 
 Jobs created before OCI image materialization may still refer directly to an
 `apps/...ext4` artifact. During the upgrade, these rows briefly show
 `image_materialization_status=verifying_legacy` and cannot dispatch. imaged
-copies a readable legacy layer to the job-owned `jobs/<job-id>.ext4` key
+copies a readable legacy layer to the legacy job-owned `jobs/<job-id>.ext4` key
 before setting `ready`, so app-layer garbage collection cannot remove a
 running job's image. A missing artifact becomes `failed` with an explicit
 error; if the store cannot answer or the copy fails, the job remains
