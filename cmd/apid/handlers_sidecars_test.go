@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -28,6 +30,26 @@ func TestBuildDeploymentForInsert_ServiceDefaultsToReadinessRollout(t *testing.T
 	}
 	if dep.TrafficPercent != 0 || dep.RolloutStartedAt == nil {
 		t.Fatalf("service rollout = traffic:%d started_at:%v; want traffic 0 and a start timestamp", dep.TrafficPercent, dep.RolloutStartedAt)
+	}
+}
+
+func TestBuildDeploymentForInsert_PersistsMainDependencies(t *testing.T) {
+	want := []api.WorkloadDependency{
+		{Name: "proxy", Condition: api.WorkloadDependencyHealthy},
+	}
+	overrides := &api.CreateDeploymentOverrides{MainDependsOn: want}
+	dep, problem := buildDeploymentForInsert(state.App{ID: "app-main-deps"}, &api.CreateDeploymentRequest{
+		Image: "sha256:test", Overrides: overrides,
+	}, overrides, testSidecarLimits(), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	var got []api.WorkloadDependency
+	if err := json.Unmarshal(dep.OverrideMainDependsOn, &got); err != nil {
+		t.Fatalf("unmarshal OverrideMainDependsOn: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("OverrideMainDependsOn = %+v, want %+v", got, want)
 	}
 }
 
@@ -245,6 +267,57 @@ func TestValidateAndPlanSidecars_EmptySidecarsNoop(t *testing.T) {
 	req := &api.CreateDeploymentRequest{}
 	if p := validateAndPlanSidecars(req, acct, limits); p != nil {
 		t.Errorf("validateAndPlanSidecars: expected nil on empty sidecars, got %+v", p)
+	}
+}
+
+func TestValidateAndPlanSidecars_ValidatesPrimaryDependencies(t *testing.T) {
+	acct := state.Account{Plan: api.PlanHobby}
+	limits := testSidecarLimits()
+	proxy := api.Sidecar{Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar}
+	cases := []struct {
+		name string
+		req  *api.CreateDeploymentRequest
+		want string
+	}{
+		{
+			name: "healthy-companion",
+			req: &api.CreateDeploymentRequest{
+				Overrides: &api.CreateDeploymentOverrides{MainDependsOn: []api.WorkloadDependency{
+					{Name: "proxy", Condition: api.WorkloadDependencyHealthy},
+				}},
+				Sidecars: api.Sidecars{proxy},
+			},
+		},
+		{
+			name: "unknown-companion",
+			req: &api.CreateDeploymentRequest{
+				Overrides: &api.CreateDeploymentOverrides{MainDependsOn: []api.WorkloadDependency{{Name: "missing"}}},
+			},
+			want: "unknown companion",
+		},
+		{
+			name: "cycle-through-main",
+			req: &api.CreateDeploymentRequest{
+				Overrides: &api.CreateDeploymentOverrides{MainDependsOn: []api.WorkloadDependency{{Name: "proxy"}}},
+				Sidecars: api.Sidecars{{Name: "proxy", Image: goodSidecarImage, Type: api.SidecarTypeSidecar,
+					DependsOn: []api.WorkloadDependency{{Name: "main"}}}},
+			},
+			want: "cycle",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := validateAndPlanSidecarsWithImages(tc.req, acct, limits, nil)
+			if tc.want == "" {
+				if problem != nil {
+					t.Fatalf("validateAndPlanSidecars: %v", problem)
+				}
+				return
+			}
+			if problem == nil || !strings.Contains(strings.ToLower(problem.Detail), tc.want) {
+				t.Fatalf("problem = %+v, want detail containing %q", problem, tc.want)
+			}
+		})
 	}
 }
 
