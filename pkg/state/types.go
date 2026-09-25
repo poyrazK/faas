@@ -693,18 +693,22 @@ type APIConsumerUsageEvent struct {
 	AppID            string
 	ConsumerKey      string
 	PlatformTenantID string // immutable at-request attribution; empty for pre-link traffic
-	WindowStart      time.Time
-	RequestCount     int64
-	ErrorCount       int64
-	BillableUnits    int64
+	// PlatformTenantSurfaceID is set only for anonymous traffic on a verified
+	// tenant surface. It is a request-time snapshot, not a current-link lookup.
+	PlatformTenantSurfaceID string
+	WindowStart             time.Time
+	RequestCount            int64
+	ErrorCount              int64
+	BillableUnits           int64
 }
 
-// APIConsumerUsageBucket is the read-side aggregate for one app, consumer,
-// and UTC minute. It is returned in chronological order by the state layer.
+// APIConsumerUsageBucket is the read-side aggregate for one app, attributed
+// consumer or surface, and UTC minute. It is returned in chronological order.
 type APIConsumerUsageBucket struct {
 	AccountID     string
 	AppID         string
 	ConsumerKey   string
+	SurfaceID     string // populated only for tenant-surface usage reads
 	WindowStart   time.Time
 	RequestCount  int64
 	ErrorCount    int64

@@ -57,6 +57,36 @@ func TestHandlerObserveRecordsUsageWithDebuggerDisabled(t *testing.T) {
 	}
 }
 
+// adr: 239
+func TestHandlerAttributesAnonymousVerifiedSurfaceOnce(t *testing.T) {
+	accountID, appID, tenantID, surfaceID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get(api.PlatformTenantIDHeader)))
+	}))
+	t.Cleanup(upstream.Close)
+	backend := &fakeBackend{app: App{ID: appID, AccountID: accountID, Plan: api.PlanPro,
+		ConsumerAuthMode: api.ConsumerAuthModeOptional, RoutedSurfaceID: surfaceID, PlatformTenantID: tenantID},
+		host: "customer.example", upstream: upstream.Listener.Addr().String()}
+	backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString()})
+	q, err := usageoutbox.Open(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	h.usageOutbox = q
+	r := httptest.NewRequest(http.MethodGet, "http://customer.example/", nil)
+	r.Header.Set(api.PlatformTenantIDHeader, "forged")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || w.Body.String() != tenantID {
+		t.Fatalf("status=%d body=%q, want tenant %q", w.Code, w.Body.String(), tenantID)
+	}
+	item, ok, err := q.Next()
+	if err != nil || !ok || item.Event.PlatformTenantID != tenantID || item.Event.PlatformTenantSurfaceID != surfaceID || item.Event.ConsumerID != "" {
+		t.Fatalf("surface usage item=%+v ok=%t err=%v", item, ok, err)
+	}
+}
+
 func TestHandlerObserveOutboxAndDebuggerShareEventIDWithoutDoubleUsage(t *testing.T) {
 	q, err := usageoutbox.Open(t.TempDir(), 4096)
 	if err != nil {

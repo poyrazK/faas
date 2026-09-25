@@ -7,7 +7,8 @@
  */
 export type PlatformTenantUsageBucketResponse = {
   app_id: string;
-  consumer_id: string;
+  consumer_id?: string;
+  surface_id?: string;
   window_start: string;
   request_count: number;
   error_count: number;

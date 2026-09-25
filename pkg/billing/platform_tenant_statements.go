@@ -33,16 +33,16 @@ func BuildPlatformTenantStatement(accountID, tenantID string, start, end, asOf t
 			continue // drafts and superseded drafts never reserve billable usage
 		}
 		for _, line := range statement.Lines {
-			key := tenantUsageKey(line.AppID, line.ConsumerID, line.WindowStart)
+			key := tenantUsageKey(line.AppID, line.ConsumerID, line.SurfaceID, line.WindowStart)
 			if covered[key] > maxInt64-line.BillableUnits {
 				return in, fmt.Errorf("platform tenant coverage overflow")
 			}
 			covered[key] += line.BillableUnits
 		}
 	}
-	byAppConsumer := map[string][]state.APIConsumerUsageBucket{}
+	bySubject := map[string][]state.APIConsumerUsageBucket{}
 	for _, bucket := range usage {
-		key := tenantUsageKey(bucket.AppID, bucket.ConsumerKey, bucket.WindowStart)
+		key := tenantUsageKey(bucket.AppID, bucket.ConsumerKey, bucket.SurfaceID, bucket.WindowStart)
 		prior := covered[key]
 		if bucket.BillableUnits < prior {
 			return in, ErrTenantUsageRegressed
@@ -52,25 +52,26 @@ func BuildPlatformTenantStatement(accountID, tenantID string, start, end, asOf t
 		if bucket.BillableUnits == 0 {
 			continue
 		}
-		byAppConsumer[bucket.AppID+"\x00"+bucket.ConsumerKey] = append(byAppConsumer[bucket.AppID+"\x00"+bucket.ConsumerKey], bucket)
+		subject := bucket.AppID + "\x00" + bucket.ConsumerKey + "\x00" + bucket.SurfaceID
+		bySubject[subject] = append(bySubject[subject], bucket)
 	}
 	for _, remaining := range covered {
 		if remaining > 0 {
 			return in, ErrTenantUsageRegressed
 		}
 	}
-	if len(byAppConsumer) == 0 {
+	if len(bySubject) == 0 {
 		return in, ErrNoNewTenantUsage
 	}
-	keys := make([]string, 0, len(byAppConsumer))
-	for key := range byAppConsumer {
+	keys := make([]string, 0, len(bySubject))
+	for key := range bySubject {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		buckets := byAppConsumer[key]
+		buckets := bySubject[key]
 		sort.Slice(buckets, func(i, j int) bool { return buckets[i].WindowStart.Before(buckets[j].WindowStart) })
-		appID, consumerID := buckets[0].AppID, buckets[0].ConsumerKey
+		appID, consumerID, surfaceID := buckets[0].AppID, buckets[0].ConsumerKey, buckets[0].SurfaceID
 		quote, err := QuoteAPIConsumerUsage(cardsByApp[appID], buckets)
 		if err != nil {
 			if errors.Is(err, ErrMixedAPIConsumerRateCardCurrency) {
@@ -93,7 +94,7 @@ func BuildPlatformTenantStatement(accountID, tenantID string, start, end, asOf t
 		in.AmountMillicents += quote.AmountMillicents
 		for _, priced := range quote.Buckets {
 			in.Lines = append(in.Lines, state.PlatformTenantStatementLine{
-				AppID: appID, ConsumerID: consumerID, WindowStart: priced.WindowStart,
+				AppID: appID, ConsumerID: consumerID, SurfaceID: surfaceID, WindowStart: priced.WindowStart,
 				BillableUnits: priced.BillableUnits, RateCardID: priced.RateCardID,
 				Currency: priced.Currency, PriceMillicentsPerUnit: priced.PriceMillicentsPerUnit,
 				AmountMillicents: priced.AmountMillicents,
@@ -106,6 +107,6 @@ func BuildPlatformTenantStatement(accountID, tenantID string, start, end, asOf t
 	return in, nil
 }
 
-func tenantUsageKey(appID, consumerID string, minute time.Time) string {
-	return appID + "\x00" + consumerID + "\x00" + minute.UTC().Format(time.RFC3339)
+func tenantUsageKey(appID, consumerID, surfaceID string, minute time.Time) string {
+	return appID + "\x00" + consumerID + "\x00" + surfaceID + "\x00" + minute.UTC().Format(time.RFC3339)
 }

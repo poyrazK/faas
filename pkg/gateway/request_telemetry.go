@@ -82,6 +82,8 @@ type RequestTelemetryRow struct {
 	// PlatformTenantID is the verified account-level customer at request
 	// time. The publisher must not merge rows across a link transition.
 	PlatformTenantID string
+	// Set only for anonymous traffic on an authoritative tenant surface.
+	PlatformTenantSurfaceID string
 	// UsageOutboxed prevents the debugger's collapsed row from writing a
 	// second financial increment when its original requests are in the outbox.
 	UsageOutboxed bool

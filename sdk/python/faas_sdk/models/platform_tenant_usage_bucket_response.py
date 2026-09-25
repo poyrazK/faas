@@ -8,6 +8,8 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="PlatformTenantUsageBucketResponse")
 
 
@@ -16,17 +18,16 @@ class PlatformTenantUsageBucketResponse:
     """One UTC day of app-consumer usage from the durable raw usage ledger."""
 
     app_id: UUID
-    consumer_id: UUID
     window_start: datetime.datetime
     request_count: int
     error_count: int
     billable_units: int
+    consumer_id: UUID | Unset = UNSET
+    surface_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         app_id = str(self.app_id)
-
-        consumer_id = str(self.consumer_id)
 
         window_start = self.window_start.isoformat()
 
@@ -36,18 +37,29 @@ class PlatformTenantUsageBucketResponse:
 
         billable_units = self.billable_units
 
+        consumer_id: str | Unset = UNSET
+        if not isinstance(self.consumer_id, Unset):
+            consumer_id = str(self.consumer_id)
+
+        surface_id: str | Unset = UNSET
+        if not isinstance(self.surface_id, Unset):
+            surface_id = str(self.surface_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "app_id": app_id,
-                "consumer_id": consumer_id,
                 "window_start": window_start,
                 "request_count": request_count,
                 "error_count": error_count,
                 "billable_units": billable_units,
             }
         )
+        if consumer_id is not UNSET:
+            field_dict["consumer_id"] = consumer_id
+        if surface_id is not UNSET:
+            field_dict["surface_id"] = surface_id
 
         return field_dict
 
@@ -55,8 +67,6 @@ class PlatformTenantUsageBucketResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         app_id = UUID(d.pop("app_id"))
-
-        consumer_id = UUID(d.pop("consumer_id"))
 
         window_start = datetime.datetime.fromisoformat(d.pop("window_start"))
 
@@ -66,13 +76,28 @@ class PlatformTenantUsageBucketResponse:
 
         billable_units = d.pop("billable_units")
 
+        _consumer_id = d.pop("consumer_id", UNSET)
+        consumer_id: UUID | Unset
+        if isinstance(_consumer_id, Unset):
+            consumer_id = UNSET
+        else:
+            consumer_id = UUID(_consumer_id)
+
+        _surface_id = d.pop("surface_id", UNSET)
+        surface_id: UUID | Unset
+        if isinstance(_surface_id, Unset):
+            surface_id = UNSET
+        else:
+            surface_id = UUID(_surface_id)
+
         platform_tenant_usage_bucket_response = cls(
             app_id=app_id,
-            consumer_id=consumer_id,
             window_start=window_start,
             request_count=request_count,
             error_count=error_count,
             billable_units=billable_units,
+            consumer_id=consumer_id,
+            surface_id=surface_id,
         )
 
         platform_tenant_usage_bucket_response.additional_properties = d

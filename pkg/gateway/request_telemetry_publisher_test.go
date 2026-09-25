@@ -140,6 +140,22 @@ func TestCollapseRequestTelemetrySeparatesTenantLinkTransition(t *testing.T) {
 	}
 }
 
+// adr: 239
+func TestCollapseRequestTelemetrySeparatesTenantSurfaces(t *testing.T) {
+	accountID, appID, deploymentID := uuid.New(), uuid.New(), uuid.New()
+	minute := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	first := makeCollapseRow(accountID, appID, deploymentID, "GET /", "GET", 200, 20, false, "", minute)
+	first.PlatformTenantID = uuid.NewString()
+	first.PlatformTenantSurfaceID = uuid.NewString()
+	second := first
+	second.EventID = uuid.New()
+	second.PlatformTenantSurfaceID = uuid.NewString()
+	got := collapseRequestTelemetry([]RequestTelemetryRow{first, second})
+	if len(got) != 2 || got[0].Count != 1 || got[1].Count != 1 {
+		t.Fatalf("surface rows collapsed across host binding: %+v", got)
+	}
+}
+
 func TestCollapseRequestTelemetry_PreservesLatencyDistribution(t *testing.T) {
 	t.Parallel()
 	appID := uuid.New()

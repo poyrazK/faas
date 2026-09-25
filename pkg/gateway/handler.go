@@ -5683,6 +5683,15 @@ haveApp:
 	if !h.enforceConsumerAuth(w, r, rec, app) {
 		return
 	}
+	// A verified tenant-surface route is an authoritative customer identity
+	// for requests without a consumer key. The financial ledger keeps these
+	// separate from linked-consumer usage so neither path is counted twice.
+	if app.RoutedSurfaceID != "" && app.PlatformTenantID != "" && authenticatedFrom(r.Context()).ConsumerID == "" {
+		authenticated := authenticatedFrom(r.Context())
+		authenticated.PlatformTenantID = app.PlatformTenantID
+		authenticated.PlatformTenantSurfaceID = app.RoutedSurfaceID
+		*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
+	}
 	// M1 wake hygiene: answer static browser/crawler paths directly at the
 	// edge. This runs after the app-level consumer gate and before edge-rule,
 	// operator-auth, limiter, or wake work, so these paths cannot create an
@@ -7219,10 +7228,16 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				requestTraceID = traceIDForTelemetry(r.Context())
 			}
 			platformTenantID := authenticatedFrom(r.Context()).PlatformTenantID
-			if parsed, err := uuid.Parse(platformTenantID); err == nil && consumerID != "" {
+			platformTenantSurfaceID := authenticatedFrom(r.Context()).PlatformTenantSurfaceID
+			if parsed, err := uuid.Parse(platformTenantID); err == nil && (consumerID != "" || platformTenantSurfaceID != "") {
 				platformTenantID = parsed.String()
 			} else {
 				platformTenantID = ""
+			}
+			if parsed, err := uuid.Parse(platformTenantSurfaceID); err == nil && consumerID == "" && platformTenantID != "" {
+				platformTenantSurfaceID = parsed.String()
+			} else {
+				platformTenantSurfaceID = ""
 			}
 			if h.requestTelemetry != nil && requestTraceID == "" {
 				// Keep the legacy request-id fallback for deployments where the
@@ -7231,34 +7246,35 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				requestTraceID = telemetryTraceID(requestID)
 			}
 			row := RequestTelemetryRow{
-				EventID:             uuid.New(),
-				AccountID:           acctUUID,
-				AppID:               appUUID,
-				DeploymentID:        deploymentUUID,
-				Route:               telemetryRoute,
-				Method:              r.Method,
-				Status:              status,
-				LatencyMS:           int(elapsed / time.Millisecond),
-				ColdBoot:            cold,
-				TraceID:             requestTraceID,
-				ReceivedAt:          time.Now(),
-				WakeID:              target.WakeID,
-				InstanceID:          target.InstanceID,
-				UAFamily:            uaFamily,
-				ReferrerHost:        referrerHost,
-				Country:             country,
-				GuestDurationMS:     guestEvidence.DurationMS,
-				GuestRuntime:        guestEvidence.Runtime,
-				GuestOutcome:        guestEvidence.Outcome,
-				GuestErrorClass:     guestEvidence.ErrorClass,
-				ConsumerID:          consumerID,
-				PlatformTenantID:    platformTenantID,
-				NodeID:              target.NodeID,
-				Region:              target.Region,
-				CommitSHA:           target.CommitSHA,
-				DeploymentTag:       target.DeploymentTag,
-				DeploymentCreatedAt: target.DeploymentCreatedAt,
-				ImageDigest:         target.ImageDigest,
+				EventID:                 uuid.New(),
+				AccountID:               acctUUID,
+				AppID:                   appUUID,
+				DeploymentID:            deploymentUUID,
+				Route:                   telemetryRoute,
+				Method:                  r.Method,
+				Status:                  status,
+				LatencyMS:               int(elapsed / time.Millisecond),
+				ColdBoot:                cold,
+				TraceID:                 requestTraceID,
+				ReceivedAt:              time.Now(),
+				WakeID:                  target.WakeID,
+				InstanceID:              target.InstanceID,
+				UAFamily:                uaFamily,
+				ReferrerHost:            referrerHost,
+				Country:                 country,
+				GuestDurationMS:         guestEvidence.DurationMS,
+				GuestRuntime:            guestEvidence.Runtime,
+				GuestOutcome:            guestEvidence.Outcome,
+				GuestErrorClass:         guestEvidence.ErrorClass,
+				ConsumerID:              consumerID,
+				PlatformTenantID:        platformTenantID,
+				PlatformTenantSurfaceID: platformTenantSurfaceID,
+				NodeID:                  target.NodeID,
+				Region:                  target.Region,
+				CommitSHA:               target.CommitSHA,
+				DeploymentTag:           target.DeploymentTag,
+				DeploymentCreatedAt:     target.DeploymentCreatedAt,
+				ImageDigest:             target.ImageDigest,
 			}
 			if h.usageOutbox != nil {
 				errorCount := int64(0)
@@ -7268,8 +7284,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				err := h.usageOutbox.Enqueue(usageoutbox.Event{
 					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
 					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
-					WindowStart:  row.ReceivedAt.UTC().Truncate(time.Minute),
-					RequestCount: 1, ErrorCount: errorCount, BillableUnits: 1,
+					PlatformTenantSurfaceID: row.PlatformTenantSurfaceID,
+					WindowStart:             row.ReceivedAt.UTC().Truncate(time.Minute),
+					RequestCount:            1, ErrorCount: errorCount, BillableUnits: 1,
 				})
 				if err != nil {
 					h.metrics.IncUsageOutboxFailure()
