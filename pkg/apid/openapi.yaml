@@ -26955,8 +26955,8 @@ components:
           not: { const: default }
           description: Project environment slug; the reserved app scope `default` cannot be used.
         protected: { type: boolean }
-        preview_pr_number: { type: integer, minimum: 1, description: GitHub pull request number for a PR-scoped project environment. }
-        preview_head_sha: { type: string, pattern: '^[a-f0-9]{40}$', description: Exact GitHub pull request head commit associated with this environment. }
+        preview_pr_number: { type: integer, minimum: 1, description: GitHub pull request number for preview environments. }
+        preview_head_sha: { type: string, pattern: '^[a-f0-9]{40}$', description: Full lowercase commit SHA recorded for the preview environment. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         cloned_from: { type: string }
@@ -26986,7 +26986,7 @@ components:
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
-        preview_pr_number: { type: integer, minimum: 1 }
+        preview_pr_number: { type: integer, minimum: 1, description: GitHub pull request number to attach to the cloned environment. }
         share_resources: { type: boolean }
         can_clone: { type: boolean, description: False when the target exists or a managed-resource prerequisite is not met. Quotas are checked again during creation. }
         can_promote: { type: boolean, description: True when every source workload has a live release available for subsequent promotion. }
@@ -27460,8 +27460,8 @@ components:
           type: boolean
           default: false
           description: Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-storage resources; data remains shared.
-        preview_pr_number: { type: integer, minimum: 1, description: Associate this cloned environment with one GitHub pull request in the project. }
-        preview_head_sha: { type: string, pattern: '^[a-f0-9]{40}$', description: Exact pull request head commit associated with the environment; must be supplied with preview_pr_number. }
+        preview_pr_number: { type: integer, minimum: 1, description: GitHub pull request number for a preview environment. }
+        preview_head_sha: { type: string, pattern: '^[a-f0-9]{40}$', description: Lowercase full commit SHA for the pull request head; supply it with preview_pr_number. }
 
     CreateProjectEnvironmentApprovalRequest:
       description: Request to approve one exact plan for a protected environment. Provide exactly one of plan_token or promotion_token.
