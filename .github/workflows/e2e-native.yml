@@ -44,8 +44,10 @@ on:
           full — every metal test in nine phases, including the full supported
           runtime fixture matrix, ~60 min.
           qualify — the full lane plus runtime-candidate fixtures; longer.
+          jobs-only — run the Jobs lifecycle phase on dedicated KVM and make
+          that phase blocking, without waiting for the full platform matrix.
         type: choice
-        options: [smoke, full, qualify]
+        options: [smoke, full, qualify, jobs-only]
         default: smoke
       keep_node_running:
         description: >-
@@ -209,7 +211,7 @@ jobs:
 
       - name: Phase 1 — fixtures (app shape checks, no microVM)
         id: phase_fixtures
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -228,7 +230,7 @@ jobs:
 
       - name: Phase 2 — build (source → builderd → builder microVM)
         id: phase_build
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -248,7 +250,7 @@ jobs:
 
       - name: Phase 3 — deploy (image, tarball, healthcheck, secrets)
         id: phase_deploy
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -267,7 +269,7 @@ jobs:
 
       - name: Phase 4 — wake (timeline, dedup, CPU fairness)
         id: phase_wake
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -286,7 +288,7 @@ jobs:
 
       - name: Phase 5 — streaming (response streaming, h2c inner leg)
         id: phase_streaming
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -305,7 +307,7 @@ jobs:
 
       - name: Phase 6 — logs (app log SSE)
         id: phase_logs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -324,7 +326,7 @@ jobs:
 
       - name: Phase 7 — security fences (§11, ship-blocking)
         id: phase_security
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -343,7 +345,7 @@ jobs:
 
       - name: Phase 8 — two-node (recovery arbiter, drain, drills)
         id: phase_twonode
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -362,7 +364,7 @@ jobs:
 
       - name: Phase 9 — jobs (awaiting native verification, #2569)
         id: phase_jobs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -375,6 +377,20 @@ jobs:
           # connection must not kill cleanup halfway through with the host still
           # quiesced. The DSN is NOT passed here — the node owns it in
           # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=20m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Jobs-only acceptance (blocking qualification lane)
+        id: phase_jobs_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'jobs-only'
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: jobs
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
             --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=20m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
@@ -432,12 +448,16 @@ jobs:
             security=${{ steps.phase_security.outcome }}
             twonode=${{ steps.phase_twonode.outcome }}
             jobs=${{ steps.phase_jobs.outcome }}
+            jobs_only=${{ steps.phase_jobs_only.outcome }}
         run: |
           set -uo pipefail
           # Jobs still needs a successful dedicated-KVM run before it can be
           # ship-blocking. Keep its result visible without hiding regressions
           # in the established phases; remove this exception after verification.
           nonblocking="jobs"
+          if [[ "${{ inputs.lane }}" == "jobs-only" ]]; then
+            nonblocking=""
+          fi
 
           rc=0
           {
