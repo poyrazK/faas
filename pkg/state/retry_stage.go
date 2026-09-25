@@ -96,6 +96,7 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 		OverrideHealthcheck:    append(json.RawMessage(nil), src.OverrideHealthcheck...),
 		OverrideLivenessProbe:  append(json.RawMessage(nil), src.OverrideLivenessProbe...),
 		OverrideReadinessProbe: append(json.RawMessage(nil), src.OverrideReadinessProbe...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), src.OverrideMainDependsOn...),
 		Sidecars:               append(json.RawMessage(nil), src.Sidecars...),
 		Workflows:              append(json.RawMessage(nil), src.Workflows...),
 		FullRootfsAllowAuto:    src.FullRootfsAllowAuto,

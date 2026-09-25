@@ -856,6 +856,7 @@ type Deployment struct {
 	OverrideLivenessProbe    []byte
 	SecretReloadSignal       pgtype.Text
 	OverrideReadinessProbe   []byte
+	OverrideMainDependsOn    []byte
 	ParkedReason             pgtype.Text
 	ParkedAt                 pgtype.Timestamptz
 	TrafficPercent           int32
