@@ -2510,6 +2510,16 @@ func (s schedScaleUpEngine) AdmitInstance(ctx context.Context, appID, scope, tri
 	return scaleup.AdmitResult{InstanceID: r.InstanceID, AtCapacity: r.AtCapacity}, nil
 }
 
+// AdmitInstanceForDeployment routes CPU-triggered scale-out to the revision
+// whose own utilization crossed its configured target.
+func (s schedScaleUpEngine) AdmitInstanceForDeployment(ctx context.Context, appID, deploymentID, scope, trigger string) (scaleup.AdmitResult, error) {
+	r, err := s.engine.AdmitInstanceForDeployment(ctx, appID, deploymentID, scope, trigger)
+	if err != nil {
+		return scaleup.AdmitResult{}, err
+	}
+	return scaleup.AdmitResult{InstanceID: r.InstanceID, AtCapacity: r.AtCapacity}, nil
+}
+
 // AdmitInstances implements scaleup.BurstEngine and preserves only the
 // result fields the trigger consumes. The wrapped scheduler still owns every
 // admission check and returns partial results with the first error.

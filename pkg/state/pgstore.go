@@ -6613,7 +6613,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
 		                          stage_state, rollback_on_5xx, release_command, release_command_shell, disable_startup_cpu_boost,
-	                          override_readiness_probe, override_main_depends_on, ram_mb, cpu_millicores, max_instances)
+	                          override_readiness_probe, override_main_depends_on, ram_mb, cpu_millicores, max_instances, cpu_utilization_target_pct)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -6627,7 +6627,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54)
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -6670,7 +6670,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		d.FullRootfsAllowAuto, d.FullRootfsOverride, d.ID, nullJSONRaw(d.InferredProfile), d.TrafficPercentExplicit, createdAt,
 		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx,
 		notNullEmptyTextArray(d.ReleaseCommand), d.ReleaseCommandShell, d.DisableStartupCPUBoost,
-		nullJSONRaw(d.OverrideReadinessProbe), notNullEmptyJSONRaw(d.OverrideMainDependsOn), d.RAMMB, d.CPUMillicores, d.MaxInstances)
+		nullJSONRaw(d.OverrideReadinessProbe), notNullEmptyJSONRaw(d.OverrideMainDependsOn), d.RAMMB, d.CPUMillicores, d.MaxInstances, d.CPUUtilizationTargetPct)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, 0, err
@@ -6836,6 +6836,37 @@ func (s *PgStore) LiveDeployments(ctx context.Context, appID string) ([]Deployme
 		 order by created_at desc`, appID)
 	if err != nil {
 		return nil, fmt.Errorf("state: list live deployments app=%s: %w", appID, err)
+	}
+	defer rows.Close()
+	return scanDeployments(rows)
+}
+
+// ListLiveDeploymentsForCPUScalingApps returns every live revision belonging
+// to an app with at least one live explicit CPU target. The override-app CTE
+// can use the partial index, while one batched read supplies both opted-in
+// revisions and siblings that inherit the app target to the one-second tick.
+func (s *PgStore) ListLiveDeploymentsForCPUScalingApps(ctx context.Context, ownerNodeID string) ([]Deployment, error) {
+	query := `with cpu_override_apps as (
+			select distinct app_id from deployments
+			where status = 'live' and cpu_utilization_target_pct is not null
+		)
+		select ` + deploymentSelectColumnsQualified + `
+		from deployments d
+		join cpu_override_apps o on o.app_id = d.app_id
+		join apps a on a.id = d.app_id
+		where d.status = 'live'`
+	if ownerNodeID != "" {
+		query += ` and a.node_id = $1`
+	}
+	var rows pgx.Rows
+	var err error
+	if ownerNodeID != "" {
+		rows, err = s.pool.Query(ctx, query, ownerNodeID)
+	} else {
+		rows, err = s.pool.Query(ctx, query)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("state: list live revisions for CPU scaling apps: %w", err)
 	}
 	defer rows.Close()
 	return scanDeployments(rows)
@@ -9511,7 +9542,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          stage_state, workflows, full_rootfs_allow_auto, full_rootfs_override, inferred_profile,
 		                          traffic_percent_explicit,
 		                          release_command, release_command_shell,
-		                          override_readiness_probe, override_main_depends_on, ram_mb, cpu_millicores, max_instances)
+	                          override_readiness_probe, override_main_depends_on, ram_mb, cpu_millicores, max_instances, cpu_utilization_target_pct)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -9525,7 +9556,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-	         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52)
+	         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -9556,7 +9587,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		newDep.TrafficPercentExplicit,
 		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell,
 		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn),
-		newDep.RAMMB, newDep.CPUMillicores, newDep.MaxInstances)
+		newDep.RAMMB, newDep.CPUMillicores, newDep.MaxInstances, newDep.CPUUtilizationTargetPct)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -23199,7 +23230,7 @@ const deploymentSelectColumnsWithRootfs = `
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
-		coalesce(ram_mb, 0), coalesce(cpu_millicores, 0), coalesce(max_instances, 0)`
+		coalesce(ram_mb, 0), coalesce(cpu_millicores, 0), coalesce(max_instances, 0), cpu_utilization_target_pct`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -23257,7 +23288,7 @@ const deploymentSelectColumnsQualified = `
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
-		coalesce(d.ram_mb, 0), coalesce(d.cpu_millicores, 0), coalesce(d.max_instances, 0)`
+		coalesce(d.ram_mb, 0), coalesce(d.cpu_millicores, 0), coalesce(d.max_instances, 0), d.cpu_utilization_target_pct`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -23374,7 +23405,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
-		&d.RAMMB, &d.CPUMillicores, &d.MaxInstances,
+		&d.RAMMB, &d.CPUMillicores, &d.MaxInstances, &d.CPUUtilizationTargetPct,
 	); err != nil {
 		return mapErr(err)
 	}

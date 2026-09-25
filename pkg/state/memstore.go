@@ -6711,6 +6711,38 @@ func (m *MemStore) LiveDeployments(_ context.Context, appID string) ([]Deploymen
 	return out, nil
 }
 
+// ListLiveDeploymentsForCPUScalingApps mirrors PgStore's indexed batch
+// discovery query and returns opted-in revisions plus live siblings that
+// inherit their app's CPU target.
+func (m *MemStore) ListLiveDeploymentsForCPUScalingApps(_ context.Context, ownerNodeID string) ([]Deployment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	appsWithOverrides := make(map[string]struct{})
+	for _, dep := range m.deployments {
+		if dep.Status == DeployLive && dep.CPUUtilizationTargetPct != nil {
+			appsWithOverrides[dep.AppID] = struct{}{}
+		}
+	}
+	var out []Deployment
+	for _, dep := range m.deployments {
+		if dep.Status != DeployLive {
+			continue
+		}
+		if _, ok := appsWithOverrides[dep.AppID]; !ok {
+			continue
+		}
+		if ownerNodeID != "" {
+			app, ok := m.apps[dep.AppID]
+			if !ok || app.NodeID != ownerNodeID {
+				continue
+			}
+		}
+		out = append(out, dep)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
 // ListCanaryInFlight (issue #976 / ADR-122 / SAFE-RELEASES-A + F)
 // mirrors PgStore.ListCanaryInFlight across all apps: status='live'
 // AND canary_total_steps > 0 AND canary_step < canary_total_steps

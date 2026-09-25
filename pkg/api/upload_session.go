@@ -32,6 +32,7 @@ type UploadDeployOptions struct {
 	Environment  string                      `json:"environment,omitempty"`
 	Resources    *DeploymentResourcesRequest `json:"resources,omitempty"`
 	MaxInstances *int                        `json:"max_instances,omitempty"`
+	Scaling      *DeploymentScalingRequest   `json:"scaling,omitempty"`
 	Reason       string                      `json:"reason,omitempty"`
 	Tag          string                      `json:"tag,omitempty"`
 	DeployedBy   string                      `json:"deployed_by,omitempty"`

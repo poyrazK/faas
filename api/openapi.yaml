@@ -21335,6 +21335,13 @@ components:
         cpu_millicores: { type: integer, enum: [250, 500, 1000], description: "Revision sustained CPU; omitted inherits the app default." }
         resource_profile: { $ref: '#/components/schemas/ResourceProfile' }
 
+    DeploymentScalingRequest:
+      description: "Optional revision-scoped autoscaling override. Omitted CPU target inherits the app policy; 0 explicitly disables CPU-based scale-up for this revision. CPU targets require Pro or Scale."
+      type: object
+      additionalProperties: false
+      properties:
+        cpu_utilization_target_pct: { type: number, minimum: 0, maximum: 100, description: "Revision CPU scale-up threshold percentage; omit to inherit app policy, 0 to disable, or 1-100 to set a target." }
+
     DeploymentResources:
       description: "Resolved immutable compute shape persisted for this deployment revision."
       type: object
@@ -23811,6 +23818,7 @@ components:
           { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$', description: "Registered project environment to resolve at upload commit." }
         resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
         max_instances: { type: [integer, "null"], minimum: 0, description: "At upload commit, set an immutable deployment serving-instance cap. Omit or use 0 to inherit app policy; the app/plan cap still aggregates across revisions." }
+        scaling: { $ref: '#/components/schemas/DeploymentScalingRequest' }
         reason: { type: string, maxLength: 280 }
         tag: { type: string }
         deployed_by: { type: string }
@@ -23979,6 +23987,11 @@ components:
           type: integer
           minimum: 0
           description: "Configured immutable per-deployment serving-instance ceiling. 0 means inherit the app's effective ceiling; the app/plan maximum remains an aggregate cap."
+        scaling:
+          oneOf:
+            - $ref: '#/components/schemas/DeploymentScalingRequest'
+            - type: 'null'
+          description: "Per-revision CPU autoscaling override echoed from the deployment row; absent means the revision inherits the app policy."
         scan:
           oneOf:
             - $ref: '#/components/schemas/ScanResult'
@@ -24244,6 +24257,7 @@ components:
           description: "Registered project environment to target for this local tarball deployment."
         resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
         max_instances: { type: [integer, "null"], minimum: 0, description: "Optional revision ceiling for this tarball deployment; 0 leaves the app's inherited limit in force." }
+        scaling: { $ref: '#/components/schemas/DeploymentScalingRequest' }
         # Issue #977 / ADR-116 — deployment annotation echo. The four
         # columns stamped at create time are surfaced verbatim so the
         # dashboard, CLI history, and SDK consumers can render the
@@ -25343,6 +25357,7 @@ components:
           type: [integer, "null"]
           minimum: 0
           description: "A deployment-local maximum for live serving VMs. When absent or 0, no stricter revision bound is applied; the app/plan aggregate remains authoritative."
+        scaling: { $ref: '#/components/schemas/DeploymentScalingRequest' }
         # Issue #977 / ADR-116 — deployment annotation fields. The
         # githubd bridge + GitHub Action auto-capture DeployedBy +
         # PRNumber; the CLI captures DeployedBy from `git config
@@ -27869,6 +27884,7 @@ components:
           description: "Registered project environment to target for this source-ref deployment."
         resources: { $ref: '#/components/schemas/DeploymentResourcesRequest' }
         max_instances: { type: [integer, "null"], minimum: 0, description: "Optional serving-VM bound recorded on the source-ref deployment; omit or use 0 for the app's effective instance limit." }
+        scaling: { $ref: '#/components/schemas/DeploymentScalingRequest' }
         no_triggers:
           type: boolean
           default: false

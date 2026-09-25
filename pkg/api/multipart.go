@@ -67,6 +67,11 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if a.MaxInstances != nil {
 		_ = w.WriteField("max_instances", fmt.Sprintf("%d", *a.MaxInstances))
 	}
+	if a.Scaling != nil {
+		if raw, err := json.Marshal(a.Scaling); err == nil {
+			_ = w.WriteField("scaling", string(raw))
+		}
+	}
 	if a.Canary != nil {
 		if raw, err := json.Marshal(a.Canary); err == nil {
 			_ = w.WriteField("canary", string(raw))
@@ -155,6 +160,7 @@ type DeployAnnotations struct {
 	// semantics as image JSON deploys. The pointer preserves explicit zero.
 	TrafficPercent         *int
 	MaxInstances           *int
+	Scaling                *DeploymentScalingRequest
 	Canary                 *CanaryPresetSpec
 	RollbackOn5xx          *bool
 	DisableStartupCPUBoost *bool

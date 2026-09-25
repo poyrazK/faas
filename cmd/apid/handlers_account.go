@@ -954,6 +954,7 @@ func buildDeploymentsForExport(rows []state.Deployment) ([]api.DeploymentRespons
 			// ListDeployments*).
 			Scope:                  d.Scope,
 			DisableStartupCPUBoost: d.DisableStartupCPUBoost,
+			Scaling:                deploymentScalingResponse(d),
 			// Issue #977 / ADR-116: annotation echo on export
 			// fixtures. The four columns are operator-supplied
 			// metadata (free-text reason, closed-set tag, actor

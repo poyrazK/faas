@@ -14,15 +14,26 @@ func TestMemStoreDeploymentQueries(t *testing.T) {
 	ctx := context.Background()
 	m := NewMemStore()
 	base := time.Now().UTC().Add(-10 * time.Minute)
-	m.apps["app-a"] = App{ID: "app-a", AccountID: "acct-a"}
-	m.apps["app-b"] = App{ID: "app-b", AccountID: "acct-b"}
+	m.apps["app-a"] = App{ID: "app-a", AccountID: "acct-a", NodeID: "node-a"}
+	m.apps["app-b"] = App{ID: "app-b", AccountID: "acct-b", NodeID: "node-b"}
 	m.apps["deleted-app"] = App{ID: "deleted-app", AccountID: "acct-a", Status: AppDeleted}
 	m.deployments["d-old"] = Deployment{ID: "d-old", AppID: "app-a", Scope: "prod", Status: DeployLive, CreatedAt: base}
-	m.deployments["d-new"] = Deployment{ID: "d-new", AppID: "app-a", Scope: "prod", Status: DeployLive, CreatedAt: base.Add(2 * time.Minute)}
+	cpuTarget := 75.0
+	m.deployments["d-new"] = Deployment{ID: "d-new", AppID: "app-a", Scope: "prod", Status: DeployLive, CreatedAt: base.Add(2 * time.Minute), CPUUtilizationTargetPct: &cpuTarget}
 	m.deployments["d-default"] = Deployment{ID: "d-default", AppID: "app-a", Scope: "", Status: DeployLive, CreatedAt: base.Add(time.Minute)}
 	m.deployments["d-superseded"] = Deployment{ID: "d-superseded", AppID: "app-a", Scope: "prod", Status: DeploySuperseded, CreatedAt: base.Add(3 * time.Minute)}
-	m.deployments["d-other"] = Deployment{ID: "d-other", AppID: "app-b", Scope: "prod", Status: DeployLive, CreatedAt: base.Add(4 * time.Minute)}
+	otherTarget := 50.0
+	m.deployments["d-other"] = Deployment{ID: "d-other", AppID: "app-b", Scope: "prod", Status: DeployLive, CreatedAt: base.Add(4 * time.Minute), CPUUtilizationTargetPct: &otherTarget}
 	m.deployments["d-deleted"] = Deployment{ID: "d-deleted", AppID: "deleted-app", Scope: "prod", Status: DeployLive, CreatedAt: base.Add(5 * time.Minute)}
+
+	overrides, err := m.ListLiveDeploymentsForCPUScalingApps(ctx, "")
+	if err != nil || len(overrides) != 4 || overrides[0].ID != "d-other" || overrides[1].ID != "d-new" {
+		t.Fatalf("ListLiveDeploymentsForCPUScalingApps = %+v, %v", overrides, err)
+	}
+	overrides, err = m.ListLiveDeploymentsForCPUScalingApps(ctx, "node-a")
+	if err != nil || len(overrides) != 3 || overrides[0].ID != "d-new" {
+		t.Fatalf("node-filtered CPU scaling revisions = %+v, %v; want app-a live rows only", overrides, err)
+	}
 
 	live, err := m.LiveDeployments(ctx, "app-a")
 	if err != nil || len(live) != 3 || live[0].ID != "d-new" || live[1].ID != "d-default" || live[2].ID != "d-old" {

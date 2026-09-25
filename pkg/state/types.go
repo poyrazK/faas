@@ -2120,6 +2120,10 @@ type Deployment struct {
 	// Zero inherits the app's effective max_instances policy. The app/plan
 	// ceiling remains a separate aggregate limit across all deployments.
 	MaxInstances int `json:"max_instances,omitempty"`
+	// CPUUtilizationTargetPct is an optional immutable per-deployment CPU
+	// scale-up threshold. Nil inherits the app's CPU target; zero disables
+	// CPU-based scale-up for this revision.
+	CPUUtilizationTargetPct *float64 `json:"cpu_utilization_target_pct,omitempty"`
 	// TrafficPercent is the per-deployment traffic-split weight
 	// (issue #556 PR-A). Integer in [0, 100] enforced by the
 	// deployments_traffic_percent_chk CHECK constraint (migration

@@ -4960,6 +4960,14 @@ func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (
 
 // --- response helpers ------------------------------------------------------
 
+func deploymentScalingResponse(d state.Deployment) *api.DeploymentScalingRequest {
+	if d.CPUUtilizationTargetPct == nil {
+		return nil
+	}
+	value := *d.CPUUtilizationTargetPct
+	return &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &value}
+}
+
 func (s *server) deploymentResponse(d state.Deployment, app state.App) api.DeploymentResponse {
 	// Issue #460 / ADR-053: echo the override_* columns on the
 	// response. Env values are NEVER echoed (override_env_keys
@@ -4998,6 +5006,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		HasOverrides:      hasOverrides,
 		MinInstances:      d.MinInstances,
 		MaxInstances:      d.MaxInstances,
+		Scaling:           deploymentScalingResponse(d),
 		// Issue #556 PR-A: traffic_percent echoes the per-deployment
 		// split weight. Σ over live rows for the app is 100 by
 		// construction (CreateDeployment zeros the prior row in the

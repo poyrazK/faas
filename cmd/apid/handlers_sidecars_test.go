@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -71,6 +72,42 @@ func TestBuildDeploymentForInsert_PersistsDeploymentMaxInstances(t *testing.T) {
 	}
 	if dep.MaxInstances != maxInstances {
 		t.Fatalf("deployment max_instances = %d, want %d", dep.MaxInstances, maxInstances)
+	}
+}
+
+func TestBuildDeploymentForInsert_PersistsDeploymentCPUScalingTarget(t *testing.T) {
+	target := 67.5
+	app := state.App{ID: "app-cpu-target", RAMMB: 512, CPUMillicores: 500, MaxConcurrency: 5}
+	dep, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{
+		Image: "sha256:test", Scaling: &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &target},
+	}, nil, api.MustLimitsFor(api.PlanPro), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	if dep.CPUUtilizationTargetPct == nil || *dep.CPUUtilizationTargetPct != target {
+		t.Fatalf("deployment CPU target = %v, want %v", dep.CPUUtilizationTargetPct, target)
+	}
+}
+
+func TestValidateDeploymentScaling(t *testing.T) {
+	belowMinimum := 0.5
+	freeTarget := 70.0
+	nanTarget := math.NaN()
+	infiniteTarget := math.Inf(1)
+	if problem := validateDeploymentScaling(&api.DeploymentScalingRequest{CPUUtilizationTargetPct: &belowMinimum}, api.PlanPro); problem == nil || problem.Code != api.CodeInvalidAutoscaleTargetCPU {
+		t.Fatalf("below-minimum target problem = %#v, want %q", problem, api.CodeInvalidAutoscaleTargetCPU)
+	}
+	for name, value := range map[string]float64{"NaN": nanTarget, "infinity": infiniteTarget} {
+		if problem := validateDeploymentScaling(&api.DeploymentScalingRequest{CPUUtilizationTargetPct: &value}, api.PlanPro); problem == nil || problem.Code != api.CodeInvalidAutoscaleTargetCPU {
+			t.Errorf("%s target problem = %#v, want %q", name, problem, api.CodeInvalidAutoscaleTargetCPU)
+		}
+	}
+	if problem := validateDeploymentScaling(&api.DeploymentScalingRequest{CPUUtilizationTargetPct: &freeTarget}, api.PlanFree); problem == nil || problem.Code != api.CodePlanScaleUpNotAllowed {
+		t.Fatalf("Free target problem = %#v, want %q", problem, api.CodePlanScaleUpNotAllowed)
+	}
+	zero := 0.0
+	if problem := validateDeploymentScaling(&api.DeploymentScalingRequest{CPUUtilizationTargetPct: &zero}, api.PlanPro); problem != nil {
+		t.Fatalf("explicit zero should disable the target: %v", problem)
 	}
 }
 

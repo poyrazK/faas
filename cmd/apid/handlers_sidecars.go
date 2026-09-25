@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -468,6 +469,13 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	if req.MaxInstances != nil {
 		dep.MaxInstances = *req.MaxInstances
 	}
+	if problem := validateDeploymentScaling(req.Scaling, plan); problem != nil {
+		return state.Deployment{}, problem
+	}
+	if req.Scaling != nil && req.Scaling.CPUUtilizationTargetPct != nil {
+		value := *req.Scaling.CPUUtilizationTargetPct
+		dep.CPUUtilizationTargetPct = &value
+	}
 	if req.RollbackOn5xx != nil {
 		dep.RollbackOn5xx = *req.RollbackOn5xx
 	}
@@ -624,6 +632,24 @@ func validateDeploymentMaxInstances(requested *int, app state.App, plan api.Plan
 	}
 	if value < 0 || value > limits.MaxConcurrency || (value > 0 && value < reachableMin) {
 		return api.ErrInvalidDeploymentMaxInstances(value, reachableMin, limits.MaxConcurrency)
+	}
+	return nil
+}
+
+func validateDeploymentScaling(scaling *api.DeploymentScalingRequest, plan api.Plan) *api.Problem {
+	if scaling == nil || scaling.CPUUtilizationTargetPct == nil {
+		return nil
+	}
+	value := *scaling.CPUUtilizationTargetPct
+	if !plan.ScaleUpTargetCPUAllowed() {
+		return api.NewProblem(http.StatusForbidden, api.CodePlanScaleUpNotAllowed,
+			"Autoscale target CPU% is not allowed on this plan",
+			"Autoscale target CPU% requires Pro or Scale; upgrade to a paid tier.")
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) || (value != 0 && (value < 1 || value > 100)) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidAutoscaleTargetCPU,
+			"Invalid autoscale target CPU%",
+			fmt.Sprintf("scaling.cpu_utilization_target_pct must be 0 (disable) or in [1, 100]; got %g", value))
 	}
 	return nil
 }

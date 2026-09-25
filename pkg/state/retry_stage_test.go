@@ -9,21 +9,23 @@ import (
 func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	oldStarted := time.Now().UTC().Add(-time.Hour)
 	now := time.Now().UTC()
+	cpuTarget := 67.5
 	src := Deployment{
-		ID:                     "failed-service",
-		AppID:                  "app-service",
-		Status:                 DeployFailed,
-		CanaryPreset:           "none",
-		CanaryTotalSteps:       0,
-		TrafficPercent:         0,
-		RolloutState:           "rolling_out",
-		RolloutStartedAt:       &oldStarted,
-		RolloutCompletedAt:     &oldStarted,
-		OverrideReadinessProbe: json.RawMessage(`{"path":"/readyz"}`),
-		OverrideMainDependsOn:  json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`),
-		RAMMB:                  384,
-		CPUMillicores:          500,
-		MaxInstances:           4,
+		ID:                      "failed-service",
+		AppID:                   "app-service",
+		Status:                  DeployFailed,
+		CanaryPreset:            "none",
+		CanaryTotalSteps:        0,
+		TrafficPercent:          0,
+		RolloutState:            "rolling_out",
+		RolloutStartedAt:        &oldStarted,
+		RolloutCompletedAt:      &oldStarted,
+		OverrideReadinessProbe:  json.RawMessage(`{"path":"/readyz"}`),
+		OverrideMainDependsOn:   json.RawMessage(`[{"name":"proxy","condition":"healthy"}]`),
+		RAMMB:                   384,
+		CPUMillicores:           500,
+		MaxInstances:            4,
+		CPUUtilizationTargetPct: &cpuTarget,
 	}
 
 	got, err := retryDeploymentInput(src, now)
@@ -50,5 +52,8 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	}
 	if got.MaxInstances != src.MaxInstances {
 		t.Fatalf("retry max_instances = %d, want %d", got.MaxInstances, src.MaxInstances)
+	}
+	if got.CPUUtilizationTargetPct == nil || *got.CPUUtilizationTargetPct != cpuTarget {
+		t.Fatalf("retry cpu target = %v, want %v", got.CPUUtilizationTargetPct, cpuTarget)
 	}
 }

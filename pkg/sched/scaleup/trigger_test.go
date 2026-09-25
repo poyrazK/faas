@@ -24,7 +24,8 @@ import (
 // trigger's ownerNodeID is empty), but the interface mandates
 // the method's presence so we no-op it.
 type fakeStore struct {
-	apps []state.App
+	apps        []state.App
+	deployments []state.Deployment
 }
 
 func (f *fakeStore) ListAllApps(_ context.Context) ([]state.App, error) {
@@ -33,6 +34,22 @@ func (f *fakeStore) ListAllApps(_ context.Context) ([]state.App, error) {
 
 func (f *fakeStore) ListAppsByNodeID(_ context.Context, _ string) ([]state.App, error) {
 	return f.apps, nil
+}
+
+func (f *fakeStore) ListLiveDeploymentsForCPUScalingApps(_ context.Context, _ string) ([]state.Deployment, error) {
+	appsWithOverrides := make(map[string]struct{})
+	for _, dep := range f.deployments {
+		if dep.Status == state.DeployLive && dep.CPUUtilizationTargetPct != nil {
+			appsWithOverrides[dep.AppID] = struct{}{}
+		}
+	}
+	var out []state.Deployment
+	for _, dep := range f.deployments {
+		if _, ok := appsWithOverrides[dep.AppID]; ok && dep.Status == state.DeployLive {
+			out = append(out, dep)
+		}
+	}
+	return out, nil
 }
 
 type capturedEvent struct {
@@ -61,8 +78,18 @@ func (f *fakeEventWriter) AppendEvent(_ context.Context, actor, kind string, sub
 // fakeLedger is a minimal Ledger. Concurrency returns the value
 // from a per-app map.
 type fakeLedger struct {
-	mu   sync.Mutex
-	conc map[string]int
+	mu             sync.Mutex
+	conc           map[string]int
+	deploymentConc map[string]int
+}
+
+func (l *fakeLedger) ConcurrencyForDeployment(appID, deploymentID string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.deploymentConc == nil {
+		return 0
+	}
+	return l.deploymentConc[appID+":"+deploymentID]
 }
 
 func (l *fakeLedger) Concurrency(appID string) int {
@@ -81,9 +108,20 @@ func (l *fakeLedger) Concurrency(appID string) int {
 type fakeEngine struct {
 	mu              sync.Mutex
 	admitCalls      []string // appIDs in AdmitInstance call order
+	deploymentCalls []string // deploymentIDs in targeted-admission order
 	ensureWakeCalls []string // appIDs in EnsureWake call order
 	results         map[string]AdmitResult
 	errs            map[string]error
+}
+
+func (e *fakeEngine) AdmitInstanceForDeployment(_ context.Context, appID, deploymentID, _, _ string) (AdmitResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.deploymentCalls = append(e.deploymentCalls, deploymentID)
+	if err, ok := e.errs[appID]; ok {
+		return AdmitResult{}, err
+	}
+	return AdmitResult{InstanceID: "ins-" + appID + "-" + deploymentID}, nil
 }
 
 type burstFakeEngine struct {
@@ -174,9 +212,18 @@ func (s *sequenceScraper) Scrape(_ context.Context) (map[string]int64, error) {
 // byInflight is the per-app map; nil is the no-signal case. byRPS
 // exercises the optional provider-independent request-rate fallback.
 type fakeInstats struct {
-	byCPU      map[string]float64
-	byInflight map[string]int64
-	byRPS      map[string]float64
+	byCPU           map[string]float64
+	byDeploymentCPU map[string]float64
+	byInflight      map[string]int64
+	byRPS           map[string]float64
+}
+
+func (i *fakeInstats) MaxCPUForDeployment(appID, deploymentID string) (float64, bool) {
+	if i == nil || i.byDeploymentCPU == nil {
+		return 0, false
+	}
+	v, ok := i.byDeploymentCPU[appID+":"+deploymentID]
+	return v, ok
 }
 
 func (i *fakeInstats) MaxCPU(appID string) (float64, bool) {
@@ -380,6 +427,43 @@ func TestTrigger_NilScraperNoOp(t *testing.T) {
 	}
 	if len(engine.admitCalls) != 1 || engine.admitCalls[0] != "cpu-app" {
 		t.Errorf("engine.admitCalls = %v, want [cpu-app]", engine.admitCalls)
+	}
+}
+
+func TestTrigger_DeploymentCPUOverridesAreScopedAndInherit(t *testing.T) {
+	overrideTarget := 80.0
+	disabledTarget := 0.0
+	store := &fakeStore{
+		apps: []state.App{{ID: "app1", AutoscaleTargetCPUPct: 70, MaxConcurrency: 5}},
+		deployments: []state.Deployment{
+			{ID: "hot", AppID: "app1", Scope: "production", Status: state.DeployLive, CPUUtilizationTargetPct: &overrideTarget},
+			{ID: "disabled", AppID: "app1", Status: state.DeployLive, CPUUtilizationTargetPct: &disabledTarget},
+			{ID: "inherited", AppID: "app1", Status: state.DeployLive},
+		},
+	}
+	ledger := &fakeLedger{
+		conc: map[string]int{"app1": 3},
+		deploymentConc: map[string]int{
+			"app1:hot":       1,
+			"app1:disabled":  1,
+			"app1:inherited": 1,
+		},
+	}
+	engine := &fakeEngine{}
+	instats := &fakeInstats{byCPU: map[string]float64{"app1": 99}, byDeploymentCPU: map[string]float64{
+		"app1:hot":       90,
+		"app1:disabled":  99,
+		"app1:inherited": 75,
+	}}
+	tr := New(store, instats, nil, engine, ledger, Options{Metrics: wire.NewOpsMetrics("test")})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.admitCalls) != 0 {
+		t.Fatalf("app-wide admissions = %v, want none when revisions have explicit CPU policy", engine.admitCalls)
+	}
+	if len(engine.deploymentCalls) != 2 || engine.deploymentCalls[0] != "hot" || engine.deploymentCalls[1] != "inherited" {
+		t.Fatalf("deployment admissions = %v, want [hot inherited]; explicit zero should disable only that revision", engine.deploymentCalls)
 	}
 }
 
