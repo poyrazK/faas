@@ -451,6 +451,11 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	env = StampRuntimeConfigEnv(env)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
+	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
+	if trustErr != nil {
+		return fmt.Errorf("prepare service proxy trust: %w", trustErr)
+	}
+	env = StampServiceProxyTrustEnv(env, serviceProxyTrust)
 	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env as the
 	// boot/wake trace seed. The W3C trace context was shipped from the
 	// host via the vsock resume hook; the supervisor reads it via

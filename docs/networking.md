@@ -260,14 +260,23 @@ target allowlist, and preview checks still run before any target is woken.
 Unbound `.internal` names are passed to the configured upstream DNS resolver;
 Gregale does not claim the customer's entire private namespace. The existing
 `*.svc.gregale` names and generated `GREGALE_SERVICE_*_URL` values remain
-unchanged for rolling-upgrade compatibility. Operators may additionally enable
-the private HTTPS listener, after distributing a dedicated service CA to all
-compute nodes. A workload can then verify `https://billing.internal` with the
-guest bundle at `/etc/faas/service-proxy-ca.crt` (for example, `curl --cacert
-/etc/faas/service-proxy-ca.crt https://billing.internal/`). This CA is not
-installed into the global trust store; application TLS clients must select it
-explicitly. See [ADR-272](adr/272-private-https-service-bindings.md) for the
-rollout and rotation contract. The alias is never a public ingress hostname.
+unchanged for rolling-upgrade compatibility. Operators may enable the private
+HTTPS listener after distributing a dedicated service CA to all compute nodes.
+The CA must have a critical permitted DNS name constraint for `.internal`.
+When configured, guest-init builds a per-workload bundle in `/tmp`, exports
+`GREGALE_SERVICE_CA_BUNDLE`, and configures common TLS clients (`SSL_CERT_FILE`,
+Python Requests, and curl) to trust the private endpoint when the image includes
+a standard system CA bundle. Node receives the CA through its additive
+`NODE_EXTRA_CA_CERTS` setting. No image or global OS trust store is changed.
+Other TLS stacks can explicitly use `GREGALE_SERVICE_CA_BUNDLE` with their own
+verifier. For example, `curl https://billing.internal/` and
+`requests.get("https://billing.internal/")` verify TLS normally; verification
+is never disabled. The raw CA also remains available at
+`/etc/faas/service-proxy-ca.crt` for explicit client-specific selection.
+Generated binding URLs remain unchanged. See [ADR-272](adr/272-private-https-service-bindings.md)
+for listener rollout and [ADR-273](adr/273-workload-scoped-service-ca-trust.md)
+for guest trust and CA requirements. The alias is never a public ingress
+hostname.
 
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
