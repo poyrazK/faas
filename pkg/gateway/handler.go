@@ -7845,7 +7845,15 @@ func (s *statusRecorder) installHeaderOps(ops []EdgeRuleHeaderOp) {
 	if s == nil || len(ops) == 0 {
 		return
 	}
-	s.headerOps = ops
+	// Accumulate: kind=headers, kind=cors (or the app's default CORS) and
+	// validate-warn each install ops on the same request. Assigning here
+	// let the last rule to fire silently discard the others — a matched
+	// CORS rule dropped every kind=headers response op, and validate-warn
+	// dropped Access-Control-Allow-Origin so browsers blocked the
+	// response. Ops apply in install order, so a later rule still wins a
+	// same-name "set". append on a nil slice copies, so the rule's own
+	// slice is never aliased.
+	s.headerOps = append(s.headerOps, ops...)
 }
 
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
