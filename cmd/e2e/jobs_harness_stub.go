@@ -14,11 +14,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -84,7 +86,35 @@ func newMetalHarness(t *testing.T) *MetalJobHarness {
 	t.Setenv("FAAS_JOBS_DISPATCH", "1")
 	t.Setenv("FAAS_SAMPLE_INTERVAL", "1s")
 	t.Setenv("FAAS_ROLLUP_INTERVAL", "1s")
-	h := e2etest.Start(t, pool, e2etest.APID|e2etest.Schedd|e2etest.VMMD|e2etest.Imaged|e2etest.Meterd)
+	ageDir := t.TempDir()
+	hostIdentity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("generate Jobs host age identity: %v", err)
+	}
+	fleetIdentity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("generate Jobs fleet age identity: %v", err)
+	}
+	hostIdentityPath := filepath.Join(ageDir, "host.age")
+	fleetIdentityPath := filepath.Join(ageDir, "fleet.age")
+	recipientPath := filepath.Join(ageDir, "host.age.pub")
+	for path, value := range map[string]string{
+		hostIdentityPath:  hostIdentity.String(),
+		fleetIdentityPath: fleetIdentity.String(),
+		recipientPath:     hostIdentity.Recipient().String(),
+	} {
+		mode := os.FileMode(0o400)
+		if path == recipientPath {
+			mode = 0o444
+		}
+		if err := os.WriteFile(path, []byte(value), mode); err != nil {
+			t.Fatalf("write Jobs test age key %s: %v", path, err)
+		}
+	}
+	h := e2etest.Start(t, pool, e2etest.APID|e2etest.Schedd|e2etest.VMMD|e2etest.Imaged|e2etest.Meterd,
+		"FAAS_HOST_AGE_RECIPIENT_PATH="+recipientPath,
+		"FAAS_HOST_AGE_IDENTITY_PATH="+hostIdentityPath,
+	)
 	jh := &MetalJobHarness{
 		t: t, Harness: h, registry: registry,
 		imageRefs: make(map[string]string), accountKeys: make(map[string]string),
@@ -185,6 +215,63 @@ func (h *MetalJobHarness) MustCreateJob(t *testing.T, name, imageRef string, com
 	var out api.JobResponse
 	decodeOK(t, raw, status, &out, http.MethodPost, path)
 	return &out
+}
+
+func (h *MetalJobHarness) MustSetJobRegistryCredential(t *testing.T, job *api.JobResponse, registryHost, username, password string) {
+	t.Helper()
+	path := "/v1/jobs/" + job.Name + "/registry-credentials"
+	raw, status, _ := h.request(t, h.defaultKey, http.MethodPut, path, api.PutJobRegistryCredentialRequest{
+		Registry: "https://" + registryHost, Username: username, Password: password,
+	})
+	if bytes.Contains(raw, []byte(password)) {
+		t.Fatalf("PUT %s leaked the registry password: %s", path, raw)
+	}
+	var out api.JobRegistryCredentialResponse
+	decodeOK(t, raw, status, &out, http.MethodPut, path)
+	if out.Registry != registryHost || out.Username != username {
+		t.Fatalf("PUT %s returned credential metadata %+v, want registry=%q username=%q", path, out, registryHost, username)
+	}
+}
+
+func (h *MetalJobHarness) MustWaitJobImageReady(t *testing.T, job *api.JobResponse, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	path := "/v1/jobs/" + job.Name
+	for time.Now().Before(deadline) {
+		raw, status, _ := h.request(t, h.defaultKey, http.MethodGet, path, nil)
+		var current api.JobResponse
+		decodeOK(t, raw, status, &current, http.MethodGet, path)
+		*job = current
+		switch current.ImageMaterializationStatus {
+		case "ready":
+			return
+		case "failed":
+			t.Fatalf("job %s image materialization failed: %s", job.Name, current.ImageMaterializationError)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("job %s image_materialization_status=%q, want ready within %s", job.Name, job.ImageMaterializationStatus, timeout)
+}
+
+func (h *MetalJobHarness) MustAssertJobRegistryCredentialUsed(t *testing.T, job *api.JobResponse, registryHost, password string) {
+	t.Helper()
+	path := "/v1/jobs/" + job.Name + "/registry-credentials"
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, status, _ := h.request(t, h.defaultKey, http.MethodGet, path, nil)
+		if bytes.Contains(raw, []byte(password)) {
+			t.Fatalf("GET %s leaked the registry password: %s", path, raw)
+		}
+		var out api.JobRegistryCredentialListResponse
+		decodeOK(t, raw, status, &out, http.MethodGet, path)
+		for _, credential := range out.Credentials {
+			if credential.Registry == registryHost && credential.LastUsedAt != "" {
+				return
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("job registry credential for %s was not marked used after image pull", registryHost)
 }
 
 func (h *MetalJobHarness) MustUpdateJob(t *testing.T, job *api.JobResponse, mut func(*api.UpdateJobRequest)) *api.JobResponse {

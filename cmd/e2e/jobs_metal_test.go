@@ -6,7 +6,7 @@
 // OCI registry + pgtest harness and exercises one job lifecycle
 // path end-to-end through the real wire.
 //
-// 11 tests per the plan, each -timeout 10-30 min, run via
+// 12 tests per the plan, each -timeout 10-30 min, run via
 // `make metal-lima` (Apple Silicon) or `make test-metal` (EX44).
 //
 // Build tag: metal. Requires:
@@ -44,6 +44,41 @@ func TestJobsE2E_HappyPath(t *testing.T) {
 	job := h.MustCreateJob(t, "happy-job", "busybox:job-happy", []string{"/job-fixture", "success"}, 512)
 	run := h.MustDispatchRun(t, job, 5)
 	h.MustWaitRunTerminal(t, run, "succeeded", 10*time.Minute)
+	h.MustAssertTaskExitCodes(t, run, 0)
+}
+
+// TestJobsE2E_PrivateRegistry pulls the OCI image through the real imaged
+// credential-unseal path, then boots a task from the materialized artifact.
+func TestJobsE2E_PrivateRegistry(t *testing.T) {
+	h := newMetalHarness(t)
+	defer h.Close()
+
+	const (
+		baseImageRef = "busybox:job-private-registry-base"
+		privateRef   = "busybox:job-private-registry"
+		username     = "jobs-robot"
+		password     = "jobs-private-registry-secret-marker"
+	)
+	h.MustSeedFakeImage(t, baseImageRef)
+	job := h.MustCreateJob(t, "private-registry-job", baseImageRef, []string{"/job-fixture", "success"}, 512)
+	h.MustWaitJobImageReady(t, job, 5*time.Minute)
+
+	// Materialize the first public image before turning on the registry auth
+	// gate. The private image update then has its credential stored before
+	// imaged receives the change notification.
+	h.registry.RequireBasicAuth(username, password)
+	h.MustSeedFakeImage(t, privateRef)
+	registryHost := h.registry.Host()
+	h.MustSetJobRegistryCredential(t, job, registryHost, username, password)
+	imageRef := h.imageRef(t, privateRef)
+	job = h.MustUpdateJob(t, job, func(update *api.UpdateJobRequest) {
+		update.ImageRef = &imageRef
+	})
+	h.MustWaitJobImageReady(t, job, 5*time.Minute)
+	h.MustAssertJobRegistryCredentialUsed(t, job, registryHost, password)
+
+	run := h.MustDispatchRun(t, job, 1)
+	h.MustWaitRunTerminal(t, run, "succeeded", 5*time.Minute)
 	h.MustAssertTaskExitCodes(t, run, 0)
 }
 
