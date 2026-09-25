@@ -58,3 +58,56 @@ func TestMemStoreAPIConsumerUsageKeepsAnonymousSeparate(t *testing.T) {
 		t.Fatalf("anonymous rows = %#v", rows)
 	}
 }
+
+func TestRequestAuditReplayFillsMissingEvidenceWithoutDoubleUsage(t *testing.T) {
+	store := NewMemStore()
+	now := time.Now().UTC().Truncate(time.Minute)
+	event := APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(),
+		ConsumerKey: uuid.NewString(), WindowStart: now,
+		RequestCount: 1, BillableUnits: 1,
+	}
+	if applied, err := store.RecordAPIConsumerUsage(context.Background(), event); err != nil || !applied {
+		t.Fatalf("legacy usage: applied=%v err=%v", applied, err)
+	}
+	event.Audit = &RequestAuditEvidence{
+		RouteTemplate: "POST /payments", Method: "POST", HTTPStatus: 201,
+		LatencyMS: 381, OccurredAt: now.Add(13 * time.Second), RequestID: "req-1",
+	}
+	if applied, err := store.RecordAPIConsumerUsage(context.Background(), event); err != nil || applied {
+		t.Fatalf("audit replay: applied=%v err=%v", applied, err)
+	}
+	if applied, err := store.RecordAPIConsumerUsage(context.Background(), event); err != nil || applied {
+		t.Fatalf("duplicate replay: applied=%v err=%v", applied, err)
+	}
+	rows, err := store.ListRequestAudit(context.Background(), event.AccountID, event.AppID, now, now.Add(time.Minute), 100)
+	if err != nil || len(rows) != 1 || rows[0].RouteTemplate != "POST /payments" {
+		t.Fatalf("audit rows=%+v err=%v", rows, err)
+	}
+	usage, err := store.ListAPIConsumerUsage(context.Background(), event.AccountID, event.AppID, event.ConsumerKey, now, now.Add(time.Minute))
+	if err != nil || len(usage) != 1 || usage[0].RequestCount != 1 {
+		t.Fatalf("usage=%+v err=%v", usage, err)
+	}
+	routes, err := store.ListDiscoveredAuditRoutes(context.Background(), event.AccountID, event.AppID, 100)
+	if err != nil || len(routes) != 1 || routes[0] != "POST /payments" {
+		t.Fatalf("routes=%+v err=%v", routes, err)
+	}
+	other, err := store.ListRequestAudit(context.Background(), uuid.NewString(), event.AppID, now, now.Add(time.Minute), 100)
+	if err != nil || len(other) != 0 {
+		t.Fatalf("cross-account audit=%+v err=%v", other, err)
+	}
+}
+
+func TestRequestAuditRejectsMalformedSourceIP(t *testing.T) {
+	now := time.Now().UTC()
+	event := APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(),
+		ConsumerKey: AnonymousConsumerKey, WindowStart: now.Truncate(time.Minute),
+		RequestCount: 1, BillableUnits: 1,
+		Audit: &RequestAuditEvidence{RouteTemplate: "GET /profile/{id}", Method: "GET", HTTPStatus: 200,
+			OccurredAt: now, SourceIP: "spoofed.example"},
+	}
+	if err := ValidateAPIConsumerUsageEvent(event); err == nil {
+		t.Fatal("malformed source IP accepted")
+	}
+}

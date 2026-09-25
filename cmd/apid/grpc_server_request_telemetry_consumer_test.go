@@ -56,6 +56,24 @@ func TestConsumerUsageRejectsMalformedEventWithoutAcknowledgement(t *testing.T) 
 	}
 }
 
+func TestConsumerUsageAuditReceiptRequiresEvidence(t *testing.T) {
+	store := &consumerTelemetryStore{}
+	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	event := &apidpb.ConsumerUsageEvent{
+		EventId: uuid.NewString(), AccountId: uuid.NewString(), AppId: uuid.NewString(),
+		WindowStartUnixMs: time.Now().UTC().Truncate(time.Minute).UnixMilli(),
+		RequestCount:      1, BillableUnits: 1,
+		Audit: &apidpb.RequestAuditEvidence{
+			RouteTemplate: "GET /orders/{id}", Method: "GET", HttpStatus: 200,
+			LatencyMs: 12, OccurredAtUnixMs: time.Now().UTC().UnixMilli(),
+		},
+	}
+	receipt, err := receiver.RecordConsumerUsage(context.Background(), event)
+	if err != nil || !receipt.GetAuditRecorded() || len(store.usage) != 1 || store.usage[0].Audit == nil {
+		t.Fatalf("audit receipt=%+v usage=%+v err=%v", receipt, store.usage, err)
+	}
+}
+
 func TestOutboxedDebuggerRowDoesNotWriteSecondUsageFact(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
 	receiver := newRequestTelemetryReceiver(store, nil, nil, true)

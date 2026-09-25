@@ -54,7 +54,9 @@ service RequestTelemetry {
   rpc RecordConsumerUsage(ConsumerUsageEvent) returns (ConsumerUsageReceipt);
 }
 
-// The financial fact contains no request path, client metadata, or payload.
+// The financial fields contain no request path, client metadata, or payload.
+// Optional audit evidence is a separate, opt-in part of the delivery envelope;
+// apid commits both in one transaction before acknowledging the event.
 message ConsumerUsageEvent {
   string event_id = 1;
   string account_id = 2;
@@ -65,11 +67,33 @@ message ConsumerUsageEvent {
   int64 request_count = 7;
   int64 error_count = 8;
   int64 billable_units = 9;
+  RequestAuditEvidence audit = 10;
 }
 
 message ConsumerUsageReceipt {
   // False means the event was committed by an earlier attempt.
   bool applied = 1;
+  // True only when optional audit evidence was committed (or already exists).
+  // Old apid versions return false, preventing an audit-enabled gateway from
+  // acknowledging and discarding an event before a compatible receiver exists.
+  bool audit_recorded = 2;
+}
+
+// One completed request, not a collapsed debugger bucket. No query, headers,
+// body, or unverified application-user identity is sent. Source IP is optional
+// and comes only from the trusted public-gateway handoff. Undeclared route
+// candidates can retain literal path segments, so collection is opt-in.
+message RequestAuditEvidence {
+  string route_template = 1;
+  string method = 2;
+  int32 http_status = 3;
+  int32 latency_ms = 4;
+  string trace_id = 5;
+  string deployment_id = 6;
+  string commit_sha = 7;
+  int64 occurred_at_unix_ms = 8;
+  string request_id = 9;
+  string source_ip = 10;
 }
 
 // IncrementRequestTelemetryRequest is one collapsed telemetry row

@@ -107,3 +107,59 @@ func TestConsumerUsageCompatibilityProbeRejectsOldReceiver(t *testing.T) {
 		t.Fatal("older apid was accepted")
 	}
 }
+
+type receiverWithoutAuditAck struct {
+	apidpb.UnimplementedRequestTelemetryServer
+	called chan struct{}
+}
+
+func (r *receiverWithoutAuditAck) RecordConsumerUsage(_ context.Context, _ *apidpb.ConsumerUsageEvent) (*apidpb.ConsumerUsageReceipt, error) {
+	select {
+	case r.called <- struct{}{}:
+	default:
+	}
+	return &apidpb.ConsumerUsageReceipt{Applied: true}, nil
+}
+
+func TestAuditEvidenceIsNotAcknowledgedByOldReceiver(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "faas-audit-old-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "usage.sock")
+	lis, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver := &receiverWithoutAuditAck{called: make(chan struct{}, 1)}
+	server := grpc.NewServer()
+	apidpb.RegisterRequestTelemetryServer(server, receiver)
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(server.Stop)
+	q, err := usageoutbox.Open(filepath.Join(dir, "spool"), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Enqueue(usageoutbox.Event{
+		EventID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(),
+		WindowStart: time.Now().UTC().Truncate(time.Minute), RequestCount: 1, BillableUnits: 1,
+		Audit: &usageoutbox.AuditEvidence{RouteTemplate: "GET /orders/{id}", Method: "GET", HTTPStatus: 200, OccurredAt: time.Now().UTC()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go deliverConsumerUsage(ctx, q, socket, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	select {
+	case <-receiver.called:
+	case <-time.After(3 * time.Second):
+		t.Fatal("receiver was not called")
+	}
+	time.Sleep(100 * time.Millisecond)
+	// The old receiver can acknowledge financial usage but cannot claim it
+	// recorded audit evidence, so the gateway must retain the durable item.
+	if got := q.Stats().PendingRecords; got != 1 {
+		t.Fatalf("audit item acknowledged without audit receipt: pending=%d", got)
+	}
+}

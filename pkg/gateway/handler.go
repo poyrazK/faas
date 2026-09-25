@@ -390,6 +390,12 @@ type DeclaredRouteMatcher interface {
 	MatchDeclaredRoute(ctx context.Context, app App, path, method string) (bool, error)
 }
 
+// ObservedRouteResolver optionally returns a route template for metrics and
+// discovery. Resolution is advisory and never changes request handling.
+type ObservedRouteResolver interface {
+	ResolveObservedRoute(ctx context.Context, app App, path, method string) (string, bool, error)
+}
+
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
 // per-app public-URL auth mode bundle plumbed onto App. Mode is
 // the canonical text from apps.public_auth_mode CHECK enum
@@ -1008,8 +1014,9 @@ type Handler struct {
 	// call paths. observe nil-checks before enqueueing. The recorder
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
-	requestTelemetry *requestTelemetryRecorder
-	usageOutbox      *usageoutbox.Outbox
+	requestTelemetry    *requestTelemetryRecorder
+	usageOutbox         *usageoutbox.Outbox
+	requestAuditEnabled bool
 
 	// streamingEnabled gates the per-app streaming response path
 	// (issue #471 / ADR-047). When false (the default), every app is
@@ -5375,6 +5382,10 @@ func (h *Handler) WithRequestTelemetryRecorder(r *requestTelemetryRecorder) {
 // telemetry. It must be opened before the gateway accepts requests.
 func (h *Handler) WithUsageOutbox(q *usageoutbox.Outbox) { h.usageOutbox = q }
 
+// WithRequestAudit enables exact completed-request evidence in the fsynced
+// usage envelope. Enable only after apid supports the audit receipt field.
+func (h *Handler) WithRequestAudit(enabled bool) { h.requestAuditEnabled = enabled }
+
 // Metrics exposes the Prometheus bundle (used by the control listener to mount
 // /metrics). May be nil if NewHandler was used and nothing initialized one.
 func (h *Handler) Metrics() *Metrics { return h.metrics }
@@ -5676,6 +5687,13 @@ haveApp:
 		}
 		r = withAppAndAccount(r, accountUUID, appUUID)
 	}
+	if h.requestAuditEnabled {
+		// Snapshot the public gateway's single verified XFF value before
+		// customer header rules or proxy handling can mutate r.Header.
+		if ip, ok := clientIPFromTrustedXFF(r); ok {
+			r = withAuditSourceIP(r, ip.String())
+		}
+	}
 	// ADR-120: resolve end-customer identity before any edge rewrite, body
 	// buffering, throttling, or wake work. This keeps invalid credentials from
 	// consuming downstream resources and makes the same stable consumer ID
@@ -5690,31 +5708,44 @@ haveApp:
 	if h.serveEdgeAnswer(w, r, app) {
 		return
 	}
-	// ADR-093: derive the per-request route label and stash it
+	// Derive the per-request route label and stash it
 	// on the request context so Handler.observe can read it on
-	// the single exit funnel. The label is method + raw path
-	// (pre-rewrite, ADR-093 D6) — the route identity is the
-	// customer-facing endpoint, so a kind=rewrite edge rule that
-	// rewrites /v1/foo → /v2/foo reports the inbound route, not
-	// the rewritten one. The routeLabelSet bounds the per-app
+	// the single exit funnel. Declared templates take precedence; common
+	// identifier shapes are inferred from the original public path before
+	// edge rewriting. The routeLabelSet bounds the per-app
 	// distinct-route count to 50 + the __route_other__ overflow
 	// bucket. The label is empty when the app is not opted in
 	// (routeSetFor returns nil) — Handler.observe short-circuits
 	// the per-route emission on "".
 	routeLabel := ""
-	if set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled); set != nil {
-		preLabel := r.Method + " " + r.URL.Path
-		routeLabel = set.admit(preLabel)
-		r = withRouteLabel(r, routeLabel)
-		// Pre-instantiate the closed `class` set under
-		// (app.ID, routeLabel) on the per-route histogram the
-		// first time the route is admitted. The admit() map is
-		// non-evicting, so we guard with a second sync.Map key
-		// (routeSetsPi) keyed by (app.ID, routeLabel) so the
-		// pre-instantiation runs exactly once per app per route.
-		// The dedupe keeps the hot path allocation-free after
-		// first sight.
-		h.preInstantiateAppRoute(app.ID, routeLabel)
+	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
+	if set != nil || h.requestAuditEnabled {
+		path := inferredObservedPath(r.URL.Path)
+		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
+			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
+				path = template
+			}
+		}
+		preLabel := otherRouteLabel
+		if path != otherRouteLabel && len(r.Method)+1+len(path) <= 256 {
+			preLabel = r.Method + " " + path
+		}
+		if h.requestAuditEnabled {
+			r = withAuditRoute(r, preLabel)
+		}
+		if set != nil {
+			routeLabel = set.admit(preLabel)
+			r = withRouteLabel(r, routeLabel)
+			// Pre-instantiate the closed `class` set under
+			// (app.ID, routeLabel) on the per-route histogram the
+			// first time the route is admitted. The admit() map is
+			// non-evicting, so we guard with a second sync.Map key
+			// (routeSetsPi) keyed by (app.ID, routeLabel) so the
+			// pre-instantiation runs exactly once per app per route.
+			// The dedupe keeps the hot path allocation-free after
+			// first sight.
+			h.preInstantiateAppRoute(app.ID, routeLabel)
+		}
 	}
 
 	// Issue #561 / ADR-089 PR 4 — apply the per-host
@@ -7265,12 +7296,47 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				if status >= 400 {
 					errorCount = 1
 				}
-				err := h.usageOutbox.Enqueue(usageoutbox.Event{
+				usageEvent := usageoutbox.Event{
 					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
 					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
 					WindowStart:  row.ReceivedAt.UTC().Truncate(time.Minute),
 					RequestCount: 1, ErrorCount: errorCount, BillableUnits: 1,
-				})
+				}
+				if h.requestAuditEnabled {
+					auditRoute := auditRouteFrom(r)
+					if auditRoute == "" {
+						auditRoute = otherRouteLabel
+					}
+					auditMethod := r.Method
+					if auditMethod == "" || len(auditMethod) > 16 {
+						auditMethod = "OTHER"
+					}
+					latencyMS := row.LatencyMS
+					if latencyMS > 86_400_000 {
+						latencyMS = 86_400_000
+					}
+					deploymentID := target.DeploymentID
+					if _, err := uuid.Parse(deploymentID); err != nil {
+						deploymentID = ""
+					}
+					commitSHA := target.CommitSHA
+					if len(commitSHA) > 64 {
+						commitSHA = ""
+					}
+					auditRequestID := requestID
+					if len(auditRequestID) > 128 {
+						auditRequestID = ""
+					}
+					usageEvent.Audit = &usageoutbox.AuditEvidence{
+						RouteTemplate: auditRoute, Method: auditMethod,
+						HTTPStatus: status, LatencyMS: latencyMS,
+						TraceID:      traceIDForTelemetry(r.Context()),
+						DeploymentID: deploymentID, CommitSHA: commitSHA,
+						OccurredAt: row.ReceivedAt.UTC(), RequestID: auditRequestID,
+						SourceIP: auditSourceIPFrom(r),
+					}
+				}
+				err := h.usageOutbox.Enqueue(usageEvent)
 				if err != nil {
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)

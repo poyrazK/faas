@@ -5433,6 +5433,27 @@ type AppRoutesResponse struct {
 	CapHit bool `json:"cap_hit"`
 }
 
+// RequestAuditRecord is one exact, opt-in gateway observation returned by
+// GET /v1/apps/{slug}/audit/requests. Business actor/action are deliberately
+// absent; consumer and tenant IDs are only present when platform-verified.
+type RequestAuditRecord struct {
+	EventID          string    `json:"event_id"`
+	AccountID        string    `json:"account_id"`
+	AppID            string    `json:"app_id"`
+	ConsumerID       string    `json:"consumer_id,omitempty"`
+	PlatformTenantID string    `json:"platform_tenant_id,omitempty"`
+	RouteTemplate    string    `json:"route_template"`
+	Method           string    `json:"method"`
+	HTTPStatus       int       `json:"http_status"`
+	LatencyMS        int       `json:"latency_ms"`
+	TraceID          string    `json:"trace_id,omitempty"`
+	DeploymentID     string    `json:"deployment_id,omitempty"`
+	CommitSHA        string    `json:"commit_sha,omitempty"`
+	OccurredAt       time.Time `json:"occurred_at"`
+	RequestID        string    `json:"request_id,omitempty"`
+	SourceIP         string    `json:"source_ip,omitempty"`
+}
+
 const (
 	AppRoutesSourceLive        = "live"
 	AppRoutesSourcePartial     = "partial"

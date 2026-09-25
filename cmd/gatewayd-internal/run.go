@@ -2659,6 +2659,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	handler.WithUsageOutbox(usageQueue)
+	handler.WithRequestAudit(osGetenv("FAAS_REQUEST_AUDIT_ENABLED") == "true")
 	go deliverConsumerUsage(ctx, usageQueue, usageTarget, usageTLS, log, handler.Metrics())
 
 	// ADR-127 production debugger — request_telemetry data plane.

@@ -118,6 +118,16 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 		WindowStart:  time.UnixMilli(req.GetWindowStartUnixMs()).UTC(),
 		RequestCount: req.GetRequestCount(), ErrorCount: req.GetErrorCount(), BillableUnits: req.GetBillableUnits(),
 	}
+	if audit := req.GetAudit(); audit != nil {
+		event.Audit = &state.RequestAuditEvidence{
+			RouteTemplate: audit.GetRouteTemplate(), Method: audit.GetMethod(),
+			HTTPStatus: int(audit.GetHttpStatus()), LatencyMS: int(audit.GetLatencyMs()),
+			TraceID: audit.GetTraceId(), DeploymentID: audit.GetDeploymentId(),
+			CommitSHA: audit.GetCommitSha(), OccurredAt: time.UnixMilli(audit.GetOccurredAtUnixMs()).UTC(),
+			RequestID: audit.GetRequestId(),
+			SourceIP:  audit.GetSourceIp(),
+		}
+	}
 	if err := state.ValidateAPIConsumerUsageEvent(event); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid consumer usage event: %v", err)
 	}
@@ -129,7 +139,7 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "record consumer usage: %v", err)
 	}
-	return &apidpb.ConsumerUsageReceipt{Applied: applied}, nil
+	return &apidpb.ConsumerUsageReceipt{Applied: applied, AuditRecorded: event.Audit != nil}, nil
 }
 
 // IncrementRequestTelemetry streams per-record telemetry rows

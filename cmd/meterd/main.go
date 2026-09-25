@@ -1226,6 +1226,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	partitionDB := poolAdapter{pool}
 	go meter.RequestTelemetryPartitionLoop(ctx, partitionDB, meter.RequestTelemetryPartitionInterval, log, requestTelemetryPartitions.observe)
 	go meter.RetentionLoopRequestTelemetry(ctx, partitionDB, meter.RequestTelemetryRetentionInterval, log)
+	go meter.RetentionLoopRequestAudit(ctx, partitionDB, time.Hour, log)
 	go meter.LogEventPartitionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observePartition)
 	go meter.LogEventRetentionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observeRetention)
 

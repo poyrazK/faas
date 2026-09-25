@@ -83,6 +83,28 @@ func TestRestartReplaysOnlyUnacknowledgedEvents(t *testing.T) {
 	}
 }
 
+func TestRestartPreservesOptionalAuditEvidence(t *testing.T) {
+	root := t.TempDir()
+	q, err := Open(root, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := testEvent(uuid.NewString())
+	event.Audit = &AuditEvidence{RouteTemplate: "POST /payments/{id}", Method: "POST", HTTPStatus: 201,
+		SourceIP: "203.0.113.42", OccurredAt: time.Now().UTC()}
+	if err := q.Enqueue(event); err != nil {
+		t.Fatal(err)
+	}
+	q, err = Open(root, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok, err := q.Next()
+	if err != nil || !ok || item.Event.Audit == nil || item.Event.Audit.SourceIP != "203.0.113.42" {
+		t.Fatalf("replayed audit item=%+v ok=%v err=%v", item, ok, err)
+	}
+}
+
 func TestConcurrentGroupCommitPersistsEveryEvent(t *testing.T) {
 	root := t.TempDir()
 	q, err := Open(root, 1<<20)

@@ -697,6 +697,32 @@ type APIConsumerUsageEvent struct {
 	RequestCount     int64
 	ErrorCount       int64
 	BillableUnits    int64
+	Audit            *RequestAuditEvidence
+}
+
+// RequestAuditEvidence is a verified gateway observation for one completed
+// request. Application-level actor and business action are not inferred.
+type RequestAuditEvidence struct {
+	RouteTemplate string    `json:"route_template"`
+	Method        string    `json:"method"`
+	HTTPStatus    int       `json:"http_status"`
+	LatencyMS     int       `json:"latency_ms"`
+	TraceID       string    `json:"trace_id,omitempty"`
+	DeploymentID  string    `json:"deployment_id,omitempty"`
+	CommitSHA     string    `json:"commit_sha,omitempty"`
+	OccurredAt    time.Time `json:"occurred_at"`
+	RequestID     string    `json:"request_id,omitempty"`
+	SourceIP      string    `json:"source_ip,omitempty"`
+}
+
+// RequestAuditRecord is the exact, non-collapsed stored event.
+type RequestAuditRecord struct {
+	EventID          string `json:"event_id"`
+	AccountID        string `json:"account_id"`
+	AppID            string `json:"app_id"`
+	ConsumerID       string `json:"consumer_id,omitempty"`
+	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
+	RequestAuditEvidence
 }
 
 // APIConsumerUsageBucket is the read-side aggregate for one app, consumer,

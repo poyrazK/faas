@@ -25,15 +25,34 @@ var ErrFull = errors.New("consumer usage outbox full")
 
 // Event has only the financial dimensions, never request paths or client data.
 type Event struct {
-	EventID          string    `json:"event_id"`
-	AccountID        string    `json:"account_id"`
-	AppID            string    `json:"app_id"`
-	ConsumerID       string    `json:"consumer_id,omitempty"`
-	PlatformTenantID string    `json:"platform_tenant_id,omitempty"`
-	WindowStart      time.Time `json:"window_start"`
-	RequestCount     int64     `json:"request_count"`
-	ErrorCount       int64     `json:"error_count"`
-	BillableUnits    int64     `json:"billable_units"`
+	EventID          string         `json:"event_id"`
+	AccountID        string         `json:"account_id"`
+	AppID            string         `json:"app_id"`
+	ConsumerID       string         `json:"consumer_id,omitempty"`
+	PlatformTenantID string         `json:"platform_tenant_id,omitempty"`
+	WindowStart      time.Time      `json:"window_start"`
+	RequestCount     int64          `json:"request_count"`
+	ErrorCount       int64          `json:"error_count"`
+	BillableUnits    int64          `json:"billable_units"`
+	Audit            *AuditEvidence `json:"audit,omitempty"`
+}
+
+// AuditEvidence is opt-in request metadata attached to the same fsynced
+// record and event ID as its financial usage fact. It never contains a query,
+// payload, or unverified application-user ID. Source IP is populated only
+// from the trusted public-gateway handoff. Undeclared route candidates can
+// still retain literal path segments, so this is opt-in.
+type AuditEvidence struct {
+	RouteTemplate string    `json:"route_template"`
+	Method        string    `json:"method"`
+	HTTPStatus    int       `json:"http_status"`
+	LatencyMS     int       `json:"latency_ms"`
+	TraceID       string    `json:"trace_id,omitempty"`
+	DeploymentID  string    `json:"deployment_id,omitempty"`
+	CommitSHA     string    `json:"commit_sha,omitempty"`
+	OccurredAt    time.Time `json:"occurred_at"`
+	RequestID     string    `json:"request_id,omitempty"`
+	SourceIP      string    `json:"source_ip,omitempty"`
 }
 
 type Item struct {

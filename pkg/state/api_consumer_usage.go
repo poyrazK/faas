@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"sort"
 	"time"
 
@@ -61,6 +62,33 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 	if event.BillableUnits < 0 || event.BillableUnits > event.RequestCount {
 		return fmt.Errorf("consumer usage: billable_units must be between zero and request_count")
 	}
+	if audit := event.Audit; audit != nil {
+		if event.RequestCount != 1 {
+			return fmt.Errorf("request audit: one event must describe exactly one request")
+		}
+		if audit.RouteTemplate == "" || len(audit.RouteTemplate) > 256 || audit.Method == "" || len(audit.Method) > 16 || audit.HTTPStatus < 100 || audit.HTTPStatus > 599 {
+			return fmt.Errorf("request audit: invalid route, method, or status")
+		}
+		if audit.LatencyMS < 0 || audit.LatencyMS > 86_400_000 || audit.OccurredAt.IsZero() || audit.OccurredAt.After(time.Now().Add(5*time.Minute)) {
+			return fmt.Errorf("request audit: invalid latency or occurrence time")
+		}
+		if len(audit.TraceID) != 0 && len(audit.TraceID) != 32 {
+			return fmt.Errorf("request audit: invalid trace ID")
+		}
+		if audit.DeploymentID != "" {
+			if _, err := uuid.Parse(audit.DeploymentID); err != nil {
+				return fmt.Errorf("request audit: invalid deployment ID: %w", err)
+			}
+		}
+		if len(audit.CommitSHA) > 64 || len(audit.RequestID) > 128 {
+			return fmt.Errorf("request audit: oversized revision or request ID")
+		}
+		if audit.SourceIP != "" {
+			if _, err := netip.ParseAddr(audit.SourceIP); err != nil {
+				return fmt.Errorf("request audit: invalid source IP: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -82,6 +110,9 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.apiConsumerUsageEvents[event.EventID]; exists {
+		if event.Audit != nil {
+			m.recordRequestAuditLocked(event)
+		}
 		return false, nil
 	}
 	if event.PlatformTenantID != "" {
@@ -115,6 +146,9 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 		m.platformTenantUsage[tenantKey] = tenantBucket
 	}
 	m.apiConsumerUsageEvents[event.EventID] = struct{}{}
+	if event.Audit != nil {
+		m.recordRequestAuditLocked(event)
+	}
 	return true, nil
 }
 
