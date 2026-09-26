@@ -65,8 +65,8 @@ function verifyWithKey(jwt, key, rawBody, nowS) {
   if (parts.length !== 3) {
     return "malformed signature";
   }
-  const [header, payload, signature] = parts;
-  const expected = base64url(crypto.createHmac("sha256", key).update(`${header}.${payload}`).digest());
+  const [encodedHeader, encodedClaims, signature] = parts;
+  const expected = base64url(crypto.createHmac("sha256", key).update(`${encodedHeader}.${encodedClaims}`).digest());
   const a = Buffer.from(expected);
   const b = Buffer.from(stripPadding(signature));
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
@@ -74,7 +74,7 @@ function verifyWithKey(jwt, key, rawBody, nowS) {
   }
   let claims;
   try {
-    claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    claims = JSON.parse(Buffer.from(encodedClaims, "base64url").toString("utf8"));
   } catch {
     return "malformed claims";
   }
