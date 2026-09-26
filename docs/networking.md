@@ -218,6 +218,13 @@ internal caller. The list accepts at most 100 logical app slugs, not generated
 PR preview names. This target check runs before routing or waking `billing`. Preview callers
 must also pass the existing project and target preview policies.
 
+For an app created outside a project, use the app API instead: include
+`"allowed_service_callers": ["frontend"]` in `POST /v1/apps`, or PATCH
+`/v1/apps/customer-billing` with that field to replace the list. PATCH with `[]` denies
+all internal callers; PATCH with `null` restores same-account access. Omission
+leaves the current policy unchanged. Project-managed and preview apps cannot
+change this field through PATCH; edit `x-gregale-allow-callers` in the source.
+
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the

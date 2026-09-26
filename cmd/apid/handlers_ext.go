@@ -891,6 +891,16 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	allowedCallers, callerPolicySet, callerProblem := serviceCallersForPatch(req.AllowedServiceCallers)
+	if callerProblem != nil {
+		api.WriteProblem(w, callerProblem)
+		return
+	}
+	if callerPolicySet && (app.ProjectID != "" || app.PreviewOfSlug != "") {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Service caller policy is source-managed", "edit x-gregale-allow-callers in the project source; preview policies inherit from their source app"))
+		return
+	}
 	if prob := resolveUpdateResourceProfile(&req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -1073,6 +1083,13 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 	}
 	lifecycleManifest, lifecycleChanged := stateManifestForUpdate(app, &req)
+	if callerPolicySet {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.AllowedServiceCallers = allowedCallers
+	}
 	retryPolicyJSON, retryPolicyProblem := marshalAppRetryPolicy(req.RetryPolicy)
 	if retryPolicyProblem != nil {
 		api.WriteProblem(w, retryPolicyProblem)
@@ -1429,6 +1446,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.EgressAllowlist != nil {
 		oldApp["egress_allowlist"] = egressStringList(app.EgressAllowlist)
 		newApp["egress_allowlist"] = egressStringList(updated.EgressAllowlist)
+	}
+	if callerPolicySet {
+		oldApp["allowed_service_callers"] = app.Manifest.AllowedServiceCallers
+		newApp["allowed_service_callers"] = updated.Manifest.AllowedServiceCallers
 	}
 	if lifecycleChanged {
 		oldApp["lifecycle"] = apiManifestFromState(app.Manifest)

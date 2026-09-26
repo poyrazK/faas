@@ -20,6 +20,10 @@ export type CreateAppRequest = {
    * Ingress exposure for the new app. Choose internal to make it service-only; available on every plan.
    */
   visibility?: 'public' | 'internal';
+  /**
+   * Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are normalized to lowercase, sorted, and deduplicated.
+   */
+  allowed_service_callers?: Array<string>;
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
   ram_mb?: number;
   /**

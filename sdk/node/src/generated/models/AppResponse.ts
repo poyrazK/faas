@@ -105,7 +105,7 @@ export type AppResponse = {
    */
   preview_service_calls_policy?: PreviewServiceCallsPolicy;
   /**
-   * Target-side service allowlist of logical app slugs (ADR-266). Omitted means any same-account caller; an explicit empty array denies all. Project Compose owns this field.
+   * Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
    */
   allowed_service_callers?: Array<string>;
   /**

@@ -288,35 +288,11 @@ func normalizeAllowedServiceCallers(value *[]string) (*[]string, error) {
 	if value == nil {
 		return nil, nil
 	}
-	if len(*value) > api.AllowedServiceCallersMax {
-		return nil, fmt.Errorf("x-gregale-allow-callers exceeds %d names", api.AllowedServiceCallersMax)
+	callers, err := api.NormalizeAllowedServiceCallers(*value)
+	if err != nil {
+		return nil, fmt.Errorf("x-gregale-allow-callers: %w", err)
 	}
-	seen := make(map[string]struct{}, len(*value))
-	callers := make([]string, 0, len(*value))
-	for _, raw := range *value {
-		name := strings.ToLower(strings.TrimSpace(raw))
-		if !validServiceCallerName(name) {
-			return nil, fmt.Errorf("x-gregale-allow-callers contains invalid app name %q", raw)
-		}
-		if _, ok := seen[name]; !ok {
-			seen[name] = struct{}{}
-			callers = append(callers, name)
-		}
-	}
-	sort.Strings(callers)
 	return &callers, nil
-}
-
-func validServiceCallerName(name string) bool {
-	if len(name) == 0 || len(name) > 63 || name[0] == '-' || name[len(name)-1] == '-' {
-		return false
-	}
-	for _, c := range name {
-		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
-			return false
-		}
-	}
-	return true
 }
 
 // dependencyNames normalizes Compose's short and long depends_on forms.

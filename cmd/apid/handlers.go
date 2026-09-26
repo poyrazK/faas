@@ -467,6 +467,12 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if retryProblem != nil {
 		return state.App{}, retryProblem
 	}
+	allowedCallers, callersProblem := serviceCallersForCreate(req.AllowedServiceCallers)
+	if callersProblem != nil {
+		return state.App{}, callersProblem
+	}
+	appManifest := stateManifestFromAPI(lifecycle)
+	appManifest.AllowedServiceCallers = allowedCallers
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
 		Visibility: visibility,
@@ -519,7 +525,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		// path above assigns appProtocol explicitly.
 		AppProtocol:     appProtocol,
 		RetryPolicyJSON: retryPolicy,
-		Manifest:        stateManifestFromAPI(lifecycle),
+		Manifest:        appManifest,
 	}, nil
 }
 
