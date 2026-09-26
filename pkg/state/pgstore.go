@@ -15179,6 +15179,34 @@ func (s *PgStore) ListInvocationsForAccount(ctx context.Context, accountID strin
 	return scanInvocations(rows)
 }
 
+func (s *PgStore) ListAsyncInvocationsForAccount(ctx context.Context, accountID string, limit int, before string) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var rows pgx.Rows
+	var err error
+	if before == "" {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+`
+			from invocations
+			where account_id = $1 and source = 'async_invoke'
+			order by created_at desc, id desc
+			limit $2`, accountID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `select `+invocationSelectCols+`
+			from invocations
+			where account_id = $1 and source = 'async_invoke'
+			  and (created_at, id) < (
+			      select created_at, id from invocations
+			      where id = $2 and account_id = $1 and source = 'async_invoke')
+			order by created_at desc, id desc
+			limit $3`, accountID, before, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return scanInvocations(rows)
+}
+
 // ListDelayedTasksForApp is the app-scoped delayed-task collection read.
 func (s *PgStore) ListDelayedTasksForApp(ctx context.Context, appID string, limit int, before string) ([]Invocation, error) {
 	if limit <= 0 {

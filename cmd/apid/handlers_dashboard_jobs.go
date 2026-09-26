@@ -22,10 +22,11 @@ import (
 )
 
 const (
-	dashboardJobsAction     = "queue_dead_letter_replay"
-	dashboardJobsCSRFCookie = "faas_csrf_queue_replay"
-	dashboardJobsPageLimit  = 100
-	dashboardQueueLimit     = 20
+	dashboardJobsAction        = "queue_dead_letter_replay"
+	dashboardJobsCSRFCookie    = "faas_csrf_queue_replay"
+	dashboardJobsPageLimit     = 100
+	dashboardQueueLimit        = 20
+	dashboardAsyncHistoryLimit = 25
 )
 
 // parseAppQueuesPath recognizes the per-app queue alias. The account-level
@@ -85,6 +86,25 @@ func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *s
 		log.Warn("dashboard jobs: list runs", "account_id", acct.ID, "err", err)
 	} else {
 		data.Runs = projectDashboardJobRuns(runs, jobs)
+	}
+	if selectedApp == "" {
+		before := r.URL.Query().Get("async_before")
+		rows, err := s.store.ListAsyncInvocationsForAccount(ctx, acct.ID, dashboardAsyncHistoryLimit+1, before)
+		if err != nil {
+			log.Warn("dashboard jobs: list async invocations", "account_id", acct.ID, "err", err)
+			data.AsyncInvocationError = "Async invocation history is temporarily unavailable. Please try again shortly."
+		} else {
+			hasOlder := len(rows) > dashboardAsyncHistoryLimit
+			if hasOlder {
+				rows = rows[:dashboardAsyncHistoryLimit]
+			}
+			data.AsyncInvocations = projectDashboardAsyncInvocations(rows, apps)
+			if hasOlder && len(rows) > 0 {
+				values := url.Values{}
+				values.Set("async_before", rows[len(rows)-1].ID)
+				data.NextAsyncInvocationsURL = "/dashboard/jobs?" + values.Encode()
+			}
+		}
 	}
 
 	for _, app := range apps {
@@ -172,6 +192,55 @@ func projectDashboardJobRuns(rows []state.JobRun, jobs []state.Job) []dashboard.
 		items = append(items, item)
 	}
 	return items
+}
+
+func projectDashboardAsyncInvocations(rows []state.Invocation, apps []state.App) []dashboard.AsyncInvocationPageItem {
+	if len(rows) == 0 {
+		return nil
+	}
+	appSlugs := make(map[string]string, len(apps))
+	for _, app := range apps {
+		appSlugs[app.ID] = app.Slug
+	}
+	items := make([]dashboard.AsyncInvocationPageItem, 0, len(rows))
+	for _, row := range rows {
+		appSlug := appSlugs[row.AppID]
+		if appSlug == "" {
+			appSlug = "deleted app"
+		}
+		item := dashboard.AsyncInvocationPageItem{
+			ID: row.ID, AppSlug: appSlug, Method: row.Method, Path: row.Path,
+			State: string(row.State), StateClass: dashboardInvocationStateClass(row.State),
+			Attempts: row.Attempts, CreatedAt: dashboardJobsTime(row.CreatedAt),
+		}
+		if row.Outcome != nil {
+			item.Outcome = string(*row.Outcome)
+		}
+		if row.CompletedAt != nil {
+			item.CompletedAt = dashboardJobsTime(*row.CompletedAt)
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func dashboardInvocationStateClass(invState state.InvocationState) string {
+	switch invState {
+	case state.InvocationPending:
+		return "queued"
+	case state.InvocationDispatching:
+		return "running"
+	case state.InvocationCompleted:
+		return "succeeded"
+	case state.InvocationFailed:
+		return "failed"
+	case state.InvocationDeadLetter:
+		return "dead_letter"
+	case state.InvocationCancelled:
+		return "cancelled"
+	default:
+		return "unknown"
+	}
 }
 
 func projectDashboardQueueMessages(rows []state.Invocation, replayable bool) []dashboard.QueueMessageItem {

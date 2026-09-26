@@ -136,6 +136,39 @@ func TestPg_EnqueueInvocationPreservesProvidedID(t *testing.T) {
 	}
 }
 
+func TestPg_ListAsyncInvocationsForAccountFiltersSourceAndPages(t *testing.T) {
+	s, ctx, appID, acctID := seedInvocationPg(t)
+	var asyncIDs []string
+	for _, source := range []state.InvocationSource{state.InvocationAsyncInvoke, state.InvocationQueue, state.InvocationAsyncInvoke} {
+		inv, err := s.EnqueueInvocation(ctx, state.Invocation{
+			AppID: appID, AccountID: acctID, Source: source,
+			Method: "POST", Path: "/reports", DueAt: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatalf("EnqueueInvocation(%s): %v", source, err)
+		}
+		if source == state.InvocationAsyncInvoke {
+			asyncIDs = append(asyncIDs, inv.ID)
+		}
+	}
+	first, err := s.ListAsyncInvocationsForAccount(ctx, acctID, 1, "")
+	if err != nil || len(first) != 1 || first[0].Source != state.InvocationAsyncInvoke {
+		t.Fatalf("first async page = (%+v, %v), want one async invocation", first, err)
+	}
+	second, err := s.ListAsyncInvocationsForAccount(ctx, acctID, 1, first[0].ID)
+	if err != nil || len(second) != 1 || second[0].Source != state.InvocationAsyncInvoke || second[0].ID == first[0].ID {
+		t.Fatalf("second async page = (%+v, %v), want the other async invocation", second, err)
+	}
+	if len(asyncIDs) != 2 || (first[0].ID != asyncIDs[0] && first[0].ID != asyncIDs[1]) ||
+		(second[0].ID != asyncIDs[0] && second[0].ID != asyncIDs[1]) {
+		t.Fatalf("paged IDs = %q, %q; inserted async IDs = %q", first[0].ID, second[0].ID, asyncIDs)
+	}
+	last, err := s.ListAsyncInvocationsForAccount(ctx, acctID, 1, second[0].ID)
+	if err != nil || len(last) != 0 {
+		t.Fatalf("last async page = (%+v, %v), want empty", last, err)
+	}
+}
+
 // TestPg_ExpiredQueueLeaseRedelivery pins crash recovery at the SQL layer:
 // an expired dispatch lease is returned to pending, the cap slot is released
 // once per reclaimed invocation, a late ack from the old worker is rejected,

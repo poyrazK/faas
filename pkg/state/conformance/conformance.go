@@ -93,6 +93,7 @@ func Run(t *testing.T, open Open) {
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
+		{"async_invocation_history_is_scoped_filtered_and_paginated", testAsyncInvocationHistory},
 		{"delayed_task_listing_is_scoped_filtered_and_paginated", testDelayedTaskListing},
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
@@ -1999,6 +2000,45 @@ func testDelayedTaskListing(t *testing.T, fx *Fixture) {
 	}
 	if len(next) != 1 || next[0].ID != first.ID {
 		t.Fatalf("next delayed-task page = %+v, want older task %s", next, first.ID)
+	}
+}
+
+func testAsyncInvocationHistory(t *testing.T, fx *Fixture) {
+	first, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(first async): %v", err)
+	}
+	if _, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationQueue, DueAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation(queue control): %v", err)
+	}
+	second, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{
+		AppID: fx.App.ID, AccountID: fx.Account.ID,
+		Source: state.InvocationAsyncInvoke, DueAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation(second async): %v", err)
+	}
+
+	page, err := fx.Store.ListAsyncInvocationsForAccount(fx.Ctx, fx.Account.ID, 1, "")
+	if err != nil || len(page) != 1 || page[0].Source != state.InvocationAsyncInvoke {
+		t.Fatalf("ListAsyncInvocationsForAccount(first page) = (%+v, %v), want one async row", page, err)
+	}
+	next, err := fx.Store.ListAsyncInvocationsForAccount(fx.Ctx, fx.Account.ID, 1, page[0].ID)
+	if err != nil || len(next) != 1 || next[0].Source != state.InvocationAsyncInvoke || next[0].ID == page[0].ID {
+		t.Fatalf("ListAsyncInvocationsForAccount(next page) = (%+v, %v), want the other async row", next, err)
+	}
+	if (page[0].ID != first.ID && page[0].ID != second.ID) || (next[0].ID != first.ID && next[0].ID != second.ID) {
+		t.Fatalf("async history pages = %q, %q; created IDs = %q, %q", page[0].ID, next[0].ID, first.ID, second.ID)
+	}
+	last, err := fx.Store.ListAsyncInvocationsForAccount(fx.Ctx, fx.Account.ID, 1, next[0].ID)
+	if err != nil || len(last) != 0 {
+		t.Fatalf("ListAsyncInvocationsForAccount(last page) = (%+v, %v), want empty", last, err)
 	}
 }
 

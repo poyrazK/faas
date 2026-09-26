@@ -12102,6 +12102,42 @@ func (m *MemStore) ListInvocationsForAccount(_ context.Context, accountID string
 	return out, nil
 }
 
+// ListAsyncInvocationsForAccount returns the account's async HTTP invocation
+// rows newest first, with a stable ID cursor matching the PgStore query.
+func (m *MemStore) ListAsyncInvocationsForAccount(_ context.Context, accountID string, limit int, before string) ([]Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Invocation
+	for _, inv := range m.invocations {
+		if inv.AccountID == accountID && inv.Source == InvocationAsyncInvoke {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if before != "" {
+		cursorIdx := -1
+		for i, inv := range out {
+			if inv.ID == before {
+				cursorIdx = i
+				break
+			}
+		}
+		if cursorIdx < 0 {
+			return nil, nil
+		}
+		out = out[cursorIdx+1:]
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ListDelayedTasksForApp returns only delayed_task rows owned by appID.
 func (m *MemStore) ListDelayedTasksForApp(_ context.Context, appID string, limit int, before string) ([]Invocation, error) {
 	m.mu.Lock()
