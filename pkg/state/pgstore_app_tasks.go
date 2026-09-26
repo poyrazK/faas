@@ -23,7 +23,8 @@ func nullableCronID(id string) any {
 
 const appTaskSelectColumns = `id, account_id, app_id, deployment_id, kind,
        command, command_shell, deployment_scope, artifact_key, image_digest,
-       status, timeout_seconds, max_output_bytes,
+       status, timeout_seconds, max_output_bytes, retry_max, retry_backoff_seconds,
+       attempt_count, retry_at,
        lease_token, lease_owner, lease_expires_at, cancel_requested_at,
        stdout_tail, stderr_tail, output_truncated, exit_code,
        failure_code, failure_message, started_at, finished_at,
@@ -39,12 +40,13 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 	var cronID pgtype.UUID
 	var leaseToken pgtype.UUID
 	var leaseOwner, failureCode, failureMessage pgtype.Text
-	var leaseExpiresAt, cancelRequestedAt, startedAt, finishedAt, scheduledFor pgtype.Timestamptz
+	var leaseExpiresAt, cancelRequestedAt, startedAt, finishedAt, scheduledFor, retryAt pgtype.Timestamptz
 	var exitCode pgtype.Int4
 	if err := row.Scan(
 		&id, &accountID, &appID, &deploymentID, &task.Kind,
 		&task.Command, &task.CommandShell, &task.DeploymentScope, &task.ArtifactKey, &task.ImageDigest,
 		&task.Status, &task.TimeoutSeconds, &task.MaxOutputBytes,
+		&task.RetryMax, &task.RetryBackoffSeconds, &task.AttemptCount, &retryAt,
 		&leaseToken, &leaseOwner, &leaseExpiresAt, &cancelRequestedAt,
 		&task.StdoutTail, &task.StderrTail, &task.OutputTruncated, &exitCode,
 		&failureCode, &failureMessage, &startedAt, &finishedAt,
@@ -60,6 +62,7 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 		task.CronID = pgUUIDString(cronID)
 	}
 	task.ScheduledFor = timestamptzToTimePtr(scheduledFor)
+	task.RetryAt = timestamptzToTimePtr(retryAt)
 	task.LeaseToken = executionUUIDPtr(leaseToken)
 	task.LeaseOwner = executionStringPtr(leaseOwner)
 	task.LeaseExpiresAt = timestamptzToTimePtr(leaseExpiresAt)
@@ -142,7 +145,7 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 	var appID string
 	var command []string
 	var commandShell bool
-	var timeoutSeconds, maxOutputBytes int
+	var timeoutSeconds, maxOutputBytes, retryMax, retryBackoffSeconds int
 	err = tx.QueryRow(ctx, `
 		update crons
 		   set last_fired_at = $3
@@ -153,8 +156,8 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 		   and last_fired_at is not distinct from $2::timestamptz
 		   and ($2::timestamptz is null or $3 > $2::timestamptz)
 		 returning app_id, command, command_shell, command_timeout_seconds,
-		           command_max_output_bytes`, cronID, expectedLastFiredAt, firedAt).
-		Scan(&appID, &command, &commandShell, &timeoutSeconds, &maxOutputBytes)
+		           command_max_output_bytes, retry_max, retry_backoff_seconds`, cronID, expectedLastFiredAt, firedAt).
+		Scan(&appID, &command, &commandShell, &timeoutSeconds, &maxOutputBytes, &retryMax, &retryBackoffSeconds)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, false, nil
 	}
@@ -187,11 +190,11 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 		insert into app_tasks (
 			account_id, app_id, deployment_id, kind, command, command_shell,
 			deployment_scope, artifact_key, image_digest, timeout_seconds,
-			max_output_bytes, created_at, updated_at, cron_id, scheduled_for
-		) values ($1::uuid, $2::uuid, $3::uuid, 'cron', $4, $5, $6, $7, $8, $9, $10, $11, $11, $12::uuid, $11)
+			max_output_bytes, retry_max, retry_backoff_seconds, created_at, updated_at, cron_id, scheduled_for
+		) values ($1::uuid, $2::uuid, $3::uuid, 'cron', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14::uuid, $13)
 		returning `+appTaskSelectColumns,
 		accountID, appID, deploymentID, command, commandShell, scope, artifactKey,
-		imageDigest, timeoutSeconds, maxOutputBytes, firedAt, cronID))
+		imageDigest, timeoutSeconds, maxOutputBytes, retryMax, retryBackoffSeconds, firedAt, cronID))
 	if err != nil {
 		return AppTask{}, false, fmt.Errorf("state: create scheduled app task for cron %s: %w", cronID, mapErr(err))
 	}
@@ -306,7 +309,8 @@ func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt 
 			 where status = 'queued'
 			   and cancel_requested_at is null
 			   and created_at <= $2
-			 order by created_at, id
+			   and (retry_at is null or retry_at <= $2)
+			 order by coalesce(retry_at, created_at), created_at, id
 			 for update skip locked
 			 limit 1
 		)
@@ -315,6 +319,9 @@ func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt 
 		       lease_token = gen_random_uuid(),
 		       lease_owner = $1,
 		       lease_expires_at = $3,
+		       retry_at = null,
+		       stdout_tail = '', stderr_tail = '', output_truncated = false,
+		       exit_code = null, failure_code = null, failure_message = null,
 		       updated_at = $2
 		  from candidate
 		 where task.id = candidate.id
@@ -335,7 +342,9 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 	startedAt = startedAt.UTC()
 	task, err := scanAppTask(s.pool.QueryRow(ctx, `
 		update app_tasks
-		   set status = 'running', started_at = $3, updated_at = $3
+		   set status = 'running', started_at = $3, attempt_count = attempt_count + 1,
+		       retry_at = null, stdout_tail = '', stderr_tail = '', output_truncated = false,
+		       exit_code = null, failure_code = null, failure_message = null, updated_at = $3
 		 where id = $1
 		   and status = 'restoring'
 		   and lease_token = $2
@@ -396,6 +405,9 @@ func (s *PgStore) RequestAppTaskCancellation(ctx context.Context, accountID, app
 	task, err := scanAppTask(tx.QueryRow(ctx, `
 		update app_tasks
 		   set status = case when status = 'queued' then 'cancelled' else status end,
+		       retry_at = case when status = 'queued' then null else retry_at end,
+		       failure_code = case when status = 'queued' then null else failure_code end,
+		       failure_message = case when status = 'queued' then null else failure_message end,
 		       cancel_requested_at = case
 		           when status in ('restoring', 'running') then coalesce(cancel_requested_at, $4)
 		           else cancel_requested_at
@@ -460,25 +472,76 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 	if params.Status == AppTaskSucceeded && current.Status != AppTaskRunning {
 		return AppTask{}, fmt.Errorf("%w: a task must be running before it can succeed", ErrAppTaskInvalid)
 	}
-	completed, err := scanAppTask(tx.QueryRow(ctx, `
-		update app_tasks
-		   set status = $3,
-		       stdout_tail = $4,
-		       stderr_tail = $5,
-		       output_truncated = $6,
-		       exit_code = $7,
-		       failure_code = $8,
-		       failure_message = $9,
-		       finished_at = $10,
-		       updated_at = $10,
-		       lease_token = null,
-		       lease_owner = null,
-		       lease_expires_at = null
-		 where id = $1 and lease_token = $2
-		returning `+appTaskSelectColumns,
-		params.ID, params.LeaseToken, string(params.Status), params.StdoutTail,
-		params.StderrTail, params.OutputTruncated, params.ExitCode,
-		params.FailureCode, params.FailureMessage, params.FinishedAt))
+	retryAt := cronAppTaskRetryAt(current, current.Status, params.Status, params.FinishedAt)
+	var startedAtArg any
+	if current.StartedAt != nil && !current.StartedAt.IsZero() {
+		startedAtArg = *current.StartedAt
+	}
+	var completed AppTask
+	if retryAt != nil {
+		// The database transition guard only permits retrying a terminal failure
+		// back to queued when its failure evidence is already durable. Record the
+		// failed attempt first, then requeue it in the same transaction; neither
+		// intermediate state is visible outside this transaction.
+		tag, execErr := tx.Exec(ctx, `
+			update app_tasks
+			   set status = $3,
+			       stdout_tail = $4,
+			       stderr_tail = $5,
+			       output_truncated = $6,
+			       exit_code = $7,
+			       failure_code = $8,
+			       failure_message = $9,
+			       finished_at = $10,
+			       retry_at = null,
+			       updated_at = $11,
+			       started_at = $12,
+			       lease_token = null,
+			       lease_owner = null,
+			       lease_expires_at = null
+			 where id = $1 and lease_token = $2`,
+			params.ID, params.LeaseToken, string(params.Status), params.StdoutTail,
+			params.StderrTail, params.OutputTruncated, params.ExitCode,
+			params.FailureCode, params.FailureMessage, params.FinishedAt, params.FinishedAt, startedAtArg)
+		if execErr != nil {
+			return AppTask{}, mapErr(execErr)
+		}
+		if tag.RowsAffected() != 1 {
+			return AppTask{}, ErrAppTaskLeaseLost
+		}
+		completed, err = scanAppTask(tx.QueryRow(ctx, `
+			update app_tasks
+			   set status = 'queued',
+			       retry_at = $3,
+			       updated_at = $4,
+			       started_at = null,
+			       finished_at = null
+			 where id = $1 and status = $2
+			returning `+appTaskSelectColumns,
+			params.ID, string(params.Status), retryAt, params.FinishedAt))
+	} else {
+		completed, err = scanAppTask(tx.QueryRow(ctx, `
+			update app_tasks
+			   set status = $3,
+			       stdout_tail = $4,
+			       stderr_tail = $5,
+			       output_truncated = $6,
+			       exit_code = $7,
+			       failure_code = $8,
+			       failure_message = $9,
+			       finished_at = $10,
+			       retry_at = null,
+			       updated_at = $11,
+			       started_at = $12,
+			       lease_token = null,
+			       lease_owner = null,
+			       lease_expires_at = null
+			 where id = $1 and lease_token = $2
+			returning `+appTaskSelectColumns,
+			params.ID, params.LeaseToken, string(params.Status), params.StdoutTail,
+			params.StderrTail, params.OutputTruncated, params.ExitCode,
+			params.FailureCode, params.FailureMessage, params.FinishedAt, params.FinishedAt, startedAtArg))
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return AppTask{}, ErrAppTaskLeaseLost
@@ -589,6 +652,7 @@ func prefixedAppTaskColumns(alias string) string {
 	return alias + `.id, ` + alias + `.account_id, ` + alias + `.app_id, ` + alias + `.deployment_id, ` + alias + `.kind,
        ` + alias + `.command, ` + alias + `.command_shell, ` + alias + `.deployment_scope, ` + alias + `.artifact_key, ` + alias + `.image_digest,
        ` + alias + `.status, ` + alias + `.timeout_seconds, ` + alias + `.max_output_bytes,
+       ` + alias + `.retry_max, ` + alias + `.retry_backoff_seconds, ` + alias + `.attempt_count, ` + alias + `.retry_at,
        ` + alias + `.lease_token, ` + alias + `.lease_owner, ` + alias + `.lease_expires_at, ` + alias + `.cancel_requested_at,
        ` + alias + `.stdout_tail, ` + alias + `.stderr_tail, ` + alias + `.output_truncated, ` + alias + `.exit_code,
        ` + alias + `.failure_code, ` + alias + `.failure_message, ` + alias + `.started_at, ` + alias + `.finished_at,

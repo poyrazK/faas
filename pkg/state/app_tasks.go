@@ -51,35 +51,39 @@ func (s AppTaskStatus) Terminal() bool {
 // to an immutable deployment artifact. Environment and secret values are
 // resolved only by the scheduler immediately before the fresh VM boots.
 type AppTask struct {
-	ID              string
-	AccountID       string
-	AppID           string
-	DeploymentID    string
-	CronID          string
-	ScheduledFor    *time.Time
-	Kind            AppTaskKind
-	Command         []string
-	CommandShell    bool
-	DeploymentScope string
-	ArtifactKey     string
-	ImageDigest     string
-	Status          AppTaskStatus
-	TimeoutSeconds  int
-	MaxOutputBytes  int
-	LeaseToken      *string
-	LeaseOwner      *string
-	LeaseExpiresAt  *time.Time
-	CancelRequested *time.Time
-	StdoutTail      string
-	StderrTail      string
-	OutputTruncated bool
-	ExitCode        *int
-	FailureCode     *string
-	FailureMessage  *string
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                  string
+	AccountID           string
+	AppID               string
+	DeploymentID        string
+	CronID              string
+	ScheduledFor        *time.Time
+	Kind                AppTaskKind
+	Command             []string
+	CommandShell        bool
+	DeploymentScope     string
+	ArtifactKey         string
+	ImageDigest         string
+	Status              AppTaskStatus
+	TimeoutSeconds      int
+	MaxOutputBytes      int
+	RetryMax            int
+	RetryBackoffSeconds int
+	AttemptCount        int
+	RetryAt             *time.Time
+	LeaseToken          *string
+	LeaseOwner          *string
+	LeaseExpiresAt      *time.Time
+	CancelRequested     *time.Time
+	StdoutTail          string
+	StderrTail          string
+	OutputTruncated     bool
+	ExitCode            *int
+	FailureCode         *string
+	FailureMessage      *string
+	StartedAt           *time.Time
+	FinishedAt          *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 const (
@@ -93,17 +97,19 @@ const (
 // CreateAppTaskParams is already-resolved app-task intent. Scope, artifact
 // key, and image digest are copied atomically from DeploymentID by the store.
 type CreateAppTaskParams struct {
-	AccountID      string
-	AppID          string
-	DeploymentID   string
-	CronID         string
-	ScheduledFor   *time.Time
-	Kind           AppTaskKind
-	Command        []string
-	CommandShell   bool
-	TimeoutSeconds int
-	MaxOutputBytes int
-	CreatedAt      time.Time
+	AccountID           string
+	AppID               string
+	DeploymentID        string
+	CronID              string
+	ScheduledFor        *time.Time
+	Kind                AppTaskKind
+	Command             []string
+	CommandShell        bool
+	TimeoutSeconds      int
+	MaxOutputBytes      int
+	RetryMax            int
+	RetryBackoffSeconds int
+	CreatedAt           time.Time
 }
 
 // CompleteAppTaskParams is the scheduler-owned terminal compare-and-swap.
@@ -188,6 +194,18 @@ func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, erro
 	if params.MaxOutputBytes < 1024 || params.MaxOutputBytes > 16*1024*1024 {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: max_output_bytes must be between 1024 and 16777216", ErrAppTaskInvalid)
 	}
+	if params.RetryMax < 0 || params.RetryMax > CronRetryMaxLimit {
+		return CreateAppTaskParams{}, fmt.Errorf("%w: retry_max must be between 0 and %d", ErrAppTaskInvalid, CronRetryMaxLimit)
+	}
+	if params.Kind != AppTaskKindCron && params.RetryMax > 0 {
+		return CreateAppTaskParams{}, fmt.Errorf("%w: retries are supported only for command cron tasks", ErrAppTaskInvalid)
+	}
+	if params.RetryBackoffSeconds == 0 {
+		params.RetryBackoffSeconds = DefaultCronRetryBackoffSeconds
+	}
+	if params.RetryBackoffSeconds < 1 || params.RetryBackoffSeconds > CronRetryBackoffSecondsLimit {
+		return CreateAppTaskParams{}, fmt.Errorf("%w: retry_backoff_seconds must be between 1 and %d", ErrAppTaskInvalid, CronRetryBackoffSecondsLimit)
+	}
 	if params.CreatedAt.IsZero() {
 		params.CreatedAt = time.Now().UTC()
 	} else {
@@ -269,6 +287,32 @@ func validateCompleteAppTask(params CompleteAppTaskParams, maxOutputBytes int) e
 	return nil
 }
 
+// cronAppTaskRetryAt returns the durable retry deadline for a failed command
+// attempt. RetryMax counts additional attempts after the initial execution;
+// only execution attempts (not restore-only failures) consume that budget.
+func cronAppTaskRetryAt(task AppTask, currentStatus, resultStatus AppTaskStatus, finishedAt time.Time) *time.Time {
+	if task.Kind != AppTaskKindCron || currentStatus != AppTaskRunning ||
+		task.AttemptCount < 1 || task.AttemptCount > task.RetryMax ||
+		(resultStatus != AppTaskFailed && resultStatus != AppTaskTimedOut) {
+		return nil
+	}
+	base := task.RetryBackoffSeconds
+	if base <= 0 {
+		base = DefaultCronRetryBackoffSeconds
+	}
+	shift := task.AttemptCount - 1
+	if shift > 10 {
+		shift = 10
+	}
+	seconds := int64(base) << shift
+	const maxRetryDelaySeconds = int64(24 * 60 * 60)
+	if seconds > maxRetryDelaySeconds {
+		seconds = maxRetryDelaySeconds
+	}
+	retryAt := finishedAt.UTC().Add(time.Duration(seconds) * time.Second)
+	return &retryAt
+}
+
 func validAppTaskDeployment(d Deployment, appID string) bool {
 	if d.AppID != appID || d.RootfsKey == "" || d.ImageDigest == "" {
 		return false
@@ -297,6 +341,7 @@ func normalizeAppTaskPage(limit, offset int) (int, int) {
 func cloneAppTask(task AppTask) AppTask {
 	task.Command = append([]string(nil), task.Command...)
 	task.ScheduledFor = cloneAppTaskTimePtr(task.ScheduledFor)
+	task.RetryAt = cloneAppTaskTimePtr(task.RetryAt)
 	task.LeaseToken = cloneAppTaskStringPtr(task.LeaseToken)
 	task.LeaseOwner = cloneAppTaskStringPtr(task.LeaseOwner)
 	task.LeaseExpiresAt = cloneAppTaskTimePtr(task.LeaseExpiresAt)

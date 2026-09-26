@@ -27540,6 +27540,8 @@ components:
         command_shell: { type: boolean, description: "Interpret a one-element command through the app shell; false executes argv directly." }
         timeout_seconds: { type: integer, minimum: 1, maximum: 3600, description: "Per-fire command deadline." }
         max_output_bytes: { type: integer, minimum: 1024, maximum: 16777216, description: "Combined stdout/stderr tail cap for command runs." }
+        retry_max: { type: integer, minimum: 0, maximum: 5, description: "Additional attempts after an execution fails or times out; zero disables retries." }
+        retry_backoff_seconds: { type: integer, minimum: 1, maximum: 3600, description: "Base retry delay. Each subsequent retry doubles the delay, capped at 24 hours." }
         enabled: { type: boolean }
         suspended_reason:
           type: string
@@ -27630,6 +27632,8 @@ components:
         enabled: { type: [boolean, "null"] }
         timezone: { type: string, description: "IANA timezone; defaults to UTC.", example: "Europe/Istanbul" }
         skip_if_running: { type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running." }
+        retry_max: { type: integer, minimum: 0, maximum: 5, description: "Additional command attempts after failure or timeout; command crons only." }
+        retry_backoff_seconds: { type: integer, minimum: 1, maximum: 3600, description: "Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only." }
 
     UpdateCronRequest:
       description: "Partial cron update."
@@ -27640,6 +27644,8 @@ components:
         enabled: { type: [boolean, "null"] }
         timezone: { type: [string, "null"], description: "IANA timezone; an empty value resets to UTC." }
         skip_if_running: { type: [boolean, "null"], description: "Enable or disable overlap skipping for scheduled fires." }
+        retry_max: { type: [integer, "null"], minimum: 0, maximum: 5, description: "Replace the retry allowance for an existing deployment-command cron." }
+        retry_backoff_seconds: { type: [integer, "null"], minimum: 1, maximum: 3600, description: "Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed attempt." }
 
     PrewarmRequest:
       description: "Schedule temporary capacity restoration ahead of a demand window."
@@ -34986,7 +34992,7 @@ components:
         App-scoped receipt for a deployment-attached command. Scheduler lease
         data, rootfs storage keys, and image digests are intentionally omitted.
       type: object
-      required: [id, app_id, deployment_id, deployment_scope, kind, command, command_shell, status, timeout_seconds, max_output_bytes, output_truncated, created_at, updated_at]
+      required: [id, app_id, deployment_id, deployment_scope, kind, command, command_shell, status, timeout_seconds, max_output_bytes, attempt_count, output_truncated, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
@@ -35002,6 +35008,10 @@ components:
         status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, cancelled] }
         timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
         max_output_bytes: { type: integer, minimum: 1024, maximum: 16777216 }
+        retry_max: { type: integer, minimum: 0, maximum: 5 }
+        retry_backoff_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        attempt_count: { type: integer, minimum: 0, description: "Number of command executions started for this logical task." }
+        retry_at: { type: [string, "null"], format: date-time, description: "When a failed command task will be eligible for its next attempt; omitted otherwise." }
         stdout_tail: { type: string }
         stderr_tail: { type: string }
         output_truncated: { type: boolean }

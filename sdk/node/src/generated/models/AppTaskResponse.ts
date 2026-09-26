@@ -19,6 +19,16 @@ export type AppTaskResponse = {
   status: 'queued' | 'restoring' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled';
   timeout_seconds: number;
   max_output_bytes: number;
+  retry_max?: number;
+  retry_backoff_seconds?: number;
+  /**
+   * Number of command executions started for this logical task.
+   */
+  attempt_count: number;
+  /**
+   * When a failed command task will be eligible for its next attempt; omitted otherwise.
+   */
+  retry_at?: string | null;
   stdout_tail?: string;
   stderr_tail?: string;
   output_truncated: boolean;

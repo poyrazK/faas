@@ -33,6 +33,14 @@ export type CronResponse = {
    * Combined stdout/stderr tail cap for command runs.
    */
   max_output_bytes?: number;
+  /**
+   * Additional attempts after an execution fails or times out; zero disables retries.
+   */
+  retry_max?: number;
+  /**
+   * Base retry delay. Each subsequent retry doubles the delay, capped at 24 hours.
+   */
+  retry_backoff_seconds?: number;
   enabled: boolean;
   /**
    * Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment.

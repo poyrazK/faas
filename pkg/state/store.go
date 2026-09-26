@@ -3330,7 +3330,7 @@ type Store interface {
 	// backfilling this field is the only honest way to rewind a test or
 	// restore an imported schedule.
 	UpdateCron(ctx context.Context, id string, schedule, path *string, enabled *bool, createdAt *time.Time) (Cron, error)
-	UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time) (Cron, error)
+	UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time, retryOptions ...CronOptions) (Cron, error)
 	DeleteCron(ctx context.Context, id, appID string) error
 	ListCronsForApp(ctx context.Context, appID string) ([]Cron, error)
 	ListEnabledCrons(ctx context.Context) ([]Cron, error)

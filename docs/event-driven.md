@@ -32,7 +32,16 @@ command runs with a 10-minute timeout and 1 MiB output limit by default; use
 repeatable and preserves argument boundaries. `--shell` instead treats the
 single `--command` value as a shell string and cannot be combined with `--arg`.
 Use `--skip-if-running` to skip a firing while an earlier command task remains
-active. Inspect outcomes with `crons runs`; the returned `task_id` can be used
+active. By default command failures are not retried. Set `--retry-max` to allow
+up to five additional attempts after a command fails or times out; retries use
+exponential backoff from `--retry-backoff-seconds` (default 60 seconds, capped
+at 24 hours). A cron run remains one logical history row while it waits for a
+retry, and its task receipt reports the attempt count and next retry time.
+Retries are at-least-once: a command may have produced side effects before it
+failed, so make retryable commands idempotent. A worker lease lost after
+dispatch is not automatically replayed because completion is uncertain.
+
+Inspect outcomes with `crons runs`; the returned `task_id` can be used
 with `GET /v1/apps/APP_ID/tasks/TASK_ID` to read captured output. Command crons
 do not support fire-now, while `gregale app APP_ID exec ...` remains the
 one-off command surface. Scheduled jobs create one task per occurrence and

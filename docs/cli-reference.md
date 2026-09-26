@@ -635,6 +635,8 @@ Schedule an HTTP request or deployment command
 | `--max-output-bytes <N>` | captured output limit (default 1048576 bytes) |  |
 | `--timezone <TZ>` | IANA timezone (default UTC) |  |
 | `--skip-if-running` | skip fires while the previous run is active |  |
+| `--retry-max` | additional command attempts after failure or timeout |  |
+| `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
 
 ### crons info
 
@@ -643,6 +645,18 @@ Show one cron rule
 ### crons update
 
 Update one cron rule
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schedule <EXPR>` | new five-field cron expression |  |
+| `--path <PATH>` | HTTP request path |  |
+| `--timezone <TZ>` | IANA timezone |  |
+| `--enable` | enable the cron |  |
+| `--disable` | disable the cron |  |
+| `--skip-if-running` | skip fires while a previous run is active |  |
+| `--allow-overlap` | allow scheduled fires to overlap |  |
+| `--retry-max` | additional command attempts after failure or timeout |  |
+| `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
 
 ### crons rm
 

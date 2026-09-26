@@ -2774,6 +2774,8 @@ type Cron struct {
 	CommandShell          bool
 	CommandTimeoutSeconds int
 	CommandMaxOutputBytes int
+	RetryMax              int // additional attempts after the first failed/timed-out execution
+	RetryBackoffSeconds   int // base delay; later retries double it, capped at 24 hours
 	Enabled               bool
 	// SuspendedReason is set by the scheduler when customer intent remains
 	// enabled but the app has no live deployment. A later successful deploy
@@ -2798,7 +2800,15 @@ type CronOptions struct {
 	CommandShell          bool
 	CommandTimeoutSeconds int
 	CommandMaxOutputBytes int
+	RetryMax              int
+	RetryBackoffSeconds   int
 }
+
+const (
+	CronRetryMaxLimit              = 5
+	DefaultCronRetryBackoffSeconds = 60
+	CronRetryBackoffSecondsLimit   = 3600
+)
 
 // FireNowStatus is the closed vocabulary for cron_fire_now_requests.status
 // (migrations/00193). Mirrors the audit-event `cron.fired.manually` status

@@ -36,9 +36,15 @@ class AppTaskResponse:
     status: AppTaskResponseStatus
     timeout_seconds: int
     max_output_bytes: int
+    attempt_count: int
+    """Number of command executions started for this logical task."""
     output_truncated: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    retry_max: int | Unset = UNSET
+    retry_backoff_seconds: int | Unset = UNSET
+    retry_at: datetime.datetime | None | Unset = UNSET
+    """When a failed command task will be eligible for its next attempt; omitted otherwise."""
     stdout_tail: str | Unset = UNSET
     stderr_tail: str | Unset = UNSET
     exit_code: int | None | Unset = UNSET
@@ -71,11 +77,25 @@ class AppTaskResponse:
 
         max_output_bytes = self.max_output_bytes
 
+        attempt_count = self.attempt_count
+
         output_truncated = self.output_truncated
 
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        retry_max = self.retry_max
+
+        retry_backoff_seconds = self.retry_backoff_seconds
+
+        retry_at: None | str | Unset
+        if isinstance(self.retry_at, Unset):
+            retry_at = UNSET
+        elif isinstance(self.retry_at, datetime.datetime):
+            retry_at = self.retry_at.isoformat()
+        else:
+            retry_at = self.retry_at
 
         stdout_tail = self.stdout_tail
 
@@ -133,11 +153,18 @@ class AppTaskResponse:
                 "status": status,
                 "timeout_seconds": timeout_seconds,
                 "max_output_bytes": max_output_bytes,
+                "attempt_count": attempt_count,
                 "output_truncated": output_truncated,
                 "created_at": created_at,
                 "updated_at": updated_at,
             }
         )
+        if retry_max is not UNSET:
+            field_dict["retry_max"] = retry_max
+        if retry_backoff_seconds is not UNSET:
+            field_dict["retry_backoff_seconds"] = retry_backoff_seconds
+        if retry_at is not UNSET:
+            field_dict["retry_at"] = retry_at
         if stdout_tail is not UNSET:
             field_dict["stdout_tail"] = stdout_tail
         if stderr_tail is not UNSET:
@@ -180,11 +207,34 @@ class AppTaskResponse:
 
         max_output_bytes = d.pop("max_output_bytes")
 
+        attempt_count = d.pop("attempt_count")
+
         output_truncated = d.pop("output_truncated")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        retry_max = d.pop("retry_max", UNSET)
+
+        retry_backoff_seconds = d.pop("retry_backoff_seconds", UNSET)
+
+        def _parse_retry_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                retry_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return retry_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        retry_at = _parse_retry_at(d.pop("retry_at", UNSET))
 
         stdout_tail = d.pop("stdout_tail", UNSET)
 
@@ -278,9 +328,13 @@ class AppTaskResponse:
             status=status,
             timeout_seconds=timeout_seconds,
             max_output_bytes=max_output_bytes,
+            attempt_count=attempt_count,
             output_truncated=output_truncated,
             created_at=created_at,
             updated_at=updated_at,
+            retry_max=retry_max,
+            retry_backoff_seconds=retry_backoff_seconds,
+            retry_at=retry_at,
             stdout_tail=stdout_tail,
             stderr_tail=stderr_tail,
             exit_code=exit_code,

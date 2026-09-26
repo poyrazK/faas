@@ -3210,6 +3210,11 @@ func normalizeCronTimezone(raw string) (string, error) {
 	return loc.String(), nil
 }
 
+func validCronRetryPolicy(retryMax, backoffSeconds int) bool {
+	return retryMax >= 0 && retryMax <= state.CronRetryMaxLimit &&
+		backoffSeconds >= 1 && backoffSeconds <= state.CronRetryBackoffSecondsLimit
+}
+
 func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateCronRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -3248,8 +3253,19 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		commandShell = resolved.CommandShell
 		commandTimeoutSeconds = resolved.TimeoutSeconds
 		commandMaxOutputBytes = resolved.MaxOutputBytes
+		backoffSeconds := req.RetryBackoffSeconds
+		if backoffSeconds == 0 {
+			backoffSeconds = state.DefaultCronRetryBackoffSeconds
+		}
+		if !validCronRetryPolicy(req.RetryMax, backoffSeconds) {
+			api.WriteProblem(w, api.ErrValidation("retry_max must be 0..5 and retry_backoff_seconds must be 1..3600"))
+			return
+		}
 	} else if req.CommandShell || req.TimeoutSeconds != 0 || req.MaxOutputBytes != 0 {
 		api.WriteProblem(w, api.ErrValidation("command options require a non-empty command"))
+		return
+	} else if req.RetryMax != 0 || req.RetryBackoffSeconds != 0 {
+		api.WriteProblem(w, api.ErrValidation("retry options require a deployment command cron"))
 		return
 	}
 	// Plan-tier gate (spec §4.4 / paid-only event-shaped primitives).
@@ -3293,7 +3309,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
-		CommandMaxOutputBytes: commandMaxOutputBytes,
+		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
+		RetryBackoffSeconds: req.RetryBackoffSeconds,
 	})
 	if err != nil {
 		var qe *state.CronQuotaError
@@ -3325,6 +3342,9 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	if len(c.Command) == 0 {
 		auditData["path"] = c.Path
+	} else {
+		auditData["retry_max"] = c.RetryMax
+		auditData["retry_backoff_seconds"] = c.RetryBackoffSeconds
 	}
 	s.audit.Emit(r.Context(), "cron.created", &acct.ID, auditData)
 	writeJSON(w, http.StatusCreated, cronResponse(c))
@@ -3384,11 +3404,30 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrValidation("command crons do not have an HTTP path; delete and recreate the cron to change its kind"))
 		return
 	}
+	var retryOptions []state.CronOptions
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil {
+		if len(c.Command) == 0 {
+			api.WriteProblem(w, api.ErrValidation("retry options require a deployment command cron"))
+			return
+		}
+		retryMax, backoffSeconds := c.RetryMax, c.RetryBackoffSeconds
+		if req.RetryMax != nil {
+			retryMax = *req.RetryMax
+		}
+		if req.RetryBackoffSeconds != nil {
+			backoffSeconds = *req.RetryBackoffSeconds
+		}
+		if !validCronRetryPolicy(retryMax, backoffSeconds) {
+			api.WriteProblem(w, api.ErrValidation("retry_max must be 0..5 and retry_backoff_seconds must be 1..3600"))
+			return
+		}
+		retryOptions = append(retryOptions, state.CronOptions{RetryMax: retryMax, RetryBackoffSeconds: backoffSeconds})
+	}
 	var timezonePatch *string
 	if req.Timezone != nil {
 		timezonePatch = &timezone
 	}
-	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil)
+	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
@@ -3420,6 +3459,14 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.SkipIfRunning != nil {
 		oldCron["skip_if_running"] = c.SkipIfRunning
 		newCron["skip_if_running"] = updated.SkipIfRunning
+	}
+	if req.RetryMax != nil {
+		oldCron["retry_max"] = c.RetryMax
+		newCron["retry_max"] = updated.RetryMax
+	}
+	if req.RetryBackoffSeconds != nil {
+		oldCron["retry_backoff_seconds"] = c.RetryBackoffSeconds
+		newCron["retry_backoff_seconds"] = updated.RetryBackoffSeconds
 	}
 	s.audit.Emit(r.Context(), "cron.updated", &acct.ID, map[string]any{
 		"cron_id": updated.ID,
@@ -3542,7 +3589,7 @@ func (s *server) listCronRuns(w http.ResponseWriter, r *http.Request, acct state
 
 func cronRunFromAppTask(task state.AppTask) api.CronRun {
 	run := api.CronRun{ID: task.ID, TaskID: task.ID, StartedAt: task.CreatedAt,
-		Attempts: 1, Outcome: api.CronRunRunning}
+		Attempts: task.AttemptCount, Outcome: api.CronRunRunning}
 	switch task.Status {
 	case state.AppTaskSucceeded:
 		run.Outcome = api.CronRunSuccess
@@ -5427,6 +5474,8 @@ func cronResponse(c state.Cron) api.CronResponse {
 		resp.CommandShell = c.CommandShell
 		resp.TimeoutSeconds = c.CommandTimeoutSeconds
 		resp.MaxOutputBytes = c.CommandMaxOutputBytes
+		resp.RetryMax = c.RetryMax
+		resp.RetryBackoffSeconds = c.RetryBackoffSeconds
 	}
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)

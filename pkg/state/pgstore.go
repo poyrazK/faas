@@ -3039,9 +3039,9 @@ func (s *PgStore) FailRunningInstanceIfOwnedByNode(ctx context.Context, id, node
 // the duplicate-dispatch hazard would corrupt the
 // cron_fired_audit row. The apps_node_id_idx covers the JOIN.
 // Projection matches scanCrons: id, app_id, schedule, path, enabled,
-// suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes.
+// suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds.
 func (s *PgStore) ListOwnedCronsByNodeID(ctx context.Context, nodeID string) ([]Cron, error) {
-	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes
+	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds
 		   from crons c
 		   join apps a on a.id = c.app_id
 		  where a.node_id = $1 and c.suspended_reason = ''`
@@ -5342,7 +5342,7 @@ func (s *PgStore) ApplyProjectPlan(
 		}
 		row := tx.QueryRow(ctx,
 			`insert into crons (app_id, schedule, path, enabled) values ($1, $2, $3, $4)
-			 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes`,
+			 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds`,
 			c.AppID, c.Schedule, c.Path, c.Enabled,
 		)
 		out, err := scanCronRow(row)
@@ -5575,7 +5575,7 @@ func (s *PgStore) ApplyProjectReconcile(
 			desiredOrder[appID] = append(desiredOrder[appID], key)
 		}
 		for _, appID := range appByWorkload {
-			rows, err = tx.Query(ctx, `select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes from crons where app_id = $1 order by created_at for update`, appID)
+			rows, err = tx.Query(ctx, `select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds from crons where app_id = $1 order by created_at for update`, appID)
 			if err != nil {
 				return ProjectReconcileResult{}, err
 			}
@@ -12177,7 +12177,30 @@ func normalizeCronOptions(opts CronOptions) CronOptions {
 	if opts.CommandMaxOutputBytes <= 0 {
 		opts.CommandMaxOutputBytes = AppTaskDefaultMaxOutputBytes
 	}
+	if opts.RetryBackoffSeconds <= 0 {
+		opts.RetryBackoffSeconds = DefaultCronRetryBackoffSeconds
+	}
 	return opts
+}
+
+func validateCronRetryOptions(opts CronOptions) error {
+	if opts.RetryMax < 0 || opts.RetryMax > CronRetryMaxLimit {
+		return fmt.Errorf("%w: retry_max must be between 0 and %d", ErrInvalidArgument, CronRetryMaxLimit)
+	}
+	if opts.RetryBackoffSeconds < 1 || opts.RetryBackoffSeconds > CronRetryBackoffSecondsLimit {
+		return fmt.Errorf("%w: retry_backoff_seconds must be between 1 and %d", ErrInvalidArgument, CronRetryBackoffSecondsLimit)
+	}
+	return nil
+}
+
+func validateCronCreateRetryOptions(opts CronOptions) error {
+	if err := validateCronRetryOptions(opts); err != nil {
+		return err
+	}
+	if opts.RetryMax > 0 && len(opts.Command) == 0 {
+		return fmt.Errorf("%w: cron retries require a deployment command", ErrInvalidArgument)
+	}
+	return nil
 }
 
 func sameCronCommand(a, b []string) bool {
@@ -12198,13 +12221,17 @@ func (s *PgStore) CreateCron(ctx context.Context, appID, schedule, path string, 
 
 func (s *PgStore) CreateCronWithOptions(ctx context.Context, appID, schedule, path string, enabled bool, opts CronOptions) (Cron, error) {
 	opts = normalizeCronOptions(opts)
+	if err := validateCronCreateRetryOptions(opts); err != nil {
+		return Cron{}, err
+	}
 	row := s.pool.QueryRow(ctx,
 		`insert into crons (app_id, schedule, path, enabled, timezone, skip_if_running,
-		                    command, command_shell, command_timeout_seconds, command_max_output_bytes)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes`,
+		                    command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds`,
 		appID, schedule, path, enabled, opts.Timezone, opts.SkipIfRunning,
-		opts.Command, opts.CommandShell, opts.CommandTimeoutSeconds, opts.CommandMaxOutputBytes)
+		opts.Command, opts.CommandShell, opts.CommandTimeoutSeconds, opts.CommandMaxOutputBytes,
+		opts.RetryMax, opts.RetryBackoffSeconds)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -12234,6 +12261,9 @@ func (s *PgStore) CreateCronIfUnderQuota(ctx context.Context, appID, schedule, p
 
 func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, schedule, path string, enabled bool, limits api.Limits, opts CronOptions) (Cron, error) {
 	opts = normalizeCronOptions(opts)
+	if err := validateCronCreateRetryOptions(opts); err != nil {
+		return Cron{}, err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Cron{}, fmt.Errorf("state: begin tx: %w", err)
@@ -12258,13 +12288,14 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	// or account cap. This check must run after the app lock and before quota
 	// counts so concurrent retries cannot race into a duplicate INSERT.
 	existing, existingErr := scanCronRow(tx.QueryRow(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds
 		 from crons where app_id = $1 and schedule = $2 and path = $3 and command = $4`,
 		appID, schedule, path, opts.Command))
 	if existingErr == nil {
 		if existing.Enabled == enabled && existing.Timezone == opts.Timezone && existing.SkipIfRunning == opts.SkipIfRunning &&
 			existing.CommandShell == opts.CommandShell && existing.CommandTimeoutSeconds == opts.CommandTimeoutSeconds &&
-			existing.CommandMaxOutputBytes == opts.CommandMaxOutputBytes {
+			existing.CommandMaxOutputBytes == opts.CommandMaxOutputBytes && existing.RetryMax == opts.RetryMax &&
+			existing.RetryBackoffSeconds == opts.RetryBackoffSeconds {
 			return existing, nil
 		}
 	}
@@ -12320,11 +12351,12 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	//    in ErrConflict for future-proofing.
 	row := tx.QueryRow(ctx,
 		`insert into crons (app_id, schedule, path, enabled, timezone, skip_if_running,
-		                    command, command_shell, command_timeout_seconds, command_max_output_bytes)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes`,
+		                    command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds`,
 		appID, schedule, path, enabled, opts.Timezone, opts.SkipIfRunning,
-		opts.Command, opts.CommandShell, opts.CommandTimeoutSeconds, opts.CommandMaxOutputBytes)
+		opts.Command, opts.CommandShell, opts.CommandTimeoutSeconds, opts.CommandMaxOutputBytes,
+		opts.RetryMax, opts.RetryBackoffSeconds)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -12337,7 +12369,7 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 
 func (s *PgStore) CronByID(ctx context.Context, id string) (Cron, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes from crons where id = $1`, id)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds from crons where id = $1`, id)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -12349,10 +12381,18 @@ func (s *PgStore) UpdateCron(ctx context.Context, id string, schedule, path *str
 	return s.UpdateCronWithOptions(ctx, id, schedule, path, enabled, nil, nil, createdAt)
 }
 
-func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time) (Cron, error) {
+func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time, retryOptions ...CronOptions) (Cron, error) {
 	var createdAtArg any
 	if createdAt != nil {
 		createdAtArg = createdAt.UTC()
+	}
+	var retryMaxArg, retryBackoffArg any
+	if len(retryOptions) > 0 {
+		opts := normalizeCronOptions(retryOptions[0])
+		if err := validateCronRetryOptions(opts); err != nil {
+			return Cron{}, err
+		}
+		retryMaxArg, retryBackoffArg = opts.RetryMax, opts.RetryBackoffSeconds
 	}
 	row := s.pool.QueryRow(ctx,
 		`update crons set
@@ -12361,10 +12401,12 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		   enabled    = coalesce($4, enabled),
 		   timezone   = coalesce($5, timezone),
 		   skip_if_running = coalesce($6, skip_if_running),
-		   created_at = coalesce($7, created_at)
+		   created_at = coalesce($7, created_at),
+		   retry_max = coalesce($8, retry_max),
+		   retry_backoff_seconds = coalesce($9, retry_backoff_seconds)
 		 where id = $1
-		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes`,
-		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg)
+		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds`,
+		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg, retryMaxArg, retryBackoffArg)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)
@@ -12446,7 +12488,7 @@ func (s *PgStore) StampAppScaleIn(ctx context.Context, appID string) error {
 
 func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes from crons where app_id = $1 order by created_at`, appID)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds from crons where app_id = $1 order by created_at`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -12456,7 +12498,7 @@ func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, er
 
 func (s *PgStore) ListEnabledCrons(ctx context.Context) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes from crons where enabled = true and suspended_reason = ''`)
+		`select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds from crons where enabled = true and suspended_reason = ''`)
 	if err != nil {
 		return nil, err
 	}
@@ -23978,7 +24020,8 @@ func scanCronRow(row interface{ Scan(...any) error }) (Cron, error) {
 	var lastFired pgtype.Timestamptz
 	if err := row.Scan(&c.ID, &c.AppID, &c.Schedule, &c.Path, &c.Enabled,
 		&c.SuspendedReason, &c.Timezone, &c.SkipIfRunning, &lastFired, &c.CreatedAt,
-		&c.Command, &c.CommandShell, &c.CommandTimeoutSeconds, &c.CommandMaxOutputBytes); err != nil {
+		&c.Command, &c.CommandShell, &c.CommandTimeoutSeconds, &c.CommandMaxOutputBytes,
+		&c.RetryMax, &c.RetryBackoffSeconds); err != nil {
 		return Cron{}, err
 	}
 	if c.Timezone == "" {
@@ -25374,7 +25417,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 // newest crons surface first.
 func (s *PgStore) ListCronsForAccount(ctx context.Context, accountID string) ([]Cron, error) {
 	rows, err := s.pool.Query(ctx,
-		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes
+		`select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds
 		 from crons c
 		 join apps a on a.id = c.app_id
 		 where a.account_id = $1
