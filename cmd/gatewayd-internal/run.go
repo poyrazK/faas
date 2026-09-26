@@ -2380,6 +2380,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	retryBudget := gateway.NewRetryBudget(0, nil)
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_REQUEST_AUDIT_ENABLED")), streamingFlagTrue) {
+		handler.WithRequestAudit(true)
+	}
+	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_API_DISCOVERY_ENABLED")), streamingFlagTrue) {
+		handler.WithAPIDiscovery(true)
+	}
 	if deps.pgStore != nil {
 		handler.WithMirrorResultStore(deps.pgStore)
 	}
