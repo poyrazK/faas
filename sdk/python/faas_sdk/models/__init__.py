@@ -392,6 +392,9 @@ from .create_org_request import CreateOrgRequest
 from .create_outbound_integration_request import CreateOutboundIntegrationRequest
 from .create_outbound_integration_request_allowed_methods_item import CreateOutboundIntegrationRequestAllowedMethodsItem
 from .create_platform_tenant_request import CreatePlatformTenantRequest
+from .create_platform_tenant_webhook_request import CreatePlatformTenantWebhookRequest
+from .create_platform_tenant_webhook_request_delivery_format import CreatePlatformTenantWebhookRequestDeliveryFormat
+from .create_platform_tenant_webhook_request_retry_policy import CreatePlatformTenantWebhookRequestRetryPolicy
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
@@ -1060,6 +1063,10 @@ from .platform_tenant_list_response import PlatformTenantListResponse
 from .platform_tenant_request_budget_response import PlatformTenantRequestBudgetResponse
 from .platform_tenant_response import PlatformTenantResponse
 from .platform_tenant_response_status import PlatformTenantResponseStatus
+from .platform_tenant_statement_finalized_webhook_payload import PlatformTenantStatementFinalizedWebhookPayload
+from .platform_tenant_statement_finalized_webhook_payload_status import (
+    PlatformTenantStatementFinalizedWebhookPayloadStatus,
+)
 from .platform_tenant_statement_handoff_response import PlatformTenantStatementHandoffResponse
 from .platform_tenant_statement_line_response import PlatformTenantStatementLineResponse
 from .platform_tenant_statement_list_response import PlatformTenantStatementListResponse
@@ -1068,6 +1075,15 @@ from .platform_tenant_statement_response_status import PlatformTenantStatementRe
 from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
 from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
 from .platform_tenant_usage_response import PlatformTenantUsageResponse
+from .platform_tenant_webhook_list_response import PlatformTenantWebhookListResponse
+from .platform_tenant_webhook_response import PlatformTenantWebhookResponse
+from .platform_tenant_webhook_response_delivery_format import PlatformTenantWebhookResponseDeliveryFormat
+from .platform_tenant_webhook_response_event_filter_item import PlatformTenantWebhookResponseEventFilterItem
+from .platform_tenant_webhook_response_retry_policy import PlatformTenantWebhookResponseRetryPolicy
+from .platform_tenant_webhook_response_scope import PlatformTenantWebhookResponseScope
+from .platform_tenant_webhook_response_webhook_secret_sealed_masked import (
+    PlatformTenantWebhookResponseWebhookSecretSealedMasked,
+)
 from .post_account_sessions_revoke_all_body import PostAccountSessionsRevokeAllBody
 from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
@@ -1512,6 +1528,9 @@ from .update_managed_realtime_endpoint_request_auth_required_claims import (
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
+from .update_platform_tenant_webhook_request import UpdatePlatformTenantWebhookRequest
+from .update_platform_tenant_webhook_request_delivery_format import UpdatePlatformTenantWebhookRequestDeliveryFormat
+from .update_platform_tenant_webhook_request_retry_policy import UpdatePlatformTenantWebhookRequestRetryPolicy
 from .update_private_network_policy_request import UpdatePrivateNetworkPolicyRequest
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
@@ -1961,6 +1980,9 @@ __all__ = (
     "CreateOutboundIntegrationRequest",
     "CreateOutboundIntegrationRequestAllowedMethodsItem",
     "CreatePlatformTenantRequest",
+    "CreatePlatformTenantWebhookRequest",
+    "CreatePlatformTenantWebhookRequestDeliveryFormat",
+    "CreatePlatformTenantWebhookRequestRetryPolicy",
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
     "CreatePrivateNetworkRequest",
@@ -2621,6 +2643,8 @@ __all__ = (
     "PlatformTenantRequestBudgetResponse",
     "PlatformTenantResponse",
     "PlatformTenantResponseStatus",
+    "PlatformTenantStatementFinalizedWebhookPayload",
+    "PlatformTenantStatementFinalizedWebhookPayloadStatus",
     "PlatformTenantStatementHandoffResponse",
     "PlatformTenantStatementLineResponse",
     "PlatformTenantStatementListResponse",
@@ -2629,6 +2653,13 @@ __all__ = (
     "PlatformTenantSurfaceResponse",
     "PlatformTenantUsageBucketResponse",
     "PlatformTenantUsageResponse",
+    "PlatformTenantWebhookListResponse",
+    "PlatformTenantWebhookResponse",
+    "PlatformTenantWebhookResponseDeliveryFormat",
+    "PlatformTenantWebhookResponseEventFilterItem",
+    "PlatformTenantWebhookResponseRetryPolicy",
+    "PlatformTenantWebhookResponseScope",
+    "PlatformTenantWebhookResponseWebhookSecretSealedMasked",
     "PostAccountSessionsRevokeAllBody",
     "PostForceColdBootAppConfirm",
     "PostForceParkInstanceConfirm",
@@ -3045,6 +3076,9 @@ __all__ = (
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
     "UpdateOutboundBindingPolicyRequest",
+    "UpdatePlatformTenantWebhookRequest",
+    "UpdatePlatformTenantWebhookRequestDeliveryFormat",
+    "UpdatePlatformTenantWebhookRequestRetryPolicy",
     "UpdatePrivateNetworkPolicyRequest",
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",

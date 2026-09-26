@@ -4206,6 +4206,185 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/account/platform-tenants/{id}/webhooks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose billing event receiver is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantWebhooks
+      summary: List a platform tenant's statement event receivers.
+      responses:
+        '200':
+          description: Tenant-scoped webhook subscriptions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantWebhookListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantWebhook
+      summary: Subscribe to finalized cross-app tenant statements.
+      description: Creates a signed, retryable receiver scoped to this tenant. Finalization is durably enqueued with the statement transition; one delivery is created per statement revision.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantWebhookRequest' }
+      responses:
+        '201':
+          description: Receiver created. The plaintext secret is not returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantWebhookResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant that owns the subscription being inspected or changed.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Tenant-scoped webhook subscription to inspect or change.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantWebhook
+      summary: Read a tenant webhook subscription.
+      responses:
+        '200':
+          description: Subscription metadata; the secret remains masked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantWebhookResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [platform-tenants]
+      operationId: updatePlatformTenantWebhook
+      summary: Update a tenant webhook destination or delivery policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePlatformTenantWebhookRequest' }
+      responses:
+        '200':
+          description: Updated subscription metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantWebhookResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [platform-tenants]
+      operationId: deletePlatformTenantWebhook
+      summary: Delete a tenant webhook and its remaining delivery history.
+      responses:
+        '204': { description: Subscription deleted. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/rotate-secret:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant context used to authorize secret rotation.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Subscription whose signing secret is rotated.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [platform-tenants]
+      operationId: rotatePlatformTenantWebhookSecret
+      summary: Rotate the signing secret for a tenant webhook.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateAppWebhookSecretRequest' }
+      responses:
+        '200':
+          description: Secret rotated; plaintext is not returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RotateAppWebhookSecretResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant context used to scope delivery history.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Subscription whose delivery attempts are listed.
+        schema: { type: string, format: uuid }
+      - name: page_size
+        in: query
+        description: Maximum number of delivery rows to return, from 1 to 100.
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - name: page_token
+        in: query
+        description: Opaque cursor returned by the previous page.
+        schema: { type: string }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantWebhookDeliveries
+      summary: Inspect tenant statement webhook deliveries.
+      responses:
+        '200':
+          description: Durable delivery history, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/retry:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant context used to authorize delivery replay.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Subscription that owns the delivery to replay.
+        schema: { type: string, format: uuid }
+      - name: did
+        in: path
+        required: true
+        description: Dead delivery to retry.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [platform-tenants]
+      operationId: retryPlatformTenantWebhookDelivery
+      summary: Retry one dead tenant webhook delivery.
+      responses:
+        '200':
+          description: Delivery requeued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookRetryDeliveryResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/account/platform-tenants/{id}/credentials:
     parameters:
       - name: id
@@ -22704,6 +22883,59 @@ components:
         amount_millicents: { type: integer, format: int64, minimum: 0 }
         created_at: { type: string, format: date-time }
 
+    CreatePlatformTenantWebhookRequest:
+      type: object
+      description: Create a receiver for this tenant's finalized cross-app billing statements.
+      required: [target_url, webhook_secret]
+      properties:
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+        retry_policy: { type: string, enum: [default, aggressive, none], default: default }
+        delivery_format: { type: string, enum: [json, cloudevents], default: json }
+        enabled: { type: boolean, default: true }
+      example:
+        target_url: "https://billing.example.com/gregale/events"
+        webhook_secret: "store-this-secret-before-submitting"
+
+    UpdatePlatformTenantWebhookRequest:
+      type: object
+      description: Update a tenant statement receiver. Rotate secrets with the dedicated action.
+      minProperties: 1
+      properties:
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format: { type: string, enum: [json, cloudevents] }
+        enabled: { type: boolean }
+
+    PlatformTenantWebhookResponse:
+      type: object
+      description: Tenant-scoped statement event receiver. The secret is never returned.
+      required: [id, scope, platform_tenant_id, account_id, target_url, webhook_secret_sealed_masked, event_filter, retry_policy, delivery_format, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string, enum: [platform_tenant] }
+        platform_tenant_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        target_url: { type: string, format: uri }
+        webhook_secret_sealed_masked: { type: string, enum: ["***"] }
+        event_filter:
+          type: array
+          items: { type: string, enum: [platform_tenant.statement.finalized] }
+        retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format: { type: string, enum: [json, cloudevents] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PlatformTenantWebhookListResponse:
+      type: object
+      description: Tenant-scoped webhook subscriptions owned by one platform tenant.
+      required: [webhooks]
+      properties:
+        webhooks:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantWebhookResponse' }
+
     CreateAPIConsumerRequest:
       description: "Stable customer identity to which consumer credentials can be attached."
       type: object
@@ -36152,6 +36384,30 @@ components:
         finalized_at: { type: string, format: date-time }
       additionalProperties: true
 
+    PlatformTenantStatementFinalizedWebhookPayload:
+      type: object
+      description: Immutable cross-app statement snapshot delivered once per finalized revision to tenant-scoped receivers.
+      required: [platform_tenant_id, external_ref, statement_id, revision, status, period_start, period_end, currency, billable_units, unpriced_units, amount_millicents, priced, lines, as_of, finalized_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Platform owner's stable customer reference. }
+        statement_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [finalized] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        priced: { type: boolean, enum: [true] }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantStatementLineResponse' }
+        as_of: { type: string, format: date-time }
+        finalized_at: { type: string, format: date-time }
+      additionalProperties: false
+
     CreateInboundWebhookEndpointRequest:
       type: object
       description: Create a provider-verified endpoint whose accepted events become durable app invocations.
@@ -36813,11 +37069,11 @@ components:
         endpoint returns this shape per row. attempt=7 + status='dead'
         is the DLQ state; the customer-facing retry endpoint flips a
         dead row back to status='pending' for one more shot.
-      required: [id, webhook_id, app_id, account_id, event, attempt, status, next_attempt_at, created_at, updated_at]
+      required: [id, webhook_id, account_id, event, attempt, status, next_attempt_at, created_at, updated_at]
       properties:
         id: { type: string, pattern: '^[0-9a-f]{32}$' }
         webhook_id: { type: string, pattern: '^[0-9a-f]{32}$' }
-        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$', description: Omitted for events sourced from a platform tenant rather than one app. }
         account_id: { type: string, format: uuid }
         event:
           type: string

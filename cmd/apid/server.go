@@ -1425,6 +1425,17 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/finalize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.finalizePlatformTenantStatement)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantStatementHandoff))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimPlatformTenantStatement)))))
+	// Durable statement events belong to the cross-app platform tenant, not
+	// any one app's webhook namespace. Each delivery remains inspectable and
+	// replayable through the same signed webhook ledger.
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantWebhooks))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantWebhook)))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/webhooks/{webhook_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantWebhook))))
+	mux.HandleFunc("PATCH /v1/account/platform-tenants/{id}/webhooks/{webhook_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updatePlatformTenantWebhook))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/webhooks/{webhook_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deletePlatformTenantWebhook))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/rotate-secret", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rotatePlatformTenantWebhookSecret))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantWebhookDeliveries))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryPlatformTenantWebhookDelivery))))
 	// API consumer monetization: rate cards are immutable versions, so
 	// publishing a new price is a POST rather than an in-place update.
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerRateCards))))

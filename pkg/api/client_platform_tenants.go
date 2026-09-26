@@ -118,3 +118,62 @@ func (c *Client) GetPlatformTenantStatementHandoff(ctx context.Context, tenantID
 	var out PlatformTenantStatementHandoffResponse
 	return out, c.do(ctx, "GET", platformTenantStatementsPath(tenantID)+"/"+url.PathEscape(statementID)+"/handoff", nil, &out)
 }
+
+func platformTenantWebhooksPath(tenantID string) string {
+	return "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/webhooks"
+}
+
+func (c *Client) ListPlatformTenantWebhooks(ctx context.Context, tenantID string) (PlatformTenantWebhookListResponse, error) {
+	var out PlatformTenantWebhookListResponse
+	return out, c.do(ctx, "GET", platformTenantWebhooksPath(tenantID), nil, &out)
+}
+
+func (c *Client) CreatePlatformTenantWebhook(ctx context.Context, tenantID string, req CreatePlatformTenantWebhookRequest) (PlatformTenantWebhookResponse, error) {
+	var out PlatformTenantWebhookResponse
+	return out, c.do(ctx, "POST", platformTenantWebhooksPath(tenantID), req, &out)
+}
+
+func (c *Client) GetPlatformTenantWebhook(ctx context.Context, tenantID, webhookID string) (PlatformTenantWebhookResponse, error) {
+	var out PlatformTenantWebhookResponse
+	path := platformTenantWebhooksPath(tenantID) + "/" + url.PathEscape(webhookID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) UpdatePlatformTenantWebhook(ctx context.Context, tenantID, webhookID string, req UpdatePlatformTenantWebhookRequest) (PlatformTenantWebhookResponse, error) {
+	var out PlatformTenantWebhookResponse
+	path := platformTenantWebhooksPath(tenantID) + "/" + url.PathEscape(webhookID)
+	return out, c.do(ctx, "PATCH", path, req, &out)
+}
+
+func (c *Client) DeletePlatformTenantWebhook(ctx context.Context, tenantID, webhookID string) error {
+	path := platformTenantWebhooksPath(tenantID) + "/" + url.PathEscape(webhookID)
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
+func (c *Client) RotatePlatformTenantWebhookSecret(ctx context.Context, tenantID, webhookID string, req RotateAppWebhookSecretRequest) (RotateAppWebhookSecretResponse, error) {
+	var out RotateAppWebhookSecretResponse
+	path := platformTenantWebhooksPath(tenantID) + "/" + url.PathEscape(webhookID) + "/rotate-secret"
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
+func (c *Client) ListPlatformTenantWebhookDeliveries(ctx context.Context, tenantID, webhookID string, opts ListAppWebhookDeliveriesOptions) (AppWebhookDeliveryListResponse, error) {
+	var out AppWebhookDeliveryListResponse
+	path := platformTenantWebhooksPath(tenantID) + "/" + url.PathEscape(webhookID) + "/deliveries"
+	q := url.Values{}
+	if opts.PageSize > 0 {
+		q.Set("page_size", strconv.Itoa(opts.PageSize))
+	}
+	if opts.PageToken != "" {
+		q.Set("page_token", opts.PageToken)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+func (c *Client) RetryPlatformTenantWebhookDelivery(ctx context.Context, tenantID, webhookID, deliveryID string) (AppWebhookRetryDeliveryResponse, error) {
+	var out AppWebhookRetryDeliveryResponse
+	path := platformTenantWebhooksPath(tenantID) + "/" + url.PathEscape(webhookID) + "/deliveries/" + url.PathEscape(deliveryID) + "/retry"
+	return out, c.do(ctx, "POST", path, nil, &out)
+}
