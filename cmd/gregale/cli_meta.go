@@ -1097,6 +1097,7 @@ var cliCommands = []cliCommand{
 				{Name: "client-ip", Short: "simulated client IP for kind=ip rules", Value: "IP"},
 				{Name: "country", Short: "simulated ISO alpha-2 country for kind=geo rules", Value: "CC"},
 				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
+				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
 			}},
 			{Name: subCreate, Short: "Add an edge rule"},
 			{Name: subGet, Short: "Show one edge rule"},

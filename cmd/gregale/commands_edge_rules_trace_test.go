@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -333,6 +335,55 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "private") {
 		t.Fatal("query string leaked into trace output")
+	}
+}
+
+func TestCmdEdgeRulesTrace_BodyFileValidatesAndOmitsContents(t *testing.T) {
+	resetJSONEnv(t)
+	jsonOutput = true
+	defer resetJSONEnv(t)
+	body := `{"count":"private-value"}`
+	bodyPath := filepath.Join(t.TempDir(), "request.json")
+	if err := os.WriteFile(bodyPath, []byte(body), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method %s", r.Method)
+		}
+		switch r.URL.Path {
+		case "/v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{EffectiveLimits: api.AppEffectiveLimits{RequestBodyMaxBytes: 1 << 20}})
+		case "/v1/apps/demo/edge-rules":
+			_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{{
+				ID: "validate", Enabled: true, Kind: "validate", MatchHost: "example.com", MatchPath: "/submit", ValidateMode: api.ValidateModeBlock,
+				Action: json.RawMessage(`{"validate":{"schema":{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]},"content_types":["application/json"]}}`),
+			}})
+		default:
+			t.Errorf("unexpected API path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_API_KEY", "")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/submit", "--method", "POST", "--header", "Content-Type: application/json", "--body-file", bodyPath}); code != 0 {
+		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
+	}
+	var result edgeRuleTraceResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
+	}
+	if !result.BodyProvided || result.BodyBytes != len(body) || result.Simulation.StatusCode != http.StatusUnprocessableEntity || result.Simulation.Outcome != "validation_failed" {
+		t.Fatalf("trace result = %#v", result)
+	}
+	if strings.Contains(stdout.String(), "private-value") || strings.Contains(stdout.String(), body) {
+		t.Fatalf("trace output leaked request body: %s", stdout.String())
 	}
 }
 

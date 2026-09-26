@@ -82,6 +82,8 @@
         <label>Path <input name="trace_path" value="{{.Data.Trace.Path}}" required maxlength="2048" placeholder="/v1/items"> <span class="muted">Path only, without the query string.</span></label>
         <label>Method <input name="trace_method" value="{{.Data.Trace.Method}}" required maxlength="32" placeholder="GET"></label>
         <label>Request headers<br><textarea name="trace_headers" rows="5" placeholder="Accept: application/json&#10;X-Region: west">{{.Data.Trace.Headers}}</textarea><br><span class="muted">One <code>Name: Value</code> per line; repeated headers are supported.</span></label>
+        <label><input type="checkbox" name="trace_body_provided" value="on" {{if .Data.Trace.BodyProvided}}checked{{end}}> Include a request body</label>
+        <label>Request body<br><textarea name="trace_body" rows="7" placeholder='{"count":3}'></textarea><br><span class="muted">Up to 1 MiB. The body is used only for this trace and is not stored or shown again. Include a <code>Content-Type</code> request header for validation rules.</span></label>
         <label>Client IP <input name="trace_client_ip" value="{{.Data.Trace.ClientIP}}" maxlength="45" placeholder="203.0.113.10"></label>
         <label>Country <input name="trace_country" value="{{.Data.Trace.Country}}" maxlength="2" placeholder="US"></label>
         <button type="submit">Trace request</button>
@@ -91,6 +93,7 @@
         <div class="trace-details" role="status" aria-live="polite">
           <h3>Simulation: {{.Simulation.Status}} · {{.Simulation.Outcome}}</h3>
           <p><code>{{.Method}} {{.Host}}{{.Path}}</code> · final path <code>{{.Simulation.FinalPath}}</code></p>
+          {{if .BodyProvided}}<p>Request body: {{.BodyBytes}} bytes supplied; contents withheld.</p>{{end}}
           <p>{{.Simulation.Reason}}</p>
           {{if .Simulation.StatusCode}}<p>Response status: <strong>{{.Simulation.StatusCode}}</strong>{{if .Simulation.Location}} · location <code>{{.Simulation.Location}}</code>{{end}}{{if .Simulation.RetryAfterSeconds}} · Retry-After {{.Simulation.RetryAfterSeconds}}s{{end}}</p>{{end}}
           {{if .Simulation.Message}}<p>Response message: {{.Simulation.Message}}</p>{{end}}
@@ -99,7 +102,7 @@
             <h4>Evaluation sequence</h4>
             <table aria-label="Trace evaluation sequence"><thead><tr><th>Phase</th><th>Rule</th><th>Outcome</th><th>Details</th></tr></thead><tbody>
               {{range .Simulation.Steps}}
-                <tr><td>{{.Phase}}</td><td><code>{{.RuleID}}</code></td><td>{{.Outcome}}</td><td>{{.Reason}}{{if .PathBefore}}<br><code>{{.PathBefore}}</code>{{if .PathAfter}} → <code>{{.PathAfter}}</code>{{end}}{{end}}{{if .Location}}<br>Location: <code>{{.Location}}</code>{{end}}{{if .StatusCode}}<br>Status: {{.StatusCode}}{{end}}</td></tr>
+                <tr><td>{{.Phase}}</td><td><code>{{.RuleID}}</code></td><td>{{.Outcome}}</td><td>{{.Reason}}{{if .PathBefore}}<br><code>{{.PathBefore}}</code>{{if .PathAfter}} → <code>{{.PathAfter}}</code>{{end}}{{end}}{{if .Location}}<br>Location: <code>{{.Location}}</code>{{end}}{{if .StatusCode}}<br>Status: {{.StatusCode}}{{end}}{{if .ValidationField}}<br>Field: <code>{{.ValidationField}}</code>{{end}}{{if .ValidationKeyword}} · keyword: <code>{{.ValidationKeyword}}</code>{{end}}</td></tr>
               {{end}}
             </tbody></table>
           {{end}}

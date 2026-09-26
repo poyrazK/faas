@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -124,6 +125,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 // app's stored edge-rule snapshot. It is a read-only, account-scoped form
 // post; it neither contacts the gateway nor stores request data.
 func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
 		writeDashboardUnauthorized(w, r)
@@ -131,13 +133,16 @@ func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request)
 	}
 	// VerifyAuthenticatedNamed reads a form value, so apply the body bound
 	// before CSRF validation as well as before the handler parses fields.
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	// Form encoding can expand the bounded UTF-8 body to roughly 3x its
+	// original byte length; cap the complete POST before CSRF parsing.
+	requestLimit := int64(edgeruletrace.MaxTraceBodyBytes*4 + 64*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, requestLimit)
 	if !s.verifyDashboardEdgeRulesCSRF(w, r, acct.ID) {
 		return
 	}
 	form := dashboard.EdgeRuleTraceFormData{Submitted: true}
 	if err := r.ParseForm(); err != nil {
-		form.ErrorMessage = "The trace form could not be read. Keep the request under 16 KB and try again."
+		form.ErrorMessage = fmt.Sprintf("The trace form could not be read. The simulated request body is limited to %d bytes.", edgeruletrace.MaxTraceBodyBytes)
 		s.renderAppEdgeRules(w, r, s.log, acct, r.PathValue("slug"), &form, nil)
 		return
 	}
@@ -145,6 +150,8 @@ func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request)
 	form.Path = r.FormValue("trace_path")
 	form.Method = r.FormValue("trace_method")
 	form.Headers = r.FormValue("trace_headers")
+	rawBody := r.FormValue("trace_body")
+	form.BodyProvided = r.FormValue("trace_body_provided") != "" || rawBody != ""
 	form.ClientIP = r.FormValue("trace_client_ip")
 	form.Country = r.FormValue("trace_country")
 	lines := strings.Split(strings.ReplaceAll(form.Headers, "\r\n", "\n"), "\n")
@@ -164,6 +171,8 @@ func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request)
 	input, err := edgeruletrace.NormalizeInput(edgeruletrace.Input{
 		App: r.PathValue("slug"), Host: form.Host, Path: form.Path, Method: form.Method,
 		ClientIP: form.ClientIP, Country: form.Country, Headers: headers,
+		Body: []byte(rawBody), BodyProvided: form.BodyProvided,
+		RequestBodyMaxBytes: acct.Plan.MaxRequestBodyBytes(),
 	})
 	if err != nil {
 		form.ErrorMessage = err.Error()
