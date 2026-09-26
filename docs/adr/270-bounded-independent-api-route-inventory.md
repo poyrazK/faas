@@ -1,4 +1,4 @@
-# ADR-268: Bounded API route inventory independent of request audit
+# ADR-270: Bounded API route inventory independent of request audit
 
 - **Status:** accepted for initial implementation
 - **Date:** 2026-09-25

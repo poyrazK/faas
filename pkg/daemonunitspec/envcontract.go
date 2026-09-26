@@ -125,7 +125,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_APID_REQUEST_WRITE_TIMEOUT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_ROLE", Owners: []string{"apid", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_API_CONTRACT_DIFF_ENABLED", Owners: []string{"shared"}, Source: EnvSourceDropin, Note: "public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs"},
-	{Name: "FAAS_API_DISCOVERY_ENABLED", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-268)"},
+	{Name: "FAAS_API_DISCOVERY_ENABLED", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-270)"},
 	{Name: "FAAS_API_HOSTING_SMOKE_REQUIRED", Owners: []string{"imaged"}, Source: EnvSourceDropin, Note: "public-beta compute-only drop-in enables fail-closed post-readiness API hosting smoke verification"},
 	{Name: "FAAS_API_HOSTING_SMOKE_URL", Owners: []string{"imaged"}, Source: EnvSourceDropin, Validate: EnvValidationURL, Note: "public origin for post-readiness API hosting smoke verification; compute-only production drop-in derives it from the apps domain"},
 	{Name: "FAAS_APPS_DOMAIN", Owners: []string{"apid", "gatewayd-internal", "gatewayd-public", "githubd", "imaged", "shared"}, Source: EnvSourceEnvFile},
