@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObservation.js';
 /**
  * Per-row shape for the nested `secrets_by_scope` response
  * (ADR-092 PR-B, mirror of ADR-090 D3's env_by_scope).
@@ -51,5 +52,9 @@ export type ScopedAppSecretResponse = {
   last_runtime_reload_at?: string;
   last_runtime_reload_error_code?: 'projection_failed' | 'signal_failed';
   last_runtime_reload_instance_id?: string;
+  /**
+   * Latest guest-init outcome from each active reporting runtime. Missing reports are unknown, and successful signals do not prove application acknowledgement.
+   */
+  runtime_reload_observations?: Array<SecretRuntimeReloadObservation>;
 };
 

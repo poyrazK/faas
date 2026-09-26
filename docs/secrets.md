@@ -56,8 +56,28 @@ secrets. Secret reload requests are resolved against the live deployment's
 scope and `env_secrets` allowlist (legacy deployments without an allowlist keep
 their existing all-secrets-in-scope behavior). The application is responsible
 for confirming to itself that it successfully reloaded. `secrets list` reports
-both wake-time delivery and guest-init's latest live-refresh observation, but
-does not claim that the application applied the new credentials.
+wake-time delivery and the latest live-refresh observation from each active
+runtime that has reported. A missing runtime report is unknown (not proof that
+the runtime lacks access), and these observations do not claim that the
+application applied the new credentials.
+
+An opted-in app may make that last step explicit. After rereading
+`FAAS_SECRETS_FILE` and successfully applying the new credentials to its own
+clients, it can POST the non-sensitive revision from
+`FAAS_SECRETS_REVISION_FILE` to `FAAS_SECRETS_RELOAD_ACK_ENDPOINT`:
+
+```json
+{"revision":"<64 lowercase hex characters>","status":"applied"}
+```
+
+If it cannot apply the new credentials, use `{"revision":"…","status":"failed"}`.
+The platform accepts only those closed outcomes and does not accept arbitrary
+error text or secret values. The response is `202` when recorded, `409` when
+the revision is stale (reread and apply the latest projection), and `503` when
+the host is temporarily unavailable (retry the same acknowledgement). Read the
+revision before and after reading the secrets file; if it changed, reread so
+the values and revision describe the same rotation. An acknowledgement is an
+application self-attestation, not independent proof of its internal state.
 
 `gregale secrets list` reports delivery for each key:
 
@@ -73,9 +93,12 @@ races with a wake or refresh report, the older result cannot mark the newer
 value delivered or reloaded. The CLI labels live-refresh outcomes as runtime
 file updated/unchanged/failed and whether the signal was sent, queued, or
 failed; a reported version different from the current version is shown as
-stale. A successful signal means only that guest-init's signal operation
-succeeded, not that the app handled it. These are latest-per-secret
-observations from one reporting runtime, not a fleet-wide health guarantee;
-the API includes that runtime's ID. The API exposes only opaque versions,
-status, timestamps, and runtime correlation IDs; it never places plaintext or
-ciphertext in delivery metadata or audit events.
+stale. Text output summarizes active runtime reports and flags failures; JSON
+includes each reporting instance ID. The report count is not a denominator for
+all active or authorized instances: runtimes with no report remain unknown.
+A successful signal means only that guest-init's signal operation succeeded,
+not that the app handled it. An explicit app acknowledgement is shown
+separately from guest-init's signal result; missing acknowledgements are
+unknown. The API exposes only opaque versions, status, timestamps, and runtime
+correlation IDs; it never places plaintext or ciphertext in delivery metadata
+or audit events.

@@ -681,6 +681,9 @@ type MemStore struct {
 	// secrets is keyed by (app_id, key) per the schema's PRIMARY KEY.
 	// Value carries account_id for the ownership check on delete.
 	secrets map[secretKey]AppSecret
+	// secretRuntimeReloadObservations mirrors the per-instance latest-status
+	// table, keyed by (app, scope, key, instance).
+	secretRuntimeReloadObservations map[secretRuntimeReloadObservationKey]AppSecretRuntimeReloadObservation
 	// registryCreds mirrors app_registry_credentials (issue #461 /
 	// ADR-062). Same composite-key shape as secrets/envs. Value
 	// carries account_id for the ownership check on delete and the
@@ -789,6 +792,13 @@ type secretKey struct {
 	AppID string
 	Scope string
 	Key   string
+}
+
+type secretRuntimeReloadObservationKey struct {
+	AppID      string
+	Scope      string
+	Key        string
+	InstanceID string
 }
 
 // envKey mirrors the app_envs PRIMARY KEY (app_id, scope, key)
@@ -1161,15 +1171,16 @@ func NewMemStore() *MemStore {
 		// 00037 added the (account_id, window_start) PK + state
 		// column to paddle_overage_dedupe; this in-memory mirror
 		// keeps the MemStore parity tests in lockstep.
-		paddleOverageWindows: map[paddleOverageWindowKey]paddleOverageClaimState{},
-		secrets:              map[secretKey]AppSecret{},
-		registryCreds:        map[registryCredKey]AppRegistryCredential{},
-		envs:                 map[envKey]AppEnv{},
-		trustedSigners:       map[trustedSignerKey]AppTrustedSigner{},
-		orgs:                 map[string]Org{},
-		orgsBySlug:           map[string]string{},
-		memberships:          map[orgAccountKey]OrgMembership{},
-		invitations:          map[string]OrgInvitation{},
+		paddleOverageWindows:            map[paddleOverageWindowKey]paddleOverageClaimState{},
+		secrets:                         map[secretKey]AppSecret{},
+		secretRuntimeReloadObservations: map[secretRuntimeReloadObservationKey]AppSecretRuntimeReloadObservation{},
+		registryCreds:                   map[registryCredKey]AppRegistryCredential{},
+		envs:                            map[envKey]AppEnv{},
+		trustedSigners:                  map[trustedSignerKey]AppTrustedSigner{},
+		orgs:                            map[string]Org{},
+		orgsBySlug:                      map[string]string{},
+		memberships:                     map[orgAccountKey]OrgMembership{},
+		invitations:                     map[string]OrgInvitation{},
 		// computeNodes is empty here; seedDefaultLocalNodeLocked
 		// inserts the synthetic default-local row below.
 		computeNodes: map[string]ComputeNode{},
@@ -18257,6 +18268,11 @@ func (m *MemStore) DeleteAppSecretInScope(_ context.Context, accountID, appID, s
 		return ErrConflict
 	}
 	delete(m.secrets, k)
+	for observationKey := range m.secretRuntimeReloadObservations {
+		if observationKey.AppID == appID && observationKey.Scope == scope && observationKey.Key == key {
+			delete(m.secretRuntimeReloadObservations, observationKey)
+		}
+	}
 	return nil
 }
 
@@ -18513,6 +18529,10 @@ func (m *MemStore) RecordAppSecretRuntimeReload(_ context.Context, result AppSec
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	instance, ok := m.instances[result.InstanceID]
+	if !ok || instance.AppID != result.AppID {
+		return 0, ErrConflict
+	}
 	for _, candidate := range result.Candidates {
 		secret, ok := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
 		if !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
@@ -18534,9 +18554,91 @@ func (m *MemStore) RecordAppSecretRuntimeReload(_ context.Context, result AppSec
 		secret.LastRuntimeReloadErrorCode = result.ErrorCode
 		secret.LastRuntimeReloadInstanceID = result.InstanceID
 		m.secrets[k] = secret
+		observationKey := secretRuntimeReloadObservationKey{
+			AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key, InstanceID: result.InstanceID,
+		}
+		observation := AppSecretRuntimeReloadObservation{
+			Scope: candidate.Scope, Key: candidate.Key, InstanceID: result.InstanceID,
+			Version: candidate.Version, Projection: result.Projection, Signal: result.Signal,
+			ObservedAt: at, ErrorCode: result.ErrorCode,
+		}
+		if previous := m.secretRuntimeReloadObservations[observationKey]; previous.ApplicationAckVersion >= candidate.Version {
+			observation.ApplicationAckVersion = previous.ApplicationAckVersion
+			observation.ApplicationAck = previous.ApplicationAck
+			observation.ApplicationAckAt = previous.ApplicationAckAt
+			observation.ApplicationAckErrorCode = previous.ApplicationAckErrorCode
+		}
+		m.secretRuntimeReloadObservations[observationKey] = observation
 		updated++
 	}
 	return updated, nil
+}
+
+func (m *MemStore) RecordAppSecretRuntimeReloadAck(_ context.Context, result AppSecretRuntimeReloadAckResult) (int, error) {
+	if !validAppSecretRuntimeReloadAckResult(result) {
+		return 0, ErrInvalidArgument
+	}
+	if len(result.Candidates) == 0 {
+		return 0, nil
+	}
+	at := result.AttemptedAt.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	instance, ok := m.instances[result.InstanceID]
+	if !ok || instance.AppID != result.AppID {
+		return 0, ErrConflict
+	}
+	for _, candidate := range result.Candidates {
+		secret, secretOK := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
+		observation, observationOK := m.secretRuntimeReloadObservations[secretRuntimeReloadObservationKey{
+			AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key, InstanceID: result.InstanceID,
+		}]
+		if !secretOK || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version ||
+			!observationOK || observation.Version > candidate.Version || observation.ApplicationAckVersion > candidate.Version {
+			return 0, ErrConflict
+		}
+	}
+	for _, candidate := range result.Candidates {
+		key := secretRuntimeReloadObservationKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key, InstanceID: result.InstanceID}
+		observation := m.secretRuntimeReloadObservations[key]
+		observation.ApplicationAckVersion = candidate.Version
+		observation.ApplicationAck = result.Status
+		observation.ApplicationAckAt = &at
+		observation.ApplicationAckErrorCode = result.ErrorCode
+		m.secretRuntimeReloadObservations[key] = observation
+	}
+	return len(result.Candidates), nil
+}
+
+func (m *MemStore) ListAppSecretRuntimeReloadObservations(_ context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadObservation, error) {
+	if accountID == "" || appID == "" {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []AppSecretRuntimeReloadObservation
+	for key, observation := range m.secretRuntimeReloadObservations {
+		secret, ok := m.secrets[secretKey{AppID: key.AppID, Scope: key.Scope, Key: key.Key}]
+		instance, active := m.instances[key.InstanceID]
+		if !ok || secret.AccountID != accountID || key.AppID != appID || instance.AppID != appID || (scope != "" && key.Scope != scope) ||
+			!active || !State(instance.State).CountsForRAM() {
+			continue
+		}
+		out = append(out, observation)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Scope != out[j].Scope {
+			return out[i].Scope < out[j].Scope
+		}
+		if out[i].Key != out[j].Key {
+			return out[i].Key < out[j].Key
+		}
+		return out[i].InstanceID < out[j].InstanceID
+	})
+	return out, nil
 }
 
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------

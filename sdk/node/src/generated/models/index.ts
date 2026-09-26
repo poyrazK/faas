@@ -720,6 +720,7 @@ export type { ScopedAppSecretResponse } from './ScopedAppSecretResponse.js';
 export type { SeatUsageResponse } from './SeatUsageResponse.js';
 export type { SecretFinding } from './SecretFinding.js';
 export type { SecretKey } from './SecretKey.js';
+export type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObservation.js';
 export type { SecretScanResult } from './SecretScanResult.js';
 export type { SecurityQuarantineRecoveryRequest } from './SecurityQuarantineRecoveryRequest.js';
 export type { SecurityQuarantineRecoveryResponse } from './SecurityQuarantineRecoveryResponse.js';

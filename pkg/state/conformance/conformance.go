@@ -2635,11 +2635,16 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	const key = "DATABASE_URL"
 	scope := api.DefaultEnvScope
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
 	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v1")); err != nil {
 		t.Fatalf("UpsertAppSecretInScope(v1): %v", err)
 	}
 	result := state.AppSecretRuntimeReloadResult{
-		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: "instance-conformance",
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
 		Revision: strings.Repeat("a", 64), Projection: state.SecretReloadProjectionUpdated,
 		Signal:     state.SecretReloadSignalSent,
 		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 1}},
@@ -2647,6 +2652,10 @@ func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result)
 	if err != nil || updated != 1 {
 		t.Fatalf("RecordAppSecretRuntimeReload(v1): updated=%d err=%v, want 1/nil", updated, err)
+	}
+	observations, err := fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(observations) != 1 || observations[0].InstanceID != instance.ID || observations[0].Version != 1 {
+		t.Fatalf("ListAppSecretRuntimeReloadObservations(v1) = %+v, %v", observations, err)
 	}
 	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v2")); err != nil {
 		t.Fatalf("UpsertAppSecretInScope(v2): %v", err)
@@ -2661,6 +2670,23 @@ func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	}
 	if current.DeliveryVersion != 2 || current.LastRuntimeReloadVersion != 1 {
 		t.Fatalf("stale runtime reload changed current metadata = current %d observed %d, want 2/1", current.DeliveryVersion, current.LastRuntimeReloadVersion)
+	}
+	result.Candidates[0].Version = 2
+	result.Revision = strings.Repeat("b", 64)
+	if updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload(v2): updated=%d err=%v", updated, err)
+	}
+	ack := state.AppSecretRuntimeReloadAckResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: result.Revision, Status: state.SecretApplicationReloadAckApplied,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 2}},
+	}
+	if updated, err := fx.Store.RecordAppSecretRuntimeReloadAck(fx.Ctx, ack); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReloadAck(v2): updated=%d err=%v", updated, err)
+	}
+	observations, err = fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(observations) != 1 || observations[0].ApplicationAckVersion != 2 || observations[0].ApplicationAck != state.SecretApplicationReloadAckApplied {
+		t.Fatalf("ListAppSecretRuntimeReloadObservations(app ack) = %+v, %v", observations, err)
 	}
 }
 
