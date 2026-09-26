@@ -1081,3 +1081,35 @@ func TestCronDispatch_EmitsCronFiredAudit_WhenInvokeFails(t *testing.T) {
 		t.Errorf("synth.calls = %d, want 2 (Invoke + SynthesizeRequest fallback)", got)
 	}
 }
+
+// TestCronDispatch_NeverFiringScheduleDoesNotFireEveryTick: a stored cron
+// for a day that never exists ("0 0 30 2 *") made NextFireAt return the zero
+// time, which is never After(now), so the dispatcher fired it on every
+// 60-second tick. It must be treated as a bad schedule.
+func TestCronDispatch_NeverFiringScheduleDoesNotFireEveryTick(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "c@example.com", api.PlanHobby)
+	_, c := newAppAndCron(t, store, acct.ID, true)
+
+	vmm := &fakeWakeVMM{}
+	eng, _ := makeEngine(t, store, vmm)
+	synth := &recordingSynth{}
+	now := time.Date(2026, 7, 17, 12, 2, 0, 0, time.UTC)
+	loop := NewLoop(nil, eng, slog.Default()).
+		WithGatewaySynth(synth).
+		WithClock(func() time.Time { return now })
+
+	c, err := store.CronByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("get cron: %v", err)
+	}
+	c.Schedule = "0 0 30 2 *"
+	for i := 0; i < 3; i++ {
+		loop.dispatchOneCron(ctx, c, now.Add(time.Duration(i)*time.Minute))
+	}
+	if got := synth.calls.Load(); got != 0 {
+		t.Fatalf("synth calls = %d, want 0 for a schedule that never fires", got)
+	}
+}

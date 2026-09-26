@@ -252,3 +252,20 @@ func TestScalingPolicy_EveryFieldSurvivesJSONRoundTrip(t *testing.T) {
 			"This is how ADR-194's `targets` shipped inert.", in, out, blob)
 	}
 }
+
+// A schedule for a day that never exists made robfig's Next return the zero
+// time, so Window reported the warm floor open at every instant — the app
+// was held (and billed) warm forever.
+func TestScheduledMinInstances_NeverFiringScheduleIsNeverOpen(t *testing.T) {
+	p := &ScalingPolicy{
+		Timezone: ist,
+		Schedules: []ScalingSchedule{{
+			Cron: "0 8 30 2 *", DurationS: 3600, MinInstances: 3,
+		}},
+	}
+	for _, when := range []string{"2026-09-21T05:00:00Z", "2027-02-28T05:30:00Z", "2028-03-01T05:30:00Z"} {
+		if got := p.ScheduledMinInstancesAt(at(t, when)); got != 0 {
+			t.Fatalf("ScheduledMinInstancesAt(%s) = %d, want 0", when, got)
+		}
+	}
+}

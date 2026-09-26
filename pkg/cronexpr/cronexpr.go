@@ -44,6 +44,15 @@ func Parse(raw, timezone string) (cron.Schedule, error) {
 	if err != nil {
 		return nil, errors.Join(ErrInvalidSchedule, err)
 	}
+	// A day that never exists ("0 0 30 2 *", "0 0 31 4 *") parses, but
+	// robfig's Next then returns the zero time. Every caller compares that
+	// against the clock as a real instant: the cron dispatcher fired such a
+	// schedule on every tick, and a scaling schedule's warm-floor window
+	// stayed open forever. Next's five-year horizon covers every calendar
+	// date that does occur (29 February included), so zero means never.
+	if parsed.Next(time.Now()).IsZero() {
+		return nil, fmt.Errorf("%w: %q never fires", ErrInvalidSchedule, raw)
+	}
 	return parsed, nil
 }
 
