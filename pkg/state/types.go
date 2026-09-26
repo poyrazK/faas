@@ -6199,15 +6199,17 @@ type Project struct {
 // promotion step. Optional PR identity marks a cloned environment as the
 // exact preview target for a GitHub pull request.
 type ProjectEnvironment struct {
-	ID              string
-	AccountID       string
-	ProjectID       string
-	Slug            string
-	Protected       bool
-	PreviewPRNumber int
-	PreviewHeadSHA  string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID               string
+	AccountID        string
+	ProjectID        string
+	Slug             string
+	Protected        bool
+	PreviewPRNumber  int
+	PreviewHeadSHA   string
+	PreviewState     string
+	PreviewExpiresAt *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // ProjectEnvironmentApproval binds a short-lived approval credential to the

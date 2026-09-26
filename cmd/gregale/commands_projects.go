@@ -806,6 +806,12 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 			sha = sha[:12]
 		}
 		_, _ = fmt.Fprintf(osStdout, "  preview: PR #%d @ %s\n", environment.PreviewPRNumber, sha)
+		if environment.PreviewState != "" {
+			_, _ = fmt.Fprintf(osStdout, "  preview state: %s\n", environment.PreviewState)
+		}
+		if environment.PreviewExpiresAt != "" {
+			_, _ = fmt.Fprintf(osStdout, "  preview expires: %s\n", environment.PreviewExpiresAt)
+		}
 	}
 	if environment.Clone != nil {
 		_, _ = fmt.Fprintf(osStdout, "  cloned from: %s\n  copied: config=%t variables=%d secrets=%d workloads=%d bindings=%d routes=%d policies=%d\n  shared: %s\n",

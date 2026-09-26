@@ -26957,6 +26957,8 @@ components:
         protected: { type: boolean }
         preview_pr_number: { type: integer, minimum: 1, description: GitHub pull request number for preview environments. }
         preview_head_sha: { type: string, pattern: '^[a-f0-9]{40}$', description: Full lowercase commit SHA recorded for the preview environment. }
+        preview_state: { type: string, enum: [open, closed, tearing_down], description: Lifecycle state for a PR-scoped project environment. }
+        preview_expires_at: { type: string, format: date-time, description: Time when the preview expires or its current cleanup grace period ends. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         cloned_from: { type: string }

@@ -2978,6 +2978,9 @@ func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnviro
 	if !validProjectEnvironmentPreviewIdentity(env.PreviewPRNumber, env.PreviewHeadSHA, env.Protected) {
 		return ProjectEnvironment{}, ErrInvalidArgument
 	}
+	if err := initializeProjectEnvironmentPreviewLifecycle(&env, time.Now().UTC()); err != nil {
+		return ProjectEnvironment{}, err
+	}
 	project, ok := m.projects[env.ProjectID]
 	if !ok || project.AccountID != env.AccountID {
 		return ProjectEnvironment{}, ErrNotFound
@@ -3084,6 +3087,10 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			continue
 		}
 		for _, deployment := range m.deployments {
+			if environment.PreviewPRNumber > 0 && environment.PreviewState == ProjectEnvironmentPreviewTearingDown &&
+				deployment.AppID == app.ID && normalizedDeploymentScope(deployment.Scope) == slug && !deployment.Status.IsTerminal() {
+				return ProjectEnvironmentCleanupJob{}, ErrConflict
+			}
 			if deployment.AppID == app.ID && deployment.Status == DeployLive &&
 				normalizedDeploymentScope(deployment.Scope) == slug {
 				return ProjectEnvironmentCleanupJob{}, ErrConflict
@@ -7730,6 +7737,19 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 	}()
 	if d.Status == DeployCancelled {
 		return ErrInvalidStateTransition
+	}
+	app := m.apps[d.AppID]
+	if app.ProjectID != "" && app.PreviewOfSlug == "" && normalizedDeploymentScope(d.Scope) != DefaultEnvScope {
+		if environment, err := m.projectEnvironmentBySlugLocked(app.ProjectID, normalizedDeploymentScope(d.Scope)); err == nil &&
+			environment.PreviewPRNumber > 0 && environment.PreviewState == ProjectEnvironmentPreviewTearingDown {
+			if d.Status == DeploySuperseded || d.Status == DeployFailed {
+				return ErrInvalidStateTransition
+			}
+			d.Status = DeploySuperseded
+			d.TrafficPercent = 0
+			m.deployments[id] = d
+			return ErrInvalidStateTransition
+		}
 	}
 
 	// Build the post-transition rows locally first. The callback can fail
