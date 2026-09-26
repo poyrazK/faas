@@ -4,6 +4,7 @@ package state
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestMemStoreServiceCallerKeys(t *testing.T) {
@@ -33,7 +34,8 @@ func TestMemStoreServiceCallerKeys(t *testing.T) {
 		t.Fatalf("keys = %+v, want node-a then node-b", keys)
 	}
 
-	// Rotation replaces the node's row rather than accumulating history.
+	// Rotation retains the previous public key for the assertion maximum TTL
+	// so requests minted just before rotation remain verifiable.
 	if err := store.PublishServiceCallerKey(ctx, ServiceCallerKey{
 		NodeID: "node-a", KeyID: "kid-rotated", PublicKeyPEM: pem,
 	}); err != nil {
@@ -43,11 +45,27 @@ func TestMemStoreServiceCallerKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list after rotate: %v", err)
 	}
-	if len(keys) != 2 {
-		t.Fatalf("after rotation there are %d keys, want 2 (one per node)", len(keys))
+	if len(keys) != 3 {
+		t.Fatalf("after rotation there are %d keys, want current + previous node-a + node-b", len(keys))
 	}
-	if keys[0].KeyID != "kid-rotated" {
-		t.Errorf("node-a kid = %q, want kid-rotated", keys[0].KeyID)
+	seen := map[string]bool{}
+	for _, key := range keys {
+		seen[key.KeyID] = true
+	}
+	for _, keyID := range []string{"kid-node-a", "kid-node-b", "kid-rotated"} {
+		if !seen[keyID] {
+			t.Errorf("rotated key set is missing %q: %+v", keyID, keys)
+		}
+	}
+
+	store.mu.Lock()
+	history := store.serviceCallerKeyHistory["kid-node-a"]
+	history.retireAt = time.Now().Add(-time.Second)
+	store.serviceCallerKeyHistory["kid-node-a"] = history
+	store.mu.Unlock()
+	keys, err = store.ListServiceCallerKeys(ctx)
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("expired history = %+v, %v; want only current keys", keys, err)
 	}
 }
 

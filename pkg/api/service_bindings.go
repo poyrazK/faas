@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"sort"
@@ -99,6 +101,31 @@ type ServiceCallScope struct {
 // ServiceCallerScopes maps logical caller app names to their permitted
 // service-call methods and path prefixes. A non-nil empty map is deny-all.
 type ServiceCallerScopes map[string]ServiceCallScope
+
+// ServiceCallerJWK is a public Ed25519 verification key for service caller
+// assertions. The private signing key never leaves its compute node.
+type ServiceCallerJWK struct {
+	Kty string `json:"kty"`
+	Crv string `json:"crv"`
+	Kid string `json:"kid"`
+	X   string `json:"x"`
+	Alg string `json:"alg"`
+	Use string `json:"use"`
+}
+
+// ServiceCallerJWKSet is the guest-readable set of active and recently
+// rotated public keys used to verify service caller assertions.
+type ServiceCallerJWKSet struct {
+	Keys []ServiceCallerJWK `json:"keys"`
+}
+
+// GetServiceCallerKeys reads the public key set used to verify signed
+// service-caller assertions. No API token is required.
+func (c *Client) GetServiceCallerKeys(ctx context.Context) (ServiceCallerJWKSet, error) {
+	var out ServiceCallerJWKSet
+	err := c.do(ctx, http.MethodGet, "/v1/service-caller-keys", nil, &out)
+	return out, err
+}
 
 // NormalizeServiceCallerScopes validates and canonicalizes a target-owned
 // method/path policy. The result is non-nil even for an explicit empty map.
