@@ -96,6 +96,14 @@ revision before and after reading the secrets file; if it changed, reread so
 the values and revision describe the same rotation. An acknowledgement is an
 application self-attestation, not independent proof of its internal state.
 
+The built-in `secret-reload-node` template is an executable Node.js + Postgres
+reference for this contract. It uses the `SIGHUP` OCI label, reads a consistent
+secret snapshot, tests a candidate database pool before swapping it in, retries
+transient ACK failures, and sends only the opaque revision plus `applied` or
+`failed` status. Start it with `gregale init --template secret-reload-node
+--path secret-reload-node`; its README includes the first deploy and rotation
+steps.
+
 `gregale secrets list` reports delivery for each key:
 
 - `pending` means the current version has not yet reached a successfully
