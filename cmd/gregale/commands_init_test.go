@@ -77,7 +77,8 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			name:  "cron-worker",
 			files: []string{"handler.js", "package.json", "README.md"},
 			readmeHas: []string{
-				"QSTASH_TOKEN",
+				"QSTASH_CURRENT_SIGNING_KEY",
+				"QSTASH_NEXT_SIGNING_KEY",
 				"UPSTASH_REDIS_REST_URL",
 				"gregale secrets set",
 				"--create-only",
@@ -390,7 +391,7 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 		{"s3-uploader", []string{"--create-only", "s3-uploader", "S3_BUCKET", "gregale secrets set", "cd <dest>"}},
 		{"slack-bot", []string{"--create-only", "slack-bot", "SLACK_SIGNING_SECRET", "gregale secrets set", "cd <dest>"}},
 		{"rest-api-postgres", []string{"--create-only", "rest-api-postgres", "DATABASE_URL", "gregale secrets set", "cd <dest>"}},
-		{"cron-worker", []string{"--create-only", "cron-worker", "QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "gregale secrets set", "cd <dest>"}},
+		{"cron-worker", []string{"--create-only", "cron-worker", "QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "gregale secrets set", "cd <dest>"}},
 		{"webhook-receiver", []string{"WEBHOOK_SECRET", "openssl rand", "gregale secrets set", "cd <dest>"}},
 		{"ai-chat", []string{"--create-only", "ai-chat", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "gregale secrets set", "cd <dest>"}},
 		{"hello-node", []string{"cd <dest>", "gregale deploy"}}, // default branch
