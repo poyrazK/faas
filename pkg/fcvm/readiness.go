@@ -78,6 +78,7 @@ func readinessProbeConfig(raw json.RawMessage) (ReadinessProbeConfig, error) {
 	return cfg, nil
 }
 
+//nolint:contextcheck // the readiness loop intentionally follows manager lifetime, not request lifetime.
 func (m *Manager) startReadinessLoop(ctx context.Context, instance string, slot int, override json.RawMessage) {
 	if len(override) == 0 || m.readinessStarter == nil {
 		return
