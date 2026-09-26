@@ -2204,7 +2204,108 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]
+Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|history|config [set]|routes set|diff|preview|promote|status|rollback); promote supports --wait [--progress] [--timeout SECONDS]
+
+#### projects environments list
+
+List environments
+
+`gregale projects environments list [flags]`
+
+#### projects environments create
+
+Create or clone an environment
+
+`gregale projects environments create [flags]`
+
+#### projects environments protect
+
+Protect an environment
+
+`gregale projects environments protect [flags]`
+
+#### projects environments unprotect
+
+Remove environment protection
+
+`gregale projects environments unprotect [flags]`
+
+#### projects environments inspect
+
+Inspect the active graph and environment deployments
+
+`gregale projects environments inspect [flags]`
+
+#### projects environments release-sets
+
+List release graphs and their retention deadlines
+
+`gregale projects environments release-sets [flags]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <CURSOR>` | page cursor |  |
+| `--limit <N>` | page size |  |
+
+#### projects environments releases
+
+List live workload deployments
+
+`gregale projects environments releases [flags]`
+
+#### projects environments history
+
+List environment promotions
+
+`gregale projects environments history [flags]`
+
+#### projects environments config
+
+Manage environment configuration
+
+`gregale projects environments config [flags]`
+
+#### projects environments routes
+
+Manage environment routes
+
+`gregale projects environments routes [flags]`
+
+#### projects environments policies
+
+Manage environment policies
+
+`gregale projects environments policies [flags]`
+
+#### projects environments diff
+
+Compare environments
+
+`gregale projects environments diff [flags]`
+
+#### projects environments preview
+
+Plan a promotion
+
+`gregale projects environments preview [flags]`
+
+#### projects environments promote
+
+Promote workloads
+
+`gregale projects environments promote [flags]`
+
+#### projects environments status
+
+Inspect a promotion
+
+`gregale projects environments status [flags]`
+
+#### projects environments rollback
+
+Roll back a promotion
+
+`gregale projects environments rollback [flags]`
 
 ### projects update
 
