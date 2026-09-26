@@ -1,4 +1,4 @@
--- filename: 20260925060000001_app_readiness_event.sql
+-- filename: 20260926082906719_app_readiness_event.sql
 -- +goose Up
 -- +goose StatementBegin
 
