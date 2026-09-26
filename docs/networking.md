@@ -266,7 +266,7 @@ compute nodes. A workload can then verify `https://billing.internal` with the
 guest bundle at `/etc/faas/service-proxy-ca.crt` (for example, `curl --cacert
 /etc/faas/service-proxy-ca.crt https://billing.internal/`). This CA is not
 installed into the global trust store; application TLS clients must select it
-explicitly. See [ADR-244](adr/244-private-https-service-bindings.md) for the
+explicitly. See [ADR-272](adr/272-private-https-service-bindings.md) for the
 rollout and rotation contract. The alias is never a public ingress hostname.
 
 Calls are authorized by the platform, not by your code. The caller is

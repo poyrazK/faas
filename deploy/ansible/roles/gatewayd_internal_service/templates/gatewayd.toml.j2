@@ -17,7 +17,7 @@ apps_domain = "{{ gatewayd_apps_domain }}"
 # the netns firewall can keep the path tenant-only.
 service_proxy_listen = "{{ gatewayd_service_proxy_listen | default('') }}"
 {% if gatewayd_service_proxy_https_listen | default('') | length > 0 %}
-# ADR-244: private guest service HTTPS. All paths use a dedicated service CA.
+# ADR-272: private guest service HTTPS. All paths use a dedicated service CA.
 service_proxy_https_listen = "{{ gatewayd_service_proxy_https_listen }}"
 service_proxy_tls_cert_path = "{{ gatewayd_service_proxy_tls_cert_path }}"
 service_proxy_tls_key_path = "{{ gatewayd_service_proxy_tls_key_path }}"

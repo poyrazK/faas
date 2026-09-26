@@ -1,4 +1,4 @@
-# ADR-244: Opt-in private HTTPS for service bindings
+# ADR-272: Opt-in private HTTPS for service bindings
 
 - **Status:** accepted
 - **Date:** 2026-09-25

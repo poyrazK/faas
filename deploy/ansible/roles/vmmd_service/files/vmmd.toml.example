@@ -57,7 +57,7 @@
 # tls_key_path = "/etc/faas/tls/vmmd.key"
 # tls_ca_path = "/etc/faas/tls/ca.pem"
 
-# ADR-244: opt-in guest service HTTPS trust bundle. This must be a dedicated
+# ADR-272: opt-in guest service HTTPS trust bundle. This must be a dedicated
 # public service CA (not the daemon mTLS CA); vmmd stages it into networked
 # guests at /etc/faas/service-proxy-ca.crt and admits bridge port 443.
 # Default: "" (HTTPS guest path disabled)
