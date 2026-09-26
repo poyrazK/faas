@@ -483,7 +483,7 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 		// back to queued when its failure evidence is already durable. Record the
 		// failed attempt first, then requeue it in the same transaction; neither
 		// intermediate state is visible outside this transaction.
-		tag, err := tx.Exec(ctx, `
+		tag, execErr := tx.Exec(ctx, `
 			update app_tasks
 			   set status = $3,
 			       stdout_tail = $4,
@@ -503,8 +503,8 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 			params.ID, params.LeaseToken, string(params.Status), params.StdoutTail,
 			params.StderrTail, params.OutputTruncated, params.ExitCode,
 			params.FailureCode, params.FailureMessage, params.FinishedAt, params.FinishedAt, startedAtArg)
-		if err != nil {
-			return AppTask{}, mapErr(err)
+		if execErr != nil {
+			return AppTask{}, mapErr(execErr)
 		}
 		if tag.RowsAffected() != 1 {
 			return AppTask{}, ErrAppTaskLeaseLost
