@@ -185,3 +185,4 @@ export type CreateAppRequest = {
    */
   require_authn?: boolean;
 };
+
