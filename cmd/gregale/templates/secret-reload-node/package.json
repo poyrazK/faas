@@ -1,0 +1,18 @@
+{
+  "name": "secret-reload-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "handler.js",
+  "scripts": {
+    "start": "node handler.js",
+    "test": "node --test secret-reload.test.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
