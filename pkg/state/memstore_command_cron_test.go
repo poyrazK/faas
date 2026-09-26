@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// adr: 099 — scheduled commands select the current live deployment once per fire.
 func TestMemStoreScheduledCommandCronUsesCurrentLiveDeploymentOnce(t *testing.T) {
 	m, ctx, _, app, _ := memCoverageFixture(t)
 	firstLive, err := m.CreateDeployment(ctx, Deployment{

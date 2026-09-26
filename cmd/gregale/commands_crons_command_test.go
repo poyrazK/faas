@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// adr: 099 — command crons preserve argv without shell reinterpretation.
 func TestCmdCronsAddCommandPreservesArgv(t *testing.T) {
 	var got struct {
 		AppID          string   `json:"app_id"`

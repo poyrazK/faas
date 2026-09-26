@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 099 — scheduled commands run as tasks on the current live deployment.
 func TestDispatchCommandCronQueuesOneTaskPerFireOnCurrentDeployment(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

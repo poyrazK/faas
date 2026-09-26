@@ -2698,6 +2698,7 @@ func TestCreateCron_OptionsRoundTrip(t *testing.T) {
 	}
 }
 
+// adr: 099 — a cron may target an app command as well as an HTTP path.
 func TestCreateCron_CommandRunRoundTrip(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	enableAppTaskAPIForTest(&e)

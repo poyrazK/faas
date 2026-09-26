@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
+// adr: 099 — HTTP and command schedules have distinct cron identities.
 func TestMigrations_00210_CronsUniqueAppSchedulePath(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)

@@ -54,6 +54,7 @@ func TestMemStoreApplyProjectReconcileRollsBackOnCronResolutionError(t *testing.
 	}
 }
 
+// adr: 099 — project reconciliation leaves independently managed command crons intact.
 func TestMemStoreApplyProjectReconcilePreservesCommandCrons(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()

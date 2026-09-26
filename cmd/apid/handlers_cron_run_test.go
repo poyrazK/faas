@@ -88,6 +88,7 @@ func TestFireCronNow_HappyPath(t *testing.T) {
 	}
 }
 
+// adr: 099 — scheduled command crons are distinct from HTTP-triggered crons.
 func TestFireCronNow_CommandCronReturnsConflict(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	app := mustSeedApp(t, e, "command-cron-fire-now")

@@ -8,6 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 099 — the cron cursor guards scheduled command task creation.
 func TestPgScheduledCommandCronCreatesCursorGuardedTask(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
 	_, appID, deploymentID := seedLiveDeploy(t, store, ctx, "command-cron-"+uuid.NewString(), "command-cron-"+uuid.NewString()[:8])

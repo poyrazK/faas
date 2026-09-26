@@ -185,6 +185,7 @@ func TestDeployManifestTriggers_HappyPath(t *testing.T) {
 	}
 }
 
+// adr: 099 — HTTP manifest reconciliation preserves independently managed command crons.
 func TestDeployManifestTriggersPreservesCommandCrons(t *testing.T) {
 	dir := t.TempDir()
 	writeGitkeep(t, dir)
