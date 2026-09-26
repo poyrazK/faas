@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE platform_tenant_access_tokens (
+CREATE TABLE IF NOT EXISTS platform_tenant_access_tokens (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id uuid NOT NULL,
     platform_tenant_id uuid NOT NULL,
@@ -20,10 +20,10 @@ CREATE TABLE platform_tenant_access_tokens (
     FOREIGN KEY (account_id, platform_tenant_id)
       REFERENCES platform_tenants(account_id, id) ON DELETE CASCADE
 );
-CREATE INDEX platform_tenant_access_tokens_active_name_idx
+CREATE INDEX IF NOT EXISTS platform_tenant_access_tokens_active_name_idx
   ON platform_tenant_access_tokens(account_id, platform_tenant_id, lower(name))
   WHERE revoked_at IS NULL;
-CREATE INDEX platform_tenant_access_tokens_tenant_idx
+CREATE INDEX IF NOT EXISTS platform_tenant_access_tokens_tenant_idx
   ON platform_tenant_access_tokens(account_id, platform_tenant_id, created_at DESC, id DESC);
 -- +goose StatementEnd
 
