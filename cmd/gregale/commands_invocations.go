@@ -112,7 +112,7 @@ func cmdInvocationsWait(args []string) int {
 					return code
 				}
 			}
-			fmt.Fprintf(osStderr, "gregale: timed out waiting for invocation %s; it may still be running (inspect with `gregale invocations get %s`)\n", id, id)
+			_, _ = fmt.Fprintf(osStderr, "gregale: timed out waiting for invocation %s; it may still be running (inspect with `gregale invocations get %s`)\n", id, id)
 			return 124
 		}
 		var ae *APIError
