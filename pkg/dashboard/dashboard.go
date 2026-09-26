@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
+	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 	"github.com/onebox-faas/faas/pkg/presetwhy"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -883,10 +884,26 @@ type AppEdgeRulesData struct {
 	App                    AppListItem
 	Rules                  []EdgeRulePageItem
 	CorsPresets            []CorsPresetPageItem
+	Trace                  EdgeRuleTraceFormData
 	ActionCSRF             string
 	Action                 string
 	SecurityHeadersEnabled bool
 	ErrorMessage           string
+}
+
+// EdgeRuleTraceFormData keeps the submitted request context and read-only
+// simulation result on the edge-rules page. Result is nil until input passes
+// validation and the current app rules can be loaded.
+type EdgeRuleTraceFormData struct {
+	Submitted    bool
+	Host         string
+	Path         string
+	Method       string
+	Headers      string
+	ClientIP     string
+	Country      string
+	ErrorMessage string
+	Result       *edgeruletrace.Result
 }
 
 // EdgeRulePageItem is a template-safe edge rule projection. ActionJSON is

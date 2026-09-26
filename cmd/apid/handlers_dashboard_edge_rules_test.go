@@ -37,13 +37,94 @@ func TestDashboardHandler_AppEdgeRules(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{"Edge rules for", "edge.example.com/api", "Security headers preset", `name="csrf_token"`, "Create an edge rule"} {
+	for _, want := range []string{"Edge rules for", "edge.example.com/api", "Security headers preset", `name="csrf_token"`, "Create an edge rule", "Trace a request", `name="trace_host"`, `value="/"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("body missing %q\n%s", want, rec.Body.String())
 		}
 	}
 	if got := rec.Header().Get("Set-Cookie"); !strings.Contains(got, dashboardEdgeRulesCSRFCookie) {
 		t.Fatalf("GET edge rules missing %s cookie: %q", dashboardEdgeRulesCSRFCookie, got)
+	}
+}
+
+func TestDashboardEdgeRuleTraceIsReadOnlyAndRequiresNamedCSRF(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "edge-trace", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	_, err = store.CreateEdgeRule(t.Context(), state.CreateEdgeRuleParams{
+		AccountID: acct.ID, AppID: app.ID, MatchHost: "edge.example.com", MatchPath: "/old", Priority: 10, Enabled: true,
+		Kind:   state.EdgeRuleKindRedirect,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindRedirect, Redirect: &state.EdgeRuleRedirectAction{StatusCode: http.StatusPermanentRedirect, To: "/new"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+
+	fields := map[string]string{"trace_host": "edge.example.com", "trace_path": "/old", "trace_method": "GET"}
+	bad := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("missing csrf status = %d, want 400\nbody = %s", bad.Code, bad.Body.String())
+	}
+
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	fields[middleware.FormFieldName] = token
+	good := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields,
+		&http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if good.Code != http.StatusOK {
+		t.Fatalf("valid trace status = %d, want 200\nbody = %s", good.Code, good.Body.String())
+	}
+	for _, want := range []string{"Simulation: complete", "redirect", "HTTP", "/new", "Rule matches"} {
+		if !strings.Contains(good.Body.String(), want) {
+			t.Errorf("trace body missing %q\n%s", want, good.Body.String())
+		}
+	}
+	rules, err := store.ListEdgeRulesForApp(t.Context(), app.ID)
+	if err != nil {
+		t.Fatalf("ListEdgeRulesForApp: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Action.Redirect.To != "/new" {
+		t.Fatalf("trace changed edge rules: %+v", rules)
+	}
+}
+
+func TestDashboardEdgeRuleTraceRendersValidationErrorWithoutMutation(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "edge-trace-invalid", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-invalid/edge-rules/trace", map[string]string{
+		middleware.FormFieldName: token, "trace_host": "example.com:443", "trace_path": "/", "trace_method": "GET",
+	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("invalid trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "host must be a hostname or IP address without a port") {
+		t.Fatalf("invalid input message missing\n%s", rec.Body.String())
+	}
+	rules, err := store.ListEdgeRulesForApp(t.Context(), app.ID)
+	if err != nil {
+		t.Fatalf("ListEdgeRulesForApp: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("invalid trace created edge rules: %+v", rules)
 	}
 }
 

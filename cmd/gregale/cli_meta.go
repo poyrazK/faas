@@ -1090,7 +1090,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
 				{Name: "kind", Short: "filter to a single kind", ClosedSet: edgeRuleKindVocab},
 			}},
-			{Name: "trace", Short: "Preview edge-rule matches and deterministic action outcomes", Flags: []cliFlag{
+			{Name: "trace", Short: "Simulate composed edge-rule outcomes for a request", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "url", Short: "absolute HTTP(S) request URL", Req: true, Value: "URL"},
 				{Name: "method", Short: "request method (default GET)", Value: "method"},

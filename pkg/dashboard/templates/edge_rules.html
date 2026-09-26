@@ -29,6 +29,8 @@
     .nowrap { white-space: nowrap; }
     .enabled { color: #065f46; }
     .disabled { color: #92400e; }
+    .trace-details { max-width: 72rem; overflow-wrap: anywhere; }
+    .trace-details td, .trace-details th { font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -68,6 +70,55 @@
           <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
           <button type="submit">Enable security headers</button>
         </form>
+      {{end}}
+    </section>
+
+    <section class="card" aria-labelledby="trace-request-heading">
+      <h2 id="trace-request-heading">Trace a request</h2>
+      <p class="muted">Preview how this app's edge rules would evaluate a request. This is read-only and does not contact the gateway or app. Runtime-dependent behavior may be reported as incomplete.</p>
+      <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/edge-rules/trace">
+        <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
+        <label>Host <input name="trace_host" value="{{.Data.Trace.Host}}" required maxlength="253" placeholder="api.example.com"></label>
+        <label>Path <input name="trace_path" value="{{.Data.Trace.Path}}" required maxlength="2048" placeholder="/v1/items"> <span class="muted">Path only, without the query string.</span></label>
+        <label>Method <input name="trace_method" value="{{.Data.Trace.Method}}" required maxlength="32" placeholder="GET"></label>
+        <label>Request headers<br><textarea name="trace_headers" rows="5" placeholder="Accept: application/json&#10;X-Region: west">{{.Data.Trace.Headers}}</textarea><br><span class="muted">One <code>Name: Value</code> per line; repeated headers are supported.</span></label>
+        <label>Client IP <input name="trace_client_ip" value="{{.Data.Trace.ClientIP}}" maxlength="45" placeholder="203.0.113.10"></label>
+        <label>Country <input name="trace_country" value="{{.Data.Trace.Country}}" maxlength="2" placeholder="US"></label>
+        <button type="submit">Trace request</button>
+      </form>
+      {{if .Data.Trace.ErrorMessage}}<div class="flash error" role="alert">{{.Data.Trace.ErrorMessage}}</div>{{end}}
+      {{with .Data.Trace.Result}}
+        <div class="trace-details" role="status" aria-live="polite">
+          <h3>Simulation: {{.Simulation.Status}} · {{.Simulation.Outcome}}</h3>
+          <p><code>{{.Method}} {{.Host}}{{.Path}}</code> · final path <code>{{.Simulation.FinalPath}}</code></p>
+          <p>{{.Simulation.Reason}}</p>
+          {{if .Simulation.StatusCode}}<p>Response status: <strong>{{.Simulation.StatusCode}}</strong>{{if .Simulation.Location}} · location <code>{{.Simulation.Location}}</code>{{end}}{{if .Simulation.RetryAfterSeconds}} · Retry-After {{.Simulation.RetryAfterSeconds}}s{{end}}</p>{{end}}
+          {{if .Simulation.Message}}<p>Response message: {{.Simulation.Message}}</p>{{end}}
+          {{if .Simulation.TargetApp}}<p>Routed target app: <code>{{.Simulation.TargetApp}}</code></p>{{end}}
+          {{if .Simulation.Steps}}
+            <h4>Evaluation sequence</h4>
+            <table aria-label="Trace evaluation sequence"><thead><tr><th>Phase</th><th>Rule</th><th>Outcome</th><th>Details</th></tr></thead><tbody>
+              {{range .Simulation.Steps}}
+                <tr><td>{{.Phase}}</td><td><code>{{.RuleID}}</code></td><td>{{.Outcome}}</td><td>{{.Reason}}{{if .PathBefore}}<br><code>{{.PathBefore}}</code>{{if .PathAfter}} → <code>{{.PathAfter}}</code>{{end}}{{end}}{{if .Location}}<br>Location: <code>{{.Location}}</code>{{end}}{{if .StatusCode}}<br>Status: {{.StatusCode}}{{end}}</td></tr>
+              {{end}}
+            </tbody></table>
+          {{end}}
+          {{if .Simulation.RequestHeaders}}
+            <h4>Request headers after simulated rules</h4>
+            <ul>{{range $name, $values := .Simulation.RequestHeaders}}{{range $values}}<li><code>{{$name}}: {{.}}</code></li>{{end}}{{end}}</ul>
+          {{end}}
+          {{if .Simulation.ResponseHeaderOps}}
+            <h4>Response header operations</h4>
+            <ul>{{range .Simulation.ResponseHeaderOps}}<li><code>{{.Action}} {{.Name}}: {{.Value}}</code></li>{{end}}</ul>
+          {{end}}
+          <h4>Rule matches</h4>
+          {{if .Rules}}
+            <table aria-label="Per-rule trace results"><thead><tr><th>Priority</th><th>Kind</th><th>Status</th><th>Outcome</th><th>Reason</th></tr></thead><tbody>
+              {{range .Rules}}<tr><td>{{.Priority}}</td><td>{{.Kind}}</td><td>{{.Status}}</td><td>{{.Outcome}}</td><td>{{.Reason}}<br><span class="muted">{{.OutcomeReason}}</span></td></tr>{{end}}
+            </tbody></table>
+          {{else}}<p class="muted">No edge rules are configured for this app.</p>{{end}}
+          <p class="muted">{{.Scope}}</p>
+        </div>
       {{end}}
     </section>
 
