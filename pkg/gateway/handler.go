@@ -620,16 +620,47 @@ type Target struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
-	// RequiresReadiness marks a primary-ingress companion whose readiness
-	// probe controls whether this instance may receive traffic. Unready targets
-	// remain in the cache so they still consume capacity.
+	// RequiresReadiness marks a target with one or more traffic-readiness gates.
+	// Required sources are ANDed, so a primary-app probe cannot mask an
+	// unhealthy ingress sidecar. Unready targets remain cached and consume
+	// capacity.
 	RequiresReadiness  bool
+	ReadinessGates     *ReadinessGates
 	Ready              bool
 	ReadinessUpdatedAt time.Time
 	ReadinessEventID   int64
 }
 
-func (t Target) routeReady() bool { return !t.RequiresReadiness || t.Ready }
+// ReadinessState is the latest reversible signal for one independently
+// configured traffic-readiness source on a target.
+type ReadinessState struct {
+	Ready     bool
+	UpdatedAt time.Time
+	EventID   int64
+}
+
+// ReadinessGates carries source-specific readiness state while keeping Target
+// comparable for existing internal request/test seams.
+type ReadinessGates struct {
+	RequiredSources []string
+	States          map[string]ReadinessState
+}
+
+func (t Target) routeReady() bool {
+	if !t.RequiresReadiness {
+		return true
+	}
+	if t.ReadinessGates == nil || len(t.ReadinessGates.RequiredSources) == 0 {
+		return t.Ready
+	}
+	for _, source := range t.ReadinessGates.RequiredSources {
+		state, ok := t.ReadinessGates.States[source]
+		if !ok || !state.Ready {
+			return false
+		}
+	}
+	return true
+}
 
 // PlatformIdentity returns the canonical request identity for this target.
 // Keeping construction here means normal, synthetic, streaming, and upgrade
