@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/serviceproxy"
 )
 
 // serviceProxyHTTPSConfig is deliberately separate from the public ACME and
@@ -90,8 +92,11 @@ func serviceProxyCARoots(bundle []byte) (*x509.CertPool, error) {
 			return nil, errors.New("service proxy CA bundle must contain only PEM CA certificates")
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil || !cert.IsCA || !cert.BasicConstraintsValid {
+		if err != nil {
 			return nil, errors.New("service proxy CA bundle contains a non-CA certificate")
+		}
+		if err := serviceproxy.ValidateInternalServiceCA(cert); err != nil {
+			return nil, fmt.Errorf("service proxy CA bundle: %w", err)
 		}
 		roots.AddCert(cert)
 		count++

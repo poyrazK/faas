@@ -21,9 +21,13 @@ func TestLoadServiceProxyCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	makeCert := func(isCA bool) []byte {
+	makeCert := func(isCA, constrained bool) []byte {
 		t.Helper()
 		template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: isCA, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+		if constrained {
+			template.PermittedDNSDomainsCritical = true
+			template.PermittedDNSDomains = []string{".internal"}
+		}
 		der, err := x509.CreateCertificate(rand.Reader, template, template, public, private)
 		if err != nil {
 			t.Fatal(err)
@@ -36,8 +40,9 @@ func TestLoadServiceProxyCA(t *testing.T) {
 		content []byte
 		ok      bool
 	}{
-		{"valid CA", makeCert(true), true},
-		{"leaf", makeCert(false), false},
+		{"valid constrained CA", makeCert(true, true), true},
+		{"unconstrained CA", makeCert(true, false), false},
+		{"leaf", makeCert(false, false), false},
 		{"private key", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("secret")}), false},
 		{"empty", nil, false},
 	} {

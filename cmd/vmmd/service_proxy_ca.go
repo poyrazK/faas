@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/serviceproxy"
 )
 
 func loadServiceProxyCA(path string) ([]byte, error) {
@@ -28,8 +30,11 @@ func loadServiceProxyCA(path string) ([]byte, error) {
 			return nil, errors.New("vmmd: service_proxy_ca_path must contain only PEM CA certificates")
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil || !cert.IsCA || !cert.BasicConstraintsValid {
+		if err != nil {
 			return nil, errors.New("vmmd: service_proxy_ca_path contains a non-CA certificate")
+		}
+		if err := serviceproxy.ValidateInternalServiceCA(cert); err != nil {
+			return nil, fmt.Errorf("vmmd: service_proxy_ca_path: %w", err)
 		}
 		count++
 		rest = next

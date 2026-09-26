@@ -56,6 +56,7 @@ func testServiceProxyPKI(t *testing.T) (Config, *x509.Certificate, *ecdsa.Privat
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "service-only-test-ca"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+		PermittedDNSDomainsCritical: true, PermittedDNSDomains: []string{".internal"},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, ca, ca, &key.PublicKey, key)
 	if err != nil {
@@ -125,6 +126,36 @@ func TestServiceProxyHTTPSConfigAndLeafRotation(t *testing.T) {
 	}
 	if resp.ProtoMajor != 2 {
 		t.Fatalf("HTTPS protocol = %s, want HTTP/2 for gRPC", resp.Proto)
+	}
+}
+
+func TestServiceProxyCARootsRejectsNamesOutsideInternal(t *testing.T) {
+	cfg, ca, caKey := testServiceProxyPKI(t)
+	caPEM, err := os.ReadFile(cfg.ServiceProxyTLSCAPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots, err := serviceProxyCARoots(caPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath := filepath.Join(t.TempDir(), "outside.crt")
+	keyPath := filepath.Join(t.TempDir(), "outside.key")
+	testServiceProxyCertificate(t, ca, caKey, 99, "*.example.com", certPath, keyPath)
+	leafPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(leafPEM)
+	if block == nil {
+		t.Fatal("test leaf is not PEM encoded")
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "api.example.com", KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err == nil {
+		t.Fatal("service CA verified a leaf outside .internal")
 	}
 }
 
