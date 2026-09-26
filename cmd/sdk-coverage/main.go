@@ -462,12 +462,12 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/crons/{id}":                                                                  "UpdateCron",
 	"POST /v1/crons":                                                                        "CreateCron",
 	"GET /v1/crons":                                                                         "ListCrons",
-	"GET /v1/crons/{id}/runs":                                                               "ListCronRuns",       // issue #791 — per-cron execution history
-	"GET /v1/crons/{id}/runs/{run_id}":                                                      "GetCronCommandRun",  // command-cron execution receipt
+	"GET /v1/crons/{id}/runs":                                                               "ListCronRuns",         // issue #791 — per-cron execution history
+	"GET /v1/crons/{id}/runs/{run_id}":                                                      "GetCronCommandRun",    // command-cron execution receipt
 	"POST /v1/crons/{id}/runs/{run_id}/cancel":                                              "CancelCronCommandRun", // command-cron run cancellation
-	"POST /v1/crons/{id}/run":                                                               "FireCron",           // issue #791 — manual fire-now (PR-C)
-	"GET /v1/cron-fire-now-requests/{request_id}":                                           "GetFireCronRequest", // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
-	"GET /v1/crons/{id}":                                                                    "GetCron",            // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
+	"POST /v1/crons/{id}/run":                                                               "FireCron",             // issue #791 — manual fire-now (PR-C)
+	"GET /v1/cron-fire-now-requests/{request_id}":                                           "GetFireCronRequest",   // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
+	"GET /v1/crons/{id}":                                                                    "GetCron",              // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
 	// Issue #1184 Workstream A — run-to-completion jobs. Same
 	// resource-noun convention as crons + alerts + edge-rules:
 	// auto-derivation produces verb+placeholder concatenation
