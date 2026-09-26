@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -106,6 +107,112 @@ func TestServiceProxyMetricsOutcomes(t *testing.T) {
 				t.Errorf("%s = %v, want 1", tc.want, got)
 			}
 		})
+	}
+}
+
+func TestServiceProxyDependencyHealthCountsFinalOutcomeByTrustedDeployment(t *testing.T) {
+	appID, deploymentID := uuid.NewString(), uuid.NewString()
+	for _, tc := range []struct {
+		name              string
+		protocol          string
+		status            int
+		grpcStatus        string
+		declareGRPCStatus bool
+		wantResult        string
+	}{
+		{name: "successful dependency", status: http.StatusOK, wantResult: "success"},
+		{name: "failed dependency", status: http.StatusBadGateway, wantResult: "error"},
+		{name: "successful gRPC dependency", protocol: "grpc", status: http.StatusOK, grpcStatus: "0", declareGRPCStatus: true, wantResult: "success"},
+		{name: "failed gRPC dependency", protocol: "grpc", status: http.StatusOK, grpcStatus: "14", declareGRPCStatus: true, wantResult: "error"},
+		{name: "missing gRPC status", protocol: "grpc", status: http.StatusOK, wantResult: "error"},
+		{name: "malformed gRPC status", protocol: "grpc", status: http.StatusOK, grpcStatus: "unknown", declareGRPCStatus: true, wantResult: "error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewMetrics()
+			proxy := NewServiceProxy(ServiceProxyConfig{
+				Provider: staticProvider{endpoints: []ServiceEndpoint{{InstanceID: "target", NodeID: "n", Port: 8080}}},
+				Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+					return ServiceTarget{AppID: "app-orders", AppProtocol: tc.protocol}, true, nil
+				},
+				ResolveCallerIdentity: func(context.Context, string) (string, string, error) {
+					return appID, deploymentID, nil
+				},
+				Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+					return ServiceCaller{AppID: appID, AccountID: "account"}, nil
+				},
+				Metrics: m,
+				Forward: func(Target) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						if tc.protocol == "grpc" {
+							w.Header().Set("Content-Type", "application/grpc")
+							if tc.declareGRPCStatus {
+								w.Header().Set("Trailer", "grpc-status")
+							}
+						}
+						w.WriteHeader(tc.status)
+						if tc.protocol == "grpc" {
+							_, _ = w.Write([]byte("payload"))
+							if tc.declareGRPCStatus {
+								w.Header().Set("grpc-status", tc.grpcStatus)
+							}
+						}
+					})
+				},
+			})
+			req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil)
+			req.Header.Set(ServiceProxyCallerAppHeader, appID)
+			rec := httptest.NewRecorder()
+			proxy.ServeHTTP(rec, req)
+			if rec.Code != tc.status {
+				t.Fatalf("response status = %d, want %d", rec.Code, tc.status)
+			}
+			if got := testutil.ToFloat64(m.serviceDependencyCalls.WithLabelValues(appID, deploymentID, tc.wantResult)); got != 1 {
+				t.Fatalf("dependency outcome count = %g, want 1", got)
+			}
+			other := "success"
+			if other == tc.wantResult {
+				other = "error"
+			}
+			if got := testutil.ToFloat64(m.serviceDependencyCalls.WithLabelValues(appID, deploymentID, other)); got != 0 {
+				t.Fatalf("other dependency outcome count = %g, want 0", got)
+			}
+		})
+	}
+}
+
+func TestServiceProxyDependencyHealthCountsManagedRoutingFailures(t *testing.T) {
+	appID, deploymentID := uuid.NewString(), uuid.NewString()
+	m := NewMetrics()
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: staticProvider{},
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		ResolveCallerIdentity: func(context.Context, string) (string, string, error) {
+			return appID, deploymentID, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: appID, AccountID: "account"}, nil
+		},
+		Metrics: m,
+		Forward: func(Target) http.Handler { return http.NotFoundHandler() },
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/health", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, appID)
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("response status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if got := testutil.ToFloat64(m.serviceDependencyCalls.WithLabelValues(appID, deploymentID, "error")); got != 1 {
+		t.Fatalf("managed routing error count = %g, want 1", got)
+	}
+}
+
+func TestServiceDependencyCounterPreinstantiatesCoverageSentinel(t *testing.T) {
+	m := NewMetrics()
+	if got := testutil.CollectAndCount(m.serviceDependencyCalls); got != 2 {
+		t.Fatalf("dependency outcome series = %d, want success/error coverage sentinels", got)
 	}
 }
 

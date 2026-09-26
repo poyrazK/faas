@@ -38,6 +38,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -589,6 +590,64 @@ func TestPgStoreRequestTelemetry_CHECKRejection(t *testing.T) {
 	// (the closed-enum CHECK at migration 00427 line 103).
 	if !strings.Contains(pgErr.ConstraintName, "method") {
 		t.Errorf("constraint name = %q, expected substring 'method'", pgErr.ConstraintName)
+	}
+}
+
+func TestPgStoreRequestTelemetry_CircuitBreakerSummaryIncludesColdBootP95(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID, deploymentID := seedLiveDeploy(t, store, ctx)
+	now := time.Now().UTC()
+	instance, err := store.CreateInstance(ctx, appID, deploymentID, string(state.StateRunning), 128, resolveDefaultLocal(t, ctx, store), "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := store.AppendUsage(ctx, accountID, appID, instance.ID, now.Truncate(time.Minute), 0, 12, 500_000, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	rows := []struct {
+		status   int32
+		latency  int32
+		coldBoot bool
+		count    int32
+	}{
+		{status: 200, latency: 10, count: 9},
+		{status: 500, latency: 100, coldBoot: true, count: 2},
+		{status: 200, latency: 200, coldBoot: true, count: 2},
+		{status: 200, latency: 300, count: 1},
+	}
+	for i, sample := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        "GET /breaker-summary",
+			Method:       "GET",
+			Status:       sample.status,
+			LatencyMs:    sample.latency,
+			ColdBoot:     sample.coldBoot,
+			ReceivedAt:   pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
+			Count:        sample.count,
+			UaFamily:     "__unknown__",
+			ReferrerHost: "__none__",
+			Country:      "__unknown__",
+		}); err != nil {
+			t.Fatalf("Insert sample %d: %v", i, err)
+		}
+	}
+
+	requests, serverErrors, p95, coldBootRequests, coldBootP95, cpuUsec, cpuRequests, err := store.RequestTelemetryCircuitBreakerSummary(
+		ctx, appID, deploymentID, now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("RequestTelemetryCircuitBreakerSummary: %v", err)
+	}
+	if requests != 14 || serverErrors != 2 || p95 != 300 {
+		t.Errorf("overall summary = requests:%d errors:%d p95:%g, want 14/2/300", requests, serverErrors, p95)
+	}
+	if coldBootRequests != 4 || coldBootP95 != 200 {
+		t.Errorf("cold-boot summary = requests:%d p95:%g, want 4/200", coldBootRequests, coldBootP95)
+	}
+	if cpuUsec != 500_000 || cpuRequests != 12 {
+		t.Errorf("CPU/request summary = cpu_usec:%d requests:%d, want 500000/12", cpuUsec, cpuRequests)
 	}
 }
 

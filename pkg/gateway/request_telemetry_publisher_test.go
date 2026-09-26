@@ -4,7 +4,7 @@
 //
 // The PR-A pass-through behavior is gone: every row drained from the
 // recorder is now collapsed by
-// (app_id, deployment_id, route, method, status, dimensions,
+// (app_id, deployment_id, route, method, status, dimensions, cold_boot,
 // minute_bucket, latency_bucket) into one row with Count = the number
 // of originals that folded into the bucket. These tests pin the shape:
 //
@@ -12,7 +12,7 @@
 //   - 2 distinct routes → 2 collapsed rows with Count=100 each
 //   - rows straddling a minute boundary DO NOT fold together
 //   - latency buckets preserve distinct portions of the distribution
-//   - ColdBoot OR: any cold row in the bucket → ColdBoot=true
+//   - warm and cold-boot rows never share a bucket, preserving cold samples
 //   - TraceID: first non-empty wins
 //   - ReceivedAt is truncated to the minute bucket boundary
 //   - Count is clamped to >= 1 (defends against recorder-side bugs
@@ -307,7 +307,7 @@ func TestCollapseRequestTelemetry_MinuteBoundarySplitsBuckets(t *testing.T) {
 	}
 }
 
-func TestCollapseRequestTelemetry_ColdBootOR(t *testing.T) {
+func TestCollapseRequestTelemetrySeparatesColdBootState(t *testing.T) {
 	t.Parallel()
 	appID := uuid.New()
 	deployID := uuid.New()
@@ -323,11 +323,14 @@ func TestCollapseRequestTelemetry_ColdBootOR(t *testing.T) {
 		"GET /v1/foo", "GET", 200, 12, true, "", base))
 
 	collapsed := collapseRequestTelemetry(rows)
-	if got, want := len(collapsed), 1; got != want {
+	if got, want := len(collapsed), 2; got != want {
 		t.Fatalf("len(collapsed) = %d, want %d", got, want)
 	}
-	if !collapsed[0].ColdBoot {
-		t.Errorf("ColdBoot = false, want true (OR semantics)")
+	if collapsed[0].ColdBoot || collapsed[0].Count != 4 {
+		t.Errorf("warm bucket = cold:%v count:%d, want false/4", collapsed[0].ColdBoot, collapsed[0].Count)
+	}
+	if !collapsed[1].ColdBoot || collapsed[1].Count != 1 {
+		t.Errorf("cold bucket = cold:%v count:%d, want true/1", collapsed[1].ColdBoot, collapsed[1].Count)
 	}
 }
 

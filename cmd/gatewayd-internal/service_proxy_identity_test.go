@@ -13,7 +13,7 @@ import (
 
 func TestServiceProxyCallerResolverMapsLocalLiveInstances(t *testing.T) {
 	instances := []state.Instance{
-		{ID: "local", AppID: "app-local", NodeID: "node-a", HostIP: "10.100.0.5"},
+		{ID: "local", AppID: "app-local", DeploymentID: "dep-local", NodeID: "node-a", HostIP: "10.100.0.5"},
 		{ID: "foreign", AppID: "app-foreign", NodeID: "node-b", HostIP: "10.100.0.6"},
 		{ID: "bad", AppID: "app-bad", NodeID: "node-a", HostIP: "not-an-ip"},
 	}
@@ -40,6 +40,16 @@ func TestServiceProxyCallerResolverMapsLocalLiveInstances(t *testing.T) {
 				t.Fatalf("resolve(%q) = %q, want %q", tc.addr, got, tc.want)
 			}
 		})
+	}
+	identityResolver := newServiceProxyCallerIdentityResolver(func(context.Context) ([]state.Instance, error) {
+		return instances, nil
+	}, "node-a")
+	appID, deploymentID, err := identityResolver.ResolveIdentity(context.Background(), "10.100.0.5:41234")
+	if err != nil {
+		t.Fatalf("resolve identity: %v", err)
+	}
+	if appID != "app-local" || deploymentID != "dep-local" {
+		t.Fatalf("resolved identity = %q/%q, want app-local/dep-local", appID, deploymentID)
 	}
 }
 

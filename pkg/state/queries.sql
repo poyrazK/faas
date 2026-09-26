@@ -1995,6 +1995,66 @@ WHERE app_id = $1
 ORDER BY received_at DESC
 LIMIT $5;
 
+-- name: RequestTelemetryCircuitBreakerSummary :one
+-- Bounded candidate/stable health summary for the deployment circuit breaker.
+-- `count` weights collapsed telemetry rows; compute request and 5xx totals,
+-- overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
+-- only one row.
+WITH weighted AS (
+    SELECT latency_ms,
+           SUM(count::bigint) AS requests,
+           SUM(count::bigint) FILTER (WHERE status >= 500 AND status < 600) AS server_errors,
+           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests
+      FROM request_telemetry
+     WHERE app_id = sqlc.arg('app_id')::uuid
+       AND deployment_id = sqlc.arg('deployment_id')::uuid
+       AND received_at >= sqlc.arg('received_at')::timestamptz
+       AND received_at < sqlc.arg('received_at_2')::timestamptz
+     GROUP BY latency_ms
+), cpu_usage AS (
+    -- CPU is sampled per instance/minute. The retained instance row supplies
+    -- its deployment identity; old stopped instances remain through the
+    -- telemetry window, then state retention removes them. Ignore pure idle
+    -- minutes so background CPU with no requests cannot dominate the ratio.
+    SELECT COALESCE(SUM(u.cpu_usec) FILTER (WHERE u.requests > 0), 0)::bigint AS cpu_usec,
+           COALESCE(SUM(u.requests::bigint) FILTER (WHERE u.requests > 0), 0)::bigint AS cpu_requests
+      FROM usage_minutes AS u
+      JOIN instances AS ins ON ins.id = u.instance_id
+     WHERE u.app_id = sqlc.arg('app_id')::uuid
+       AND ins.app_id = sqlc.arg('app_id')::uuid
+       AND ins.deployment_id = sqlc.arg('deployment_id')::uuid
+       AND u.minute >= date_trunc('minute', sqlc.arg('received_at')::timestamptz)
+       AND u.minute < sqlc.arg('received_at_2')::timestamptz
+)
+SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
+       COALESCE(SUM(server_errors), 0)::bigint AS server_errors,
+       COALESCE(
+           MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint),
+           0
+       )::double precision AS p95_latency_ms,
+       COALESCE(SUM(cold_boot_requests), 0)::bigint AS cold_boot_requests,
+       COALESCE(
+           MIN(latency_ms) FILTER (
+               WHERE cold_boot_cumulative >= CEIL(cold_boot_total * 0.95)::bigint
+                 AND cold_boot_total > 0
+           ),
+           0
+       )::double precision AS cold_boot_p95_latency_ms,
+       cpu_usage.cpu_usec,
+       cpu_usage.cpu_requests
+  FROM (
+      SELECT latency_ms,
+             requests,
+             server_errors,
+             cold_boot_requests,
+             SUM(requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+             SUM(requests) OVER () AS total,
+             SUM(cold_boot_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
+             SUM(cold_boot_requests) OVER () AS cold_boot_total
+        FROM weighted
+  ) AS ranked
+  CROSS JOIN cpu_usage;
+
 -- name: RequestTelemetryBaselineP95ByRoute :many
 -- Per-route p50/p95/p99 latency + represented request count for the
 -- compare endpoint and the regression detector (ADR-127 PR-B

@@ -1056,6 +1056,11 @@ type Querier interface {
 	// weight so callers can report request totals rather than stored
 	// aggregate-row totals. Uses request_telemetry_app_dep_received_idx.
 	RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryByDeploymentParams) ([]RequestTelemetryByDeploymentRow, error)
+	// Bounded candidate/stable health summary for the deployment circuit breaker.
+	// `count` weights collapsed telemetry rows; compute request and 5xx totals,
+	// overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
+	// only one row.
+	RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error)
 	// Signal coverage for the customer debugger. Counts are weighted by the
 	// publisher's collapsed-row `count`, while the row totals make the amount
 	// of aggregation visible to callers. This query deliberately reports

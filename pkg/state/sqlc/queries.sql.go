@@ -11603,6 +11603,104 @@ func (q *Queries) RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const requestTelemetryCircuitBreakerSummary = `-- name: RequestTelemetryCircuitBreakerSummary :one
+WITH weighted AS (
+    SELECT latency_ms,
+           SUM(count::bigint) AS requests,
+           SUM(count::bigint) FILTER (WHERE status >= 500 AND status < 600) AS server_errors,
+           SUM(count::bigint) FILTER (WHERE cold_boot) AS cold_boot_requests
+      FROM request_telemetry
+     WHERE app_id = $1::uuid
+       AND deployment_id = $2::uuid
+       AND received_at >= $3::timestamptz
+       AND received_at < $4::timestamptz
+     GROUP BY latency_ms
+), cpu_usage AS (
+    -- CPU is sampled per instance/minute. The retained instance row supplies
+    -- its deployment identity; old stopped instances remain through the
+    -- telemetry window, then state retention removes them. Ignore pure idle
+    -- minutes so background CPU with no requests cannot dominate the ratio.
+    SELECT COALESCE(SUM(u.cpu_usec) FILTER (WHERE u.requests > 0), 0)::bigint AS cpu_usec,
+           COALESCE(SUM(u.requests::bigint) FILTER (WHERE u.requests > 0), 0)::bigint AS cpu_requests
+      FROM usage_minutes AS u
+      JOIN instances AS ins ON ins.id = u.instance_id
+     WHERE u.app_id = $1::uuid
+       AND ins.app_id = $1::uuid
+       AND ins.deployment_id = $2::uuid
+       AND u.minute >= date_trunc('minute', $3::timestamptz)
+       AND u.minute < $4::timestamptz
+)
+SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
+       COALESCE(SUM(server_errors), 0)::bigint AS server_errors,
+       COALESCE(
+           MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint),
+           0
+       )::double precision AS p95_latency_ms,
+       COALESCE(SUM(cold_boot_requests), 0)::bigint AS cold_boot_requests,
+       COALESCE(
+           MIN(latency_ms) FILTER (
+               WHERE cold_boot_cumulative >= CEIL(cold_boot_total * 0.95)::bigint
+                 AND cold_boot_total > 0
+           ),
+           0
+       )::double precision AS cold_boot_p95_latency_ms,
+       cpu_usage.cpu_usec,
+       cpu_usage.cpu_requests
+  FROM (
+      SELECT latency_ms,
+             requests,
+             server_errors,
+             cold_boot_requests,
+             SUM(requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+             SUM(requests) OVER () AS total,
+             SUM(cold_boot_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
+             SUM(cold_boot_requests) OVER () AS cold_boot_total
+        FROM weighted
+  ) AS ranked
+  CROSS JOIN cpu_usage
+`
+
+type RequestTelemetryCircuitBreakerSummaryParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt2  pgtype.Timestamptz
+}
+
+type RequestTelemetryCircuitBreakerSummaryRow struct {
+	Requests             int64
+	ServerErrors         int64
+	P95LatencyMs         float64
+	ColdBootRequests     int64
+	ColdBootP95LatencyMs float64
+	CpuUsec              int64
+	CpuRequests          int64
+}
+
+// Bounded candidate/stable health summary for the deployment circuit breaker.
+// `count` weights collapsed telemetry rows; compute request and 5xx totals,
+// overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
+// only one row.
+func (q *Queries) RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error) {
+	row := db.QueryRow(ctx, requestTelemetryCircuitBreakerSummary,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ReceivedAt,
+		arg.ReceivedAt2,
+	)
+	var i RequestTelemetryCircuitBreakerSummaryRow
+	err := row.Scan(
+		&i.Requests,
+		&i.ServerErrors,
+		&i.P95LatencyMs,
+		&i.ColdBootRequests,
+		&i.ColdBootP95LatencyMs,
+		&i.CpuUsec,
+		&i.CpuRequests,
+	)
+	return i, err
+}
+
 const requestTelemetryCoverage = `-- name: RequestTelemetryCoverage :one
 SELECT
     COUNT(*)::bigint AS telemetry_rows,

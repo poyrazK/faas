@@ -125,6 +125,10 @@ type ServiceCaller struct {
 	// boundary, so these cost nothing extra.
 	AccountID  string
 	InstanceID string
+	// DeploymentID is populated only from node-local instance identity, never
+	// from a guest-supplied header. It lets internal service-proxy outcomes be
+	// attributed to the exact calling revision for rollout health checks.
+	DeploymentID string
 }
 
 // ServiceProxyAuthorizer enforces the tenant boundary and any caller-side
@@ -393,6 +397,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	upgrade := isUpgradeRequest(r)
 	traceWriter := &serviceProxyTraceResponseWriter{ResponseWriter: w}
+	var dependencyHealthCaller ServiceCaller
+	var dependencyHealthTarget ServiceTarget
+	dependencyCallEligible := false
 	dispatchWriter := http.ResponseWriter(traceWriter)
 	if upgrade {
 		// A hijacked response needs the original writer. The ordinary trace
@@ -401,16 +408,23 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dispatchWriter = w
 	}
 	defer func() {
+		status := traceWriter.status
+		if status == 0 {
+			// net/http implicitly commits 200 when a handler returns without
+			// writing a response.
+			status = http.StatusOK
+		}
 		if !upgrade {
-			status := traceWriter.status
-			if status == 0 {
-				// net/http implicitly commits 200 when a handler returns without
-				// writing a response.
-				status = http.StatusOK
-			}
 			dependencySpan.SetAttributes(attribute.Int("http.response.status_code", status))
 			if status >= http.StatusBadRequest {
 				dependencySpan.SetStatus(codes.Error, strconv.Itoa(status))
+			}
+			if dependencyCallEligible && dependencyHealthCaller.DeploymentID != "" {
+				p.metrics.ObserveServiceDependencyCall(
+					dependencyHealthCaller.AppID,
+					dependencyHealthCaller.DeploymentID,
+					serviceProxyDependencyFailed(status, dependencyHealthTarget.AppProtocol, traceWriter.Header()),
+				)
 			}
 		}
 		dependencySpan.End()
@@ -458,6 +472,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	dependencyHealthTarget = target
 	if p.authorize == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
@@ -493,6 +508,12 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service authorization is unavailable")
 		return
 	}
+	if callerInfo.AppID == caller && callerDeploymentID != "" {
+		// The resolver binds this ID to the live source instance. Copy it only
+		// after the tenant authorizer confirms the caller app.
+		callerInfo.DeploymentID = callerDeploymentID
+	}
+	dependencyHealthCaller = callerInfo
 	// Only the authorizer can establish the tenant identity. Stamp it after a
 	// successful authorization so the in-process retained-span exporter can
 	// route this platform-owned span to apid without a customer API key.
@@ -576,6 +597,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
 		}
 	}
+	// From this point, the request has passed identity, target, and binding
+	// checks and is an actual managed dependency attempt. Count route/wake
+	// failures as well as final upstream responses, but exclude malformed or
+	// unauthorized requests from release health.
+	dependencyCallEligible = true
 	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
 	if !served {
 		return
@@ -1262,6 +1288,39 @@ func parseServiceProxyPath(path string) (service, targetPath string, ok bool) {
 
 func serviceProxyProblem(w http.ResponseWriter, status int, detail string) {
 	http.Error(w, detail, status)
+}
+
+// serviceProxyDependencyFailed classifies the final managed-call outcome for
+// deployment health. Native gRPC uses HTTP 200 for both successful and failed
+// RPCs, so its terminal grpc-status trailer is authoritative; a missing or
+// malformed status is an UNKNOWN/protocol failure, not a healthy call.
+func serviceProxyDependencyFailed(status int, targetProtocol string, responseHeader http.Header) bool {
+	if status >= http.StatusInternalServerError {
+		return true
+	}
+	if targetProtocol != api.AppProtocolGRPC {
+		return false
+	}
+	if status != http.StatusOK {
+		return true
+	}
+	grpcStatus, ok := serviceProxyGRPCStatus(responseHeader)
+	if !ok {
+		return true
+	}
+	code, err := strconv.Atoi(grpcStatus)
+	return err != nil || code != 0
+}
+
+func serviceProxyGRPCStatus(header http.Header) (string, bool) {
+	for key, values := range header {
+		key = strings.TrimPrefix(key, http.TrailerPrefix)
+		if !strings.EqualFold(key, "grpc-status") || len(values) == 0 {
+			continue
+		}
+		return strings.TrimSpace(values[len(values)-1]), true
+	}
+	return "", false
 }
 
 type serviceProxyResponseWriter struct {
