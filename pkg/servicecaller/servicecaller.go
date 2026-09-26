@@ -176,8 +176,8 @@ func Mint(in MintInput, priv ed25519.PrivateKey, kid string, ttl time.Duration, 
 	return compact, nil
 }
 
-// TrustedKeys maps a node key id to its public key. The caller owns refresh;
-// pkg/sched's NodeKeyRegistry is the production source.
+// TrustedKeys maps a node key id to its public key. Callers own refresh;
+// FetchTrustedKeys provides a bounded HTTPS bootstrap for workload verifiers.
 type TrustedKeys map[string]ed25519.PublicKey
 
 // Verify checks an assertion and returns what it states. expectedAudience is

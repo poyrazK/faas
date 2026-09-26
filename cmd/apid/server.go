@@ -3278,6 +3278,15 @@ func (s *server) handler() http.Handler {
 	// tenant data, reads only public repositories, and is rate limited per
 	// client IP (api.PreflightRateLimitPerHour).
 	mux.HandleFunc("GET /v1/preflight", s.servePreflight)
+	// Public by design: guest workloads need the platform's public caller
+	// assertion keys in order to verify X-Faas-Caller-Assertion. The document
+	// contains no tenant metadata and is independently capped per source IP.
+	mux.Handle("GET /v1/service-caller-keys", middleware.AuthLimit(middleware.AuthLimitConfig{
+		Log:           s.log,
+		Window:        time.Minute,
+		MaxFailures:   60,
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	})(http.HandlerFunc(s.serviceCallerKeys)))
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
 	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
 	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
