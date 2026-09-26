@@ -186,3 +186,34 @@ func TestGoFunctionStarterEncodesRequestFields(t *testing.T) {
 		t.Fatalf("body = %v, want exactly {ok, path, method} echoing the request", body)
 	}
 }
+
+// TestS3UploaderStarterKeepsRawBodyForEveryContentType — the uploader parsed
+// bodies with express.text(), which only handles text/plain. The README's own
+// `curl --data` example (form-encoded) and every binary upload reached the
+// route as an empty object, so PutObject failed. Express itself is not
+// installed in CI, so this pins the parser configuration statically; the
+// behaviour was checked against express 4: express.text() yields {} for
+// application/x-www-form-urlencoded and image/png.
+func TestS3UploaderStarterKeepsRawBodyForEveryContentType(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "s3-uploader")
+	if err := Materialize("s3-uploader", dest); err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(filepath.Join(dest, "handler.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var codeLines []string
+	for _, line := range strings.Split(string(src), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "//") {
+			codeLines = append(codeLines, line)
+		}
+	}
+	code := strings.Join(codeLines, "\n")
+	if strings.Contains(code, "express.text(") || strings.Contains(code, "express.json(") || strings.Contains(code, "express.urlencoded(") {
+		t.Fatal("s3-uploader parses bodies with a content-type-specific parser; uploads of other types arrive empty")
+	}
+	if !strings.Contains(code, "express.raw({ type: () => true") {
+		t.Fatal("s3-uploader must read every request body as raw bytes (express.raw with a match-all type)")
+	}
+}
