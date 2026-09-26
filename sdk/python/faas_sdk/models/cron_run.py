@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -15,14 +16,15 @@ T = TypeVar("T", bound="CronRun")
 
 @_attrs_define
 class CronRun:
-    """One execution of a cron: when it fired, how long it ran, and how it ended. Backed by the underlying invocations row,
-    projected so callers need not compute a duration or interpret raw state.
+    """One execution of a cron: when it fired, how long it ran, and how it ended. HTTP fires project invocations; command
+    fires project deployment-attached app tasks.
 
     """
 
     id: str
+    """Invocation id for HTTP crons or task UUID for command crons."""
     started_at: datetime.datetime
-    """When the cron fired (the invocation's created_at), not when the app began executing."""
+    """When the cron fired (the invocation/task creation time), not when the app began executing."""
     outcome: CronRunOutcome
     """Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget
     was exhausted; `running` means the run has not reached a terminal state yet. Branch on this, never on `error`.
@@ -35,6 +37,8 @@ class CronRun:
     """completed_at - started_at in milliseconds, computed server-side. Null while the run is still in flight."""
     instance_id: None | str | Unset = UNSET
     """The instance that served the run; null if the fire never reached one."""
+    task_id: UUID | Unset = UNSET
+    """Deployment-attached app-task receipt for command crons."""
     error: None | str | Unset = UNSET
     """Operator-facing failure text. Unstructured and unversioned — do not parse it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -68,6 +72,10 @@ class CronRun:
         else:
             instance_id = self.instance_id
 
+        task_id: str | Unset = UNSET
+        if not isinstance(self.task_id, Unset):
+            task_id = str(self.task_id)
+
         error: None | str | Unset
         if isinstance(self.error, Unset):
             error = UNSET
@@ -90,6 +98,8 @@ class CronRun:
             field_dict["duration_ms"] = duration_ms
         if instance_id is not UNSET:
             field_dict["instance_id"] = instance_id
+        if task_id is not UNSET:
+            field_dict["task_id"] = task_id
         if error is not UNSET:
             field_dict["error"] = error
 
@@ -141,6 +151,13 @@ class CronRun:
 
         instance_id = _parse_instance_id(d.pop("instance_id", UNSET))
 
+        _task_id = d.pop("task_id", UNSET)
+        task_id: UUID | Unset
+        if isinstance(_task_id, Unset):
+            task_id = UNSET
+        else:
+            task_id = UUID(_task_id)
+
         def _parse_error(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -158,6 +175,7 @@ class CronRun:
             completed_at=completed_at,
             duration_ms=duration_ms,
             instance_id=instance_id,
+            task_id=task_id,
             error=error,
         )
 

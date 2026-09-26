@@ -18,12 +18,17 @@ T = TypeVar("T", bound="CreateJobRequest")
 
 @_attrs_define
 class CreateJobRequest:
-    """Job creation payload — name + image + command + caps."""
+    """Job creation payload — name + image + command + caps; schedule enables recurring runs."""
 
     name: str
     image_ref: str
     command: list[str]
     kind: CreateJobRequestKind | Unset = "batch"
+    schedule: str | Unset = UNSET
+    """Optional five-field cron expression. When present, the job becomes recurring and schedd creates one single-
+    task run per occurrence."""
+    timezone: str | Unset = UNSET
+    """IANA timezone for schedule; defaults to UTC."""
     env_overrides: CreateJobRequestEnvOverrides | Unset = UNSET
     ram_mb: int | Unset = UNSET
     task_timeout_sec: int | Unset = UNSET
@@ -41,6 +46,10 @@ class CreateJobRequest:
         kind: str | Unset = UNSET
         if not isinstance(self.kind, Unset):
             kind = self.kind
+
+        schedule = self.schedule
+
+        timezone = self.timezone
 
         env_overrides: dict[str, Any] | Unset = UNSET
         if not isinstance(self.env_overrides, Unset):
@@ -65,6 +74,10 @@ class CreateJobRequest:
         )
         if kind is not UNSET:
             field_dict["kind"] = kind
+        if schedule is not UNSET:
+            field_dict["schedule"] = schedule
+        if timezone is not UNSET:
+            field_dict["timezone"] = timezone
         if env_overrides is not UNSET:
             field_dict["env_overrides"] = env_overrides
         if ram_mb is not UNSET:
@@ -96,6 +109,10 @@ class CreateJobRequest:
         else:
             kind = check_create_job_request_kind(_kind)
 
+        schedule = d.pop("schedule", UNSET)
+
+        timezone = d.pop("timezone", UNSET)
+
         _env_overrides = d.pop("env_overrides", UNSET)
         env_overrides: CreateJobRequestEnvOverrides | Unset
         if isinstance(_env_overrides, Unset):
@@ -116,6 +133,8 @@ class CreateJobRequest:
             image_ref=image_ref,
             command=command,
             kind=kind,
+            schedule=schedule,
+            timezone=timezone,
             env_overrides=env_overrides,
             ram_mb=ram_mb,
             task_timeout_sec=task_timeout_sec,

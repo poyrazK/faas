@@ -11,17 +11,18 @@ import (
 )
 
 // AppTaskKind identifies why a deployment-attached command was admitted.
-// Manual tasks are customer initiated; release tasks are an internal deploy
-// gate and are unique per deployment.
+// Manual tasks are customer initiated; release tasks are deploy gates and
+// cron tasks come from recurring schedules.
 type AppTaskKind string
 
 const (
 	AppTaskKindManual  AppTaskKind = "manual"
 	AppTaskKindRelease AppTaskKind = "release"
+	AppTaskKindCron    AppTaskKind = "cron"
 )
 
 func (k AppTaskKind) Valid() bool {
-	return k == AppTaskKindManual || k == AppTaskKindRelease
+	return k == AppTaskKindManual || k == AppTaskKindRelease || k == AppTaskKindCron
 }
 
 // AppTaskStatus is the durable scheduler lifecycle from ADR-230.
@@ -54,6 +55,8 @@ type AppTask struct {
 	AccountID       string
 	AppID           string
 	DeploymentID    string
+	CronID          string
+	ScheduledFor    *time.Time
 	Kind            AppTaskKind
 	Command         []string
 	CommandShell    bool
@@ -93,6 +96,8 @@ type CreateAppTaskParams struct {
 	AccountID      string
 	AppID          string
 	DeploymentID   string
+	CronID         string
+	ScheduledFor   *time.Time
 	Kind           AppTaskKind
 	Command        []string
 	CommandShell   bool
@@ -149,6 +154,9 @@ type AppTaskStore interface {
 	RequestAppTaskCancellation(ctx context.Context, accountID, appID, taskID string, requestedAt time.Time) (AppTask, error)
 	CompleteAppTask(ctx context.Context, params CompleteAppTaskParams) (AppTask, error)
 	SweepExpiredAppTasks(ctx context.Context, at time.Time) (AppTaskSweepResult, error)
+	CreateScheduledCronAppTask(ctx context.Context, cronID string, expectedLastFiredAt *time.Time, firedAt time.Time) (AppTask, bool, error)
+	CountActiveCronAppTasks(ctx context.Context, cronID string) (int, error)
+	ListCronAppTaskRuns(ctx context.Context, cronID string, limit int, before string) ([]AppTask, error)
 }
 
 func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, error) {
@@ -157,6 +165,10 @@ func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, erro
 	}
 	if !params.Kind.Valid() {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: unsupported kind %q", ErrAppTaskInvalid, params.Kind)
+	}
+	if (params.Kind == AppTaskKindCron) != (params.CronID != "") ||
+		(params.ScheduledFor != nil && params.Kind != AppTaskKindCron) {
+		return CreateAppTaskParams{}, fmt.Errorf("%w: cron task identity is inconsistent", ErrAppTaskInvalid)
 	}
 	if err := validateAppTaskCommand(params.Command); err != nil {
 		return CreateAppTaskParams{}, err
@@ -284,6 +296,7 @@ func normalizeAppTaskPage(limit, offset int) (int, int) {
 
 func cloneAppTask(task AppTask) AppTask {
 	task.Command = append([]string(nil), task.Command...)
+	task.ScheduledFor = cloneAppTaskTimePtr(task.ScheduledFor)
 	task.LeaseToken = cloneAppTaskStringPtr(task.LeaseToken)
 	task.LeaseOwner = cloneAppTaskStringPtr(task.LeaseOwner)
 	task.LeaseExpiresAt = cloneAppTaskTimePtr(task.LeaseExpiresAt)

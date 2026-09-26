@@ -121,6 +121,7 @@ func Run(t *testing.T, open Open) {
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
 		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
 		{"queued_job_capacity_deferral_preserves_retry", testJobTaskDeferQueued},
+		{"scheduled_command_cron_cursor_and_run_history_are_consistent", testScheduledCommandCronLifecycle},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
@@ -129,6 +130,45 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testScheduledCommandCronLifecycle(t *testing.T, fx *Fixture) {
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/local/cron.ext4", "apps/conformance/cron-rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := fx.Store.CreateCronWithOptions(fx.Ctx, fx.App.ID, "* * * * *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance", "--compact"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+
+	firedAt := time.Now().UTC().Truncate(time.Minute)
+	first, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, nil, firedAt)
+	if err != nil || !created {
+		t.Fatalf("first scheduled fire = %+v, created=%t, err=%v", first, created, err)
+	}
+	if first.Kind != state.AppTaskKindCron || first.CronID != cron.ID || first.DeploymentID != fx.Deployment.ID ||
+		first.ScheduledFor == nil || !first.ScheduledFor.Equal(firedAt) || len(first.Command) != 2 || first.Command[0] != "bin/maintenance" {
+		t.Fatalf("first scheduled task did not preserve cron metadata: %+v", first)
+	}
+
+	secondAt := firedAt.Add(time.Minute)
+	second, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, &firedAt, secondAt)
+	if err != nil || !created {
+		t.Fatalf("second scheduled fire = %+v, created=%t, err=%v", second, created, err)
+	}
+	duplicate, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, &firedAt, secondAt)
+	if err != nil || created || duplicate.ID != "" {
+		t.Fatalf("stale scheduled fire = %+v, created=%t, err=%v; want no-op", duplicate, created, err)
+	}
+	if active, err := fx.Store.CountActiveCronAppTasks(fx.Ctx, cron.ID); err != nil || active != 2 {
+		t.Fatalf("CountActiveCronAppTasks = %d, %v; want 2", active, err)
+	}
+	runs, err := fx.Store.ListCronAppTaskRuns(fx.Ctx, cron.ID, 10, "")
+	if err != nil || len(runs) != 2 || runs[0].ID != second.ID || runs[1].ID != first.ID {
+		t.Fatalf("ListCronAppTaskRuns = %+v, %v; want newest-first history", runs, err)
 	}
 }
 

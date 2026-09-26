@@ -13,7 +13,7 @@ export type AppTaskResponse = {
   app_id: string;
   deployment_id: string;
   deployment_scope: string;
-  kind: 'manual' | 'release';
+  kind: 'manual' | 'release' | 'cron';
   command: Array<string>;
   command_shell: boolean;
   status: 'queued' | 'restoring' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled';

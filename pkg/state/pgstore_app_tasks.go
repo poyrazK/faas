@@ -14,13 +14,20 @@ import (
 
 var _ AppTaskStore = (*PgStore)(nil)
 
+func nullableCronID(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
+}
+
 const appTaskSelectColumns = `id, account_id, app_id, deployment_id, kind,
        command, command_shell, deployment_scope, artifact_key, image_digest,
        status, timeout_seconds, max_output_bytes,
        lease_token, lease_owner, lease_expires_at, cancel_requested_at,
        stdout_tail, stderr_tail, output_truncated, exit_code,
        failure_code, failure_message, started_at, finished_at,
-       created_at, updated_at`
+       created_at, updated_at, cron_id, scheduled_for`
 
 type appTaskRowScanner interface {
 	Scan(dest ...any) error
@@ -29,9 +36,10 @@ type appTaskRowScanner interface {
 func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 	var task AppTask
 	var id, accountID, appID, deploymentID pgtype.UUID
+	var cronID pgtype.UUID
 	var leaseToken pgtype.UUID
 	var leaseOwner, failureCode, failureMessage pgtype.Text
-	var leaseExpiresAt, cancelRequestedAt, startedAt, finishedAt pgtype.Timestamptz
+	var leaseExpiresAt, cancelRequestedAt, startedAt, finishedAt, scheduledFor pgtype.Timestamptz
 	var exitCode pgtype.Int4
 	if err := row.Scan(
 		&id, &accountID, &appID, &deploymentID, &task.Kind,
@@ -40,7 +48,7 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 		&leaseToken, &leaseOwner, &leaseExpiresAt, &cancelRequestedAt,
 		&task.StdoutTail, &task.StderrTail, &task.OutputTruncated, &exitCode,
 		&failureCode, &failureMessage, &startedAt, &finishedAt,
-		&task.CreatedAt, &task.UpdatedAt,
+		&task.CreatedAt, &task.UpdatedAt, &cronID, &scheduledFor,
 	); err != nil {
 		return AppTask{}, err
 	}
@@ -48,6 +56,10 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 	task.AccountID = pgUUIDString(accountID)
 	task.AppID = pgUUIDString(appID)
 	task.DeploymentID = pgUUIDString(deploymentID)
+	if cronID.Valid {
+		task.CronID = pgUUIDString(cronID)
+	}
+	task.ScheduledFor = timestamptzToTimePtr(scheduledFor)
 	task.LeaseToken = executionUUIDPtr(leaseToken)
 	task.LeaseOwner = executionStringPtr(leaseOwner)
 	task.LeaseExpiresAt = timestamptzToTimePtr(leaseExpiresAt)
@@ -83,11 +95,11 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 		insert into app_tasks (
 			account_id, app_id, deployment_id, kind, command, command_shell,
 			deployment_scope, artifact_key, image_digest, timeout_seconds,
-			max_output_bytes, created_at, updated_at
+			max_output_bytes, created_at, updated_at, cron_id, scheduled_for
 		)
 		select $1, a.id, d.id, $4, $5, $6,
 		       coalesce(nullif(d.scope, ''), 'default'), d.rootfs_key, d.image_digest,
-		       $7, $8, $9, $9
+		       $7, $8, $9, $9, $10::uuid, $11::timestamptz
 		  from apps a
 		  join deployments d on d.app_id = a.id
 		 where a.id = $2
@@ -101,7 +113,7 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 		returning `+appTaskSelectColumns,
 		resolved.AccountID, resolved.AppID, resolved.DeploymentID, string(resolved.Kind),
 		resolved.Command, resolved.CommandShell, resolved.TimeoutSeconds,
-		resolved.MaxOutputBytes, resolved.CreatedAt)
+		resolved.MaxOutputBytes, resolved.CreatedAt, nullableCronID(resolved.CronID), resolved.ScheduledFor)
 	task, err := scanAppTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
@@ -110,6 +122,116 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 		return AppTask{}, mapErr(err)
 	}
 	return task, nil
+}
+
+// CreateScheduledCronAppTask atomically advances a command cron's cursor,
+// chooses the app's currently-live deployment, and queues its task. A stale
+// scheduler snapshot becomes a no-op; a deployment change between schedule
+// evaluation and persistence is resolved against the live row in this tx.
+func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string, expectedLastFiredAt *time.Time, firedAt time.Time) (AppTask, bool, error) {
+	if cronID == "" || firedAt.IsZero() {
+		return AppTask{}, false, ErrAppTaskInvalid
+	}
+	firedAt = firedAt.UTC()
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return AppTask{}, false, fmt.Errorf("state: begin scheduled cron task: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var appID string
+	var command []string
+	var commandShell bool
+	var timeoutSeconds, maxOutputBytes int
+	err = tx.QueryRow(ctx, `
+		update crons
+		   set last_fired_at = $3
+		 where id = $1::uuid
+		   and enabled = true
+		   and suspended_reason = ''
+		   and cardinality(command) > 0
+		   and last_fired_at is not distinct from $2::timestamptz
+		   and ($2::timestamptz is null or $3 > $2::timestamptz)
+		 returning app_id, command, command_shell, command_timeout_seconds,
+		           command_max_output_bytes`, cronID, expectedLastFiredAt, firedAt).
+		Scan(&appID, &command, &commandShell, &timeoutSeconds, &maxOutputBytes)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AppTask{}, false, nil
+	}
+	if err != nil {
+		return AppTask{}, false, fmt.Errorf("state: claim command cron %s: %w", cronID, err)
+	}
+
+	var accountID, deploymentID, scope, artifactKey, imageDigest string
+	err = tx.QueryRow(ctx, `
+		select a.account_id, d.id, coalesce(nullif(d.scope, ''), 'default'), d.rootfs_key, d.image_digest
+		  from apps a
+		  join deployments d on d.app_id = a.id
+		 where a.id = $1::uuid
+		   and a.status <> 'deleted'
+		   and d.status = 'live'
+		   and d.rootfs_key is not null and d.rootfs_key <> ''
+		   and d.image_digest <> ''
+		 order by (d.traffic_percent > 0) desc, d.created_at desc, d.id desc
+		 limit 1
+		 for update of d`, appID).
+		Scan(&accountID, &deploymentID, &scope, &artifactKey, &imageDigest)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AppTask{}, false, ErrAppTaskDeploymentUnavailable
+	}
+	if err != nil {
+		return AppTask{}, false, fmt.Errorf("state: select live deployment for command cron %s: %w", cronID, err)
+	}
+
+	task, err := scanAppTask(tx.QueryRow(ctx, `
+		insert into app_tasks (
+			account_id, app_id, deployment_id, kind, command, command_shell,
+			deployment_scope, artifact_key, image_digest, timeout_seconds,
+			max_output_bytes, created_at, updated_at, cron_id, scheduled_for
+		) values ($1::uuid, $2::uuid, $3::uuid, 'cron', $4, $5, $6, $7, $8, $9, $10, $11, $11, $12::uuid, $11)
+		returning `+appTaskSelectColumns,
+		accountID, appID, deploymentID, command, commandShell, scope, artifactKey,
+		imageDigest, timeoutSeconds, maxOutputBytes, firedAt, cronID))
+	if err != nil {
+		return AppTask{}, false, fmt.Errorf("state: create scheduled app task for cron %s: %w", cronID, mapErr(err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AppTask{}, false, fmt.Errorf("state: commit scheduled app task for cron %s: %w", cronID, err)
+	}
+	return task, true, nil
+}
+
+func (s *PgStore) CountActiveCronAppTasks(ctx context.Context, cronID string) (int, error) {
+	var count int
+	if err := s.pool.QueryRow(ctx, `
+		select count(*) from app_tasks
+		 where cron_id = $1::uuid and status in ('queued', 'restoring', 'running')`, cronID).Scan(&count); err != nil {
+		return 0, mapErr(err)
+	}
+	return count, nil
+}
+
+func (s *PgStore) ListCronAppTaskRuns(ctx context.Context, cronID string, limit int, before string) ([]AppTask, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var rows pgx.Rows
+	var err error
+	if before == "" {
+		rows, err = s.pool.Query(ctx, `select `+appTaskSelectColumns+`
+			from app_tasks where cron_id = $1::uuid
+			order by created_at desc, id desc limit $2`, cronID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `select `+appTaskSelectColumns+`
+			from app_tasks where cron_id = $1::uuid
+			  and (created_at, id) < (select created_at, id from app_tasks where id = $2::uuid and cron_id = $1::uuid)
+			order by created_at desc, id desc limit $3`, cronID, before, limit)
+	}
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	return scanAppTaskRows(rows)
 }
 
 func (s *PgStore) AppTaskByID(ctx context.Context, accountID, appID, taskID string) (AppTask, error) {
@@ -470,5 +592,5 @@ func prefixedAppTaskColumns(alias string) string {
        ` + alias + `.lease_token, ` + alias + `.lease_owner, ` + alias + `.lease_expires_at, ` + alias + `.cancel_requested_at,
        ` + alias + `.stdout_tail, ` + alias + `.stderr_tail, ` + alias + `.output_truncated, ` + alias + `.exit_code,
        ` + alias + `.failure_code, ` + alias + `.failure_message, ` + alias + `.started_at, ` + alias + `.finished_at,
-       ` + alias + `.created_at, ` + alias + `.updated_at`
+       ` + alias + `.created_at, ` + alias + `.updated_at, ` + alias + `.cron_id, ` + alias + `.scheduled_for`
 }

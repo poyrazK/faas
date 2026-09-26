@@ -3503,30 +3503,41 @@ type AddTenantHostnameRequest struct {
 	Hostname string `json:"hostname"`
 }
 
-// CronResponse mirrors the crons table. Timezone and SkipIfRunning expose the
-// optional scheduling controls; LastFiredAt is the most recent fire stamp
-// schedd wrote (MarkCronFired).
+// CronResponse mirrors the crons table. Kind selects either an HTTP path or a
+// deployment-attached command. Timezone and SkipIfRunning expose scheduling
+// controls; LastFiredAt is the most recent fire stamp written by schedd.
 type CronResponse struct {
-	ID              string `json:"id"`
-	AppID           string `json:"app_id"`
-	Schedule        string `json:"schedule"`
-	Path            string `json:"path"`
-	Enabled         bool   `json:"enabled"`
-	SuspendedReason string `json:"suspended_reason,omitempty"`
-	Timezone        string `json:"timezone"`
-	SkipIfRunning   bool   `json:"skip_if_running"`
-	CreatedAt       string `json:"created_at"`
-	LastFiredAt     string `json:"last_fired_at,omitempty"`
+	ID              string   `json:"id"`
+	AppID           string   `json:"app_id"`
+	Kind            string   `json:"kind"`
+	Schedule        string   `json:"schedule"`
+	Path            string   `json:"path,omitempty"`
+	Command         []string `json:"command,omitempty"`
+	CommandShell    bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds  int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes  int      `json:"max_output_bytes,omitempty"`
+	Enabled         bool     `json:"enabled"`
+	SuspendedReason string   `json:"suspended_reason,omitempty"`
+	Timezone        string   `json:"timezone"`
+	SkipIfRunning   bool     `json:"skip_if_running"`
+	CreatedAt       string   `json:"created_at"`
+	LastFiredAt     string   `json:"last_fired_at,omitempty"`
 }
 
-// CreateCronRequest creates a scheduled synthetic POST.
+// CreateCronRequest creates either a scheduled HTTP request or a
+// deployment-attached command schedule. Command and Path are mutually
+// exclusive; omitting both keeps the HTTP default path of "/".
 type CreateCronRequest struct {
-	AppID         string `json:"app_id"`
-	Schedule      string `json:"schedule"`
-	Path          string `json:"path,omitempty"`
-	Enabled       *bool  `json:"enabled,omitempty"`
-	Timezone      string `json:"timezone,omitempty"`
-	SkipIfRunning *bool  `json:"skip_if_running,omitempty"`
+	AppID          string   `json:"app_id"`
+	Schedule       string   `json:"schedule"`
+	Path           string   `json:"path,omitempty"`
+	Command        []string `json:"command,omitempty"`
+	CommandShell   bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes int      `json:"max_output_bytes,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+	Timezone       string   `json:"timezone,omitempty"`
+	SkipIfRunning  *bool    `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
@@ -4856,13 +4867,16 @@ const (
 	CronRunTimeout CronRunOutcome = "timeout"
 	// CronRunDeadLetter — the per-plan retry budget was exhausted.
 	CronRunDeadLetter CronRunOutcome = "dead_letter"
+	// CronRunCancelled — a deployment-attached command was cancelled.
+	CronRunCancelled CronRunOutcome = "cancelled"
 	// CronRunRunning — the fire is still in flight (the underlying
 	// invocation row is non-terminal and carries no outcome).
 	CronRunRunning CronRunOutcome = "running"
 )
 
 // CronRun is one row of a cron's execution history: GET
-// /v1/crons/{id}/runs.
+// /v1/crons/{id}/runs. HTTP schedules project invocations; command schedules
+// project deployment-attached app tasks.
 //
 // Deliberately NOT the full Invocation shape. A cron run is a narrow
 // question — did it work, when, and for how long — and the caller
@@ -4872,7 +4886,7 @@ const (
 // without churning the cron surface.
 type CronRun struct {
 	ID string `json:"id"`
-	// StartedAt is the underlying invocation's created_at — when the
+	// StartedAt is the underlying invocation/task's created_at — when the
 	// cron fired, not when the app began executing.
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
@@ -4883,6 +4897,7 @@ type CronRun struct {
 	// Attempts is the dispatch count; > 1 means the row was retried.
 	Attempts   int    `json:"attempts"`
 	InstanceID string `json:"instance_id,omitempty"`
+	TaskID     string `json:"task_id,omitempty"`
 	// Error is the operator-facing failure text. Unstructured and
 	// unversioned — branch on Outcome, never on this string.
 	Error string `json:"error,omitempty"`

@@ -310,6 +310,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	}
 	cronKeys := make(map[string]struct{}, len(crons))
 	for _, cron := range crons {
+		if len(cron.Command) > 0 {
+			continue
+		}
 		cronKeys[cron.Schedule+"\x00"+cron.Path] = struct{}{}
 	}
 	triggerKeys := make(map[string]struct{}, len(triggers))

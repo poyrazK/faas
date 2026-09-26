@@ -3,12 +3,34 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Cron creation payload: schedule expression, target URL, and optional timezone/overlap policy.
+ * Create an HTTP-path cron or deployment-attached app command schedule.
  */
 export type CreateCronRequest = {
+  /**
+   * App id or slug.
+   */
   app_id: string;
   schedule: string;
+  /**
+   * HTTP target path; defaults to / and is mutually exclusive with command.
+   */
   path?: string;
+  /**
+   * Direct command argv; mutually exclusive with path.
+   */
+  command?: Array<string>;
+  /**
+   * Interpret one command string through the app shell when true.
+   */
+  command_shell?: boolean;
+  /**
+   * Per-fire command deadline; zero uses the 600-second default.
+   */
+  timeout_seconds?: number;
+  /**
+   * Combined stdout/stderr tail cap; zero uses the 1 MiB default.
+   */
+  max_output_bytes?: number;
   enabled?: boolean | null;
   /**
    * IANA timezone; defaults to UTC.

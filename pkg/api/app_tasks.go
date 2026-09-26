@@ -6,14 +6,14 @@ import (
 	"strings"
 )
 
-// AppTaskKind identifies the customer-visible reason for a deployment-
-// attached command. Public admission creates manual tasks only; release tasks
-// are reserved for the deployment orchestrator.
+// AppTaskKind identifies why a deployment-attached command runs. Direct API
+// admission creates manual tasks; release and cron tasks are scheduler-owned.
 type AppTaskKind string
 
 const (
 	AppTaskKindManual  AppTaskKind = "manual"
 	AppTaskKindRelease AppTaskKind = "release"
+	AppTaskKindCron    AppTaskKind = "cron"
 )
 
 // AppTaskStatus is the customer-visible lifecycle for a deployment-attached

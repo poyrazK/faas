@@ -126,7 +126,7 @@ tags:
   - name: domains
     description: Custom domain bindings.
   - name: crons
-    description: Scheduled synthetic POSTs.
+    description: Scheduled HTTP-path requests or deployment-attached command runs.
   - name: triggers
     description: |
       Event source mappings (issue #757 / ADR-100). A trigger is a
@@ -11577,30 +11577,32 @@ paths:
     post:
       tags: [crons]
       operationId: createCron
-      summary: Create a cron trigger.
+      summary: Create a scheduled HTTP request or deployment command.
       requestBody:
         required: true
-        description: "Cron payload — schedule expression + target URL. See CreateCronRequest."
+        description: "Schedule plus exactly one target: an HTTP path or a deployment command. See CreateCronRequest."
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateCronRequest'
-              example: {"schedule":"*/5 * * * *","target_url":"https://hello-world.example.com/cron"}
+              example: {"app_id":"0123456789abcdef0123456789abcdef","schedule":"0 2 * * *","command":["bin/reindex","--delta"]}
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '201':
-          description: The new cron trigger.
+          description: The new schedule.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CronResponse'
-                example: {"id":"0123456789abcdef0123456789abcdef","schedule":"*/5 * * * *","target_url":"https://hello-world.example.com/cron","enabled":true,"last_run_at":"2026-07-23T11:20:00Z","next_run_at":"2026-07-23T11:25:00Z"}
+                example: {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","kind":"command","schedule":"0 2 * * *","command":["bin/reindex","--delta"],"command_shell":false,"timeout_seconds":600,"max_output_bytes":1048576,"enabled":true,"timezone":"UTC","skip_if_running":false,"created_at":"2026-07-23T11:20:00Z"}
         '400': { $ref: '#/components/responses/CronInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/CronInvalid' }
         '403': { $ref: '#/components/responses/PlanLimit' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/crons/{id}:
     parameters:
@@ -11726,7 +11728,9 @@ paths:
         Scoped to `deploy:write` (or `admin`); no new `cron:write`
         scope is added (ADR-090 §Sub-decisions 1). The fire does
         NOT shift `last_fired_at` — the next scheduled boundary is
-        unaffected.
+        unaffected. This endpoint applies to HTTP crons only; use
+        `gregale app <slug> exec` for a one-off command rather than
+        manually firing a deployment-command cron.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -11749,6 +11753,11 @@ paths:
           description: Plan tier does not include cron support (e.g. Free plan).
           content:
             application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Command crons only fire on their schedule.
+          content:
+            application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '410':
@@ -27518,39 +27527,45 @@ components:
     # ─── Crons ────────────────────────────────────────────────────────────
 
     CronResponse:
-      description: "A cron trigger with an optional IANA timezone and overlap policy."
+      description: "An app schedule: either an HTTP-path cron or a deployment-attached command cron."
       type: object
-      required: [id, app_id, schedule, path, enabled, timezone, skip_if_running, created_at]
+      required: [id, app_id, kind, schedule, enabled, timezone, skip_if_running, created_at]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        kind: { type: string, enum: [http, command], description: "HTTP triggers the app path; command runs argv in a fresh VM using the live deployment selected at fire time." }
         schedule: { type: string , example: "*/5 * * * *"}
-        path: { type: string }
+        path: { type: string, description: "HTTP target path; omitted for command crons." }
+        command: { type: array, items: { type: string }, description: "Direct command argv; present only for command crons." }
+        command_shell: { type: boolean, description: "Interpret a one-element command through the app shell; false executes argv directly." }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600, description: "Per-fire command deadline." }
+        max_output_bytes: { type: integer, minimum: 1024, maximum: 16777216, description: "Combined stdout/stderr tail cap for command runs." }
         enabled: { type: boolean }
         suspended_reason:
           type: string
           enum: [no_live_deployment]
           description: "Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment."
         timezone: { type: string, description: "IANA timezone used to evaluate the schedule; defaults to UTC.", example: "America/New_York" }
-        skip_if_running: { type: boolean, description: "When true, consume a scheduled occurrence while a prior cron invocation is pending or dispatching." }
+        skip_if_running: { type: boolean, description: "When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active." }
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
 
     CronRun:
-      description: "One execution of a cron: when it fired, how long it ran, and how it ended. Backed by the underlying invocations row, projected so callers need not compute a duration or interpret raw state."
+      description: "One execution of a cron: when it fired, how long it ran, and how it ended. HTTP fires project invocations; command fires project deployment-attached app tasks."
       type: object
       required: [id, started_at, outcome, attempts]
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
-        started_at: { type: string, format: date-time, description: "When the cron fired (the invocation's created_at), not when the app began executing." }
+        id: { type: string, pattern: '^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$', description: "Invocation id for HTTP crons or task UUID for command crons.", example: "0123456789abcdef0123456789abcdef" }
+        started_at: { type: string, format: date-time, description: "When the cron fired (the invocation/task creation time), not when the app began executing." }
         completed_at: { type: [string, "null"], format: date-time, description: "When the run reached a terminal state; null while still in flight." }
         duration_ms: { type: [integer, "null"], description: "completed_at - started_at in milliseconds, computed server-side. Null while the run is still in flight." }
         outcome:
           type: string
-          enum: [success, failed, timeout, dead_letter, running]
+          enum: [success, failed, timeout, dead_letter, running, cancelled]
           description: "Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget was exhausted; `running` means the run has not reached a terminal state yet. Branch on this, never on `error`."
         attempts: { type: integer, description: "Dispatch attempts for this run; greater than 1 means it was retried." }
         instance_id: { type: [string, "null"], pattern: '^[a-f0-9]{32}$', description: "The instance that served the run; null if the fire never reached one." }
+        task_id: { type: string, format: uuid, description: "Deployment-attached app-task receipt for command crons." }
         error: { type: [string, "null"], description: "Operator-facing failure text. Unstructured and unversioned — do not parse it." }
 
     ListCronRunsResponse:
@@ -27601,13 +27616,17 @@ components:
         account_id: { type: string, format: uuid }
 
     CreateCronRequest:
-      description: "Cron creation payload: schedule expression, target URL, and optional timezone/overlap policy."
+      description: "Create an HTTP-path cron or deployment-attached app command schedule."
       type: object
       required: [app_id, schedule]
       properties:
-        app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
+        app_id: { type: string, description: "App id or slug.", example: "0123456789abcdef0123456789abcdef" }
         schedule: { type: string , example: "*/5 * * * *"}
-        path: { type: string }
+        path: { type: string, description: "HTTP target path; defaults to / and is mutually exclusive with command." }
+        command: { type: array, minItems: 1, maxItems: 64, items: { type: string, maxLength: 4096 }, description: "Direct command argv; mutually exclusive with path." }
+        command_shell: { type: boolean, default: false, description: "Interpret one command string through the app shell when true." }
+        timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Per-fire command deadline; zero uses the 600-second default." }
+        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Combined stdout/stderr tail cap; zero uses the 1 MiB default." }
         enabled: { type: [boolean, "null"] }
         timezone: { type: string, description: "IANA timezone; defaults to UTC.", example: "Europe/Istanbul" }
         skip_if_running: { type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running." }
@@ -34943,7 +34962,7 @@ components:
         app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         deployment_scope: { type: string }
-        kind: { type: string, enum: [manual, release] }
+        kind: { type: string, enum: [manual, release, cron] }
         command:
           type: array
           minItems: 1

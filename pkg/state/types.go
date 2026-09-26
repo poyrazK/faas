@@ -2763,13 +2763,18 @@ type DomainDoctorObservation struct {
 	CertCheckedAt   time.Time
 }
 
-// Cron is a scheduled synthetic POST through gatewayd-internal (spec §4.3).
+// Cron is a recurring app schedule. Empty Command means an HTTP request cron;
+// a non-empty Command runs against the app's live deployment at fire time.
 type Cron struct {
-	ID       string
-	AppID    string
-	Schedule string // cron expression
-	Path     string
-	Enabled  bool
+	ID                    string
+	AppID                 string
+	Schedule              string // cron expression
+	Path                  string
+	Command               []string
+	CommandShell          bool
+	CommandTimeoutSeconds int
+	CommandMaxOutputBytes int
+	Enabled               bool
 	// SuspendedReason is set by the scheduler when customer intent remains
 	// enabled but the app has no live deployment. A later successful deploy
 	// clears it without re-enabling a cron the customer disabled explicitly.
@@ -2787,8 +2792,12 @@ const CronSuspendedNoLiveDeployment = "no_live_deployment"
 // advances the schedule without dispatching when a prior cron invocation is
 // still pending or dispatching.
 type CronOptions struct {
-	Timezone      string
-	SkipIfRunning bool
+	Timezone              string
+	SkipIfRunning         bool
+	Command               []string
+	CommandShell          bool
+	CommandTimeoutSeconds int
+	CommandMaxOutputBytes int
 }
 
 // FireNowStatus is the closed vocabulary for cron_fire_now_requests.status

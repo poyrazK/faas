@@ -41,6 +41,12 @@ class JobResponse:
     status: JobResponseStatus
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    schedule: str | Unset = UNSET
+    """Recurring five-field cron expression, when configured."""
+    timezone: str | Unset = UNSET
+    """IANA timezone used to evaluate the recurring schedule."""
+    last_scheduled_at: datetime.datetime | Unset = UNSET
+    """Most recent scheduled occurrence that created a run."""
     image_resolved_digest: str | Unset = UNSET
     """Immutable OCI manifest digest selected from image_ref."""
     image_storage_key: str | Unset = UNSET
@@ -80,6 +86,14 @@ class JobResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        schedule = self.schedule
+
+        timezone = self.timezone
+
+        last_scheduled_at: str | Unset = UNSET
+        if not isinstance(self.last_scheduled_at, Unset):
+            last_scheduled_at = self.last_scheduled_at.isoformat()
+
         image_resolved_digest = self.image_resolved_digest
 
         image_storage_key = self.image_storage_key
@@ -114,6 +128,12 @@ class JobResponse:
                 "updated_at": updated_at,
             }
         )
+        if schedule is not UNSET:
+            field_dict["schedule"] = schedule
+        if timezone is not UNSET:
+            field_dict["timezone"] = timezone
+        if last_scheduled_at is not UNSET:
+            field_dict["last_scheduled_at"] = last_scheduled_at
         if image_resolved_digest is not UNSET:
             field_dict["image_resolved_digest"] = image_resolved_digest
         if image_storage_key is not UNSET:
@@ -162,6 +182,17 @@ class JobResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        schedule = d.pop("schedule", UNSET)
+
+        timezone = d.pop("timezone", UNSET)
+
+        _last_scheduled_at = d.pop("last_scheduled_at", UNSET)
+        last_scheduled_at: datetime.datetime | Unset
+        if isinstance(_last_scheduled_at, Unset):
+            last_scheduled_at = UNSET
+        else:
+            last_scheduled_at = datetime.datetime.fromisoformat(_last_scheduled_at)
+
         image_resolved_digest = d.pop("image_resolved_digest", UNSET)
 
         image_storage_key = d.pop("image_storage_key", UNSET)
@@ -197,6 +228,9 @@ class JobResponse:
             status=status,
             created_at=created_at,
             updated_at=updated_at,
+            schedule=schedule,
+            timezone=timezone,
+            last_scheduled_at=last_scheduled_at,
             image_resolved_digest=image_resolved_digest,
             image_storage_key=image_storage_key,
             image_materialization_error=image_materialization_error,
