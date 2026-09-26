@@ -1,4 +1,4 @@
-# ADR-270: Binding-scoped private service aliases
+# ADR-271: Binding-scoped private service aliases
 
 - **Status:** accepted
 - **Date:** 2026-09-25
