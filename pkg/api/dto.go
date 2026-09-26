@@ -10211,11 +10211,16 @@ type CreateJobRequest struct {
 	// hyphens. Validated by the handler against validSlug.
 	Name string `json:"name"`
 	// Kind is the closed-set {batch, recurring}. batch
-	// tasks run exactly once; recurring tasks re-run on
-	// the run's schedule (issue #1184 Workstream A
-	// extension — base schema accepts both). Defaults to
-	// "batch" when empty.
+	// tasks are dispatched manually; recurring jobs require
+	// a cron schedule. A non-empty Schedule also implies
+	// "recurring". Defaults to "batch" when empty.
 	Kind string `json:"kind,omitempty"`
+	// Schedule enables recurring runs. The scheduler creates one job run per
+	// matching occurrence; omitted means this is a batch job.
+	Schedule string `json:"schedule,omitempty"`
+	// Timezone is an IANA name used to evaluate Schedule. Omitted defaults to
+	// UTC and is ignored for batch jobs.
+	Timezone string `json:"timezone,omitempty"`
 	// ImageRef is the OCI image name[:tag | @digest].
 	// Digest pinning is RECOMMENDED — the same way app
 	// builds are — but not enforced at this layer.
@@ -10268,6 +10273,10 @@ type UpdateJobRequest struct {
 	// DELETE /v1/jobs/{name} (separate status='deleted'
 	// transition with the no-live-instances guard).
 	Status *string `json:"status,omitempty"`
+	// Schedule changes recurring execution. An empty string removes the
+	// schedule and converts the job back to batch mode.
+	Schedule *string `json:"schedule,omitempty"`
+	Timezone *string `json:"timezone,omitempty"`
 }
 
 // CreateJobRunRequest is the POST /v1/jobs/{name}/runs body.
@@ -10301,11 +10310,14 @@ type CreateJobRunRequest struct {
 // single type. CreatedAt / UpdatedAt are RFC 3339 strings
 // (matches the AppResponse convention).
 type JobResponse struct {
-	ID        string `json:"id"`
-	AccountID string `json:"account_id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	ImageRef  string `json:"image_ref"`
+	ID              string `json:"id"`
+	AccountID       string `json:"account_id"`
+	Name            string `json:"name"`
+	Kind            string `json:"kind"`
+	Schedule        string `json:"schedule,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
+	LastScheduledAt string `json:"last_scheduled_at,omitempty"`
+	ImageRef        string `json:"image_ref"`
 	// ImageResolvedDigest is the immutable manifest selected from image_ref
 	// by imaged. It is empty while the image is pending materialization.
 	ImageResolvedDigest string `json:"image_resolved_digest,omitempty"`

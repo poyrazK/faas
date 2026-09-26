@@ -677,9 +677,17 @@ var cliCommands = []cliCommand{
 		Short:   "Manage jobs (run-to-completion workloads)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List jobs in this account"},
-			{Name: "add", Short: "Create a new job"},
+			{Name: "add", Short: "Create a new job", Flags: []cliFlag{
+				{Name: "image", Value: "REF", Short: "OCI image (required)", Req: true},
+				{Name: "schedule", Value: "EXPR", Short: "recurring five-field cron schedule"},
+				{Name: "timezone", Value: "TZ", Short: "IANA timezone for the recurring schedule"},
+			}},
 			{Name: "info", Short: "Show one job"},
-			{Name: "update", Short: "Update one job"},
+			{Name: "update", Short: "Update one job", Flags: []cliFlag{
+				{Name: "schedule", Value: "EXPR", Short: "replace recurring cron schedule"},
+				{Name: "timezone", Value: "TZ", Short: "replace schedule IANA timezone"},
+				{Name: "unschedule", Short: "remove recurring schedule"},
+			}},
 			{Name: "rm", Short: "Soft-delete one job"},
 			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)"},
 			{Name: "runs", Short: "List runs for one job"},

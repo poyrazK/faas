@@ -7,7 +7,13 @@ gregale invoke --async --payload @payload.json APP_ID
 gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
 gregale jobs run nightly --tasks 10
 gregale crons add --app APP_ID --schedule "0 * * * *" --path /jobs/nightly
+gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
 ```
+
+Use a scheduled job when work should run to completion in an isolated job
+environment; use an app cron when the schedule should make an HTTP request to
+an app route. Scheduled jobs create one task per occurrence and pick up the
+job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 

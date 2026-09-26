@@ -41,7 +41,8 @@ const jobSelectCols = `id, account_id, kind, name, image_ref, ram_mb, task_timeo
        coalesce(image_storage_key, ''), image_materialization_status,
        coalesce(image_materialization_error, ''),
        image_materialized_at, image_materialization_attempts,
-       image_materialization_next_attempt_at`
+       image_materialization_next_attempt_at, coalesce(cron_schedule, ''),
+       cron_timezone, last_scheduled_at`
 
 // jobRunSelectCols is the canonical column order for job_runs.
 // Includes dead_letter_count (00574). ORDER BY id keeps the contract
@@ -82,7 +83,8 @@ func scanJobCols(scan func(...any) error) (Job, error) {
 		&j.CreatedAt, &j.UpdatedAt, &j.Command, &j.ImageResolvedDigest,
 		&j.ImageStorageKey, &j.ImageMaterializationStatus,
 		&j.ImageMaterializationError, &j.ImageMaterializedAt,
-		&j.ImageMaterializationAttempts, &j.ImageMaterializationNextAttemptAt); err != nil {
+		&j.ImageMaterializationAttempts, &j.ImageMaterializationNextAttemptAt,
+		&j.CronSchedule, &j.CronTimezone, &j.LastScheduledAt); err != nil {
 		return Job{}, err
 	}
 	if len(envOverrides) > 0 {
@@ -268,6 +270,21 @@ func (s *PgStore) JobListByAccount(ctx context.Context, accountID string, limit,
 	return scanJobs(rows)
 }
 
+// JobListScheduled returns active recurring jobs in cursor order. The list is
+// a candidate snapshot only; JobRunCreateScheduled re-checks every field under
+// a row lock before advancing the cursor and inserting a run.
+func (s *PgStore) JobListScheduled(ctx context.Context) ([]Job, error) {
+	rows, err := s.pool.Query(ctx,
+		`select `+jobSelectCols+` from jobs
+		  where status = 'active' and kind = 'recurring' and cron_schedule is not null
+		  order by coalesce(last_scheduled_at, created_at), id`)
+	if err != nil {
+		return nil, fmt.Errorf("state: list scheduled jobs: %w", err)
+	}
+	defer rows.Close()
+	return scanJobs(rows)
+}
+
 // JobUpdate mutates the optional fields of a job row. nil pointers
 // leave the column untouched (COALESCE guard). updated_at is stamped
 // to now() unconditionally so the audit trail reflects the touch.
@@ -334,6 +351,45 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 		return Job{}, err
 	}
 	return job, nil
+}
+
+// JobUpdateWithSchedule updates a job and its schedule in one row mutation.
+// A non-nil empty schedule removes recurring execution; any schedule or
+// timezone change resets the scheduler cursor to the edit time.
+func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status, schedule, timezone *string) (Job, error) {
+	var envOverridesArg any
+	if len(envOverrides) > 0 {
+		envOverridesArg = []byte(envOverrides)
+	}
+	row := s.pool.QueryRow(ctx,
+		`update jobs set
+		   command         = coalesce($2::text[],  command),
+		   image_ref       = coalesce($3,          image_ref),
+		   image_resolved_digest = case when $3 is null then image_resolved_digest else null end,
+		   image_storage_key = case when $3 is null then image_storage_key else null end,
+		   image_materialization_status = case when $3 is null then image_materialization_status else 'pending' end,
+		   image_materialization_error = case when $3 is null then image_materialization_error else null end,
+		   image_materialized_at = case when $3 is null then image_materialized_at else null end,
+		   image_materialization_attempts = case when $3 is null then image_materialization_attempts else 0 end,
+		   image_materialization_next_attempt_at = case when $3 is null then image_materialization_next_attempt_at else null end,
+		   image_materialization_lease_owner = case when $3 is null then image_materialization_lease_owner else null end,
+		   image_materialization_lease_until = case when $3 is null then image_materialization_lease_until else null end,
+		   ram_mb          = coalesce($4,          ram_mb),
+		   task_timeout_s  = coalesce($5,          task_timeout_s),
+		   max_parallelism = coalesce($6,          max_parallelism),
+		   retry_max       = coalesce($7,          retry_max),
+		   env_overrides   = coalesce($8::jsonb,   env_overrides),
+		   status          = coalesce($9,          status),
+		   cron_schedule   = case when $10::text is null then cron_schedule else nullif($10, '') end,
+		   cron_timezone   = coalesce($11, cron_timezone),
+		   kind            = case when $10::text is null then kind when $10 = '' then 'batch' else 'recurring' end,
+		   last_scheduled_at = case when $10::text is not null or $11::text is not null then now() else last_scheduled_at end,
+		   updated_at      = now()
+		 where id = $1::uuid and status <> 'deleted'
+		 returning `+jobSelectCols,
+		id, command, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax,
+		envOverridesArg, status, schedule, timezone)
+	return scanJob(row)
 }
 
 // JobListPendingImageMaterialization returns active jobs whose source image
@@ -801,6 +857,60 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		return JobRun{}, nil, fmt.Errorf("state: commit job run create: %w", err)
 	}
 	return run, fanned, nil
+}
+
+// JobRunCreateScheduled atomically claims the current schedule occurrence and
+// persists its one-task run. If another schedd already advanced the cursor,
+// or the job was edited/paused after the candidate read, it returns created=false.
+func (s *PgStore) JobRunCreateScheduled(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return JobRun{}, false, fmt.Errorf("state: begin scheduled job run tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var accountID string
+	var parallelism int
+	var envOverrides []byte
+	err = tx.QueryRow(ctx,
+		`update jobs
+		    set last_scheduled_at = $5
+		  where id = $1::uuid
+		    and status = 'active'
+		    and kind = 'recurring'
+		    and cron_schedule = $2
+		    and cron_timezone = $3
+		    and last_scheduled_at is not distinct from $4::timestamptz
+		    and ($4::timestamptz is null or $5 > $4::timestamptz)
+		  returning account_id, max_parallelism, env_overrides`,
+		jobID, schedule, timezone, expectedLastScheduledAt, firedAt.UTC()).
+		Scan(&accountID, &parallelism, &envOverrides)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return JobRun{}, false, nil
+	}
+	if err != nil {
+		return JobRun{}, false, fmt.Errorf("state: claim scheduled job %s: %w", jobID, err)
+	}
+	if len(envOverrides) == 0 {
+		envOverrides = []byte(`{}`)
+	}
+	run, err := scanJobRun(tx.QueryRow(ctx,
+		`insert into job_runs (job_id, account_id, trigger_kind, env_overrides,
+		                       tasks, parallelism)
+		 values ($1::uuid, $2::uuid, 'scheduled', $3::jsonb, 1, $4)
+		 returning `+jobRunSelectCols,
+		jobID, accountID, envOverrides, parallelism))
+	if err != nil {
+		return JobRun{}, false, fmt.Errorf("state: create scheduled job run: %w", mapErr(err))
+	}
+	if _, err := tx.Exec(ctx,
+		`insert into job_tasks (run_id, task_index, status) values ($1::uuid, 0, 'queued')`, run.ID); err != nil {
+		return JobRun{}, false, fmt.Errorf("state: fan out scheduled job run %s: %w", run.ID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return JobRun{}, false, fmt.Errorf("state: commit scheduled job run %s: %w", run.ID, err)
+	}
+	return run, true, nil
 }
 
 // JobRunGetByID returns ErrNotFound when the row is missing.

@@ -14,5 +14,13 @@ export type UpdateJobRequest = {
   max_parallelism?: number;
   retry_max?: number;
   status?: 'active' | 'paused';
+  /**
+   * Replace the cron expression; an empty string removes the schedule.
+   */
+  schedule?: string;
+  /**
+   * Replace the schedule IANA timezone.
+   */
+  timezone?: string;
 };
 
