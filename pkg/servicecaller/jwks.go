@@ -153,10 +153,25 @@ func TrustedKeysFromJWKS(raw []byte) (TrustedKeys, error) {
 // move to a different key issuer.
 func FetchTrustedKeys(ctx context.Context, client *http.Client, endpoint string) (TrustedKeys, error) {
 	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+	if err != nil {
 		return nil, errors.New("servicecaller: invalid JWKS URL")
 	}
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())) {
+	if parsed.Host == "" {
+		return nil, errors.New("servicecaller: invalid JWKS URL")
+	}
+	if parsed.User != nil {
+		return nil, errors.New("servicecaller: invalid JWKS URL")
+	}
+	if parsed.Fragment != "" {
+		return nil, errors.New("servicecaller: invalid JWKS URL")
+	}
+	switch parsed.Scheme {
+	case "https":
+	case "http":
+		if !isLoopbackHost(parsed.Hostname()) {
+			return nil, errors.New("servicecaller: JWKS URL must use HTTPS")
+		}
+	default:
 		return nil, errors.New("servicecaller: JWKS URL must use HTTPS")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
@@ -177,7 +192,7 @@ func FetchTrustedKeys(ctx context.Context, client *http.Client, endpoint string)
 	if err != nil {
 		return nil, fmt.Errorf("servicecaller: fetch JWKS: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("servicecaller: fetch JWKS: unexpected status %d", response.StatusCode)
 	}
