@@ -186,7 +186,7 @@
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
-  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed, sse:api_route_discovered" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RequestAnalytics}}{{if .Data.RequestAnalytics.SelectedQuery}}?{{.Data.RequestAnalytics.SelectedQuery}}{{end}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
     {{template "email-verification-banner" .}}
     {{/* Issue #791 PR-E / ADR-090 closure — flash banner shown
          after a dashboard fire-now POST. The handler redirects
@@ -633,6 +633,14 @@
             · {{if eq .Data.RequestAnalytics.GroupBy "consumer_id"}}<strong>consumer</strong>{{else}}<a href="?analytics_by=consumer_id">consumer</a>{{end}}
           </p>
           {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          <p class="muted">Cold-request p95 includes both wake and handler time. Wake boot p95 is schedd boot-start to instance-running time. Guest runtime percentiles are platform-runner wall time, not CPU time, and are unavailable for arbitrary HTTP containers.</p>
+          <p class="muted">Dependency timings use retained, classified span samples. Exclusive p95 estimates time outside nested child spans; it is not a full request-call count or additive latency total.</p>
+          {{if .Data.RequestAnalytics.DependenciesTruncated}}<p class="muted">Dependency evidence is bounded; some rows or dependency groups were omitted from this view.</p>{{end}}
+          {{with .Data.RequestAnalytics.ComputeCost}}
+            <p class="muted">Estimated compute value for this window: €{{.EstimatedEUR}} · allocated: €{{.AllocatedEUR}} · rate: €{{.RateEUR}}/GB-RAM-hour, split by observed request share across {{.RequestCount}} requests. This values raw RAM-hours before the account's included allowance and excludes egress; it is not an invoice amount.</p>
+            {{if gt .OtherRoutesRequests 0}}<p class="muted">Other routes (outside the top list): {{.OtherRoutesRequests}} requests ({{printf "%.2f" .OtherRoutesRequestSharePct}}%), allocated €{{.OtherRoutesEUR}}.</p>{{end}}
+            {{if ne .UnallocatedEUR "0.00000"}}<p class="muted">€{{.UnallocatedEUR}} remains unallocated because no route requests were observed.</p>{{end}}
+          {{end}}
           {{if .Data.RequestAnalytics.LatencySparklineHTML}}
             <h3>Hourly trend{{if .Data.RequestAnalytics.SelectedRoute}} · <code>{{.Data.RequestAnalytics.SelectedMethod}} {{.Data.RequestAnalytics.SelectedRoute}}</code> · <a href="/dashboard/apps/{{.Data.App.Slug}}">all traffic</a>{{end}} <small style="font-weight:normal;color:#888">({{.Data.RequestAnalytics.Bucket}} buckets · {{.Data.RequestAnalytics.From}} to {{.Data.RequestAnalytics.Until}})</small></h3>
             <table aria-label="Hourly request analytics trends">
@@ -665,23 +673,55 @@
               {{if .Data.RequestAnalytics.Routes}}
               <h3>Top routes</h3>
               <table>
-                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th><th>Trend</th><th>Explore</th></tr></thead>
+                <thead><tr><th>Route</th><th>Method</th><th>Requests</th><th>Request share</th><th>Est. compute</th><th>Errors</th><th>p50</th><th>p95</th><th>p99</th><th>Cold-request p95</th><th>Wake boot p95</th><th>Guest runtime p50/p95</th><th>Guest CPU avg/p95</th><th>Peak guest RSS</th><th>Dependency waits (sampled)</th><th>Trend</th><th>Explore</th></tr></thead>
                 <tbody>
                   {{range .Data.RequestAnalytics.Routes}}
                     <tr>
                       <td><code>{{.Route}}</code></td>
                       <td>{{.Method}}</td>
                       <td>{{.Requests}}</td>
+                      <td>{{printf "%.2f" .RequestSharePct}}%</td>
+                      <td>€{{.EstimatedComputeCostEUR}}</td>
                       <td>{{.ErrorRequests}} ({{printf "%.2f" .ErrorRatePct}}%)</td>
                       <td>{{.P50MS}} ms</td>
                       <td>{{.P95MS}} ms</td>
                       <td>{{.P99MS}} ms</td>
-                      <td><a href="{{.TrendURL}}">View</a></td>
-                      <td><a href="{{.DebugURL}}">Inspect requests</a></td>
+                      <td>{{if .ColdRequestP95Available}}{{.ColdRequestP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .WakeBootP95Available}}{{.WakeBootP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .GuestExecutionAvailable}}{{.GuestExecutionP50MS}} / {{.GuestExecutionP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .GuestResourceUsageAvailable}}{{.GuestCPUAvgMS}} / {{.GuestCPUP95MS}} ms{{else}}—{{end}}</td>
+                      <td>{{if .GuestResourceUsageAvailable}}{{.GuestPeakRSSMaxMB}} MiB (bucketed){{else}}—{{end}}</td>
+                      <td>{{if .Dependencies}}{{range .Dependencies}}{{if .Kind}}{{.Kind}}{{else}}{{.Type}}{{end}} / {{.Name}}: exclusive p95 {{.ExclusiveP95MS}} ms (p95 {{.P95MS}} ms, {{.Samples}} samples)<br>{{end}}{{else}}—{{end}}</td>
+                      <td>{{if .TrendURL}}<a href="{{.TrendURL}}">View</a>{{else}}—{{end}}</td>
+                      <td>{{if .DebugURL}}<a href="{{.DebugURL}}">Inspect requests</a>{{else}}—{{end}}</td>
                     </tr>
                   {{end}}
                 </tbody>
               </table>
+              {{with .Data.RequestAnalytics.DeploymentCosts}}
+                <h3>Estimated compute by deployment</h3>
+                <p class="muted">€{{.EstimatedEUR}} for this app and window, split across immutable deployments by request share. Allocated: €{{.AllocatedEUR}}; this is the same raw-compute estimate shown above, not a separate charge. CPU comparisons are advisory, require at least 20 measured requests per deployment, and can change with route mix; CPU data is only available for supported Linux one-shot runtimes.</p>
+                {{if .Deployments}}
+                  <table aria-label="Estimated compute by deployment">
+                    <thead><tr><th>Deployment</th><th>Revision</th><th>Requests</th><th>Request share</th><th>Est. compute</th><th>Measured guest CPU / request</th><th>Change vs earlier measured deployment</th></tr></thead>
+                    <tbody>
+                      {{range .Deployments}}
+                        <tr>
+                          <td><code>{{printf "%.12s" .DeploymentID}}</code>{{if .CreatedAt}}<small class="muted"> · {{.CreatedAt}}</small>{{end}}</td>
+                          <td>{{if .Tag}}<code>{{.Tag}}</code>{{else}}<code>{{printf "%.12s" .Revision}}</code>{{end}}</td>
+                          <td>{{.Requests}}</td>
+                          <td>{{printf "%.2f" .RequestSharePct}}%</td>
+                          <td>€{{.EstimatedEUR}}</td>
+                          <td>{{if .GuestCPUAvailable}}{{.GuestCPUAvgMS}} ms ({{.GuestCPUMeasuredRequests}} measured requests){{else}}—{{end}}</td>
+                          <td>{{if .GuestCPUChangeAvailable}}{{if gt .GuestCPUChangePct 0.0}}+{{end}}{{printf "%.1f" .GuestCPUChangePct}}% vs <code>{{printf "%.12s" .GuestCPUComparedTo}}</code>{{if .GuestCPURegression}} <strong>⚠ CPU/request regression</strong>{{end}}{{else}}—{{end}}</td>
+                        </tr>
+                      {{end}}
+                    </tbody>
+                  </table>
+                {{end}}
+                {{if gt .OtherRequests 0}}<p class="muted">Other deployments (outside the top list): {{.OtherRequests}} requests ({{printf "%.2f" .OtherSharePct}}%), allocated €{{.OtherEUR}}.</p>{{end}}
+                {{if ne .UnallocatedEUR "0.00000"}}<p class="muted">€{{.UnallocatedEUR}} remains unallocated because no deployment requests were observed.</p>{{end}}
+              {{end}}
               {{if .Data.RequestAnalytics.RoutesTruncated}}<p class="muted">Showing the top {{.Data.RequestAnalytics.RoutesLimit}} route/method combinations. Use the JSON endpoint for the same bounded result.</p>{{end}}
               {{end}}
             {{else if .Data.RequestAnalytics.Groups}}
@@ -717,12 +757,14 @@
           {{end}}
           {{if .Data.DiscoveredRoutes.Routes}}
             <table aria-label="Persisted discovered API routes">
-              <thead><tr><th>Method</th><th>Route template</th><th>Requests</th><th>First seen</th><th>Last seen</th></tr></thead>
+              <thead><tr><th>Method</th><th>Route template</th><th>Contract</th><th>Edge policy</th><th>Requests</th><th>First seen</th><th>Last seen</th></tr></thead>
               <tbody>
                 {{range .Data.DiscoveredRoutes.Routes}}
                   <tr>
                     <td><code>{{.Method}}</code></td>
                     <td><code>{{.Path}}</code></td>
+                    <td>{{.Contract}}</td>
+                    <td>{{.Policy}}</td>
                     <td>{{.RequestCount}}</td>
                     <td>{{.FirstSeen}}</td>
                     <td>{{.LastSeen}}</td>

@@ -1274,6 +1274,13 @@ from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .repo_response import RepoResponse
+from .request_analytics_compute_cost import RequestAnalyticsComputeCost
+from .request_analytics_compute_cost_allocation_method import RequestAnalyticsComputeCostAllocationMethod
+from .request_analytics_compute_cost_basis import RequestAnalyticsComputeCostBasis
+from .request_analytics_compute_cost_currency import RequestAnalyticsComputeCostCurrency
+from .request_analytics_dependency import RequestAnalyticsDependency
+from .request_analytics_deployment_cost import RequestAnalyticsDeploymentCost
+from .request_analytics_deployment_cost_breakdown import RequestAnalyticsDeploymentCostBreakdown
 from .request_analytics_group import RequestAnalyticsGroup
 from .request_analytics_group_method import RequestAnalyticsGroupMethod
 from .request_analytics_response import RequestAnalyticsResponse
@@ -2796,6 +2803,13 @@ __all__ = (
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "RepoResponse",
+    "RequestAnalyticsComputeCost",
+    "RequestAnalyticsComputeCostAllocationMethod",
+    "RequestAnalyticsComputeCostBasis",
+    "RequestAnalyticsComputeCostCurrency",
+    "RequestAnalyticsDependency",
+    "RequestAnalyticsDeploymentCost",
+    "RequestAnalyticsDeploymentCostBreakdown",
     "RequestAnalyticsGroup",
     "RequestAnalyticsGroupMethod",
     "RequestAnalyticsResponse",

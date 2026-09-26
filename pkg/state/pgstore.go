@@ -27551,6 +27551,13 @@ func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc
 	return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, s.pool, arg)
 }
 
+// RequestTelemetryAnalyticsByDeployment returns a bounded request-weighted
+// deployment split for the caller's analytics window. TotalRequests is the
+// full pre-limit count used to calculate the visible __other__ share.
+func (s *PgStore) RequestTelemetryAnalyticsByDeployment(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
+	return s.appErrorsQueries().RequestTelemetryAnalyticsByDeployment(ctx, s.pool, arg)
+}
+
 // RequestTelemetryAnalyticsTimeseries backs the zero-filled hourly customer
 // analytics chart. The SQL query weights collapsed telemetry rows by count.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {

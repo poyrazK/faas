@@ -633,6 +633,10 @@ const (
 	// scheduler's fanout worker. The event ledger remains authoritative; this
 	// channel is a low-latency wakeup for matching and enqueueing deliveries.
 	NotifyEventPublished = "event_published"
+	// NotifyAPIRouteDiscovered carries a first-seen, normalized API route
+	// candidate to the account-scoped dashboard stream. The event.published
+	// envelope is the durable source for configured event-subscription fanout.
+	NotifyAPIRouteDiscovered = "api_route_discovered"
 	// NotifyJobChanged fires when a row is inserted/updated/deleted
 	// in public.jobs (issue #1184 Workstream A / ADR-099). Listeners:
 	//   - schedd dispatchJobsTick: wakes the 1s tick to claim any
