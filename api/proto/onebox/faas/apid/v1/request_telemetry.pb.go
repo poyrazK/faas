@@ -58,8 +58,12 @@ type ConsumerUsageEvent struct {
 	ErrorCount        int64                  `protobuf:"varint,8,opt,name=error_count,json=errorCount,proto3" json:"error_count,omitempty"`
 	BillableUnits     int64                  `protobuf:"varint,9,opt,name=billable_units,json=billableUnits,proto3" json:"billable_units,omitempty"`
 	Audit             *RequestAuditEvidence  `protobuf:"bytes,10,opt,name=audit,proto3" json:"audit,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// A normalized route candidate. Independent of the optional exact audit
+	// record; the receiver persists it idempotently with the usage event.
+	DiscoveredRoute    string `protobuf:"bytes,11,opt,name=discovered_route,json=discoveredRoute,proto3" json:"discovered_route,omitempty"`
+	DiscoveredAtUnixMs int64  `protobuf:"varint,12,opt,name=discovered_at_unix_ms,json=discoveredAtUnixMs,proto3" json:"discovered_at_unix_ms,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageEvent) Reset() {
@@ -162,6 +166,20 @@ func (x *ConsumerUsageEvent) GetAudit() *RequestAuditEvidence {
 	return nil
 }
 
+func (x *ConsumerUsageEvent) GetDiscoveredRoute() string {
+	if x != nil {
+		return x.DiscoveredRoute
+	}
+	return ""
+}
+
+func (x *ConsumerUsageEvent) GetDiscoveredAtUnixMs() int64 {
+	if x != nil {
+		return x.DiscoveredAtUnixMs
+	}
+	return 0
+}
+
 type ConsumerUsageReceipt struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// False means the event was committed by an earlier attempt.
@@ -170,8 +188,11 @@ type ConsumerUsageReceipt struct {
 	// Old apid versions return false, preventing an audit-enabled gateway from
 	// acknowledging and discarding an event before a compatible receiver exists.
 	AuditRecorded bool `protobuf:"varint,2,opt,name=audit_recorded,json=auditRecorded,proto3" json:"audit_recorded,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// True only after the optional discovered route was committed. A gateway
+	// retains the outbox item when talking to a receiver that ignores field 11.
+	DiscoveryRecorded bool `protobuf:"varint,3,opt,name=discovery_recorded,json=discoveryRecorded,proto3" json:"discovery_recorded,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageReceipt) Reset() {
@@ -214,6 +235,13 @@ func (x *ConsumerUsageReceipt) GetApplied() bool {
 func (x *ConsumerUsageReceipt) GetAuditRecorded() bool {
 	if x != nil {
 		return x.AuditRecorded
+	}
+	return false
+}
+
+func (x *ConsumerUsageReceipt) GetDiscoveryRecorded() bool {
+	if x != nil {
+		return x.DiscoveryRecorded
 	}
 	return false
 }
@@ -445,8 +473,18 @@ type IncrementRequestTelemetryRequest struct {
 	// The same request's financial event was fsynced to the dedicated outbox.
 	// New receivers skip their legacy ledger write for this debugger row.
 	UsageOutboxed bool `protobuf:"varint,30,opt,name=usage_outboxed,json=usageOutboxed,proto3" json:"usage_outboxed,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// guest_cpu_time_ms — per-invocation child-process user+system CPU time
+	// measured by a Linux one-shot function runner. See resource-usage flag.
+	GuestCpuTimeMs int32 `protobuf:"varint,31,opt,name=guest_cpu_time_ms,json=guestCpuTimeMs,proto3" json:"guest_cpu_time_ms,omitempty"`
+	// guest_peak_rss_mb — the child process peak resident set size, rounded up
+	// to MiB. Persistent workers and arbitrary HTTP containers leave it zero.
+	GuestPeakRssMb int32 `protobuf:"varint,32,opt,name=guest_peak_rss_mb,json=guestPeakRssMb,proto3" json:"guest_peak_rss_mb,omitempty"`
+	// guest_resource_usage_available — true only when both process CPU and RSS
+	// were measured for this invocation. False distinguishes unavailable from
+	// a measured zero/sub-MiB value.
+	GuestResourceUsageAvailable bool `protobuf:"varint,33,opt,name=guest_resource_usage_available,json=guestResourceUsageAvailable,proto3" json:"guest_resource_usage_available,omitempty"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -689,6 +727,27 @@ func (x *IncrementRequestTelemetryRequest) GetUsageOutboxed() bool {
 	return false
 }
 
+func (x *IncrementRequestTelemetryRequest) GetGuestCpuTimeMs() int32 {
+	if x != nil {
+		return x.GuestCpuTimeMs
+	}
+	return 0
+}
+
+func (x *IncrementRequestTelemetryRequest) GetGuestPeakRssMb() int32 {
+	if x != nil {
+		return x.GuestPeakRssMb
+	}
+	return 0
+}
+
+func (x *IncrementRequestTelemetryRequest) GetGuestResourceUsageAvailable() bool {
+	if x != nil {
+		return x.GuestResourceUsageAvailable
+	}
+	return false
+}
+
 // IncrementRequestTelemetryResponse is the per-record outcome the
 // server returns. outcome ∈ {inserted, rate_limited, db_error}.
 // `inserted` is a successful INSERT; `rate_limited` means the
@@ -756,7 +815,7 @@ var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\x93\x03\n" +
+	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xf1\x03\n" +
 	"\x12ConsumerUsageEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -771,10 +830,13 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"errorCount\x12%\n" +
 	"\x0ebillable_units\x18\t \x01(\x03R\rbillableUnits\x12?\n" +
 	"\x05audit\x18\n" +
-	" \x01(\v2).onebox.faas.apid.v1.RequestAuditEvidenceR\x05audit\"W\n" +
+	" \x01(\v2).onebox.faas.apid.v1.RequestAuditEvidenceR\x05audit\x12)\n" +
+	"\x10discovered_route\x18\v \x01(\tR\x0fdiscoveredRoute\x121\n" +
+	"\x15discovered_at_unix_ms\x18\f \x01(\x03R\x12discoveredAtUnixMs\"\x86\x01\n" +
 	"\x14ConsumerUsageReceipt\x12\x18\n" +
 	"\aapplied\x18\x01 \x01(\bR\aapplied\x12%\n" +
-	"\x0eaudit_recorded\x18\x02 \x01(\bR\rauditRecorded\"\xdf\x02\n" +
+	"\x0eaudit_recorded\x18\x02 \x01(\bR\rauditRecorded\x12-\n" +
+	"\x12discovery_recorded\x18\x03 \x01(\bR\x11discoveryRecorded\"\xdf\x02\n" +
 	"\x14RequestAuditEvidence\x12%\n" +
 	"\x0eroute_template\x18\x01 \x01(\tR\rrouteTemplate\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +
@@ -790,7 +852,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\t \x01(\tR\trequestId\x12\x1b\n" +
 	"\tsource_ip\x18\n" +
-	" \x01(\tR\bsourceIp\"\x90\b\n" +
+	" \x01(\tR\bsourceIp\"\xab\t\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -828,7 +890,10 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x15deployment_created_at\x18\x1b \x01(\tR\x13deploymentCreatedAt\x12!\n" +
 	"\fimage_digest\x18\x1c \x01(\tR\vimageDigest\x12,\n" +
 	"\x12platform_tenant_id\x18\x1d \x01(\tR\x10platformTenantId\x12%\n" +
-	"\x0eusage_outboxed\x18\x1e \x01(\bR\rusageOutboxed\"c\n" +
+	"\x0eusage_outboxed\x18\x1e \x01(\bR\rusageOutboxed\x12)\n" +
+	"\x11guest_cpu_time_ms\x18\x1f \x01(\x05R\x0eguestCpuTimeMs\x12)\n" +
+	"\x11guest_peak_rss_mb\x18  \x01(\x05R\x0eguestPeakRssMb\x12C\n" +
+	"\x1eguest_resource_usage_available\x18! \x01(\bR\x1bguestResourceUsageAvailable\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\x8e\x02\n" +

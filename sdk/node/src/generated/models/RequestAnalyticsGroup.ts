@@ -15,5 +15,12 @@ export type RequestAnalyticsGroup = {
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
+  cold_request_p95_ms?: number | null;
+  wake_boot_p95_ms?: number | null;
+  guest_execution_p50_ms?: number | null;
+  guest_execution_p95_ms?: number | null;
+  guest_cpu_avg_ms?: number | null;
+  guest_cpu_p95_ms?: number | null;
+  guest_peak_rss_max_mb?: number | null;
 };
 

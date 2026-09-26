@@ -1017,6 +1017,7 @@ type Handler struct {
 	requestTelemetry    *requestTelemetryRecorder
 	usageOutbox         *usageoutbox.Outbox
 	requestAuditEnabled bool
+	apiDiscoveryEnabled bool
 
 	// streamingEnabled gates the per-app streaming response path
 	// (issue #471 / ADR-047). When false (the default), every app is
@@ -5386,6 +5387,10 @@ func (h *Handler) WithUsageOutbox(q *usageoutbox.Outbox) { h.usageOutbox = q }
 // usage envelope. Enable only after apid supports the audit receipt field.
 func (h *Handler) WithRequestAudit(enabled bool) { h.requestAuditEnabled = enabled }
 
+// WithAPIDiscovery records bounded route candidates without enabling exact
+// request audit. The operator flag is off by default pending path review.
+func (h *Handler) WithAPIDiscovery(enabled bool) { h.apiDiscoveryEnabled = enabled }
+
 // Metrics exposes the Prometheus bundle (used by the control listener to mount
 // /metrics). May be nil if NewHandler was used and nothing initialized one.
 func (h *Handler) Metrics() *Metrics { return h.metrics }
@@ -5719,18 +5724,15 @@ haveApp:
 	// the per-route emission on "".
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
-	if set != nil || h.requestAuditEnabled {
+	if set != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
 				path = template
 			}
 		}
-		preLabel := otherRouteLabel
-		if path != otherRouteLabel && len(r.Method)+1+len(path) <= 256 && !strings.ContainsAny(path, "?#\x00\r\n\t") {
-			preLabel = r.Method + " " + path
-		}
-		if h.requestAuditEnabled {
+		preLabel := observedRouteLabel(r.Method, path)
+		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
 		}
 		if set != nil {
@@ -7262,34 +7264,37 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				requestTraceID = telemetryTraceID(requestID)
 			}
 			row := RequestTelemetryRow{
-				EventID:             uuid.New(),
-				AccountID:           acctUUID,
-				AppID:               appUUID,
-				DeploymentID:        deploymentUUID,
-				Route:               telemetryRoute,
-				Method:              r.Method,
-				Status:              status,
-				LatencyMS:           int(elapsed / time.Millisecond),
-				ColdBoot:            cold,
-				TraceID:             requestTraceID,
-				ReceivedAt:          time.Now(),
-				WakeID:              target.WakeID,
-				InstanceID:          target.InstanceID,
-				UAFamily:            uaFamily,
-				ReferrerHost:        referrerHost,
-				Country:             country,
-				GuestDurationMS:     guestEvidence.DurationMS,
-				GuestRuntime:        guestEvidence.Runtime,
-				GuestOutcome:        guestEvidence.Outcome,
-				GuestErrorClass:     guestEvidence.ErrorClass,
-				ConsumerID:          consumerID,
-				PlatformTenantID:    platformTenantID,
-				NodeID:              target.NodeID,
-				Region:              target.Region,
-				CommitSHA:           target.CommitSHA,
-				DeploymentTag:       target.DeploymentTag,
-				DeploymentCreatedAt: target.DeploymentCreatedAt,
-				ImageDigest:         target.ImageDigest,
+				EventID:                     uuid.New(),
+				AccountID:                   acctUUID,
+				AppID:                       appUUID,
+				DeploymentID:                deploymentUUID,
+				Route:                       telemetryRoute,
+				Method:                      r.Method,
+				Status:                      status,
+				LatencyMS:                   int(elapsed / time.Millisecond),
+				ColdBoot:                    cold,
+				TraceID:                     requestTraceID,
+				ReceivedAt:                  time.Now(),
+				WakeID:                      target.WakeID,
+				InstanceID:                  target.InstanceID,
+				UAFamily:                    uaFamily,
+				ReferrerHost:                referrerHost,
+				Country:                     country,
+				GuestDurationMS:             guestEvidence.DurationMS,
+				GuestRuntime:                guestEvidence.Runtime,
+				GuestOutcome:                guestEvidence.Outcome,
+				GuestErrorClass:             guestEvidence.ErrorClass,
+				GuestCPUTimeMS:              guestEvidence.CPUTimeMS,
+				GuestPeakRSSMB:              guestEvidence.PeakRSSMB,
+				GuestResourceUsageAvailable: guestEvidence.ResourceUsageAvailable,
+				ConsumerID:                  consumerID,
+				PlatformTenantID:            platformTenantID,
+				NodeID:                      target.NodeID,
+				Region:                      target.Region,
+				CommitSHA:                   target.CommitSHA,
+				DeploymentTag:               target.DeploymentTag,
+				DeploymentCreatedAt:         target.DeploymentCreatedAt,
+				ImageDigest:                 target.ImageDigest,
 			}
 			if h.usageOutbox != nil {
 				errorCount := int64(0)
@@ -7301,6 +7306,15 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
 					WindowStart:  row.ReceivedAt.UTC().Truncate(time.Minute),
 					RequestCount: 1, ErrorCount: errorCount, BillableUnits: 1,
+				}
+				if h.requestAuditEnabled || h.apiDiscoveryEnabled {
+					usageEvent.DiscoveredRoute = auditRouteFrom(r)
+					if usageEvent.DiscoveredRoute == otherRouteLabel {
+						usageEvent.DiscoveredRoute = ""
+					}
+					if usageEvent.DiscoveredRoute != "" {
+						usageEvent.DiscoveredAtUnixMs = row.ReceivedAt.UTC().UnixMilli()
+					}
 				}
 				if h.requestAuditEnabled {
 					auditRoute := auditRouteFrom(r)

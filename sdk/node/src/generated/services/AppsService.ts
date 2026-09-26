@@ -35,7 +35,7 @@ import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
-import type { DiscoveredAuditRoutesResponse } from '../models/DiscoveredAuditRoutesResponse.js';
+import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
@@ -856,6 +856,13 @@ export class AppsService {
    *
    * Counts and percentiles include the recorder's collapsed row `count`,
    * so the result represents original requests rather than stored rows.
+   * Route groups also include cold-request p95 and platform-runner guest
+   * execution wall-time percentiles when available, p95 time from
+   * `wake.boot_started` to `wake.boot_completed` for correlated route wakes,
+   * plus bounded sampled dependency span timings for platform-classified dependencies. The
+   * dependency values are not complete call counts; `dependencies_truncated`
+   * marks row or cardinality caps. CPU time and route memory peaks are not
+   * inferred from these fields.
    * Grouped results contain at most 50 groups plus `__other__`. Consumer
    * grouping uses the stable consumer UUID and reports anonymous traffic
    * as `__anonymous__`. Only a normalized User-Agent family, hostname-only
@@ -1087,27 +1094,27 @@ export class AppsService {
     });
   }
   /**
-   * Persisted API route candidates from audited traffic
-   * Returns up to 500 distinct observed method/template labels from the
-   * exact request audit store. Unlike the live per-route metrics surface,
-   * this inventory remains available during a gateway or metrics outage.
-   * It only includes traffic observed while audit collection was enabled
-   * and still within the 30-day request-audit retention window.
+   * Persisted, bounded API route inventory
+   * Returns up to 500 distinct observed method/template candidates with
+   * first/last seen times and replay-safe request counts. Discovery has
+   * its own operator opt-in, independent of exact request audit and its
+   * 30-day retention. Undeclared paths can retain literal segments, so
+   * operators must review path privacy before enabling discovery.
    *
-   * @returns DiscoveredAuditRoutesResponse Persisted discovered route candidates.
+   * @returns DiscoveredRoutesResponse Persisted discovered route candidates.
    * @throws ApiError
    */
-  public static getAppDiscoveredAuditRoutes({
+  public static getAppDiscoveredRoutes({
     slug,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
-  }): CancelablePromise<DiscoveredAuditRoutesResponse> {
+  }): CancelablePromise<DiscoveredRoutesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
-      url: '/v1/apps/{slug}/audit/routes',
+      url: '/v1/apps/{slug}/discovered-routes',
       path: {
         'slug': slug,
       },

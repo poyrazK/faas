@@ -22,3 +22,18 @@ func TestInferredObservedPath(t *testing.T) {
 		}
 	}
 }
+
+// adr: 244
+func TestObservedRouteLabelRejectsOutboxPoisonPaths(t *testing.T) {
+	for _, tc := range []struct{ method, path, want string }{
+		{"GET", "/users/{id}", "GET /users/{id}"},
+		{"GET", "/users/private?token", otherRouteLabel},
+		{"GET", "/users/name\nother", otherRouteLabel},
+		{"GET", "/users/name\x00other", otherRouteLabel},
+		{"LONGCUSTOMMETHODNAME", "/users", otherRouteLabel},
+	} {
+		if got := observedRouteLabel(tc.method, tc.path); got != tc.want {
+			t.Errorf("observedRouteLabel(%q, %q) = %q, want %q", tc.method, tc.path, got, tc.want)
+		}
+	}
+}

@@ -134,6 +134,8 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	requestAuditEvents        map[string]RequestAuditRecord
+	discoveredAPIRoutes       map[string]DiscoveredAPIRoute
+	discoveryReceipts         map[string]struct{}
 	deploymentActivationMu    sync.Mutex
 	deploymentActivationLocks map[string]*deploymentActivationLock
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
@@ -579,7 +581,7 @@ type MemStore struct {
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage       map[string]APIConsumerUsageBucket
 	platformTenantUsage    map[string]APIConsumerUsageBucket
-	apiConsumerUsageEvents map[string]struct{}
+	apiConsumerUsageEvents map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.
@@ -1094,7 +1096,9 @@ func NewMemStore() *MemStore {
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
 		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
-		apiConsumerUsageEvents:            map[string]struct{}{},
+		apiConsumerUsageEvents:            map[string]usageEventIdentity{},
+		discoveredAPIRoutes:               map[string]DiscoveredAPIRoute{},
+		discoveryReceipts:                 map[string]struct{}{},
 		apiConsumerRateCards:              map[string]APIConsumerRateCard{},
 		apiConsumerUsageStatements:        map[string]APIConsumerUsageStatement{},
 		apiConsumerUsageStatementHandoffs: map[string]APIConsumerUsageStatementHandoff{},
@@ -5959,6 +5963,21 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	m.logEvents = filteredLogEvents
+	for eventID, record := range m.requestAuditEvents {
+		if record.AppID == id {
+			delete(m.requestAuditEvents, eventID)
+		}
+	}
+	for key := range m.discoveredAPIRoutes {
+		if strings.HasPrefix(key, discoveredRouteKey(a.AccountID, id, "")) {
+			delete(m.discoveredAPIRoutes, key)
+		}
+	}
+	for eventID := range m.discoveryReceipts {
+		if m.apiConsumerUsageEvents[eventID].appID == id {
+			delete(m.discoveryReceipts, eventID)
+		}
+	}
 	delete(m.apps, id)
 	return nil
 }
@@ -15038,6 +15057,11 @@ func (m *MemStore) AppendEventWithTrace(ctx context.Context, actor, kind string,
 func (m *MemStore) appendEventWithTraceAt(_ context.Context, actor, kind string, subject *string, data []byte, traceID *string, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.appendEventLocked(actor, kind, subject, data, traceID, at)
+}
+
+// appendEventLocked appends an event when the caller already owns m.mu.
+func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data []byte, traceID *string, at time.Time) error {
 	var subj *uuid.UUID
 	if subject != nil {
 		subj = parseSubjectID(*subject)
@@ -19090,6 +19114,21 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for sid, handoff := range m.platformTenantStatementHandoffs {
 		if handoff.AccountID == id {
 			delete(m.platformTenantStatementHandoffs, sid)
+		}
+	}
+	for eventID, record := range m.requestAuditEvents {
+		if record.AccountID == id {
+			delete(m.requestAuditEvents, eventID)
+		}
+	}
+	for key := range m.discoveredAPIRoutes {
+		if strings.HasPrefix(key, id+"\x00") {
+			delete(m.discoveredAPIRoutes, key)
+		}
+	}
+	for eventID := range m.discoveryReceipts {
+		if m.apiConsumerUsageEvents[eventID].accountID == id {
+			delete(m.discoveryReceipts, eventID)
 		}
 	}
 	for did, d := range m.deployments {

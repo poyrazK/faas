@@ -31,6 +31,17 @@ func inferredObservedPath(path string) string {
 	return path
 }
 
+// observedRouteLabel is shared by audit and independent discovery. Untrusted
+// path bytes must not turn a financially critical outbox event into a
+// permanently rejected delivery at the receiver.
+func observedRouteLabel(method, path string) string {
+	if path == otherRouteLabel || method == "" || len(method) > 16 ||
+		len(method)+1+len(path) > 256 || strings.ContainsAny(path, "?#\x00\r\n\t") {
+		return otherRouteLabel
+	}
+	return method + " " + path
+}
+
 func observedIdentifier(segment string) bool {
 	if segment == "" {
 		return false

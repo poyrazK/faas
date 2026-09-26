@@ -68,6 +68,10 @@ message ConsumerUsageEvent {
   int64 error_count = 8;
   int64 billable_units = 9;
   RequestAuditEvidence audit = 10;
+  // A normalized route candidate. Independent of the optional exact audit
+  // record; the receiver persists it idempotently with the usage event.
+  string discovered_route = 11;
+  int64 discovered_at_unix_ms = 12;
 }
 
 message ConsumerUsageReceipt {
@@ -77,6 +81,9 @@ message ConsumerUsageReceipt {
   // Old apid versions return false, preventing an audit-enabled gateway from
   // acknowledging and discarding an event before a compatible receiver exists.
   bool audit_recorded = 2;
+  // True only after the optional discovered route was committed. A gateway
+  // retains the outbox item when talking to a receiver that ignores field 11.
+  bool discovery_recorded = 3;
 }
 
 // One completed request, not a collapsed debugger bucket. No query, headers,
@@ -226,6 +233,19 @@ message IncrementRequestTelemetryRequest {
   // The same request's financial event was fsynced to the dedicated outbox.
   // New receivers skip their legacy ledger write for this debugger row.
   bool usage_outboxed = 30;
+
+  // guest_cpu_time_ms — per-invocation child-process user+system CPU time
+  // measured by a Linux one-shot function runner. See resource-usage flag.
+  int32 guest_cpu_time_ms = 31;
+
+  // guest_peak_rss_mb — the child process peak resident set size, rounded up
+  // to MiB. Persistent workers and arbitrary HTTP containers leave it zero.
+  int32 guest_peak_rss_mb = 32;
+
+  // guest_resource_usage_available — true only when both process CPU and RSS
+  // were measured for this invocation. False distinguishes unavailable from
+  // a measured zero/sub-MiB value.
+  bool guest_resource_usage_available = 33;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

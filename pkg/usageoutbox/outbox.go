@@ -23,18 +23,21 @@ const (
 
 var ErrFull = errors.New("consumer usage outbox full")
 
-// Event has only the financial dimensions, never request paths or client data.
+// Event carries financial facts and optional, opt-in observations. Discovered
+// routes are normalized method/templates, never queries, headers, or bodies.
 type Event struct {
-	EventID          string         `json:"event_id"`
-	AccountID        string         `json:"account_id"`
-	AppID            string         `json:"app_id"`
-	ConsumerID       string         `json:"consumer_id,omitempty"`
-	PlatformTenantID string         `json:"platform_tenant_id,omitempty"`
-	WindowStart      time.Time      `json:"window_start"`
-	RequestCount     int64          `json:"request_count"`
-	ErrorCount       int64          `json:"error_count"`
-	BillableUnits    int64          `json:"billable_units"`
-	Audit            *AuditEvidence `json:"audit,omitempty"`
+	EventID            string         `json:"event_id"`
+	AccountID          string         `json:"account_id"`
+	AppID              string         `json:"app_id"`
+	ConsumerID         string         `json:"consumer_id,omitempty"`
+	PlatformTenantID   string         `json:"platform_tenant_id,omitempty"`
+	WindowStart        time.Time      `json:"window_start"`
+	RequestCount       int64          `json:"request_count"`
+	ErrorCount         int64          `json:"error_count"`
+	BillableUnits      int64          `json:"billable_units"`
+	Audit              *AuditEvidence `json:"audit,omitempty"`
+	DiscoveredRoute    string         `json:"discovered_route,omitempty"`
+	DiscoveredAtUnixMs int64          `json:"discovered_at_unix_ms,omitempty"`
 }
 
 // AuditEvidence is opt-in request metadata attached to the same fsynced

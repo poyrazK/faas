@@ -38,27 +38,3 @@ func (s *PgStore) ListRequestAudit(ctx context.Context, accountID, appID string,
 	}
 	return out, rows.Err()
 }
-
-func (s *PgStore) ListDiscoveredAuditRoutes(ctx context.Context, accountID, appID string, limit int) ([]string, error) {
-	if err := validateAuditQuery(accountID, appID, limit); err != nil {
-		return nil, err
-	}
-	rows, err := s.pool.Query(ctx, `
-		select route_template from request_audit_events
-		where account_id = $1::uuid and app_id = $2::uuid
-		  and route_template <> '__route_other__'
-		group by route_template order by route_template limit $3`, accountID, appID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]string, 0)
-	for rows.Next() {
-		var route string
-		if err := rows.Scan(&route); err != nil {
-			return nil, err
-		}
-		out = append(out, route)
-	}
-	return out, rows.Err()
-}

@@ -11,8 +11,11 @@ from ..models.request_analytics_response_group_by import (
     RequestAnalyticsResponseGroupBy,
     check_request_analytics_response_group_by,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.request_analytics_compute_cost import RequestAnalyticsComputeCost
+    from ..models.request_analytics_deployment_cost_breakdown import RequestAnalyticsDeploymentCostBreakdown
     from ..models.request_analytics_group import RequestAnalyticsGroup
     from ..models.request_analytics_route import RequestAnalyticsRoute
 
@@ -55,8 +58,16 @@ class RequestAnalyticsResponse:
     """Maximum number of route rows returned."""
     routes_truncated: bool
     """True when more route rows matched than routes_limit."""
+    dependencies_truncated: bool
+    """True when dependency span rows, route dependency groups, or route dependency outputs were capped."""
     as_of: datetime.datetime
     """RFC3339Nano UTC assembly timestamp."""
+    compute_cost: RequestAnalyticsComputeCost | Unset = UNSET
+    """Estimated app compute value over the analytics window, allocated by observed request share. This is not an
+    invoice amount; it values raw RAM-hours before the account's included allowance and excludes egress."""
+    deployment_costs: RequestAnalyticsDeploymentCostBreakdown | Unset = UNSET
+    """Bounded deployment allocation of the app's estimated raw compute value for the analytics window. It is not
+    an invoice amount."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -104,7 +115,17 @@ class RequestAnalyticsResponse:
 
         routes_truncated = self.routes_truncated
 
+        dependencies_truncated = self.dependencies_truncated
+
         as_of = self.as_of.isoformat()
+
+        compute_cost: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.compute_cost, Unset):
+            compute_cost = self.compute_cost.to_dict()
+
+        deployment_costs: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.deployment_costs, Unset):
+            deployment_costs = self.deployment_costs.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -129,14 +150,21 @@ class RequestAnalyticsResponse:
                 "routes": routes,
                 "routes_limit": routes_limit,
                 "routes_truncated": routes_truncated,
+                "dependencies_truncated": dependencies_truncated,
                 "as_of": as_of,
             }
         )
+        if compute_cost is not UNSET:
+            field_dict["compute_cost"] = compute_cost
+        if deployment_costs is not UNSET:
+            field_dict["deployment_costs"] = deployment_costs
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.request_analytics_compute_cost import RequestAnalyticsComputeCost
+        from ..models.request_analytics_deployment_cost_breakdown import RequestAnalyticsDeploymentCostBreakdown
         from ..models.request_analytics_group import RequestAnalyticsGroup
         from ..models.request_analytics_route import RequestAnalyticsRoute
 
@@ -189,7 +217,23 @@ class RequestAnalyticsResponse:
 
         routes_truncated = d.pop("routes_truncated")
 
+        dependencies_truncated = d.pop("dependencies_truncated")
+
         as_of = datetime.datetime.fromisoformat(d.pop("as_of"))
+
+        _compute_cost = d.pop("compute_cost", UNSET)
+        compute_cost: RequestAnalyticsComputeCost | Unset
+        if isinstance(_compute_cost, Unset):
+            compute_cost = UNSET
+        else:
+            compute_cost = RequestAnalyticsComputeCost.from_dict(_compute_cost)
+
+        _deployment_costs = d.pop("deployment_costs", UNSET)
+        deployment_costs: RequestAnalyticsDeploymentCostBreakdown | Unset
+        if isinstance(_deployment_costs, Unset):
+            deployment_costs = UNSET
+        else:
+            deployment_costs = RequestAnalyticsDeploymentCostBreakdown.from_dict(_deployment_costs)
 
         request_analytics_response = cls(
             slug=slug,
@@ -211,7 +255,10 @@ class RequestAnalyticsResponse:
             routes=routes,
             routes_limit=routes_limit,
             routes_truncated=routes_truncated,
+            dependencies_truncated=dependencies_truncated,
             as_of=as_of,
+            compute_cost=compute_cost,
+            deployment_costs=deployment_costs,
         )
 
         request_analytics_response.additional_properties = d
