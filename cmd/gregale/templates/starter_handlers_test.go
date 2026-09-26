@@ -1,7 +1,11 @@
 package templates
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -133,5 +137,52 @@ func TestAIChatStarterUsesAServedClaudeModel(t *testing.T) {
 		if !strings.Contains(src, want) {
 			t.Errorf("ai-chat/handler.js missing %q", want)
 		}
+	}
+}
+
+// TestGoFunctionStarterEncodesRequestFields — the Go starter spliced the
+// request path and method into a JSON string by concatenation, so a path
+// containing a quote or backslash produced invalid (or field-injected) JSON.
+func TestGoFunctionStarterEncodesRequestFields(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain is not installed")
+	}
+	dest := filepath.Join(t.TempDir(), "function-go")
+	if err := Materialize("function-go", dest); err != nil {
+		t.Fatal(err)
+	}
+	path := `/a"b\c","admin":true,"x":"`
+	envelope, err := json.Marshal(map[string]any{"method": "POST", "path": path, "headers": map[string]string{}, "query": "", "body_b64": ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, goBin, "run", filepath.Join(dest, "handler.go"))
+	cmd.Dir = dest
+	cmd.Env = append(os.Environ(), "GO111MODULE=off", "GOFLAGS=")
+	cmd.Stdin = bytes.NewReader(envelope)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("run starter: %v", err)
+	}
+	var resp struct {
+		Status  int    `json:"status"`
+		BodyB64 string `json:"body_b64"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("response envelope: %v (%s)", err, out)
+	}
+	raw, err := base64.StdEncoding.DecodeString(resp.BodyB64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("starter body is not valid JSON: %v (%s)", err, raw)
+	}
+	if body["path"] != path || body["method"] != "POST" || body["admin"] != nil || len(body) != 3 {
+		t.Fatalf("body = %v, want exactly {ok, path, method} echoing the request", body)
 	}
 }
