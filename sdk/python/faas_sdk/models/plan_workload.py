@@ -33,7 +33,7 @@ class PlanWorkload:
     dockerfile: str | Unset = UNSET
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
-    GREGALE_SERVICE_<NAME>_URL for workload dependencies."""
+    GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""

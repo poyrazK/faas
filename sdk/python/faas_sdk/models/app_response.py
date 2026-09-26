@@ -116,9 +116,10 @@ class AppResponse:
     preview_expires_at: datetime.datetime | None | Unset = UNSET
     """Automatic teardown deadline for a preview, when one is configured."""
     service_bindings: list[AppServiceBinding] | Unset = UNSET
-    """Declared same-account service dependencies currently injected into this workload. Project workloads derive
-    these from Compose; standalone apps derive them from service_binding_targets. They are discovery metadata under
-    the `account` policy and the outbound authorization allowlist under the `declared` policy."""
+    """Declared same-account service dependencies injected into this workload as legacy `_URL` environment
+    variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone
+    apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the
+    outbound authorization allowlist under the `declared` policy."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings."""
