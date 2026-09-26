@@ -17,13 +17,21 @@ export type AppOpenAPIPolicyPreviewResponse = {
    */
   source: string;
   /**
-   * Whether at least one collector returned current route telemetry.
+   * Whether current route telemetry or a persisted discovered-route inventory is available.
    */
   observed_available: boolean;
   /**
-   * Completeness of the fleet-wide observed-route input.
+   * Completeness of the current fleet-wide telemetry input; persisted inventory availability is reported separately.
    */
   observed_source: 'live' | 'partial' | 'unavailable';
+  /**
+   * Whether durable, opt-in discovered routes contributed to the observed route set.
+   */
+  observed_inventory_available: boolean;
+  /**
+   * Whether the live route snapshot or durable discovered-route inventory reached its route cap.
+   */
+  observed_cap_hit: boolean;
   /**
    * Number of registry compute gateways expected to contribute route observations.
    */

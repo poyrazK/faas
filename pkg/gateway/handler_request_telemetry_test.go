@@ -356,6 +356,8 @@ func TestHandlerObservePersistsGuestEvidence(t *testing.T) {
 		{"X-Faas-Guest-Runtime", "node24"},
 		{"X-Faas-Guest-Duration-Ms", "125"},
 		{"X-Faas-Guest-Outcome", "ok"},
+		{"X-Faas-Guest-CPU-Time-Ms", "12"},
+		{"X-Faas-Guest-Peak-Rss-Mb", "48"},
 	} {
 		if !recordGuestExecutionEvidence(r.Context(), header.name, header.value) {
 			t.Fatalf("failed to record %s", header.name)
@@ -368,5 +370,8 @@ func TestHandlerObservePersistsGuestEvidence(t *testing.T) {
 	}
 	if rows[0].GuestRuntime != "node24" || rows[0].GuestDurationMS != 125 || rows[0].GuestOutcome != "ok" {
 		t.Fatalf("guest evidence = (%q, %d, %q)", rows[0].GuestRuntime, rows[0].GuestDurationMS, rows[0].GuestOutcome)
+	}
+	if !rows[0].GuestResourceUsageAvailable || rows[0].GuestCPUTimeMS != 12 || rows[0].GuestPeakRSSMB != 48 {
+		t.Fatalf("guest process usage = available:%t cpu:%d rss:%d", rows[0].GuestResourceUsageAvailable, rows[0].GuestCPUTimeMS, rows[0].GuestPeakRSSMB)
 	}
 }

@@ -9,4 +9,6 @@ const (
 	GuestEvidenceRuntimeHeader    = "X-Faas-Guest-Runtime"
 	GuestEvidenceOutcomeHeader    = "X-Faas-Guest-Outcome"
 	GuestEvidenceErrorClassHeader = "X-Faas-Guest-Error-Class"
+	GuestEvidenceCPUTimeHeader    = "X-Faas-Guest-Cpu-Time-Ms"
+	GuestEvidencePeakRSSHeader    = "X-Faas-Guest-Peak-Rss-Mb"
 )
