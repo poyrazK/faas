@@ -7721,10 +7721,13 @@ type EdgeRuleRespondAction struct {
 	Body       json.RawMessage `json:"body,omitempty"`
 }
 
-// EdgeRuleAsyncAction has no knobs in v1. The durable invocation subsystem
-// supplies retry, deadline, retention, and payload limits from the app and
+// EdgeRuleAsyncAction configures an async route's terminal destinations.
+// Retry, deadline, retention, and payload limits still come from the app and
 // account plan, keeping an async route's behavior aligned with /invoke/async.
-type EdgeRuleAsyncAction struct{}
+type EdgeRuleAsyncAction struct {
+	OnSuccess string `json:"on_success,omitempty"`
+	OnFailure string `json:"on_failure,omitempty"`
+}
 
 func (a *EdgeRuleAsyncAction) Validate() *Problem {
 	if a == nil {

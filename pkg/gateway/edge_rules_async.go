@@ -13,15 +13,18 @@ import (
 )
 
 // EdgeRuleAsyncResolved is the compiled kind=async matcher payload. The action
-// itself is empty; delivery policy comes from the existing invocation system.
+// may select terminal webhook destinations; retry and retention policy still
+// come from the existing invocation system.
 type EdgeRuleAsyncResolved struct {
-	ID           string
-	AccountID    string
-	AppID        string
-	Priority     int
-	PathGlob     string
-	Methods      map[string]bool
-	MatchHeaders map[string]string
+	ID               string
+	AccountID        string
+	AppID            string
+	OnSuccessWebhook string
+	OnFailureWebhook string
+	Priority         int
+	PathGlob         string
+	Methods          map[string]bool
+	MatchHeaders     map[string]string
 }
 
 // PickFirstAsyncMatch returns the first priority-ordered async rule matching
@@ -56,13 +59,15 @@ type AsyncEdgeRuleMatcher interface {
 // Headers has already had credentials, hop-by-hop, and platform-owned fields
 // removed before it crosses this interface.
 type AsyncRouteRequest struct {
-	AppID          string
-	AccountID      string
-	Method         string
-	Path           string
-	Payload        json.RawMessage
-	Headers        map[string]string
-	IdempotencyKey string
+	AppID            string
+	AccountID        string
+	OnSuccessWebhook string
+	OnFailureWebhook string
+	Method           string
+	Path             string
+	Payload          json.RawMessage
+	Headers          map[string]string
+	IdempotencyKey   string
 }
 
 type AsyncRouteAccepted struct {
@@ -130,13 +135,15 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		return true
 	}
 	accepted, err := h.asyncRoutes.EnqueueAsyncRoute(r.Context(), AsyncRouteRequest{
-		AppID:          app.ID,
-		AccountID:      app.AccountID,
-		Method:         r.Method,
-		Path:           r.URL.RequestURI(),
-		Payload:        payload,
-		Headers:        asyncRouteHeaders(r.Header),
-		IdempotencyKey: r.Header.Get("Idempotency-Key"),
+		AppID:            app.ID,
+		AccountID:        app.AccountID,
+		OnSuccessWebhook: rule.OnSuccessWebhook,
+		OnFailureWebhook: rule.OnFailureWebhook,
+		Method:           r.Method,
+		Path:             r.URL.RequestURI(),
+		Payload:          payload,
+		Headers:          asyncRouteHeaders(r.Header),
+		IdempotencyKey:   r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
 		status := http.StatusServiceUnavailable

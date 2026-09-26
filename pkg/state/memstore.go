@@ -11819,6 +11819,9 @@ func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.
 	inv.CompletedAt = &now
 	outcome := OutcomeSuccess
 	inv.Outcome = &outcome
+	if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
+		return err
+	}
 	m.invocations[id] = inv
 	// PR-B fixup (code-review #1185 finding #6): MemStore parity
 	// with PgStore. Without the decrement, ClaimInvocationWithCap
@@ -11844,6 +11847,27 @@ func (m *MemStore) decrementAccountAsyncInflightLocked(accountID string) {
 		q.CurrentInflight--
 	}
 	m.accountAsyncQuota[accountID] = q
+}
+
+// enqueueInvocationDestinationLocked mirrors the PgStore transaction path.
+// Caller holds m.mu so the callback row and terminal invocation become
+// visible together to MemStore readers.
+func (m *MemStore) enqueueInvocationDestinationLocked(inv Invocation) error {
+	delivery, ok, err := invocationDestinationDelivery(inv)
+	if err != nil || !ok {
+		return err
+	}
+	hook, exists := m.appWebhooks[delivery.WebhookID]
+	if !exists || !hook.Enabled || hook.AppID != delivery.AppID || hook.AccountID != delivery.AccountID {
+		return nil
+	}
+	delivery.ID = newID()
+	delivery.UpdatedAt = delivery.CreatedAt
+	if m.appWebhookDeliveries == nil {
+		m.appWebhookDeliveries = make(map[string]AppWebhookDelivery)
+	}
+	m.appWebhookDeliveries[delivery.ID] = delivery
+	return nil
 }
 
 // FailInvocation is the durable store half of the drain's error
@@ -11917,6 +11941,11 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		// ApplyFailOptions defaults it to OutcomeFailed.
 		outcome := failOpts.Outcome
 		inv.Outcome = &outcome
+	}
+	if inv.State == InvocationFailed || inv.State == InvocationDeadLetter {
+		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
+			return err
+		}
 	}
 	m.invocations[id] = inv
 	// A slot belongs to the dispatching lease. Release it on every
@@ -23550,6 +23579,9 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		inv.LastError = "deadline_at breached"
 		now := time.Now()
 		inv.CompletedAt = &now
+		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
+			return nil, err
+		}
 		m.invocations[id] = inv
 		if quotaReserved {
 			m.decrementAccountAsyncInflightLocked(inv.AccountID)

@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -232,8 +233,10 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 		if err := json.Unmarshal(raw, &fields); err != nil {
 			return api.ErrValidation(fmt.Sprintf("async action: %v", err))
 		}
-		if len(fields) != 0 {
-			return api.ErrValidation("async action does not accept fields; send an empty object")
+		for field := range fields {
+			if field != "on_success" && field != "on_failure" {
+				return api.ErrValidation(fmt.Sprintf("async action does not accept field %q", field))
+			}
 		}
 		var a api.EdgeRuleAsyncAction
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -242,6 +245,36 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 		return a.Validate()
 	}
 	return api.ErrValidation("edge rule action validation fell through — internal bug")
+}
+
+// validateEdgeRuleAsyncDestinations keeps async-route callbacks scoped to the
+// same app and account as the edge rule. Invocation destinations use the same
+// ownership boundary, so a route cannot turn a webhook ID into a cross-tenant
+// delivery primitive.
+func (s *server) validateEdgeRuleAsyncDestinations(ctx context.Context, appID, accountID, kind string, raw json.RawMessage) *api.Problem {
+	if kind != string(state.EdgeRuleKindAsync) {
+		return nil
+	}
+	var action api.EdgeRuleAsyncAction
+	if err := json.Unmarshal(raw, &action); err != nil {
+		return api.ErrValidation(fmt.Sprintf("async action: %v", err))
+	}
+	for _, destination := range []struct {
+		field string
+		id    string
+	}{
+		{field: "on_success", id: action.OnSuccess},
+		{field: "on_failure", id: action.OnFailure},
+	} {
+		if destination.id == "" {
+			continue
+		}
+		hook, err := s.store.AppWebhookByID(ctx, destination.id)
+		if err != nil || hook.AppID != appID || hook.AccountID != accountID {
+			return api.ErrValidation(fmt.Sprintf("async action.%s must reference a webhook owned by this app", destination.field))
+		}
+	}
+	return nil
 }
 
 // --- list ------------------------------------------------------------------
@@ -348,6 +381,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	if prob := validateEdgeRuleBody(&req, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.validateEdgeRuleAsyncDestinations(r.Context(), app.ID, acct.ID, req.Kind, req.Action); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -701,7 +738,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 	case state.EdgeRuleKindAsync:
 		var a api.EdgeRuleAsyncAction
 		if err := json.Unmarshal(raw, &a); err == nil {
-			out.Async = &state.EdgeRuleAsyncAction{}
+			out.Async = &state.EdgeRuleAsyncAction{OnSuccess: a.OnSuccess, OnFailure: a.OnFailure}
 		}
 	}
 	return out
@@ -792,6 +829,10 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 	if req.Action != nil {
 		prob := validateEdgeRuleAction(string(row.Kind), *req.Action, acct.Plan)
 		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		if prob := s.validateEdgeRuleAsyncDestinations(r.Context(), row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}

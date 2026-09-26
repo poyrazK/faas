@@ -8,6 +8,9 @@
   ID and `/v1/invocations/{id}` status URL without waking the app. Schedd's
   existing durable drain later wakes the app, delivers the original method,
   URL, JSON body, and safe headers, and stores the terminal result/error.
+  Optional `on_success` and `on_failure` fields select same-app webhook
+  subscriptions for the terminal `job.finished` event. The selected delivery
+  is recorded atomically with the terminal invocation transition.
 - **Why:** Gregale already has the durable invocation state machine, retry and
   retention policy, wake integration, and status/result API. Requiring an app
   to add a second queue just to move a slow HTTP handler off the request path
@@ -38,3 +41,15 @@ failure returns `503`; payload or JSON validation failure returns `413`/`400`.
 The result is read through the existing authenticated
 `GET /v1/invocations/{id}` contract. The request's `status_url` is deliberately
 that control-plane path rather than an unauthenticated application-host URL.
+
+Example CLI configuration:
+
+```sh
+gregale edge-rules create --app reports --kind async \
+  --match-host api.example.com --match-path /reports \
+  --on-success-webhook <subscription-id> \
+  --on-failure-webhook <subscription-id>
+```
+
+Destinations are optional and must belong to the same app as the rule. A
+disabled or deleted subscription does not block invocation completion.

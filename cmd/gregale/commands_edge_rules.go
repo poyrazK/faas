@@ -179,6 +179,8 @@ func cmdEdgeRulesCreate(args []string) int {
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
+	onSuccessWebhook := fs.String("on-success-webhook", "", "kind=async: app webhook subscription ID for successful invocations")
+	onFailureWebhook := fs.String("on-failure-webhook", "", "kind=async: app webhook subscription ID for failed invocations")
 
 	// rewrite
 	rewriteFrom := fs.String("rewrite-from", "", "kind=rewrite: from path (required)")
@@ -384,6 +386,8 @@ func cmdEdgeRulesCreate(args []string) int {
 		MaintenanceMessage:                *maintenanceMessage,
 		RespondStatus:                     *respondStatus,
 		RespondBody:                       *respondBody,
+		AsyncOnSuccess:                    *onSuccessWebhook,
+		AsyncOnFailure:                    *onFailureWebhook,
 	})
 	if err != nil {
 		return printErr("Invalid flags for --kind="+*kind, err)
@@ -478,6 +482,8 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// requires the full new action shape — no partial sub-keys.
 	kind := fs.String("kind", "", "rule kind (required when patching --*-action flags)")
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug")
+	onSuccessWebhook := fs.String("on-success-webhook", "", "kind=async: app webhook subscription ID for successful invocations")
+	onFailureWebhook := fs.String("on-failure-webhook", "", "kind=async: app webhook subscription ID for failed invocations")
 	rewriteFrom := fs.String("rewrite-from", "", "kind=rewrite: from path")
 	rewriteTo := fs.String("rewrite-to", "", "kind=rewrite: to path")
 	redirectStatus := fs.Int("redirect-status", 0, "kind=redirect: status code")
@@ -704,6 +710,8 @@ func cmdEdgeRulesUpdate(args []string) int {
 			MaintenanceMessage:                *maintenanceMessage,
 			RespondStatus:                     *respondStatus,
 			RespondBody:                       *respondBody,
+			AsyncOnSuccess:                    *onSuccessWebhook,
+			AsyncOnFailure:                    *onFailureWebhook,
 		})
 		if err != nil {
 			return printErr("Invalid flags for --kind="+*kind, err)
@@ -770,6 +778,8 @@ func cmdEdgeRulesRm(args []string) int {
 type edgeRuleActionInputs struct {
 	// route
 	RouteTarget string
+	// async
+	AsyncOnSuccess, AsyncOnFailure string
 	// rewrite
 	RewriteFrom, RewriteTo string
 	// redirect
@@ -1165,7 +1175,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		}
 		return marshalAction(a)
 	case "async":
-		a := api.EdgeRuleAsyncAction{}
+		a := api.EdgeRuleAsyncAction{OnSuccess: in.AsyncOnSuccess, OnFailure: in.AsyncOnFailure}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
 		}
@@ -1359,6 +1369,7 @@ func parseHeaderOps(add, set, rm []string, dir string) ([]api.EdgeRuleHeaderOp, 
 func anyKindFlagVisited(visited map[string]bool) bool {
 	kindFlagNames := []string{
 		"route-target-slug",
+		"on-success-webhook", "on-failure-webhook",
 		"rewrite-from", "rewrite-to",
 		"redirect-status", "redirect-to", "redirect-header",
 		"headers-request-add", "headers-request-set", "headers-request-remove",
