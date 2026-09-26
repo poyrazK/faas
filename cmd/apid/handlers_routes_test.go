@@ -21,12 +21,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestAppRoutes_HappyPath seeds an app, installs a fake
@@ -66,6 +70,35 @@ func TestAppRoutes_HappyPath(t *testing.T) {
 	}
 	if rec.Header().Get("X-Faas-Routes-State") != api.AppRoutesSourceLive {
 		t.Errorf("X-Faas-Routes-State = %q, want live", rec.Header().Get("X-Faas-Routes-State"))
+	}
+}
+
+func TestAppRoutes_IncludesAccountScopedDiscoveredRoutes(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedApp(t, e, "discovered-api")
+	now := time.Now().UTC()
+	event := state.APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: app.ID,
+		ConsumerKey: state.AnonymousConsumerKey, WindowStart: now.Truncate(time.Minute),
+		RequestCount: 1, BillableUnits: 1, DiscoveredRoute: "GET /profiles/{id}", DiscoveredAt: now,
+	}
+	if _, err := e.store.RecordAPIConsumerUsage(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+
+	// With no live gateway configured, this route can only come from the
+	// durable inventory. The handler must pass the authenticated account ID
+	// to the collector so the inventory read remains tenant-scoped.
+	rec := e.do(t, http.MethodGet, "/v1/apps/discovered-api/routes", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out api.AppRoutesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Routes) != 1 || out.Routes[0] != event.DiscoveredRoute {
+		t.Fatalf("routes = %v, want [%q]", out.Routes, event.DiscoveredRoute)
 	}
 }
 

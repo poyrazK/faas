@@ -837,6 +837,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// separate from the live Prometheus snapshot above and is omitted for
 		// plans without request-telemetry retention.
 		RequestAnalytics: s.fetchDashboardRequestAnalytics(ctx, log, app, acct, analyticsGroupBy, analyticsRoute, analyticsMethod),
+		DiscoveredRoutes: s.fetchDashboardDiscoveredRoutes(ctx, log, acct, app),
 		// Issue #396 / ADR-045 PR 4 — best-effort alert-rule
 		// snapshot. Failure is non-fatal: a Postgres blip on the
 		// alert_rules read renders the panel's warning empty-state

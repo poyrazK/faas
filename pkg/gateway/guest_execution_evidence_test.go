@@ -16,6 +16,8 @@ func TestRecordGuestExecutionEvidenceIsBoundedAndRedacted(t *testing.T) {
 		{"X-Faas-Guest-Runtime", "node22"},
 		{"X-Faas-Guest-Duration-Ms", "42"},
 		{"X-Faas-Guest-Outcome", "ok"},
+		{"X-Faas-Guest-CPU-Time-Ms", "7"},
+		{"X-Faas-Guest-Peak-Rss-Mb", "64"},
 	} {
 		if !recordGuestExecutionEvidence(ctx, header.name, header.value) {
 			t.Fatalf("header %q was not consumed", header.name)
@@ -28,8 +30,23 @@ func TestRecordGuestExecutionEvidenceIsBoundedAndRedacted(t *testing.T) {
 		t.Fatal("ordinary response header was consumed")
 	}
 	evidence, ok := guestExecutionEvidenceFromContext(ctx)
-	if !ok || evidence.Runtime != "node22" || evidence.DurationMS != 42 || evidence.Outcome != "ok" {
+	if !ok || evidence.Runtime != "node22" || evidence.DurationMS != 42 || evidence.Outcome != "ok" ||
+		!evidence.ResourceUsageAvailable || evidence.CPUTimeMS != 7 || evidence.PeakRSSMB != 64 {
 		t.Fatalf("evidence = %+v, ok=%v", evidence, ok)
+	}
+}
+
+func TestGuestResourceUsageRequiresBothValidMeasurements(t *testing.T) {
+	r := httptestRequestWithGuestEvidence()
+	recordGuestExecutionEvidence(r.Context(), "X-Faas-Guest-CPU-Time-Ms", "0")
+	evidence, _ := guestExecutionEvidenceFromContext(r.Context())
+	if evidence.ResourceUsageAvailable {
+		t.Fatalf("partial resource evidence should be unavailable: %+v", evidence)
+	}
+	recordGuestExecutionEvidence(r.Context(), "X-Faas-Guest-Peak-Rss-Mb", "0")
+	evidence, _ = guestExecutionEvidenceFromContext(r.Context())
+	if !evidence.ResourceUsageAvailable || evidence.CPUTimeMS != 0 || evidence.PeakRSSMB != 0 {
+		t.Fatalf("measured zero values should remain distinguishable from unavailable: %+v", evidence)
 	}
 }
 
@@ -50,12 +67,15 @@ func TestStripGuestEvidenceResponseHeaders(t *testing.T) {
 	resp := &http.Response{Request: r, Header: make(http.Header)}
 	resp.Header.Set("X-Faas-Guest-Runtime", "python312")
 	resp.Header.Set("X-Faas-Guest-Duration-Ms", "31")
+	resp.Header.Set("X-Faas-Guest-CPU-Time-Ms", "7")
+	resp.Header.Set("X-Faas-Guest-Peak-Rss-Mb", "64")
 	stripGuestEvidenceResponseHeaders(resp)
-	if resp.Header.Get("X-Faas-Guest-Runtime") != "" || resp.Header.Get("X-Faas-Guest-Duration-Ms") != "" {
+	if resp.Header.Get("X-Faas-Guest-Runtime") != "" || resp.Header.Get("X-Faas-Guest-Duration-Ms") != "" ||
+		resp.Header.Get("X-Faas-Guest-CPU-Time-Ms") != "" || resp.Header.Get("X-Faas-Guest-Peak-Rss-Mb") != "" {
 		t.Fatalf("response headers = %v", resp.Header)
 	}
 	evidence, ok := guestExecutionEvidenceFromContext(r.Context())
-	if !ok || evidence.Runtime != "python312" || evidence.DurationMS != 31 {
+	if !ok || evidence.Runtime != "python312" || evidence.DurationMS != 31 || !evidence.ResourceUsageAvailable {
 		t.Fatalf("evidence = %+v, ok=%v", evidence, ok)
 	}
 }
@@ -65,6 +85,8 @@ func TestDefaultProxyStripsGuestEvidenceHeaders(t *testing.T) {
 		w.Header().Set("X-Faas-Guest-Runtime", "node22")
 		w.Header().Set("X-Faas-Guest-Duration-Ms", "19")
 		w.Header().Set("X-Faas-Guest-Outcome", "ok")
+		w.Header().Set("X-Faas-Guest-CPU-Time-Ms", "2")
+		w.Header().Set("X-Faas-Guest-Peak-Rss-Mb", "32")
 		w.Header().Set("X-Customer-Header", "safe")
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -73,11 +95,11 @@ func TestDefaultProxyStripsGuestEvidenceHeaders(t *testing.T) {
 	r = withGuestExecutionEvidence(r)
 	rec := httptest.NewRecorder()
 	defaultProxy(strings.TrimPrefix(upstream.URL, "http://"), 0).ServeHTTP(rec, r)
-	if rec.Code != http.StatusNoContent || rec.Header().Get("X-Faas-Guest-Runtime") != "" || rec.Header().Get("X-Customer-Header") != "safe" {
+	if rec.Code != http.StatusNoContent || rec.Header().Get("X-Faas-Guest-Runtime") != "" || rec.Header().Get("X-Faas-Guest-CPU-Time-Ms") != "" || rec.Header().Get("X-Customer-Header") != "safe" {
 		t.Fatalf("status=%d headers=%v", rec.Code, rec.Header())
 	}
 	evidence, ok := guestExecutionEvidenceFromContext(r.Context())
-	if !ok || evidence.Runtime != "node22" || evidence.DurationMS != 19 || evidence.Outcome != "ok" {
+	if !ok || evidence.Runtime != "node22" || evidence.DurationMS != 19 || evidence.Outcome != "ok" || !evidence.ResourceUsageAvailable {
 		t.Fatalf("evidence=%+v ok=%v", evidence, ok)
 	}
 }

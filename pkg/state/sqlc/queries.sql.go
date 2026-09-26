@@ -4320,7 +4320,8 @@ INSERT INTO request_telemetry (
     status, latency_ms, cold_boot, trace_id, received_at, count,
     ua_family, referrer_host, country, wake_id, instance_id,
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
-    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest
+    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -4334,38 +4335,44 @@ INSERT INTO request_telemetry (
     $24::text,
     $25::text,
     $26::text,
-    $27::text
+    $27::text,
+    $28::int,
+    $29::int,
+    $30::bool
 )
 `
 
 type InsertRequestTelemetryParams struct {
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	DeploymentID        pgtype.UUID
-	Route               string
-	Method              string
-	Status              int32
-	LatencyMs           int32
-	ColdBoot            bool
-	TraceID             pgtype.Text
-	ReceivedAt          pgtype.Timestamptz
-	Count               int32
-	UaFamily            string
-	ReferrerHost        string
-	Country             string
-	WakeID              pgtype.Text
-	InstanceID          pgtype.Text
-	GuestDurationMs     int32
-	GuestRuntime        string
-	GuestOutcome        string
-	GuestErrorClass     string
-	ConsumerID          pgtype.UUID
-	NodeID              string
-	Region              string
-	CommitSha           string
-	DeploymentTag       string
-	DeploymentCreatedAt string
-	ImageDigest         string
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	DeploymentID                pgtype.UUID
+	Route                       string
+	Method                      string
+	Status                      int32
+	LatencyMs                   int32
+	ColdBoot                    bool
+	TraceID                     pgtype.Text
+	ReceivedAt                  pgtype.Timestamptz
+	Count                       int32
+	UaFamily                    string
+	ReferrerHost                string
+	Country                     string
+	WakeID                      pgtype.Text
+	InstanceID                  pgtype.Text
+	GuestDurationMs             int32
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	ConsumerID                  pgtype.UUID
+	NodeID                      string
+	Region                      string
+	CommitSha                   string
+	DeploymentTag               string
+	DeploymentCreatedAt         string
+	ImageDigest                 string
+	GuestCpuTimeMs              int32
+	GuestPeakRssMb              int32
+	GuestResourceUsageAvailable bool
 }
 
 // ---------------------------------------------------------------------------
@@ -4431,6 +4438,9 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.DeploymentTag,
 		arg.DeploymentCreatedAt,
 		arg.ImageDigest,
+		arg.GuestCpuTimeMs,
+		arg.GuestPeakRssMb,
+		arg.GuestResourceUsageAvailable,
 	)
 	return err
 }
@@ -6976,7 +6986,7 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 }
 
 const listRequestTelemetryDependencySpans = `-- name: ListRequestTelemetryDependencySpans :many
-SELECT id, count, status, trace_id, received_at, spans_summary
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary
 FROM request_telemetry
 WHERE app_id = $1
   AND account_id = $2
@@ -6997,6 +7007,8 @@ type ListRequestTelemetryDependencySpansParams struct {
 
 type ListRequestTelemetryDependencySpansRow struct {
 	ID           pgtype.UUID
+	Route        string
+	Method       string
 	Count        int32
 	Status       int32
 	TraceID      pgtype.Text
@@ -7026,6 +7038,8 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 		var i ListRequestTelemetryDependencySpansRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Route,
+			&i.Method,
 			&i.Count,
 			&i.Status,
 			&i.TraceID,
@@ -10657,6 +10671,101 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	return inserted, err
 }
 
+const requestTelemetryAnalyticsByDeployment = `-- name: RequestTelemetryAnalyticsByDeployment :many
+WITH per_deployment AS (
+    SELECT deployment_id::text AS deployment_id,
+           COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
+           COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
+           COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
+           SUM(count)::bigint AS requests,
+           COALESCE(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
+    FROM request_telemetry
+    WHERE app_id = $1
+      AND account_id = $2
+      AND received_at >= $3
+      AND received_at <  $4
+    GROUP BY deployment_id
+)
+SELECT deployment_id,
+       commit_sha,
+       deployment_tag,
+       deployment_created_at,
+       requests,
+       guest_cpu_measured_requests,
+       guest_cpu_avg_ms,
+       SUM(requests) OVER ()::bigint AS total_requests
+FROM per_deployment
+ORDER BY requests DESC, deployment_id ASC
+LIMIT $5
+`
+
+type RequestTelemetryAnalyticsByDeploymentParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+	Limit        int32
+}
+
+type RequestTelemetryAnalyticsByDeploymentRow struct {
+	DeploymentID             string
+	CommitSha                interface{}
+	DeploymentTag            interface{}
+	DeploymentCreatedAt      interface{}
+	Requests                 int64
+	GuestCpuMeasuredRequests int64
+	GuestCpuAvgMs            int32
+	TotalRequests            int64
+}
+
+// Bounded deployment cost allocation for the customer request analytics
+// window. Request counts are weighted by the publisher's collapsed `count`.
+// The window total is computed before LIMIT so the handler can allocate the
+// omitted deployments into a visible __other__ bucket without an unbounded
+// response.
+func (q *Queries) RequestTelemetryAnalyticsByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByDeploymentParams) ([]RequestTelemetryAnalyticsByDeploymentRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryAnalyticsByDeployment,
+		arg.AppID,
+		arg.AccountID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryAnalyticsByDeploymentRow{}
+	for rows.Next() {
+		var i RequestTelemetryAnalyticsByDeploymentRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.Requests,
+			&i.GuestCpuMeasuredRequests,
+			&i.GuestCpuAvgMs,
+			&i.TotalRequests,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestTelemetryAnalyticsByDimension = `-- name: RequestTelemetryAnalyticsByDimension :many
 WITH filtered AS (
     SELECT
@@ -10672,6 +10781,12 @@ WITH filtered AS (
         latency_ms,
         cold_boot,
         status,
+        guest_duration_ms,
+        guest_runtime,
+        guest_cpu_time_ms,
+        guest_peak_rss_mb,
+        guest_resource_usage_available,
+        wake_id,
         count::bigint AS request_count
     FROM request_telemetry
     WHERE app_id = $1
@@ -10694,6 +10809,12 @@ WITH filtered AS (
         filtered.latency_ms,
         filtered.cold_boot,
         filtered.status,
+        filtered.guest_duration_ms,
+        filtered.guest_runtime,
+        filtered.guest_cpu_time_ms,
+        filtered.guest_peak_rss_mb,
+        filtered.guest_resource_usage_available,
+        filtered.wake_id,
         filtered.request_count
     FROM filtered
     LEFT JOIN top_groups
@@ -10709,6 +10830,124 @@ WITH filtered AS (
            SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
            SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
     FROM latency_values
+), cold_latency_values AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE cold_boot
+    GROUP BY dimension, method, latency_ms
+), cold_wakes AS (
+    SELECT DISTINCT dimension, method, wake_id
+    FROM assigned
+    WHERE cold_boot
+      AND wake_id IS NOT NULL
+      AND wake_id <> ''
+      AND dimension <> '__other__'
+      AND $5::text = 'route'
+), wake_events AS (
+    SELECT cold_wakes.dimension,
+           cold_wakes.method,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_started' AND events.actor = 'schedd') AS started_at,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_completed' AND events.actor = 'schedd') AS completed_at
+    FROM cold_wakes
+    JOIN events ON events.data->>'wake_id' = cold_wakes.wake_id
+    WHERE events.kind IN ('wake.boot_started', 'wake.boot_completed')
+    GROUP BY cold_wakes.dimension, cold_wakes.method, cold_wakes.wake_id
+), wake_durations AS (
+    SELECT dimension,
+           method,
+           (EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)::int AS duration_ms
+    FROM wake_events
+    WHERE started_at IS NOT NULL
+      AND completed_at IS NOT NULL
+      AND completed_at > started_at
+), wake_values AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           COUNT(*)::bigint AS sample_count
+    FROM wake_durations
+    GROUP BY dimension, method, duration_ms
+), wake_ranked AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM wake_values
+), wake_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS wake_boot_p95_ms
+    FROM wake_ranked
+    GROUP BY dimension, method
+), cold_ranked AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM cold_latency_values
+), cold_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS cold_request_p95_ms
+    FROM cold_ranked
+    GROUP BY dimension, method
+), guest_latency_values AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE guest_runtime <> '__unknown__'
+    GROUP BY dimension, method, guest_duration_ms
+), guest_ranked AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY guest_duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM guest_latency_values
+), guest_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.50))::int AS guest_execution_p50_ms,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS guest_execution_p95_ms
+    FROM guest_ranked
+    GROUP BY dimension, method
+), guest_cpu_values AS (
+    SELECT dimension,
+           method,
+           guest_cpu_time_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE guest_resource_usage_available
+    GROUP BY dimension, method, guest_cpu_time_ms
+), guest_cpu_ranked AS (
+    SELECT dimension,
+           method,
+           guest_cpu_time_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY guest_cpu_time_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM guest_cpu_values
+), guest_resource_metrics AS (
+    SELECT assigned.dimension,
+           assigned.method,
+           ROUND(SUM(assigned.guest_cpu_time_ms::numeric * assigned.request_count)
+                 FILTER (WHERE assigned.guest_resource_usage_available)
+                 / NULLIF(SUM(assigned.request_count) FILTER (WHERE assigned.guest_resource_usage_available), 0))::int AS guest_cpu_avg_ms,
+           MAX(assigned.guest_peak_rss_mb) FILTER (WHERE assigned.guest_resource_usage_available)::int AS guest_peak_rss_max_mb
+    FROM assigned
+    GROUP BY assigned.dimension, assigned.method
+), guest_cpu_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(guest_cpu_time_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS guest_cpu_p95_ms
+    FROM guest_cpu_ranked
+    GROUP BY dimension, method
 ), percentiles AS (
     SELECT dimension,
            method,
@@ -10733,9 +10972,21 @@ SELECT totals.dimension,
        totals.cold_boots,
        percentiles.p50_ms,
        percentiles.p95_ms,
-       percentiles.p99_ms
+       percentiles.p99_ms,
+       cold_percentiles.cold_request_p95_ms,
+       wake_percentiles.wake_boot_p95_ms,
+       guest_percentiles.guest_execution_p50_ms,
+       guest_percentiles.guest_execution_p95_ms,
+       guest_resource_metrics.guest_cpu_avg_ms,
+       guest_cpu_percentiles.guest_cpu_p95_ms,
+       guest_resource_metrics.guest_peak_rss_max_mb
 FROM totals
 JOIN percentiles USING (dimension, method)
+LEFT JOIN cold_percentiles USING (dimension, method)
+LEFT JOIN wake_percentiles USING (dimension, method)
+LEFT JOIN guest_percentiles USING (dimension, method)
+LEFT JOIN guest_resource_metrics USING (dimension, method)
+LEFT JOIN guest_cpu_percentiles USING (dimension, method)
 ORDER BY totals.requests DESC, totals.dimension ASC, totals.method ASC
 `
 
@@ -10749,14 +11000,21 @@ type RequestTelemetryAnalyticsByDimensionParams struct {
 }
 
 type RequestTelemetryAnalyticsByDimensionRow struct {
-	Dimension     interface{}
-	Method        interface{}
-	Requests      int64
-	ErrorRequests int64
-	ColdBoots     int64
-	P50Ms         int32
-	P95Ms         int32
-	P99Ms         int32
+	Dimension           interface{}
+	Method              interface{}
+	Requests            int64
+	ErrorRequests       int64
+	ColdBoots           int64
+	P50Ms               int32
+	P95Ms               int32
+	P99Ms               int32
+	ColdRequestP95Ms    pgtype.Int4
+	WakeBootP95Ms       pgtype.Int4
+	GuestExecutionP50Ms pgtype.Int4
+	GuestExecutionP95Ms pgtype.Int4
+	GuestCpuAvgMs       pgtype.Int4
+	GuestCpuP95Ms       pgtype.Int4
+	GuestPeakRssMaxMb   pgtype.Int4
 }
 
 // Top-N customer analytics grouped by one of the bounded dimensions. Rows
@@ -10788,6 +11046,13 @@ func (q *Queries) RequestTelemetryAnalyticsByDimension(ctx context.Context, db D
 			&i.P50Ms,
 			&i.P95Ms,
 			&i.P99Ms,
+			&i.ColdRequestP95Ms,
+			&i.WakeBootP95Ms,
+			&i.GuestExecutionP50Ms,
+			&i.GuestExecutionP95Ms,
+			&i.GuestCpuAvgMs,
+			&i.GuestCpuP95Ms,
+			&i.GuestPeakRssMaxMb,
 		); err != nil {
 			return nil, err
 		}

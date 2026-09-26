@@ -33,9 +33,14 @@ class AppOpenAPIPolicyPreviewResponse:
     source: str
     """preview, empty: no_import, degraded: routes_partial, or degraded: routes_unavailable."""
     observed_available: bool
-    """Whether at least one collector returned current route telemetry."""
+    """Whether current route telemetry or a persisted discovered-route inventory is available."""
     observed_source: AppOpenAPIPolicyPreviewResponseObservedSource
-    """Completeness of the fleet-wide observed-route input."""
+    """Completeness of the current fleet-wide telemetry input; persisted inventory availability is reported
+    separately."""
+    observed_inventory_available: bool
+    """Whether durable, opt-in discovered routes contributed to the observed route set."""
+    observed_cap_hit: bool
+    """Whether the live route snapshot or durable discovered-route inventory reached its route cap."""
     collectors_expected: int
     """Number of registry compute gateways expected to contribute route observations."""
     collectors_healthy: int
@@ -54,6 +59,10 @@ class AppOpenAPIPolicyPreviewResponse:
         observed_available = self.observed_available
 
         observed_source: str = self.observed_source
+
+        observed_inventory_available = self.observed_inventory_available
+
+        observed_cap_hit = self.observed_cap_hit
 
         collectors_expected = self.collectors_expected
 
@@ -81,6 +90,8 @@ class AppOpenAPIPolicyPreviewResponse:
                 "source": source,
                 "observed_available": observed_available,
                 "observed_source": observed_source,
+                "observed_inventory_available": observed_inventory_available,
+                "observed_cap_hit": observed_cap_hit,
                 "collectors_expected": collectors_expected,
                 "collectors_healthy": collectors_healthy,
                 "routes": routes,
@@ -106,6 +117,10 @@ class AppOpenAPIPolicyPreviewResponse:
         observed_available = d.pop("observed_available")
 
         observed_source = check_app_open_api_policy_preview_response_observed_source(d.pop("observed_source"))
+
+        observed_inventory_available = d.pop("observed_inventory_available")
+
+        observed_cap_hit = d.pop("observed_cap_hit")
 
         collectors_expected = d.pop("collectors_expected")
 
@@ -134,6 +149,8 @@ class AppOpenAPIPolicyPreviewResponse:
             source=source,
             observed_available=observed_available,
             observed_source=observed_source,
+            observed_inventory_available=observed_inventory_available,
+            observed_cap_hit=observed_cap_hit,
             collectors_expected=collectors_expected,
             collectors_healthy=collectors_healthy,
             routes=routes,

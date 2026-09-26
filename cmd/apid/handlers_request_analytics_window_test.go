@@ -5,7 +5,19 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestNullableAnalyticsInt(t *testing.T) {
+	if got := nullableAnalyticsInt(pgtype.Int4{}); got != nil {
+		t.Fatalf("missing evidence = %v, want nil", *got)
+	}
+	got := nullableAnalyticsInt(pgtype.Int4{Int32: 212, Valid: true})
+	if got == nil || *got != 212 {
+		t.Fatalf("present evidence = %v, want 212", got)
+	}
+}
 
 func TestParseRequestAnalyticsWindow(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)

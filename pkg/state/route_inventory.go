@@ -2,9 +2,12 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // DiscoveredRouteLimit bounds persistent per-app cardinality independently of
@@ -12,6 +15,68 @@ import (
 const DiscoveredRouteLimit = 500
 
 const discoveredRouteOverflow = "__route_other__"
+
+const (
+	discoveredRouteEventSource = "gregale.api"
+	discoveredRouteEventType   = "com.gregale.api.route.discovered"
+)
+
+type discoveredRouteEventData struct {
+	AppID         string    `json:"app_id"`
+	RouteTemplate string    `json:"route_template"`
+	Method        string    `json:"method"`
+	Path          string    `json:"path"`
+	FirstSeen     time.Time `json:"first_seen"`
+}
+
+type discoveredRouteCloudEvent struct {
+	SpecVersion     string                   `json:"specversion"`
+	ID              string                   `json:"id"`
+	Source          string                   `json:"source"`
+	Type            string                   `json:"type"`
+	Time            time.Time                `json:"time"`
+	DataContentType string                   `json:"data_content_type"`
+	Data            discoveredRouteEventData `json:"data"`
+	AccountID       string                   `json:"account_id"`
+}
+
+type discoveredRouteNotice struct {
+	AccountID     string    `json:"account_id"`
+	AppID         string    `json:"app_id"`
+	RouteTemplate string    `json:"route_template"`
+	Method        string    `json:"method"`
+	Path          string    `json:"path"`
+	FirstSeen     time.Time `json:"first_seen"`
+}
+
+// apiRouteDiscoveredPayloads returns the canonical event-fanout envelope and
+// the smaller account-scoped SSE notice for one first-seen route. The event
+// ID is stable for the account/app/template so fanout retries stay idempotent.
+func apiRouteDiscoveredPayloads(accountID, appID, route string, firstSeen time.Time) (eventPayload, noticePayload []byte, err error) {
+	method, path, ok := strings.Cut(strings.TrimSpace(route), " ")
+	if !ok || method == "" || path == "" {
+		return nil, nil, nil
+	}
+	firstSeen = firstSeen.UTC()
+	eventData := discoveredRouteEventData{
+		AppID: appID, RouteTemplate: route, Method: method, Path: path, FirstSeen: firstSeen,
+	}
+	eventID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:api-route-discovered\x00"+accountID+"\x00"+appID+"\x00"+route)).String()
+	envelope := discoveredRouteCloudEvent{
+		SpecVersion: "1.0", ID: eventID, Source: discoveredRouteEventSource,
+		Type: discoveredRouteEventType, Time: firstSeen, DataContentType: "application/json",
+		Data: eventData, AccountID: accountID,
+	}
+	eventPayload, err = json.Marshal(envelope)
+	if err != nil {
+		return nil, nil, err
+	}
+	noticePayload, err = json.Marshal(discoveredRouteNotice{
+		AccountID: accountID, AppID: appID, RouteTemplate: route,
+		Method: method, Path: path, FirstSeen: firstSeen,
+	})
+	return eventPayload, noticePayload, err
+}
 
 type usageEventIdentity struct{ accountID, appID string }
 
@@ -46,13 +111,13 @@ func discoveredRouteKey(accountID, appID, route string) string {
 	return accountID + "\x00" + appID + "\x00" + route
 }
 
-func (m *MemStore) recordDiscoveredRouteLocked(event APIConsumerUsageEvent) {
+func (m *MemStore) recordDiscoveredRouteLocked(event APIConsumerUsageEvent) []byte {
 	route := discoveredRouteFor(event)
 	if route == "" {
-		return
+		return nil
 	}
 	if _, already := m.discoveryReceipts[event.EventID]; already {
-		return
+		return nil
 	}
 	prefix := discoveredRouteKey(event.AccountID, event.AppID, "")
 	key := prefix + route
@@ -72,6 +137,7 @@ func (m *MemStore) recordDiscoveredRouteLocked(event APIConsumerUsageEvent) {
 	}
 	when := discoveredAtFor(event)
 	entry := m.discoveredAPIRoutes[key]
+	newRoute := entry.RouteTemplate == "" && route != discoveredRouteOverflow
 	if entry.RouteTemplate == "" {
 		entry = DiscoveredAPIRoute{RouteTemplate: route, FirstSeen: when, LastSeen: when}
 	}
@@ -84,6 +150,14 @@ func (m *MemStore) recordDiscoveredRouteLocked(event APIConsumerUsageEvent) {
 	entry.RequestCount++
 	m.discoveredAPIRoutes[key] = entry
 	m.discoveryReceipts[event.EventID] = struct{}{}
+	if !newRoute {
+		return nil
+	}
+	eventPayload, _, err := apiRouteDiscoveredPayloads(event.AccountID, event.AppID, route, when)
+	if err != nil {
+		return nil
+	}
+	return eventPayload
 }
 
 func (m *MemStore) ListDiscoveredAPIRoutes(_ context.Context, accountID, appID string, limit int) ([]DiscoveredAPIRoute, bool, error) {

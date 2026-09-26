@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/db"
 )
 
 // recordDiscoveredRouteTx runs in the same transaction as the financial
@@ -29,6 +30,7 @@ func recordDiscoveredRouteTx(ctx context.Context, tx pgx.Tx, event APIConsumerUs
 		return nil
 	}
 	when := discoveredAtFor(event)
+	newRoute := false
 	updated, err := updateDiscoveredRouteTx(ctx, tx, event.AccountID, event.AppID, route, when)
 	if err != nil {
 		return err
@@ -59,22 +61,60 @@ func recordDiscoveredRouteTx(ctx context.Context, tx pgx.Tx, event APIConsumerUs
 				(account_id, app_id, route_template, first_seen, last_seen, request_count)
 				select $1::uuid, $2::uuid, $3, $4, $4, 1 from apps
 				where id = $2::uuid and account_id = $1::uuid
-				on conflict (account_id, app_id, route_template) do update
-				set first_seen = least(app_api_routes.first_seen, excluded.first_seen),
-				    last_seen = greatest(app_api_routes.last_seen, excluded.last_seen),
-				    request_count = app_api_routes.request_count + 1`,
+				on conflict (account_id, app_id, route_template) do nothing`,
 				event.AccountID, event.AppID, route, when)
 			if err != nil {
 				return fmt.Errorf("api discovery: insert route: %w", err)
 			}
-			if result.RowsAffected() != 1 {
-				return fmt.Errorf("api discovery: app is not owned by account")
+			if result.RowsAffected() == 1 {
+				newRoute = route != discoveredRouteOverflow
+			} else {
+				// A writer outside this lock protocol may have won the insert.
+				// Preserve its aggregate update without emitting a duplicate event.
+				updated, err = updateDiscoveredRouteTx(ctx, tx, event.AccountID, event.AppID, route, when)
+				if err != nil {
+					return err
+				}
+				if !updated {
+					return fmt.Errorf("api discovery: app is not owned by account")
+				}
 			}
+		}
+	}
+	if newRoute {
+		if err := appendDiscoveredRouteEventTx(ctx, tx, event.AccountID, event.AppID, route, when); err != nil {
+			return err
 		}
 	}
 	if _, err := tx.Exec(ctx, `update api_consumer_usage_events
 		set discovery_recorded = true where event_id = $1::uuid`, event.EventID); err != nil {
 		return fmt.Errorf("api discovery: mark usage receipt: %w", err)
+	}
+	return nil
+}
+
+// appendDiscoveredRouteEventTx writes the first-seen route event and both
+// wakeups inside the route-allocation transaction. A retry can neither
+// duplicate the event nor commit a route without its durable fanout record.
+func appendDiscoveredRouteEventTx(ctx context.Context, tx pgx.Tx, accountID, appID, route string, firstSeen time.Time) error {
+	eventPayload, noticePayload, err := apiRouteDiscoveredPayloads(accountID, appID, route, firstSeen)
+	if err != nil {
+		return fmt.Errorf("api discovery: encode route event: %w", err)
+	}
+	if len(eventPayload) == 0 || len(noticePayload) == 0 {
+		return fmt.Errorf("api discovery: invalid route event for %q", route)
+	}
+	// Keep the ledger's insertion time current for the bounded fanout recovery
+	// sweep; the CloudEvent's time still records when the route was first seen.
+	if _, err := tx.Exec(ctx, `insert into events (actor, kind, subject, data)
+		values ('apid', 'event.published', $1::uuid, $2::jsonb)`, accountID, eventPayload); err != nil {
+		return fmt.Errorf("api discovery: persist route event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyEventPublished, string(eventPayload)); err != nil {
+		return fmt.Errorf("api discovery: notify event fanout: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyAPIRouteDiscovered, string(noticePayload)); err != nil {
+		return fmt.Errorf("api discovery: notify dashboard: %w", err)
 	}
 	return nil
 }
