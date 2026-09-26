@@ -221,3 +221,4 @@ export type UpdateAppRequest = {
   cors_default_enabled?: boolean | null;
   cors_default_origins?: Array<string>;
 };
+
