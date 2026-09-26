@@ -133,6 +133,29 @@ in PR 5. A future AsyncLocalStorage-based per-call key (PR 11 if
 docs customers request it) would layer on top without breaking the
 existing contract.
 
+## Project release context
+
+Capture the release selected for an inbound Gregale request and use the
+wrapped fetch for outbound managed service calls. The helper forwards only
+`X-Gregale-Release` to `*.svc.gregale` and removes the caller-scoped
+`X-Gregale-Revision` header on that hop:
+
+```ts
+import { createGregaleFetch, withGregaleRequestContext } from '@gregale/sdk-node';
+
+const serviceFetch = createGregaleFetch();
+
+async function checkout(request: Request) {
+  return withGregaleRequestContext(request.headers, async () => {
+    return serviceFetch('http://billing.svc.gregale:10080/checkout', { method: 'POST' });
+  });
+}
+```
+
+The async context is isolated between concurrent handlers. Use it only around
+work caused by that inbound request; detached background jobs should capture
+the release explicitly when they are enqueued.
+
 ## Execution streaming
 
 Disposable executions expose a typed, resumable iterator. It consumes output
