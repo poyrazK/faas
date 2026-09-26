@@ -11629,24 +11629,7 @@ WITH weighted AS (
        AND ins.deployment_id = $2::uuid
        AND u.minute >= date_trunc('minute', $3::timestamptz)
        AND u.minute < $4::timestamptz
-)
-SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
-       COALESCE(SUM(server_errors), 0)::bigint AS server_errors,
-       COALESCE(
-           MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint),
-           0
-       )::double precision AS p95_latency_ms,
-       COALESCE(SUM(cold_boot_requests), 0)::bigint AS cold_boot_requests,
-       COALESCE(
-           MIN(latency_ms) FILTER (
-               WHERE cold_boot_cumulative >= CEIL(cold_boot_total * 0.95)::bigint
-                 AND cold_boot_total > 0
-           ),
-           0
-       )::double precision AS cold_boot_p95_latency_ms,
-       cpu_usage.cpu_usec,
-       cpu_usage.cpu_requests
-  FROM (
+), ranked AS (
       SELECT latency_ms,
              requests,
              server_errors,
@@ -11656,8 +11639,32 @@ SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
              SUM(cold_boot_requests) OVER (ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cold_boot_cumulative,
              SUM(cold_boot_requests) OVER () AS cold_boot_total
         FROM weighted
-  ) AS ranked
-  CROSS JOIN cpu_usage
+), summary AS (
+    SELECT COALESCE(SUM(requests), 0)::bigint AS requests,
+           COALESCE(SUM(server_errors), 0)::bigint AS server_errors,
+           COALESCE(
+               MIN(latency_ms) FILTER (WHERE cumulative >= CEIL(total * 0.95)::bigint),
+               0
+           )::double precision AS p95_latency_ms,
+           COALESCE(SUM(cold_boot_requests), 0)::bigint AS cold_boot_requests,
+           COALESCE(
+               MIN(latency_ms) FILTER (
+                   WHERE cold_boot_cumulative >= CEIL(cold_boot_total * 0.95)::bigint
+                     AND cold_boot_total > 0
+               ),
+               0
+           )::double precision AS cold_boot_p95_latency_ms
+      FROM ranked
+)
+SELECT summary.requests,
+       summary.server_errors,
+       summary.p95_latency_ms,
+       summary.cold_boot_requests,
+       summary.cold_boot_p95_latency_ms,
+       cpu_usage.cpu_usec,
+       cpu_usage.cpu_requests
+  FROM summary
+ CROSS JOIN cpu_usage
 `
 
 type RequestTelemetryCircuitBreakerSummaryParams struct {
