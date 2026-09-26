@@ -456,6 +456,10 @@ func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invoc
 		out, _, err := a.replayMirror(ctx, appID, inv)
 		return out, err
 	}
+	if a.invokeWithStatus != nil {
+		out, _, err := a.InvokeWithStatus(ctx, appID, inv)
+		return out, err
+	}
 	if a.invoke == nil {
 		return inv, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
 	}
@@ -700,12 +704,29 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 	if a.forward == nil {
 		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
+	inv.AppID = appID
+	if a.store != nil {
+		var version state.InvocationVersion
+		var err error
+		inv, version, err = state.ResolveInvocationVersion(ctx, a.store, inv)
+		if err != nil {
+			return inv, 0, fmt.Errorf("gateway synth: resolve invocation version: %w", err)
+		}
+		if version.DeploymentID != "" && target.DeploymentID != version.DeploymentID {
+			return inv, 0, fmt.Errorf("gateway synth: pre-woken deployment does not match release pin")
+		}
+		if version.DeploymentID != "" {
+			instance, lookupErr := a.store.InstanceByID(ctx, target.InstanceID)
+			if lookupErr != nil || instance.AppID != appID || instance.DeploymentID != version.DeploymentID || instance.NodeID != target.NodeID || instance.State != string(state.StateRunning) {
+				return inv, 0, fmt.Errorf("gateway synth: pre-woken instance does not belong to pinned deployment")
+			}
+		}
+	}
 	// Schedd's pre-woken response identifies the instance and node, while the
 	// invocation request remains authoritative for the app. Keep that identity
 	// on the target so the shared forwarding path can attribute
 	// wake.proxy_first_byte events just like an ordinary HTTP wake.
 	target.AppID = appID
-	inv.AppID = appID
 	inv.InstanceID = target.InstanceID
 	return a.forwardInvocationWithStatus(ctx, target, inv)
 }
@@ -1307,6 +1328,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
 	backend := gateway.NewPGBackend(router, sched, log).
+		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
+			releaseID, deploymentID, err := pgStore.ResolveProjectRelease(ctx, appID, scope, requestedID)
+			if errors.Is(err, state.ErrNotFound) {
+				return "", "", gateway.ErrReleaseGone
+			}
+			return releaseID, deploymentID, err
+		}).
+		WithRevisionPinResolver(func(ctx context.Context, appID, scope, deploymentID string) (bool, error) {
+			_, err := pgStore.ResolveRevisionPin(ctx, appID, scope, deploymentID)
+			if errors.Is(err, state.ErrNotFound) {
+				return false, nil
+			}
+			return err == nil, err
+		}).
 		WithWarmHint(warmHintCache.HintFunc()).
 		WithAppResolver(func(ctx context.Context, appID string) (gateway.App, bool, error) {
 			app, err := pgStore.AppByID(ctx, appID)
@@ -1341,7 +1376,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, VersionAffinityCookie: app.Manifest.VersionAffinityCookie, VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, ProjectID: app.ProjectID, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, VersionAffinityCookie: app.Manifest.VersionAffinityCookie, VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie, RevisionPinTTLSeconds: app.Manifest.RevisionPinTTLSeconds, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1642,6 +1677,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			acceptedAt := time.Now()
 			ctx = gateway.WithStartTime(ctx, acceptedAt)
 			ctx = gateway.WithWakeTimelineStart(ctx, acceptedAt)
+			inv.AppID = appID
+			inv, version, err := state.ResolveInvocationVersion(ctx, pgStore, inv)
+			if err != nil {
+				return inv, 0, fmt.Errorf("synth invoke resolve version: %w", err)
+			}
 			app, err := pgStore.AppByID(ctx, appID)
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
@@ -1653,15 +1693,36 @@ func run(ctx context.Context, log *slog.Logger) error {
 			var identity api.PlatformIdentity
 			var instanceID, nodeID, deploymentID, wakeID string
 			var port int
+			wakeScope := ""
+			if version.DeploymentID != "" {
+				wakeScope = version.Scope
+			}
 			if rich, ok := cli.(interface {
 				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
 			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, "", "")
+				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, wakeScope)
 			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, "", "")
+				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, wakeScope)
 			}
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
+			}
+			if version.DeploymentID != "" && deploymentID != version.DeploymentID {
+				return inv, 0, fmt.Errorf("synth invoke woke deployment %s instead of pinned %s", deploymentID, version.DeploymentID)
+			}
+			if version.DeploymentID != "" {
+				_, checked, checkErr := state.ResolveInvocationVersion(ctx, pgStore, inv)
+				if checkErr != nil {
+					return inv, 0, fmt.Errorf("synth invoke release changed during wake: %w", checkErr)
+				}
+				if checked.DeploymentID != version.DeploymentID || checked.ReleaseID != version.ReleaseID {
+					return inv, 0, fmt.Errorf("synth invoke release changed during wake: expected %s/%s, got %s/%s",
+						version.ReleaseID, version.DeploymentID, checked.ReleaseID, checked.DeploymentID)
+				}
+				instance, lookupErr := pgStore.InstanceByID(ctx, instanceID)
+				if lookupErr != nil || instance.AppID != appID || instance.DeploymentID != version.DeploymentID || instance.NodeID != nodeID || instance.State != string(state.StateRunning) {
+					return inv, 0, fmt.Errorf("synth invoke woke instance outside selected release")
+				}
 			}
 			target := gateway.Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port, Region: identity.Region, CommitSHA: identity.CommitSHA, DeploymentTag: identity.DeploymentTag, DeploymentCreatedAt: identity.DeploymentCreatedAt, ImageDigest: identity.ImageDigest}
 			backend.RecordTarget(appID, target)
@@ -2400,6 +2461,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// PgStore used by apid. The gateway keeps the hot-path policy and the
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
+	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	// E2 / issue #1397: browser wake pages use the same gatewayd audit
 	// writer as the auth gates so wake.page_served joins the eventual
 	// scheduler wake by its real wake_id.
@@ -2488,6 +2550,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pkg/edgejwks.NewCache + pkg/edgejwks.NewVerifier.
 	if deps.edgeJWKSAdapter != nil {
 		handler.WithJWTVerifier(deps.edgeJWKSAdapter)
+	}
+	if deps.pgStore != nil {
+		handler.WithPlatformTenantExternalRefResolver(newPlatformTenantExternalRefResolver(deps.pgStore))
 	}
 	// ADR-091 D21 — arm the geoip reader that applyEdgeRuleGeo
 	// consults. nil-safe: deps.geoReader nil (file missing or
@@ -2711,36 +2776,38 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			for i := range rows {
 				row := rows[i]
 				req := &apidpb.IncrementRequestTelemetryRequest{
-					EventId:             row.EventID.String(),
-					AccountId:           row.AccountID.String(),
-					AppId:               row.AppID.String(),
-					DeploymentId:        row.DeploymentID.String(),
-					RouteTemplate:       row.Route,
-					Method:              row.Method,
-					HttpStatus:          int32(row.Status),
-					LatencyMs:           int32(row.LatencyMS),
-					ColdBoot:            row.ColdBoot,
-					TraceId:             row.TraceID,
-					ReceivedAtUnixMs:    row.ReceivedAt.UnixMilli(),
-					Count:               int32(row.Count),
-					UaFamily:            row.UAFamily,
-					ReferrerHost:        row.ReferrerHost,
-					Country:             row.Country,
-					WakeId:              row.WakeID,
-					InstanceId:          row.InstanceID,
-					GuestDurationMs:     int32(row.GuestDurationMS),
-					GuestRuntime:        row.GuestRuntime,
-					GuestOutcome:        row.GuestOutcome,
-					GuestErrorClass:     row.GuestErrorClass,
-					ConsumerId:          row.ConsumerID,
-					PlatformTenantId:    row.PlatformTenantID,
-					UsageOutboxed:       row.UsageOutboxed,
-					NodeId:              row.NodeID,
-					Region:              row.Region,
-					CommitSha:           row.CommitSHA,
-					DeploymentTag:       row.DeploymentTag,
-					DeploymentCreatedAt: row.DeploymentCreatedAt,
-					ImageDigest:         row.ImageDigest,
+					EventId:                              row.EventID.String(),
+					AccountId:                            row.AccountID.String(),
+					AppId:                                row.AppID.String(),
+					DeploymentId:                         row.DeploymentID.String(),
+					RouteTemplate:                        row.Route,
+					Method:                               row.Method,
+					HttpStatus:                           int32(row.Status),
+					LatencyMs:                            int32(row.LatencyMS),
+					ColdBoot:                             row.ColdBoot,
+					TraceId:                              row.TraceID,
+					ReceivedAtUnixMs:                     row.ReceivedAt.UnixMilli(),
+					Count:                                int32(row.Count),
+					UaFamily:                             row.UAFamily,
+					ReferrerHost:                         row.ReferrerHost,
+					Country:                              row.Country,
+					WakeId:                               row.WakeID,
+					InstanceId:                           row.InstanceID,
+					GuestDurationMs:                      int32(row.GuestDurationMS),
+					GuestRuntime:                         row.GuestRuntime,
+					GuestOutcome:                         row.GuestOutcome,
+					GuestErrorClass:                      row.GuestErrorClass,
+					ConsumerId:                           row.ConsumerID,
+					PlatformTenantId:                     row.PlatformTenantID,
+					PlatformTenantSurfaceId:              row.PlatformTenantSurfaceID,
+					PlatformTenantJwtAuthorizationRuleId: row.PlatformTenantJWTAuthorizationRuleID,
+					UsageOutboxed:                        row.UsageOutboxed,
+					NodeId:                               row.NodeID,
+					Region:                               row.Region,
+					CommitSha:                            row.CommitSHA,
+					DeploymentTag:                        row.DeploymentTag,
+					DeploymentCreatedAt:                  row.DeploymentCreatedAt,
+					ImageDigest:                          row.ImageDigest,
 				}
 				if row.Count < 1 {
 					req.Count = 1
@@ -3320,6 +3387,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
 			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
 			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
+			ResolveRelease: func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (string, string, error) {
+				releaseID, deploymentID, err := pgStore.ResolveServiceRelease(ctx, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID)
+				if errors.Is(err, state.ErrNotFound) {
+					return "", "", gateway.ErrReleaseGone
+				}
+				if errors.Is(err, state.ErrConflict) {
+					return "", "", gateway.ErrReleaseConflict
+				}
+				return releaseID, deploymentID, err
+			},
 			// ADR-201 §2. Nil Breaker installs the legacy fixed-TTL
 			// quarantine, so with the flag off this is byte-identical to the
 			// pre-ADR-201 behaviour.
@@ -3335,7 +3412,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
-			serviceProxyConfig.ResolveCaller = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
+			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
+			identityResolver.lookup = pgStore.LiveInstancesByHostIP
+			serviceProxyConfig.ResolveCallerIdentity = identityResolver.ResolveIdentity
 			guestServiceProxy = gateway.NewServiceProxy(serviceProxyConfig)
 		}
 	}

@@ -243,6 +243,7 @@ type CreateAppRequest struct {
 	// VersionAffinityCookie derives rollout affinity from this browser cookie.
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -515,6 +516,7 @@ type UpdateAppRequest struct {
 	// VersionAffinityCookie replaces the cookie source; empty disables it.
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1340,6 +1342,7 @@ type AppResponse struct {
 	SessionAffinity              bool   `json:"session_affinity"`
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -7082,6 +7085,42 @@ type EdgeRuleRewriteAction struct {
 	To   string `json:"to"`
 }
 
+// ApplyEdgeRuleRewritePath applies the edge-rule prefix rewrite semantics used
+// by both the gateway and the read-only trace preview. It returns applied=false
+// when From is not a prefix of requestPath (the selector may still have
+// matched, but the gateway treats this inconsistent action as a miss).
+func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath string, applied bool) {
+	if from == "*" {
+		from = ""
+	}
+	if from == "" {
+		to = NormalizeEdgeRuleRewriteTarget(to)
+		if to == "/" {
+			return requestPath, true
+		}
+		return to + requestPath, true
+	}
+	if !strings.HasPrefix(requestPath, from) {
+		return requestPath, false
+	}
+	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+}
+
+// NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to
+// one leading slash and removes a trailing slash except for the root path.
+func NormalizeEdgeRuleRewriteTarget(value string) string {
+	if value == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(value, "/") {
+		value = "/" + value
+	}
+	if len(value) > 1 && strings.HasSuffix(value, "/") {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
 func (a *EdgeRuleRewriteAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("rewrite action is required")
@@ -7222,10 +7261,9 @@ type EdgeRuleCORSAction struct {
 // The grammar is deliberately tiny (no regex metacharacters, no
 // path matching, no scheme matching) so the gateway hot-path
 // matcher can stay an O(n) string-prefix scan without backtracking.
-// The regex below enforces the grammar at create-time; the gateway
-// applies the same predicates in handler.go::matchOrigin (so a
-// rule that bypasses the apid validator still matches what the
-// customer expects — defence in depth).
+// The regex below enforces the grammar at create-time; both the gateway
+// and simulator use MatchEdgeRuleCORSOrigin for the runtime predicates (so a
+// rule that bypasses the apid validator still matches consistently).
 //
 // Footgun guard (ADR-091 D12) only fires for the bare "*" entry
 // combined with AllowCredentials: true. A pattern like
@@ -7346,11 +7384,12 @@ var edgeRuleJWTAllowedAlgs = map[string]struct{}{
 
 // EdgeRuleJWTAction validates an inbound Bearer JWT.
 type EdgeRuleJWTAction struct {
-	Issuer         string            `json:"issuer"`
-	Audience       []string          `json:"audience,omitempty"`
-	JWKSURL        string            `json:"jwks_url"`
-	Algorithms     []string          `json:"algorithms"`
-	RequiredClaims map[string]string `json:"required_claims,omitempty"`
+	Issuer                         string            `json:"issuer"`
+	Audience                       []string          `json:"audience,omitempty"`
+	JWKSURL                        string            `json:"jwks_url"`
+	Algorithms                     []string          `json:"algorithms"`
+	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes
@@ -7399,6 +7438,13 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 	for _, alg := range a.Algorithms {
 		if _, ok := edgeRuleJWTAllowedAlgs[alg]; !ok {
 			return ErrValidation(fmt.Sprintf("jwt action algorithm %q is not in the closed vocabulary (RS256/RS384/RS512/ES256/ES384/ES512)", alg))
+		}
+	}
+	claim := a.PlatformTenantExternalRefClaim
+	if claim != "" {
+		if len(claim) > 128 || strings.TrimSpace(claim) != claim || strings.ContainsAny(claim, " \t\r\n\x00") ||
+			claim == "iss" || claim == "aud" || claim == "sub" || claim == "exp" || claim == "nbf" || claim == "iat" || claim == "jti" {
+			return ErrValidation("platform_tenant_external_ref_claim must name a custom JWT claim (1-128 characters, no whitespace), not a registered JWT claim")
 		}
 	}
 	return nil
@@ -10115,6 +10161,16 @@ type RecoverRolloutRequest struct {
 	// --reason as required (operators writing a recovery note
 	// is the entire point of the audit trail).
 	Reason string `json:"reason,omitempty"`
+}
+
+// RecoverDeploymentRolloutRequest is the internal, exact-target variant used
+// by meterd's deployment circuit breaker. The predecessor is part of the
+// compare-and-abort contract so a delayed signal cannot restore a different
+// revision after traffic has moved.
+type RecoverDeploymentRolloutRequest struct {
+	Action                          string `json:"action"`
+	Reason                          string `json:"reason,omitempty"`
+	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
 }
 
 // RolloutTransitionResponse is the body returned by

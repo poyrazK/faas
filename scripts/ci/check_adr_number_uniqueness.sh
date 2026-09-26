@@ -2,7 +2,7 @@
 # Fail on a NEWLY duplicated ADR number in docs/adr/.
 #
 # Concurrent PRs each pick "the next number" and whichever merges second keeps
-# it, so main already carries 71 duplicated numbers (ADR-122 is used four
+# it, so main already carries 74 duplicated numbers (ADR-122 is used four
 # times). Retro-fixing those would break dozens of `// adr: NNN` citation
 # lines, metric help strings and runbooks, so this gate freezes the existing
 # set in docs/adr/DUPLICATE_NUMBERS_BASELINE.txt and only stops NEW collisions.

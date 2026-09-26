@@ -1235,18 +1235,19 @@ func compileJWTRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleJWTResolved
 			}
 		}
 		out = append(out, gateway.EdgeRuleJWTResolved{
-			ID:             r.ID,
-			AccountID:      r.AccountID,
-			AppID:          r.AppID,
-			Priority:       r.Priority,
-			PathGlob:       r.MatchPath,
-			Methods:        buildMethodsMap(r.MatchMethods),
-			MatchHeaders:   buildMatchHeadersMap(r.MatchHeaders),
-			Issuer:         action.Issuer,
-			Audience:       audCopy,
-			JWKSURL:        action.JWKSURL,
-			Algorithms:     algCopy,
-			RequiredClaims: claimsCopy,
+			ID:                             r.ID,
+			AccountID:                      r.AccountID,
+			AppID:                          r.AppID,
+			Priority:                       r.Priority,
+			PathGlob:                       r.MatchPath,
+			Methods:                        buildMethodsMap(r.MatchMethods),
+			MatchHeaders:                   buildMatchHeadersMap(r.MatchHeaders),
+			Issuer:                         action.Issuer,
+			Audience:                       audCopy,
+			JWKSURL:                        action.JWKSURL,
+			Algorithms:                     algCopy,
+			RequiredClaims:                 claimsCopy,
+			PlatformTenantExternalRefClaim: action.PlatformTenantExternalRefClaim,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

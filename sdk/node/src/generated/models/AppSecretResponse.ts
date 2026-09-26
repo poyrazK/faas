@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObservation.js';
 /**
  * A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the env-scope the row belongs to (ADR-092 PR-B). Pre-PR-B callers see scope='default' echoed on every row.
  */
@@ -65,5 +66,9 @@ export type AppSecretResponse = {
    * Runtime instance that reported this projection/signal outcome.
    */
   last_runtime_reload_instance_id?: string;
+  /**
+   * For this scope, the array contains only active runtimes that reported; it is not an inventory of every active or authorized runtime.
+   */
+  runtime_reload_observations?: Array<SecretRuntimeReloadObservation>;
 };
 

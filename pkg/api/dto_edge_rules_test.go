@@ -44,6 +44,27 @@ func happyEdgeRuleValidateAction() EdgeRuleValidateAction {
 	}
 }
 
+func TestApplyEdgeRuleRewritePath(t *testing.T) {
+	cases := []struct {
+		name, requestPath, from, to, wantPath string
+		wantApplied                           bool
+	}{
+		{name: "replace prefix", requestPath: "/api/items", from: "/api", to: "/v1", wantPath: "/v1/items", wantApplied: true},
+		{name: "add prefix", requestPath: "/items", from: "", to: "/v1", wantPath: "/v1/items", wantApplied: true},
+		{name: "wildcard from adds prefix", requestPath: "/items", from: "*", to: "v1/", wantPath: "/v1/items", wantApplied: true},
+		{name: "root is no-op", requestPath: "/items", from: "", to: "/", wantPath: "/items", wantApplied: true},
+		{name: "from mismatch", requestPath: "/api/items", from: "/v2", to: "/v1", wantPath: "/api/items", wantApplied: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotPath, gotApplied := ApplyEdgeRuleRewritePath(tc.requestPath, tc.from, tc.to)
+			if gotPath != tc.wantPath || gotApplied != tc.wantApplied {
+				t.Fatalf("ApplyEdgeRuleRewritePath(%q, %q, %q) = (%q, %v), want (%q, %v)", tc.requestPath, tc.from, tc.to, gotPath, gotApplied, tc.wantPath, tc.wantApplied)
+			}
+		})
+	}
+}
+
 func TestEdgeRuleValidateAction_Validate_HappyPath(t *testing.T) {
 	a := happyEdgeRuleValidateAction()
 	if p := a.Validate(); p != nil {

@@ -101,7 +101,12 @@ func (s *server) listSecrets(w http.ResponseWriter, r *http.Request, acct state.
 			api.WriteProblem(w, api.ErrCapacity("could not list secrets"))
 			return
 		}
-		writeSecretListAll(w, rows, limits.SecretCountMax)
+		observations, err := s.listSecretRuntimeReloadObservations(r.Context(), acct.ID, app.ID, "")
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not list secret runtime status"))
+			return
+		}
+		writeSecretListAll(w, rows, limits.SecretCountMax, observations)
 		return
 	}
 	s.listSecretsInScope(w, r, acct, app, scope, limits)
@@ -118,6 +123,11 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 	rows, err := s.store.ListAppSecretsInScope(r.Context(), acct.ID, app.ID, scope)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list secrets"))
+		return
+	}
+	observations, err := s.listSecretRuntimeReloadObservations(r.Context(), acct.ID, app.ID, scope)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list secret runtime status"))
 		return
 	}
 	out := make([]api.AppSecretResponse, 0, len(rows))
@@ -139,6 +149,7 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 			LastRuntimeReloadAt:         formatOptionalSecretTime(row.LastRuntimeReloadAt),
 			LastRuntimeReloadErrorCode:  row.LastRuntimeReloadErrorCode,
 			LastRuntimeReloadInstanceID: row.LastRuntimeReloadInstanceID,
+			RuntimeReloadObservations:   observations[secretObservationKey{Scope: row.Scope, Key: row.Key}],
 		})
 	}
 	totalCount, err := s.store.CountAppSecrets(r.Context(), acct.ID, app.ID)
@@ -162,7 +173,7 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 // Mirror of writeEnvListAll (handlers_env.go:209) — the env route
 // already uses this discriminated-union shape (ADR-090 PR-B), and
 // secrets deliberately re-use the same rendering rule for symmetry.
-func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int) {
+func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int, observations map[secretObservationKey][]api.SecretRuntimeReloadObservation) {
 	bucket := map[string][]api.ScopedAppSecretResponse{}
 	for _, r := range rows {
 		bucket[r.Scope] = append(bucket[r.Scope], api.ScopedAppSecretResponse{
@@ -182,6 +193,7 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 			LastRuntimeReloadAt:         formatOptionalSecretTime(r.LastRuntimeReloadAt),
 			LastRuntimeReloadErrorCode:  r.LastRuntimeReloadErrorCode,
 			LastRuntimeReloadInstanceID: r.LastRuntimeReloadInstanceID,
+			RuntimeReloadObservations:   observations[secretObservationKey{Scope: r.Scope, Key: r.Key}],
 		})
 	}
 	for scope := range bucket {
@@ -204,6 +216,30 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 		Quota:          quota,
 		Count:          len(rows),
 	})
+}
+
+type secretObservationKey struct {
+	Scope string
+	Key   string
+}
+
+func (s *server) listSecretRuntimeReloadObservations(ctx context.Context, accountID, appID, scope string) (map[secretObservationKey][]api.SecretRuntimeReloadObservation, error) {
+	rows, err := s.store.ListAppSecretRuntimeReloadObservations(ctx, accountID, appID, scope)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[secretObservationKey][]api.SecretRuntimeReloadObservation, len(rows))
+	for _, row := range rows {
+		key := secretObservationKey{Scope: row.Scope, Key: row.Key}
+		out[key] = append(out[key], api.SecretRuntimeReloadObservation{
+			InstanceID: row.InstanceID, Version: row.Version,
+			Projection: string(row.Projection), Signal: string(row.Signal),
+			ObservedAt: row.ObservedAt.UTC().Format(time.RFC3339Nano), ErrorCode: row.ErrorCode,
+			ApplicationAckVersion: row.ApplicationAckVersion, ApplicationAck: string(row.ApplicationAck),
+			ApplicationAckAt: formatOptionalSecretTime(row.ApplicationAckAt), ApplicationAckErrorCode: row.ApplicationAckErrorCode,
+		})
+	}
+	return out, nil
 }
 
 func formatOptionalSecretTime(value *time.Time) string {

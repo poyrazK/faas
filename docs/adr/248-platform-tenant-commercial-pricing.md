@@ -1,0 +1,8 @@
+# ADR-248: Tenant-wide commercial request pricing
+
+- **Status:** accepted
+- **Date:** 2026-09-25
+- **Context:** Cross-app tenant statements currently use the app-level request rate card for each usage source. That produces an auditable consolidated statement, but a platform cannot assign one customer-specific commercial price across all of that customer's apps without maintaining equivalent prices in each app.
+- **Decision:** Add immutable, effective-dated request rate cards scoped to a platform tenant. For each attributed usage minute, the newest effective tenant card takes precedence over the app rate card. Until the tenant's first card is effective, app-level pricing remains the fallback. Versions for one tenant use one currency. Statement lines identify the exact app or tenant rate-card version used.
+- **Consequences:** Existing tenants retain their current pricing without migration or opt-in changes. New tenant prices apply by usage event minute; draft revisions may be superseded when the quote changes, while finalized statements remain immutable and later usage is billed only in additive adjustments. A statement that actually uses prices in different currencies is rejected. This is a downstream customer tariff, not a runtime cost or profit calculation; the current usage meter remains request-unit based.
+- **Alternatives considered:** Duplicating an app-level rate card per app makes synchronized tier changes error-prone and still offers no single customer-wide pricing history. Rewriting finalized statement lines would invalidate invoices and webhook payloads, so it is prohibited.

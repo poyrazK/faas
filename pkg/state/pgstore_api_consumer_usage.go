@@ -26,12 +26,15 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 	err = tx.QueryRow(ctx, `
 		insert into api_consumer_usage_events
 		       (event_id, account_id, app_id, consumer_key, window_start,
-		        request_count, error_count, billable_units, platform_tenant_id)
-		values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, nullif($9::text, '')::uuid)
+		        request_count, error_count, billable_units, platform_tenant_id, platform_tenant_surface_id,
+		        platform_tenant_jwt_authorization_rule_id)
+		values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8,
+		        nullif($9::text, '')::uuid, nullif($10::text, '')::uuid, nullif($11::text, '')::uuid)
 		on conflict (event_id) do nothing
 		returning true`,
 		event.EventID, event.AccountID, event.AppID, event.ConsumerKey,
-		event.WindowStart.UTC(), event.RequestCount, event.ErrorCount, event.BillableUnits, event.PlatformTenantID,
+		event.WindowStart.UTC(), event.RequestCount, event.ErrorCount, event.BillableUnits,
+		event.PlatformTenantID, event.PlatformTenantSurfaceID, event.PlatformTenantJWTAuthorizationRuleID,
 	).Scan(&inserted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -40,17 +43,23 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 		return false, err
 	}
 	if event.PlatformTenantID != "" {
+		subject, sourceKind := event.ConsumerKey, "consumer"
+		if event.PlatformTenantSurfaceID != "" {
+			subject, sourceKind = event.PlatformTenantSurfaceID, "surface"
+		} else if event.PlatformTenantJWTAuthorizationRuleID != "" {
+			subject, sourceKind = event.PlatformTenantJWTAuthorizationRuleID, "jwt"
+		}
 		_, err = tx.Exec(ctx, `
 			insert into platform_tenant_usage_minutes
-			       (account_id, platform_tenant_id, app_id, consumer_key, window_start,
+			       (account_id, platform_tenant_id, app_id, source_kind, consumer_key, window_start,
 			        request_count, error_count, billable_units)
-			values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8)
-			on conflict (account_id, platform_tenant_id, app_id, consumer_key, window_start) do update
+			values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9)
+			on conflict (account_id, platform_tenant_id, app_id, source_kind, consumer_key, window_start) do update
 			set request_count = platform_tenant_usage_minutes.request_count + excluded.request_count,
 			    error_count = platform_tenant_usage_minutes.error_count + excluded.error_count,
 			    billable_units = platform_tenant_usage_minutes.billable_units + excluded.billable_units,
 			    updated_at = now()`,
-			event.AccountID, event.PlatformTenantID, event.AppID, event.ConsumerKey, event.WindowStart.UTC(),
+			event.AccountID, event.PlatformTenantID, event.AppID, sourceKind, subject, event.WindowStart.UTC(),
 			event.RequestCount, event.ErrorCount, event.BillableUnits)
 		if err != nil {
 			return false, err

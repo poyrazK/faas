@@ -6,11 +6,14 @@ info:
   summary: Customer-facing REST API for the one-box FaaS platform.
   description: |
     Public REST surface exposed by `apid` on `127.0.0.1:8081` (proxied by
-    `gatewayd` at the public listener). Every route is authenticated with a
-    Bearer API key (`fp_live_…`) and rate-limited per-IP (10 failed-auth / min),
-    except the provider-signed durable inbound webhook ingress.
-    Successful POSTs accept an `Idempotency-Key` header (24h TTL) and replay
-    with `Idempotent-Replayed: true`.
+    `gatewayd` at the public listener). Protected routes accept an account
+    Bearer API key (`fp_live_…`) or the tenant-bound `fp_tenant_…` credential
+    only on the explicitly documented tenant-self read routes. Authentication
+    is rate-limited per-IP (10 failed-auth / min), except the provider-signed
+    durable inbound webhook ingress.
+    Successful POSTs generally accept an `Idempotency-Key` header (24h TTL)
+    and replay with `Idempotent-Replayed: true`; the one-time token-creation
+    endpoint deliberately does not cache plaintext for retries.
 
     Errors use RFC 9457 `application/problem+json` with a stable `code`
     field — see `Problem` schema. Authentication rate limits use the same
@@ -36,6 +39,8 @@ servers:
         description: Public hostname (one-box FaaS).
 
 tags:
+  - name: outbound
+    description: Bind apps to account-owned, operator-provisioned managed outbound integrations without exposing provider credentials.
   - name: storage
     description: Private customer object-storage preview, separate from runtime snapshots and image layers.
   - name: managed_postgres
@@ -318,6 +323,234 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/outbound/integrations:
+    get:
+      tags: [outbound]
+      operationId: listOutboundIntegrationOffers
+      summary: List managed outbound integrations available to this account.
+      description: Provider credentials and gateway tokens are never returned.
+      responses:
+        '200':
+          description: Available managed integrations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundIntegrationOfferList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundIntegration
+      summary: Create a customer-owned managed outbound integration.
+      description: Requires MFA and deploy-write scope. The origin must resolve only to globally reachable addresses. Provider Authorization is uploaded separately and sealed at rest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundIntegrationRequest' }
+      responses:
+        '201':
+          description: Customer integration created without credential material.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: The account already has an integration with this name. }
+        '429': { description: The account has reached its customer integration limit. }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/credential:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of an account-owned customer-sealed integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: putOutboundCredential
+      summary: Set or rotate a customer-held outbound provider credential.
+      description: The Authorization value is sealed at rest and never returned. Requires MFA and deploy-write scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundCredentialRequest' }
+      responses:
+        '204': { description: Credential saved; no secret is returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundCredential
+      summary: Revoke a customer-held outbound provider credential.
+      description: Idempotent for an existing integration; subsequent gateway calls fail closed.
+      responses:
+        '204': { description: Credential absent. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/budget:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose daily budget is being changed.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundIntegrationDailyBudget
+      summary: Set or clear a customer-owned integration's daily request limit.
+      description: Requires MFA and deploy-write scope. The configured value cannot exceed the account plan's per-integration ceiling. Set daily_request_limit to null to clear the customer-selected limit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundDailyRequestBudgetRequest' }
+      responses:
+        '204': { description: Daily request limit updated; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/request-policy:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the customer-owned integration whose request policy is being changed.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundIntegrationRequestPolicy
+      summary: Replace a customer-owned integration's rate, burst, concurrency, and timeout policy.
+      description: Requires MFA and deploy-write scope. Every value must fit the account plan ceiling. Changes are enforced on subsequent admissions without an outboundd restart; already-admitted calls keep their existing deadline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundRequestPolicyRequest' }
+      responses:
+        '204': { description: Request policy updated; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/usage:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose current usage is being read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundIntegrationUsage
+      summary: Read the integration's current UTC-day outbound request usage.
+      description: Requires MFA and read-surface scope. Counts requests admitted by the gateway, including provider calls that later fail. Usage resets at the returned UTC midnight timestamp.
+      responses:
+        '200':
+          description: Current UTC-day request count and configured limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundIntegrationUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of a customer-owned managed integration.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundIntegration
+      summary: Delete a customer-owned managed outbound integration.
+      description: Requires MFA and deploy-write scope. Deletes the integration, its sealed credential, app bindings, and admission state. Operator-provisioned integrations cannot be deleted here.
+      responses:
+        '204': { description: Integration deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/outbound-bindings:
+    get:
+      tags: [outbound]
+      operationId: listOutboundAppBindings
+      summary: List an app's managed outbound bindings.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: Current app bindings, without credential material.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAppBindingList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/outbound-bindings/{integration}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: integration
+        in: path
+        required: true
+        description: UUID of an account-owned managed integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: bindOutboundIntegration
+      summary: Bind an app to an existing managed outbound integration.
+      description: Idempotent. The integration is operator-provisioned; this request never carries a provider key.
+      responses:
+        '200':
+          description: Binding stored; a customer-sealed integration also needs a configured credential to serve traffic.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAppBinding' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    patch:
+      tags: [outbound]
+      operationId: updateOutboundBindingPolicy
+      summary: Narrow an app's managed outbound route policy.
+      description: Methods and paths must remain within the operator-approved integration policy. Requires MFA and deploy-write scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateOutboundBindingPolicyRequest' }
+      responses:
+        '204': { description: Binding route policy updated. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: unbindOutboundIntegration
+      summary: Remove an app's managed outbound binding.
+      description: Idempotent; returns 204 even when the binding is already absent.
+      responses:
+        '204': { description: Binding absent. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/status:
     get:
       tags: [status]
@@ -3755,6 +3988,83 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantActivationResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/platform-tenants/{id}/request-budget:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer whose shared admission budget is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantRequestBudget
+      summary: Read cross-app customer request admission ceilings and counters.
+      responses:
+        '200':
+          description: Current policy and UTC-window admitted-request counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantRequestBudgetResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: setPlatformTenantRequestBudget
+      summary: Set cross-app customer request admission ceilings.
+      description: Zero disables a ceiling. The shared counter is authoritative across gateway replicas; configured admission fails closed if it is unavailable. These are admitted-request counts, not billed usage or a money cap.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformTenantRequestBudgetRequest' }
+      responses:
+        '200':
+          description: Updated policy and current counters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantRequestBudgetResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/account/platform-tenants/{id}/rate-cards:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Customer whose cross-app commercial tariff is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantRateCards
+      summary: List immutable customer prices applied across linked apps.
+      responses:
+        '200':
+          description: Tenant tariff history ordered by effective minute.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantRateCardListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantRateCard
+      summary: Set an immutable cross-app customer price.
+      description: Appends a version that overrides app-level prices for this tenant from its effective UTC minute. Before the first tenant version takes effect, statement pricing falls back to each app's rate card. A tenant can use only one currency; finalized statement revisions are never rewritten.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantRateCardRequest' }
+      responses:
+        '201':
+          description: New immutable tenant rate-card version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantRateCardResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/account/platform-tenants/{id}/usage:
     parameters:
       - name: id
@@ -3782,6 +4092,49 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlatformTenantUsageResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/activity:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose cross-app request evidence is requested.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantActivity
+      summary: Read retained request-debugger evidence across a platform tenant's apps.
+      description: This plan-gated support view returns only bounded debugger evidence carrying request-time tenant attribution. It is sampled/retained evidence, not a complete request ledger or billing source of truth. Bodies, headers, and credentials are never returned.
+      parameters:
+        - name: since
+          in: query
+          description: Positive duration such as 30m, 24h, or 3d; defaults to 24h and is clamped to plan retention.
+          schema: { type: string }
+        - name: app_id
+          in: query
+          description: Restrict to one app UUID; results remain scoped to this tenant's request-time attribution.
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          description: Restrict to one HTTP response status.
+          schema: { type: integer, minimum: 100, maximum: 599 }
+        - name: limit
+          in: query
+          description: Maximum rows in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: cursor
+          in: query
+          description: Opaque cursor from the previous page; it pins the time window and filters.
+          schema: { type: string, maxLength: 4096 }
+      responses:
+        '200':
+          description: One bounded page of observed request telemetry; represented request counts are weighted by collapsed rows.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantActivityResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/account/platform-tenants/{id}/usage-statements:
@@ -3817,7 +4170,7 @@ paths:
       tags: [platform-tenants]
       operationId: createPlatformTenantStatement
       summary: Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
-      description: A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed currencies are rejected.
+      description: For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card; before the tenant's first effective card, app pricing remains the fallback. A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed effective currencies are rejected.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -3939,6 +4292,185 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/account/platform-tenants/{id}/webhooks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose billing event receiver is managed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantWebhooks
+      summary: List a platform tenant's statement event receivers.
+      responses:
+        '200':
+          description: Tenant-scoped webhook subscriptions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantWebhookListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantWebhook
+      summary: Subscribe to finalized cross-app tenant statements.
+      description: Creates a signed, retryable receiver scoped to this tenant. Finalization is durably enqueued with the statement transition; one delivery is created per statement revision.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantWebhookRequest' }
+      responses:
+        '201':
+          description: Receiver created. The plaintext secret is not returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantWebhookResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant that owns the subscription being inspected or changed.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Tenant-scoped webhook subscription to inspect or change.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantWebhook
+      summary: Read a tenant webhook subscription.
+      responses:
+        '200':
+          description: Subscription metadata; the secret remains masked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantWebhookResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [platform-tenants]
+      operationId: updatePlatformTenantWebhook
+      summary: Update a tenant webhook destination or delivery policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePlatformTenantWebhookRequest' }
+      responses:
+        '200':
+          description: Updated subscription metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantWebhookResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [platform-tenants]
+      operationId: deletePlatformTenantWebhook
+      summary: Delete a tenant webhook and its remaining delivery history.
+      responses:
+        '204': { description: Subscription deleted. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/rotate-secret:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant context used to authorize secret rotation.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Subscription whose signing secret is rotated.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [platform-tenants]
+      operationId: rotatePlatformTenantWebhookSecret
+      summary: Rotate the signing secret for a tenant webhook.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateAppWebhookSecretRequest' }
+      responses:
+        '200':
+          description: Secret rotated; plaintext is not returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RotateAppWebhookSecretResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant context used to scope delivery history.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Subscription whose delivery attempts are listed.
+        schema: { type: string, format: uuid }
+      - name: page_size
+        in: query
+        description: Maximum number of delivery rows to return, from 1 to 100.
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - name: page_token
+        in: query
+        description: Opaque cursor returned by the previous page.
+        schema: { type: string }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantWebhookDeliveries
+      summary: Inspect tenant statement webhook deliveries.
+      responses:
+        '200':
+          description: Durable delivery history, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookDeliveryListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/webhooks/{webhook_id}/deliveries/{did}/retry:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant context used to authorize delivery replay.
+        schema: { type: string, format: uuid }
+      - name: webhook_id
+        in: path
+        required: true
+        description: Subscription that owns the delivery to replay.
+        schema: { type: string, format: uuid }
+      - name: did
+        in: path
+        required: true
+        description: Dead delivery to retry.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [platform-tenants]
+      operationId: retryPlatformTenantWebhookDelivery
+      summary: Retry one dead tenant webhook delivery.
+      responses:
+        '200':
+          description: Delivery requeued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWebhookRetryDeliveryResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/account/platform-tenants/{id}/credentials:
     parameters:
       - name: id
@@ -3992,6 +4524,155 @@ paths:
               schema: { $ref: '#/components/schemas/ApplyPlatformTenantCredentialsResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/access-tokens:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant receiving the downstream self-service token.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantAccessTokens
+      summary: List metadata for downstream tenant access tokens.
+      responses:
+        '200':
+          description: Metadata only; token plaintext is never returned by listing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantAccessTokenListResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantAccessToken
+      summary: Mint a tenant-bound read-only self-service credential.
+      description: The bearer is scoped to exactly one downstream tenant, supports usage and/or finalized-statement reads, expires within 365 days, and is returned once. Account-wide API-key creation cannot mint these special tenant scopes. This endpoint does not cache plaintext for Idempotency-Key retries; after a lost response, list token metadata and create a replacement under a new name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformTenantAccessTokenRequest' }
+      responses:
+        '201':
+          description: Token metadata and one-time plaintext bearer. Store the token securely; it cannot be retrieved later.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatePlatformTenantAccessTokenResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/account/platform-tenants/{id}/access-tokens/{token_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant that owns the access token.
+        schema: { type: string, format: uuid }
+      - name: token_id
+        in: path
+        required: true
+        description: Access token to revoke.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [platform-tenants]
+      operationId: revokePlatformTenantAccessToken
+      summary: Revoke a downstream tenant access token.
+      responses:
+        '200':
+          description: Revoked token metadata; plaintext is never returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantAccessTokenResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/usage:
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSelfUsage
+      summary: Read this tenant's own cross-app raw usage.
+      description: Requires a tenant-bound access token with platform_tenant:usage:read. The credential cannot select or impersonate a different tenant.
+      parameters:
+        - name: since
+          in: query
+          description: Inclusive UTC-day boundary for the requested tenant usage.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Exclusive UTC-day boundary; buckets before this instant are included.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: This tenant's usage over the requested bounded window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantUsageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+
+  /v1/platform-tenant-self/usage-statements:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantSelfStatements
+      summary: List this tenant's finalized cross-app usage statements.
+      description: Requires a tenant-bound access token with platform_tenant:statements:read. Drafts and superseded revisions are never exposed. Statements overlapping the requested window are returned newest period and revision first.
+      parameters:
+        - name: period_start
+          in: query
+          required: true
+          description: Inclusive UTC-minute start of the lookup window; the range may be at most 90 days.
+          schema: { type: string, format: date-time }
+        - name: period_end
+          in: query
+          required: true
+          description: Exclusive UTC-minute end of the lookup window.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          description: Maximum statements in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+        - name: offset
+          in: query
+          description: Zero-based offset for the next page; use next_offset from the previous response.
+          schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 }
+      responses:
+        '200':
+          description: One bounded page of finalized statements.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSelfStatementListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/platform-tenant-self/usage-statements/{statement_id}:
+    parameters:
+      - name: statement_id
+        in: path
+        required: true
+        description: Finalized immutable statement revision belonging to this token's tenant.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSelfStatement
+      summary: Read one of this tenant's finalized statement revisions.
+      description: Draft, superseded, and other tenants' statements all appear as not found.
+      responses:
+        '200':
+          description: Finalized statement snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantStatementResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/consumers:
     parameters:
@@ -12530,6 +13211,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/release-sets:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the release set.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target project environment.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    post:
+      tags: [projects]
+      operationId: publishProjectReleaseSet
+      summary: Atomically activate an immutable project deployment graph.
+      description: Every project workload must have one live deployment and revision pinning enabled for at least the requested TTL. Previous release sets remain addressable until expiry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishProjectReleaseSetRequest' }
+      responses:
+        '201':
+          description: Published release set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/state:
     parameters:
       - name: slug
@@ -15450,6 +16165,8 @@ paths:
         to pick up the eventual result.
       parameters:
         - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -15480,6 +16197,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -15508,6 +16227,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -15537,6 +16258,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -16082,6 +16805,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -19266,9 +19991,10 @@ components:
       type: http
       scheme: bearer
       description: |
-        Bearer API key. Format: `fp_live_` + 48 hex chars. The plaintext is
-        returned exactly once on `POST /v1/keys`; subsequent reads only
-        surface the prefix.
+        Bearer credential. Account API keys use `fp_live_` + 48 hex chars and are
+        returned exactly once on `POST /v1/keys`. Downstream platform-tenant
+        self-service tokens use the distinct `fp_tenant_` + 64 hex format and are
+        limited to the tenant's own usage and finalized statements.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -19334,6 +20060,18 @@ components:
       description: |
         Idempotency key for the POST. Stored for 24h. On replay the server
         returns the original response with `Idempotent-Replayed: true`.
+    GregaleRevision:
+      name: X-Gregale-Revision
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+      description: Exact deployment pin. Mutually exclusive with X-Gregale-Release; checked again at delivery.
+    GregaleRelease:
+      name: X-Gregale-Release
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+      description: Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
     Slug:
       name: slug
       in: path
@@ -19441,6 +20179,156 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    OutboundIntegrationOffer:
+      type: object
+      description: Account-owned managed integration metadata; never contains a provider key or gateway token.
+      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled, credential_source, credential_configured, owner_kind, daily_request_limit, request_policy]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        origin: { type: string, format: uri }
+        allowed_methods:
+          type: array
+          items: { type: string }
+        allowed_path_prefixes:
+          type: array
+          items: { type: string }
+        enabled: { type: boolean }
+        credential_source:
+          type: string
+          enum: [operator_env, customer_sealed]
+          description: Who supplies the provider Authorization value.
+        credential_configured:
+          type: boolean
+          description: Whether the selected source currently has a credential; never reveals its value.
+        owner_kind:
+          type: string
+          enum: [operator, customer]
+          description: Whether the integration is operator-provisioned or customer-created.
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+          description: Effective per-integration UTC-day admitted-request limit; null means no configured limit.
+        request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }
+    CreateOutboundIntegrationRequest:
+      type: object
+      description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
+      required: [name, origin, allowed_methods, allowed_path_prefixes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        origin: { type: string, format: uri }
+        allowed_methods:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          maxItems: 6
+          items: { type: string, enum: [GET, HEAD, POST, PUT, PATCH, DELETE] }
+        allowed_path_prefixes:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          maxItems: 32
+          items: { type: string, maxLength: 512 }
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+          description: Optional per-integration daily admitted-request limit; account plan ceilings may be lower.
+        request_policy:
+          allOf:
+            - $ref: '#/components/schemas/OutboundRequestPolicy'
+          description: Optional full request policy. Omission selects the default 10 RPS, burst 20, 10 in flight, and 30-second timeout.
+    OutboundRequestPolicy:
+      type: object
+      description: Effective customer-selected per-integration policy, bounded by the account plan.
+      required: [rate_per_second, burst, max_in_flight, request_timeout_ms]
+      properties:
+        rate_per_second: { type: number, format: double, exclusiveMinimum: true, minimum: 0, maximum: 500 }
+        burst: { type: integer, minimum: 1, maximum: 2000 }
+        max_in_flight: { type: integer, minimum: 1, maximum: 1000 }
+        request_timeout_ms: { type: integer, minimum: 1, maximum: 300000 }
+    PutOutboundRequestPolicyRequest:
+      type: object
+      description: Replace all admission policy values for a customer-owned integration.
+      required: [request_policy]
+      properties:
+        request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }
+    PutOutboundDailyRequestBudgetRequest:
+      type: object
+      description: Set a lower per-integration daily request limit or clear it with null.
+      required: [daily_request_limit]
+      properties:
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+    OutboundIntegrationUsageResponse:
+      type: object
+      description: Current UTC-day admitted-request count and the effective optional request limit.
+      required: [daily_request_count, daily_request_limit, usage_date, resets_at]
+      properties:
+        daily_request_count: { type: integer, format: int64, minimum: 0 }
+        daily_request_limit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000000
+        usage_date: { type: string, format: date }
+        resets_at: { type: string, format: date-time }
+    PutOutboundCredentialRequest:
+      type: object
+      description: Provider Authorization header value, accepted once and never returned.
+      required: [authorization]
+      properties:
+        authorization: { type: string, minLength: 1, maxLength: 8192 }
+    OutboundIntegrationOfferList:
+      type: object
+      description: Enabled managed integrations this account may bind to its apps.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
+    OutboundAppBinding:
+      type: object
+      description: An app's customer-owned attachment to a managed integration.
+      required: [integration, app_id, allowed_methods, allowed_path_prefixes, created_at]
+      properties:
+        integration: { $ref: '#/components/schemas/OutboundIntegrationOffer' }
+        app_id: { type: string, format: uuid }
+        allowed_methods:
+          type: array
+          description: App-specific methods, bounded by the integration ceiling.
+          items: { type: string }
+        allowed_path_prefixes:
+          type: array
+          description: App-specific path prefixes, bounded by the integration ceiling.
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+    UpdateOutboundBindingPolicyRequest:
+      type: object
+      description: Explicit nonempty method and path subsets for a bound app.
+      required: [allowed_methods, allowed_path_prefixes]
+      properties:
+        allowed_methods:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items: { type: string }
+        allowed_path_prefixes:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: { type: string }
+    OutboundAppBindingList:
+      type: object
+      description: Customer-owned outbound attachments for one app.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAppBinding' }
+
     PreflightLevel:
       type: string
       enum: [green, amber, red]
@@ -21674,6 +22562,12 @@ components:
           description: "Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie."
           type: boolean
           default: false
+        revision_pin_ttl_seconds:
+          description: "Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables revision pinning."
+          type: integer
+          minimum: 0
+          maximum: 604800
+          default: 0
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -22111,6 +23005,60 @@ components:
       properties:
         status: { type: string, enum: [active, suspended] }
 
+    SetPlatformTenantRequestBudgetRequest:
+      description: Both optional admission ceilings must be supplied; zero disables a dimension.
+      type: object
+      required: [max_requests_per_minute, max_requests_per_day]
+      properties:
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0, maximum: 1000000 }
+        max_requests_per_day: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+
+    PlatformTenantRequestBudgetResponse:
+      description: One customer's authoritative cross-app admitted-request budget and current UTC counters. Absent policy has configured=false and zero ceilings.
+      type: object
+      required: [tenant_id, configured, max_requests_per_minute, max_requests_per_day, minute_used, day_used, minute_resets_at, day_resets_at]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        configured: { type: boolean }
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
+        max_requests_per_day: { type: integer, format: int64, minimum: 0 }
+        minute_used: { type: integer, format: int64, minimum: 0 }
+        day_used: { type: integer, format: int64, minimum: 0 }
+        minute_resets_at: { type: string, format: date-time }
+        day_resets_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreatePlatformTenantRateCardRequest:
+      description: Immutable tenant-wide price per attributed request unit. Currency defaults to EUR and effective_from defaults to the next UTC minute.
+      type: object
+      required: [price_millicents_per_unit]
+      properties:
+        currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1500 }
+        effective_from: { type: [string, "null"], format: date-time, description: UTC minute at which the version starts; omitted means the next UTC minute. }
+
+    PlatformTenantRateCardResponse:
+      description: Immutable, versioned customer price shared across every app attributed to one platform tenant.
+      type: object
+      required: [id, tenant_id, currency, unit, price_millicents_per_unit, effective_from, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        unit: { type: string, enum: [request] }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        effective_from: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    PlatformTenantRateCardListResponse:
+      description: Chronological immutable tariff versions for one customer.
+      type: object
+      required: [rate_cards]
+      properties:
+        rate_cards:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantRateCardResponse' }
+
     LinkPlatformTenantConsumerRequest:
       description: Attach an existing app-local API consumer to one platform customer.
       type: object
@@ -22147,6 +23095,63 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantResponse' }
         next_offset: { type: integer, minimum: 0 }
 
+    CreatePlatformTenantAccessTokenRequest:
+      description: Mint a bearer for one downstream tenant. Plaintext is returned once and expires no later than one year after creation.
+      type: object
+      required: [name, scopes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+        expires_at: { type: string, format: date-time, description: Defaults to 90 days from creation; maximum 365 days. }
+
+    PlatformTenantAccessTokenResponse:
+      description: Redacted token metadata. Plaintext is never returned by list or revoke.
+      type: object
+      required: [id, tenant_id, name, prefix, scopes, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
+        scopes:
+          type: array
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+
+    CreatePlatformTenantAccessTokenResponse:
+      description: Token metadata plus one-time plaintext bearer. Save the token securely; it is never retrievable again.
+      type: object
+      required: [id, tenant_id, name, prefix, scopes, created_at, expires_at, token]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        prefix: { type: string, pattern: '^fp_tenant_[0-9a-f]{8}$' }
+        scopes:
+          type: array
+          items: { type: string, enum: [platform_tenant:usage:read, platform_tenant:statements:read] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        token: { type: string, pattern: '^fp_tenant_[0-9a-f]{64}$', description: One-time plaintext bearer; emitted only by create. }
+
+    PlatformTenantAccessTokenListResponse:
+      description: Tenant access-token metadata without any recoverable plaintext bearer.
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantAccessTokenResponse' }
+
     PlatformTenantSurfaceResponse:
       description: A linked tenant surface summary; use the app endpoint for hostnames.
       type: object
@@ -22176,19 +23181,21 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantSurfaceResponse' }
 
     PlatformTenantUsageBucketResponse:
-      description: One UTC day of app-consumer usage from the durable raw usage ledger.
+      description: One UTC day of durable tenant-attributed usage. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
       type: object
-      required: [app_id, consumer_id, window_start, request_count, error_count, billable_units]
+      required: [app_id, window_start, request_count, error_count, billable_units]
       properties:
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
+        surface_id: { type: string, format: uuid }
+        jwt_authorization_rule_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
         request_count: { type: integer, format: int64, minimum: 0 }
         error_count: { type: integer, format: int64, minimum: 0 }
         billable_units: { type: integer, format: int64, minimum: 0 }
 
     PlatformTenantUsageResponse:
-      description: Cross-app raw usage totals with app and consumer attribution.
+      description: Cross-app raw usage totals with app and consumer, surface, or JWT-rule attribution.
       type: object
       required: [tenant_id, period_start, period_end, request_count, error_count, billable_units, buckets, as_of]
       properties:
@@ -22203,16 +23210,55 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantUsageBucketResponse' }
         as_of: { type: string, format: date-time }
 
-    PlatformTenantStatementLineResponse:
-      description: Immutable tenant-attributed UTC minute priced with one app's rate-card version.
+    PlatformTenantActivityItem:
+      description: One observed telemetry row and the app it belongs to. Request details contain no HTTP body or headers.
       type: object
-      required: [app_id, consumer_id, window_start, billable_units, amount_millicents]
+      required: [app_id, request]
+      properties:
+        app_id: { type: string, format: uuid }
+        request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+
+    PlatformTenantActivityFilters:
+      description: Normalized app and HTTP status filters applied to every page.
+      type: object
+      properties:
+        app_id: { type: string, format: uuid }
+        status: { type: integer, minimum: 100, maximum: 599 }
+
+    PlatformTenantActivityResponse:
+      description: A retention-bounded page of observed debugger evidence. Page totals weight each collapsed telemetry row by request.count and must not be treated as complete usage.
+      type: object
+      required: [tenant_id, since, window_start, window_end, plan_retention_days, retention_clamped, page_telemetry_rows, page_represented_requests, page_error_requests, page_complete, filters, requests]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        since: { type: string, description: Actual lookback duration after applying the account's debugger retention ceiling. }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        plan_retention_days: { type: integer, minimum: 0 }
+        retention_clamped: { type: boolean }
+        page_telemetry_rows: { type: integer, format: int64, minimum: 0 }
+        page_represented_requests: { type: integer, format: int64, minimum: 0 }
+        page_error_requests: { type: integer, format: int64, minimum: 0 }
+        page_complete: { type: boolean, description: True when this page contains all matching retained rows in the pinned window; it does not imply complete telemetry capture. }
+        next_cursor: { type: string, description: Present when another page of retained rows exists. }
+        filters: { $ref: '#/components/schemas/PlatformTenantActivityFilters' }
+        requests:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantActivityItem' }
+
+    PlatformTenantStatementLineResponse:
+      description: Immutable tenant-attributed UTC minute priced with either an app rate-card version or a tenant-wide rate-card version. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
+      type: object
+      required: [app_id, window_start, billable_units, amount_millicents]
       properties:
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
+        surface_id: { type: string, format: uuid }
+        jwt_authorization_rule_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
+        platform_tenant_rate_card_id: { type: string, format: uuid, description: Tenant-wide price source; mutually exclusive with rate_card_id. }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
@@ -22247,6 +23293,36 @@ components:
         statements:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantStatementResponse' }
+        next_offset: { type: integer, minimum: 0 }
+
+    PlatformTenantStatementSummaryResponse:
+      description: Finalized statement metadata without the potentially large line-item collection; retrieve line items by statement ID.
+      type: object
+      required: [id, tenant_id, period_start, period_end, revision, status, billable_units, unpriced_units, amount_millicents, as_of, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [finalized] }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        as_of: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        finalized_at: { type: string, format: date-time }
+
+    PlatformTenantSelfStatementListResponse:
+      description: Bounded page of finalized statement summaries. next_offset is present only when another page exists.
+      type: object
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantStatementSummaryResponse' }
+        next_offset: { type: integer, minimum: 0 }
 
     PlatformTenantStatementHandoffResponse:
       description: Provider-neutral receipt for a finalized cross-app statement revision.
@@ -22259,6 +23335,59 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
         created_at: { type: string, format: date-time }
+
+    CreatePlatformTenantWebhookRequest:
+      type: object
+      description: Create a receiver for this tenant's finalized cross-app billing statements.
+      required: [target_url, webhook_secret]
+      properties:
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        webhook_secret: { type: string, minLength: 1, maxLength: 256 }
+        retry_policy: { type: string, enum: [default, aggressive, none], default: default }
+        delivery_format: { type: string, enum: [json, cloudevents], default: json }
+        enabled: { type: boolean, default: true }
+      example:
+        target_url: "https://billing.example.com/gregale/events"
+        webhook_secret: "store-this-secret-before-submitting"
+
+    UpdatePlatformTenantWebhookRequest:
+      type: object
+      description: Update a tenant statement receiver. Rotate secrets with the dedicated action.
+      minProperties: 1
+      properties:
+        target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
+        retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format: { type: string, enum: [json, cloudevents] }
+        enabled: { type: boolean }
+
+    PlatformTenantWebhookResponse:
+      type: object
+      description: Tenant-scoped statement event receiver. The secret is never returned.
+      required: [id, scope, platform_tenant_id, account_id, target_url, webhook_secret_sealed_masked, event_filter, retry_policy, delivery_format, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string, enum: [platform_tenant] }
+        platform_tenant_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        target_url: { type: string, format: uri }
+        webhook_secret_sealed_masked: { type: string, enum: ["***"] }
+        event_filter:
+          type: array
+          items: { type: string, enum: [platform_tenant.statement.finalized] }
+        retry_policy: { type: string, enum: [default, aggressive, none] }
+        delivery_format: { type: string, enum: [json, cloudevents] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PlatformTenantWebhookListResponse:
+      type: object
+      description: Tenant-scoped webhook subscriptions owned by one platform tenant.
+      required: [webhooks]
+      properties:
+        webhooks:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantWebhookResponse' }
 
     CreateAPIConsumerRequest:
       description: "Stable customer identity to which consumer credentials can be attached."
@@ -22615,6 +23744,12 @@ components:
           description: "Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with version_affinity_cookie; omitted uses false."
           type: boolean
           default: false
+        revision_pin_ttl_seconds:
+          description: "Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."
+          type: integer
+          minimum: 0
+          maximum: 604800
+          default: 0
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -23037,6 +24172,11 @@ components:
         version_affinity_managed_cookie:
           description: "Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no change."
           type: [boolean, "null"]
+        revision_pin_ttl_seconds:
+          description: "Set the revision pin window in seconds; zero disables future retention. Omit for no change."
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 604800
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -23659,6 +24799,12 @@ components:
           description: "Whether the edge issues its own host-only rollout-affinity cookie."
           type: boolean
           default: false
+        revision_pin_ttl_seconds:
+          description: "Configured revision pin window in seconds; zero disables pinning."
+          type: integer
+          minimum: 0
+          maximum: 604800
+          default: 0
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."
@@ -27317,6 +28463,44 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentReleaseWorkloadResponse' }
 
+    PublishProjectReleaseSetRequest:
+      description: A complete mapping of project workload slugs to live deployment UUIDs.
+      type: object
+      additionalProperties: false
+      required: [ttl_seconds, deployments]
+      properties:
+        ttl_seconds: { type: integer, minimum: 1, maximum: 604800 }
+        deployments:
+          type: object
+          minProperties: 1
+          maxProperties: 100
+          additionalProperties: { type: string, format: uuid }
+
+    ProjectReleaseSetResponse:
+      description: Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and expires_at is set.
+      type: object
+      required: [id, account_id, project_id, environment, active, ttl_seconds, created_at, members]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment: { type: string }
+        active: { type: boolean }
+        ttl_seconds: { type: integer, minimum: 1, maximum: 604800 }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectReleaseSetMemberResponse' }
+
+    ProjectReleaseSetMemberResponse:
+      description: One app and exact deployment in an immutable project release set.
+      type: object
+      required: [app_id, deployment_id]
+      properties:
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+
     ProjectEnvironmentReleaseWorkloadResponse:
       description: Current live deployment metadata for one project workload. The stable environment URL is present before the first deployment but returns 404 until a live release exists.
       type: object
@@ -29496,6 +30680,12 @@ components:
         required_claims:
           type: object
           additionalProperties: { type: string }
+        platform_tenant_external_ref_claim:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[^\s]{1,128}$'
+          description: Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are rejected before the request reaches the guest.
 
     EdgeRuleIPAction:
       description: 'CIDR allow/deny evaluator. Deny is checked AFTER allow so a single-IP deny wins.'
@@ -30982,6 +32172,26 @@ components:
         last_runtime_reload_at: { type: string, format: date-time }
         last_runtime_reload_error_code: { type: string, enum: [projection_failed, signal_failed], description: "Closed, non-sensitive guest-init outcome code." }
         last_runtime_reload_instance_id: { type: string, description: "Runtime instance that reported this projection/signal outcome." }
+        runtime_reload_observations:
+          type: array
+          description: "For this scope, the array contains only active runtimes that reported; it is not an inventory of every active or authorized runtime."
+          items: { $ref: '#/components/schemas/SecretRuntimeReloadObservation' }
+
+    SecretRuntimeReloadObservation:
+      description: "Non-sensitive guest-init projection/signal outcome and optional application-owned reload acknowledgement for one runtime. An application acknowledgement is a self-attestation, not independent verification."
+      type: object
+      required: [instance_id, version, projection, signal, observed_at]
+      properties:
+        instance_id: { type: string, description: "Runtime instance ID that reported this outcome." }
+        version: { type: integer, format: int64, minimum: 1, description: "Secret version observed by guest-init; compare with delivery_version to detect stale status." }
+        projection: { type: string, enum: [updated, unchanged, failed] }
+        signal: { type: string, enum: [sent, queued, failed, not_attempted] }
+        observed_at: { type: string, format: date-time }
+        error_code: { type: string, enum: [projection_failed, signal_failed] }
+        application_ack_version: { type: integer, format: int64, minimum: 1, description: "Secret version the application claims to have applied; compare with delivery_version, independently of the guest-init report version." }
+        application_ack: { type: string, enum: [applied, failed], description: "Explicit application-owned outcome after rereading and applying FAAS_SECRETS_FILE. Missing means unknown, not failed." }
+        application_ack_at: { type: string, format: date-time }
+        application_ack_error_code: { type: string, enum: [application_reload_failed], description: "Closed, non-sensitive application-reported failure code." }
 
     # ADR-092 PR-B: per-row shape for the nested secrets_by_scope
     # response (mirror of ScopedAppEnvResponse). Reserved for the
@@ -31029,6 +32239,10 @@ components:
         last_runtime_reload_at: { type: string, format: date-time }
         last_runtime_reload_error_code: { type: string, enum: [projection_failed, signal_failed] }
         last_runtime_reload_instance_id: { type: string }
+        runtime_reload_observations:
+          type: array
+          description: "Latest guest-init outcome from each active reporting runtime. Missing reports are unknown, and successful signals do not prove application acknowledgement."
+          items: { $ref: '#/components/schemas/SecretRuntimeReloadObservation' }
 
     AppSecretListResponse:
       description: "Paginated list of sealed-secret envelopes (no plaintext). Discriminated union: `secrets` is the flat arm; `secrets_by_scope` is the `?scope=__all__` arm (ADR-092 PR-B)."
@@ -35712,6 +36926,30 @@ components:
         finalized_at: { type: string, format: date-time }
       additionalProperties: true
 
+    PlatformTenantStatementFinalizedWebhookPayload:
+      type: object
+      description: Immutable cross-app statement snapshot delivered once per finalized revision to tenant-scoped receivers.
+      required: [platform_tenant_id, external_ref, statement_id, revision, status, period_start, period_end, currency, billable_units, unpriced_units, amount_millicents, priced, lines, as_of, finalized_at]
+      properties:
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Platform owner's stable customer reference. }
+        statement_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [finalized] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        priced: { type: boolean, enum: [true] }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantStatementLineResponse' }
+        as_of: { type: string, format: date-time }
+        finalized_at: { type: string, format: date-time }
+      additionalProperties: false
+
     CreateInboundWebhookEndpointRequest:
       type: object
       description: Create a provider-verified endpoint whose accepted events become durable app invocations.
@@ -36373,11 +37611,11 @@ components:
         endpoint returns this shape per row. attempt=7 + status='dead'
         is the DLQ state; the customer-facing retry endpoint flips a
         dead row back to status='pending' for one more shot.
-      required: [id, webhook_id, app_id, account_id, event, attempt, status, next_attempt_at, created_at, updated_at]
+      required: [id, webhook_id, account_id, event, attempt, status, next_attempt_at, created_at, updated_at]
       properties:
         id: { type: string, pattern: '^[0-9a-f]{32}$' }
         webhook_id: { type: string, pattern: '^[0-9a-f]{32}$' }
-        app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        app_id: { type: string, pattern: '^[0-9a-f]{32}$', description: Omitted for events sourced from a platform tenant rather than one app. }
         account_id: { type: string, format: uuid }
         event:
           type: string

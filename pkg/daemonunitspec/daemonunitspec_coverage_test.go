@@ -86,6 +86,16 @@ func hasLoadCredential(u daemonunit.Unit, name, path string) bool {
 	return false
 }
 
+func TestOutbounddReceivesFleetIdentityOnlyAsCredential(t *testing.T) {
+	u := UnitOutboundd()
+	if !hasEnvironment(u, "FAAS_FLEET_AGE_IDENTITY_PATH", "%d/faas_fleet_age_identity") {
+		t.Fatal("outboundd fleet identity path is not a systemd credential path")
+	}
+	if !hasLoadCredential(u, "faas_fleet_age_identity", "/etc/faas/secrets/fleet.age") {
+		t.Fatal("outboundd is missing its fleet identity LoadCredential")
+	}
+}
+
 func hasOptionalLoadCredential(u daemonunit.Unit, name, path string) bool {
 	for _, cred := range u.LoadCredential {
 		if cred.Name == name && cred.Path == path && cred.Optional {

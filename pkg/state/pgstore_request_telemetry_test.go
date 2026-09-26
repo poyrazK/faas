@@ -38,6 +38,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -113,6 +114,65 @@ func TestPgStoreRequestTelemetry_ConsumerDimension(t *testing.T) {
 		} else if row.Requests != wantCount {
 			t.Errorf("consumer %q requests = %d, want %d", value, row.Requests, wantCount)
 		}
+	}
+}
+
+func TestPgStoreRequestTelemetryByPlatformTenantUsesRequestTimeAttribution(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, otherAccountID := uuid.NewString(), uuid.NewString()
+	tenantID := uuid.NewString()
+	appA, appB := uuid.NewString(), uuid.NewString()
+	deploymentID := uuid.NewString()
+	now := time.Now().UTC()
+
+	rows := []struct {
+		account, tenant, app string
+		status, count        int32
+		at                   time.Time
+	}{
+		{accountID, tenantID, appA, 503, 3, now.Add(-time.Minute)},
+		{accountID, tenantID, appB, 200, 5, now.Add(-2 * time.Minute)},
+		{accountID, uuid.NewString(), appA, 503, 7, now.Add(-3 * time.Minute)},
+		// Even a matching tenant UUID cannot cross the account boundary.
+		{otherAccountID, tenantID, appA, 503, 11, now.Add(-4 * time.Minute)},
+	}
+	for _, row := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, row.account), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, row.app), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        "GET /tenant-activity", Method: "GET", Status: row.status,
+			LatencyMs: 24, Count: row.count, ReceivedAt: pgtype.Timestamptz{Time: row.at, Valid: true},
+			UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+			PlatformTenantID: pgtype.UUID{Bytes: parseUUID(t, row.tenant), Valid: true},
+		}); err != nil {
+			t.Fatalf("Insert request telemetry: %v", err)
+		}
+	}
+
+	got, err := store.ListRequestTelemetryByPlatformTenant(ctx, sqlc.ListRequestTelemetryByPlatformTenantParams{
+		AccountID:        pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		PlatformTenantID: pgtype.UUID{Bytes: parseUUID(t, tenantID), Valid: true},
+		ReceivedFrom:     pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
+		ReceivedUntil:    pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		Limit:            10,
+	})
+	if err != nil {
+		t.Fatalf("List tenant activity: %v", err)
+	}
+	if len(got) != 2 || uuid.UUID(got[0].AppID.Bytes).String() != appA || got[0].Status != 503 || got[0].Count != 3 || uuid.UUID(got[1].AppID.Bytes).String() != appB {
+		t.Fatalf("tenant activity = %+v, want only the two request-time matches for account/tenant", got)
+	}
+
+	filtered, err := store.ListRequestTelemetryByPlatformTenant(ctx, sqlc.ListRequestTelemetryByPlatformTenantParams{
+		AccountID:        pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		PlatformTenantID: pgtype.UUID{Bytes: parseUUID(t, tenantID), Valid: true},
+		ReceivedFrom:     pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
+		ReceivedUntil:    pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		AppIDFilter:      appA, StatusFilter: 503, Limit: 10,
+	})
+	if err != nil || len(filtered) != 1 || filtered[0].Count != 3 {
+		t.Fatalf("filtered tenant activity = %+v, err=%v; want one matching 503 row", filtered, err)
 	}
 }
 
@@ -530,6 +590,64 @@ func TestPgStoreRequestTelemetry_CHECKRejection(t *testing.T) {
 	// (the closed-enum CHECK at migration 00427 line 103).
 	if !strings.Contains(pgErr.ConstraintName, "method") {
 		t.Errorf("constraint name = %q, expected substring 'method'", pgErr.ConstraintName)
+	}
+}
+
+func TestPgStoreRequestTelemetry_CircuitBreakerSummaryIncludesColdBootP95(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID, deploymentID := seedLiveDeploy(t, store, ctx)
+	now := time.Now().UTC()
+	instance, err := store.CreateInstance(ctx, appID, deploymentID, string(state.StateRunning), 128, resolveDefaultLocal(t, ctx, store), "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := store.AppendUsage(ctx, accountID, appID, instance.ID, now.Truncate(time.Minute), 0, 12, 500_000, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	rows := []struct {
+		status   int32
+		latency  int32
+		coldBoot bool
+		count    int32
+	}{
+		{status: 200, latency: 10, count: 9},
+		{status: 500, latency: 100, coldBoot: true, count: 2},
+		{status: 200, latency: 200, coldBoot: true, count: 2},
+		{status: 200, latency: 300, count: 1},
+	}
+	for i, sample := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        "GET /breaker-summary",
+			Method:       "GET",
+			Status:       sample.status,
+			LatencyMs:    sample.latency,
+			ColdBoot:     sample.coldBoot,
+			ReceivedAt:   pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
+			Count:        sample.count,
+			UaFamily:     "__unknown__",
+			ReferrerHost: "__none__",
+			Country:      "__unknown__",
+		}); err != nil {
+			t.Fatalf("Insert sample %d: %v", i, err)
+		}
+	}
+
+	requests, serverErrors, p95, coldBootRequests, coldBootP95, cpuUsec, cpuRequests, err := store.RequestTelemetryCircuitBreakerSummary(
+		ctx, appID, deploymentID, now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("RequestTelemetryCircuitBreakerSummary: %v", err)
+	}
+	if requests != 14 || serverErrors != 2 || p95 != 300 {
+		t.Errorf("overall summary = requests:%d errors:%d p95:%g, want 14/2/300", requests, serverErrors, p95)
+	}
+	if coldBootRequests != 4 || coldBootP95 != 200 {
+		t.Errorf("cold-boot summary = requests:%d p95:%g, want 4/200", coldBootRequests, coldBootP95)
+	}
+	if cpuUsec != 500_000 || cpuRequests != 12 {
+		t.Errorf("CPU/request summary = cpu_usec:%d requests:%d, want 500000/12", cpuUsec, cpuRequests)
 	}
 }
 

@@ -13,9 +13,9 @@ import (
 )
 
 // Client is the small opt-in adapter applications can use instead of building
-// the gateway URL and headers themselves. It only targets the configured
-// gateway endpoint; provider authentication headers remain application-owned
-// and are forwarded by Handler.
+// the gateway URL and headers themselves for legacy application-auth
+// integrations. Managed-credential integrations require a vmmd-signed
+// workload identity assertion instead.
 type Client struct {
 	BaseURL       string
 	IntegrationID string

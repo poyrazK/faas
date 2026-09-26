@@ -134,7 +134,7 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 			return
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) {
+	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) || strings.EqualFold(strings.TrimSpace(name), api.RevisionHeader) || strings.EqualFold(strings.TrimSpace(name), api.ReleaseHeader) {
 		return
 	}
 	if guestSetsManagedVersionCookie(ctx, name, value) {
@@ -183,6 +183,8 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 	if resp == nil || resp.Header == nil {
 		return
 	}
+	resp.Header.Del(api.RevisionHeader)
+	resp.Header.Del(api.ReleaseHeader)
 	ctx := context.Background()
 	if resp.Request != nil {
 		ctx = resp.Request.Context()

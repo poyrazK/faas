@@ -50,6 +50,20 @@ func (m *MemStore) GetPlatformTenant(_ context.Context, accountID, tenantID stri
 	return tenant, nil
 }
 
+func (m *MemStore) ResolvePlatformTenantExternalRef(_ context.Context, accountID, externalRef string) (PlatformTenant, error) {
+	if accountID == "" || externalRef == "" || len(externalRef) > 256 {
+		return PlatformTenant{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, tenant := range m.platformTenants {
+		if tenant.AccountID == accountID && tenant.ExternalRef == externalRef {
+			return tenant, nil
+		}
+	}
+	return PlatformTenant{}, ErrNotFound
+}
+
 func (m *MemStore) ListPlatformTenants(_ context.Context, accountID string, limit, offset int) ([]PlatformTenant, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, ErrInvalidArgument
@@ -194,9 +208,9 @@ func (m *MemStore) ListPlatformTenantUsage(_ context.Context, accountID, tenantI
 			continue
 		}
 		bucket.WindowStart = bucket.WindowStart.UTC().Truncate(24 * time.Hour)
-		key := bucket.AppID + "/" + bucket.ConsumerKey + "/" + bucket.WindowStart.Format(time.RFC3339)
+		key := bucket.AppID + "/" + bucket.ConsumerKey + "/" + bucket.SurfaceID + "/" + bucket.JWTAuthorizationRuleID + "/" + bucket.WindowStart.Format(time.RFC3339)
 		day := byDay[key]
-		day.AccountID, day.AppID, day.ConsumerKey, day.WindowStart = bucket.AccountID, bucket.AppID, bucket.ConsumerKey, bucket.WindowStart
+		day.AccountID, day.AppID, day.ConsumerKey, day.SurfaceID, day.JWTAuthorizationRuleID, day.WindowStart = bucket.AccountID, bucket.AppID, bucket.ConsumerKey, bucket.SurfaceID, bucket.JWTAuthorizationRuleID, bucket.WindowStart
 		day.RequestCount += bucket.RequestCount
 		day.ErrorCount += bucket.ErrorCount
 		day.BillableUnits += bucket.BillableUnits
@@ -209,6 +223,12 @@ func (m *MemStore) ListPlatformTenantUsage(_ context.Context, accountID, tenantI
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].WindowStart.Equal(out[j].WindowStart) {
 			if out[i].AppID == out[j].AppID {
+				if out[i].ConsumerKey == out[j].ConsumerKey {
+					if out[i].SurfaceID == out[j].SurfaceID {
+						return out[i].JWTAuthorizationRuleID < out[j].JWTAuthorizationRuleID
+					}
+					return out[i].SurfaceID < out[j].SurfaceID
+				}
 				return out[i].ConsumerKey < out[j].ConsumerKey
 			}
 			return out[i].AppID < out[j].AppID

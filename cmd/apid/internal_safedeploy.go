@@ -29,6 +29,8 @@ func (s *server) mountInternalSafeDeploy(mux *http.ServeMux, listenerAddr, canar
 	}
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/canary/advance",
 		internalSafeDeployAuth(canaryToken, s.internalAdvanceCanary))
+	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/rollouts/recover",
+		internalSafeDeployAuth(actionToken, s.internalRecoverDeploymentRollout))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/apps/{slug}/rollouts/recover",
 		internalSafeDeployAuth(actionToken, s.internalForApp(s.recoverRollout)))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/apps/{slug}/rollback",
@@ -88,6 +90,25 @@ func (s *server) internalAdvanceCanary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.idempotent(s.advanceCanary)(w, r, acct)
+}
+
+func (s *server) internalRecoverDeploymentRollout(w http.ResponseWriter, r *http.Request) {
+	d, err := s.store.DeploymentByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.internalSafeDeployLookupError(w, r, err, "deployment")
+		return
+	}
+	app, err := s.store.AppByID(r.Context(), d.AppID)
+	if err != nil {
+		s.internalSafeDeployLookupError(w, r, err, "deployment")
+		return
+	}
+	acct, err := s.store.AccountByID(r.Context(), app.AccountID)
+	if err != nil {
+		s.internalSafeDeployLookupError(w, r, err, "deployment")
+		return
+	}
+	s.idempotent(s.recoverDeploymentRollout)(w, r, acct)
 }
 
 func (s *server) internalForApp(next accountHandler) http.HandlerFunc {

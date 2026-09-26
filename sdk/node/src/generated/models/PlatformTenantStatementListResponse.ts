@@ -8,5 +8,6 @@ import type { PlatformTenantStatementResponse } from './PlatformTenantStatementR
  */
 export type PlatformTenantStatementListResponse = {
   statements: Array<PlatformTenantStatementResponse>;
+  next_offset?: number;
 };
 

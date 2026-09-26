@@ -39,7 +39,6 @@ class AppWebhookDeliveryResponse:
 
     id: str
     webhook_id: str
-    app_id: str
     account_id: UUID
     event: str
     """Platform event name or explicitly delivered custom outbox event type."""
@@ -48,6 +47,8 @@ class AppWebhookDeliveryResponse:
     next_attempt_at: datetime.datetime
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    app_id: str | Unset = UNSET
+    """Omitted for events sourced from a platform tenant rather than one app."""
     payload: AppWebhookDeliveryResponsePayload | Unset = UNSET
     """The original event payload (omitted on rows past the first attempt; the customer has already seen it)."""
     last_error: str | Unset = UNSET
@@ -59,8 +60,6 @@ class AppWebhookDeliveryResponse:
         id = self.id
 
         webhook_id = self.webhook_id
-
-        app_id = self.app_id
 
         account_id = str(self.account_id)
 
@@ -75,6 +74,8 @@ class AppWebhookDeliveryResponse:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        app_id = self.app_id
 
         payload: dict[str, Any] | Unset = UNSET
         if not isinstance(self.payload, Unset):
@@ -94,7 +95,6 @@ class AppWebhookDeliveryResponse:
             {
                 "id": id,
                 "webhook_id": webhook_id,
-                "app_id": app_id,
                 "account_id": account_id,
                 "event": event,
                 "attempt": attempt,
@@ -104,6 +104,8 @@ class AppWebhookDeliveryResponse:
                 "updated_at": updated_at,
             }
         )
+        if app_id is not UNSET:
+            field_dict["app_id"] = app_id
         if payload is not UNSET:
             field_dict["payload"] = payload
         if last_error is not UNSET:
@@ -124,8 +126,6 @@ class AppWebhookDeliveryResponse:
 
         webhook_id = d.pop("webhook_id")
 
-        app_id = d.pop("app_id")
-
         account_id = UUID(d.pop("account_id"))
 
         event = d.pop("event")
@@ -139,6 +139,8 @@ class AppWebhookDeliveryResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        app_id = d.pop("app_id", UNSET)
 
         _payload = d.pop("payload", UNSET)
         payload: AppWebhookDeliveryResponsePayload | Unset
@@ -161,7 +163,6 @@ class AppWebhookDeliveryResponse:
         app_webhook_delivery_response = cls(
             id=id,
             webhook_id=webhook_id,
-            app_id=app_id,
             account_id=account_id,
             event=event,
             attempt=attempt,
@@ -169,6 +170,7 @@ class AppWebhookDeliveryResponse:
             next_attempt_at=next_attempt_at,
             created_at=created_at,
             updated_at=updated_at,
+            app_id=app_id,
             payload=payload,
             last_error=last_error,
             last_response_code=last_response_code,

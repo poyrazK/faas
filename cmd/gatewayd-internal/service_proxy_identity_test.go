@@ -13,7 +13,7 @@ import (
 
 func TestServiceProxyCallerResolverMapsLocalLiveInstances(t *testing.T) {
 	instances := []state.Instance{
-		{ID: "local", AppID: "app-local", NodeID: "node-a", HostIP: "10.100.0.5"},
+		{ID: "local", AppID: "app-local", DeploymentID: "dep-local", NodeID: "node-a", HostIP: "10.100.0.5"},
 		{ID: "foreign", AppID: "app-foreign", NodeID: "node-b", HostIP: "10.100.0.6"},
 		{ID: "bad", AppID: "app-bad", NodeID: "node-a", HostIP: "not-an-ip"},
 	}
@@ -41,6 +41,16 @@ func TestServiceProxyCallerResolverMapsLocalLiveInstances(t *testing.T) {
 			}
 		})
 	}
+	identityResolver := newServiceProxyCallerIdentityResolver(func(context.Context) ([]state.Instance, error) {
+		return instances, nil
+	}, "node-a")
+	appID, deploymentID, err := identityResolver.ResolveIdentity(context.Background(), "10.100.0.5:41234")
+	if err != nil {
+		t.Fatalf("resolve identity: %v", err)
+	}
+	if appID != "app-local" || deploymentID != "dep-local" {
+		t.Fatalf("resolved identity = %q/%q, want app-local/dep-local", appID, deploymentID)
+	}
 }
 
 func TestServiceProxyCallerResolverRefreshesAndFailsClosed(t *testing.T) {
@@ -54,7 +64,7 @@ func TestServiceProxyCallerResolverRefreshesAndFailsClosed(t *testing.T) {
 		nodeID: "node-a",
 		now:    func() time.Time { return now },
 		ttl:    time.Second,
-		byIP:   make(map[string]string),
+		byIP:   make(map[string]serviceProxyInstanceIdentity),
 	}
 	if got, err := resolver.Resolve(context.Background(), "10.100.0.5:1"); err != nil || got != "app-local" {
 		t.Fatalf("first resolve = %q, %v; want app-local", got, err)
@@ -93,6 +103,28 @@ func TestServiceProxyCallerResolverRejectsAmbiguousHostIP(t *testing.T) {
 	}
 	if got != "" {
 		t.Fatalf("ambiguous host IP resolved to %q, want empty", got)
+	}
+}
+
+func TestServiceProxyCallerIdentityDoesNotCacheReusedHostIP(t *testing.T) {
+	current := state.Instance{AppID: "old-app", DeploymentID: "old-deployment", NodeID: "node-a", HostIP: "10.100.0.5", State: string(state.StateRunning)}
+	lookups := 0
+	resolver := newServiceProxyCallerIdentityResolver(nil, "node-a")
+	resolver.lookup = func(_ context.Context, nodeID, hostIP string) ([]state.Instance, error) {
+		if nodeID != "node-a" || hostIP != "10.100.0.5" {
+			t.Fatalf("lookup args = %q/%q", nodeID, hostIP)
+		}
+		lookups++
+		return []state.Instance{current}, nil
+	}
+	appID, deploymentID, err := resolver.ResolveIdentity(context.Background(), "10.100.0.5:40000")
+	if err != nil || appID != "old-app" || deploymentID != "old-deployment" {
+		t.Fatalf("old identity = %q/%q, %v", appID, deploymentID, err)
+	}
+	current.AppID, current.DeploymentID = "new-app", "new-deployment"
+	appID, deploymentID, err = resolver.ResolveIdentity(context.Background(), "10.100.0.5:40001")
+	if err != nil || appID != "new-app" || deploymentID != "new-deployment" || lookups != 2 {
+		t.Fatalf("reused IP identity = %q/%q, %v; lookups %d", appID, deploymentID, err, lookups)
 	}
 }
 

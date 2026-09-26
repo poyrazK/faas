@@ -68,6 +68,7 @@ const (
 	devSyncFile                   = "dev_sync.go"                    // developer edit-to-live history
 	privateNetworkFile            = "private_network.go"             // Gregale-owned private network fabric DTOs
 	queueBindingFile              = "queue_bindings.go"              // first-class queue binding DTOs
+	outboundBindingsFile          = "outbound_bindings.go"           // managed outbound binding DTOs
 	platformTenantsFile           = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 )
@@ -183,6 +184,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           true, // HTML form, write-only secrets editor (issue #1397 G2)
 	"POST /dashboard/apps/{slug}/instances/{action}":             true, // HTML form, app lifecycle controls (issue #1397 G6)
 	"POST /dashboard/apps/{slug}/edge-rules":                     true, // HTML form, edge-rule create (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/trace":               true, // HTML form, read-only edge-rule request trace
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":         true, // HTML form, edge-rule enabled toggle (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         true, // HTML form, edge-rule delete (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    true, // HTML form, security-headers preset (issue #1397 G4)
@@ -293,21 +295,22 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"ApplyResponseApp":             true, // inline {slug,id} row in ApplyResponse.apis schema
-	"CliAuthCodeResponse":          true, // POST /v1/cli-auth/code (anonymous)
-	"CliAuthExchangeRequest":       true, // POST /v1/cli-auth/exchange
-	"CliAuthExchangeResponse":      true, // POST /v1/cli-auth/exchange
-	"CliAuthStatus":                true, // enum used by CLI auth
-	"ComputeNodeEnrollmentRequest": true, // authenticated operator-only compute-node mutation payload
-	"ComputeNodeOperatorResponse":  true, // authenticated operator-only compute-node projection
-	"StatusPage":                   true, // GET /status/slo.json (public status)
-	"SessionsRevokeRequest":        true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
-	"ManagedPostgresPlanLimits":    true, // internal plan policy, not a wire DTO
-	"RealtimeLimits":               true, // internal plan policy, not a wire DTO
-	"ExecutionSnapshotShape":       true, // internal snapshot compatibility key, not a wire DTO
-	"ResolvedExecutionRequest":     true, // sealed scheduler intent, not a public DTO
-	"ResolvedCreateAppTaskRequest": true, // validated state admission input, not a public DTO
-	"AlertRuleRow":                 true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	"ApplyResponseApp":                true, // inline {slug,id} row in ApplyResponse.apis schema
+	"CliAuthCodeResponse":             true, // POST /v1/cli-auth/code (anonymous)
+	"CliAuthExchangeRequest":          true, // POST /v1/cli-auth/exchange
+	"CliAuthExchangeResponse":         true, // POST /v1/cli-auth/exchange
+	"CliAuthStatus":                   true, // enum used by CLI auth
+	"ComputeNodeEnrollmentRequest":    true, // authenticated operator-only compute-node mutation payload
+	"ComputeNodeOperatorResponse":     true, // authenticated operator-only compute-node projection
+	"StatusPage":                      true, // GET /status/slo.json (public status)
+	"SessionsRevokeRequest":           true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
+	"ManagedPostgresPlanLimits":       true, // internal plan policy, not a wire DTO
+	"RealtimeLimits":                  true, // internal plan policy, not a wire DTO
+	"ExecutionSnapshotShape":          true, // internal snapshot compatibility key, not a wire DTO
+	"ResolvedExecutionRequest":        true, // sealed scheduler intent, not a public DTO
+	"ResolvedCreateAppTaskRequest":    true, // validated state admission input, not a public DTO
+	"RecoverDeploymentRolloutRequest": true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"AlertRuleRow":                    true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
 	// pkg/api ↔ pkg/state seam. The wire DTOs are OrgResponse /
 	// OrgMemberResponse / OrgInvitationResponse; the *Row types
@@ -324,6 +327,7 @@ var dtoExclude = map[string]bool{
 	"AppWebhookRow":                   true,
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
+	"PlatformTenantActivityOptions":   true, // client-only query parameters; the response DTOs are in the public spec
 	"InboundWebhookEndpointRow":       true,
 	"AppLogDrainRow":                  true,
 	"QueueBindingRow":                 true,
@@ -975,6 +979,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
+		filepath.Join(root, "pkg", "api", outboundBindingsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),

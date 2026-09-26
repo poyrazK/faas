@@ -12,6 +12,9 @@ import (
 const platformTenantStatementCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
        lines, as_of, created_at, finalized_at`
+const platformTenantStatementSummaryCols = `id, account_id, platform_tenant_id, period_start, period_end,
+       revision, status, currency, billable_units, unpriced_units, amount_millicents,
+       as_of, created_at, finalized_at`
 const platformTenantHandoffCols = `id, account_id, platform_tenant_id, statement_id,
        external_invoice_id, currency, amount_millicents, created_at`
 
@@ -41,6 +44,25 @@ func scanPlatformTenantStatement(row pgx.Row) (PlatformTenantStatement, error) {
 	return out, nil
 }
 
+func scanPlatformTenantStatementSummary(row pgx.Row) (PlatformTenantStatementSummary, error) {
+	var out PlatformTenantStatementSummary
+	var status string
+	err := row.Scan(&out.ID, &out.AccountID, &out.TenantID, &out.PeriodStart, &out.PeriodEnd,
+		&out.Revision, &status, &out.Currency, &out.BillableUnits, &out.UnpricedUnits,
+		&out.AmountMillicents, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
+	if err != nil {
+		return out, err
+	}
+	out.Status = APIConsumerUsageStatementStatus(status)
+	out.PeriodStart, out.PeriodEnd, out.AsOf = out.PeriodStart.UTC(), out.PeriodEnd.UTC(), out.AsOf.UTC()
+	out.CreatedAt = out.CreatedAt.UTC()
+	if out.FinalizedAt != nil {
+		at := out.FinalizedAt.UTC()
+		out.FinalizedAt = &at
+	}
+	return out, nil
+}
+
 func scanPlatformTenantHandoff(row pgx.Row) (PlatformTenantStatementHandoff, error) {
 	var out PlatformTenantStatementHandoff
 	err := row.Scan(&out.ID, &out.AccountID, &out.TenantID, &out.StatementID,
@@ -56,11 +78,14 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 	if _, err := s.GetPlatformTenant(ctx, accountID, tenantID); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `select account_id, app_id, consumer_key, window_start,
+	rows, err := s.pool.Query(ctx, `select account_id, app_id,
+		case when source_kind = 'consumer' then consumer_key else '' end,
+		case when source_kind = 'surface' then consumer_key else '' end,
+		case when source_kind = 'jwt' then consumer_key else '' end, window_start,
 		request_count, error_count, billable_units from platform_tenant_usage_minutes
 		where account_id = $1::uuid and platform_tenant_id = $2::uuid
 		and window_start >= $3 and window_start < $4
-		order by app_id, consumer_key, window_start`, accountID, tenantID, start.UTC(), end.UTC())
+		order by app_id, source_kind, consumer_key, window_start`, accountID, tenantID, start.UTC(), end.UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +93,7 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 	out := []APIConsumerUsageBucket{}
 	for rows.Next() {
 		var b APIConsumerUsageBucket
-		if err := rows.Scan(&b.AccountID, &b.AppID, &b.ConsumerKey, &b.WindowStart,
+		if err := rows.Scan(&b.AccountID, &b.AppID, &b.ConsumerKey, &b.SurfaceID, &b.JWTAuthorizationRuleID, &b.WindowStart,
 			&b.RequestCount, &b.ErrorCount, &b.BillableUnits); err != nil {
 			return nil, err
 		}
@@ -138,13 +163,21 @@ func (s *PgStore) CreatePlatformTenantStatement(ctx context.Context, in Platform
 	}
 	seen := map[string]bool{}
 	for _, line := range in.Lines {
-		key := line.AppID + "\x00" + line.ConsumerID
+		key := line.AppID + "\x00" + line.ConsumerID + "\x00" + line.SurfaceID + "\x00" + line.JWTAuthorizationRuleID
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		_, err := tx.Exec(ctx, `insert into platform_tenant_statement_consumers (statement_id, app_id, consumer_id)
-			values ($1::uuid, $2::uuid, $3::uuid)`, out.ID, line.AppID, line.ConsumerID)
+		if line.ConsumerID != "" {
+			_, err = tx.Exec(ctx, `insert into platform_tenant_statement_consumers (statement_id, app_id, consumer_id)
+				values ($1::uuid, $2::uuid, $3::uuid)`, out.ID, line.AppID, line.ConsumerID)
+		} else if line.SurfaceID != "" {
+			_, err = tx.Exec(ctx, `insert into platform_tenant_statement_surfaces (statement_id, app_id, surface_id)
+				values ($1::uuid, $2::uuid, $3::uuid)`, out.ID, line.AppID, line.SurfaceID)
+		} else {
+			_, err = tx.Exec(ctx, `insert into platform_tenant_statement_jwt_rules (statement_id, app_id, authorization_rule_id)
+				values ($1::uuid, $2::uuid, $3::uuid)`, out.ID, line.AppID, line.JWTAuthorizationRuleID)
+		}
 		if err != nil {
 			return PlatformTenantStatement{}, false, err
 		}
@@ -178,6 +211,30 @@ func (s *PgStore) ListPlatformTenantStatements(ctx context.Context, accountID, t
 	out := []PlatformTenantStatement{}
 	for rows.Next() {
 		statement, err := scanPlatformTenantStatement(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, statement)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) ListFinalizedPlatformTenantStatements(ctx context.Context, accountID, tenantID string, start, end time.Time, limit, offset int) ([]PlatformTenantStatementSummary, error) {
+	if !end.After(start) || limit < 1 || limit > 101 || offset < 0 {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := s.pool.Query(ctx, `select `+platformTenantStatementSummaryCols+` from platform_tenant_statements
+		where account_id = $1::uuid and platform_tenant_id = $2::uuid and status = 'finalized'
+		and period_start < $4 and period_end > $3
+		order by period_start desc, revision desc, created_at desc, id desc
+		limit $5 offset $6`, accountID, tenantID, start, end, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]PlatformTenantStatementSummary, 0, limit)
+	for rows.Next() {
+		statement, err := scanPlatformTenantStatementSummary(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -254,6 +311,20 @@ func (s *PgStore) CreatePlatformTenantStatementHandoff(ctx context.Context, in P
 		  join platform_tenant_statement_consumers mine on mine.statement_id = $1::uuid
 		  join platform_tenant_statement_consumers theirs on theirs.statement_id = p.id
 		    and theirs.app_id = mine.app_id and theirs.consumer_id = mine.consumer_id
+		 where p.period_start < $3 and p.period_end > $2
+		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
+		or exists (select 1 from platform_tenant_statement_handoffs h
+		  join platform_tenant_statements p on p.id = h.statement_id
+		  join platform_tenant_statement_surfaces mine on mine.statement_id = $1::uuid
+		  join platform_tenant_statement_surfaces theirs on theirs.statement_id = p.id
+		    and theirs.app_id = mine.app_id and theirs.surface_id = mine.surface_id
+		 where p.period_start < $3 and p.period_end > $2
+		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
+		or exists (select 1 from platform_tenant_statement_handoffs h
+		  join platform_tenant_statements p on p.id = h.statement_id
+		  join platform_tenant_statement_jwt_rules mine on mine.statement_id = $1::uuid
+		  join platform_tenant_statement_jwt_rules theirs on theirs.statement_id = p.id
+		    and theirs.app_id = mine.app_id and theirs.authorization_rule_id = mine.authorization_rule_id
 		 where p.period_start < $3 and p.period_end > $2
 		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
 		or exists (select 1 from api_consumer_usage_statement_handoffs where account_id = $5::uuid and external_invoice_id = $6)

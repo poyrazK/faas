@@ -115,3 +115,66 @@ func TestPgPlatformTenantStatementHandoffExcludesAppClaim(t *testing.T) {
 		t.Fatalf("tenant overlap err=%v", err)
 	}
 }
+
+// adr: 239
+func TestPgTenantSurfaceUsageStatementAndHandoff(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
+	tenant, _, err := store.CreatePlatformTenant(ctx, accountID, "surface-billing-"+uuid.NewString()[:8], "Surface billing", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surfaceID := uuid.NewString()
+	start := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	event := state.APIConsumerUsageEvent{EventID: uuid.NewString(), AccountID: accountID, AppID: appID,
+		ConsumerKey: state.AnonymousConsumerKey, PlatformTenantID: tenant.ID,
+		PlatformTenantSurfaceID: surfaceID, WindowStart: start, RequestCount: 3, BillableUnits: 3}
+	if applied, err := store.RecordAPIConsumerUsage(ctx, event); err != nil || !applied {
+		t.Fatalf("record surface event applied=%t err=%v", applied, err)
+	}
+	if applied, err := store.RecordAPIConsumerUsage(ctx, event); err != nil || applied {
+		t.Fatalf("replay surface event applied=%t err=%v", applied, err)
+	}
+	minutes, err := store.ListPlatformTenantUsageMinutes(ctx, accountID, tenant.ID, start, start.Add(time.Minute))
+	if err != nil || len(minutes) != 1 || minutes[0].SurfaceID != surfaceID || minutes[0].ConsumerKey != "" || minutes[0].BillableUnits != 3 {
+		t.Fatalf("tenant surface minutes=%+v err=%v", minutes, err)
+	}
+	days, err := store.ListPlatformTenantUsage(ctx, accountID, tenant.ID, start, start.Add(time.Minute))
+	if err != nil || len(days) != 1 || days[0].SurfaceID != surfaceID || days[0].BillableUnits != 3 {
+		t.Fatalf("tenant surface days=%+v err=%v", days, err)
+	}
+	input := state.PlatformTenantStatementInput{AccountID: accountID, TenantID: tenant.ID,
+		PeriodStart: start, PeriodEnd: start.Add(time.Hour), Revision: 1, Currency: "EUR",
+		BillableUnits: 3, AmountMillicents: 30, AsOf: time.Now().UTC(),
+		Lines: []state.PlatformTenantStatementLine{{AppID: appID, SurfaceID: surfaceID, WindowStart: start,
+			BillableUnits: 3, RateCardID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 10, AmountMillicents: 30}}}
+	statement, created, err := store.CreatePlatformTenantStatement(ctx, input)
+	if err != nil || !created || len(statement.Lines) != 1 || statement.Lines[0].SurfaceID != surfaceID {
+		t.Fatalf("surface statement=%+v created=%t err=%v", statement, created, err)
+	}
+	if _, _, err := store.FinalizePlatformTenantStatement(ctx, accountID, tenant.ID, statement.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := store.CreatePlatformTenantStatementHandoff(ctx, state.PlatformTenantStatementHandoffInput{
+		AccountID: accountID, TenantID: tenant.ID, StatementID: statement.ID, ExternalInvoiceID: "surface-invoice-1",
+	}); err != nil || !created {
+		t.Fatalf("surface handoff created=%t err=%v", created, err)
+	}
+	other, _, err := store.CreatePlatformTenant(ctx, accountID, "surface-next-"+uuid.NewString()[:8], "Next owner", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.TenantID = other.ID
+	second, _, err := store.CreatePlatformTenantStatement(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.FinalizePlatformTenantStatement(ctx, accountID, other.ID, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.CreatePlatformTenantStatementHandoff(ctx, state.PlatformTenantStatementHandoffInput{
+		AccountID: accountID, TenantID: other.ID, StatementID: second.ID, ExternalInvoiceID: "surface-invoice-2",
+	}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("overlapping surface handoff err=%v", err)
+	}
+}
