@@ -177,3 +177,82 @@ func TestPythonFunctionAdapterHandlerExceptionIsTerminalAndWorkerSurvives(t *tes
 		t.Fatalf("adapter exit: %v; stderr=%s", err, stderr.String())
 	}
 }
+
+// TestPythonFunctionAdapterKeepsOneEventLoopAcrossRequests — the adapter ran
+// every async handler with asyncio.run(), which closes the loop afterwards.
+// A persistent worker exists so handlers can keep clients (DB pools, HTTP
+// sessions) between requests; those are bound to the loop that created them,
+// so every warm request after the first failed with "bound to a different
+// event loop".
+func TestPythonFunctionAdapterKeepsOneEventLoopAcrossRequests(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not installed")
+	}
+	dir := t.TempDir()
+	impl := `import asyncio
+_queue = None
+
+async def handler(event, ctx):
+    global _queue
+    if _queue is None:
+        _queue = asyncio.Queue()
+    try:
+        await asyncio.wait_for(_queue.get(), 0.01)
+    except asyncio.TimeoutError:
+        pass
+    return {"statusCode": 200, "body": "ok"}
+`
+	if err := os.WriteFile(filepath.Join(dir, ".faas-handler.py"), []byte(impl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := filepath.Join(dir, "handler.py")
+	if err := os.WriteFile(adapter, []byte(pythonFunctionAdapter), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, python, adapter)
+	cmd.Env = append(os.Environ(), "FAAS_PERSISTENT_WORKER=1")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	scan := bufio.NewScanner(stdout)
+	if !scan.Scan() {
+		t.Fatalf("ready frame: %v", scan.Err())
+	}
+	envelope, _ := json.Marshal(map[string]any{"method": "POST", "path": "/", "headers": map[string]string{}, "body_b64": ""})
+	for i := 1; i <= 3; i++ {
+		if _, err := stdin.Write(append(envelope, '\n')); err != nil {
+			t.Fatal(err)
+		}
+		if !scan.Scan() {
+			t.Fatalf("request %d: read response: %v; stderr=%s", i, scan.Err(), stderr.String())
+		}
+		var response struct {
+			Status  int    `json:"status"`
+			BodyB64 string `json:"body_b64"`
+		}
+		if err := json.Unmarshal(scan.Bytes(), &response); err != nil {
+			t.Fatalf("request %d: decode response: %v", i, err)
+		}
+		body, _ := base64.StdEncoding.DecodeString(response.BodyB64)
+		if response.Status != 200 || string(body) != "ok" {
+			t.Fatalf("request %d = %d %s; stderr=%s", i, response.Status, body, stderr.String())
+		}
+	}
+	_ = stdin.Close()
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("adapter exit: %v; stderr=%s", err, stderr.String())
+	}
+}

@@ -1198,6 +1198,14 @@ if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
     real_stdout.write(json.dumps({"__faas_ready": True}) + "\n")
     real_stdout.flush()
 
+# One event loop for the life of the worker. asyncio.run() per request
+# closed the loop after every invocation, so async clients a handler keeps
+# between requests (DB pools, HTTP sessions, queues) were bound to a dead
+# loop and the next warm request failed with "bound to a different event
+# loop" / "Event loop is closed".
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 for line in sys.stdin:
     if not line.strip():
         continue
@@ -1236,7 +1244,7 @@ for line in sys.stdin:
             "body_b64": body_b64,
         }
         result = handler(event, _Context(invocation_id))
-        if inspect.isawaitable(result): result = asyncio.run(result)
+        if inspect.isawaitable(result): result = loop.run_until_complete(result)
 
         status = 200
         response_headers = {}
