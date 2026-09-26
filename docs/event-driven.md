@@ -86,6 +86,35 @@ equivalents are `--async-max-attempts`, `--async-retry-base-seconds`,
 `--async-retry-max-seconds`, `--async-retry-jitter-seconds`, and
 `--async-max-age-seconds` on `gregale edge-rules create`.
 
+For deployed apps, the same async route can be declared in `gregale.yaml` and
+reconciled with the source deployment:
+
+```yaml
+async_routes:
+  - app: reports
+    name: create-report
+    match_host: reports.example.com
+    match_path: /reports
+    match_methods: [POST]
+    on_success: WEBHOOK_ID
+    on_failure: DLQ_WEBHOOK_ID
+    retry_policy:
+      max_attempts: 4
+      base_seconds: 1
+      max_seconds: 30
+      jitter_seconds: 0.2
+    max_age_seconds: 600
+```
+
+`app` is the target app slug, and destinations are existing webhook IDs from
+`gregale webhooks list --app reports`. Route names are stable per app: later
+deploys update a matching manifest-owned route and remove stale manifest-owned
+routes. Unmanaged edge rules are never adopted or deleted; an exact route
+collision fails deployment with guidance to resolve it first. Omitting
+`async_routes` leaves managed routes unchanged, while `async_routes: []`
+clears them. Routes default to `POST`; `PUT`, `PATCH`, and `DELETE` are also
+accepted. This declaration is YAML-only, and `--no-triggers` skips it.
+
 ## Application inbox
 
 For straightforward application-to-application work, send directly to the

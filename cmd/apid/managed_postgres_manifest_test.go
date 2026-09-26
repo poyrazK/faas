@@ -1,12 +1,38 @@
 package main
 
 import (
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestProjectManifestAsyncRoutesRequireNoTriggersOptOut(t *testing.T) {
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(context.Background(), "project-async-routes@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newServer(store, slog.Default(), "gregale.dev", noopNotifier{})
+	dir := t.TempDir()
+	body := "async_routes: []\n"
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, problem := srv.loadAndResolveManifestPostgresBindings(context.Background(), acct, dir, []string{"reports"}, "", false); problem == nil {
+		t.Fatal("project deploy accepted async_routes without --no-triggers")
+	}
+	if _, problem := srv.loadAndResolveManifestPostgresBindings(context.Background(), acct, dir, []string{"reports"}, "", true); problem != nil {
+		t.Fatalf("project deploy with --no-triggers: %+v", problem)
+	}
+}
 
 func TestResolveManagedPostgresDatabaseRecordByIDOrName(t *testing.T) {
 	databases := []managedpostgres.Database{

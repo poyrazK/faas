@@ -7240,9 +7240,12 @@ type EdgeRuleCircuitBreakerAction struct {
 
 // EdgeRule is the in-memory row mirrored from edge_rules.
 type EdgeRule struct {
-	ID           string
-	AccountID    string
-	AppID        string
+	ID        string
+	AccountID string
+	AppID     string
+	// ManifestKey is a private stable ownership key for edge rules applied
+	// from deployment manifests. It is empty for manually managed rules.
+	ManifestKey  string
 	MatchHost    string
 	MatchPath    string
 	MatchMethods []string
@@ -7394,6 +7397,7 @@ type AlertPreset struct {
 type CreateEdgeRuleParams struct {
 	AccountID    string
 	AppID        string
+	ManifestKey  string
 	MatchHost    string
 	MatchPath    string
 	MatchMethods []string

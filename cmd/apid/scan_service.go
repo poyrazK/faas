@@ -1410,7 +1410,7 @@ func (s *server) scanService(
 		selectedDatabaseWorkloads = append(selectedDatabaseWorkloads, workload.Name)
 	}
 	resolvedManifestBindings, manifestProblem := s.loadAndResolveManifestPostgresBindings(
-		r.Context(), acct, req.ScanDir, selectedDatabaseWorkloads, req.Environment)
+		r.Context(), acct, req.ScanDir, selectedDatabaseWorkloads, req.Environment, req.NoTriggers)
 	if manifestProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
 	}

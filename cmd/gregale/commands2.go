@@ -1648,13 +1648,18 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("trigger %d uses kind %q; deploy does not reconcile non-cron manifest triggers yet; pass --no-triggers and create it with `gregale triggers add` after deployment", i+1, trigger.Kind)
 		}
 	}
+	for i, route := range m.AsyncRoutes {
+		if route.App != slug {
+			return fmt.Errorf("async_routes entry %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, route.App, slug)
+		}
+	}
 	return nil
 }
 
 // validateProjectManifestConfig rejects app-only declarations that the
 // multi-workload planner cannot safely fan out. Failing explicitly is safer
 // than silently applying only triggers while ignoring a scaling block.
-func validateProjectManifestConfig(cwd string) error {
+func validateProjectManifestConfig(cwd string, skipTriggerConfig ...bool) error {
 	if cwd == "" {
 		return nil
 	}
@@ -1673,6 +1678,10 @@ func validateProjectManifestConfig(cwd string) error {
 	}
 	if m.RetryPolicy != nil {
 		return errors.New("retry_policy is supported on single-app deploys; configure each workload separately after project apply")
+	}
+	skipTriggers := len(skipTriggerConfig) > 0 && skipTriggerConfig[0]
+	if m.AsyncRoutes != nil && !skipTriggers {
+		return errors.New("async_routes are supported on single-app deploys; apply them separately to each workload after project apply")
 	}
 	return nil
 }
@@ -3268,7 +3277,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 	if projectRequested {
-		if manifestErr := validateProjectManifestConfig(sourceDir); manifestErr != nil {
+		if manifestErr := validateProjectManifestConfig(sourceDir, *noTriggers); manifestErr != nil {
 			return printErr("Invalid project deploy manifest", manifestErr)
 		}
 	}
