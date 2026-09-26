@@ -73,7 +73,7 @@ func TestRunServiceBindingProbeUsesVerifiedTLSAndMarkedGatewayRoute(t *testing.T
 }
 
 func TestRunServiceBindingProbeFailsClosedForWrongCAAndDoesNotFollowRedirects(t *testing.T) {
-	cert, _ := serviceProbeTestCertificate(t, "billing.internal")
+	cert, serverCAPEM := serviceProbeTestCertificate(t, "billing.internal")
 	_, wrongCAPEM := serviceProbeTestCertificate(t, "other.internal")
 	var calls atomic.Int32
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -98,8 +98,7 @@ func TestRunServiceBindingProbeFailsClosedForWrongCAAndDoesNotFollowRedirects(t 
 
 	// With the right CA the request reaches the gateway, but a redirect is not
 	// treated as a canary success and is never followed to another host.
-	_, caPEM := serviceProbeTestCertificate(t, "billing.internal")
-	redirectReport := runServiceBindingProbe(context.Background(), "billing", caPEM, resolver, dial)
+	redirectReport := runServiceBindingProbe(context.Background(), "billing", serverCAPEM, resolver, dial)
 	if redirectReport.TLS.Status != "passed" || redirectReport.Routing.Status != "not_checked" || redirectReport.Passed() {
 		t.Fatalf("redirect report = %+v", redirectReport)
 	}

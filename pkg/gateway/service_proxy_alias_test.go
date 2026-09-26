@@ -12,6 +12,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// adr: 269
+// adr: 273
 func TestServiceProxyAliasRequiresBindingEvenWithDirectHost(t *testing.T) {
 	allowed := false
 	resolveCalls := 0

@@ -1,4 +1,4 @@
-# ADR-247: Caller-side HTTPS service-binding canary
+# ADR-273: Caller-side HTTPS service-binding canary
 
 - **Status:** accepted
 - **Context:** The additive HTTPS endpoint inventory advertises `https://<service>.internal`, but a listed binding does not prove that the caller can resolve the alias, trust the private gateway certificate, or pass the live service authorization and routing checks.

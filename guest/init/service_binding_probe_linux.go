@@ -158,7 +158,7 @@ func runServiceBindingProbe(ctx context.Context, service string, caBundle []byte
 		report.Error = "TLS handshake or HTTPS connection failed"
 		return report
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	report.HTTPStatus = response.StatusCode
 	if response.TLS == nil {
 		report.TLS = api.ServiceBindingProbeCheck{Status: "failed", Detail: "response did not use TLS"}

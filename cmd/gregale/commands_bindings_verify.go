@@ -17,6 +17,7 @@ import (
 const (
 	bindingProbeTaskTimeoutSeconds = 15
 	bindingProbeWaitTimeoutDefault = 5 * time.Minute
+	bindingProbeCancelTimeout      = 5 * time.Second
 )
 
 type serviceBindingProbeClient interface {
@@ -91,7 +92,9 @@ func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClien
 		select {
 		case <-waitContext.Done():
 			if errors.Is(interruptContext.Err(), context.Canceled) {
-				cancelled, cancelErr := client.CancelAppTask(context.Background(), slug, task.ID)
+				cancelContext, cancelRequest := context.WithTimeout(context.WithoutCancel(interruptContext), bindingProbeCancelTimeout)
+				cancelled, cancelErr := client.CancelAppTask(cancelContext, slug, task.ID)
+				cancelRequest()
 				if cancelErr != nil {
 					PrintWarn(osStderr, "could not request cancellation for canary task %s: %v", task.ID, cancelErr)
 				} else if !jsonOutput {
