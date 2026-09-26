@@ -12,6 +12,7 @@ import type { ProjectEnvironmentVariableResponse } from './ProjectEnvironmentVar
  * Effective configuration and live release state for one workload.
  */
 export type ProjectEnvironmentStateWorkloadResponse = {
+  app_id?: string;
   workload_slug: string;
   workload_name: string;
   release: ProjectEnvironmentReleaseWorkloadResponse;

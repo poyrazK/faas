@@ -198,6 +198,8 @@ class UpdateAppRequest:
     version_affinity_managed_cookie: bool | None | Unset = UNSET
     """Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no
     change."""
+    revision_pin_ttl_seconds: int | None | Unset = UNSET
+    """Set the revision pin window in seconds; zero disables future retention. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -482,6 +484,12 @@ class UpdateAppRequest:
         else:
             version_affinity_managed_cookie = self.version_affinity_managed_cookie
 
+        revision_pin_ttl_seconds: int | None | Unset
+        if isinstance(self.revision_pin_ttl_seconds, Unset):
+            revision_pin_ttl_seconds = UNSET
+        else:
+            revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -692,6 +700,8 @@ class UpdateAppRequest:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
         if version_affinity_managed_cookie is not UNSET:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -1211,6 +1221,15 @@ class UpdateAppRequest:
             d.pop("version_affinity_managed_cookie", UNSET)
         )
 
+        def _parse_revision_pin_ttl_seconds(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        revision_pin_ttl_seconds = _parse_revision_pin_ttl_seconds(d.pop("revision_pin_ttl_seconds", UNSET))
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1532,6 +1551,7 @@ class UpdateAppRequest:
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             autoscale_target_rps=autoscale_target_rps,

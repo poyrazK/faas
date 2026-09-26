@@ -1800,6 +1800,23 @@ type ProjectEnvironmentCleanupJob struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ProjectReleaseMember struct {
+	ReleaseID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ProjectReleaseSet struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Active          bool
+	TtlSeconds      int32
+	ExpiresAt       pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+}
+
 type ProvisionedStaticEgressIp struct {
 	AccountID  pgtype.UUID
 	CustomerIp netip.Addr

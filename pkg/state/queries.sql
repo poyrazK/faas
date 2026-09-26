@@ -4014,3 +4014,31 @@ WHERE kind = 'wake.sidecar_health'
   AND data->>'status' IN ('ready', 'unready')
   AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
 ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC;
+
+-- name: ReadProjectReleaseSet :one
+-- A single statement reads the pointer and its complete membership together.
+SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
+        'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'app_id', rm.app_id, 'deployment_id', rm.deployment_id) ORDER BY rm.app_id)
+            FROM project_release_members rm WHERE rm.release_id = rs.id), '[]'::jsonb)))::jsonb AS release
+  FROM project_release_sets rs
+  JOIN projects p ON p.id = rs.project_id AND p.account_id = rs.account_id
+ WHERE rs.account_id = sqlc.arg(account_id) AND rs.project_id = sqlc.arg(project_id)
+   AND rs.environment_slug = sqlc.arg(environment)
+   AND ((sqlc.narg(release_id)::uuid IS NULL AND rs.active)
+     OR rs.id = sqlc.narg(release_id)::uuid);
+
+-- name: ListProjectReleaseSetsBefore :many
+-- Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
+SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
+        'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'app_id', rm.app_id, 'deployment_id', rm.deployment_id) ORDER BY rm.app_id)
+            FROM project_release_members rm WHERE rm.release_id = rs.id), '[]'::jsonb)))::jsonb AS release
+  FROM project_release_sets rs
+  JOIN projects p ON p.id = rs.project_id AND p.account_id = rs.account_id
+ WHERE rs.account_id = sqlc.arg(account_id) AND rs.project_id = sqlc.arg(project_id)
+   AND rs.environment_slug = sqlc.arg(environment)
+   AND (sqlc.narg(before_at)::timestamptz IS NULL
+     OR (rs.created_at, rs.id) < (sqlc.narg(before_at)::timestamptz, sqlc.narg(before_id)::uuid))
+ ORDER BY rs.created_at DESC, rs.id DESC
+ LIMIT sqlc.arg(page_limit);
