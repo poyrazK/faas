@@ -1395,6 +1395,8 @@ from .secret_runtime_reload_observation_application_ack_error_code import (
 )
 from .secret_runtime_reload_observation_error_code import SecretRuntimeReloadObservationErrorCode
 from .secret_runtime_reload_observation_projection import SecretRuntimeReloadObservationProjection
+from .secret_runtime_reload_observation_reload_support import SecretRuntimeReloadObservationReloadSupport
+from .secret_runtime_reload_observation_runtime_state import SecretRuntimeReloadObservationRuntimeState
 from .secret_runtime_reload_observation_signal import SecretRuntimeReloadObservationSignal
 from .secret_scan_result import SecretScanResult
 from .security_quarantine_recovery_request import SecurityQuarantineRecoveryRequest
@@ -2971,6 +2973,8 @@ __all__ = (
     "SecretRuntimeReloadObservationApplicationAckErrorCode",
     "SecretRuntimeReloadObservationErrorCode",
     "SecretRuntimeReloadObservationProjection",
+    "SecretRuntimeReloadObservationReloadSupport",
+    "SecretRuntimeReloadObservationRuntimeState",
     "SecretRuntimeReloadObservationSignal",
     "SecretScanResult",
     "SecurityQuarantineRecoveryRequest",

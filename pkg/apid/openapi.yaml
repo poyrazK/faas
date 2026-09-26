@@ -32230,16 +32230,20 @@ components:
         last_runtime_reload_instance_id: { type: string, description: "Runtime instance that reported this projection/signal outcome." }
         runtime_reload_observations:
           type: array
-          description: "For this scope, the array contains only active runtimes that reported; it is not an inventory of every active or authorized runtime."
+          description: "Complete current roster of active runtimes authorized for this secret by the deployment scope and env_secrets allowlist. Missing guest reports are represented explicitly."
           items: { $ref: '#/components/schemas/SecretRuntimeReloadObservation' }
+        runtime_reload_targets_complete: { type: boolean, description: "True when this response includes the complete active, secret-authorized runtime roster. The field is absent from older control-plane responses; callers must fail closed when waiting for acknowledgements." }
 
     SecretRuntimeReloadObservation:
-      description: "Non-sensitive guest-init projection/signal outcome and optional application-owned reload acknowledgement for one runtime. An application acknowledgement is a self-attestation, not independent verification."
+      description: "Non-sensitive active runtime target and optional guest-init projection/signal outcome plus application-owned reload acknowledgement. An application acknowledgement is a self-attestation, not independent verification."
       type: object
-      required: [instance_id, version, projection, signal, observed_at]
+      required: [instance_id, runtime_state, reload_support, reported]
       properties:
-        instance_id: { type: string, description: "Runtime instance ID that reported this outcome." }
-        version: { type: integer, format: int64, minimum: 1, description: "Secret version observed by guest-init; compare with delivery_version to detect stale status." }
+        instance_id: { type: string, description: "Authorized active runtime instance ID." }
+        runtime_state: { type: string, enum: [waking, cold_booting, running, draining, snapshotting, migrating, warm], description: "Current active instance state." }
+        reload_support: { type: string, enum: [enabled, disabled, unknown], description: "Whether this deployment can participate in live reload; unknown means its image opt-in predates persisted metadata." }
+        reported: { type: boolean, description: "Whether this runtime has reported a guest-init outcome. False is unknown, never success." }
+        version: { type: integer, format: int64, minimum: 1, description: "Secret version observed by guest-init; compare with delivery_version to detect stale status. Present only when reported is true." }
         projection: { type: string, enum: [updated, unchanged, failed] }
         signal: { type: string, enum: [sent, queued, failed, not_attempted] }
         observed_at: { type: string, format: date-time }
@@ -32297,8 +32301,9 @@ components:
         last_runtime_reload_instance_id: { type: string }
         runtime_reload_observations:
           type: array
-          description: "Latest guest-init outcome from each active reporting runtime. Missing reports are unknown, and successful signals do not prove application acknowledgement."
+          description: "For this scope, includes every active runtime authorized for the secret by its deployment, even before the runtime reports."
           items: { $ref: '#/components/schemas/SecretRuntimeReloadObservation' }
+        runtime_reload_targets_complete: { type: boolean, description: "Indicates whether this scoped row contains a complete authorized target set. Older control planes omit the marker, so acknowledgement waiters must fail closed." }
 
     AppSecretListResponse:
       description: "Paginated list of sealed-secret envelopes (no plaintext). Discriminated union: `secrets` is the flat arm; `secrets_by_scope` is the `?scope=__all__` arm (ADR-092 PR-B)."

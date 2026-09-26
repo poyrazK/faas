@@ -2675,10 +2675,18 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	const key = "DATABASE_URL"
 	scope := api.DefaultEnvScope
+	if err := fx.Store.SetDeploymentSecretReloadSignal(fx.Ctx, fx.Deployment.ID, "SIGHUP"); err != nil {
+		t.Fatalf("SetDeploymentSecretReloadSignal: %v", err)
+	}
 	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
 		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
+	}
+	unreported, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance(unreported): %v", err)
 	}
 	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v1")); err != nil {
 		t.Fatalf("UpsertAppSecretInScope(v1): %v", err)
@@ -2696,6 +2704,19 @@ func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	observations, err := fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
 	if err != nil || len(observations) != 1 || observations[0].InstanceID != instance.ID || observations[0].Version != 1 {
 		t.Fatalf("ListAppSecretRuntimeReloadObservations(v1) = %+v, %v", observations, err)
+	}
+	targets, err := fx.Store.ListAppSecretRuntimeReloadTargets(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(targets) != 2 {
+		t.Fatalf("ListAppSecretRuntimeReloadTargets(v1) = %+v, %v; want reported and unreported active targets", targets, err)
+	}
+	var sawUnreported bool
+	for _, target := range targets {
+		if target.InstanceID == unreported.ID {
+			sawUnreported = !target.Reported && target.ReloadSupport == "enabled"
+		}
+	}
+	if !sawUnreported {
+		t.Fatalf("target roster omitted the unreported reload-enabled runtime: %+v", targets)
 	}
 	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v2")); err != nil {
 		t.Fatalf("UpsertAppSecretInScope(v2): %v", err)

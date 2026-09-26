@@ -168,11 +168,18 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	if got := listResp.Secrets[0]; got.DeliveryStatus != string(state.SecretDeliveryDelivered) || got.DeliveredVersion != 1 || got.LastDeliveredWakeID != "wake-delivered" {
 		t.Errorf("delivered metadata = %+v", got)
 	}
-	firstRuntime, err := e.store.CreateInstance(context.Background(), app.ID, "reload-deployment", string(state.StateRunning), 256, "test-node", "")
+	deployment, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:reload-test",
+		Status: state.DeployLive,
+	})
+	if err != nil {
+		t.Fatalf("create reload deployment: %v", err)
+	}
+	firstRuntime, err := e.store.CreateInstance(context.Background(), app.ID, deployment.ID, string(state.StateRunning), 256, "test-node", "")
 	if err != nil {
 		t.Fatalf("create first runtime: %v", err)
 	}
-	secondRuntime, err := e.store.CreateInstance(context.Background(), app.ID, "reload-deployment", string(state.StateRunning), 256, "test-node", "")
+	secondRuntime, err := e.store.CreateInstance(context.Background(), app.ID, deployment.ID, string(state.StateRunning), 256, "test-node", "")
 	if err != nil {
 		t.Fatalf("create second runtime: %v", err)
 	}
@@ -209,6 +216,15 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 		!((got[0].InstanceID == firstRuntime.ID && got[1].InstanceID == secondRuntime.ID) ||
 			(got[0].InstanceID == secondRuntime.ID && got[1].InstanceID == firstRuntime.ID)) {
 		t.Errorf("per-runtime reload observations = %+v, want both active runtimes", got)
+	}
+	if got := listResp.Secrets[0]; !got.RuntimeReloadTargetsComplete {
+		t.Errorf("runtime target roster complete = false, want true")
+	} else {
+		for _, observation := range got.RuntimeReloadObservations {
+			if observation.ReloadSupport != "unknown" || !observation.Reported {
+				t.Errorf("legacy reported runtime metadata = %+v, want unknown/reported", observation)
+			}
+		}
 	}
 	if got := listResp.Secrets[0].RuntimeReloadObservations; len(got) == 2 {
 		var found bool

@@ -33,6 +33,48 @@ SET cents_remaining = credit.cents_remaining + inserted.delta_cents
 FROM inserted
 WHERE credit.id = inserted.credit_id AND credit.account_id = sqlc.arg(account_id);
 
+-- name: ListAppSecretRuntimeReloadTargets :many
+-- Build the complete active roster for each secret from the deployment's
+-- persisted scope/allowlist and reload opt-in. A missing observation remains
+-- a target with nullable outcome fields rather than disappearing from the
+-- denominator.
+SELECT s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       i.state AS runtime_state,
+       CASE
+         WHEN d.secret_reload_signal IS NULL THEN 'unknown'
+         WHEN d.secret_reload_signal = '' OR jsonb_array_length(d.sidecars) > 0 THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN app_secrets s ON s.app_id = i.app_id AND s.scope = d.scope
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+ WHERE s.account_id = sqlc.arg(account_id)::uuid
+   AND i.app_id = sqlc.arg(app_id)::uuid
+   AND (sqlc.arg(scope)::text = '' OR s.scope = sqlc.arg(scope)::text)
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND (coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb OR d.override_env_secrets ? s.key)
+ORDER BY s.scope ASC, s.key ASC, i.id ASC;
+
+-- name: SetDeploymentSecretReloadSignal :execrows
+-- imaged persists the validated image opt-in on each newly built deployment;
+-- the state query keeps legacy NULL rows distinct from explicit opt-outs.
+UPDATE deployments
+   SET secret_reload_signal = sqlc.arg(signal)::text
+ WHERE id = sqlc.arg(id)::uuid;
+
 -- name: SumAccountCreditRefundReversal :one
 SELECT coalesce(sum(delta_cents), 0)::bigint AS reversed_cents
 FROM credit_ledger

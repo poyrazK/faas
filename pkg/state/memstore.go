@@ -6627,6 +6627,22 @@ func (m *MemStore) DeploymentByID(_ context.Context, id string) (Deployment, err
 	return d, nil
 }
 
+func (m *MemStore) SetDeploymentSecretReloadSignal(_ context.Context, id, signal string) error {
+	if id == "" || !validSecretReloadSignal(signal) {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	d.SecretReloadSignal = signal
+	d.SecretReloadSignalKnown = true
+	m.deployments[id] = d
+	return nil
+}
+
 func (m *MemStore) UpsertDeploymentHostingReceipt(_ context.Context, deploymentID string, receipt []byte) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -18782,6 +18798,92 @@ func (m *MemStore) ListAppSecretRuntimeReloadObservations(_ context.Context, acc
 		return out[i].InstanceID < out[j].InstanceID
 	})
 	return out, nil
+}
+
+func (m *MemStore) ListAppSecretRuntimeReloadTargets(_ context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadTarget, error) {
+	if accountID == "" || appID == "" {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []AppSecretRuntimeReloadTarget
+	for _, instance := range m.instances {
+		if instance.AppID != appID || !State(instance.State).CountsForRAM() {
+			continue
+		}
+		deployment, ok := m.deployments[instance.DeploymentID]
+		if !ok || deployment.AppID != appID {
+			return nil, ErrNotFound
+		}
+		deploymentScope := deployment.Scope
+		if deploymentScope == "" {
+			deploymentScope = api.DefaultEnvScope
+		}
+		var allowlist map[string]string
+		if len(deployment.OverrideEnvSecrets) > 0 {
+			var decoded map[string]string
+			if json.Unmarshal(deployment.OverrideEnvSecrets, &decoded) == nil && len(decoded) > 0 {
+				allowlist = decoded
+			}
+			// Mirror sched.envSecretsFromDep: a non-empty map is the positive
+			// allowlist; malformed/empty legacy values stage the whole scope.
+		}
+		for secretKey, secret := range m.secrets {
+			if secretKey.AppID != appID || secret.AccountID != accountID || secret.Scope != deploymentScope || (scope != "" && secret.Scope != scope) {
+				continue
+			}
+			if len(allowlist) > 0 {
+				if _, authorized := allowlist[secret.Key]; !authorized {
+					continue
+				}
+			}
+			support := "unknown"
+			if deployment.SecretReloadSignalKnown {
+				support = "disabled"
+				if deployment.SecretReloadSignal != "" && !hasSidecars(deployment.Sidecars) {
+					support = "enabled"
+				}
+			}
+			target := AppSecretRuntimeReloadTarget{
+				Scope: secret.Scope, Key: secret.Key, InstanceID: instance.ID,
+				RuntimeState: instance.State, ReloadSupport: support,
+			}
+			observation, reported := m.secretRuntimeReloadObservations[secretRuntimeReloadObservationKey{
+				AppID: appID, Scope: secret.Scope, Key: secret.Key, InstanceID: instance.ID,
+			}]
+			if reported {
+				target.Reported = true
+				target.Version = observation.Version
+				target.Projection = observation.Projection
+				target.Signal = observation.Signal
+				target.ObservedAt = &observation.ObservedAt
+				target.ErrorCode = observation.ErrorCode
+				target.ApplicationAckVersion = observation.ApplicationAckVersion
+				target.ApplicationAck = observation.ApplicationAck
+				target.ApplicationAckAt = observation.ApplicationAckAt
+				target.ApplicationAckErrorCode = observation.ApplicationAckErrorCode
+			}
+			out = append(out, target)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Scope != out[j].Scope {
+			return out[i].Scope < out[j].Scope
+		}
+		if out[i].Key != out[j].Key {
+			return out[i].Key < out[j].Key
+		}
+		return out[i].InstanceID < out[j].InstanceID
+	})
+	return out, nil
+}
+
+func hasSidecars(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "[]" {
+		return false
+	}
+	var sidecars []json.RawMessage
+	return json.Unmarshal(raw, &sidecars) != nil || len(sidecars) > 0
 }
 
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------

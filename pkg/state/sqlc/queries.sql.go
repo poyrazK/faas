@@ -5220,6 +5220,100 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 	return items, nil
 }
 
+const listAppSecretRuntimeReloadTargets = `-- name: ListAppSecretRuntimeReloadTargets :many
+SELECT s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       i.state AS runtime_state,
+       CASE
+         WHEN d.secret_reload_signal IS NULL THEN 'unknown'
+         WHEN d.secret_reload_signal = '' OR jsonb_array_length(d.sidecars) > 0 THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN app_secrets s ON s.app_id = i.app_id AND s.scope = d.scope
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+ WHERE s.account_id = $1::uuid
+   AND i.app_id = $2::uuid
+   AND ($3::text = '' OR s.scope = $3::text)
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND (coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb OR d.override_env_secrets ? s.key)
+ORDER BY s.scope ASC, s.key ASC, i.id ASC
+`
+
+type ListAppSecretRuntimeReloadTargetsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+}
+
+type ListAppSecretRuntimeReloadTargetsRow struct {
+	Scope                   string
+	Key                     string
+	InstanceID              string
+	RuntimeState            string
+	ReloadSupport           string
+	SecretVersion           pgtype.Int8
+	Projection              pgtype.Text
+	Signal                  pgtype.Text
+	ObservedAt              pgtype.Timestamptz
+	ErrorCode               pgtype.Text
+	ApplicationAckVersion   pgtype.Int8
+	ApplicationAckStatus    pgtype.Text
+	ApplicationAckAt        pgtype.Timestamptz
+	ApplicationAckErrorCode pgtype.Text
+}
+
+// Build the complete active roster for each secret from the deployment's
+// persisted scope/allowlist and reload opt-in. A missing observation remains
+// a target with nullable outcome fields rather than disappearing from the
+// denominator.
+func (q *Queries) ListAppSecretRuntimeReloadTargets(ctx context.Context, db DBTX, arg ListAppSecretRuntimeReloadTargetsParams) ([]ListAppSecretRuntimeReloadTargetsRow, error) {
+	rows, err := db.Query(ctx, listAppSecretRuntimeReloadTargets, arg.AccountID, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppSecretRuntimeReloadTargetsRow{}
+	for rows.Next() {
+		var i ListAppSecretRuntimeReloadTargetsRow
+		if err := rows.Scan(
+			&i.Scope,
+			&i.Key,
+			&i.InstanceID,
+			&i.RuntimeState,
+			&i.ReloadSupport,
+			&i.SecretVersion,
+			&i.Projection,
+			&i.Signal,
+			&i.ObservedAt,
+			&i.ErrorCode,
+			&i.ApplicationAckVersion,
+			&i.ApplicationAckStatus,
+			&i.ApplicationAckAt,
+			&i.ApplicationAckErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApps = `-- name: ListApps :many
 select id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(idle_timeout_s, 0),
        max_concurrency, status, manifest, created_at
@@ -6342,7 +6436,7 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.disable_startup_cpu_boost, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile, d.revision
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.secret_reload_signal, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.disable_startup_cpu_boost, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile, d.revision
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -6391,6 +6485,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.ScanStatus,
 			&i.ScannedAt,
 			&i.OverrideLivenessProbe,
+			&i.SecretReloadSignal,
 			&i.ParkedReason,
 			&i.ParkedAt,
 			&i.TrafficPercent,
@@ -12258,6 +12353,27 @@ func (q *Queries) SetDeploymentFailed(ctx context.Context, db DBTX, arg SetDeplo
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const setDeploymentSecretReloadSignal = `-- name: SetDeploymentSecretReloadSignal :execrows
+UPDATE deployments
+   SET secret_reload_signal = $1::text
+ WHERE id = $2::uuid
+`
+
+type SetDeploymentSecretReloadSignalParams struct {
+	Signal string
+	ID     pgtype.UUID
+}
+
+// imaged persists the validated image opt-in on each newly built deployment;
+// the state query keeps legacy NULL rows distinct from explicit opt-outs.
+func (q *Queries) SetDeploymentSecretReloadSignal(ctx context.Context, db DBTX, arg SetDeploymentSecretReloadSignalParams) (int64, error) {
+	result, err := db.Exec(ctx, setDeploymentSecretReloadSignal, arg.Signal, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const snapshotLocalityNodes = `-- name: SnapshotLocalityNodes :many

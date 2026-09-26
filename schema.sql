@@ -2455,6 +2455,7 @@ CREATE TABLE public.deployments (
     scan_status text,
     scanned_at timestamp with time zone,
     override_liveness_probe jsonb,
+    secret_reload_signal text,
     parked_reason text,
     parked_at timestamp with time zone,
     traffic_percent integer DEFAULT 100 NOT NULL,
@@ -2525,6 +2526,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployments_secret_reload_signal_chk CHECK (((secret_reload_signal IS NULL) OR (secret_reload_signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))),
     CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
     CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
     CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
@@ -2816,6 +2818,42 @@ CREATE TABLE public.instances (
     CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text]))),
     CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
+);
+
+
+--
+-- Name: app_secret_runtime_reload_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_secret_runtime_reload_observations (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    key text NOT NULL,
+    instance_id uuid NOT NULL,
+    secret_version bigint NOT NULL,
+    projection text NOT NULL,
+    signal text NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    error_code text,
+    application_ack_version bigint,
+    application_ack_status text,
+    application_ack_at timestamp with time zone,
+    application_ack_error_code text,
+    CONSTRAINT app_secret_runtime_reload_observations_pkey PRIMARY KEY (app_id, scope, key, instance_id),
+    CONSTRAINT app_secret_runtime_reload_observation_secret_fkey FOREIGN KEY (app_id, scope, key) REFERENCES public.app_secrets(app_id, scope, key) ON DELETE CASCADE,
+    CONSTRAINT app_secret_runtime_reload_observation_instance_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE,
+    CONSTRAINT app_secret_runtime_reload_observation_version_chk CHECK ((secret_version >= 1)),
+    CONSTRAINT app_secret_runtime_reload_observation_projection_chk CHECK ((projection = ANY (ARRAY['updated'::text, 'unchanged'::text, 'failed'::text]))),
+    CONSTRAINT app_secret_runtime_reload_observation_signal_chk CHECK ((signal = ANY (ARRAY['sent'::text, 'queued'::text, 'failed'::text, 'not_attempted'::text]))),
+    CONSTRAINT app_secret_runtime_reload_application_ack_version_chk CHECK ((application_ack_version IS NULL OR application_ack_version >= 1)),
+    CONSTRAINT app_secret_runtime_reload_application_ack_status_chk CHECK ((application_ack_status IS NULL OR application_ack_status = ANY (ARRAY['applied'::text, 'failed'::text]))),
+    CONSTRAINT app_secret_runtime_reload_application_ack_outcome_chk CHECK (
+        (application_ack_version IS NULL AND application_ack_status IS NULL AND application_ack_at IS NULL AND application_ack_error_code IS NULL)
+        OR (application_ack_version IS NOT NULL AND application_ack_status IS NOT NULL AND application_ack_at IS NOT NULL AND (
+            (application_ack_status = 'applied'::text AND application_ack_error_code IS NULL)
+            OR (application_ack_status = 'failed'::text AND application_ack_error_code = 'application_reload_failed'::text)
+        ))
+    )
 );
 
 
@@ -9552,6 +9590,7 @@ CREATE INDEX object_storage_s3_credentials_bucket_active_idx ON public.object_st
 CREATE UNIQUE INDEX object_storage_s3_credentials_managed_binding_idx ON public.object_storage_s3_credentials USING btree (bucket_id, managed_app_id, managed_scope, managed_prefix) WHERE ((status = 'active'::text) AND (managed_app_id IS NOT NULL));
 
 CREATE INDEX app_secrets_managed_object_storage_idx ON public.app_secrets USING btree (managed_object_storage_credential_id) WHERE (managed_object_storage_credential_id IS NOT NULL);
+CREATE INDEX app_secret_runtime_reload_observations_instance_idx ON public.app_secret_runtime_reload_observations USING btree (instance_id);
 
 
 --

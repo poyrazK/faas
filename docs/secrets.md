@@ -7,6 +7,7 @@ values are never returned, logged, or included in deployment receipts.
 ```bash
 gregale secrets set --app my-api STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
+gregale secrets rotate --app my-api DATABASE_URL="$NEW_DATABASE_URL" --restart --wait-for-ack --timeout 2m
 gregale secrets list --app my-api
 gregale secrets unset --app my-api STRIPE_SECRET_KEY
 ```
@@ -32,6 +33,18 @@ waits for registered gateways to acknowledge the route update
 and fresh VM telemetry; legacy single-box installs use their existing local
 notification path.
 
+`secrets rotate --wait-for-ack` is the in-process counterpart: after rotating,
+the CLI polls the complete active authorized-runtime roster until every
+reload-enabled runtime self-attests that it applied the current version. It
+exits non-zero on an application-reported failure, timeout, or if a target
+without a current app-applied acknowledgement has disabled/unknown reload
+support. Combine `--restart --wait-for-ack` for apps without live-reload
+support: the CLI waits for the correlated restart to reach a running instance,
+then waits until every active authorized runtime acknowledges the current
+secret version. Missing or unsupported capability stays pending on this path;
+it is never treated as success. If no runtime is active without `--restart`,
+the command succeeds and the rotation will be delivered on the next cold wake.
+
 Apps that can reload credentials in-process may opt in via an OCI image label:
 
 ```dockerfile
@@ -56,10 +69,14 @@ secrets. Secret reload requests are resolved against the live deployment's
 scope and `env_secrets` allowlist (legacy deployments without an allowlist keep
 their existing all-secrets-in-scope behavior). The application is responsible
 for confirming to itself that it successfully reloaded. `secrets list` reports
-wake-time delivery and the latest live-refresh observation from each active
-runtime that has reported. A missing runtime report is unknown (not proof that
-the runtime lacks access), and these observations do not claim that the
-application applied the new credentials.
+wake-time delivery and a complete roster of active runtimes currently
+authorized for each key by deployment scope and `env_secrets`. Each target
+shows whether reload support is enabled, explicitly disabled, or unknown for a
+legacy deployment, plus whether that runtime has reported. A missing report is
+unknown, not success. `runtime_reload_targets_complete` distinguishes this
+complete roster from an older server that only returned reporters. The report
+does not claim that the application applied the new credentials unless its
+self-attestation is present.
 
 An opted-in app may make that last step explicit. After rereading
 `FAAS_SECRETS_FILE` and successfully applying the new credentials to its own
@@ -79,6 +96,14 @@ revision before and after reading the secrets file; if it changed, reread so
 the values and revision describe the same rotation. An acknowledgement is an
 application self-attestation, not independent proof of its internal state.
 
+The built-in `secret-reload-node` template is an executable Node.js + Postgres
+reference for this contract. It uses the `SIGHUP` OCI label, reads a consistent
+secret snapshot, tests a candidate database pool before swapping it in, retries
+transient ACK failures, and sends only the opaque revision plus `applied` or
+`failed` status. Start it with `gregale init --template secret-reload-node
+--path secret-reload-node`; its README includes the first deploy and rotation
+steps.
+
 `gregale secrets list` reports delivery for each key:
 
 - `pending` means the current version has not yet reached a successfully
@@ -93,9 +118,11 @@ races with a wake or refresh report, the older result cannot mark the newer
 value delivered or reloaded. The CLI labels live-refresh outcomes as runtime
 file updated/unchanged/failed and whether the signal was sent, queued, or
 failed; a reported version different from the current version is shown as
-stale. Text output summarizes active runtime reports and flags failures; JSON
-includes each reporting instance ID. The report count is not a denominator for
-all active or authorized instances: runtimes with no report remain unknown.
+stale. Text and JSON include every active authorized target, including those
+with no report, and flag disabled/unknown support separately from pending
+reports. Existing deployments whose opt-in metadata predates this roster are
+marked unknown; redeploy with an image reload-signal label to make the
+capability explicit.
 A successful signal means only that guest-init's signal operation succeeded,
 not that the app handled it. An explicit app acknowledgement is shown
 separately from guest-init's signal result; missing acknowledgements are
