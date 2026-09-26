@@ -1413,6 +1413,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/activation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantActivation))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantCredentials))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/credentials/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.applyPlatformTenantCredentials))))
+	// Downstream tenant bearers are distinct, tenant-bound, read-only
+	// capabilities. Their plaintext is returned once and never cached.
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.listPlatformTenantAccessTokens))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.createPlatformTenantAccessToken))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/access-tokens/{token_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.revokePlatformTenantAccessToken))))
 	mux.HandleFunc("PATCH /v1/account/platform-tenants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantStatus))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/consumers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.linkPlatformTenantConsumer)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/surfaces", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.linkPlatformTenantSurface)))))
@@ -1426,6 +1431,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/finalize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.finalizePlatformTenantStatement)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantStatementHandoff))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimPlatformTenantStatement)))))
+	// Downstream tenants get a separate route namespace and an explicit
+	// special-scope gate; account keys cannot use these routes.
+	mux.HandleFunc("GET /v1/platform-tenant-self/usage", s.authLimited(s.requireScope(api.ScopesPlatformTenantUsageReadSurface...)(s.getPlatformTenantSelfUsage)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/usage-statements", s.authLimited(s.requireScope(api.ScopesPlatformTenantStatementsReadSurface...)(s.listPlatformTenantSelfStatements)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/usage-statements/{statement_id}", s.authLimited(s.requireScope(api.ScopesPlatformTenantStatementsReadSurface...)(s.getPlatformTenantSelfStatement)))
 	// Durable statement events belong to the cross-app platform tenant, not
 	// any one app's webhook namespace. Each delivery remains inspectable and
 	// replayable through the same signed webhook ledger.

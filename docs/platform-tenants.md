@@ -60,6 +60,21 @@ The older app-local key-create endpoint still returns plaintext once, but no lon
 
 `GET /v1/account/platform-tenants/{id}` shows the linked consumers and surfaces. `GET /v1/account/platform-tenants?limit=100&offset=0` pages the registry. `GET /v1/account/platform-tenants/{id}/usage?since=…&until=…` sums durable request, error, and billable-unit facts attributed to that tenant **when each request occurred**, grouped by UTC day and app. Each bucket identifies either a linked `consumer_id` or a verified `surface_id`. Linking a consumer or surface later does not import its earlier traffic. Historical rows and requests from older gateways without a tenant claim remain unassigned; Gregale never guesses their owner from the current link. This is raw usage, not an invoice or a cross-app price quote.
 
+## Let downstream customers inspect their own usage and statements
+
+Platform owners can issue a separate read-only credential to one downstream tenant:
+
+```http
+POST /v1/account/platform-tenants/{id}/access-tokens
+Content-Type: application/json
+
+{"name":"customer billing portal","scopes":["platform_tenant:usage:read","platform_tenant:statements:read"]}
+```
+
+The response contains an `fp_tenant_` bearer exactly once. Save it in the customer's secret manager; Gregale persists only its SHA-256 hash. The default lifetime is 90 days and the maximum is 365 days. Keep names unique among active tokens and issue no more than ten at a time; list metadata with `GET .../{id}/access-tokens` and revoke with `DELETE .../{id}/access-tokens/{token_id}`. Revocation is immediate. These special scopes cannot be added to ordinary account API keys.
+
+The downstream service sends its bearer to `GET /v1/platform-tenant-self/usage?since=…&until=…` or `GET /v1/platform-tenant-self/usage-statements?period_start=…&period_end=…&limit=100&offset=0`. Statement listing returns lightweight summaries of finalized revisions only, newest period/revision first, with `next_offset` when another page exists; `GET /v1/platform-tenant-self/usage-statements/{statement_id}` retrieves one full finalized revision and its line items. Draft, superseded, and other tenants' statements are hidden as not found. Tenant identity comes from the credential, not a caller-supplied tenant ID. There is no write, invoice-handoff, activity, or account-management access through this bearer. See [ADR-247](adr/247-platform-tenant-self-service.md).
+
 ## Control customer requests across apps
 
 After every gateway is upgraded, set an optional shared admission budget:
@@ -129,4 +144,4 @@ On requests authenticated with a linked consumer key, or anonymous requests rout
 
 The CLI provides the same lifecycle with `gregale platform-tenants add|apply|list|info|activation|link-consumer|link-surface|usage|suspend|resume`.
 
-Suspension does not block anonymous traffic on unlinked app domains, independent JWT authentication on those domains, or credentials not linked to the tenant. Configure those separately if you need a complete customer access ban. Reads and writes require the same MFA-gated account scopes as API consumer management; Free plans do not expose this feature.
+Suspension does not block anonymous traffic on unlinked app domains, independent JWT authentication on those domains, or credentials not linked to the tenant. Configure those separately if you need a complete customer access ban. Account-scoped platform-tenant management requires the same MFA-gated account scopes as API consumer management; tenant-self read tokens are separate and remain limited to the tenant's own usage and finalized statements. Free plans do not expose the feature.

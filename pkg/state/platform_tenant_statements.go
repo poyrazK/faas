@@ -16,6 +16,7 @@ type PlatformTenantStatementStore interface {
 	CreatePlatformTenantStatement(context.Context, PlatformTenantStatementInput) (PlatformTenantStatement, bool, error)
 	GetPlatformTenantStatement(context.Context, string, string, string) (PlatformTenantStatement, error)
 	ListPlatformTenantStatements(context.Context, string, string, time.Time, time.Time) ([]PlatformTenantStatement, error)
+	ListFinalizedPlatformTenantStatements(context.Context, string, string, time.Time, time.Time, int, int) ([]PlatformTenantStatementSummary, error)
 	FinalizePlatformTenantStatement(context.Context, string, string, string) (PlatformTenantStatement, bool, error)
 	CreatePlatformTenantStatementHandoff(context.Context, PlatformTenantStatementHandoffInput) (PlatformTenantStatementHandoff, bool, error)
 	GetPlatformTenantStatementHandoff(context.Context, string, string, string) (PlatformTenantStatementHandoff, error)
@@ -52,6 +53,37 @@ type PlatformTenantStatement struct {
 	AsOf             time.Time
 	CreatedAt        time.Time
 	FinalizedAt      *time.Time
+}
+
+// PlatformTenantStatementSummary is the bounded list projection. It omits
+// line items; callers fetch one full immutable statement by ID when needed.
+type PlatformTenantStatementSummary struct {
+	ID               string
+	AccountID        string
+	TenantID         string
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	Revision         int
+	Status           APIConsumerUsageStatementStatus
+	Currency         string
+	BillableUnits    int64
+	UnpricedUnits    int64
+	AmountMillicents int64
+	AsOf             time.Time
+	CreatedAt        time.Time
+	FinalizedAt      *time.Time
+}
+
+func platformTenantStatementSummary(s PlatformTenantStatement) PlatformTenantStatementSummary {
+	var finalizedAt *time.Time
+	if s.FinalizedAt != nil {
+		value := *s.FinalizedAt
+		finalizedAt = &value
+	}
+	return PlatformTenantStatementSummary{ID: s.ID, AccountID: s.AccountID, TenantID: s.TenantID,
+		PeriodStart: s.PeriodStart, PeriodEnd: s.PeriodEnd, Revision: s.Revision, Status: s.Status,
+		Currency: s.Currency, BillableUnits: s.BillableUnits, UnpricedUnits: s.UnpricedUnits,
+		AmountMillicents: s.AmountMillicents, AsOf: s.AsOf, CreatedAt: s.CreatedAt, FinalizedAt: finalizedAt}
 }
 
 type PlatformTenantStatementInput struct {

@@ -112,6 +112,45 @@ func (m *MemStore) ListPlatformTenantStatements(_ context.Context, accountID, te
 	return out, nil
 }
 
+func (m *MemStore) ListFinalizedPlatformTenantStatements(_ context.Context, accountID, tenantID string, start, end time.Time, limit, offset int) ([]PlatformTenantStatementSummary, error) {
+	if !end.After(start) || limit < 1 || limit > 101 || offset < 0 {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tenant, ok := m.platformTenants[tenantID]
+	if !ok || tenant.AccountID != accountID {
+		return nil, ErrNotFound
+	}
+	out := make([]PlatformTenantStatementSummary, 0)
+	for _, statement := range m.platformTenantStatements {
+		if statement.AccountID == accountID && statement.TenantID == tenantID &&
+			statement.Status == APIConsumerUsageStatementFinalized && statement.PeriodStart.Before(end) && statement.PeriodEnd.After(start) {
+			out = append(out, platformTenantStatementSummary(statement))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].PeriodStart.Equal(out[j].PeriodStart) {
+			return out[i].PeriodStart.After(out[j].PeriodStart)
+		}
+		if out[i].Revision != out[j].Revision {
+			return out[i].Revision > out[j].Revision
+		}
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	if offset >= len(out) {
+		return []PlatformTenantStatementSummary{}, nil
+	}
+	endIndex := offset + limit
+	if endIndex > len(out) {
+		endIndex = len(out)
+	}
+	return out[offset:endIndex], nil
+}
+
 func (m *MemStore) FinalizePlatformTenantStatement(_ context.Context, accountID, tenantID, statementID string) (PlatformTenantStatement, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

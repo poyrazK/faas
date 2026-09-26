@@ -836,6 +836,9 @@ func (k ConsumerKey) Active(now time.Time) bool {
 type APIKey struct {
 	ID        string
 	AccountID string
+	// PlatformTenantID is set only on the synthetic APIKey projection for a
+	// tenant-bound self-service bearer. Persisted account keys leave it empty.
+	PlatformTenantID string
 	// AppID is set only for per-app deploy-token principals. Legacy
 	// account/org API keys leave it empty; authz.LoadApp uses it as an
 	// additional tenant boundary when the principal is app-scoped.
