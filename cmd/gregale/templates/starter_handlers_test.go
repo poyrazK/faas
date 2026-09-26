@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -104,4 +105,33 @@ assert.equal((await call(body, sign("sig_current", body, { iss: "someone" }))).s
 assert.equal((await call(body, "v1=" + crypto.createHmac("sha256", "sig_current").update(body).digest("hex"))).status, 401, "legacy v1 format");
 assert.equal(redisCalls, 2, "only verified deliveries touch Redis");
 `)
+}
+
+// TestAIChatStarterUsesAServedClaudeModel — the ai-chat starter defaulted to
+// claude-3-5-sonnet-latest, a retired model: every chat request made with an
+// ANTHROPIC_API_KEY failed until the customer overrode ANTHROPIC_MODEL. Pin the
+// default away from retired Claude 3.x ids, and keep max_tokens large enough
+// for current models' adaptive thinking to leave room for the reply.
+func TestAIChatStarterUsesAServedClaudeModel(t *testing.T) {
+	for _, name := range []string{"ai-chat/handler.js", "ai-chat/README.md"} {
+		body, err := FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, retired := range []string{"claude-3-5-sonnet", "claude-3-opus", "claude-3-sonnet", "claude-3-haiku"} {
+			if strings.Contains(string(body), retired) {
+				t.Errorf("%s references retired model %q", name, retired)
+			}
+		}
+	}
+	handler, err := FS.ReadFile("ai-chat/handler.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(handler)
+	for _, want := range []string{`process.env.ANTHROPIC_MODEL || "claude-opus-5"`, "max_tokens: 16000", `body.fallbacks = "default"`, "server-side-fallback-2026-07-01", `stop_reason === "refusal"`} {
+		if !strings.Contains(src, want) {
+			t.Errorf("ai-chat/handler.js missing %q", want)
+		}
+	}
 }
