@@ -218,9 +218,9 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 		select {
 		case <-waitContext.Done():
 			if errors.Is(interruptContext.Err(), context.Canceled) {
-				cancelContext, cancelRequest := context.WithTimeout(context.WithoutCancel(interruptContext), bindingProbeCancelTimeout)
+				cancelContext, cancelRequest := context.WithTimeout(context.WithoutCancel(ctx), bindingProbeCancelTimeout)
+				defer cancelRequest()
 				cancelled, cancelErr := client.CancelAppTask(cancelContext, slug, task.ID)
-				cancelRequest()
 				if cancelErr != nil {
 					PrintWarn(osStderr, "could not request cancellation for canary task %s: %v", task.ID, cancelErr)
 				} else if !jsonOutput {
