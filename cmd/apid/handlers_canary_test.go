@@ -172,12 +172,15 @@ func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
 			t.Fatalf("canary/raw token on recovery route status = %d, want 401", rec.Code)
 		}
 	}
-	recovered, err := client.RecoverRollout(ctx, app.Slug, "abort", "test service recovery")
+	recovered, err := client.RecoverDeploymentRolloutAndIdempotencyKey(ctx, canary.ID, prior.ID, "abort", "circuit breaker test", "exact-recovery-test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if recovered.Deployment.RolloutState != "aborted" {
 		t.Fatalf("recovered state = %q, want aborted", recovered.Deployment.RolloutState)
+	}
+	if got, err := e.store.DeploymentByID(ctx, prior.ID); err != nil || got.TrafficPercent != 100 {
+		t.Fatalf("exact recovery predecessor = traffic:%d err:%v; want restored to 100%%", got.TrafficPercent, err)
 	}
 }
 

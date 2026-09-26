@@ -96,6 +96,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -688,6 +689,11 @@ type Metrics struct {
 	// Deliberately NOT labelled by app — the label set must stay bounded, and
 	// per-app attribution already exists in the wake timeline.
 	serviceCallTotal *prometheus.CounterVec
+	// serviceDependencyCalls is the unsampled, per-caller-deployment outcome
+	// signal for managed service-proxy calls. Only trusted UUID identities from
+	// the node-local instance resolver are admitted; service names and paths
+	// are intentionally not labels.
+	serviceDependencyCalls *prometheus.CounterVec
 	// serviceWakeLatency (ADR-196) observes how long an internal caller was
 	// held while a parked target service was restored. ADR-196 defers
 	// speculative wake-ahead along depends_on edges "until measured evidence";
@@ -1449,6 +1455,13 @@ func NewMetrics() *Metrics {
 			},
 			[]string{"outcome"},
 		),
+		serviceDependencyCalls: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_dependency_calls_total",
+				Help: "Unsampled managed service-proxy calls attributed to the trusted caller app and deployment, labelled by final outcome (success or error). Errors are final 5xx responses; caller and target identity failures are excluded.",
+			},
+			[]string{"app", "deployment", "outcome"},
+		),
 		// Buckets span 10 ms (a warm in-rack hop) to 30 s (the wake gate's
 		// lifecycle TTL). The middle of the range is where the platform wake
 		// budget lives (§6.3, p95 < 350 ms on the reference node), so the
@@ -1520,6 +1533,12 @@ func NewMetrics() *Metrics {
 	// internal traffic" from "the proxy is not wired" without them.
 	for _, outcome := range ServiceCallOutcomes {
 		m.serviceCallTotal.WithLabelValues(string(outcome))
+	}
+	// The sentinel keeps the metric family visible even when no workload has
+	// made a managed service call yet, allowing meterd to distinguish a
+	// healthy zero-call window from missing instrumentation.
+	for _, outcome := range []string{"success", "error"} {
+		m.serviceDependencyCalls.WithLabelValues("__other__", "__other__", outcome)
 	}
 	wsOutcomes := []WSOutcome{WSOutcomeAccepted, WSOutcomePlanDenied, WSOutcomeBridgeDisabled}
 	wsSessionOutcomes := []WSOutcome{WSOutcomeAccepted, WSOutcomeInitFailed, WSOutcomeUpstreamUnavailable, WSOutcomeClientDisconnect}
@@ -1804,7 +1823,7 @@ func NewMetrics() *Metrics {
 			m.versionAffinityKeys.WithLabelValues(surface, outcome)
 		}
 	}
-	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
@@ -3319,6 +3338,29 @@ func (m *Metrics) IncServiceCall(outcome ServiceCallOutcome) {
 		return
 	}
 	m.serviceCallTotal.WithLabelValues(string(outcome)).Inc()
+}
+
+// ObserveServiceDependencyCall records the final result of one managed
+// service-proxy request for the exact caller deployment. It is deliberately
+// updated on the request path, not by an OTel exporter, so trace sampling and
+// slowest-span retention cannot bias the health signal.
+func (m *Metrics) ObserveServiceDependencyCall(appID, deploymentID string, failed bool) {
+	if m == nil {
+		return
+	}
+	appUUID, err := uuid.Parse(appID)
+	if err != nil {
+		return
+	}
+	deploymentUUID, err := uuid.Parse(deploymentID)
+	if err != nil {
+		return
+	}
+	outcome := "success"
+	if failed {
+		outcome = "error"
+	}
+	m.serviceDependencyCalls.WithLabelValues(appUUID.String(), deploymentUUID.String(), outcome).Inc()
 }
 
 // ObserveServiceWakeLatency records how long an internal caller waited for a

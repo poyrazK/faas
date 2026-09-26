@@ -8103,6 +8103,20 @@ func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedI
 // the same closed-set guards so handler tests can pin the same
 // shape against either store.
 func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reason string) (Deployment, int64, error) {
+	return s.recoverRollout(ctx, appID, "", "", action, reason)
+}
+
+// RecoverRolloutForDeployment aborts the named candidate only when the
+// predecessor observed by the caller is still live and serving in the same
+// scope. The exact pair is checked under row locks before traffic is changed.
+func (s *PgStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
+	if deploymentID == "" || expectedPredecessorID == "" || deploymentID == expectedPredecessorID || action != "abort" {
+		return Deployment{}, 0, ErrRolloutStateInvalid
+	}
+	return s.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason)
+}
+
+func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
 	switch action {
 	case "advance", "promote", "abort":
 	default:
@@ -8120,20 +8134,35 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	if deploymentID != "" {
+		// Deployment creation already serializes on the app row. Taking the
+		// same lock prevents a new release from changing the candidate or its
+		// predecessor between the health decision and this transaction.
+		var lockedAppID string
+		if err := tx.QueryRow(ctx, `select id from apps where id = $1 for update`, appID).Scan(&lockedAppID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Deployment{}, 0, ErrNotFound
+			}
+			return Deployment{}, 0, fmt.Errorf("state: recover_rollout lock app: %w", err)
+		}
+	}
 
 	// (1) Find + lock the active rollout row for this app.
 	// Mirrors SafedeployListPendingRollouts' predicate; the FOR
 	// UPDATE serialises a concurrent canary tick or alert-driven
 	// action executor on the same row.
-	row := tx.QueryRow(ctx,
-		`select `+deploymentSelectColumnsWithRootfs+`
-		   from deployments
-		  where app_id = $1
-		    and status = 'live'
-			and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
-		  order by created_at desc
-		  limit 1
-		  for update`, appID)
+	query := `select ` + deploymentSelectColumnsWithRootfs + `
+	   from deployments
+	  where app_id = $1
+	    and status = 'live'
+	    and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')`
+	args := []any{appID}
+	if deploymentID != "" {
+		query += ` and id = $2::uuid`
+		args = append(args, deploymentID)
+	}
+	query += ` order by created_at desc limit 1 for update`
+	row := tx.QueryRow(ctx, query, args...)
 	dep, scanErr := scanDeploymentWithRootfs(row)
 	if scanErr != nil {
 		if errors.Is(scanErr, ErrNotFound) {
@@ -8143,6 +8172,34 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 	}
 	if dep.CanaryTotalSteps <= 0 && !IsServiceRollout(dep) {
 		return dep, 0, ErrRolloutStateInvalid
+	}
+	if expectedPredecessorID != "" {
+		if IsServiceRollout(dep) {
+			return dep, 0, ErrRolloutStateInvalid
+		}
+		var predecessorID string
+		if err := tx.QueryRow(ctx,
+			`select id from deployments
+			  where app_id = $1 and scope = $2 and id = $3::uuid
+			    and status = 'live' and traffic_percent > 0
+			  for update`, dep.AppID, dep.Scope, expectedPredecessorID).Scan(&predecessorID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return dep, 0, ErrNotFound
+			}
+			return Deployment{}, 0, fmt.Errorf("state: recover_rollout lock predecessor: %w", err)
+		}
+		var otherCanaries int
+		if err := tx.QueryRow(ctx,
+			`select count(*) from deployments
+			  where app_id = $1 and scope = $2 and status = 'live' and id <> $3::uuid
+			    and canary_total_steps > 0
+			    and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')`,
+			dep.AppID, dep.Scope, dep.ID).Scan(&otherCanaries); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: recover_rollout check exact-scope canaries: %w", err)
+		}
+		if otherCanaries != 0 {
+			return dep, 0, ErrRolloutStateInvalid
+		}
 	}
 
 	now := time.Now().UTC()
@@ -8340,43 +8397,61 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 			dep.ID, now, reason); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp abort: %w", err)
 		}
-		// An aborted canary must not retain its old traffic weight. Rebuild
-		// the sibling weights in the same transaction so abort/demote cannot
-		// leave the app below or above the Σ=100 invariant.
-		siblingRows, err := tx.Query(ctx,
-			`select id, traffic_percent
+		if expectedPredecessorID != "" {
+			// Exact-target recovery is scoped and restores precisely the
+			// predecessor used by the health comparison. Other environments
+			// on the same app are unaffected.
+			if _, err := tx.Exec(ctx,
+				`update deployments set traffic_percent = 0
+				  where app_id = $1 and scope = $2 and status = 'live' and id <> $3::uuid`,
+				appID, dep.Scope, expectedPredecessorID); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: recover_rollout zero exact-scope siblings: %w", err)
+			}
+			if _, err := tx.Exec(ctx,
+				`update deployments set traffic_percent = 100
+				  where app_id = $1 and scope = $2 and id = $3::uuid and status = 'live'`,
+				appID, dep.Scope, expectedPredecessorID); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: recover_rollout restore predecessor: %w", err)
+			}
+		} else {
+			// An aborted canary must not retain its old traffic weight. Rebuild
+			// the sibling weights in the same transaction so abort/demote cannot
+			// leave the app below or above the Σ=100 invariant.
+			siblingRows, err := tx.Query(ctx,
+				`select id, traffic_percent
 			   from deployments
 			  where app_id = $1 and status = 'live' and id != $2
 			  order by id`,
-			appID, dep.ID)
-		if err != nil {
-			return Deployment{}, 0, fmt.Errorf("state: recover_rollout read abort siblings: %w", err)
-		}
-		var siblings []struct {
-			ID    string
-			Prior int
-		}
-		for siblingRows.Next() {
-			var sibling struct {
+				appID, dep.ID)
+			if err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: recover_rollout read abort siblings: %w", err)
+			}
+			var siblings []struct {
 				ID    string
 				Prior int
 			}
-			if err := siblingRows.Scan(&sibling.ID, &sibling.Prior); err != nil {
-				siblingRows.Close()
-				return Deployment{}, 0, fmt.Errorf("state: recover_rollout scan abort sibling: %w", err)
+			for siblingRows.Next() {
+				var sibling struct {
+					ID    string
+					Prior int
+				}
+				if err := siblingRows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+					siblingRows.Close()
+					return Deployment{}, 0, fmt.Errorf("state: recover_rollout scan abort sibling: %w", err)
+				}
+				siblings = append(siblings, sibling)
 			}
-			siblings = append(siblings, sibling)
-		}
-		siblingRows.Close()
-		if err := siblingRows.Err(); err != nil {
-			return Deployment{}, 0, fmt.Errorf("state: recover_rollout iterate abort siblings: %w", err)
-		}
-		newWeights := RedistributeTraffic(siblings, 100)
-		for i, sibling := range siblings {
-			if _, err := tx.Exec(ctx,
-				`update deployments set traffic_percent = $2 where id = $1`,
-				sibling.ID, newWeights[i]); err != nil {
-				return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp abort sibling %s: %w", sibling.ID, err)
+			siblingRows.Close()
+			if err := siblingRows.Err(); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: recover_rollout iterate abort siblings: %w", err)
+			}
+			newWeights := RedistributeTraffic(siblings, 100)
+			for i, sibling := range siblings {
+				if _, err := tx.Exec(ctx,
+					`update deployments set traffic_percent = $2 where id = $1`,
+					sibling.ID, newWeights[i]); err != nil {
+					return Deployment{}, 0, fmt.Errorf("state: recover_rollout stamp abort sibling %s: %w", sibling.ID, err)
+				}
 			}
 		}
 		auditKind = DeployRolledBack
@@ -27769,6 +27844,34 @@ func (s *PgStore) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg
 // and the regression detector (PR-B cron).
 func (s *PgStore) RequestTelemetryByDeployment(ctx context.Context, arg sqlc.RequestTelemetryByDeploymentParams) ([]sqlc.RequestTelemetryByDeploymentRow, error) {
 	return s.appErrorsQueries().RequestTelemetryByDeployment(ctx, s.pool, arg)
+}
+
+// RequestTelemetryCircuitBreakerSummary is the bounded per-deployment
+// aggregate used by meterd's canary circuit breaker. It computes weighted
+// request and 5xx totals plus a weighted p95 in Postgres, avoiding transfer of
+// raw telemetry rows on every progression tick. This deliberately stays
+// outside state.Store's public API; the meterd adapter discovers it as an
+// optional internal reader.
+func (s *PgStore) RequestTelemetryCircuitBreakerSummary(ctx context.Context, appID, deploymentID string, since, until time.Time) (requests, serverErrors int64, p95LatencyMS float64, coldBootRequests int64, coldBootP95LatencyMS float64, cpuUsec, cpuRequests int64, err error) {
+	appUUID, parseErr := uuid.Parse(appID)
+	if parseErr != nil {
+		return 0, 0, 0, 0, 0, 0, 0, fmt.Errorf("state: circuit-breaker telemetry summary parse app id %q: %w", appID, parseErr)
+	}
+	deploymentUUID, parseErr := uuid.Parse(deploymentID)
+	if parseErr != nil {
+		return 0, 0, 0, 0, 0, 0, 0, fmt.Errorf("state: circuit-breaker telemetry summary parse deployment id %q: %w", deploymentID, parseErr)
+	}
+	row, err := s.appErrorsQueries().RequestTelemetryCircuitBreakerSummary(ctx, s.pool, sqlc.RequestTelemetryCircuitBreakerSummaryParams{
+		AppID:        pgtype.UUID{Bytes: appUUID, Valid: true},
+		DeploymentID: pgtype.UUID{Bytes: deploymentUUID, Valid: true},
+		ReceivedAt:   pgtype.Timestamptz{Time: since, Valid: true},
+		ReceivedAt2:  pgtype.Timestamptz{Time: until, Valid: true},
+	})
+	if err != nil {
+		err = fmt.Errorf("state: circuit-breaker telemetry summary app=%s deployment=%s: %w", appID, deploymentID, err)
+		return 0, 0, 0, 0, 0, 0, 0, err
+	}
+	return row.Requests, row.ServerErrors, row.P95LatencyMs, row.ColdBootRequests, row.ColdBootP95LatencyMs, row.CpuUsec, row.CpuRequests, nil
 }
 
 // RequestTelemetryBaselineP95ByRoute backs the regression detector's

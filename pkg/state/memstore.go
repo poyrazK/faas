@@ -6933,7 +6933,18 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 // CLI can echo "audit_id=…"). Both backends share the same
 // closed-set guards so handler tests can pin the same shape
 // against either store.
-func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reason string) (Deployment, int64, error) {
+func (m *MemStore) RecoverRollout(ctx context.Context, appID string, action, reason string) (Deployment, int64, error) {
+	return m.recoverRollout(ctx, appID, "", "", action, reason)
+}
+
+func (m *MemStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
+	if deploymentID == "" || expectedPredecessorID == "" || deploymentID == expectedPredecessorID || action != "abort" {
+		return Deployment{}, 0, ErrRolloutStateInvalid
+	}
+	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason)
+}
+
+func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
 	// Validate action at the store boundary so a direct store
 	// caller (CLI test path) gets the same 422 shape as the
 	// handler. The handler also validates via
@@ -6958,7 +6969,7 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	// progression auto-supersedes the prior live row).
 	var target *Deployment
 	for id, d := range m.deployments {
-		if d.AppID != appID || d.Status != DeployLive {
+		if d.AppID != appID || d.Status != DeployLive || (deploymentID != "" && id != deploymentID) {
 			continue
 		}
 		d.RolloutState = NormalizeRolloutState(d.RolloutState)
@@ -6975,6 +6986,26 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 	}
 	if target.CanaryTotalSteps <= 0 && !IsServiceRollout(*target) {
 		return *target, 0, ErrRolloutStateInvalid
+	}
+	if expectedPredecessorID != "" {
+		if IsServiceRollout(*target) {
+			return *target, 0, ErrRolloutStateInvalid
+		}
+		predecessor, exists := m.deployments[expectedPredecessorID]
+		if !exists || predecessor.AppID != appID || predecessor.Status != DeployLive ||
+			normalizedDeploymentScope(predecessor.Scope) != normalizedDeploymentScope(target.Scope) || predecessor.TrafficPercent <= 0 {
+			return *target, 0, ErrNotFound
+		}
+		for otherID, other := range m.deployments {
+			if otherID == target.ID || other.AppID != appID || other.Status != DeployLive ||
+				normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.CanaryTotalSteps <= 0 {
+				continue
+			}
+			rolloutState := NormalizeRolloutState(other.RolloutState)
+			if rolloutState == "pending" || rolloutState == "rolling_out" {
+				return *target, 0, ErrRolloutStateInvalid
+			}
+		}
 	}
 	before := *target
 
@@ -7150,6 +7181,33 @@ func (m *MemStore) RecoverRollout(_ context.Context, appID string, action, reaso
 		// Keep the in-memory implementation aligned with Postgres: an
 		// aborted canary is removed from traffic and its siblings are
 		// rebalanced while the store lock is held.
+		if expectedPredecessorID != "" {
+			for otherID, other := range m.deployments {
+				if other.AppID != appID || other.Status != DeployLive ||
+					normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || otherID == expectedPredecessorID {
+					continue
+				}
+				other.TrafficPercent = 0
+				m.deployments[otherID] = other
+			}
+			predecessor := m.deployments[expectedPredecessorID]
+			predecessor.TrafficPercent = 100
+			m.deployments[expectedPredecessorID] = predecessor
+			m.deployments[target.ID] = *target
+			auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
+				DeploymentID: uuid.MustParse(target.ID),
+				AccountID:    nil,
+				Kind:         DeployRolledBack,
+				Actor:        "operator:cli:recover_rollout",
+				At:           now,
+				Data:         json.RawMessage(rolloutAuditData("abort", reason)),
+			})
+			if err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
+			}
+			m.enqueueRolloutOutcomeWebhooksLocked(before, *target)
+			return *target, auditID, nil
+		}
 		siblings := []siblingRow{}
 		for otherID, other := range m.deployments {
 			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {

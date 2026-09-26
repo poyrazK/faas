@@ -874,6 +874,11 @@ type OpsMetrics struct {
 	// Labelled by reason ∈ {advance, list_in_flight}. Closed
 	// vocabulary — unknown reasons drop to the no-op closure.
 	canaryProgressionErrorsTotal *prometheus.CounterVec
+	// canaryProgressionCircuitBreakerTotal counts breaker aborts and
+	// boundary holds. Its event label is a small closed vocabulary so an
+	// operator can distinguish regressions from unavailable evidence without
+	// putting deployment IDs or customer-controlled strings in Prometheus.
+	canaryProgressionCircuitBreakerTotal *prometheus.CounterVec
 	// canaryProgressionZeroTimestampTotal (SAFE-RELEASES code-review
 	// hardening, migration 00517) counts every row the
 	// canary_progression tick walks whose canary_step_started_at is
@@ -3066,6 +3071,16 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, reason := range []string{"advance", "list_in_flight"} {
 		canaryProgressionErrorsTotal.WithLabelValues(reason)
 	}
+	canaryProgressionCircuitBreakerTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_canary_progression_circuit_breaker_total",
+		Help: "Count of canary circuit-breaker aborts and boundary holds, labelled by closed event reason.",
+	}, []string{"event"})
+	for _, event := range []string{
+		"abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom",
+		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed",
+	} {
+		canaryProgressionCircuitBreakerTotal.WithLabelValues(event)
+	}
 	// SAFE-RELEASES code-review hardening (migration 00517):
 	// tripwire counter for the canary_progression tick seeing a
 	// zero canary_step_started_at. Post-00517 the column is NOT NULL
@@ -3736,6 +3751,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		deploymentAuditGCRowsDeletedTotal,
 		canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal,
+		canaryProgressionCircuitBreakerTotal,
 		canaryProgressionZeroTimestampTotal,
 		canaryProgressionHealthGateBlockedTotal,
 		safedeployOrchestratorStartedTotal,
@@ -5154,6 +5170,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		alertEvalFiredTotal:                        alertEvalFiredTotal,
 		canaryProgressionAdvancedTotal:             canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal:               canaryProgressionErrorsTotal,
+		canaryProgressionCircuitBreakerTotal:       canaryProgressionCircuitBreakerTotal,
 		canaryProgressionZeroTimestampTotal:        canaryProgressionZeroTimestampTotal,
 		canaryProgressionHealthGateBlockedTotal:    canaryProgressionHealthGateBlockedTotal,
 		safedeployOrchestratorStartedTotal:         safedeployOrchestratorStartedTotal,
@@ -8154,6 +8171,22 @@ func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) prometheus.Coun
 		return nil
 	}
 	return m.canaryProgressionErrorsTotal.WithLabelValues(reason)
+}
+
+// CanaryProgressionCircuitBreakerTotal returns a closed-label counter for
+// one breaker abort or boundary hold. Unknown events are ignored so metric
+// labels can never be influenced by an error string or deployment metadata.
+func (m *OpsMetrics) CanaryProgressionCircuitBreakerTotal(event string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	switch event {
+	case "abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom",
+		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed":
+		return m.canaryProgressionCircuitBreakerTotal.WithLabelValues(event)
+	default:
+		return nil
+	}
 }
 
 // SafedeployOrchestratorStartedTotal returns the pending to

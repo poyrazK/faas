@@ -10160,6 +10160,16 @@ type RecoverRolloutRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// RecoverDeploymentRolloutRequest is the internal, exact-target variant used
+// by meterd's deployment circuit breaker. The predecessor is part of the
+// compare-and-abort contract so a delayed signal cannot restore a different
+// revision after traffic has moved.
+type RecoverDeploymentRolloutRequest struct {
+	Action                          string `json:"action"`
+	Reason                          string `json:"reason,omitempty"`
+	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
+}
+
 // RolloutTransitionResponse is the body returned by
 // POST /v1/apps/{slug}/rollouts/recover. The Deployment carries
 // the post-transition state (rollout_state + canary_step +
