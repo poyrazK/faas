@@ -1,4 +1,4 @@
--- filename: 20260925050000001_deployment_readiness_probe.sql
+-- filename: 20260926081111526_deployment_readiness_probe.sql
 -- A deployment's recurring primary-app readiness policy is immutable and
 -- independent from its one-shot startup healthcheck and liveness policy.
 --
