@@ -1231,6 +1231,13 @@ INSERT INTO app_error_requests (
 -- types — without them sqlc infers the timestamps as timestamptz
 -- from the leading (count, last_seen_at) references and breaks
 -- pagination.
+--
+-- cursor_count is a non-nullable bigint, so "no cursor" arrives as 0
+-- (count is always >= 1). The predicate used to test IS NULL, which
+-- never held: the first page matched no rows and the summary was
+-- always empty. fingerprint sorts DESC to agree with the row-value
+-- comparison; ASC made pages repeat or skip groups that tie on
+-- (count, last_seen_at).
 SELECT
     id, fingerprint, error_class, route, http_status,
     count, request_count, first_seen_at, last_seen_at,
@@ -1242,11 +1249,11 @@ WHERE account_id = sqlc.arg('account_id')
   AND app_id     = sqlc.arg('app_id')
   AND last_seen_at >= sqlc.arg('since')
   AND last_seen_at <= sqlc.arg('until')
-  AND (sqlc.arg('cursor_count')::bigint IS NULL
+  AND (sqlc.arg('cursor_count')::bigint = 0
        OR count < sqlc.arg('cursor_count')
        OR (count = sqlc.arg('cursor_count')
            AND (last_seen_at, fingerprint) < (sqlc.arg('cursor_last_seen'), sqlc.arg('cursor_fingerprint')::text)))
-ORDER BY count DESC, last_seen_at DESC, fingerprint ASC
+ORDER BY count DESC, last_seen_at DESC, fingerprint DESC
 LIMIT sqlc.arg('limit');
 
 -- name: ListAppErrorRequests :many

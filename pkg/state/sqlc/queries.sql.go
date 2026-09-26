@@ -5023,11 +5023,11 @@ WHERE account_id = $1
   AND app_id     = $2
   AND last_seen_at >= $3
   AND last_seen_at <= $4
-  AND ($5::bigint IS NULL
+  AND ($5::bigint = 0
        OR count < $5
        OR (count = $5
            AND (last_seen_at, fingerprint) < ($6, $7::text)))
-ORDER BY count DESC, last_seen_at DESC, fingerprint ASC
+ORDER BY count DESC, last_seen_at DESC, fingerprint DESC
 LIMIT $8
 `
 
@@ -5080,6 +5080,13 @@ type ListAppErrorGroupsRow struct {
 // types — without them sqlc infers the timestamps as timestamptz
 // from the leading (count, last_seen_at) references and breaks
 // pagination.
+//
+// cursor_count is a non-nullable bigint, so "no cursor" arrives as 0
+// (count is always >= 1). The predicate used to test IS NULL, which
+// never held: the first page matched no rows and the summary was
+// always empty. fingerprint sorts DESC to agree with the row-value
+// comparison; ASC made pages repeat or skip groups that tie on
+// (count, last_seen_at).
 func (q *Queries) ListAppErrorGroups(ctx context.Context, db DBTX, arg ListAppErrorGroupsParams) ([]ListAppErrorGroupsRow, error) {
 	rows, err := db.Query(ctx, listAppErrorGroups,
 		arg.AccountID,

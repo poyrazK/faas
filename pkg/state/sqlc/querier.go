@@ -557,6 +557,13 @@ type Querier interface {
 	// types — without them sqlc infers the timestamps as timestamptz
 	// from the leading (count, last_seen_at) references and breaks
 	// pagination.
+	//
+	// cursor_count is a non-nullable bigint, so "no cursor" arrives as 0
+	// (count is always >= 1). The predicate used to test IS NULL, which
+	// never held: the first page matched no rows and the summary was
+	// always empty. fingerprint sorts DESC to agree with the row-value
+	// comparison; ASC made pages repeat or skip groups that tie on
+	// (count, last_seen_at).
 	ListAppErrorGroups(ctx context.Context, db DBTX, arg ListAppErrorGroupsParams) ([]ListAppErrorGroupsRow, error)
 	// Drill-down rows for one fingerprint. Cursor paginated via
 	// (received_at, request_id). Index path:
