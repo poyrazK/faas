@@ -18,6 +18,8 @@ Public surface:
   parser for the long-lived `/v1/apps/{slug}/logs` endpoint.
 * `ExecutionEvent`, `watch_execution`, `awatch_execution` - typed,
   resumable streams for disposable agent executions.
+* `GregaleReleaseMiddleware` and HTTPX transports - capture and forward the
+  request's project release to managed service calls.
 """
 
 from ._rfc7807 import (
