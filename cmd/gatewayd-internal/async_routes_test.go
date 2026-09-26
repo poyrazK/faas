@@ -80,6 +80,34 @@ func TestAsyncRouteEnqueuerPersistsInvocationEnvelope(t *testing.T) {
 	}
 }
 
+func TestAsyncRouteEnqueuerPersistsExecutionPolicyOverrides(t *testing.T) {
+	store := &fakeAsyncRouteInvocationStore{app: state.App{
+		ID: "app_1", AccountID: "acct_1", RetryPolicyJSON: json.RawMessage(`{"max_attempts":2}`),
+	}}
+	enqueuer := &asyncRouteEnqueuer{store: store}
+	deadline := time.Now().UTC().Add(5 * time.Minute).Truncate(time.Second)
+	accepted, err := enqueuer.EnqueueAsyncRoute(t.Context(), gateway.AsyncRouteRequest{
+		AppID: "app_1", AccountID: "acct_1", Method: "POST", Path: "/reports",
+		Payload:     json.RawMessage(`{}`),
+		RetryPolicy: &api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 1, MaxSeconds: 30, JitterSeconds: 0.2},
+		DeadlineAt:  &deadline,
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	invocation := store.invocations[accepted.ID]
+	var got api.RetryPolicyDTO
+	if err := json.Unmarshal(invocation.RetryPolicyJSON, &got); err != nil {
+		t.Fatalf("decode retry policy %s: %v", invocation.RetryPolicyJSON, err)
+	}
+	if got.MaxAttempts != 4 || got.BaseSeconds != 1 || got.MaxSeconds != 30 || got.JitterSeconds != 0.2 {
+		t.Errorf("retry policy = %+v, want explicit route override rather than app default", got)
+	}
+	if invocation.DeadlineAt == nil || !invocation.DeadlineAt.Equal(deadline) {
+		t.Errorf("deadline_at = %v, want %s", invocation.DeadlineAt, deadline)
+	}
+}
+
 func TestAsyncRouteEnqueuerIdempotencyKeyReturnsExistingInvocation(t *testing.T) {
 	store := &fakeAsyncRouteInvocationStore{app: state.App{ID: "app_1", AccountID: "acct_1", RetryPolicyJSON: json.RawMessage(`{}`)}}
 	enqueuer := &asyncRouteEnqueuer{store: store}
