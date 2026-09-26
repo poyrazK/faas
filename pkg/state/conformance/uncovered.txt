@@ -126,7 +126,6 @@ CreateConsumerKeyForConsumer
 CreateCorsPresetIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions
-CreateCronWithOptions
 CreateCustomDomain
 CreateDeploymentScopeExclusion
 CreateEdgeRule
