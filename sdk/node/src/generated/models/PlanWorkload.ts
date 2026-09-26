@@ -17,7 +17,7 @@ export type PlanWorkload = {
   dockerfile?: string;
   command: Array<string>;
   /**
-   * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies.
+   * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies.
    */
   depends_on?: Array<string>;
   /**

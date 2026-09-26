@@ -62,8 +62,15 @@ func TestStandaloneServiceBindingProjection(t *testing.T) {
 	if !reflect.DeepEqual(bindings, want) {
 		t.Fatalf("bindings = %#v, want %#v", bindings, want)
 	}
-	env := ServiceBindingEnv(map[string]string{"CUSTOM": "kept", "GREGALE_SERVICE_OLD_URL": "stale"}, bindings)
-	if len(env) != 3 || env["CUSTOM"] != "kept" || env["GREGALE_SERVICE_OLD_URL"] != "" || env["GREGALE_SERVICE_BILLING_URL"] != "http://billing.svc.gregale:10080" {
+	env := ServiceBindingEnv(map[string]string{
+		"CUSTOM":                        "kept",
+		"GREGALE_SERVICE_OLD_URL":       "stale",
+		"GREGALE_SERVICE_OLD_HTTPS_URL": "stale",
+	}, bindings)
+	if len(env) != 5 || env["CUSTOM"] != "kept" || env["GREGALE_SERVICE_OLD_URL"] != "" ||
+		env["GREGALE_SERVICE_BILLING_URL"] != "http://billing.svc.gregale:10080" ||
+		env["GREGALE_SERVICE_BILLING_HTTPS_URL"] != "https://billing.internal" ||
+		env["GREGALE_SERVICE_IDENTITY_HTTPS_URL"] != "https://identity.internal" {
 		t.Fatalf("env = %#v", env)
 	}
 	if empty := ServiceBindingEnv(env, nil); !reflect.DeepEqual(empty, map[string]string{"CUSTOM": "kept"}) {

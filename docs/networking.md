@@ -202,6 +202,15 @@ services:
 environment. The dependency graph is validated before anything deploys —
 unknown names, self-edges, and ambiguous names are rejected.
 
+Each binding also has an additive HTTPS canary variable, for example
+`GREGALE_SERVICE_BILLING_HTTPS_URL=https://billing.internal`. The existing
+`GREGALE_SERVICE_BILLING_URL=http://billing.svc.gregale:10080` remains unchanged.
+Applications must explicitly choose the HTTPS variable, and should do so only
+after the private HTTPS listener and workload CA trust are enabled on their
+compute path. An unavailable HTTPS endpoint fails normally; Gregale does not
+silently retry over HTTP. Standalone bindings, project workloads, and preview
+environments receive the same pair of variables.
+
 The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, and queue
 bindings. New project workloads use the `declared` caller policy: the gateway
@@ -273,8 +282,9 @@ verifier. For example, `curl https://billing.internal/` and
 `requests.get("https://billing.internal/")` verify TLS normally; verification
 is never disabled. The raw CA also remains available at
 `/etc/faas/service-proxy-ca.crt` for explicit client-specific selection.
-Generated binding URLs remain unchanged. See [ADR-272](adr/272-private-https-service-bindings.md)
-for listener rollout and [ADR-273](adr/273-workload-scoped-service-ca-trust.md)
+The legacy generated binding URLs remain unchanged. See [ADR-274](adr/274-additive-https-service-binding-urls.md)
+for the explicit HTTPS canary variable, [ADR-272](adr/272-private-https-service-bindings.md)
+for listener rollout, and [ADR-273](adr/273-workload-scoped-service-ca-trust.md)
 for guest trust and CA requirements. The alias is never a public ingress
 hostname.
 

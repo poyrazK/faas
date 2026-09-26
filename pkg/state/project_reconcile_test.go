@@ -188,8 +188,9 @@ func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.
 func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 	existing := AppManifest{
 		Env: map[string]string{
-			"CUSTOM":                          "kept",
-			"GREGALE_SERVICE_OLD_SERVICE_URL": "http://old-service.svc.gregale:10080",
+			"CUSTOM":                                "kept",
+			"GREGALE_SERVICE_OLD_SERVICE_URL":       "http://old-service.svc.gregale:10080",
+			"GREGALE_SERVICE_OLD_SERVICE_HTTPS_URL": "https://old-service.internal",
 		},
 		ServiceBindings: []api.AppServiceBinding{{
 			Binding: "GREGALE_SERVICE_OLD_SERVICE_URL",
@@ -198,7 +199,8 @@ func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 	}
 	desired := AppManifest{
 		Env: map[string]string{
-			"GREGALE_SERVICE_API_URL": "http://api.svc.gregale:10080",
+			"GREGALE_SERVICE_API_URL":       "http://api.svc.gregale:10080",
+			"GREGALE_SERVICE_API_HTTPS_URL": "https://api.internal",
 		},
 		ServiceBindings: []api.AppServiceBinding{{
 			Binding: "GREGALE_SERVICE_API_URL",
@@ -208,11 +210,15 @@ func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 	}
 
 	got := mergeProjectManagedManifest(existing, desired)
-	if got.Env["CUSTOM"] != "kept" || got.Env["GREGALE_SERVICE_API_URL"] == "" {
+	if got.Env["CUSTOM"] != "kept" || got.Env["GREGALE_SERVICE_API_URL"] != "http://api.svc.gregale:10080" ||
+		got.Env["GREGALE_SERVICE_API_HTTPS_URL"] != "https://api.internal" {
 		t.Fatalf("merged env = %#v, want custom env and current service binding", got.Env)
 	}
 	if _, ok := got.Env["GREGALE_SERVICE_OLD_SERVICE_URL"]; ok {
 		t.Fatalf("merged env = %#v, stale service binding was retained", got.Env)
+	}
+	if _, ok := got.Env["GREGALE_SERVICE_OLD_SERVICE_HTTPS_URL"]; ok {
+		t.Fatalf("merged env = %#v, stale HTTPS service binding was retained", got.Env)
 	}
 	if len(got.ServiceBindings) != 1 || got.ServiceBindings[0] != desired.ServiceBindings[0] {
 		t.Fatalf("service bindings = %#v, want %#v", got.ServiceBindings, desired.ServiceBindings)

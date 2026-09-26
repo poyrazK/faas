@@ -17,7 +17,8 @@ class AppServiceBinding:
     """
 
     binding: str
-    """Platform-owned environment key containing the internal service URL."""
+    """Platform-owned legacy HTTP URL environment key. Bound workloads also receive a companion key with
+    `_HTTPS_URL` in place of `_URL` for explicit private HTTPS canaries."""
     service: str
     """Stable target app name used by private service discovery."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

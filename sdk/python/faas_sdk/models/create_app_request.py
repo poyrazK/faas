@@ -64,8 +64,8 @@ class CreateAppRequest:
     normalized to lowercase, sorted, and deduplicated."""
     service_binding_targets: list[str] | Unset = UNSET
     """Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform
-    derives read-only binding keys and internal URLs. Targets may be declared before they exist. Omit or [] for no
-    bindings."""
+    derives read-only binding keys and internal URLs, including an additive HTTPS canary variable. Targets may be
+    declared before they exist. Omit or [] for no bindings."""
     service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
     """Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only
     service_binding_targets."""

@@ -25,7 +25,7 @@ export type CreateAppRequest = {
    */
   allowed_service_callers?: Array<string>;
   /**
-   * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs. Targets may be declared before they exist. Omit or [] for no bindings.
+   * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including an additive HTTPS canary variable. Targets may be declared before they exist. Omit or [] for no bindings.
    */
   service_binding_targets?: Array<string>;
   /**
