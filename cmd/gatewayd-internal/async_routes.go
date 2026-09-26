@@ -40,6 +40,12 @@ func (e *asyncRouteEnqueuer) EnqueueAsyncRoute(ctx context.Context, req gateway.
 		invocationID = uuid.NewSHA1(asyncRouteInvocationNamespace, []byte(req.AppID+"\x00"+req.IdempotencyKey)).String()
 	}
 	retryPolicy := app.RetryPolicyJSON
+	if req.RetryPolicy != nil {
+		retryPolicy, err = json.Marshal(req.RetryPolicy)
+		if err != nil {
+			return gateway.AsyncRouteAccepted{}, err
+		}
+	}
 	if string(retryPolicy) == "{}" {
 		retryPolicy = nil
 	}
@@ -54,6 +60,7 @@ func (e *asyncRouteEnqueuer) EnqueueAsyncRoute(ctx context.Context, req gateway.
 		Headers:                headers,
 		DueAt:                  time.Now().UTC(),
 		RetryPolicyJSON:        append(json.RawMessage(nil), retryPolicy...),
+		DeadlineAt:             req.DeadlineAt,
 		OnSuccessDestinationID: req.OnSuccessWebhook,
 		OnFailureDestinationID: req.OnFailureWebhook,
 	})

@@ -49,6 +49,30 @@ invocation permanently fails or exhausts its retry budget. Webhook delivery
 has its own retry and dead-letter lifecycle, so a downstream outage does not
 change the invocation result.
 
+Async edge rules can also set their own retry curve and maximum invocation
+age instead of inheriting the app retry curve and plan deadline:
+
+```json
+{
+  "retry_policy": {
+    "max_attempts": 4,
+    "base_seconds": 1,
+    "max_seconds": 30,
+    "jitter_seconds": 0.2
+  },
+  "max_age_seconds": 600,
+  "on_failure": "WEBHOOK_ID"
+}
+```
+
+`max_attempts` includes the initial attempt; the current plan caps the retry
+budget. `max_age_seconds` starts when the edge accepts the request and is
+clamped to the plan's maximum invocation deadline. Omit either setting (or
+use zero for maximum age) to keep the existing app/plan default. The CLI
+equivalents are `--async-max-attempts`, `--async-retry-base-seconds`,
+`--async-retry-max-seconds`, `--async-retry-jitter-seconds`, and
+`--async-max-age-seconds` on `gregale edge-rules create`.
+
 ## Application inbox
 
 For straightforward application-to-application work, send directly to the

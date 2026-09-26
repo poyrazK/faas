@@ -7,20 +7,23 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// EdgeRuleAsyncResolved is the compiled kind=async matcher payload. The action
-// may select terminal webhook destinations; retry and retention policy still
-// come from the existing invocation system.
+// EdgeRuleAsyncResolved is the compiled kind=async matcher payload. Explicit
+// retry and maximum-age controls override the invocation defaults; omitted
+// controls preserve the existing behavior.
 type EdgeRuleAsyncResolved struct {
 	ID               string
 	AccountID        string
 	AppID            string
 	OnSuccessWebhook string
 	OnFailureWebhook string
+	RetryPolicy      *api.RetryPolicyDTO
+	MaxAgeSeconds    int
 	Priority         int
 	PathGlob         string
 	Methods          map[string]bool
@@ -63,6 +66,8 @@ type AsyncRouteRequest struct {
 	AccountID        string
 	OnSuccessWebhook string
 	OnFailureWebhook string
+	RetryPolicy      *api.RetryPolicyDTO
+	DeadlineAt       *time.Time
 	Method           string
 	Path             string
 	Payload          json.RawMessage
@@ -128,17 +133,26 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		return true
 	}
 
+	var retryPolicy *api.RetryPolicyDTO
+	if rule.RetryPolicy != nil {
+		policy := *rule.RetryPolicy
+		policy.MaxAttempts = api.EffectiveRetryMaxAttempts(policy.MaxAttempts, limits.MaxQueueAttempts)
+		retryPolicy = &policy
+	}
 	payload, problem := readAsyncRoutePayload(r, int64(limits.MaxSourceBytesPerInvocation))
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		h.observeAsyncRule(rule, "blocked", "error")
 		return true
 	}
+	deadlineAt := asyncRouteDeadlineAt(time.Now().UTC(), rule.MaxAgeSeconds, limits.MaxAsyncInvocationDeadlineSeconds)
 	accepted, err := h.asyncRoutes.EnqueueAsyncRoute(r.Context(), AsyncRouteRequest{
 		AppID:            app.ID,
 		AccountID:        app.AccountID,
 		OnSuccessWebhook: rule.OnSuccessWebhook,
 		OnFailureWebhook: rule.OnFailureWebhook,
+		RetryPolicy:      retryPolicy,
+		DeadlineAt:       deadlineAt,
 		Method:           r.Method,
 		Path:             r.URL.RequestURI(),
 		Payload:          payload,
@@ -186,6 +200,17 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		})
 	}
 	return true
+}
+
+func asyncRouteDeadlineAt(now time.Time, requestedAgeSeconds, planMaxAgeSeconds int) *time.Time {
+	if planMaxAgeSeconds <= 0 {
+		return nil
+	}
+	if requestedAgeSeconds <= 0 || requestedAgeSeconds > planMaxAgeSeconds {
+		requestedAgeSeconds = planMaxAgeSeconds
+	}
+	deadline := now.UTC().Add(time.Duration(requestedAgeSeconds) * time.Second)
+	return &deadline
 }
 
 func (h *Handler) observeAsyncRule(rule *EdgeRuleAsyncResolved, outcome, result string) {

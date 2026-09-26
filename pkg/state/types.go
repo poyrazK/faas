@@ -7090,13 +7090,15 @@ type EdgeRuleThrottleAction struct {
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
 }
 
-// EdgeRuleAsyncAction selects app webhook subscriptions for terminal
-// outcomes. Matching, payload limits, retry defaults, deadlines, and result
-// retention all reuse the existing durable invocation contract and the
-// account plan's limits.
+// EdgeRuleAsyncAction configures a durable async route. Omitted retry and age
+// controls keep the app and account-plan defaults; explicit values are copied
+// to each accepted invocation and the scheduler still applies current plan
+// caps.
 type EdgeRuleAsyncAction struct {
-	OnSuccess string `json:"on_success,omitempty"`
-	OnFailure string `json:"on_failure,omitempty"`
+	OnSuccess     string              `json:"on_success,omitempty"`
+	OnFailure     string              `json:"on_failure,omitempty"`
+	RetryPolicy   *api.RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int                 `json:"max_age_seconds,omitempty"`
 }
 
 // EdgeRuleAction is the kind-tagged union stored in edge_rules.action

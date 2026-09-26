@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -4765,6 +4766,36 @@ type RetryPolicyDTO struct {
 	JitterSeconds float64 `json:"jitter_seconds,omitempty"`
 }
 
+// Validate checks the shared per-invocation retry override shape. The
+// scheduler still clamps MaxAttempts against the account plan when dispatching
+// so a later downgrade cannot retain a larger retry budget.
+func (p *RetryPolicyDTO) Validate() *Problem {
+	if p == nil {
+		return nil
+	}
+	if p.MaxAttempts < 0 || p.MaxAttempts > DurableRetryMaxAttempts {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", fmt.Sprintf("max_attempts must be between 0 and %d", DurableRetryMaxAttempts))
+	}
+	if p.BaseSeconds < 0 || math.IsNaN(p.BaseSeconds) || math.IsInf(p.BaseSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "base_seconds must be finite and non-negative")
+	}
+	if p.MaxSeconds < 0 || math.IsNaN(p.MaxSeconds) || math.IsInf(p.MaxSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be finite and non-negative")
+	}
+	if p.BaseSeconds > 0 && p.MaxSeconds > 0 && p.MaxSeconds < p.BaseSeconds {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be at least base_seconds")
+	}
+	if p.JitterSeconds < 0 || p.JitterSeconds > 1 || math.IsNaN(p.JitterSeconds) || math.IsInf(p.JitterSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "jitter_seconds must be between 0 and 1")
+	}
+	return nil
+}
+
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
@@ -7736,17 +7767,25 @@ type EdgeRuleRespondAction struct {
 	Body       json.RawMessage `json:"body,omitempty"`
 }
 
-// EdgeRuleAsyncAction configures an async route's terminal destinations.
-// Retry, deadline, retention, and payload limits still come from the app and
-// account plan, keeping an async route's behavior aligned with /invoke/async.
+// EdgeRuleAsyncAction configures an async route's durable execution policy
+// and terminal destinations. Omitted retry and age controls keep the existing
+// app / account-plan defaults.
 type EdgeRuleAsyncAction struct {
-	OnSuccess string `json:"on_success,omitempty"`
-	OnFailure string `json:"on_failure,omitempty"`
+	OnSuccess     string          `json:"on_success,omitempty"`
+	OnFailure     string          `json:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int             `json:"max_age_seconds,omitempty"`
 }
 
 func (a *EdgeRuleAsyncAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("async action is required")
+	}
+	if p := a.RetryPolicy.Validate(); p != nil {
+		return p
+	}
+	if a.MaxAgeSeconds < 0 || a.MaxAgeSeconds > MaxAsyncRouteAgeSeconds {
+		return ErrValidation(fmt.Sprintf("async action: max_age_seconds must be between 0 and %d", MaxAsyncRouteAgeSeconds))
 	}
 	return nil
 }

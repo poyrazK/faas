@@ -31184,9 +31184,11 @@ components:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
         on_success and on_failure optionally select app webhook subscription
-        IDs that receive the terminal job.finished invocation outcome. Retry,
-        deadline, retention, and payload limits come from the existing
-        invocation and account-plan contracts.
+        IDs that receive the terminal job.finished invocation outcome. An
+        optional retry_policy overrides the app retry curve for invocations
+        accepted by this route. max_age_seconds starts when Gregale accepts a
+        request; values above the plan's invocation deadline are clamped.
+        Omitted values preserve existing app and plan defaults.
       type: object
       properties:
         on_success:
@@ -31197,6 +31199,34 @@ components:
           type: string
           format: uuid
           description: Optional app webhook subscription ID for failed or dead-lettered invocations.
+        retry_policy:
+          type: object
+          description: Optional per-route retry override; attempts are capped by the account plan.
+          properties:
+            max_attempts:
+              type: integer
+              minimum: 0
+              maximum: 25
+              description: Total attempts including the first; 0 inherits the plan default.
+            base_seconds:
+              type: number
+              minimum: 0
+              description: Base delay for exponential retry backoff.
+            max_seconds:
+              type: number
+              minimum: 0
+              description: Maximum exponential backoff delay; must be at least base_seconds when both are positive.
+            jitter_seconds:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: Symmetric retry jitter fraction.
+          additionalProperties: false
+        max_age_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: Maximum lifetime from acceptance; 0 or omission inherits the account-plan default, and lower plan ceilings clamp this value.
       additionalProperties: false
 
     EdgeRuleGeoAction:
