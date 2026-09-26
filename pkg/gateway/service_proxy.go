@@ -41,6 +41,9 @@ const (
 	// The node-local resolver answers <slug>.svc.gregale with the tenant
 	// bridge address; the HTTP proxy then authorizes the slug before forwarding.
 	ServiceDiscoveryDomain = "svc.gregale"
+	// ServiceAliasDomain is the binding-scoped short name. Unlike the legacy
+	// suffix, it is available only to callers that declare that service.
+	ServiceAliasDomain = "internal"
 
 	// ServiceCallerEnvHeader tells the target guest which environment the
 	// calling workload belongs to. Only set when it is not production, so a
@@ -137,6 +140,11 @@ type ServiceCaller struct {
 // declared-binding policy. A nil authorizer is a wiring error and fails closed.
 type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID string) (ServiceCaller, error)
 
+// ServiceAliasAllowed checks whether a caller declared the target named by
+// a short .internal Host. It is checked even when the caller's legacy
+// outbound policy is account, so direct Host requests cannot bypass DNS.
+type ServiceAliasAllowed func(ctx context.Context, callerAppID, service string) (bool, error)
+
 // ServiceProxyCallerResolver binds the caller header to the network identity
 // observed by the node-local listener. When it is configured, the resolved
 // identity is authoritative and the caller header becomes an optional
@@ -205,6 +213,7 @@ type ServiceProxyConfig struct {
 	Provider              ServiceEndpointProvider
 	Resolve               ServiceProxyResolver
 	Authorize             ServiceProxyAuthorizer
+	AllowAlias            ServiceAliasAllowed
 	ResolveCaller         ServiceProxyCallerResolver
 	ResolveCallerIdentity ServiceProxyCallerIdentityResolver
 	ResolveRelease        ServiceProxyReleaseResolver
@@ -262,6 +271,7 @@ type ServiceProxy struct {
 	provider              ServiceEndpointProvider
 	resolve               ServiceProxyResolver
 	authorize             ServiceProxyAuthorizer
+	allowAlias            ServiceAliasAllowed
 	resolveCaller         ServiceProxyCallerResolver
 	resolveCallerIdentity ServiceProxyCallerIdentityResolver
 	resolveRelease        ServiceProxyReleaseResolver
@@ -355,6 +365,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		provider:              cfg.Provider,
 		resolve:               cfg.Resolve,
 		authorize:             cfg.Authorize,
+		allowAlias:            cfg.AllowAlias,
 		resolveCaller:         cfg.ResolveCaller,
 		resolveCallerIdentity: cfg.ResolveCallerIdentity,
 		resolveRelease:        cfg.ResolveRelease,
@@ -375,13 +386,14 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 	}
 }
 
-// ServeHTTP accepts /v1/internal/services/{service}[/{path...}] and the
-// guest-facing <service>.svc.gregale Host form. The service segment is
-// resolved to an app; the remaining path is forwarded unchanged.
+// ServeHTTP accepts /v1/internal/services/{service}[/{path...}], the
+// guest-facing <service>.svc.gregale Host form, and a bound
+// <service>.internal alias. The service segment is resolved to an app; the
+// remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	service, targetPath, ok := parseServiceProxyRequest(r)
+	service, targetPath, alias, ok := parseServiceProxyRequest(r)
 	if !ok {
-		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>] or <name>.svc.gregale")
+		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>], <name>.svc.gregale, or a bound <name>.internal")
 		return
 	}
 	// The guest-facing service-proxy listener is a standalone http.Server, not
@@ -463,6 +475,22 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.metrics.IncServiceCall(ServiceCallUnauthenticated)
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
+	}
+	if alias {
+		if p.allowAlias == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorizer is not wired")
+			return
+		}
+		allowed, err := p.allowAlias(dependencyCtx, caller, service)
+		if err != nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorization is unavailable")
+			return
+		}
+		if !allowed {
+			p.metrics.IncServiceCall(ServiceCallBindingDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has not declared this service binding")
+			return
+		}
 	}
 	target, err := p.resolveTarget(dependencyCtx, caller, service)
 	if err != nil {
@@ -743,25 +771,40 @@ func (p *ServiceProxy) countForward(woken bool) {
 }
 
 // parseServiceProxyRequest accepts the original explicit path form and the
-// guest-facing DNS/Host form. The latter lets a workload use a normal URL,
-// for example http://orders.svc.gregale:10080/health, without exposing node
-// addresses or requiring a platform-owned caller header.
-func parseServiceProxyRequest(r *http.Request) (service, targetPath string, ok bool) {
+// guest-facing DNS/Host forms. They let a workload use a normal URL without
+// exposing node addresses or requiring a platform-owned caller header.
+func parseServiceProxyRequest(r *http.Request) (service, targetPath string, alias, ok bool) {
+	aliasService, aliasHost := parseServiceAliasHost(r.Host)
 	if service, targetPath, ok = parseServiceProxyPath(r.URL.Path); ok {
-		return service, targetPath, true
+		if aliasHost && aliasService != service {
+			return "", "", false, false
+		}
+		return service, targetPath, aliasHost, true
 	}
-	service, ok = parseServiceProxyHost(r.Host)
-	if !ok {
-		return "", "", false
+	if aliasHost {
+		service = aliasService
+	} else {
+		service, ok = parseServiceProxyHost(r.Host)
+		if !ok {
+			return "", "", false, false
+		}
 	}
 	targetPath = r.URL.Path
 	if targetPath == "" {
 		targetPath = "/"
 	}
-	return service, targetPath, true
+	return service, targetPath, aliasHost, true
 }
 
 func parseServiceProxyHost(host string) (string, bool) {
+	return parseServiceHostWithDomain(host, ServiceDiscoveryDomain)
+}
+
+func parseServiceAliasHost(host string) (string, bool) {
+	return parseServiceHostWithDomain(host, ServiceAliasDomain)
+}
+
+func parseServiceHostWithDomain(host, domain string) (string, bool) {
 	host = strings.TrimSpace(host)
 	if parsed, _, err := net.SplitHostPort(host); err == nil {
 		host = parsed
@@ -769,7 +812,7 @@ func parseServiceProxyHost(host string) (string, bool) {
 		return "", false
 	}
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	suffix := "." + ServiceDiscoveryDomain
+	suffix := "." + domain
 	if !strings.HasSuffix(host, suffix) {
 		return "", false
 	}

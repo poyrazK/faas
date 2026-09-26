@@ -1,4 +1,4 @@
-# ADR-268: Standalone outbound service bindings
+# ADR-269: Standalone outbound service bindings
 
 - **Status:** accepted
 - **Date:** 2026-09-25
