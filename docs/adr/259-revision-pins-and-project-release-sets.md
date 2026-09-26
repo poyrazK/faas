@@ -1,4 +1,4 @@
-# ADR-245 · Expiring revision pins and project release sets
+# ADR-259 · Expiring revision pins and project release sets
 
 - **Status:** implemented for HTTP ingress, durable invocations, and managed service calls
 - **Date:** 2026-09-25
