@@ -1366,6 +1366,23 @@ func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug, nil, &out)
 }
 
+// GetAppsSlugPolicyStatus reports gateway application of app-cache changes,
+// traffic weights, and edge-rule changes. Edge rules have their own revision
+// sequence in the response. wait may be zero for a snapshot or up to 10
+// seconds for a bounded server-side wait; a pending result remains possible
+// on timeout.
+func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
+	var out RuntimePolicyStatusResponse
+	if wait < 0 || wait > 10*time.Second {
+		return out, fmt.Errorf("runtime policy wait must be between 0 and 10 seconds")
+	}
+	path := "/v1/apps/" + slug + "/policy/status"
+	if wait > 0 {
+		path += "?wait=" + url.QueryEscape(wait.String())
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // UpdateApp applies a partial update to an app.
 func (c *Client) UpdateApp(ctx context.Context, slug string, req UpdateAppRequest) (AppResponse, error) {
 	var out AppResponse

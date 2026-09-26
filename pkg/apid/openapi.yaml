@@ -3818,6 +3818,37 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/policy/status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRuntimePolicyStatus
+      summary: Check whether serving gateways have applied app-cache and traffic changes.
+      description: |
+        Reports the latest durable app/traffic change and the serving gateway
+        fleet's applied position. `active` requires every registered serving
+        gateway to have a fresh observation at or beyond that revision. This
+        attests gateway cache invalidation and traffic weights, not scheduler,
+        VM, or guest-side policy convergence.
+        `unverified` means no revision or no serving fleet can be observed.
+        Other policy kinds are not yet included in this status.
+      parameters:
+        - name: wait
+          in: query
+          description: Optional bounded wait for active state, up to 10s.
+          schema: { type: string, example: 5s }
+      responses:
+        '200':
+          description: Current application state; pending remains possible after wait expires.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimePolicyStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/platform-tenants:
     get:
       tags: [platform-tenants]
@@ -22398,6 +22429,33 @@ components:
       description: "Production target policy for internal service calls from preview apps. `allow` preserves existing behavior; `deny` rejects preview callers before waking the target."
       type: string
       enum: [allow, deny]
+
+    RuntimePolicyStatusResponse:
+      description: Fresh serving-gateway status for app-cache and deployment traffic changes. The edge_rules component reports its separate revision sequence.
+      type: object
+      required: [app_id, desired_revision, state, coverage, serving_gateways, applied_gateways, pending_gateways, stale_gateways, edge_rules]
+      properties:
+        app_id: { type: string }
+        desired_revision: { type: integer, format: int64, minimum: 0, description: Latest desired control-plane revision for app-cache and deployment traffic policy. }
+        state: { type: string, enum: [active, pending, unverified] }
+        coverage: { type: array, items: { type: string }, example: [gateway_app_cache, deployment_traffic] }
+        serving_gateways: { type: integer, minimum: 0 }
+        applied_gateways: { type: integer, minimum: 0 }
+        pending_gateways: { type: integer, minimum: 0 }
+        stale_gateways: { type: integer, minimum: 0 }
+        edge_rules: { $ref: '#/components/schemas/RuntimePolicyComponentStatus' }
+
+    RuntimePolicyComponentStatus:
+      description: Fresh serving-gateway application status for a policy ledger with its own revision sequence.
+      type: object
+      required: [desired_revision, state, serving_gateways, applied_gateways, pending_gateways, stale_gateways]
+      properties:
+        desired_revision: { type: integer, format: int64, minimum: 0 }
+        state: { type: string, enum: [active, pending, unverified] }
+        serving_gateways: { type: integer, minimum: 0 }
+        applied_gateways: { type: integer, minimum: 0 }
+        pending_gateways: { type: integer, minimum: 0 }
+        stale_gateways: { type: integer, minimum: 0 }
 
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."

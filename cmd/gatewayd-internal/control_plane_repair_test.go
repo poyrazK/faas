@@ -45,9 +45,19 @@ func (f *controlPlaneRepairStoreFake) PruneControlPlaneChangeLog(context.Context
 	return 0, nil
 }
 
+func (f *controlPlaneRepairStoreFake) UpsertGatewayControlPlaneWatermark(context.Context, string, string, int64) error {
+	return nil
+}
+
 type controlPlaneRepairInvalidatorFake struct {
-	resetApps []string
-	cacheApps []string
+	resetApps   []string
+	routeApps   []string
+	cacheApps   []string
+	targetApps  []string
+	weightApps  []string
+	refreshes   []string
+	targetError error
+	weightError error
 }
 
 func (f *controlPlaneRepairInvalidatorFake) ResetApp(appID string) {
@@ -56,6 +66,22 @@ func (f *controlPlaneRepairInvalidatorFake) ResetApp(appID string) {
 
 func (f *controlPlaneRepairInvalidatorFake) InvalidateResponseCacheByApp(appID string) {
 	f.cacheApps = append(f.cacheApps, appID)
+}
+
+func (f *controlPlaneRepairInvalidatorFake) InvalidateRoutesForApp(appID string) {
+	f.routeApps = append(f.routeApps, appID)
+}
+
+func (f *controlPlaneRepairInvalidatorFake) RefreshLiveTargets(_ context.Context, appID string) error {
+	f.targetApps = append(f.targetApps, appID)
+	f.refreshes = append(f.refreshes, "targets:"+appID)
+	return f.targetError
+}
+
+func (f *controlPlaneRepairInvalidatorFake) RefreshDeploymentWeights(_ context.Context, appID string) error {
+	f.weightApps = append(f.weightApps, appID)
+	f.refreshes = append(f.refreshes, "weights:"+appID)
+	return f.weightError
 }
 
 func TestRepairDurableControlPlaneChangesCoalescesApps(t *testing.T) {
@@ -80,6 +106,53 @@ func TestRepairDurableControlPlaneChangesCoalescesApps(t *testing.T) {
 	}
 	if len(inv.cacheApps) != 2 || inv.cacheApps[0] != "app-a" || inv.cacheApps[1] != "app-b" {
 		t.Fatalf("cache apps = %v, want one invalidation per app", inv.cacheApps)
+	}
+	if len(inv.routeApps) != 2 || inv.routeApps[0] != "app-a" || inv.routeApps[1] != "app-b" {
+		t.Fatalf("route apps = %v, want one invalidation per app", inv.routeApps)
+	}
+	if len(inv.weightApps) != 0 || len(inv.targetApps) != 0 {
+		t.Fatalf("app-only changes refreshed deployments: targets %v weights %v", inv.targetApps, inv.weightApps)
+	}
+}
+
+func TestRepairDurableControlPlaneChangesRefreshesTrafficOncePerApp(t *testing.T) {
+	store := &controlPlaneRepairStoreFake{changes: []state.ControlPlaneChange{
+		{ID: 8, ResourceType: "deployment_traffic", AppID: "app-a", Operation: "updated"},
+		{ID: 9, ResourceType: "deployment_traffic", AppID: "app-a", Operation: "updated"},
+	}}
+	inv := new(controlPlaneRepairInvalidatorFake)
+	lastID := int64(7)
+	rows, err := repairDurableControlPlaneChanges(context.Background(), store, inv, &lastID, nil)
+	if err != nil || rows != 2 || lastID != 9 {
+		t.Fatalf("repair = rows %d, cursor %d, err %v; want 2, 9, nil", rows, lastID, err)
+	}
+	if len(inv.targetApps) != 1 || inv.targetApps[0] != "app-a" || len(inv.weightApps) != 1 || inv.weightApps[0] != "app-a" {
+		t.Fatalf("traffic refresh = targets %v weights %v; want app-a once each", inv.targetApps, inv.weightApps)
+	}
+	if len(inv.refreshes) != 2 || inv.refreshes[0] != "targets:app-a" || inv.refreshes[1] != "weights:app-a" {
+		t.Fatalf("refresh order = %v, want targets before weights", inv.refreshes)
+	}
+	if len(inv.cacheApps) != 1 || inv.cacheApps[0] != "app-a" {
+		t.Fatalf("cache invalidations = %v; want app-a", inv.cacheApps)
+	}
+}
+
+func TestRepairDurableControlPlaneChangesRetriesFailedTrafficRefresh(t *testing.T) {
+	store := &controlPlaneRepairStoreFake{changes: []state.ControlPlaneChange{
+		{ID: 8, ResourceType: "deployment_traffic", AppID: "app-a", Operation: "updated"},
+	}}
+	wantErr := errors.New("weight store unavailable")
+	inv := &controlPlaneRepairInvalidatorFake{weightError: wantErr}
+	lastID := int64(7)
+	if _, err := repairDurableControlPlaneChanges(context.Background(), store, inv, &lastID, nil); !errors.Is(err, wantErr) {
+		t.Fatalf("refresh error = %v, want %v", err, wantErr)
+	}
+	if lastID != 7 {
+		t.Fatalf("cursor = %d, want unchanged 7", lastID)
+	}
+	inv.weightError = nil
+	if rows, err := repairDurableControlPlaneChanges(context.Background(), store, inv, &lastID, nil); err != nil || rows != 1 || lastID != 8 {
+		t.Fatalf("retry = rows %d, cursor %d, err %v; want 1, 8, nil", rows, lastID, err)
 	}
 }
 
