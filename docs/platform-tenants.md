@@ -75,6 +75,18 @@ Content-Type: application/json
 
 One admitted request consumes one unit even if its guest later fails. The gate runs after ordinary app/account limits but before request buffering or waking an instance. At the ceiling, Gregale returns `429 tenant_request_budget_exceeded`, `Retry-After`, and `x-faas-rate-limit-scope: platform-tenant`; rejected requests are not billed. If the authoritative counter cannot be checked, tenant-attributed traffic returns `503 tenant_request_budget_unavailable` rather than relying on a replica-local fallback. This is an admission control, not an exact monetary spend cap or an invoice. See [ADR-240](adr/240-platform-tenant-request-budgets.md).
 
+## Triage one customer's request activity across apps
+
+Use the account-scoped activity view to inspect recent retained debugger evidence for a customer:
+
+```http
+GET /v1/account/platform-tenants/{id}/activity?since=24h&status=503&limit=100
+```
+
+Optionally filter by `app_id` and continue with the opaque `next_cursor`. The endpoint is gated by the account's debugger plan and clamps its lookback to plan retention. Each row identifies its app and includes safe diagnostic metadata such as route template, status, latency bucket, deployment, and request/trace ID when present. Publisher-collapsed rows include a `count`; page totals weight by that count. This is sampled, retention-bound diagnostic evidence—not a complete request log, billing ledger, or guarantee that every failed request was captured. Request/response bodies, headers, and credentials are never exposed. See [ADR-246](adr/246-platform-tenant-request-activity.md).
+
+The equivalent CLI is `gregale platform-tenants activity --id <tenant-uuid> --since 24h --status 503`; use `--cursor <next_cursor>` to page through results. Add `--json` when a support workflow needs machine-readable output.
+
 ## Consolidate usage across apps
 
 Create a statement for an explicit UTC-minute period after configuring each app's versioned API-consumer rate cards:

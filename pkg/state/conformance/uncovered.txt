@@ -418,6 +418,7 @@ ListProjectsForAccount
 ListQueueBindingsForApp
 ListRecentEventsForAccount
 ListRequestTelemetryByApp
+ListRequestTelemetryByPlatformTenant
 ListRequestTelemetryDependencySpans
 ListRunningInstancesOnDeadNodes
 ListRuntimeConfigRevisions

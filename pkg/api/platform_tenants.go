@@ -165,6 +165,48 @@ type PlatformTenantUsageResponse struct {
 	AsOf          time.Time                           `json:"as_of"`
 }
 
+// PlatformTenantActivityItem couples a sampled request-debugger row with the
+// app that served it. The request payload deliberately excludes request and
+// response bodies, headers, and credentials.
+type PlatformTenantActivityItem struct {
+	AppID   string                    `json:"app_id"`
+	Request DebugTelemetryRequestItem `json:"request"`
+}
+
+// PlatformTenantActivityResponse is a bounded page over retained debugger
+// evidence, not a complete request ledger. RequestCount and ErrorCount are
+// weighted by each collapsed telemetry row's Count value.
+type PlatformTenantActivityResponse struct {
+	TenantID                string                        `json:"tenant_id"`
+	Since                   string                        `json:"since"`
+	WindowStart             time.Time                     `json:"window_start"`
+	WindowEnd               time.Time                     `json:"window_end"`
+	PlanRetentionDays       int                           `json:"plan_retention_days"`
+	RetentionClamped        bool                          `json:"retention_clamped"`
+	PageTelemetryRows       int64                         `json:"page_telemetry_rows"`
+	PageRepresentedRequests int64                         `json:"page_represented_requests"`
+	PageErrorRequests       int64                         `json:"page_error_requests"`
+	PageComplete            bool                          `json:"page_complete"`
+	NextCursor              string                        `json:"next_cursor,omitempty"`
+	Filters                 PlatformTenantActivityFilters `json:"filters"`
+	Requests                []PlatformTenantActivityItem  `json:"requests"`
+}
+
+type PlatformTenantActivityFilters struct {
+	AppID  string `json:"app_id,omitempty"`
+	Status int    `json:"status,omitempty"`
+}
+
+// PlatformTenantActivityOptions filters and paginates the tenant activity
+// evidence endpoint. Cursor values are opaque and should be reused verbatim.
+type PlatformTenantActivityOptions struct {
+	Since  string
+	AppID  string
+	Status int
+	Cursor string
+	Limit  int
+}
+
 // Tenant statement revisions are additive. Revision 1 is the initial period
 // snapshot; later revisions contain only usage delivered after prior ones.
 type PlatformTenantStatementLineResponse struct {

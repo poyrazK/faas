@@ -3572,6 +3572,7 @@ CREATE TABLE public.request_telemetry (
     deployment_tag text DEFAULT ''::text NOT NULL,
     deployment_created_at text DEFAULT ''::text NOT NULL,
     image_digest text DEFAULT ''::text NOT NULL,
+    platform_tenant_id uuid,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),

@@ -4320,7 +4320,8 @@ INSERT INTO request_telemetry (
     status, latency_ms, cold_boot, trace_id, received_at, count,
     ua_family, referrer_host, country, wake_id, instance_id,
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
-    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest
+    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
+    platform_tenant_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -4334,7 +4335,8 @@ INSERT INTO request_telemetry (
     $24::text,
     $25::text,
     $26::text,
-    $27::text
+    $27::text,
+    $28::uuid
 )
 `
 
@@ -4366,6 +4368,7 @@ type InsertRequestTelemetryParams struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
+	PlatformTenantID    pgtype.UUID
 }
 
 // ---------------------------------------------------------------------------
@@ -4431,6 +4434,7 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.DeploymentTag,
 		arg.DeploymentCreatedAt,
 		arg.ImageDigest,
+		arg.PlatformTenantID,
 	)
 	return err
 }
@@ -6942,6 +6946,125 @@ func (q *Queries) ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg Li
 		var i ListRequestTelemetryByAppRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.DeploymentID,
+			&i.Route,
+			&i.Method,
+			&i.Status,
+			&i.LatencyMs,
+			&i.Count,
+			&i.ColdBoot,
+			&i.TraceID,
+			&i.ReceivedAt,
+			&i.WakeID,
+			&i.InstanceID,
+			&i.GuestDurationMs,
+			&i.GuestRuntime,
+			&i.GuestOutcome,
+			&i.GuestErrorClass,
+			&i.ConsumerID,
+			&i.NodeID,
+			&i.Region,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.ImageDigest,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRequestTelemetryByPlatformTenant = `-- name: ListRequestTelemetryByPlatformTenant :many
+SELECT id, app_id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
+FROM request_telemetry
+WHERE account_id = $1
+  AND platform_tenant_id = $2
+  AND received_at >= $3
+  AND received_at < $4
+  AND ($5::timestamptz IS NULL
+       OR (received_at, id) < ($5::timestamptz,
+                               $6::uuid))
+  AND ($7::text = ''
+       OR app_id = NULLIF($7::text, '')::uuid)
+  AND ($8::int = 0
+       OR status = $8::int)
+ORDER BY received_at DESC, id DESC
+LIMIT $9::int
+`
+
+type ListRequestTelemetryByPlatformTenantParams struct {
+	AccountID        pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	ReceivedFrom     pgtype.Timestamptz
+	ReceivedUntil    pgtype.Timestamptz
+	CursorReceivedAt pgtype.Timestamptz
+	CursorID         pgtype.UUID
+	AppIDFilter      string
+	StatusFilter     int32
+	Limit            int32
+}
+
+type ListRequestTelemetryByPlatformTenantRow struct {
+	ID                  pgtype.UUID
+	AppID               pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	Count               int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+}
+
+// Cross-app support view for a platform customer. Always constrain by both
+// owning account and the immutable request-time tenant snapshot; do not infer
+// attribution by joining today's consumer/surface links.
+func (q *Queries) ListRequestTelemetryByPlatformTenant(ctx context.Context, db DBTX, arg ListRequestTelemetryByPlatformTenantParams) ([]ListRequestTelemetryByPlatformTenantRow, error) {
+	rows, err := db.Query(ctx, listRequestTelemetryByPlatformTenant,
+		arg.AccountID,
+		arg.PlatformTenantID,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.CursorReceivedAt,
+		arg.CursorID,
+		arg.AppIDFilter,
+		arg.StatusFilter,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRequestTelemetryByPlatformTenantRow{}
+	for rows.Next() {
+		var i ListRequestTelemetryByPlatformTenantRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
 			&i.DeploymentID,
 			&i.Route,
 			&i.Method,

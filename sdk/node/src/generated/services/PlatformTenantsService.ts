@@ -16,6 +16,7 @@ import type { CreatePlatformTenantWebhookRequest } from '../models/CreatePlatfor
 import type { LinkPlatformTenantConsumerRequest } from '../models/LinkPlatformTenantConsumerRequest.js';
 import type { LinkPlatformTenantSurfaceRequest } from '../models/LinkPlatformTenantSurfaceRequest.js';
 import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
+import type { PlatformTenantActivityResponse } from '../models/PlatformTenantActivityResponse.js';
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
 import type { PlatformTenantDetailResponse } from '../models/PlatformTenantDetailResponse.js';
 import type { PlatformTenantListResponse } from '../models/PlatformTenantListResponse.js';
@@ -335,6 +336,65 @@ export class PlatformTenantsService {
         'until': until,
       },
       errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read retained request-debugger evidence across a platform tenant's apps.
+   * This plan-gated support view returns only bounded debugger evidence carrying request-time tenant attribution. It is sampled/retained evidence, not a complete request ledger or billing source of truth. Bodies, headers, and credentials are never returned.
+   * @returns PlatformTenantActivityResponse One bounded page of observed request telemetry; represented request counts are weighted by collapsed rows.
+   * @throws ApiError
+   */
+  public static listPlatformTenantActivity({
+    id,
+    since,
+    appId,
+    status,
+    limit = 100,
+    cursor,
+  }: {
+    /**
+     * Platform tenant whose cross-app request evidence is requested.
+     */
+    id: string,
+    /**
+     * Positive duration such as 30m, 24h, or 3d; defaults to 24h and is clamped to plan retention.
+     */
+    since?: string,
+    /**
+     * Restrict to one app UUID; results remain scoped to this tenant's request-time attribution.
+     */
+    appId?: string,
+    /**
+     * Restrict to one HTTP response status.
+     */
+    status?: number,
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number,
+    /**
+     * Opaque cursor from the previous page; it pins the time window and filters.
+     */
+    cursor?: string,
+  }): CancelablePromise<PlatformTenantActivityResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/activity',
+      path: {
+        'id': id,
+      },
+      query: {
+        'since': since,
+        'app_id': appId,
+        'status': status,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
       },
     });
