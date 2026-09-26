@@ -105,6 +105,117 @@ func TestCmdBindingsVerifyRejectsUndeclaredServiceBeforeTaskAdmission(t *testing
 	}
 }
 
+func TestCmdBindingsVerifyAllAggregatesEveryDeclaredService(t *testing.T) {
+	var created []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{
+				ID: "app-1", Slug: "api",
+				ServiceBindings: []api.AppServiceBinding{
+					{Binding: "GREGALE_SERVICE_EMAIL_URL", Service: "email"},
+					{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
+			var request api.CreateAppTaskRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode create task: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if len(request.Command) != 2 || request.Command[0] != api.AppTaskServiceBindingProbeCommand || request.CommandShell {
+				t.Errorf("task command = %+v", request)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			service := request.Command[1]
+			created = append(created, service)
+			report := api.ServiceBindingProbeReport{
+				Service:       service,
+				URL:           "https://" + service + ".internal",
+				DNS:           api.ServiceBindingProbeCheck{Status: "passed"},
+				TLS:           api.ServiceBindingProbeCheck{Status: "passed"},
+				Authorization: api.ServiceBindingProbeCheck{Status: "passed"},
+				Routing:       api.ServiceBindingProbeCheck{Status: "passed"},
+			}
+			if service == "email" {
+				report.TLS = api.ServiceBindingProbeCheck{Status: "failed", Detail: "certificate was not trusted"}
+				report.Authorization = api.ServiceBindingProbeCheck{Status: "not_checked"}
+				report.Routing = api.ServiceBindingProbeCheck{Status: "not_checked"}
+				report.Error = "TLS certificate verification failed"
+			}
+			reportJSON, err := json.Marshal(report)
+			if err != nil {
+				t.Errorf("marshal report: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(api.AppTaskResponse{
+				ID: "task-" + service, AppID: "app-1", DeploymentID: "deployment-1",
+				Kind: api.AppTaskKindManual, Status: api.AppTaskStatusSucceeded, StdoutTail: string(reportJSON),
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	previousJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = previousJSON })
+	var out bytes.Buffer
+	previousOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previousOut })
+
+	if code := run([]string{"bindings", "verify", "api", "--all", "--poll-interval=1ms", "--wait-timeout=1s"}); code != 1 {
+		t.Fatalf("exit = %d, want 1 when a binding fails; output = %s", code, out.String())
+	}
+	if !reflect.DeepEqual(created, []string{"billing", "email"}) {
+		t.Fatalf("verified services = %v, want stable sorted list", created)
+	}
+	var got serviceBindingProbeBatchReport
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode batch report: %v; output=%s", err, out.String())
+	}
+	if got.App != "api" || got.Total != 2 || got.Checked != 2 || got.Passed != 1 || got.Failed != 1 || len(got.Bindings) != 2 {
+		t.Fatalf("batch summary = %+v", got)
+	}
+	if got.Bindings[0].Status != "passed" || got.Bindings[0].Service != "billing" {
+		t.Fatalf("first binding result = %+v, want passing billing result", got.Bindings[0])
+	}
+	if got.Bindings[1].Status != "failed" || got.Bindings[1].Service != "email" || got.Bindings[1].Report.TLS.Status != "failed" {
+		t.Fatalf("second binding result = %+v, want failed email TLS result", got.Bindings[1])
+	}
+}
+
+func TestCmdBindingsVerifyAllRejectsAppsWithoutServiceBindings(t *testing.T) {
+	var createCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api" {
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "api"})
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks" {
+			createCalls++
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	if code := run([]string{"bindings", "verify", "api", "--all"}); code == 0 {
+		t.Fatal("verification succeeded with no declared service bindings")
+	}
+	if createCalls != 0 {
+		t.Fatalf("created %d canary task(s) with no bindings", createCalls)
+	}
+}
+
 func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
