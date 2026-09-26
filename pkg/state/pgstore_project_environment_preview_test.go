@@ -38,7 +38,10 @@ func TestPgProjectEnvironmentPreviewLifecycle(t *testing.T) {
 	if err != nil || environment.PreviewState != state.ProjectEnvironmentPreviewOpen || environment.PreviewHeadSHA != shaB {
 		t.Fatalf("updated preview = %+v err=%v", environment, err)
 	}
-	closedUntil := time.Now().UTC().Add(state.ProjectEnvironmentPreviewCloseGrace)
+	// PostgreSQL timestamps have microsecond precision; normalize the expected
+	// value so this persistence assertion does not compare against discarded
+	// nanoseconds from time.Now().
+	closedUntil := time.Now().UTC().Add(state.ProjectEnvironmentPreviewCloseGrace).Truncate(time.Microsecond)
 	environment, err = store.CloseProjectEnvironmentPreview(ctx, account.ID, project.ID, 381, closedUntil)
 	if err != nil || environment.PreviewState != state.ProjectEnvironmentPreviewClosed ||
 		environment.PreviewExpiresAt == nil || !environment.PreviewExpiresAt.Equal(closedUntil) {

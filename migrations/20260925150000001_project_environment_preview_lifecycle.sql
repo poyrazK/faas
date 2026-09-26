@@ -11,15 +11,26 @@ UPDATE project_environments
        preview_expires_at = coalesce(preview_expires_at, now() + interval '7 days')
  WHERE preview_pr_number IS NOT NULL;
 
-ALTER TABLE project_environments
-    ADD CONSTRAINT project_environments_preview_lifecycle_chk
-    CHECK (
-        (preview_pr_number IS NULL AND preview_state IS NULL AND preview_expires_at IS NULL)
-        OR (preview_pr_number IS NOT NULL
-            AND preview_state IS NOT NULL
-            AND preview_state IN ('open', 'closed', 'tearing_down')
-            AND preview_expires_at IS NOT NULL)
-    );
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_constraint
+        WHERE conname = 'project_environments_preview_lifecycle_chk'
+          AND conrelid = 'project_environments'::regclass
+    ) THEN
+        ALTER TABLE project_environments
+            ADD CONSTRAINT project_environments_preview_lifecycle_chk
+            CHECK (
+                (preview_pr_number IS NULL AND preview_state IS NULL AND preview_expires_at IS NULL)
+                OR (preview_pr_number IS NOT NULL
+                    AND preview_state IS NOT NULL
+                    AND preview_state IN ('open', 'closed', 'tearing_down')
+                    AND preview_expires_at IS NOT NULL)
+            );
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 CREATE INDEX IF NOT EXISTS project_environments_preview_expiry_idx
     ON project_environments (preview_expires_at, id)
