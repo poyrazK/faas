@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 272 | [Opt-in private HTTPS for service bindings](272-private-https-service-bindings.md) | accepted | Dedicated private CA, bridge-only TLS listener, and guest CA bundle without changing generated URLs |
 | 271 | [Binding-scoped private service aliases](271-binding-scoped-internal-aliases.md) | accepted | Declared bindings gain private `<service>.internal:10080` names without claiming unbound customer DNS or bypassing proxy authorization |
 | 269 | [Standalone outbound service bindings](269-standalone-outbound-service-bindings.md) | accepted | Standalone callers declare bounded targets and opt in to enforced outbound policy while legacy apps retain account access |
 | 267 | [Standalone app service-caller policy API](267-standalone-service-caller-policy-api.md) | accepted | Create/PATCH target allowlists with replace, deny-all, and reset semantics; project-owned policy remains source-managed |

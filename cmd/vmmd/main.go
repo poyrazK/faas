@@ -527,6 +527,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// only re-renders the nftables ruleset from compile-time
 	// defaults. The setter is invoked exactly once per process.
 	netns.SetDefaultHostBridgeIP(parsedBridge.Masked().Addr().Next())
+	serviceProxyCAPEM, caErr := loadServiceProxyCA(cfg.ServiceProxyCAPath)
+	if caErr != nil {
+		return caErr
+	}
+	// Keep the :443 admission rule coupled to trust delivery. Both remain
+	// disabled unless the operator explicitly configures the private CA.
+	netns.SetDefaultServiceProxyHTTPS(len(serviceProxyCAPEM) > 0)
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
 	// any wake can trigger a render; otherwise the package default (eth0)
@@ -874,6 +881,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer stopArchive()
 	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
+		WithServiceProxyCA(serviceProxyCAPEM).
 		// Same registry the Manager gets below, so per-artifact
 		// materialization lands next to the wake phases in one scrape.
 		WithWakePhaseMetrics(wpm).

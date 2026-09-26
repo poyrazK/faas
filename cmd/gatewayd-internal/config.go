@@ -45,6 +45,14 @@ type Config struct {
 	// proxy port; the sibling DNS resolver is started on the same address at
 	// port 53. Empty disables the guest-facing listener and resolver.
 	ServiceProxyListen string `toml:"service_proxy_listen"`
+	// ServiceProxyHTTPSListen enables the opt-in, bridge-only HTTPS endpoint
+	// for binding-scoped <service>.internal aliases. Empty keeps the legacy
+	// plaintext endpoint unchanged. The CA is dedicated to guest service TLS,
+	// not the daemon-to-daemon mTLS trust domain.
+	ServiceProxyHTTPSListen string `toml:"service_proxy_https_listen"`
+	ServiceProxyTLSCertPath string `toml:"service_proxy_tls_cert_path"`
+	ServiceProxyTLSKeyPath  string `toml:"service_proxy_tls_key_path"`
+	ServiceProxyTLSCAPath   string `toml:"service_proxy_tls_ca_path"`
 
 	// AppsDomain is the platform wildcard suffix (e.g. "gregale.dev").
 	// gatewayd routes <slug>.<apps_domain> to the customer's app and

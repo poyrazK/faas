@@ -138,6 +138,7 @@ var HostKeys = map[string]HostBlock{
 			"advisory_client_cert_path",
 			"advisory_client_key_path",
 			"advisory_client_ca_path",
+			"service_proxy_ca_path",
 		},
 		ComputeNodeBlock: []TableKey{
 			// Self-registration identity — the vmmd box tells
@@ -252,6 +253,10 @@ var HostKeys = map[string]HostBlock{
 			"egress_tls_cert_path",
 			"egress_tls_key_path",
 			"egress_tls_ca_path",
+			"service_proxy_https_listen",
+			"service_proxy_tls_cert_path",
+			"service_proxy_tls_key_path",
+			"service_proxy_tls_ca_path",
 		},
 		ComputeNodeBlock: nil,
 	},

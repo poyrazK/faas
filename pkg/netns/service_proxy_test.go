@@ -51,6 +51,18 @@ func TestNftCommandsAdmitGuestServiceProxyOnlyOnHostBridge(t *testing.T) {
 	}
 }
 
+func TestServiceProxyHTTPSFirewallIsOptIn(t *testing.T) {
+	config := NewConfigWithBridge("instance-1", "fc-instance-1", "veth-host", "veth-peer", netip.MustParseAddr("10.100.0.7"), netip.MustParseAddr("10.100.0.1"))
+	want := []string{"iifname", "tap0", "ip", "daddr", "10.100.0.1", "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept"}
+	if containsSequenceInCommands(config.NftCommands(), want) {
+		t.Fatal("guest :443 admission enabled without CA opt-in")
+	}
+	config.ServiceProxyHTTPS = true
+	if !containsSequenceInCommands(config.NftCommands(), want) {
+		t.Fatal("guest :443 admission absent after opt-in")
+	}
+}
+
 func containsSequenceInCommands(commands [][]string, want []string) bool {
 	for _, command := range commands {
 		if containsSequence(command, want) {
