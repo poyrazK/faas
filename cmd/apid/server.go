@@ -2002,6 +2002,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getWorkflowRun))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}/steps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowSteps))))
+	mux.HandleFunc("GET /v1/workflows/runs/{id}/steps/{step}/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowStepAttempts))))
 	mux.HandleFunc("GET /v1/workflows/runs/{id}/callbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowCallbacks))))
 	mux.HandleFunc("POST /v1/workflows/runs/{id}/callbacks/{callback_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.completeWorkflowCallback))))
 	mux.HandleFunc("PUT /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putWorkflowCallbackWebhookBinding))))

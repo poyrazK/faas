@@ -16,7 +16,7 @@ var workflowUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 
 func cmdWorkflows(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows <list|run|status|steps|cancel|events>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows <list|run|status|steps|attempts|cancel|events>", "workflows")
 		return 1
 	}
 	switch args[0] {
@@ -28,6 +28,8 @@ func cmdWorkflows(args []string) int {
 		return cmdWorkflowsStatus(args[1:])
 	case "steps":
 		return cmdWorkflowsSteps(args[1:])
+	case "attempts":
+		return cmdWorkflowsAttempts(args[1:])
 	case "cancel":
 		return cmdWorkflowsCancel(args[1:])
 	case "events":
@@ -208,6 +210,35 @@ func cmdWorkflowsSteps(args []string) int {
 	return 0
 }
 
+func cmdWorkflowsAttempts(args []string) int {
+	if len(args) != 2 {
+		PrintUsage(os.Stderr, "usage: gregale workflows attempts <run_id> <step_name>", "workflows")
+		return 1
+	}
+	runID, stepName := args[0], args[1]
+	if !workflowUUIDPattern.MatchString(runID) {
+		fmt.Fprintf(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
+		return 1
+	}
+	if stepName == "" {
+		fmt.Fprintln(os.Stderr, "error: step name is required")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.ListWorkflowStepAttempts(context.Background(), runID, stepName)
+	if err != nil {
+		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeNDJSON(resp.Attempts))
+	}
+	renderWorkflowStepAttemptsTable(osStdout, resp.Attempts)
+	return 0
+}
+
 func cmdWorkflowsCancel(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale workflows cancel <run_id>", "workflows")
@@ -304,5 +335,29 @@ func renderWorkflowStepsTable(w io.Writer, steps []api.WorkflowStepResponse) {
 	_, _ = fmt.Fprintf(w, "%-20s  %-15s  %-8s  %-20s\n", "STEP NAME", "STATUS", "ATTEMPT", "CREATED AT")
 	for _, s := range steps {
 		_, _ = fmt.Fprintf(w, "%-20s  %-15s  %-8d  %-20s\n", s.StepName, s.Status, s.Attempt, s.CreatedAt)
+	}
+}
+
+func renderWorkflowStepAttemptsTable(w io.Writer, attempts []api.WorkflowStepAttemptResponse) {
+	if len(attempts) == 0 {
+		_, _ = fmt.Fprintln(w, "No attempts recorded.")
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%-8s  %-10s  %-6s  %-25s  %-25s  %-25s\n", "ATTEMPT", "STATUS", "HTTP", "STARTED AT", "FINISHED AT", "NEXT ATTEMPT")
+	for _, a := range attempts {
+		httpStatus, finishedAt, nextAttemptAt := "-", "-", "-"
+		if a.HTTPStatus != nil {
+			httpStatus = fmt.Sprint(*a.HTTPStatus)
+		}
+		if a.FinishedAt != nil {
+			finishedAt = *a.FinishedAt
+		}
+		if a.NextAttemptAt != nil {
+			nextAttemptAt = *a.NextAttemptAt
+		}
+		_, _ = fmt.Fprintf(w, "%-8d  %-10s  %-6s  %-25s  %-25s  %-25s\n", a.Attempt, a.Status, httpStatus, a.StartedAt, finishedAt, nextAttemptAt)
+		if a.Error != nil && *a.Error != "" {
+			_, _ = fmt.Fprintf(w, "  error: %s\n", *a.Error)
+		}
 	}
 }

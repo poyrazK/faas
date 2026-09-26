@@ -32,9 +32,17 @@ const (
 	WorkflowStepStatusSkipped       = "skipped"
 )
 
+const (
+	WorkflowAttemptStatusRunning   = "running"
+	WorkflowAttemptStatusRetrying  = "retrying"
+	WorkflowAttemptStatusSucceeded = "succeeded"
+	WorkflowAttemptStatusFailed    = "failed"
+)
+
 var (
 	ErrWorkflowRunNotFound       = errors.New("state: workflow run not found")
 	ErrWorkflowStepNotFound      = errors.New("state: workflow step not found")
+	ErrWorkflowAttemptNotFound   = errors.New("state: workflow step attempt not found")
 	ErrWorkflowEventNotFound     = errors.New("state: workflow event not found")
 	ErrWorkflowNotRunning        = errors.New("state: workflow run is not in running state")
 	ErrWorkflowInvalidStatus     = errors.New("state: invalid workflow status")
@@ -74,6 +82,13 @@ func validateWorkflowStepStatus(status string) error {
 	}
 }
 
+func validateWorkflowHTTPStatus(status *int) error {
+	if status != nil && (*status < 100 || *status > 599) {
+		return fmt.Errorf("%w: HTTP status must be between 100 and 599", ErrWorkflowInvalidRecord)
+	}
+	return nil
+}
+
 func validateWorkflowJSON(raw json.RawMessage, required bool) error {
 	if len(raw) == 0 {
 		if required {
@@ -92,6 +107,30 @@ func cloneWorkflowJSON(raw json.RawMessage) json.RawMessage {
 		return nil
 	}
 	return append(json.RawMessage(nil), raw...)
+}
+
+func cloneWorkflowInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneWorkflowTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneWorkflowString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func equalWorkflowJSON(a, b json.RawMessage) bool {
@@ -185,6 +224,26 @@ type WorkflowStep struct {
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
+// WorkflowStepAttempt is one executor invocation for a workflow step. Unlike
+// WorkflowStep, attempts are append-only by (run, step, attempt) so retries
+// remain inspectable after the step summary advances.
+type WorkflowStepAttempt struct {
+	RunID         string     `json:"run_id"`
+	StepName      string     `json:"step_name"`
+	Attempt       int        `json:"attempt"`
+	Status        string     `json:"status"`
+	HTTPStatus    *int       `json:"http_status,omitempty"`
+	StartedAt     time.Time  `json:"started_at"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+	Error         *string    `json:"error,omitempty"`
+}
+
+type workflowStepAttemptKey struct {
+	runID, stepName string
+	attempt         int
+}
+
 // WorkflowEvent is one row of public.workflow_events.
 type WorkflowEvent struct {
 	ID         string          `json:"id"`
@@ -227,9 +286,18 @@ type WorkflowStore interface {
 	// Steps
 	CreateWorkflowSteps(ctx context.Context, runID string, steps []*WorkflowStep) error
 	GetWorkflowSteps(ctx context.Context, runID string) ([]*WorkflowStep, error)
+	// StartWorkflowStep atomically persists the resolved input and transitions
+	// a pending step to running, returning the stored representation so the
+	// first dispatch and retries use the exact same payload.
+	StartWorkflowStep(ctx context.Context, runID, stepName string, attempt int, input json.RawMessage) (json.RawMessage, error)
 	MarkWorkflowStepStatus(ctx context.Context, runID, stepName, status string, attempt int, output json.RawMessage, err *string) error
+	// MarkWorkflowStepAttemptStatus atomically updates a dispatched step and
+	// closes its attempt with the executor's HTTP result.
+	MarkWorkflowStepAttemptStatus(ctx context.Context, runID, stepName, status string, attempt int, httpStatus *int, output json.RawMessage, err *string) error
 	// ScheduleWorkflowStepRetry atomically persists the retry deadline and run wake.
 	ScheduleWorkflowStepRetry(ctx context.Context, runID, stepName string, attempt int, retryAt time.Time, stepErr string) error
+	ScheduleWorkflowStepRetryWithHTTPStatus(ctx context.Context, runID, stepName string, attempt int, retryAt time.Time, httpStatus *int, stepErr string) error
+	GetWorkflowStepAttempts(ctx context.Context, runID, stepName string) ([]*WorkflowStepAttempt, error)
 	// ParkWorkflowTimer atomically records the step's first activation and the
 	// run's durable wake deadline. Re-parking never resets the original deadline.
 	ParkWorkflowTimer(ctx context.Context, runID, stepName string, duration time.Duration) (time.Time, error)

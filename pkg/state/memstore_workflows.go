@@ -460,8 +460,89 @@ func (m *MemStore) GetWorkflowSteps(_ context.Context, runID string) ([]*Workflo
 	return steps, nil
 }
 
+// StartWorkflowStep persists the resolved input with the running transition.
+// A retry therefore reads and reuses the same request body after recovery.
+func (m *MemStore) StartWorkflowStep(_ context.Context, runID, stepName string, attempt int, input json.RawMessage) (json.RawMessage, error) {
+	if attempt < 1 {
+		return nil, ErrWorkflowInvalidAttempt
+	}
+	if err := validateWorkflowJSON(input, true); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.workflowRuns[runID]
+	if !ok {
+		return nil, ErrWorkflowRunNotFound
+	}
+	if run.Status == WorkflowRunStatusSucceeded || run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead {
+		return nil, fmt.Errorf("%w: workflow run is terminal", ErrConflict)
+	}
+	steps, ok := m.workflowSteps[runID]
+	if !ok {
+		return nil, ErrWorkflowStepNotFound
+	}
+	step, ok := steps[stepName]
+	if !ok {
+		return nil, ErrWorkflowStepNotFound
+	}
+	if step.Status != WorkflowStepStatusPending && step.Status != WorkflowStepStatusAwaitingEvent {
+		return nil, fmt.Errorf("%w: workflow step is not pending or parked", ErrConflict)
+	}
+	now := time.Now().UTC()
+	step.Status = WorkflowStepStatusRunning
+	step.Attempt = attempt
+	step.Input = cloneWorkflowJSON(input)
+	step.Error = nil
+	step.NextRetryAt = nil
+	step.FinishedAt = nil
+	if step.StartedAt == nil {
+		step.StartedAt = &now
+	}
+	if m.workflowStepAttempts == nil {
+		m.workflowStepAttempts = make(map[workflowStepAttemptKey]WorkflowStepAttempt)
+	}
+	key := workflowStepAttemptKey{runID: runID, stepName: stepName, attempt: attempt}
+	attemptRecord, exists := m.workflowStepAttempts[key]
+	if !exists {
+		attemptRecord = WorkflowStepAttempt{RunID: runID, StepName: stepName, Attempt: attempt, StartedAt: now}
+	}
+	attemptRecord.Status = WorkflowAttemptStatusRunning
+	attemptRecord.HTTPStatus = nil
+	attemptRecord.FinishedAt = nil
+	attemptRecord.NextAttemptAt = nil
+	attemptRecord.Error = nil
+	m.workflowStepAttempts[key] = attemptRecord
+	steps[stepName] = step
+	m.workflowSteps[runID] = steps
+	run.CurrentStep = &stepName
+	run.UpdatedAt = now
+	m.workflowRuns[runID] = run
+	return cloneWorkflowJSON(step.Input), nil
+}
+
 // MarkWorkflowStepStatus updates the execution state of a step.
 func (m *MemStore) MarkWorkflowStepStatus(_ context.Context, runID, stepName, status string, attempt int, output json.RawMessage, err *string) error {
+	return m.markWorkflowStepStatus(runID, stepName, status, attempt, nil, nil, output, err)
+}
+
+// MarkWorkflowStepAttemptStatus atomically closes an executor attempt and
+// updates its compact step summary.
+func (m *MemStore) MarkWorkflowStepAttemptStatus(_ context.Context, runID, stepName, status string, attempt int, httpStatus *int, output json.RawMessage, err *string) error {
+	if status != WorkflowStepStatusSucceeded && status != WorkflowStepStatusFailed && status != WorkflowStepStatusDead {
+		return fmt.Errorf("%w: attempt completion requires a terminal status", ErrWorkflowInvalidStatus)
+	}
+	if err := validateWorkflowHTTPStatus(httpStatus); err != nil {
+		return err
+	}
+	attemptStatus := WorkflowAttemptStatusFailed
+	if status == WorkflowStepStatusSucceeded {
+		attemptStatus = WorkflowAttemptStatusSucceeded
+	}
+	return m.markWorkflowStepStatus(runID, stepName, status, attempt, &attemptStatus, httpStatus, output, err)
+}
+
+func (m *MemStore) markWorkflowStepStatus(runID, stepName, status string, attempt int, attemptStatus *string, httpStatus *int, output json.RawMessage, err *string) error {
 	if statusErr := validateWorkflowStepStatus(status); statusErr != nil {
 		return statusErr
 	}
@@ -470,6 +551,9 @@ func (m *MemStore) MarkWorkflowStepStatus(_ context.Context, runID, stepName, st
 	}
 	if jsonErr := validateWorkflowJSON(output, false); jsonErr != nil {
 		return jsonErr
+	}
+	if statusErr := validateWorkflowHTTPStatus(httpStatus); statusErr != nil {
+		return statusErr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -487,6 +571,19 @@ func (m *MemStore) MarkWorkflowStepStatus(_ context.Context, runID, stepName, st
 	}
 
 	now := time.Now().UTC()
+	if attemptStatus != nil {
+		key := workflowStepAttemptKey{runID: runID, stepName: stepName, attempt: attempt}
+		attemptRecord, exists := m.workflowStepAttempts[key]
+		if !exists {
+			return ErrWorkflowAttemptNotFound
+		}
+		attemptRecord.Status = *attemptStatus
+		attemptRecord.HTTPStatus = cloneWorkflowInt(httpStatus)
+		attemptRecord.FinishedAt = &now
+		attemptRecord.NextAttemptAt = nil
+		attemptRecord.Error = cloneWorkflowString(err)
+		m.workflowStepAttempts[key] = attemptRecord
+	}
 	step.Status = status
 	step.Attempt = attempt
 	if len(output) > 0 {
@@ -523,6 +620,19 @@ func (m *MemStore) MarkWorkflowStepStatus(_ context.Context, runID, stepName, st
 // ScheduleWorkflowStepRetry persists a retry deadline and scheduler wake under
 // the same lock, so a crash cannot lose either half of the retry transition.
 func (m *MemStore) ScheduleWorkflowStepRetry(_ context.Context, runID, stepName string, attempt int, retryAt time.Time, stepErr string) error {
+	return m.scheduleWorkflowStepRetry(runID, stepName, attempt, retryAt, nil, stepErr, false)
+}
+
+// ScheduleWorkflowStepRetryWithHTTPStatus persists the retry and its failed
+// executor attempt under the same lock as the scheduler wake.
+func (m *MemStore) ScheduleWorkflowStepRetryWithHTTPStatus(_ context.Context, runID, stepName string, attempt int, retryAt time.Time, httpStatus *int, stepErr string) error {
+	if err := validateWorkflowHTTPStatus(httpStatus); err != nil {
+		return err
+	}
+	return m.scheduleWorkflowStepRetry(runID, stepName, attempt, retryAt, httpStatus, stepErr, true)
+}
+
+func (m *MemStore) scheduleWorkflowStepRetry(runID, stepName string, attempt int, retryAt time.Time, httpStatus *int, stepErr string, recordAttempt bool) error {
 	if attempt < 1 || retryAt.IsZero() || stepErr == "" {
 		return ErrWorkflowInvalidRecord
 	}
@@ -544,6 +654,19 @@ func (m *MemStore) ScheduleWorkflowStepRetry(_ context.Context, runID, stepName 
 	}
 	now := time.Now().UTC()
 	retryDeadline := retryAt.UTC()
+	if recordAttempt {
+		key := workflowStepAttemptKey{runID: runID, stepName: stepName, attempt: attempt}
+		attemptRecord, exists := m.workflowStepAttempts[key]
+		if !exists {
+			return ErrWorkflowAttemptNotFound
+		}
+		attemptRecord.Status = WorkflowAttemptStatusRetrying
+		attemptRecord.HTTPStatus = cloneWorkflowInt(httpStatus)
+		attemptRecord.FinishedAt = &now
+		attemptRecord.NextAttemptAt = &retryDeadline
+		attemptRecord.Error = cloneWorkflowString(&stepErr)
+		m.workflowStepAttempts[key] = attemptRecord
+	}
 	wakeAt := earlierWorkflowWake(run.ScheduledFor, retryDeadline, now)
 	step.Status = WorkflowStepStatusPending
 	step.Attempt = attempt
@@ -558,6 +681,31 @@ func (m *MemStore) ScheduleWorkflowStepRetry(_ context.Context, runID, stepName 
 	run.UpdatedAt = now
 	m.workflowRuns[runID] = run
 	return nil
+}
+
+func (m *MemStore) GetWorkflowStepAttempts(_ context.Context, runID, stepName string) ([]*WorkflowStepAttempt, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.workflowRuns[runID]; !ok {
+		return nil, ErrWorkflowRunNotFound
+	}
+	if _, ok := m.workflowSteps[runID][stepName]; !ok {
+		return nil, ErrWorkflowStepNotFound
+	}
+	attempts := make([]*WorkflowStepAttempt, 0)
+	for key, value := range m.workflowStepAttempts {
+		if key.runID != runID || key.stepName != stepName {
+			continue
+		}
+		cp := value
+		cp.HTTPStatus = cloneWorkflowInt(value.HTTPStatus)
+		cp.FinishedAt = cloneWorkflowTime(value.FinishedAt)
+		cp.NextAttemptAt = cloneWorkflowTime(value.NextAttemptAt)
+		cp.Error = cloneWorkflowString(value.Error)
+		attempts = append(attempts, &cp)
+	}
+	sort.Slice(attempts, func(i, j int) bool { return attempts[i].Attempt < attempts[j].Attempt })
+	return attempts, nil
 }
 
 // ParkWorkflowTimer updates the step and run under one lock. The existing
@@ -872,6 +1020,11 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 			delete(m.workflowRuns, id)
 			delete(m.workflowSteps, id)
 			delete(m.workflowEvents, id)
+			for key := range m.workflowStepAttempts {
+				if key.runID == id {
+					delete(m.workflowStepAttempts, key)
+				}
+			}
 			for bindingID, binding := range m.workflowCallbackWebhookBindings {
 				if binding.RunID == id {
 					delete(m.workflowCallbackWebhookBindings, bindingID)

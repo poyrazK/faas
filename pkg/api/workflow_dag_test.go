@@ -274,7 +274,7 @@ func TestValidateWorkflowDAG_RejectsPlanAndPolicyViolations(t *testing.T) {
 		{
 			name: "timer exceeds plan cap",
 			spec: WorkflowSpec{Name: "long-timer", Steps: []WorkflowStepSpec{
-				{Name: "wait", WaitForDuration: 8 * 24 * time.Hour},
+				{Name: "wait", WaitForDuration: 31 * 24 * time.Hour},
 			}},
 			plan: PlanHobby, wantErr: ErrWorkflowWaitDurationInvalid,
 		},
@@ -491,8 +491,8 @@ func TestWorkflowConditionWireAndValidation(t *testing.T) {
 		{"long interval", func(s *WorkflowStepSpec) { s.WaitForCondition.Interval = 8 * 24 * time.Hour }, ErrWorkflowConditionInvalid},
 		{"too many attempts", func(s *WorkflowStepSpec) { s.WaitForCondition.MaxAttempts = 1001 }, ErrWorkflowConditionInvalid},
 		{"missing checker", func(s *WorkflowStepSpec) { s.WaitForCondition.Run = "" }, ErrWorkflowConditionInvalid},
-		{"missing timeout", func(s *WorkflowStepSpec) { s.Timeout = 0 }, ErrWorkflowWaitTimeoutInvalid},
-		{"long timeout", func(s *WorkflowStepSpec) { s.Timeout = 8 * 24 * time.Hour }, ErrWorkflowWaitTimeoutInvalid},
+		{"missing timeout", func(s *WorkflowStepSpec) { s.Timeout = 0 }, ErrWorkflowConditionTimeoutInvalid},
+		{"long timeout", func(s *WorkflowStepSpec) { s.Timeout = 8 * 24 * time.Hour }, ErrWorkflowConditionTimeoutInvalid},
 		{"mixed target", func(s *WorkflowStepSpec) { s.Run = "other" }, ErrWorkflowInvalidStepTarget},
 		{"retry option", func(s *WorkflowStepSpec) { s.Retry = &WorkflowRetrySpec{MaxAttempts: 2} }, ErrWorkflowConditionOptionsInvalid},
 	} {

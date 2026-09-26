@@ -11887,6 +11887,33 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/workflows/runs/{id}/steps/{step}/attempts:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Parent run for the requested executor-attempt history.
+      - name: step
+        in: path
+        required: true
+        schema: { type: string }
+        description: Workflow step name whose executor attempts are returned.
+    get:
+      tags: [workflows]
+      operationId: listWorkflowStepAttempts
+      summary: List executor attempts for one workflow step.
+      responses:
+        '200':
+          description: Ordered executor attempts, including retry and condition-check outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowStepAttemptsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowStepAttemptsNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/workflows/runs/{id}/callbacks:
     parameters:
       - name: id
@@ -26726,6 +26753,30 @@ components:
           type: array
           items: { $ref: '#/components/schemas/WorkflowStepResponse' }
 
+    WorkflowStepAttemptResponse:
+      description: "One durable executor invocation for a workflow step."
+      type: object
+      required: [attempt, status, started_at]
+      properties:
+        attempt: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [running, retrying, succeeded, failed]
+        http_status: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        next_attempt_at: { type: [string, 'null'], format: date-time }
+        error: { type: [string, 'null'] }
+
+    ListWorkflowStepAttemptsResponse:
+      description: "The ordered executor-attempt history for one workflow step."
+      type: object
+      required: [attempts]
+      properties:
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowStepAttemptResponse' }
+
     InjectWorkflowEventResponse:
       description: "Acknowledgement that an external workflow event was recorded."
       type: object
@@ -38602,6 +38653,12 @@ components:
 
     WorkflowRunNotFound:
       description: "code: workflow_run_not_found — the run is absent or belongs to another account."
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    WorkflowStepAttemptsNotFound:
+      description: "The workflow run is absent or not owned by the caller, or code: workflow_step_not_found — the requested step is absent."
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

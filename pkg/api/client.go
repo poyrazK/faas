@@ -6378,7 +6378,15 @@ func (c *Client) GetWorkflowRun(ctx context.Context, runID string) (WorkflowRunR
 // ListWorkflowSteps (ADR-081) lists step records for a workflow run.
 func (c *Client) ListWorkflowSteps(ctx context.Context, runID string) (ListWorkflowStepsResponse, error) {
 	var resp ListWorkflowStepsResponse
-	err := c.do(ctx, "GET", "/v1/workflows/runs/"+runID+"/steps", nil, &resp)
+	err := c.do(ctx, "GET", "/v1/workflows/runs/"+url.PathEscape(runID)+"/steps", nil, &resp)
+	return resp, err
+}
+
+// ListWorkflowStepAttempts lists executor attempts for one step in a run.
+func (c *Client) ListWorkflowStepAttempts(ctx context.Context, runID, stepName string) (ListWorkflowStepAttemptsResponse, error) {
+	var resp ListWorkflowStepAttemptsResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/steps/" + url.PathEscape(stepName) + "/attempts"
+	err := c.do(ctx, "GET", path, nil, &resp)
 	return resp, err
 }
 

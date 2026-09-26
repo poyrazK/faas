@@ -8,6 +8,7 @@ import type { InjectWorkflowEventRequest } from '../models/InjectWorkflowEventRe
 import type { InjectWorkflowEventResponse } from '../models/InjectWorkflowEventResponse.js';
 import type { ListWorkflowCallbacksResponse } from '../models/ListWorkflowCallbacksResponse.js';
 import type { ListWorkflowRunsResponse } from '../models/ListWorkflowRunsResponse.js';
+import type { ListWorkflowStepAttemptsResponse } from '../models/ListWorkflowStepAttemptsResponse.js';
 import type { ListWorkflowStepsResponse } from '../models/ListWorkflowStepsResponse.js';
 import type { WorkflowCallbackWebhookBindingResponse } from '../models/WorkflowCallbackWebhookBindingResponse.js';
 import type { WorkflowRunResponse } from '../models/WorkflowRunResponse.js';
@@ -164,6 +165,42 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List executor attempts for one workflow step.
+   * @returns ListWorkflowStepAttemptsResponse Ordered executor attempts, including retry and condition-check outcomes.
+   * @throws ApiError
+   */
+  public static listWorkflowStepAttempts({
+    id,
+    step,
+  }: {
+    /**
+     * Parent run for the requested executor-attempt history.
+     */
+    id: string,
+    /**
+     * Workflow step name whose executor attempts are returned.
+     */
+    step: string,
+  }): CancelablePromise<ListWorkflowStepAttemptsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/workflows/runs/{id}/steps/{step}/attempts',
+      path: {
+        'id': id,
+        'step': step,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `The workflow run is absent or not owned by the caller, or code: workflow_step_not_found — the requested step is absent.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

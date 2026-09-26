@@ -26,6 +26,7 @@ type WorkflowConditionUpdate struct {
 	Checked, Done   bool
 	Result          json.RawMessage
 	Error           *string
+	HTTPStatus      *int
 	Interval        time.Duration
 	Timeout         time.Duration
 	MaxAttempts     int
@@ -43,6 +44,9 @@ func validateWorkflowConditionUpdate(u WorkflowConditionUpdate) error {
 	}
 	if u.Checked {
 		if err := validateWorkflowJSON(u.Result, true); err != nil {
+			return err
+		}
+		if err := validateWorkflowHTTPStatus(u.HTTPStatus); err != nil {
 			return err
 		}
 	}
@@ -99,13 +103,23 @@ func (m *MemStore) ResolveWorkflowCondition(_ context.Context, u WorkflowConditi
 	if step.Status != WorkflowStepStatusRunning || step.StartedAt == nil || step.Attempt < 1 {
 		return WorkflowConditionOutcome{}, ErrConflict
 	}
+	attemptStatus := WorkflowAttemptStatusSucceeded
+	if u.Error != nil {
+		attemptStatus = WorkflowAttemptStatusFailed
+	}
 	step.Output = cloneWorkflowJSON(u.Result)
 	step.Error = u.Error
 	step.NextCheckAt = nil
 	if !now.Before(step.StartedAt.Add(u.Timeout)) {
+		if err := m.finishWorkflowConditionAttemptLocked(u, attemptStatus, nil, now); err != nil {
+			return WorkflowConditionOutcome{}, err
+		}
 		return m.expireWorkflowConditionLocked(run, step, u, now), nil
 	}
 	if u.Done {
+		if err := m.finishWorkflowConditionAttemptLocked(u, WorkflowAttemptStatusSucceeded, nil, now); err != nil {
+			return WorkflowConditionOutcome{}, err
+		}
 		step.Status = WorkflowStepStatusSucceeded
 		step.FinishedAt = &now
 		run.Status = WorkflowRunStatusPending
@@ -115,9 +129,18 @@ func (m *MemStore) ResolveWorkflowCondition(_ context.Context, u WorkflowConditi
 		return WorkflowConditionOutcome{Status: WorkflowConditionSucceeded}, nil
 	}
 	if step.Attempt >= u.MaxAttempts || !now.Before(step.StartedAt.Add(u.Timeout)) {
+		if err := m.finishWorkflowConditionAttemptLocked(u, attemptStatus, nil, now); err != nil {
+			return WorkflowConditionOutcome{}, err
+		}
 		return m.expireWorkflowConditionLocked(run, step, u, now), nil
 	}
 	next := workflowConditionWake(now, *step.StartedAt, u.Interval, u.Timeout)
+	if u.Error != nil {
+		attemptStatus = WorkflowAttemptStatusRetrying
+	}
+	if err := m.finishWorkflowConditionAttemptLocked(u, attemptStatus, &next, now); err != nil {
+		return WorkflowConditionOutcome{}, err
+	}
 	step.Status = WorkflowStepStatusAwaitingEvent
 	step.NextCheckAt = &next
 	m.workflowSteps[u.RunID][u.StepName] = step
@@ -128,6 +151,21 @@ func (m *MemStore) ResolveWorkflowCondition(_ context.Context, u WorkflowConditi
 	run.UpdatedAt = now
 	m.workflowRuns[u.RunID] = run
 	return WorkflowConditionOutcome{Status: WorkflowConditionWaiting, NextCheckAt: next}, nil
+}
+
+func (m *MemStore) finishWorkflowConditionAttemptLocked(u WorkflowConditionUpdate, status string, next *time.Time, now time.Time) error {
+	key := workflowStepAttemptKey{runID: u.RunID, stepName: u.StepName, attempt: m.workflowSteps[u.RunID][u.StepName].Attempt}
+	attempt, ok := m.workflowStepAttempts[key]
+	if !ok {
+		return ErrWorkflowAttemptNotFound
+	}
+	attempt.Status = status
+	attempt.HTTPStatus = cloneWorkflowInt(u.HTTPStatus)
+	attempt.FinishedAt = &now
+	attempt.NextAttemptAt = cloneWorkflowTime(next)
+	attempt.Error = cloneWorkflowString(u.Error)
+	m.workflowStepAttempts[key] = attempt
+	return nil
 }
 
 func (m *MemStore) expireWorkflowConditionLocked(run WorkflowRun, step WorkflowStep, u WorkflowConditionUpdate, now time.Time) WorkflowConditionOutcome {
@@ -210,10 +248,20 @@ func (s *PgStore) ResolveWorkflowCondition(ctx context.Context, u WorkflowCondit
 	if status != WorkflowStepStatusRunning || startedAt == nil || attempt < 1 {
 		return WorkflowConditionOutcome{}, ErrConflict
 	}
+	attemptStatus := WorkflowAttemptStatusSucceeded
+	if u.Error != nil {
+		attemptStatus = WorkflowAttemptStatusFailed
+	}
 	if !now.Before(startedAt.Add(u.Timeout)) {
+		if err := finishPgWorkflowConditionAttempt(ctx, tx, u, attempt, attemptStatus, nil, now); err != nil {
+			return WorkflowConditionOutcome{}, err
+		}
 		return resolveExpiredPgCondition(ctx, tx, u, now)
 	}
 	if u.Done {
+		if err := finishPgWorkflowConditionAttempt(ctx, tx, u, attempt, WorkflowAttemptStatusSucceeded, nil, now); err != nil {
+			return WorkflowConditionOutcome{}, err
+		}
 		if _, err := tx.Exec(ctx, `UPDATE workflow_steps SET status = 'succeeded', output = $3, error = $4, next_check_at = NULL, finished_at = $5 WHERE run_id = $1 AND step_name = $2`, u.RunID, u.StepName, u.Result, u.Error, now); err != nil {
 			return WorkflowConditionOutcome{}, fmt.Errorf("pgstore: complete condition step: %w", err)
 		}
@@ -223,9 +271,18 @@ func (s *PgStore) ResolveWorkflowCondition(ctx context.Context, u WorkflowCondit
 		return WorkflowConditionOutcome{Status: WorkflowConditionSucceeded}, tx.Commit(ctx)
 	}
 	if attempt >= u.MaxAttempts || !now.Before(startedAt.Add(u.Timeout)) {
+		if err := finishPgWorkflowConditionAttempt(ctx, tx, u, attempt, attemptStatus, nil, now); err != nil {
+			return WorkflowConditionOutcome{}, err
+		}
 		return resolveExpiredPgCondition(ctx, tx, u, now)
 	}
 	next := workflowConditionWake(now, *startedAt, u.Interval, u.Timeout)
+	if u.Error != nil {
+		attemptStatus = WorkflowAttemptStatusRetrying
+	}
+	if err := finishPgWorkflowConditionAttempt(ctx, tx, u, attempt, attemptStatus, &next, now); err != nil {
+		return WorkflowConditionOutcome{}, err
+	}
 	wake := earlierWorkflowWake(scheduledFor, next, now)
 	if _, err := tx.Exec(ctx, `UPDATE workflow_steps SET status = 'awaiting_event', output = $3, error = $4, next_check_at = $5 WHERE run_id = $1 AND step_name = $2`, u.RunID, u.StepName, u.Result, u.Error, next); err != nil {
 		return WorkflowConditionOutcome{}, fmt.Errorf("pgstore: park condition step: %w", err)
@@ -234,6 +291,22 @@ func (s *PgStore) ResolveWorkflowCondition(ctx context.Context, u WorkflowCondit
 		return WorkflowConditionOutcome{}, fmt.Errorf("pgstore: park condition run: %w", err)
 	}
 	return WorkflowConditionOutcome{Status: WorkflowConditionWaiting, NextCheckAt: next}, tx.Commit(ctx)
+}
+
+func finishPgWorkflowConditionAttempt(ctx context.Context, tx pgx.Tx, u WorkflowConditionUpdate, attempt int, status string, next *time.Time, now time.Time) error {
+	tag, err := tx.Exec(ctx, `
+		UPDATE workflow_step_attempts
+		SET status = $4, http_status = $5, finished_at = $6,
+		    next_attempt_at = $7, error = $8
+		WHERE run_id = $1 AND step_name = $2 AND attempt = $3
+	`, u.RunID, u.StepName, attempt, status, u.HTTPStatus, now, next, u.Error)
+	if err != nil {
+		return fmt.Errorf("pgstore: finish condition checker attempt: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrWorkflowAttemptNotFound
+	}
+	return nil
 }
 
 func resolveExpiredPgCondition(ctx context.Context, tx pgx.Tx, u WorkflowConditionUpdate, now time.Time) (WorkflowConditionOutcome, error) {

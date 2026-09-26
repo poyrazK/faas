@@ -433,6 +433,7 @@ export type { ListTriggerDeadLetterResponse } from './models/ListTriggerDeadLett
 export type { ListTriggerRecordsResponse } from './models/ListTriggerRecordsResponse.js';
 export type { ListWorkflowCallbacksResponse } from './models/ListWorkflowCallbacksResponse.js';
 export type { ListWorkflowRunsResponse } from './models/ListWorkflowRunsResponse.js';
+export type { ListWorkflowStepAttemptsResponse } from './models/ListWorkflowStepAttemptsResponse.js';
 export type { ListWorkflowStepsResponse } from './models/ListWorkflowStepsResponse.js';
 export type { LogExcerpt } from './models/LogExcerpt.js';
 export type { LogQueryEvent } from './models/LogQueryEvent.js';
@@ -840,6 +841,7 @@ export type { WorkflowConditionSpec } from './models/WorkflowConditionSpec.js';
 export type { WorkflowRetrySpec } from './models/WorkflowRetrySpec.js';
 export type { WorkflowRunResponse } from './models/WorkflowRunResponse.js';
 export type { WorkflowSpec } from './models/WorkflowSpec.js';
+export type { WorkflowStepAttemptResponse } from './models/WorkflowStepAttemptResponse.js';
 export type { WorkflowStepResponse } from './models/WorkflowStepResponse.js';
 export type { WorkflowStepSpec } from './models/WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './models/WorkflowTriggerSpec.js';

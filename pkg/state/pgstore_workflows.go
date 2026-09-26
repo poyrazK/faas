@@ -589,7 +589,128 @@ func (s *PgStore) GetWorkflowSteps(ctx context.Context, runID string) ([]*Workfl
 	return steps, rows.Err()
 }
 
+func (s *PgStore) GetWorkflowStepAttempts(ctx context.Context, runID, stepName string) ([]*WorkflowStepAttempt, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workflow_runs WHERE id = $1)`, runID).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("pgstore: inspect workflow run for attempts: %w", err)
+	}
+	if !exists {
+		return nil, ErrWorkflowRunNotFound
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workflow_steps WHERE run_id = $1 AND step_name = $2)`, runID, stepName).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("pgstore: inspect workflow step attempts: %w", err)
+	}
+	if !exists {
+		return nil, ErrWorkflowStepNotFound
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT attempt, status, http_status, started_at, finished_at, next_attempt_at, error
+		FROM workflow_step_attempts
+		WHERE run_id = $1 AND step_name = $2
+		ORDER BY attempt ASC
+	`, runID, stepName)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: get workflow step attempts: %w", err)
+	}
+	defer rows.Close()
+	attempts := make([]*WorkflowStepAttempt, 0)
+	for rows.Next() {
+		var attempt WorkflowStepAttempt
+		attempt.RunID = runID
+		attempt.StepName = stepName
+		if err := rows.Scan(&attempt.Attempt, &attempt.Status, &attempt.HTTPStatus, &attempt.StartedAt, &attempt.FinishedAt, &attempt.NextAttemptAt, &attempt.Error); err != nil {
+			return nil, fmt.Errorf("pgstore: scan workflow step attempt: %w", err)
+		}
+		attempts = append(attempts, &attempt)
+	}
+	return attempts, rows.Err()
+}
+
+// StartWorkflowStep persists the resolved input with the running transition.
+// A retry therefore reads and reuses the same request body after recovery.
+func (s *PgStore) StartWorkflowStep(ctx context.Context, runID, stepName string, attempt int, input json.RawMessage) (json.RawMessage, error) {
+	if attempt < 1 {
+		return nil, ErrWorkflowInvalidAttempt
+	}
+	if err := validateWorkflowJSON(input, true); err != nil {
+		return nil, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: begin start workflow step: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	var runStatus string
+	if err := tx.QueryRow(ctx, `SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrWorkflowRunNotFound
+		}
+		return nil, fmt.Errorf("pgstore: lock run to start workflow step: %w", err)
+	}
+	if runStatus == WorkflowRunStatusSucceeded || runStatus == WorkflowRunStatusFailed || runStatus == WorkflowRunStatusDead {
+		return nil, fmt.Errorf("%w: workflow run is terminal", ErrConflict)
+	}
+	var storedInput []byte
+	err = tx.QueryRow(ctx, `
+		UPDATE workflow_steps
+		SET status = 'running', attempt = $3, input = $4, error = NULL,
+		    started_at = COALESCE(started_at, now()), next_retry_at = NULL,
+		    finished_at = NULL
+		WHERE run_id = $1 AND step_name = $2 AND status IN ('pending', 'awaiting_event')
+		RETURNING input
+	`, runID, stepName, attempt, input).Scan(&storedInput)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("pgstore: start workflow step: %w", err)
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workflow_steps WHERE run_id = $1 AND step_name = $2)`, runID, stepName).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("pgstore: inspect workflow step start conflict: %w", err)
+		}
+		if !exists {
+			return nil, ErrWorkflowStepNotFound
+		}
+		return nil, fmt.Errorf("%w: workflow step is not pending or parked", ErrConflict)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO workflow_step_attempts (run_id, step_name, attempt, status)
+		VALUES ($1, $2, $3, 'running')
+		ON CONFLICT (run_id, step_name, attempt) DO UPDATE
+		SET status = 'running', http_status = NULL, finished_at = NULL,
+		    next_attempt_at = NULL, error = NULL
+	`, runID, stepName, attempt); err != nil {
+		return nil, fmt.Errorf("pgstore: start workflow step attempt: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE workflow_runs SET current_step = $2, updated_at = now() WHERE id = $1`, runID, stepName); err != nil {
+		return nil, fmt.Errorf("pgstore: update workflow current step: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("pgstore: commit start workflow step: %w", err)
+	}
+	return json.RawMessage(storedInput), nil
+}
+
 func (s *PgStore) MarkWorkflowStepStatus(ctx context.Context, runID, stepName, status string, attempt int, output json.RawMessage, stepErr *string) error {
+	return s.markWorkflowStepStatus(ctx, runID, stepName, status, attempt, nil, nil, output, stepErr)
+}
+
+// MarkWorkflowStepAttemptStatus atomically closes an executor attempt and
+// updates its compact step summary.
+func (s *PgStore) MarkWorkflowStepAttemptStatus(ctx context.Context, runID, stepName, status string, attempt int, httpStatus *int, output json.RawMessage, stepErr *string) error {
+	if status != WorkflowStepStatusSucceeded && status != WorkflowStepStatusFailed && status != WorkflowStepStatusDead {
+		return fmt.Errorf("%w: attempt completion requires a terminal status", ErrWorkflowInvalidStatus)
+	}
+	if err := validateWorkflowHTTPStatus(httpStatus); err != nil {
+		return err
+	}
+	attemptStatus := WorkflowAttemptStatusFailed
+	if status == WorkflowStepStatusSucceeded {
+		attemptStatus = WorkflowAttemptStatusSucceeded
+	}
+	return s.markWorkflowStepStatus(ctx, runID, stepName, status, attempt, &attemptStatus, httpStatus, output, stepErr)
+}
+
+func (s *PgStore) markWorkflowStepStatus(ctx context.Context, runID, stepName, status string, attempt int, attemptStatus *string, httpStatus *int, output json.RawMessage, stepErr *string) error {
 	if err := validateWorkflowStepStatus(status); err != nil {
 		return err
 	}
@@ -597,6 +718,9 @@ func (s *PgStore) MarkWorkflowStepStatus(ctx context.Context, runID, stepName, s
 		return ErrWorkflowInvalidAttempt
 	}
 	if err := validateWorkflowJSON(output, false); err != nil {
+		return err
+	}
+	if err := validateWorkflowHTTPStatus(httpStatus); err != nil {
 		return err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -639,6 +763,20 @@ func (s *PgStore) MarkWorkflowStepStatus(ctx context.Context, runID, stepName, s
 		}
 		return fmt.Errorf("%w: workflow step is terminal", ErrConflict)
 	}
+	if attemptStatus != nil {
+		tag, err = tx.Exec(ctx, `
+			UPDATE workflow_step_attempts
+			SET status = $4, http_status = $5, finished_at = clock_timestamp(),
+			    next_attempt_at = NULL, error = $6
+			WHERE run_id = $1 AND step_name = $2 AND attempt = $3
+		`, runID, stepName, attempt, *attemptStatus, httpStatus, stepErr)
+		if err != nil {
+			return fmt.Errorf("pgstore: finish workflow step attempt: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrWorkflowAttemptNotFound
+		}
+	}
 
 	// Update current_step pointer and updated_at on workflow_runs
 	runQuery := `
@@ -657,6 +795,19 @@ func (s *PgStore) MarkWorkflowStepStatus(ctx context.Context, runID, stepName, s
 // ScheduleWorkflowStepRetry persists a retry deadline and scheduler wake in
 // one transaction. Lock order matches cancellation and other step transitions.
 func (s *PgStore) ScheduleWorkflowStepRetry(ctx context.Context, runID, stepName string, attempt int, retryAt time.Time, stepErr string) error {
+	return s.scheduleWorkflowStepRetry(ctx, runID, stepName, attempt, retryAt, nil, stepErr, false)
+}
+
+// ScheduleWorkflowStepRetryWithHTTPStatus persists the retry and its failed
+// executor attempt in the scheduler transaction.
+func (s *PgStore) ScheduleWorkflowStepRetryWithHTTPStatus(ctx context.Context, runID, stepName string, attempt int, retryAt time.Time, httpStatus *int, stepErr string) error {
+	if err := validateWorkflowHTTPStatus(httpStatus); err != nil {
+		return err
+	}
+	return s.scheduleWorkflowStepRetry(ctx, runID, stepName, attempt, retryAt, httpStatus, stepErr, true)
+}
+
+func (s *PgStore) scheduleWorkflowStepRetry(ctx context.Context, runID, stepName string, attempt int, retryAt time.Time, httpStatus *int, stepErr string, recordAttempt bool) error {
 	if attempt < 1 || retryAt.IsZero() || stepErr == "" {
 		return ErrWorkflowInvalidRecord
 	}
@@ -695,6 +846,20 @@ func (s *PgStore) ScheduleWorkflowStepRetry(ctx context.Context, runID, stepName
 			return ErrWorkflowStepNotFound
 		}
 		return fmt.Errorf("%w: workflow step is not running", ErrConflict)
+	}
+	if recordAttempt {
+		tag, err = tx.Exec(ctx, `
+			UPDATE workflow_step_attempts
+			SET status = 'retrying', http_status = $4, finished_at = $5,
+			    next_attempt_at = $6, error = $7
+			WHERE run_id = $1 AND step_name = $2 AND attempt = $3
+		`, runID, stepName, attempt, httpStatus, now, retryAt.UTC(), stepErr)
+		if err != nil {
+			return fmt.Errorf("pgstore: finish retrying workflow attempt: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrWorkflowAttemptNotFound
+		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE workflow_runs SET status = 'pending', current_step = $2, scheduled_for = $3, updated_at = now() WHERE id = $1`, runID, stepName, wakeAt); err != nil {
 		return fmt.Errorf("pgstore: persist workflow retry wake: %w", err)

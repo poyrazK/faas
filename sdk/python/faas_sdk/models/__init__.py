@@ -852,6 +852,7 @@ from .list_trigger_records_response import ListTriggerRecordsResponse
 from .list_workflow_callbacks_response import ListWorkflowCallbacksResponse
 from .list_workflow_runs_response import ListWorkflowRunsResponse
 from .list_workflow_runs_status import ListWorkflowRunsStatus
+from .list_workflow_step_attempts_response import ListWorkflowStepAttemptsResponse
 from .list_workflow_steps_response import ListWorkflowStepsResponse
 from .log_excerpt import LogExcerpt
 from .log_excerpt_level import LogExcerptLevel
@@ -1615,6 +1616,8 @@ from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
 from .workflow_run_response import WorkflowRunResponse
 from .workflow_run_response_status import WorkflowRunResponseStatus
 from .workflow_spec import WorkflowSpec
+from .workflow_step_attempt_response import WorkflowStepAttemptResponse
+from .workflow_step_attempt_response_status import WorkflowStepAttemptResponseStatus
 from .workflow_step_response import WorkflowStepResponse
 from .workflow_step_response_status import WorkflowStepResponseStatus
 from .workflow_step_spec import WorkflowStepSpec
@@ -2470,6 +2473,7 @@ __all__ = (
     "ListWorkflowCallbacksResponse",
     "ListWorkflowRunsResponse",
     "ListWorkflowRunsStatus",
+    "ListWorkflowStepAttemptsResponse",
     "ListWorkflowStepsResponse",
     "LogExcerpt",
     "LogExcerptLevel",
@@ -3191,6 +3195,8 @@ __all__ = (
     "WorkflowRunResponse",
     "WorkflowRunResponseStatus",
     "WorkflowSpec",
+    "WorkflowStepAttemptResponse",
+    "WorkflowStepAttemptResponseStatus",
     "WorkflowStepResponse",
     "WorkflowStepResponseStatus",
     "WorkflowStepSpec",

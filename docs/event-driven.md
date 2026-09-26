@@ -16,6 +16,8 @@ workflows:
     steps:
       - name: charge
         run: charge_card
+        input:
+          order_id: "{{input.order_id}}"
         retry:
           max_attempts: 3
           backoff: exponential
@@ -24,11 +26,67 @@ workflows:
         depends_on: [charge]
       - name: check_delivery
         run: check_delivery
-        depends_on: [delivery_delay]
+        depends_on: [delivery_delay, charge]
+        input:
+          order_id: "{{input.order_id}}"
+          charge_id: "{{steps.charge.output.charge_id}}"
       - name: send_email
         run: send_email
         depends_on: [check_delivery]
+        input:
+          order_id: "{{input.order_id}}"
+          delivery: "{{steps.check_delivery.output}}"
 ```
+
+Each handler step can declare an `input` JSON template. `{{input}}` selects
+the complete workflow input and `{{input.path.to.value}}` selects a field;
+`{{steps.STEP.output}}` selects a dependency's full JSON result, with dotted
+fields or numeric array indexes available after `output`. Step-output
+references must name a direct `depends_on` step. A reference occupying a
+whole JSON value preserves its type (including objects, arrays, numbers, and
+booleans); a reference embedded in a longer string must resolve to a scalar.
+Missing paths fail the step before the handler is invoked. If `input` is
+omitted, the handler receives the full workflow input as before. Gregale stores
+the resolved input before dispatch, so retries reuse the same payload even if
+the scheduler restarts.
+
+Executable steps receive an `Idempotency-Key` of
+`workflow/<run-id>/<step-name>`, unchanged across automatic retries; the
+separate `X-Faas-Workflow-Attempt` header increments. Deduplicate external
+side effects on that key. Delivery is still at least once, not exactly once.
+
+### Recover from a failed step
+
+Use `on_failure` to run a compensating or notification handler after a step has
+exhausted its retries (or its input template cannot be resolved):
+
+```yaml
+- name: charge
+  run: charge_card
+  retry:
+    max_attempts: 3
+    backoff: exponential
+  on_failure: refund
+- name: refund
+  run: refund_order
+  depends_on: [charge]
+  input:
+    order_id: "{{input.order_id}}"
+    failure: "{{failure}}"
+```
+
+The handler is skipped when `charge` succeeds. Its default input, when `input`
+is omitted, is an envelope containing the original run input and failure
+context: `{"input": ..., "failure": ...}`. Templates can select
+`{{failure.step}}`, `{{failure.status}}`, `{{failure.attempt}}`, and
+`{{failure.message}}`; the whole `{{failure}}` reference preserves the object.
+Failure context is available only to the step named by `on_failure`.
+
+This is a recovery hook, not error suppression: once the handler finishes, the
+workflow run still ends failed or dead. The original error remains the run's
+primary error; a handler's own failure is recorded on that handler step. Each
+executable step can route to one distinct executable handler, and handlers
+cannot chain `on_failure` or have downstream workflow steps.
 
 Handler retries persist a `next_retry_at` deadline per step, so an unrelated
 event cannot run a retry before its configured backoff expires. When a workflow
@@ -41,11 +99,26 @@ Deploy the manifest, then start a run with:
 gregale workflows run order_followup --app APP_SLUG --input '{"order_id":"ord_123"}'
 ```
 
+Inspect the latest step summary with `gregale workflows steps RUN_ID`. To see
+each handler invocation or condition-check poll—including its outcome, HTTP
+status, start/finish times, error, and next scheduled attempt—use:
+
+```bash
+gregale workflows attempts RUN_ID STEP_NAME
+```
+
+The equivalent read-only API is
+`GET /v1/workflows/runs/{id}/steps/{step}/attempts`. Attempt history stores
+metadata, not request or response bodies; timer and callback waits do not
+create executor-attempt records.
+
 The timer
 starts only when its dependencies succeed. It is stored in the workflow
 ledger and resumed by the scheduler when due; no application instance is
-reserved for the wait. `wait_for_duration` accepts `1s` through `7d` on
-workflow-enabled plans. It cannot be combined with `run`, `path`,
+reserved for the wait. `wait_for_duration` accepts `1s` through `30d` on
+Hobby, `90d` on Pro, or `365d` on Scale. `wait_for_event` and
+`wait_for_callback` timeouts use the same per-plan horizon. A timer cannot be
+combined with `run`, `path`,
 `wait_for_event`, `timeout`, `on_timeout`, or `retry` in one step.
 
 For a one-time callback, declare a separate `wait_for_callback: true` step
@@ -92,9 +165,11 @@ the result the step output and unlocks dependents. Gregale persists each result
 and the next check time, then releases compute between calls. A 5xx or transport
 error retries on the same schedule; malformed 2xx and 4xx responses fail the
 run. The interval is at least one minute, with at most 1,000 checks and a
-plan-bounded overall timeout (currently at most seven days). Attempt
-exhaustion follows `on_timeout` when present. Checker calls are at least once;
-use their stable `Idempotency-Key` for any side effects. A push event or
+separate seven-day maximum interval and overall timeout, even on plans that
+allow longer parked waits. Attempt exhaustion follows `on_timeout` when
+present. Checker calls are at least once and get a per-check
+`Idempotency-Key` (`workflow/<run-id>/<step-name>/<attempt>`), so distinct
+polls remain distinct. A push event or
 callback remains preferable when the external system supports one.
 
 For an unsupported external provider, receive and verify its webhook in your own handler,

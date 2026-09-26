@@ -64,6 +64,25 @@ func workflowStepResponse(s *state.WorkflowStep) api.WorkflowStepResponse {
 	return resp
 }
 
+func workflowStepAttemptResponse(a *state.WorkflowStepAttempt) api.WorkflowStepAttemptResponse {
+	resp := api.WorkflowStepAttemptResponse{
+		Attempt:    a.Attempt,
+		Status:     a.Status,
+		HTTPStatus: a.HTTPStatus,
+		StartedAt:  a.StartedAt.UTC().Format(time.RFC3339),
+		Error:      a.Error,
+	}
+	if a.FinishedAt != nil {
+		finished := a.FinishedAt.UTC().Format(time.RFC3339)
+		resp.FinishedAt = &finished
+	}
+	if a.NextAttemptAt != nil {
+		next := a.NextAttemptAt.UTC().Format(time.RFC3339)
+		resp.NextAttemptAt = &next
+	}
+	return resp
+}
+
 // createWorkflowRun handles POST /v1/apps/{slug}/workflows/{name}/runs
 func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	slug := r.PathValue("slug")
@@ -269,6 +288,35 @@ func (s *server) listWorkflowSteps(w http.ResponseWriter, r *http.Request, acct 
 	writeJSON(w, http.StatusOK, api.ListWorkflowStepsResponse{
 		Steps: res,
 	})
+}
+
+// listWorkflowStepAttempts handles GET /v1/workflows/runs/{id}/steps/{step}/attempts.
+func (s *server) listWorkflowStepAttempts(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	id := r.PathValue("id")
+	run, err := s.store.GetWorkflowRun(r.Context(), id)
+	if err != nil {
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+		return
+	}
+	app, err := s.store.AppByID(r.Context(), run.AppID)
+	if err != nil || app.AccountID != acct.ID {
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+		return
+	}
+	attempts, err := s.store.GetWorkflowStepAttempts(r.Context(), id, r.PathValue("step"))
+	if errors.Is(err, state.ErrWorkflowStepNotFound) {
+		api.WriteProblem(w, api.ErrWorkflowStepNotFound())
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("failed to get workflow step attempts"))
+		return
+	}
+	res := make([]api.WorkflowStepAttemptResponse, len(attempts))
+	for i, attempt := range attempts {
+		res[i] = workflowStepAttemptResponse(attempt)
+	}
+	writeJSON(w, http.StatusOK, api.ListWorkflowStepAttemptsResponse{Attempts: res})
 }
 
 // injectWorkflowEvent handles POST /v1/workflows/runs/{id}/events

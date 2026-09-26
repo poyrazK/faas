@@ -29,15 +29,23 @@ var (
 	ErrWorkflowDAGCycle                = errors.New("workflow: circular dependency detected in steps")
 	ErrWorkflowTimeoutInvalid          = errors.New("workflow: step timeout cannot be negative")
 	ErrWorkflowTimeoutExceeded         = errors.New("workflow: step timeout exceeds plan limit")
-	ErrWorkflowWaitTimeoutInvalid      = errors.New("workflow: event, callback, or condition wait timeout must be between 1s and the plan limit")
+	ErrWorkflowWaitTimeoutInvalid      = errors.New("workflow: event or callback wait timeout must be between 1s and the plan limit")
+	ErrWorkflowConditionTimeoutInvalid = errors.New("workflow: condition wait timeout must be between 1s and 7d")
 	ErrWorkflowWaitDurationInvalid     = errors.New("workflow: wait_for_duration must be between 1s and the plan limit")
-	ErrWorkflowWaitOptionsInvalid      = errors.New("workflow: wait_for_duration cannot have input, method, timeout, on_timeout, or retry")
+	ErrWorkflowWaitOptionsInvalid      = errors.New("workflow: wait_for_duration cannot have input, method, timeout, on_timeout, on_failure, or retry")
 	ErrWorkflowCallbackOptionsInvalid  = errors.New("workflow: wait_for_callback cannot have input, method, or retry")
 	ErrWorkflowConditionInvalid        = errors.New("workflow: wait_for_condition needs a valid checker, interval, and 1-1000 attempts")
 	ErrWorkflowConditionOptionsInvalid = errors.New("workflow: wait_for_condition cannot have input, method, or retry")
 	ErrWorkflowReservedEventName       = errors.New("workflow: wait_for_event name uses a reserved callback prefix")
 	ErrWorkflowRetryInvalid            = errors.New("workflow: retry must have 1-25 attempts and fixed or exponential backoff")
 	ErrWorkflowUnknownOnTimeout        = errors.New("workflow: on_timeout references unknown step")
+	ErrWorkflowUnknownOnFailure        = errors.New("workflow: on_failure references unknown step")
+	ErrWorkflowInvalidOnFailure        = errors.New("workflow: on_failure must target a distinct handler step and may only be used on handler steps")
+	ErrWorkflowDuplicateFailureTarget  = errors.New("workflow: a failure handler can only handle one source step")
+	ErrWorkflowFailureHandlerDependent = errors.New("workflow: an on_failure handler cannot have dependent steps")
+	ErrWorkflowInvalidFailureContext   = errors.New("workflow: failure context is only available in an on_failure handler")
+	ErrWorkflowInputTemplateInvalid    = errors.New("workflow: invalid step input template")
+	ErrWorkflowInputOutputDependency   = errors.New("workflow: step output references must name a direct dependency")
 )
 
 // WorkflowTriggerSpec describes how a workflow is started. Manual is the
@@ -71,6 +79,7 @@ type WorkflowStepSpec struct {
 	WaitForCondition *WorkflowConditionSpec `json:"wait_for_condition,omitempty" yaml:"wait_for_condition,omitempty" toml:"wait_for_condition,omitempty"`
 	Timeout          time.Duration          `json:"timeout,omitempty" yaml:"timeout,omitempty" toml:"timeout,omitempty"`
 	OnTimeout        string                 `json:"on_timeout,omitempty" yaml:"on_timeout,omitempty" toml:"on_timeout,omitempty"`
+	OnFailure        string                 `json:"on_failure,omitempty" yaml:"on_failure,omitempty" toml:"on_failure,omitempty"`
 	Retry            *WorkflowRetrySpec     `json:"retry,omitempty" yaml:"retry,omitempty" toml:"retry,omitempty"`
 }
 
@@ -158,7 +167,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 	allowed := map[string]struct{}{
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
 		"depends_on": {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
-		"on_timeout": {}, "retry": {},
+		"on_timeout": {}, "on_failure": {}, "retry": {},
 	}
 	for key := range fields {
 		if _, ok := allowed[key]; !ok {
@@ -179,6 +188,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 		WaitForCondition *WorkflowConditionSpec `json:"wait_for_condition"`
 		Timeout          json.RawMessage        `json:"timeout"`
 		OnTimeout        string                 `json:"on_timeout"`
+		OnFailure        string                 `json:"on_failure"`
 		Retry            *WorkflowRetrySpec     `json:"retry"`
 	}
 	var w wire
@@ -199,7 +209,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 		WaitForEvent: w.WaitForEvent, WaitForCallback: w.WaitForCallback,
 		WaitForDuration:  waitForDuration,
 		WaitForCondition: w.WaitForCondition,
-		Timeout:          timeout, OnTimeout: w.OnTimeout,
+		Timeout:          timeout, OnTimeout: w.OnTimeout, OnFailure: w.OnFailure,
 		Retry: w.Retry,
 	}
 	return nil
@@ -229,13 +239,14 @@ func (s WorkflowStepSpec) MarshalJSON() ([]byte, error) {
 		WaitForCondition *WorkflowConditionSpec `json:"wait_for_condition,omitempty"`
 		Timeout          any                    `json:"timeout,omitempty"`
 		OnTimeout        string                 `json:"on_timeout,omitempty"`
+		OnFailure        string                 `json:"on_failure,omitempty"`
 		Retry            *WorkflowRetrySpec     `json:"retry,omitempty"`
 	}{
 		Name: s.Name, Run: s.Run, Input: s.Input, Path: s.Path, Method: s.Method,
 		DependsOn: s.DependsOn, WaitForEvent: s.WaitForEvent,
 		WaitForCallback: s.WaitForCallback,
 		WaitForDuration: waitForDuration, WaitForCondition: s.WaitForCondition, Timeout: timeout,
-		OnTimeout: s.OnTimeout, Retry: s.Retry,
+		OnTimeout: s.OnTimeout, OnFailure: s.OnFailure, Retry: s.Retry,
 	})
 }
 
@@ -252,7 +263,7 @@ func (s *WorkflowStepSpec) UnmarshalYAML(node *yaml.Node) error {
 	allowed := map[string]struct{}{
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
 		"depends_on": {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
-		"on_timeout": {}, "retry": {},
+		"on_timeout": {}, "on_failure": {}, "retry": {},
 	}
 	for key := range fields {
 		if _, ok := allowed[key]; !ok {
@@ -293,7 +304,7 @@ func decodeWorkflowDuration(raw json.RawMessage, field string) (time.Duration, e
 }
 
 // parseWorkflowDuration follows time.ParseDuration and adds the day suffix
-// used by ADR-081 examples (for example, "7d" for the maximum wait). Go's
+// used by ADR-081 examples (for example, "365d" for a Scale wait). Go's
 // standard parser intentionally has no day unit because a day can be
 // calendar-dependent; workflow waits are fixed 24-hour intervals, so the
 // conversion is unambiguous here.
@@ -342,6 +353,7 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 	maxTimeout := plan.WorkflowStepMaxTimeout()
 	maxWaitDays := plan.WorkflowMaxWaitDays()
 	maxWaitDuration := time.Duration(maxWaitDays) * 24 * time.Hour
+	conditionMaxWaitDuration := 7 * 24 * time.Hour
 
 	for _, step := range spec.Steps {
 		if strings.TrimSpace(step.Name) == "" {
@@ -396,7 +408,7 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		}
 		if hasCondition {
 			condition := step.WaitForCondition
-			if !validWorkflowRunName(condition.Run) || condition.Interval < time.Minute || condition.Interval > maxWaitDuration || condition.MaxAttempts < 1 || condition.MaxAttempts > 1000 {
+			if !validWorkflowRunName(condition.Run) || condition.Interval < time.Minute || condition.Interval > conditionMaxWaitDuration || condition.MaxAttempts < 1 || condition.MaxAttempts > 1000 {
 				return nil, fmt.Errorf("%w in step %q", ErrWorkflowConditionInvalid, step.Name)
 			}
 			if len(step.Input) > 0 || step.Method != "" || step.Retry != nil {
@@ -406,20 +418,94 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		if hasEvent && strings.HasPrefix(step.WaitForEvent, workflowCallbackEventPrefix) {
 			return nil, fmt.Errorf("%w in step %q", ErrWorkflowReservedEventName, step.Name)
 		}
-		if hasEvent || step.WaitForCallback || hasCondition {
+		if hasEvent || step.WaitForCallback {
 			if step.Timeout < time.Second || maxWaitDays <= 0 || step.Timeout > maxWaitDuration {
 				return nil, fmt.Errorf("%w in step %q", ErrWorkflowWaitTimeoutInvalid, step.Name)
+			}
+		} else if hasCondition {
+			if step.Timeout < time.Second || step.Timeout > conditionMaxWaitDuration {
+				return nil, fmt.Errorf("%w in step %q", ErrWorkflowConditionTimeoutInvalid, step.Name)
 			}
 		} else if step.Timeout > 0 && (maxTimeout <= 0 || step.Timeout > maxTimeout) {
 			return nil, fmt.Errorf("%w in step %q: %v > %v", ErrWorkflowTimeoutExceeded, step.Name, step.Timeout, maxTimeout)
 		}
 	}
 
-	// Validate dependencies and on_timeout references.
+	// Validate exception routes before input references so failure templates
+	// can be restricted to the handler that owns that failure context.
+	failureHandlers := make(map[string]string)
+	timeoutHandlers := make(map[string]struct{})
 	for _, step := range spec.Steps {
 		if step.OnTimeout != "" {
 			if _, ok := stepMap[step.OnTimeout]; !ok {
 				return nil, fmt.Errorf("%w in step %q: %q", ErrWorkflowUnknownOnTimeout, step.Name, step.OnTimeout)
+			}
+			timeoutHandlers[step.OnTimeout] = struct{}{}
+		}
+		if step.OnFailure == "" {
+			continue
+		}
+		sourceIsHandler := strings.TrimSpace(step.Run) != "" || strings.TrimSpace(step.Path) != ""
+		target, targetExists := stepMap[step.OnFailure]
+		if !targetExists {
+			return nil, fmt.Errorf("%w in step %q: %q", ErrWorkflowUnknownOnFailure, step.Name, step.OnFailure)
+		}
+		targetIsHandler := strings.TrimSpace(target.Run) != "" || strings.TrimSpace(target.Path) != ""
+		if !sourceIsHandler || !targetIsHandler || step.OnFailure == step.Name {
+			return nil, fmt.Errorf("%w in step %q: %q", ErrWorkflowInvalidOnFailure, step.Name, step.OnFailure)
+		}
+		if _, duplicate := failureHandlers[step.OnFailure]; duplicate {
+			return nil, fmt.Errorf("%w: %q", ErrWorkflowDuplicateFailureTarget, step.OnFailure)
+		}
+		failureHandlers[step.OnFailure] = step.Name
+	}
+	for targetName := range failureHandlers {
+		target := stepMap[targetName]
+		if target.OnFailure != "" {
+			return nil, fmt.Errorf("%w: failure handler %q cannot route its own failure", ErrWorkflowInvalidOnFailure, targetName)
+		}
+		if _, isTimeoutHandler := timeoutHandlers[targetName]; isTimeoutHandler {
+			return nil, fmt.Errorf("%w: %q is already an on_timeout handler", ErrWorkflowInvalidOnFailure, targetName)
+		}
+	}
+	for _, step := range spec.Steps {
+		for _, dependency := range step.DependsOn {
+			if step.Name == dependency {
+				continue // The DAG validation below reports self-dependencies.
+			}
+			if _, isFailureHandler := failureHandlers[dependency]; isFailureHandler {
+				return nil, fmt.Errorf("%w: %q", ErrWorkflowFailureHandlerDependent, dependency)
+			}
+		}
+	}
+
+	// Validate dependencies and input references.
+	stepNames := make([]string, 0, len(stepMap))
+	for name := range stepMap {
+		stepNames = append(stepNames, name)
+	}
+	for _, step := range spec.Steps {
+		refs, err := workflowInputReferences(step.Input, stepNames)
+		if err != nil {
+			return nil, fmt.Errorf("%w in step %q: %v", ErrWorkflowInputTemplateInvalid, step.Name, err)
+		}
+		dependencies := make(map[string]struct{}, len(step.DependsOn))
+		for _, dep := range step.DependsOn {
+			dependencies[dep] = struct{}{}
+		}
+		for _, ref := range refs {
+			if ref.Source == workflowInputStepOutput {
+				if failureHandlers[step.Name] == ref.StepName {
+					return nil, fmt.Errorf("%w: read failure details through {{failure...}} in step %q", ErrWorkflowInvalidFailureContext, step.Name)
+				}
+				if _, ok := dependencies[ref.StepName]; !ok {
+					return nil, fmt.Errorf("%w in step %q: %q", ErrWorkflowInputOutputDependency, step.Name, ref.StepName)
+				}
+			}
+			if ref.Source == workflowInputFailure {
+				if _, isFailureHandler := failureHandlers[step.Name]; !isFailureHandler {
+					return nil, fmt.Errorf("%w in step %q", ErrWorkflowInvalidFailureContext, step.Name)
+				}
 			}
 		}
 
@@ -581,6 +667,23 @@ type WorkflowStepResponse struct {
 // ListWorkflowStepsResponse is returned by GET /v1/workflows/runs/{id}/steps.
 type ListWorkflowStepsResponse struct {
 	Steps []WorkflowStepResponse `json:"steps"`
+}
+
+// WorkflowStepAttemptResponse is one durable executor invocation for a step.
+type WorkflowStepAttemptResponse struct {
+	Attempt       int     `json:"attempt"`
+	Status        string  `json:"status"`
+	HTTPStatus    *int    `json:"http_status,omitempty"`
+	StartedAt     string  `json:"started_at"`
+	FinishedAt    *string `json:"finished_at,omitempty"`
+	NextAttemptAt *string `json:"next_attempt_at,omitempty"`
+	Error         *string `json:"error,omitempty"`
+}
+
+// ListWorkflowStepAttemptsResponse is returned by
+// GET /v1/workflows/runs/{id}/steps/{step}/attempts.
+type ListWorkflowStepAttemptsResponse struct {
+	Attempts []WorkflowStepAttemptResponse `json:"attempts"`
 }
 
 // InjectWorkflowEventRequest is the body for POST /v1/workflows/runs/{id}/events.
