@@ -108,6 +108,12 @@ type ProjectReleaseSetResponse struct {
 	Members     []ProjectReleaseSetMemberResponse `json:"members"`
 }
 
+// ProjectReleaseSetListResponse includes retired and expired release graphs.
+type ProjectReleaseSetListResponse struct {
+	Items      []ProjectReleaseSetResponse `json:"items"`
+	NextBefore string                      `json:"next_before,omitempty"`
+}
+
 // ProjectReleaseSetMemberResponse maps one project app to its deployment.
 type ProjectReleaseSetMemberResponse struct {
 	AppID        string `json:"app_id"`
@@ -170,6 +176,7 @@ type ProjectEnvironmentBindingResponse struct {
 // ProjectEnvironmentStateWorkloadResponse is the effective state of one
 // project workload in a named environment.
 type ProjectEnvironmentStateWorkloadResponse struct {
+	AppID        string                                    `json:"app_id"`
 	WorkloadSlug string                                    `json:"workload_slug"`
 	WorkloadName string                                    `json:"workload_name"`
 	Release      ProjectEnvironmentReleaseWorkloadResponse `json:"release"`
@@ -231,13 +238,15 @@ type ProjectEnvironmentSharedResourceResponse struct {
 // ProjectEnvironmentStateResponse is the canonical read model used by future
 // clone operations and by the unified environment diff.
 type ProjectEnvironmentStateResponse struct {
-	ProjectSlug     string                                     `json:"project_slug"`
-	Environment     string                                     `json:"environment"`
-	Protected       bool                                       `json:"protected"`
-	Configuration   ProjectEnvironmentConfigResponse           `json:"configuration"`
-	Workloads       []ProjectEnvironmentStateWorkloadResponse  `json:"workloads"`
-	SharedResources []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
-	GeneratedAt     string                                     `json:"generated_at"`
+	ActiveReleaseSet *ProjectReleaseSetResponse                 `json:"active_release_set"`
+	ReleaseSetStatus string                                     `json:"release_set_status"`
+	ProjectSlug      string                                     `json:"project_slug"`
+	Environment      string                                     `json:"environment"`
+	Protected        bool                                       `json:"protected"`
+	Configuration    ProjectEnvironmentConfigResponse           `json:"configuration"`
+	Workloads        []ProjectEnvironmentStateWorkloadResponse  `json:"workloads"`
+	SharedResources  []ProjectEnvironmentSharedResourceResponse `json:"shared_resources"`
+	GeneratedAt      string                                     `json:"generated_at"`
 }
 
 // ProjectEnvironmentReleaseDiffResponse compares the live artifact selected

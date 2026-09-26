@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.project_environment_binding_response import ProjectEnvironmentBindingResponse
@@ -34,6 +37,7 @@ class ProjectEnvironmentStateWorkloadResponse:
     """Effective declared-route contract and whether it is environment-owned."""
     policies: ProjectEnvironmentEdgePolicyResponse
     """Headers/CORS policy ownership and rules. Other edge-rule kinds remain application-owned."""
+    app_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +66,10 @@ class ProjectEnvironmentStateWorkloadResponse:
 
         policies = self.policies.to_dict()
 
+        app_id: str | Unset = UNSET
+        if not isinstance(self.app_id, Unset):
+            app_id = str(self.app_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -76,6 +84,8 @@ class ProjectEnvironmentStateWorkloadResponse:
                 "policies": policies,
             }
         )
+        if app_id is not UNSET:
+            field_dict["app_id"] = app_id
 
         return field_dict
 
@@ -120,6 +130,13 @@ class ProjectEnvironmentStateWorkloadResponse:
 
         policies = ProjectEnvironmentEdgePolicyResponse.from_dict(d.pop("policies"))
 
+        _app_id = d.pop("app_id", UNSET)
+        app_id: UUID | Unset
+        if isinstance(_app_id, Unset):
+            app_id = UNSET
+        else:
+            app_id = UUID(_app_id)
+
         project_environment_state_workload_response = cls(
             workload_slug=workload_slug,
             workload_name=workload_name,
@@ -129,6 +146,7 @@ class ProjectEnvironmentStateWorkloadResponse:
             bindings=bindings,
             routes=routes,
             policies=policies,
+            app_id=app_id,
         )
 
         project_environment_state_workload_response.additional_properties = d

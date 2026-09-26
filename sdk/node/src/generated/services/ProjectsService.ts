@@ -22,6 +22,7 @@ import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnv
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
+import type { ProjectReleaseSetListResponse } from '../models/ProjectReleaseSetListResponse.js';
 import type { ProjectReleaseSetResponse } from '../models/ProjectReleaseSetResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
@@ -601,6 +602,57 @@ export class ProjectsService {
     });
   }
   /**
+   * List active, retired, and expired project release sets.
+   * Returns newest first, ordered by created_at and ID descending. Pass next_before as before for the next page.
+   * @returns ProjectReleaseSetListResponse Page of release graphs owned by the requested project environment.
+   * @throws ApiError
+   */
+  public static listProjectReleaseSets({
+    slug,
+    environment,
+    before,
+    limit = 50,
+  }: {
+    /**
+     * Project slug owning the release set.
+     */
+    slug: string,
+    /**
+     * Target project environment.
+     */
+    environment: string,
+    /**
+     * Continue release-set history from the next_before cursor returned by the preceding page.
+     */
+    before?: string,
+    /**
+     * Maximum number of release sets to return.
+     */
+    limit?: number,
+  }): CancelablePromise<ProjectReleaseSetListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * Atomically activate an immutable project deployment graph.
    * Every project workload must have one live deployment and revision pinning enabled for at least the requested TTL. Previous release sets remain addressable until expiry.
    * @returns ProjectReleaseSetResponse Published release set.
@@ -635,6 +687,86 @@ export class ProjectsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get the active project release graph.
+   * Returns 404 when no active release exists in this project environment.
+   * @returns ProjectReleaseSetResponse Currently active release graph and its immutable deployment membership.
+   * @throws ApiError
+   */
+  public static getActiveProjectReleaseSet({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project whose active release is requested.
+     */
+    slug: string,
+    /**
+     * Environment whose active graph should be returned.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectReleaseSetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/active',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect a specific project release graph.
+   * Includes retired and expired graphs for diagnosis; this read does not make them routable.
+   * @returns ProjectReleaseSetResponse Requested historical release graph, including its activation and expiry metadata.
+   * @throws ApiError
+   */
+  public static getProjectReleaseSet({
+    slug,
+    environment,
+    release,
+  }: {
+    /**
+     * Project owning the specific release being inspected.
+     */
+    slug: string,
+    /**
+     * Environment that originally published the requested release.
+     */
+    environment: string,
+    /**
+     * Release-set UUID.
+     */
+    release: string,
+  }): CancelablePromise<ProjectReleaseSetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/{release}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'release': release,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

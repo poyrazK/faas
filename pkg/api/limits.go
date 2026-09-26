@@ -35,8 +35,10 @@ const (
 	MaxPlatformTenantRequestsPerDay    int64 = 100_000_000
 	// RevisionPinMaxTTLSeconds bounds how long a superseded deployment can
 	// remain addressable by clients after a stable cutover.
-	RevisionPinMaxTTLSeconds    = 7 * 24 * 60 * 60
-	ProjectReleaseSetMaxMembers = 100
+	RevisionPinMaxTTLSeconds     = 7 * 24 * 60 * 60
+	ProjectReleaseSetMaxMembers  = 100
+	ProjectReleaseSetPageDefault = 50
+	ProjectReleaseSetPageMax     = 100
 	// CertIssuanceFailedAfter is the sustained failure window before the
 	// platform raises the customer-facing certificate issuance alert.
 	CertIssuanceFailedAfter = 15 * time.Minute

@@ -43,6 +43,13 @@
   errors do not fall back to weighted routing. Rollback may select a retained
   zero-traffic revision. The weighted picker continues to ignore 0% rows.
   Existing apps are unchanged until they enable a TTL or publish a set.
+- **Read inventory:** Account-scoped GET endpoints expose active, specific,
+  and cursor-paginated historical graphs, including expired sets. Reading a
+  graph does not make its members eligible for routing. Environment state
+  includes the active set and workload app IDs alongside the existing live
+  deployment inventory so clients can compare those selections.
+  These reads do not change activation, environment hostname routing, or
+  promotion semantics.
 - **Durable work:** Async invoke, delayed tasks, queues, inbox messages, and
   asynchronous edge routes capture the selected release or direct revision
   when enqueued. The scheduler and gateway revalidate it before delivery.
