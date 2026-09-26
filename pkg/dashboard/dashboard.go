@@ -1851,13 +1851,20 @@ type RequestAnalyticsDeploymentCostBreakdownView struct {
 }
 
 type RequestAnalyticsDeploymentCostView struct {
-	DeploymentID    string
-	Revision        string
-	Tag             string
-	CreatedAt       string
-	Requests        int64
-	RequestSharePct float64
-	EstimatedEUR    string
+	DeploymentID             string
+	Revision                 string
+	Tag                      string
+	CreatedAt                string
+	Requests                 int64
+	RequestSharePct          float64
+	EstimatedEUR             string
+	GuestCPUAvailable        bool
+	GuestCPUAvgMS            int
+	GuestCPUMeasuredRequests int64
+	GuestCPUChangeAvailable  bool
+	GuestCPUChangePct        float64
+	GuestCPUComparedTo       string
+	GuestCPURegression       bool
 }
 
 type RequestAnalyticsGroupView struct {

@@ -9932,15 +9932,21 @@ type RequestAnalyticsComputeCost struct {
 }
 
 // RequestAnalyticsDeploymentCost is the estimated share of this app's compute
-// value attributed to one immutable deployment by its observed request share.
+// value attributed to one immutable deployment by its observed request share,
+// with optional measured CPU/request comparison data.
 type RequestAnalyticsDeploymentCost struct {
-	DeploymentID                   string  `json:"deployment_id"`
-	CommitSHA                      string  `json:"commit_sha,omitempty"`
-	DeploymentTag                  string  `json:"deployment_tag,omitempty"`
-	DeploymentCreatedAt            string  `json:"deployment_created_at,omitempty"`
-	Requests                       int64   `json:"requests"`
-	RequestSharePct                float64 `json:"request_share_pct"`
-	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents"`
+	DeploymentID                   string   `json:"deployment_id"`
+	CommitSHA                      string   `json:"commit_sha,omitempty"`
+	DeploymentTag                  string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt            string   `json:"deployment_created_at,omitempty"`
+	Requests                       int64    `json:"requests"`
+	RequestSharePct                float64  `json:"request_share_pct"`
+	EstimatedComputeCostMillicents int64    `json:"estimated_compute_cost_millicents"`
+	GuestCPUAvgMS                  *int     `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUMeasuredRequests       int64    `json:"guest_cpu_measured_requests"`
+	GuestCPUChangePct              *float64 `json:"guest_cpu_change_pct,omitempty"`
+	GuestCPUComparedTo             string   `json:"guest_cpu_compared_to,omitempty"`
+	GuestCPURegression             bool     `json:"guest_cpu_regression"`
 }
 
 // RequestAnalyticsDeploymentCostBreakdown is the bounded deployment split of

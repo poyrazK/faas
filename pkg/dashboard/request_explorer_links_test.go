@@ -29,6 +29,8 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 					Deployments: []dashboard.RequestAnalyticsDeploymentCostView{{
 						DeploymentID: "deploy-1234567890", Revision: "abcdef1234567890", Tag: "v39",
 						Requests: 3, RequestSharePct: 100, EstimatedEUR: "1.23456",
+						GuestCPUAvailable: true, GuestCPUAvgMS: 21, GuestCPUMeasuredRequests: 23,
+						GuestCPUChangeAvailable: true, GuestCPUChangePct: 61, GuestCPUComparedTo: "v38", GuestCPURegression: true,
 					}},
 				},
 				Routes: []dashboard.RequestAnalyticsRouteView{{
@@ -66,6 +68,9 @@ func TestRender_AppDetail_RequestAnalyticsLinksToDebugger(t *testing.T) {
 		"€1.23456",
 		"Estimated compute by deployment",
 		"v39",
+		"21 ms (23 measured requests)",
+		"+61.0% vs <code>v38</code>",
+		"CPU/request regression",
 		"Inspect requests",
 		"/dashboard/apps/demo/debug?route=%2Fcheckout&amp;since=24h",
 		"?analytics_by=consumer_id",

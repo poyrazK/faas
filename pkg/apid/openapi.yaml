@@ -32976,8 +32976,8 @@ components:
 
     RequestAnalyticsDeploymentCost:
       type: object
-      description: "One deployment's estimated share of app raw compute value, allocated by its observed request share."
-      required: [deployment_id, requests, request_share_pct, estimated_compute_cost_millicents]
+      description: "One deployment's estimated share of app raw compute value, allocated by its observed request share, with optional measured CPU/request comparison. CPU regression comparisons are advisory, traffic-mix sensitive, and only available for supported runtimes."
+      required: [deployment_id, requests, request_share_pct, estimated_compute_cost_millicents, guest_cpu_measured_requests, guest_cpu_regression]
       properties:
         deployment_id: { type: string, description: "Immutable deployment UUID." }
         commit_sha: { type: string }
@@ -32986,6 +32986,11 @@ components:
         requests: { type: integer, format: int64, minimum: 0 }
         request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
         estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        guest_cpu_avg_ms: { type: integer, minimum: 0, description: "Mean measured guest CPU time per request in the analytics window; only populated for supported Linux one-shot runtimes." }
+        guest_cpu_measured_requests: { type: integer, format: int64, minimum: 0, description: "Request-weighted number of requests with measured guest CPU data." }
+        guest_cpu_change_pct: { type: number, format: double, description: "Percentage change in mean guest CPU time from the earlier comparable deployment in this analytics window. Only computed when both deployments have at least 20 measured requests and the baseline is non-zero." }
+        guest_cpu_compared_to: { type: string, description: "Tag, commit SHA, or deployment UUID for the earlier measured deployment used as the CPU comparison baseline." }
+        guest_cpu_regression: { type: boolean, description: "True when measured guest CPU/request increased by at least 25% from the comparison baseline. Advisory and sensitive to traffic mix." }
 
     RequestAnalyticsDeploymentCostBreakdown:
       type: object
