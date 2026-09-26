@@ -49,6 +49,14 @@ func (c *Client) GetCronCommandRun(ctx context.Context, cronID, runID string) (A
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
+// CancelCronCommandRun requests cancellation of one run belonging to a
+// command cron and returns its current durable task receipt.
+func (c *Client) CancelCronCommandRun(ctx context.Context, cronID, runID string) (AppTaskResponse, error) {
+	var out AppTaskResponse
+	path := "/v1/crons/" + url.PathEscape(cronID) + "/runs/" + url.PathEscape(runID) + "/cancel"
+	return out, c.do(ctx, http.MethodPost, path, nil, &out)
+}
+
 // CancelAppTask requests idempotent cancellation of one app task.
 func (c *Client) CancelAppTask(ctx context.Context, slug, id string) (AppTaskResponse, error) {
 	var out AppTaskResponse

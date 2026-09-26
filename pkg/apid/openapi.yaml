@@ -11731,6 +11731,46 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
+  /v1/crons/{id}/runs/{run_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - name: run_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Command-cron task identifier to cancel.
+    post:
+      tags: [crons]
+      operationId: cancelCronCommandRun
+      summary: Request cancellation of one command-cron run.
+      description: |
+        Requests cancellation of one queued or active command-cron run and
+        returns its current durable app-task receipt. A queued run becomes
+        cancelled immediately; an active run records `cancel_requested_at`
+        and is stopped by its worker. Repeating the request is safe. Runs
+        belonging to another cron, HTTP cron runs, and runs owned by another
+        account return the same 404.
+
+        Scoped to `deploy:write` (or `admin`) and subject to the app-task API
+        capability gate. An optional `Idempotency-Key` replays the stored
+        response for the account/key pair.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, maxLength: 255 }
+          description: Replay token for a duplicate cancellation request.
+      responses:
+        '202':
+          description: Cancellation accepted; the receipt may remain active while the worker stops.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/crons/{id}/run:
     parameters:
       - name: id

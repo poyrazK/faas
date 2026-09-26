@@ -48,6 +48,9 @@ retry details on demand with `gregale crons runs CRON_ID --run TASK_ID`. Use
 current live deployment without moving its schedule cursor.
 If `--skip-if-running` is configured and another run is still active, the
 manual request fails rather than overlapping it.
+Cancel a queued or active command-cron run with
+`gregale crons cancel CRON_ID TASK_ID`; an active task reports its cancellation
+request while the worker stops it. Disabling a cron only prevents future fires.
 `gregale app APP_ID exec ...` remains the surface for an arbitrary one-off
 command. Scheduled jobs create one task per occurrence and
 pick up the job's current configuration at fire time.
