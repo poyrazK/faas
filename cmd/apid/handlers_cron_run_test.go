@@ -88,8 +88,8 @@ func TestFireCronNow_HappyPath(t *testing.T) {
 	}
 }
 
-// adr: 099 — scheduled command crons are distinct from HTTP-triggered crons.
-func TestFireCronNow_CommandCronReturnsConflict(t *testing.T) {
+// adr: 099 — scheduled command crons can be fired immediately as a queued task.
+func TestFireCronNow_CommandCronIsAccepted(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	app := mustSeedApp(t, e, "command-cron-fire-now")
 	cron, err := e.store.CreateCronWithOptions(context.Background(), app, "0 2 * * *", "/", true, state.CronOptions{
@@ -99,7 +99,23 @@ func TestFireCronNow_CommandCronReturnsConflict(t *testing.T) {
 		t.Fatalf("CreateCronWithOptions: %v", err)
 	}
 	rec := e.do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/run", nil, nil)
-	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.FireCronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if resp.CronID != cron.ID || resp.RequestID == "" || resp.Status != "pending" {
+		t.Fatalf("response = %+v; want pending request for command cron %s", resp, cron.ID)
+	}
+	request, err := e.store.GetFireNowRequest(context.Background(), resp.RequestID)
+	if err != nil {
+		t.Fatalf("GetFireNowRequest: %v", err)
+	}
+	if request.CronID != cron.ID || request.Status != state.FireNowStatusPending {
+		t.Fatalf("fire-now row = %+v; want pending request for command cron", request)
+	}
 }
 
 func TestFireCronNow_BadID(t *testing.T) {

@@ -63,6 +63,7 @@ func Run(t *testing.T, open Open) {
 		{"due_webhook_delivery_claim_respects_schedule_and_limit", testDueWebhookDeliveryClaimRespectsScheduleAndLimit},
 		{"account_release_webhook_quota_and_cross_app_pagination", testAccountReleaseWebhookQuotaAndPagination},
 		{"fire_now_request_claim_is_exactly_once", testFireNowRequestClaimIsExactlyOnce},
+		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
@@ -169,6 +170,57 @@ func testScheduledCommandCronLifecycle(t *testing.T, fx *Fixture) {
 	runs, err := fx.Store.ListCronAppTaskRuns(fx.Ctx, cron.ID, 10, "")
 	if err != nil || len(runs) != 2 || runs[0].ID != second.ID || runs[1].ID != first.ID {
 		t.Fatalf("ListCronAppTaskRuns = %+v, %v; want newest-first history", runs, err)
+	}
+}
+
+func testManualCommandCronFireNow(t *testing.T, fx *Fixture) {
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/local/manual-cron.ext4", "apps/conformance/manual-cron-rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := fx.Store.CreateCronWithOptions(fx.Ctx, fx.App.ID, "0 0 1 1 *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance", "--compact"}, RetryMax: 2, RetryBackoffSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	cursor := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	if err := fx.Store.MarkCronFired(fx.Ctx, cron.ID, cursor); err != nil {
+		t.Fatalf("MarkCronFired: %v", err)
+	}
+	requestID, err := fx.Store.InsertFireNowRequest(fx.Ctx, cron.ID, fx.Account.ID)
+	if err != nil {
+		t.Fatalf("InsertFireNowRequest: %v", err)
+	}
+	claimed, err := fx.Store.ClaimPendingFireNowRequest(fx.Ctx)
+	if err != nil || claimed.ID != requestID || claimed.Status != state.FireNowStatusRunning {
+		t.Fatalf("ClaimPendingFireNowRequest = %+v, %v; want running request %s", claimed, err, requestID)
+	}
+
+	firedAt := time.Now().UTC()
+	task, err := fx.Store.CreateManualCronAppTaskForFireNow(fx.Ctx, requestID, firedAt)
+	if err != nil {
+		t.Fatalf("CreateManualCronAppTaskForFireNow: %v", err)
+	}
+	if task.CronID != cron.ID || task.Kind != state.AppTaskKindCron || task.DeploymentID != fx.Deployment.ID ||
+		task.ScheduledFor != nil || task.RetryMax != 2 || task.RetryBackoffSeconds != 30 ||
+		len(task.Command) != 2 || task.Command[0] != "bin/maintenance" {
+		t.Fatalf("manual command task = %+v; want cron settings and no scheduled_for", task)
+	}
+	request, err := fx.Store.GetFireNowRequest(fx.Ctx, requestID)
+	if err != nil || request.Status != state.FireNowStatusSucceeded || request.TaskID == nil || *request.TaskID != task.ID || request.InvocationID != nil {
+		t.Fatalf("fire-now request = %+v, %v; want successful task receipt", request, err)
+	}
+	replayed, err := fx.Store.CreateManualCronAppTaskForFireNow(fx.Ctx, requestID, firedAt.Add(time.Second))
+	if err != nil || replayed.ID != task.ID {
+		t.Fatalf("idempotent replay task = %+v, %v; want original %s", replayed, err, task.ID)
+	}
+	storedCron, err := fx.Store.CronByID(fx.Ctx, cron.ID)
+	if err != nil || !storedCron.LastFiredAt.Equal(cursor) {
+		t.Fatalf("cron cursor = %v, %v; want unchanged %v", storedCron.LastFiredAt, err, cursor)
+	}
+	runs, err := fx.Store.ListCronAppTaskRuns(fx.Ctx, cron.ID, 10, "")
+	if err != nil || len(runs) != 1 || runs[0].ID != task.ID {
+		t.Fatalf("command cron runs = %+v, %v; want exactly one task", runs, err)
 	}
 }
 

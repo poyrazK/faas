@@ -254,6 +254,18 @@ func TestCmdCronsFireNowGet_Failed(t *testing.T) {
 	}
 }
 
+func TestRenderFireNowStatusShowsCommandTaskReceipt(t *testing.T) {
+	response := makeFireNowResponse()
+	response.Status = fireNowStatusSucceeded
+	taskID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	response.TaskID = &taskID
+	var output bytes.Buffer
+	renderFireNowStatus(&output, response)
+	if !strings.Contains(output.String(), "task: "+taskID) {
+		t.Fatalf("command fire-now status = %q; want task receipt", output.String())
+	}
+}
+
 func TestCmdCronsFireNowGet_JSON_Envelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(makeFireNowResponse())

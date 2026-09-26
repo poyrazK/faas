@@ -11,8 +11,8 @@ import (
 )
 
 // AppTaskKind identifies why a deployment-attached command was admitted.
-// Manual tasks are customer initiated; release tasks are deploy gates and
-// cron tasks come from recurring schedules.
+// Manual tasks are arbitrary customer commands; release tasks are deploy
+// gates; cron tasks run a saved command on schedule or by manual fire-now.
 type AppTaskKind string
 
 const (
@@ -141,6 +141,9 @@ var (
 	ErrAppTaskDeploymentUnavailable = errors.New("state: app task deployment artifact is unavailable")
 	ErrAppTaskLeaseLost             = errors.New("state: app task lease lost")
 	ErrAppTaskCancellationPending   = errors.New("state: app task cancellation is pending")
+	ErrAppTaskCronDisabled          = errors.New("state: command cron is disabled")
+	ErrAppTaskCronSuspended         = errors.New("state: command cron is suspended")
+	ErrAppTaskCronOverlap           = errors.New("state: command cron already has an active run")
 )
 
 // AppTaskStore is deliberately separate from ExecutionStore: disposable
@@ -161,6 +164,10 @@ type AppTaskStore interface {
 	CompleteAppTask(ctx context.Context, params CompleteAppTaskParams) (AppTask, error)
 	SweepExpiredAppTasks(ctx context.Context, at time.Time) (AppTaskSweepResult, error)
 	CreateScheduledCronAppTask(ctx context.Context, cronID string, expectedLastFiredAt *time.Time, firedAt time.Time) (AppTask, bool, error)
+	// CreateManualCronAppTaskForFireNow atomically queues one command-cron
+	// task for a claimed fire-now request and stamps that request succeeded
+	// with the new task id. It deliberately leaves crons.last_fired_at alone.
+	CreateManualCronAppTaskForFireNow(ctx context.Context, requestID string, firedAt time.Time) (AppTask, error)
 	CountActiveCronAppTasks(ctx context.Context, cronID string) (int, error)
 	ListCronAppTaskRuns(ctx context.Context, cronID string, limit int, before string) ([]AppTask, error)
 }

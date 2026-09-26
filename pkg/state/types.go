@@ -2844,6 +2844,7 @@ type FireNowRequest struct {
 	RequestedAt  time.Time
 	Status       FireNowStatus
 	InvocationID *string // nil while pending/running; set on terminal
+	TaskID       *string // nil for HTTP crons; set when a command-cron task is queued
 	Error        *string // nil until status=failed
 	FinishedAt   *time.Time
 }

@@ -49,6 +49,60 @@ func TestPgScheduledCommandCronCreatesCursorGuardedTask(t *testing.T) {
 	}
 }
 
+func TestPgManualCommandCronFireNowQueuesTaskWithoutMovingCursor(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID, deploymentID := seedLiveDeploy(t, store, ctx, "manual-command-cron-"+uuid.NewString(), "manual-command-"+uuid.NewString()[:8])
+	if err := store.SetDeploymentRootfs(ctx, deploymentID, "/tmp/manual-cron.ext4", "apps/manual-cron/rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(ctx, appID, "0 0 1 1 *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance", "--compact"}, RetryMax: 2, RetryBackoffSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	cursor := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	if err := store.MarkCronFired(ctx, cron.ID, cursor); err != nil {
+		t.Fatalf("set schedule cursor: %v", err)
+	}
+	requestID, err := store.InsertFireNowRequest(ctx, cron.ID, accountID)
+	if err != nil {
+		t.Fatalf("InsertFireNowRequest: %v", err)
+	}
+	claimed, err := store.ClaimPendingFireNowRequest(ctx)
+	if err != nil || claimed.ID != requestID || claimed.Status != state.FireNowStatusRunning {
+		t.Fatalf("ClaimPendingFireNowRequest = %+v, %v; want running request %s", claimed, err, requestID)
+	}
+
+	firedAt := time.Now().UTC()
+	task, err := store.CreateManualCronAppTaskForFireNow(ctx, requestID, firedAt)
+	if err != nil {
+		t.Fatalf("CreateManualCronAppTaskForFireNow: %v", err)
+	}
+	if task.CronID != cron.ID || task.Kind != state.AppTaskKindCron || task.DeploymentID != deploymentID ||
+		task.ScheduledFor != nil || task.RetryMax != 2 || task.RetryBackoffSeconds != 30 || len(task.Command) != 2 {
+		t.Fatalf("manual command task = %+v; want cron settings and no scheduled_for", task)
+	}
+	request, err := store.GetFireNowRequest(ctx, requestID)
+	if err != nil || request.Status != state.FireNowStatusSucceeded || request.TaskID == nil || *request.TaskID != task.ID || request.InvocationID != nil {
+		t.Fatalf("fire-now request = %+v, %v; want successful task receipt", request, err)
+	}
+	// If the scheduler lost its response after commit and retried the operation,
+	// it must resolve the original task instead of enqueuing a duplicate.
+	replayed, err := store.CreateManualCronAppTaskForFireNow(ctx, requestID, firedAt.Add(time.Second))
+	if err != nil || replayed.ID != task.ID {
+		t.Fatalf("idempotent replay task = %+v, %v; want original %s", replayed, err, task.ID)
+	}
+	storedCron, err := store.CronByID(ctx, cron.ID)
+	if err != nil || !storedCron.LastFiredAt.Equal(cursor) {
+		t.Fatalf("cron cursor = %v, %v; want unchanged %v", storedCron.LastFiredAt, err, cursor)
+	}
+	runs, err := store.ListCronAppTaskRuns(ctx, cron.ID, 10, "")
+	if err != nil || len(runs) != 1 || runs[0].ID != task.ID {
+		t.Fatalf("command cron runs = %+v, %v; want exactly one task", runs, err)
+	}
+}
+
 // spec: command cron retries are durable in Postgres and reuse one scheduled occurrence row.
 func TestPgScheduledCommandCronRetryReusesOccurrence(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)

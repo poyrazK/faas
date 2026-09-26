@@ -204,6 +204,143 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 	return task, true, nil
 }
 
+// CreateManualCronAppTaskForFireNow creates a command task for a claimed
+// fire-now request without updating crons.last_fired_at. The app task and
+// the terminal request receipt commit atomically, making a scheduler retry
+// safe if it loses the response after the transaction commits.
+func (s *PgStore) CreateManualCronAppTaskForFireNow(ctx context.Context, requestID string, firedAt time.Time) (AppTask, error) {
+	if requestID == "" || firedAt.IsZero() {
+		return AppTask{}, ErrAppTaskInvalid
+	}
+	firedAt = firedAt.UTC()
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return AppTask{}, fmt.Errorf("state: begin manual cron task: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var cronID, accountID, requestStatus string
+	var existingTaskID pgtype.UUID
+	err = tx.QueryRow(ctx, `
+		select cron_id::text, account_id::text, status, task_id
+		  from cron_fire_now_requests
+		 where id = $1::uuid
+		 for update`, requestID).
+		Scan(&cronID, &accountID, &requestStatus, &existingTaskID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AppTask{}, ErrFireNowRequestNotFound
+	}
+	if err != nil {
+		return AppTask{}, fmt.Errorf("state: load manual cron fire-now request: %w", err)
+	}
+	if existingTaskID.Valid {
+		task, scanErr := scanAppTask(tx.QueryRow(ctx, `
+			select `+appTaskSelectColumns+` from app_tasks where id = $1`, pgUUIDString(existingTaskID)))
+		if scanErr != nil {
+			return AppTask{}, fmt.Errorf("state: load manual cron task receipt: %w", mapErr(scanErr))
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return AppTask{}, fmt.Errorf("state: commit manual cron task receipt: %w", err)
+		}
+		return task, nil
+	}
+	if requestStatus != string(FireNowStatusRunning) {
+		return AppTask{}, ErrFireNowRequestNotFound
+	}
+
+	var appID, cronAccountID string
+	var command []string
+	var commandShell, enabled, skipIfRunning bool
+	var suspendedReason string
+	var timeoutSeconds, maxOutputBytes, retryMax, retryBackoffSeconds int
+	err = tx.QueryRow(ctx, `
+		select c.app_id::text, a.account_id::text, c.command, c.command_shell,
+		       c.command_timeout_seconds, c.command_max_output_bytes,
+	       c.retry_max, c.retry_backoff_seconds, c.enabled, c.suspended_reason,
+	       c.skip_if_running
+		  from crons c
+		  join apps a on a.id = c.app_id
+		 where c.id = $1::uuid and a.status <> 'deleted'
+		 for update of c`, cronID).
+		Scan(&appID, &cronAccountID, &command, &commandShell,
+			&timeoutSeconds, &maxOutputBytes, &retryMax, &retryBackoffSeconds,
+			&enabled, &suspendedReason, &skipIfRunning)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && cronAccountID != accountID) {
+		return AppTask{}, ErrNotFound
+	}
+	if err != nil {
+		return AppTask{}, fmt.Errorf("state: lock manual command cron: %w", err)
+	}
+	if !enabled {
+		return AppTask{}, ErrAppTaskCronDisabled
+	}
+	if suspendedReason != "" {
+		return AppTask{}, ErrAppTaskCronSuspended
+	}
+	if len(command) == 0 {
+		return AppTask{}, ErrAppTaskInvalid
+	}
+	if skipIfRunning {
+		var active bool
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from app_tasks
+				 where cron_id = $1::uuid and status in ('queued', 'restoring', 'running')
+			)`, cronID).Scan(&active); err != nil {
+			return AppTask{}, fmt.Errorf("state: check active manual command cron: %w", err)
+		}
+		if active {
+			return AppTask{}, ErrAppTaskCronOverlap
+		}
+	}
+
+	var deploymentID, scope, artifactKey, imageDigest string
+	err = tx.QueryRow(ctx, `
+		select d.id::text, coalesce(nullif(d.scope, ''), 'default'), d.rootfs_key, d.image_digest
+		  from deployments d
+		 where d.app_id = $1::uuid and d.status = 'live'
+		   and d.rootfs_key is not null and d.rootfs_key <> ''
+		   and d.image_digest <> ''
+		 order by (d.traffic_percent > 0) desc, d.created_at desc, d.id desc
+		 limit 1 for update`, appID).
+		Scan(&deploymentID, &scope, &artifactKey, &imageDigest)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
+	}
+	if err != nil {
+		return AppTask{}, fmt.Errorf("state: select live deployment for manual command cron: %w", err)
+	}
+
+	task, err := scanAppTask(tx.QueryRow(ctx, `
+		insert into app_tasks (
+			account_id, app_id, deployment_id, kind, command, command_shell,
+			deployment_scope, artifact_key, image_digest, timeout_seconds,
+			max_output_bytes, retry_max, retry_backoff_seconds, created_at, updated_at,
+			cron_id, scheduled_for
+		) values ($1::uuid, $2::uuid, $3::uuid, 'cron', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14::uuid, null)
+		returning `+appTaskSelectColumns,
+		accountID, appID, deploymentID, command, commandShell, scope, artifactKey,
+		imageDigest, timeoutSeconds, maxOutputBytes, retryMax, retryBackoffSeconds, firedAt, cronID))
+	if err != nil {
+		return AppTask{}, fmt.Errorf("state: create manual command cron task: %w", mapErr(err))
+	}
+	finishedAt := time.Now().UTC()
+	tag, err := tx.Exec(ctx, `
+		update cron_fire_now_requests
+		   set status = 'succeeded', task_id = $2::uuid, finished_at = $3
+		 where id = $1::uuid and status = 'running'`, requestID, task.ID, finishedAt)
+	if err != nil {
+		return AppTask{}, fmt.Errorf("state: complete manual command cron request: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return AppTask{}, ErrFireNowRequestNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AppTask{}, fmt.Errorf("state: commit manual command cron task: %w", err)
+	}
+	return task, nil
+}
+
 func (s *PgStore) CountActiveCronAppTasks(ctx context.Context, cronID string) (int, error) {
 	var count int
 	if err := s.pool.QueryRow(ctx, `
