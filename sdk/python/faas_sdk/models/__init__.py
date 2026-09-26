@@ -606,6 +606,9 @@ from .diff_request import DiffRequest
 from .diff_request_env_by_scope import DiffRequestEnvByScope
 from .diff_response import DiffResponse
 from .diff_response_plan import DiffResponsePlan
+from .discovered_api_route import DiscoveredAPIRoute
+from .discovered_routes_response import DiscoveredRoutesResponse
+from .discovered_routes_response_source import DiscoveredRoutesResponseSource
 from .dispatch_invocation_batch_body import DispatchInvocationBatchBody
 from .dispatch_invocation_batch_body_records_item import DispatchInvocationBatchBodyRecordsItem
 from .dispatch_invocation_batch_body_records_item_headers import DispatchInvocationBatchBodyRecordsItemHeaders
@@ -1330,6 +1333,13 @@ from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .repo_response import RepoResponse
+from .request_analytics_compute_cost import RequestAnalyticsComputeCost
+from .request_analytics_compute_cost_allocation_method import RequestAnalyticsComputeCostAllocationMethod
+from .request_analytics_compute_cost_basis import RequestAnalyticsComputeCostBasis
+from .request_analytics_compute_cost_currency import RequestAnalyticsComputeCostCurrency
+from .request_analytics_dependency import RequestAnalyticsDependency
+from .request_analytics_deployment_cost import RequestAnalyticsDeploymentCost
+from .request_analytics_deployment_cost_breakdown import RequestAnalyticsDeploymentCostBreakdown
 from .request_analytics_group import RequestAnalyticsGroup
 from .request_analytics_group_method import RequestAnalyticsGroupMethod
 from .request_analytics_response import RequestAnalyticsResponse
@@ -1343,6 +1353,8 @@ from .request_analytics_timeseries_response_group_by import RequestAnalyticsTime
 from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
 from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSeries
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
+from .request_audit_list_response import RequestAuditListResponse
+from .request_audit_record import RequestAuditRecord
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
@@ -2227,6 +2239,9 @@ __all__ = (
     "DiffRequestEnvByScope",
     "DiffResponse",
     "DiffResponsePlan",
+    "DiscoveredAPIRoute",
+    "DiscoveredRoutesResponse",
+    "DiscoveredRoutesResponseSource",
     "DispatchInvocationBatchBody",
     "DispatchInvocationBatchBodyRecordsItem",
     "DispatchInvocationBatchBodyRecordsItemHeaders",
@@ -2923,6 +2938,13 @@ __all__ = (
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "RepoResponse",
+    "RequestAnalyticsComputeCost",
+    "RequestAnalyticsComputeCostAllocationMethod",
+    "RequestAnalyticsComputeCostBasis",
+    "RequestAnalyticsComputeCostCurrency",
+    "RequestAnalyticsDependency",
+    "RequestAnalyticsDeploymentCost",
+    "RequestAnalyticsDeploymentCostBreakdown",
     "RequestAnalyticsGroup",
     "RequestAnalyticsGroupMethod",
     "RequestAnalyticsResponse",
@@ -2936,6 +2958,8 @@ __all__ = (
     "RequestAnalyticsTimeseriesResponseMethod",
     "RequestAnalyticsTimeseriesSeries",
     "RequestAnalyticsTimeseriesSeriesMethod",
+    "RequestAuditListResponse",
+    "RequestAuditRecord",
     "ResolvedExecutionLimits",
     "ResourceProfile",
     "RestoreManagedPostgresDatabaseRequest",

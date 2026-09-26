@@ -13,19 +13,27 @@ import (
 const maxGuestExecutionDurationMS = 24 * 60 * 60 * 1000
 
 type guestExecutionEvidence struct {
-	mu         sync.Mutex
-	Runtime    string
-	DurationMS int
-	Outcome    string
-	ErrorClass string
-	seen       bool
+	mu                     sync.Mutex
+	Runtime                string
+	DurationMS             int
+	Outcome                string
+	ErrorClass             string
+	CPUTimeMS              int
+	PeakRSSMB              int
+	ResourceUsageAvailable bool
+	cpuUsageSeen           bool
+	peakRSSSeen            bool
+	seen                   bool
 }
 
 type guestExecutionEvidenceSnapshot struct {
-	Runtime    string
-	DurationMS int
-	Outcome    string
-	ErrorClass string
+	Runtime                string
+	DurationMS             int
+	Outcome                string
+	ErrorClass             string
+	CPUTimeMS              int
+	PeakRSSMB              int
+	ResourceUsageAvailable bool
 }
 
 type guestExecutionEvidenceContextKey struct{}
@@ -44,6 +52,8 @@ func guestExecutionEvidenceFromContext(ctx context.Context) (guestExecutionEvide
 	return guestExecutionEvidenceSnapshot{
 		Runtime: evidence.Runtime, DurationMS: evidence.DurationMS,
 		Outcome: evidence.Outcome, ErrorClass: evidence.ErrorClass,
+		CPUTimeMS: evidence.CPUTimeMS, PeakRSSMB: evidence.PeakRSSMB,
+		ResourceUsageAvailable: evidence.ResourceUsageAvailable,
 	}, evidence.seen
 }
 
@@ -84,6 +94,24 @@ func recordGuestExecutionEvidence(ctx context.Context, name, value string) bool 
 			return true
 		}
 		evidence.ErrorClass = value
+		evidence.seen = true
+	case api.GuestEvidenceCPUTimeHeader:
+		resource, err := strconv.Atoi(value)
+		if err != nil || resource < 0 || resource > maxGuestExecutionDurationMS {
+			return true
+		}
+		evidence.CPUTimeMS = resource
+		evidence.cpuUsageSeen = true
+		evidence.ResourceUsageAvailable = evidence.cpuUsageSeen && evidence.peakRSSSeen
+		evidence.seen = true
+	case api.GuestEvidencePeakRSSHeader:
+		resource, err := strconv.Atoi(value)
+		if err != nil || resource < 0 || resource > 65536 {
+			return true
+		}
+		evidence.PeakRSSMB = resource
+		evidence.peakRSSSeen = true
+		evidence.ResourceUsageAvailable = evidence.cpuUsageSeen && evidence.peakRSSSeen
 		evidence.seen = true
 	default:
 		return false
@@ -172,7 +200,8 @@ func stripGuestManagedVersionCookieResponseHeader(resp *http.Response) {
 func isGuestEvidenceHeader(name string) bool {
 	switch http.CanonicalHeaderKey(strings.TrimSpace(name)) {
 	case api.GuestEvidenceDurationHeader, api.GuestEvidenceRuntimeHeader,
-		api.GuestEvidenceOutcomeHeader, api.GuestEvidenceErrorClassHeader:
+		api.GuestEvidenceOutcomeHeader, api.GuestEvidenceErrorClassHeader,
+		api.GuestEvidenceCPUTimeHeader, api.GuestEvidencePeakRSSHeader:
 		return true
 	default:
 		return false
@@ -194,6 +223,8 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 		api.GuestEvidenceRuntimeHeader,
 		api.GuestEvidenceOutcomeHeader,
 		api.GuestEvidenceErrorClassHeader,
+		api.GuestEvidenceCPUTimeHeader,
+		api.GuestEvidencePeakRSSHeader,
 	} {
 		for _, value := range resp.Header.Values(name) {
 			recordGuestExecutionEvidence(ctx, name, value)

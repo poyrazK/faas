@@ -55,6 +55,7 @@ var eventsChannels = []string{
 	db.NotifyBillingPastDue,
 	db.NotifyInvocationDone,
 	db.NotifyDebugRegressionChanged,
+	db.NotifyAPIRouteDiscovered,
 	// Wave 0 PR-C / ADR-047: stateless-advisory frame from
 	// cmd/apid/advisory_receiver.go::ForwardStatelessAdvisory.
 	// Payload is the small summary (app_id, instance, n, sample_path);

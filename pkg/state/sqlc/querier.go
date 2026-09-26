@@ -1015,6 +1015,12 @@ type Querier interface {
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
+	// Bounded deployment cost allocation for the customer request analytics
+	// window. Request counts are weighted by the publisher's collapsed `count`.
+	// The window total is computed before LIMIT so the handler can allocate the
+	// omitted deployments into a visible __other__ bucket without an unbounded
+	// response.
+	RequestTelemetryAnalyticsByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryAnalyticsByDeploymentParams) ([]RequestTelemetryAnalyticsByDeploymentRow, error)
 	// Top-N customer analytics grouped by one of the bounded dimensions. Rows
 	// outside the top-N are folded into __other__ so a customer cannot turn this
 	// endpoint into an unbounded cardinality surface. Counts and percentiles use

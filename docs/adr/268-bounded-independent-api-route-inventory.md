@@ -1,0 +1,9 @@
+# ADR-268: Bounded API route inventory independent of request audit
+
+- **Status:** accepted for initial implementation
+- **Date:** 2026-09-25
+- **Decision:** Extend the durable per-request consumer-usage envelope with an optional normalized method/template and observation time. `FAAS_API_DISCOVERY_ENABLED=true` captures route candidates without collecting exact request audit; audit-enabled traffic also contributes. `apid` updates a separate per-app inventory in the usage transaction and marks the usage event as discovery-recorded, so retries cannot inflate counts. An older receiver cannot acknowledge discovery-bearing outbox items.
+- **Read surface:** `GET /v1/apps/{slug}/discovered-routes` replaces the initial audit-coupled route endpoint before release. It returns up to 500 account-scoped candidates with first/last seen times, replay-safe request counts, and a cap-hit signal. The existing `/routes` remains the separate live 50-label metrics snapshot.
+- **Bounds:** At most 500 ordinary routes plus one overflow sentinel per app. New route allocation is serialized by app; updates to established routes take an indexed row update. The inventory survives the 30-day exact-audit retention and is deleted with the app/account. No query string, body, headers, or source IP enter this table.
+- **Privacy and rollout:** An inferred route can retain a literal path segment that may identify a person. Discovery is off by default pending an operator path-privacy review. Deploy the migration and upgraded `apid` before enabling the gateway flag. This is observed traffic, not a complete list of routes in unexercised code.
+- **Rejected alternatives:** Grouping exact audit rows at read time (couples discovery to sensitive audit retention and scans a high-volume table); reusing the lossy 50-route Prometheus label set (incomplete and not durable); a separate per-request discovery receipt table (duplicates the existing usage ledger).

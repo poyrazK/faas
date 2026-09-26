@@ -54,7 +54,9 @@ service RequestTelemetry {
   rpc RecordConsumerUsage(ConsumerUsageEvent) returns (ConsumerUsageReceipt);
 }
 
-// The financial fact contains no request path, client metadata, or payload.
+// The financial fields contain no request path, client metadata, or payload.
+// Optional audit evidence is a separate, opt-in part of the delivery envelope;
+// apid commits both in one transaction before acknowledging the event.
 message ConsumerUsageEvent {
   string event_id = 1;
   string account_id = 2;
@@ -65,17 +67,46 @@ message ConsumerUsageEvent {
   int64 request_count = 7;
   int64 error_count = 8;
   int64 billable_units = 9;
-  string platform_tenant_surface_id = 10; // anonymous traffic on a verified surface only
-  string platform_tenant_jwt_authorization_rule_id = 11; // anonymous traffic attributed by this verified JWT rule
+  RequestAuditEvidence audit = 10;
+  // A normalized route candidate. Independent of the optional exact audit
+  // record; the receiver persists it idempotently with the usage event.
+  string discovered_route = 11;
+  int64 discovered_at_unix_ms = 12;
+  string platform_tenant_surface_id = 13; // anonymous traffic on a verified surface only
+  string platform_tenant_jwt_authorization_rule_id = 14; // anonymous traffic attributed by this verified JWT rule
 }
 
 message ConsumerUsageReceipt {
   // False means the event was committed by an earlier attempt.
   bool applied = 1;
-  // An older apid cannot acknowledge surface attribution. The gateway must
-  // retain the event in its outbox until this is true for surface events.
-  bool surface_attribution_supported = 2;
-  bool jwt_tenant_attribution_supported = 3;
+  // True only when optional audit evidence was committed (or already exists).
+  // Old apid versions return false, preventing an audit-enabled gateway from
+  // acknowledging and discarding an event before a compatible receiver exists.
+  bool audit_recorded = 2;
+  // True only after the optional discovered route was committed. A gateway
+  // retains the outbox item when talking to a receiver that ignores field 11.
+  bool discovery_recorded = 3;
+  // Older apid versions cannot acknowledge these attribution modes. Keep the
+  // outbox record until a receiver explicitly advertises support.
+  bool surface_attribution_supported = 4;
+  bool jwt_tenant_attribution_supported = 5;
+}
+
+// One completed request, not a collapsed debugger bucket. No query, headers,
+// body, or unverified application-user identity is sent. Source IP is optional
+// and comes only from the trusted public-gateway handoff. Undeclared route
+// candidates can retain literal path segments, so collection is opt-in.
+message RequestAuditEvidence {
+  string route_template = 1;
+  string method = 2;
+  int32 http_status = 3;
+  int32 latency_ms = 4;
+  string trace_id = 5;
+  string deployment_id = 6;
+  string commit_sha = 7;
+  int64 occurred_at_unix_ms = 8;
+  string request_id = 9;
+  string source_ip = 10;
 }
 
 // IncrementRequestTelemetryRequest is one collapsed telemetry row
@@ -208,8 +239,20 @@ message IncrementRequestTelemetryRequest {
   // The same request's financial event was fsynced to the dedicated outbox.
   // New receivers skip their legacy ledger write for this debugger row.
   bool usage_outboxed = 30;
-  string platform_tenant_surface_id = 31;
-  string platform_tenant_jwt_authorization_rule_id = 32;
+  // guest_cpu_time_ms — per-invocation child-process user+system CPU time
+  // measured by a Linux one-shot function runner. See resource-usage flag.
+  int32 guest_cpu_time_ms = 31;
+
+  // guest_peak_rss_mb — the child process peak resident set size, rounded up
+  // to MiB. Persistent workers and arbitrary HTTP containers leave it zero.
+  int32 guest_peak_rss_mb = 32;
+
+  // guest_resource_usage_available — true only when both process CPU and RSS
+  // were measured for this invocation. False distinguishes unavailable from
+  // a measured zero/sub-MiB value.
+  bool guest_resource_usage_available = 33;
+  string platform_tenant_surface_id = 34;
+  string platform_tenant_jwt_authorization_rule_id = 35;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

@@ -1499,6 +1499,8 @@ func (s *server) handler() http.Handler {
 	// (a customer who shouldn't see a route set on app X
 	// cannot enumerate it through this endpoint).
 	mux.HandleFunc("GET /v1/apps/{slug}/routes", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRoutes)))
+	mux.HandleFunc("GET /v1/apps/{slug}/audit/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAudit))))
+	mux.HandleFunc("GET /v1/apps/{slug}/discovered-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppDiscoveredRoutes))))
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// recommender (Phase 1). Read-only, no MFA, primary caller is
 	// an API key with ScopesReadSurface. IDOR-safe via loadApp —

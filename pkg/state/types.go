@@ -700,10 +700,49 @@ type APIConsumerUsageEvent struct {
 	// a verified JWT rule. Raw JWT subjects and custom claim values are never
 	// written to the financial ledger.
 	PlatformTenantJWTAuthorizationRuleID string
-	WindowStart                          time.Time
-	RequestCount                         int64
-	ErrorCount                           int64
-	BillableUnits                        int64
+	// Audit is an exact per-request evidence record retained independently of
+	// the collapsed usage buckets.
+	Audit           *RequestAuditEvidence
+	DiscoveredRoute string // optional normalized method/template
+	DiscoveredAt    time.Time
+	WindowStart     time.Time
+	RequestCount    int64
+	ErrorCount      int64
+	BillableUnits   int64
+}
+
+// DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
+// distinct delivered usage event IDs, not debugger samples or audit retention.
+type DiscoveredAPIRoute struct {
+	RouteTemplate string    `json:"route_template"`
+	FirstSeen     time.Time `json:"first_seen"`
+	LastSeen      time.Time `json:"last_seen"`
+	RequestCount  int64     `json:"request_count"`
+}
+
+// RequestAuditEvidence is a verified gateway observation for one completed
+// request. Application-level actor and business action are not inferred.
+type RequestAuditEvidence struct {
+	RouteTemplate string    `json:"route_template"`
+	Method        string    `json:"method"`
+	HTTPStatus    int       `json:"http_status"`
+	LatencyMS     int       `json:"latency_ms"`
+	TraceID       string    `json:"trace_id,omitempty"`
+	DeploymentID  string    `json:"deployment_id,omitempty"`
+	CommitSHA     string    `json:"commit_sha,omitempty"`
+	OccurredAt    time.Time `json:"occurred_at"`
+	RequestID     string    `json:"request_id,omitempty"`
+	SourceIP      string    `json:"source_ip,omitempty"`
+}
+
+// RequestAuditRecord is the exact, non-collapsed stored event.
+type RequestAuditRecord struct {
+	EventID          string `json:"event_id"`
+	AccountID        string `json:"account_id"`
+	AppID            string `json:"app_id"`
+	ConsumerID       string `json:"consumer_id,omitempty"`
+	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
+	RequestAuditEvidence
 }
 
 // APIConsumerUsageBucket is the read-side aggregate for one app, attributed

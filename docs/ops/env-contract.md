@@ -46,6 +46,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_REQUEST_WRITE_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |  | `` |  |
 | `FAAS_API_CONTRACT_DIFF_ENABLED` | shared | `dropin` |  |  | `` | public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs |
+| `FAAS_API_DISCOVERY_ENABLED` | gatewayd-internal | `default` |  |  | `` | opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-268) |
 | `FAAS_API_HOSTING_SMOKE_REQUIRED` | imaged | `dropin` |  |  | `` | public-beta compute-only drop-in enables fail-closed post-readiness API hosting smoke verification |
 | `FAAS_API_HOSTING_SMOKE_URL` | imaged | `dropin` |  |  | `url` | public origin for post-readiness API hosting smoke verification; compute-only production drop-in derives it from the apps domain |
 | `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, gatewayd-public, githubd, imaged, shared | `envfile` |  |  | `` |  |
@@ -329,6 +330,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REKEY_ENABLED` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_REKEY_PROGRESS_FILE` | apid | `default` |  |  | `` |  |
 | `FAAS_RELEASE_PHASE_ENABLED` | imaged | `default` |  |  | `` | exact opt-in for pre-boot release commands; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd |
+| `FAAS_REQUEST_AUDIT_ENABLED` | gatewayd-internal | `default` |  |  | `` | exact request audit is off by default until the receiver rollout and path-privacy review are complete (ADR-242) |
 | `FAAS_REQUEST_TELEMETRY_ENABLED` | apid, gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_REQUIRE_SHARED_ARTIFACTS` | shared | `envfile` |  |  | `` |  |
 | `FAAS_RESIDENCY_INTERVAL` | meterd | `default` |  |  | `` |  |
