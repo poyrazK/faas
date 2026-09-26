@@ -123,6 +123,10 @@ func TestDetectCompose_AllowedServiceCallers(t *testing.T) {
   billing:
     build: ./billing
     x-gregale-allow-callers: [Frontend, frontend, worker]
+    x-gregale-allow-call-scopes:
+      frontend:
+        methods: [get, POST]
+        path_prefixes: [/v1/orders/, /health]
   closed:
     build: ./closed
     x-gregale-allow-callers: []
@@ -144,6 +148,13 @@ func TestDetectCompose_AllowedServiceCallers(t *testing.T) {
 			if seed.allowedServiceCallers == nil || strings.Join(*seed.allowedServiceCallers, ",") != "frontend,worker" {
 				t.Fatalf("billing allowlist = %v", seed.allowedServiceCallers)
 			}
+			if seed.allowedServiceCallScopes == nil {
+				t.Fatal("billing caller scopes are missing")
+			}
+			scope := (*seed.allowedServiceCallScopes)["frontend"]
+			if strings.Join(scope.Methods, ",") != "GET,POST" || strings.Join(scope.PathPrefixes, ",") != "/health,/v1/orders" {
+				t.Fatalf("billing caller scope = %#v", scope)
+			}
 		case "closed":
 			if seed.allowedServiceCallers == nil || len(*seed.allowedServiceCallers) != 0 {
 				t.Fatalf("closed allowlist = %v", seed.allowedServiceCallers)
@@ -157,6 +168,9 @@ func TestDetectCompose_AllowedServiceCallers(t *testing.T) {
 	for _, workload := range workloads {
 		if workload.Name == "billing" && (workload.AllowedServiceCallers == nil || strings.Join(*workload.AllowedServiceCallers, ",") != "frontend,worker") {
 			t.Fatalf("merged billing allowlist = %v", workload.AllowedServiceCallers)
+		}
+		if workload.Name == "billing" && (workload.AllowedServiceCallScopes == nil || (*workload.AllowedServiceCallScopes)["frontend"].Methods[0] != "GET") {
+			t.Fatalf("merged billing scopes = %#v", workload.AllowedServiceCallScopes)
 		}
 	}
 }
@@ -180,6 +194,21 @@ func TestNormalizeAllowedServiceCallersBoundsList(t *testing.T) {
 	}
 	if _, err := normalizeAllowedServiceCallers(&names); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("over-limit list error = %v", err)
+	}
+}
+
+func TestDetectComposeRejectsInvalidAllowedServiceCallScope(t *testing.T) {
+	fsys := fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  billing:
+    build: ./billing
+    x-gregale-allow-call-scopes:
+      frontend:
+        methods: [GET]
+        path_prefixes: [/v1/../admin]
+`)}}
+	_, _, _, err := detectCompose(fsys)
+	if err == nil || !strings.Contains(err.Error(), "x-gregale-allow-call-scopes") {
+		t.Fatalf("invalid service caller scope error = %v", err)
 	}
 }
 

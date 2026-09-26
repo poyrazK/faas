@@ -471,6 +471,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if callersProblem != nil {
 		return state.App{}, callersProblem
 	}
+	allowedCallScopes, callScopesProblem := serviceCallScopesForCreate(req.AllowedServiceCallScopes)
+	if callScopesProblem != nil {
+		return state.App{}, callScopesProblem
+	}
 	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, req.Slug)
 	if bindingsProblem != nil {
 		return state.App{}, bindingsProblem
@@ -485,6 +489,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	}
 	appManifest := stateManifestFromAPI(lifecycle)
 	appManifest.AllowedServiceCallers = allowedCallers
+	appManifest.AllowedServiceCallScopes = allowedCallScopes
 	appManifest.ServiceBindings = bindings
 	appManifest.ServiceBindingPolicy = servicePolicy
 	appManifest.ServiceBindingTransport = serviceTransport
@@ -765,6 +770,17 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		copyOfNames := append([]string{}, (*a.Manifest.AllowedServiceCallers)...)
 		allowedCallers = &copyOfNames
 	}
+	var allowedCallScopes *api.ServiceCallerScopes
+	if a.Manifest.AllowedServiceCallScopes != nil {
+		copyOfScopes := make(api.ServiceCallerScopes, len(*a.Manifest.AllowedServiceCallScopes))
+		for caller, scope := range *a.Manifest.AllowedServiceCallScopes {
+			copyOfScopes[caller] = api.ServiceCallScope{
+				Methods:      append([]string(nil), scope.Methods...),
+				PathPrefixes: append([]string(nil), scope.PathPrefixes...),
+			}
+		}
+		allowedCallScopes = &copyOfScopes
+	}
 	consumerAuthMode := string(a.ConsumerAuthMode)
 	if consumerAuthMode == "" {
 		consumerAuthMode = api.ConsumerAuthModeOptional
@@ -843,6 +859,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		ServiceBindingTransport:   a.Manifest.EffectiveServiceBindingTransport(),
 		PreviewServiceCallsPolicy: a.Manifest.EffectivePreviewServiceCallsPolicy(),
 		AllowedServiceCallers:     allowedCallers,
+		AllowedServiceCallScopes:  allowedCallScopes,
 		EgressAllowlist:           ea,
 		// Issue #169 / #172: per-app reactive scale-up trigger
 		// targets. 0 = "disabled" (no autoscale rule). Reactive

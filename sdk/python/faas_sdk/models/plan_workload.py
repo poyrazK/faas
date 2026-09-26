@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.plan_detected_by import PlanDetectedBy
+    from ..models.service_caller_scopes import ServiceCallerScopes
 
 
 T = TypeVar("T", bound="PlanWorkload")
@@ -47,6 +48,9 @@ class PlanWorkload:
     allowed_service_callers: list[str] | Unset = UNSET
     """Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers;
     an empty array denies all."""
+    allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
+    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied."""
     class_: PlanWorkloadClass | Unset = UNSET
     schedule: str | Unset = UNSET
     """cron expression when declared (CronJob, render, serverless)"""
@@ -102,6 +106,10 @@ class PlanWorkload:
         if not isinstance(self.allowed_service_callers, Unset):
             allowed_service_callers = self.allowed_service_callers
 
+        allowed_service_call_scopes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+
         class_: str | Unset = UNSET
         if not isinstance(self.class_, Unset):
             class_ = self.class_
@@ -150,6 +158,8 @@ class PlanWorkload:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
         if allowed_service_callers is not UNSET:
             field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if class_ is not UNSET:
             field_dict["class"] = class_
         if schedule is not UNSET:
@@ -172,6 +182,7 @@ class PlanWorkload:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.plan_detected_by import PlanDetectedBy
+        from ..models.service_caller_scopes import ServiceCallerScopes
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -208,6 +219,13 @@ class PlanWorkload:
             preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
 
         allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
+        _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
+        allowed_service_call_scopes: ServiceCallerScopes | Unset
+        if isinstance(_allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        else:
+            allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
 
         _class_ = d.pop("class", UNSET)
         class_: PlanWorkloadClass | Unset
@@ -256,6 +274,7 @@ class PlanWorkload:
             service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,
             allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
             class_=class_,
             schedule=schedule,
             env_keys=env_keys,

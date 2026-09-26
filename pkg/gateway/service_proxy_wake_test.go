@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // wakingProvider reports no endpoints until wakeDone is flipped, then reports
@@ -126,6 +128,49 @@ func TestServiceProxyDoesNotWakeWarmTarget(t *testing.T) {
 	}
 	if got := wakes.Load(); got != 0 {
 		t.Errorf("wake calls = %d, want 0 for a warm target", got)
+	}
+}
+
+func TestServiceProxyScopeDenialDoesNotLookUpOrWakeTarget(t *testing.T) {
+	var wakeDone atomic.Bool
+	provider := &wakingProvider{wakeDone: &wakeDone}
+	var wakes, forwarded atomic.Int32
+	scope := &api.ServiceCallScope{Methods: []string{"GET"}, PathPrefixes: []string{"/v1/orders"}}
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{CallScope: scope}, nil
+		},
+		Wake: func(context.Context, string) error {
+			wakes.Add(1)
+			wakeDone.Store(true)
+			return nil
+		},
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				forwarded.Add(1)
+				w.WriteHeader(http.StatusOK)
+			})
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/orders/admin", nil)
+	req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("scope-denied status = %d, want 403: %s", rec.Code, rec.Body)
+	}
+	if got := provider.calls.Load(); got != 0 {
+		t.Errorf("endpoint reads = %d, want 0 before denied call exits", got)
+	}
+	if got := wakes.Load(); got != 0 {
+		t.Errorf("wake calls = %d, want 0 for out-of-scope request", got)
+	}
+	if got := forwarded.Load(); got != 0 {
+		t.Errorf("forwarded requests = %d, want 0 for out-of-scope request", got)
 	}
 }
 

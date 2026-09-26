@@ -39,10 +39,11 @@ type composeCandidate struct {
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
 
-	ServiceBindingPolicy      string    `yaml:"x-gregale-service-policy"`
-	ServiceBindingTransport   string    `yaml:"x-gregale-service-transport"`
-	PreviewServiceCallsPolicy string    `yaml:"x-gregale-preview-calls"`
-	AllowedServiceCallers     *[]string `yaml:"x-gregale-allow-callers"`
+	ServiceBindingPolicy      string                   `yaml:"x-gregale-service-policy"`
+	ServiceBindingTransport   string                   `yaml:"x-gregale-service-transport"`
+	PreviewServiceCallsPolicy string                   `yaml:"x-gregale-preview-calls"`
+	AllowedServiceCallers     *[]string                `yaml:"x-gregale-allow-callers"`
+	AllowedServiceCallScopes  *api.ServiceCallerScopes `yaml:"x-gregale-allow-call-scopes"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -202,6 +203,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasBuild && allowedCallers != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-callers requires a build workload", src, name)
 		}
+		allowedCallScopes, scopesErr := normalizeAllowedServiceCallScopes(s.AllowedServiceCallScopes)
+		if scopesErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, scopesErr)
+		}
+		if !hasBuild && allowedCallScopes != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-call-scopes requires a build workload", src, name)
+		}
 		command, commandShell := commandSpec(s.Command)
 		if hasBuild {
 			if (ctx != "" && !fs.ValidPath(ctx)) || strings.HasPrefix(ctx, "../") ||
@@ -256,6 +264,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			serviceBindingTransport:   serviceBindingTransport,
 			previewServiceCallsPolicy: previewServiceCallsPolicy,
 			allowedServiceCallers:     allowedCallers,
+			allowedServiceCallScopes:  allowedCallScopes,
 
 			ports:   parsePorts(s.Ports),
 			envKeys: envKeys(s.Environment),
@@ -315,6 +324,17 @@ func normalizeAllowedServiceCallers(value *[]string) (*[]string, error) {
 		return nil, fmt.Errorf("x-gregale-allow-callers: %w", err)
 	}
 	return &callers, nil
+}
+
+func normalizeAllowedServiceCallScopes(value *api.ServiceCallerScopes) (*api.ServiceCallerScopes, error) {
+	if value == nil {
+		return nil, nil
+	}
+	scopes, err := api.NormalizeServiceCallerScopes(*value)
+	if err != nil {
+		return nil, fmt.Errorf("x-gregale-allow-call-scopes: %w", err)
+	}
+	return &scopes, nil
 }
 
 // dependencyNames normalizes Compose's short and long depends_on forms.

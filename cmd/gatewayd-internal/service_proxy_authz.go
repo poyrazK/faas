@@ -121,6 +121,22 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
 			}
 		}
+		var callScope *api.ServiceCallScope
+		if target.Manifest.AllowedServiceCallScopes != nil {
+			scopes, err := api.NormalizeServiceCallerScopes(*target.Manifest.AllowedServiceCallScopes)
+			if err != nil {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
+			}
+			logicalCaller := caller.Slug
+			if caller.PreviewOfSlug != "" {
+				logicalCaller = caller.PreviewOfSlug
+			}
+			scope, allowed := scopes[strings.ToLower(strings.TrimSpace(logicalCaller))]
+			if !allowed {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
+			}
+			callScope = &scope
+		}
 		// The caller row is already loaded; carrying its preview identity out
 		// saves the hop a third store read for a fact we have in hand.
 		return gateway.ServiceCaller{
@@ -128,6 +144,7 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			PreviewOfSlug: caller.PreviewOfSlug,
 			AccountID:     caller.AccountID,
 			RequireHTTPS:  caller.Manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
+			CallScope:     callScope,
 		}, nil
 	}
 }

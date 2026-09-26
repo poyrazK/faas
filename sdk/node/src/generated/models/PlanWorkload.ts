@@ -6,6 +6,7 @@ import type { PlanDetectedBy } from './PlanDetectedBy.js';
 import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 /**
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
@@ -37,6 +38,10 @@ export type PlanWorkload = {
    * Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers; an empty array denies all.
    */
   allowed_service_callers?: Array<string>;
+  /**
+   * Target-side method/path grants from Compose `x-gregale-allow-call-scopes`. When present, callers missing from the map are denied.
+   */
+  allowed_service_call_scopes?: ServiceCallerScopes;
   class?: 'http' | 'graphql' | 'grpc' | 'job' | 'worker' | 'server' | 'unknown';
   /**
    * cron expression when declared (CronJob, render, serverless)

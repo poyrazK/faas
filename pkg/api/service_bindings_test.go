@@ -71,6 +71,72 @@ func TestNormalizeAllowedServiceCallers(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndMatchServiceCallerScopes(t *testing.T) {
+	got, err := NormalizeServiceCallerScopes(ServiceCallerScopes{
+		" Frontend ": {
+			Methods:      []string{"get", "POST", "GET"},
+			PathPrefixes: []string{"/v1/orders/", "/v1/%70ayments"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := got["frontend"]
+	if !reflect.DeepEqual(scope.Methods, []string{"GET", "POST"}) ||
+		!reflect.DeepEqual(scope.PathPrefixes, []string{"/v1/orders", "/v1/payments"}) {
+		t.Fatalf("normalized scope = %#v", scope)
+	}
+	for _, test := range []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{method: "GET", path: "/v1/orders", want: true},
+		{method: "POST", path: "/v1/orders/42", want: true},
+		{method: "DELETE", path: "/v1/orders/42"},
+		{method: "get", path: "/v1/orders/42"},
+		{method: "GET", path: "/v1/orders-archive"},
+		{method: "GET", path: "/v1/orders/../admin"},
+		{method: "GET", path: "/v1//orders"},
+	} {
+		if allowed := scope.Allows(test.method, test.path); allowed != test.want {
+			t.Errorf("Allows(%q, %q) = %t, want %t", test.method, test.path, allowed, test.want)
+		}
+	}
+
+	empty, err := NormalizeServiceCallerScopes(ServiceCallerScopes{})
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Fatalf("explicit empty scopes = %#v, %v", empty, err)
+	}
+}
+
+func TestNormalizeServiceCallerScopesRejectsUnsafeRules(t *testing.T) {
+	for name, scope := range map[string]ServiceCallScope{
+		"missing methods": {PathPrefixes: []string{"/health"}},
+		"missing paths":   {Methods: []string{"GET"}},
+		"bad method":      {Methods: []string{"GET,POST"}, PathPrefixes: []string{"/health"}},
+		"absolute url":    {Methods: []string{"GET"}, PathPrefixes: []string{"https://billing/health"}},
+		"query":           {Methods: []string{"GET"}, PathPrefixes: []string{"/health?ready=1"}},
+		"fragment":        {Methods: []string{"GET"}, PathPrefixes: []string{"/health#ready"}},
+		"traversal":       {Methods: []string{"GET"}, PathPrefixes: []string{"/api/../admin"}},
+		"duplicate slash": {Methods: []string{"GET"}, PathPrefixes: []string{"/api//admin"}},
+		"backslash":       {Methods: []string{"GET"}, PathPrefixes: []string{"/api\\admin"}},
+		"bad escape":      {Methods: []string{"GET"}, PathPrefixes: []string{"/api/%zz"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NormalizeServiceCallerScopes(ServiceCallerScopes{"frontend": scope}); err == nil {
+				t.Fatalf("accepted unsafe scope: %#v", scope)
+			}
+		})
+	}
+	if _, err := NormalizeServiceCallerScopes(ServiceCallerScopes{
+		" Frontend ": {Methods: []string{"GET"}, PathPrefixes: []string{"/api"}},
+		"frontend":   {Methods: []string{"POST"}, PathPrefixes: []string{"/api"}},
+	}); err == nil {
+		t.Fatal("accepted duplicate caller after normalization")
+	}
+}
+
 func TestStandaloneServiceBindingProjection(t *testing.T) {
 	targets, err := NormalizeServiceBindingTargets([]string{" Identity ", "billing", "BILLING"})
 	if err != nil || !reflect.DeepEqual(targets, []string{"billing", "identity"}) {

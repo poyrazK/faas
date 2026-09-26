@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from ..models.public_auth_status import PublicAuthStatus
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.scaling_policy import ScalingPolicy
+    from ..models.service_caller_scopes import ServiceCallerScopes
 
 
 T = TypeVar("T", bound="AppResponse")
@@ -134,6 +135,9 @@ class AppResponse:
     """Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account
     caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
    """
+    allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
+    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied."""
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
@@ -351,6 +355,10 @@ class AppResponse:
         if not isinstance(self.allowed_service_callers, Unset):
             allowed_service_callers = self.allowed_service_callers
 
+        allowed_service_call_scopes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
@@ -535,6 +543,8 @@ class AppResponse:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
         if allowed_service_callers is not UNSET:
             field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
         if streaming_enabled is not UNSET:
@@ -609,6 +619,7 @@ class AppResponse:
         from ..models.public_auth_status import PublicAuthStatus
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -781,6 +792,13 @@ class AppResponse:
             preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
 
         allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
+        _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
+        allowed_service_call_scopes: ServiceCallerScopes | Unset
+        if isinstance(_allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        else:
+            allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
 
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
@@ -1018,6 +1036,7 @@ class AppResponse:
             service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,
             allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,

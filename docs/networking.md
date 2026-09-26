@@ -241,6 +241,37 @@ internal caller. The list accepts at most 100 logical app slugs, not generated
 PR preview names. This target check runs before routing or waking `billing`. Preview callers
 must also pass the existing project and target preview policies.
 
+For least-privilege access, a target can grant each caller only specific HTTP
+methods and path prefixes:
+
+```yaml
+services:
+  billing:
+    build: ./billing
+    x-gregale-allow-call-scopes:
+      public-api:
+        methods: [GET, POST]
+        path_prefixes: [/v1/invoices, /v1/checkout]
+```
+
+When `x-gregale-allow-call-scopes` is present, it also acts as a caller
+allowlist: callers missing from the map are denied. If
+`x-gregale-allow-callers` is also set, both policies must allow the caller.
+Configured methods are normalized to uppercase and matched against the request
+method exactly; `*` explicitly permits every method. A path prefix matches the
+exact path and its slash-delimited descendants, so
+`/v1/invoices` allows `/v1/invoices/42` but not `/v1/invoices-archive`. Query
+strings do not affect the path check. Ambiguous paths such as dot-segments or
+duplicate separators fail closed, and the check runs before endpoint lookup or
+wake. The platform-owned `bindings verify` probe remains available because it
+does not invoke an application route.
+
+Standalone apps use the same target-side policy in `allowed_service_call_scopes`
+on `POST /v1/apps` or `PATCH /v1/apps/<slug>`. PATCH omission keeps the current
+map, `null` clears it, and `{}` denies every caller. Project-managed apps must
+set `x-gregale-allow-call-scopes` in source; they reject this PATCH just like
+the existing caller allowlist.
+
 For an app created outside a project, use the app API instead: include
 `"allowed_service_callers": ["frontend"]` in `POST /v1/apps`, or PATCH
 `/v1/apps/customer-billing` with that field to replace the list. PATCH with `[]` denies

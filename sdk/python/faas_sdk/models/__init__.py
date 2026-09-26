@@ -1426,6 +1426,8 @@ from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
 from .service_binding_policy import ServiceBindingPolicy
 from .service_binding_transport import ServiceBindingTransport
+from .service_call_scope import ServiceCallScope
+from .service_caller_scopes import ServiceCallerScopes
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
@@ -3033,6 +3035,8 @@ __all__ = (
     "SendAppMessageResponseStatus",
     "ServiceBindingPolicy",
     "ServiceBindingTransport",
+    "ServiceCallerScopes",
+    "ServiceCallScope",
     "ServiceReplicas",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",

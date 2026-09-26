@@ -192,6 +192,9 @@ type CreateAppRequest struct {
 	// AllowedServiceCallers restricts internal callers to these logical app
 	// names. Omitted/null preserves same-account access; [] denies all.
 	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes grants named callers a narrower method/path
+	// policy. When present, callers absent from the map are denied.
+	AllowedServiceCallScopes *ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
 	// ServiceBindingTargets declares outbound same-account services for a
 	// standalone app. The platform derives binding keys and internal URLs.
 	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
@@ -482,6 +485,9 @@ type UpdateAppRequest struct {
 	// omitted (unchanged), null (same-account access), array (replace, with
 	// [] denying all). The handler validates and normalizes the array.
 	AllowedServiceCallers json.RawMessage `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes is raw JSON so omitted leaves the current policy,
+	// null clears it, and an object (including {}) replaces it.
+	AllowedServiceCallScopes json.RawMessage `json:"allowed_service_call_scopes,omitempty"`
 	// ServiceBindingTargets replaces the standalone outbound target list.
 	// Omitted/null leaves it unchanged; [] clears every binding.
 	ServiceBindingTargets *[]string `json:"service_binding_targets,omitempty"`
@@ -1332,6 +1338,9 @@ type AppResponse struct {
 	// AllowedServiceCallers is the target-side internal-service policy. Nil
 	// permits same-account callers; an empty non-nil list denies all.
 	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
+	// AllowedServiceCallScopes is the optional method/path policy for internal
+	// callers. When present, only callers with a matching scope are permitted.
+	AllowedServiceCallScopes *ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -6044,6 +6053,7 @@ type PlanWorkload struct {
 	ServiceBindingTransport   ServiceBindingTransport   `json:"service_binding_transport,omitempty"`
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
 	AllowedServiceCallers     *[]string                 `json:"allowed_service_callers,omitempty"`
+	AllowedServiceCallScopes  *ServiceCallerScopes      `json:"allowed_service_call_scopes,omitempty"`
 
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`

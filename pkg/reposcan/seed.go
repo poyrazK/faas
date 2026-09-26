@@ -1,5 +1,7 @@
 package reposcan
 
+import "github.com/onebox-faas/faas/pkg/api"
+
 // detector is the named source that produced a workloadSeed. The
 // merge rule uses this as a tiebreak: when two seeds at the same
 // tier have the same (RootDir, Name), the lower-detectorPriority
@@ -113,6 +115,7 @@ type workloadSeed struct {
 	serviceBindingTransport   ServiceBindingTransport
 	previewServiceCallsPolicy PreviewServiceCallsPolicy
 	allowedServiceCallers     *[]string
+	allowedServiceCallScopes  *api.ServiceCallerScopes
 
 	class     Class
 	schedule  string
