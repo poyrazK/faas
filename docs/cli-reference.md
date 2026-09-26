@@ -46,7 +46,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
 | [`run`](#run) | Run untrusted code in an isolated disposable microVM |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
-| [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get &lt;id&gt;) |
+| [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
 | [`debug`](#debug) | Production debugger (ADR-127) |
 | [`trace`](#trace) | Look up a W3C trace through the account trace index |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
@@ -1441,6 +1441,16 @@ Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (se
 
 Add an edge rule
 
+| Flag | Meaning | |
+|---|---|---|
+| `--on-success-webhook <ID>` | success webhook subscription; repeat when updating async policy |  |
+| `--on-failure-webhook <ID>` | failure webhook subscription; repeat when updating async policy |  |
+| `--async-max-attempts <N>` | total attempts (0 = plan default; capped by plan) |  |
+| `--async-retry-base-seconds <N>` | exponential retry base delay |  |
+| `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
+| `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
+| `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
+
 ### edge-rules get
 
 Show one edge rule
@@ -1448,6 +1458,16 @@ Show one edge rule
 ### edge-rules update
 
 Update one edge rule
+
+| Flag | Meaning | |
+|---|---|---|
+| `--on-success-webhook <ID>` | success webhook subscription |  |
+| `--on-failure-webhook <ID>` | failure webhook subscription |  |
+| `--async-max-attempts <N>` | total attempts (0 = plan default; capped by plan) |  |
+| `--async-retry-base-seconds <N>` | exponential retry base delay |  |
+| `--async-retry-max-seconds <N>` | maximum exponential retry delay |  |
+| `--async-retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
+| `--async-max-age-seconds <N>` | invocation lifetime from acceptance (0 = plan default; capped by plan) |  |
 
 ### edge-rules rm
 
@@ -1644,7 +1664,7 @@ Cancel one run
 
 ## invocations
 
-Per-account invocation ledger (invocations list|get &lt;id&gt;)
+Per-account invocation ledger (invocations list|get|wait &lt;id&gt;)
 
 `gregale invocations [<subcommand>] <id>`
 
@@ -1655,6 +1675,15 @@ List invocations
 ### invocations get
 
 Show one invocation
+
+### invocations wait
+
+Wait for one invocation to finish
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <D>` | stop waiting after this duration (0 waits indefinitely) |  |
+| `--interval <D>` | time between status checks (default 1s) |  |
 
 
 ## debug
