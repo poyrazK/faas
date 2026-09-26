@@ -395,6 +395,7 @@ func TestRenderDeploymentResourcesShowsResolvedShape(t *testing.T) {
 func TestRenderDeploymentScalingShowsRevisionOverride(t *testing.T) {
 	target := 72.5
 	zero := 0.0
+	maxRequests := 8
 	tests := []struct {
 		name    string
 		scaling *api.DeploymentScalingRequest
@@ -403,6 +404,7 @@ func TestRenderDeploymentScalingShowsRevisionOverride(t *testing.T) {
 		{name: "inherit", scaling: nil, want: ""},
 		{name: "explicit target", scaling: &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &target}, want: "cpu_target:    72.5%\n"},
 		{name: "disabled", scaling: &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &zero}, want: "cpu_target:    disabled (0%)\n"},
+		{name: "revision request cap", scaling: &api.DeploymentScalingRequest{MaxConcurrentRequests: &maxRequests}, want: "max_requests:  8 per instance\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

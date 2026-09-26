@@ -168,6 +168,26 @@ func TestPg_DeploymentCPUUtilizationTargetRoundtrip(t *testing.T) {
 	}
 }
 
+func TestPg_DeploymentMaxConcurrentRequestsRoundtrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx, "deployment-request-cap", "deployment-request-cap")
+	created, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:deployment-request-cap", Status: state.DeployPending,
+		MaxConcurrentRequests: 7,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	got, err := s.DeploymentByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if got.MaxConcurrentRequests != 7 {
+		t.Fatalf("max_concurrent_requests = %d, want 7", got.MaxConcurrentRequests)
+	}
+}
+
 func TestPg_TriggerDeadLetterNormalizesInvalidJSON(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, _ := seedLiveDeploy(t, s, ctx, "trigger-dlq-json", "trigger-dlq-json")

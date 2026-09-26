@@ -26,6 +26,7 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 		CPUMillicores:           500,
 		MaxInstances:            4,
 		CPUUtilizationTargetPct: &cpuTarget,
+		MaxConcurrentRequests:   7,
 	}
 
 	got, err := retryDeploymentInput(src, now)
@@ -55,5 +56,8 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	}
 	if got.CPUUtilizationTargetPct == nil || *got.CPUUtilizationTargetPct != cpuTarget {
 		t.Fatalf("retry cpu target = %v, want %v", got.CPUUtilizationTargetPct, cpuTarget)
+	}
+	if got.MaxConcurrentRequests != src.MaxConcurrentRequests {
+		t.Fatalf("retry max_concurrent_requests = %d, want %d", got.MaxConcurrentRequests, src.MaxConcurrentRequests)
 	}
 }

@@ -491,6 +491,12 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 	if err != nil {
 		return gateway.App{}, false, err
 	}
+	deploymentConcurrencyLimits := make(map[string]int, len(liveDeployments))
+	for _, deployment := range liveDeployments {
+		if deployment.ID != "" && deployment.MaxConcurrentRequests > 0 {
+			deploymentConcurrencyLimits[deployment.ID] = deployment.MaxConcurrentRequests
+		}
+	}
 	favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
 	concurrencyOverflow := ""
 	maxQueueWaitMS := 0
@@ -514,6 +520,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		Plan:                         acct.Plan,
 		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),
 		MaxConcurrency:               app.MaxConcurrency,
+		DeploymentConcurrencyLimits:  deploymentConcurrencyLimits,
 		ConcurrencyOverflow:          concurrencyOverflow,
 		MaxQueueWaitMS:               maxQueueWaitMS,
 		MaxQueueDepth:                maxQueueDepth,

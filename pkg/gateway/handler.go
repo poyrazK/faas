@@ -120,6 +120,9 @@ type App struct {
 	DeclaredRoutes []DeclaredRoute
 	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
 	MaxConcurrency int
+	// DeploymentConcurrencyLimits contains explicit per-revision request caps.
+	// Missing entries inherit the plan's per-instance concurrency bound.
+	DeploymentConcurrencyLimits map[string]int
 	// ConcurrencyOverflow controls saturation behavior at the wake and
 	// per-instance gates. Empty and "queue" retain the bounded-wait default;
 	// "drop" returns 429 immediately when no slot is available.
@@ -6423,7 +6426,8 @@ haveApp:
 	// URLs deliberately skip this step: burst admission uses the weighted app
 	// picker and could wake or select a sibling deployment instead of the
 	// immutable revision named by the hostname.
-	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
+	planVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
+	perVMConcurrency := effectiveTargetVMConcurrencyLimit(app, pick.Target, planVMConcurrency)
 	waitedForBurst := false
 	if !exactDeployment {
 		//nolint:contextcheck // request ctx at handler boundary.
@@ -6511,15 +6515,18 @@ haveApp:
 	capacityWaitCtx, cancelCapacityWait := context.WithTimeout(r.Context(), queuePolicy.MaxWait)
 	defer cancelCapacityWait()
 	capacityWaitStarted := time.Now()
+	perVMConcurrency = effectiveTargetVMConcurrencyLimit(app, pick.Target, planVMConcurrency)
 	capacityCtx, capacitySpan := pkgtrace.StartSpan(capacityWaitCtx, "gateway.capacity_wait",
 		attribute.String("app_id", app.ID),
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency, exactDeploymentID, versionKey)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, planVMConcurrency, exactDeploymentID, versionKey)
+	perVMConcurrency = effectiveTargetVMConcurrencyLimit(app, pick.Target, planVMConcurrency)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
 		attribute.String("selected_instance_id", pick.Target.InstanceID),
+		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
 	if err != nil {
 		capacitySpan.RecordError(err)

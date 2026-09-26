@@ -1023,6 +1023,11 @@ func unlimitedLimiterForTest() *gateway.Limiter {
 func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "limited", api.PlanScale)
+	if _, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Status: state.DeployLive, MaxConcurrentRequests: 9,
+	}); err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
 	app.MaxConcurrency = 1
 	app.IdleTimeoutS = 17
 	app.NodeID = "node-ssd"
@@ -1033,6 +1038,14 @@ func TestPgRouterPreservesAppInstanceCeiling(t *testing.T) {
 	}
 	if got.MaxConcurrency != 1 {
 		t.Fatalf("app ceiling = %d, want 1", got.MaxConcurrency)
+	}
+	if len(got.DeploymentConcurrencyLimits) != 1 {
+		t.Fatalf("deployment concurrency limits = %#v, want one revision cap of 9", got.DeploymentConcurrencyLimits)
+	}
+	for _, limit := range got.DeploymentConcurrencyLimits {
+		if limit != 9 {
+			t.Fatalf("deployment request cap = %d, want 9", limit)
+		}
 	}
 	if got.IdleTimeoutS != 17 || got.NodeID != "node-ssd" {
 		t.Fatalf("routing fields = idle:%d node:%q, want 17/node-ssd", got.IdleTimeoutS, got.NodeID)

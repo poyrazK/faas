@@ -942,7 +942,7 @@ func validateSourceRefPreviewFlags(explicit map[string]bool) error {
 	for _, name := range []string{
 		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
-		"wait", "no-wait", "timeout",
+		"wait", "no-wait", "timeout", "max-concurrent-requests",
 	} {
 		if explicit[name] {
 			unsupported = append(unsupported, "--"+name)
@@ -2010,6 +2010,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
 	resourcesProfile := fs.String("resources-profile", "", "named compute profile for this revision: micro|small|medium|large|xlarge")
 	maxInstances := fs.Int("max-instances", 0, "maximum serving instances for this revision (0 = inherit app limit)")
+	maxConcurrentRequests := fs.Int("max-concurrent-requests", -1, "maximum simultaneous requests per instance for this revision (1 = serialize; omitted = plan default)")
 	cpuUtilizationTargetPct := fs.Float64("cpu-utilization-target-pct", -1, "revision CPU scale-up target in percent (0-100; 0 disables; -1 = inherit app policy)")
 	ramMB := fs.Int("ram-mb", 0, "revision RAM override in MiB (must fit the plan)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "revision CPU override in millicores: 250, 500, or 1000")
@@ -2340,7 +2341,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "app-protocol", "resources-profile", "ram-mb", "cpu-millicores", "max-instances", "cpu-utilization-target-pct"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "app-protocol", "resources-profile", "ram-mb", "cpu-millicores", "max-instances", "max-concurrent-requests", "cpu-utilization-target-pct"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2409,6 +2410,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if explicit["max-instances"] && (*diff || *dryRun) {
 		return printErr("Invalid flags", errors.New("--max-instances is only applied by a deploy; remove --diff/--dry-run"))
 	}
+	if explicit["max-concurrent-requests"] && *maxConcurrentRequests < 1 {
+		return printErr("Invalid --max-concurrent-requests", fmt.Errorf("must be a positive request count; got %d", *maxConcurrentRequests))
+	}
+	if explicit["max-concurrent-requests"] && (*diff || *dryRun) {
+		return printErr("Invalid flags", errors.New("--max-concurrent-requests is only applied by a deploy; remove --diff/--dry-run"))
+	}
 	if explicit["cpu-utilization-target-pct"] && (math.IsNaN(*cpuUtilizationTargetPct) || math.IsInf(*cpuUtilizationTargetPct, 0) || *cpuUtilizationTargetPct < 0 || *cpuUtilizationTargetPct > 100) {
 		return printErr("Invalid --cpu-utilization-target-pct", fmt.Errorf("must be between 0 and 100; got %g", *cpuUtilizationTargetPct))
 	}
@@ -2423,6 +2430,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if explicit["cpu-utilization-target-pct"] && *githubSnippet {
 		return printErr("Invalid flags", errors.New("--github emits a generic workflow; set cpu_utilization_target_pct in the workflow's deploy command"))
+	}
+	if explicit["max-concurrent-requests"] && *githubSnippet {
+		return printErr("Invalid flags", errors.New("--github emits a generic workflow; set scaling.max_concurrent_requests in the workflow's deploy command"))
 	}
 	if *vcpu < 0 {
 		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
@@ -2534,7 +2544,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// overrides here instead of silently dropping them from both
 			// the scan and apply requests.
 			"function", "app", "runtime", "handler", "dockerfile",
-			"vcpu", "profile", "resources-profile", "ram-mb", "cpu-millicores", "max-instances", "cpu-utilization-target-pct", "require-authn", "no-require-authn",
+			"vcpu", "profile", "resources-profile", "ram-mb", "cpu-millicores", "max-instances", "max-concurrent-requests", "cpu-utilization-target-pct", "require-authn", "no-require-authn",
 			"app-protocol", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		} {
 			if explicit[name] {
@@ -2608,10 +2618,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	var deploymentScaling *api.DeploymentScalingRequest
 	var deploymentScalingTargetPct *float64
+	var maxConcurrentRequestsPtr *int
 	if explicit["cpu-utilization-target-pct"] {
 		value := *cpuUtilizationTargetPct
-		deploymentScaling = &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &value}
 		deploymentScalingTargetPct = &value
+	}
+	if explicit["max-concurrent-requests"] {
+		value := *maxConcurrentRequests
+		maxConcurrentRequestsPtr = &value
+	}
+	if deploymentScalingTargetPct != nil || maxConcurrentRequestsPtr != nil {
+		deploymentScaling = &api.DeploymentScalingRequest{
+			CPUUtilizationTargetPct: deploymentScalingTargetPct,
+			MaxConcurrentRequests:   maxConcurrentRequestsPtr,
+		}
 	}
 	slug := *name
 	if slug == "" {
@@ -2715,8 +2735,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		refIntent := deployIdempotencyIntent{
 			Slug: slug, Repo: *repo, Ref: *ref, Reason: *reason, Tag: *tag,
 			ResourcesProfile: *resourcesProfile, RAMMB: *ramMB, CPUMillicores: *cpuMillicores,
-			MaxInstances: *maxInstances,
-			DeployedBy:   resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
+			MaxInstances:          *maxInstances,
+			MaxConcurrentRequests: maxConcurrentRequestsPtr,
+			DeployedBy:            resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
 			CPUUtilizationTargetPct: deploymentScalingTargetPct,
@@ -3377,8 +3398,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Slug: slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler,
 		Image: *image, SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
 		Profile: *profile, ResourcesProfile: *resourcesProfile, RAMMB: *ramMB, CPUMillicores: *cpuMillicores,
-		MaxInstances: *maxInstances,
-		Dockerfile:   *dockerfile, RequireAuthn: requireAuthnPtr,
+		MaxInstances:          *maxInstances,
+		MaxConcurrentRequests: maxConcurrentRequestsPtr,
+		Dockerfile:            *dockerfile, RequireAuthn: requireAuthnPtr,
 		AppProtocol: appProtocolIntent, ExecutionMode: *executionMode, RestartPolicy: *restartPolicy,
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,

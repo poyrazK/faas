@@ -4961,11 +4961,19 @@ func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (
 // --- response helpers ------------------------------------------------------
 
 func deploymentScalingResponse(d state.Deployment) *api.DeploymentScalingRequest {
-	if d.CPUUtilizationTargetPct == nil {
+	if d.CPUUtilizationTargetPct == nil && d.MaxConcurrentRequests == 0 {
 		return nil
 	}
-	value := *d.CPUUtilizationTargetPct
-	return &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &value}
+	response := &api.DeploymentScalingRequest{}
+	if d.CPUUtilizationTargetPct != nil {
+		value := *d.CPUUtilizationTargetPct
+		response.CPUUtilizationTargetPct = &value
+	}
+	if d.MaxConcurrentRequests > 0 {
+		value := d.MaxConcurrentRequests
+		response.MaxConcurrentRequests = &value
+	}
+	return response
 }
 
 func (s *server) deploymentResponse(d state.Deployment, app state.App) api.DeploymentResponse {

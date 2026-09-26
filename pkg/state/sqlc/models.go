@@ -893,6 +893,9 @@ type Deployment struct {
 	Revision                 int32
 	RamMb                    int32
 	CpuMillicores            int32
+	MaxInstances             int32
+	CpuUtilizationTargetPct  pgtype.Float8
+	MaxConcurrentRequests    pgtype.Int4
 }
 
 type DeploymentAlias struct {

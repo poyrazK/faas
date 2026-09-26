@@ -1836,11 +1836,13 @@ type DeploymentResourcesRequest struct {
 	ResourceProfile *string `json:"resource_profile,omitempty"`
 }
 
-// DeploymentScalingRequest contains revision-scoped autoscaling controls.
-// Nil fields inherit the app policy; explicit zero disables that signal for
-// this revision.
+// DeploymentScalingRequest contains revision-scoped scaling controls.
+// Nil fields inherit the app policy; explicit zero disables the CPU signal
+// for this revision. MaxConcurrentRequests is a hard per-instance request
+// cap and must be positive when specified.
 type DeploymentScalingRequest struct {
 	CPUUtilizationTargetPct *float64 `json:"cpu_utilization_target_pct,omitempty"`
+	MaxConcurrentRequests   *int     `json:"max_concurrent_requests,omitempty"`
 }
 
 // DeploymentResources is the resolved immutable compute shape of a revision.

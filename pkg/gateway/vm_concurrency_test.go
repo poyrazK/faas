@@ -322,6 +322,86 @@ func TestEffectiveVMConcurrencyLimitMatchesPublishedListenerLimit(t *testing.T) 
 	}
 }
 
+func TestEffectiveTargetVMConcurrencyLimitUsesRevisionCapAndPlanFallback(t *testing.T) {
+	app := App{DeploymentConcurrencyLimits: map[string]int{"dep-small": 2, "dep-invalid": 100}}
+	for _, tc := range []struct {
+		name   string
+		target Target
+		plan   int
+		want   int
+	}{
+		{name: "revision override", target: Target{DeploymentID: "dep-small"}, plan: 25, want: 2},
+		{name: "inherit for unknown revision", target: Target{DeploymentID: "dep-inherit"}, plan: 25, want: 25},
+		{name: "legacy target", target: Target{}, plan: 4, want: 4},
+		{name: "clamp stale or invalid override", target: Target{DeploymentID: "dep-invalid"}, plan: 25, want: 25},
+		{name: "unknown plan fails closed", target: Target{DeploymentID: "dep-small"}, plan: 0, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := effectiveTargetVMConcurrencyLimit(app, tc.target, tc.plan); got != tc.want {
+				t.Fatalf("effective target concurrency = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAcquireVMTargetEnforcesRevisionConcurrencyCap(t *testing.T) {
+	target := Target{NodeID: "node-a", InstanceID: "limited", DeploymentID: "dep-small"}
+	app := App{
+		ID: "app", Plan: api.PlanFree,
+		DeploymentConcurrencyLimits: map[string]int{"dep-small": 2},
+	}
+	backend := &fakeBackend{app: app, targets: []Target{target}}
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	limit := effectiveTargetVMConcurrencyLimit(app, target, api.MustLimitsFor(api.PlanFree).ConcurrencyPerVMBound)
+	first, ok := h.vmConcurrency.tryAcquire(target.InstanceID, string(app.Plan), limit)
+	if !ok {
+		t.Fatal("failed to occupy first revision request slot")
+	}
+	defer first()
+	second, ok := h.vmConcurrency.tryAcquire(target.InstanceID, string(app.Plan), limit)
+	if !ok {
+		t.Fatal("failed to occupy second revision request slot")
+	}
+	defer second()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	_, release, waited, err := h.acquireVMTarget(ctx, app, PickResult{Target: target, OK: true}, api.MustLimitsFor(api.PlanFree).ConcurrencyPerVMBound, "", "")
+	if release != nil {
+		release()
+	}
+	if !waited || !errors.Is(err, ErrConcurrencyQueueWaitTimeout) {
+		t.Fatalf("waited=%v err=%v, want timeout at revision cap %d", waited, err, limit)
+	}
+}
+
+func TestAcquireVMTargetUsesRepickedRevisionCap(t *testing.T) {
+	first := Target{NodeID: "node-a", InstanceID: "first", DeploymentID: "dep-small"}
+	second := Target{NodeID: "node-b", InstanceID: "second", DeploymentID: "dep-large"}
+	app := App{
+		ID: "app", Plan: api.PlanPro,
+		DeploymentConcurrencyLimits: map[string]int{"dep-small": 1, "dep-large": 3},
+	}
+	backend := &fakeBackend{app: app, targets: []Target{first, second}}
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	held, ok := h.vmConcurrency.tryAcquire(first.InstanceID, string(app.Plan), 1)
+	if !ok {
+		t.Fatal("failed to occupy first revision request slot")
+	}
+	defer held()
+
+	pick, release, waited, err := h.acquireVMTarget(context.Background(), app, PickResult{Target: first, OK: true}, api.MustLimitsFor(api.PlanPro).ConcurrencyPerVMBound, "", "")
+	if err != nil {
+		t.Fatalf("acquireVMTarget: %v", err)
+	}
+	if release != nil {
+		defer release()
+	}
+	if waited || pick.Target.InstanceID != second.InstanceID {
+		t.Fatalf("selected target=%+v waited=%v, want uncapped second revision without waiting", pick.Target, waited)
+	}
+}
+
 func TestAdvertisedScaleFunctionBurstDoesNotWaitForCapacity(t *testing.T) {
 	m := newVMConcurrencyManager(nil)
 	const concurrency = 20
