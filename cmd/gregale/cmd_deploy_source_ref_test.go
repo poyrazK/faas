@@ -177,9 +177,11 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 			invoke: func(slug, repo, ref string, ann api.DeployAnnotations) int {
 				zero := 0
 				maxInstances := 2
+				cpuTarget := 70.0
 				rollback := true
 				ann.TrafficPercent = &zero
 				ann.MaxInstances = &maxInstances
+				ann.Scaling = &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &cpuTarget}
 				ann.RollbackOn5xx = &rollback
 				return cmdDeployRepoSourceRef(slug, repo, ref, ann)
 			},
@@ -218,6 +220,9 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 					}
 					if got.MaxInstances == nil || *got.MaxInstances != 2 {
 						t.Errorf("body.max_instances = %v, want explicit 2", got.MaxInstances)
+					}
+					if got.Scaling == nil || got.Scaling.CPUUtilizationTargetPct == nil || *got.Scaling.CPUUtilizationTargetPct != 70 {
+						t.Errorf("body.scaling.cpu_utilization_target_pct = %v, want explicit 70", got.Scaling)
 					}
 					if got.RollbackOn5xx == nil || !*got.RollbackOn5xx {
 						t.Errorf("body.rollback_on_5xx = %v, want explicit true", got.RollbackOn5xx)

@@ -1697,6 +1697,10 @@ type CreateDeploymentRequest struct {
 	// deployment. Zero/omitted inherits the app ceiling; the app/plan ceiling
 	// still applies across all deployments.
 	MaxInstances *int `json:"max_instances,omitempty"`
+	// Scaling carries immutable autoscaling overrides for this revision.
+	// An omitted CPU target inherits the app's configured CPU target; an
+	// explicit zero disables CPU-based scale-up for this revision.
+	Scaling *DeploymentScalingRequest `json:"scaling,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -1830,6 +1834,13 @@ type DeploymentResourcesRequest struct {
 	RAMMB           *int    `json:"ram_mb,omitempty"`
 	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
 	ResourceProfile *string `json:"resource_profile,omitempty"`
+}
+
+// DeploymentScalingRequest contains revision-scoped autoscaling controls.
+// Nil fields inherit the app policy; explicit zero disables that signal for
+// this revision.
+type DeploymentScalingRequest struct {
+	CPUUtilizationTargetPct *float64 `json:"cpu_utilization_target_pct,omitempty"`
 }
 
 // DeploymentResources is the resolved immutable compute shape of a revision.
@@ -2613,6 +2624,9 @@ type DeploymentResponse struct {
 	// MaxInstances is the configured immutable per-deployment ceiling. Zero
 	// means the deployment inherits the app's effective ceiling.
 	MaxInstances int `json:"max_instances"`
+	// Scaling is the revision-specific override, when one was configured.
+	// An absent object means the revision inherits the app's scaling policy.
+	Scaling *DeploymentScalingRequest `json:"scaling,omitempty"`
 	// Scan is the per-deploy grype CVE scan surface (issue #464
 	// / ADR-055, PR-1). nil for pre-feature rows (the migration
 	// backfilled scan_status='skipped' + scan_result={reason:
@@ -5935,6 +5949,7 @@ type SourceRefDeployRequest struct {
 	Format       string                      `json:"format,omitempty"`
 	Resources    *DeploymentResourcesRequest `json:"resources,omitempty"`
 	MaxInstances *int                        `json:"max_instances,omitempty"`
+	Scaling      *DeploymentScalingRequest   `json:"scaling,omitempty"`
 	// Environment selects a registered project environment. The server
 	// resolves it to the deployment's env scope before enqueueing the build.
 	Environment string `json:"environment,omitempty"`
@@ -5970,6 +5985,7 @@ type SourceTarballDeployRequest struct {
 	NoTriggers   bool                        `json:"no_triggers,omitempty"`
 	Resources    *DeploymentResourcesRequest `json:"resources,omitempty"`
 	MaxInstances *int                        `json:"max_instances,omitempty"`
+	Scaling      *DeploymentScalingRequest   `json:"scaling,omitempty"`
 	// Environment selects a registered project environment for this upload.
 	Environment string `json:"environment,omitempty"`
 	// Annotation fields (issue #977 / ADR-116). All four are

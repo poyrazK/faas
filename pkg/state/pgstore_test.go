@@ -147,6 +147,27 @@ func TestPg_DeploymentMaxInstancesRoundtrip(t *testing.T) {
 	}
 }
 
+func TestPg_DeploymentCPUUtilizationTargetRoundtrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, _ := seedLiveDeploy(t, s, ctx, "deployment-cpu-scaling-target", "deployment-cpu-scaling-target")
+	target := 67.5
+	created, err := s.CreateDeployment(ctx, state.Deployment{
+		AppID: appID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:deployment-cpu-scaling-target", Status: state.DeployPending,
+		CPUUtilizationTargetPct: &target,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	got, err := s.DeploymentByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if got.CPUUtilizationTargetPct == nil || *got.CPUUtilizationTargetPct != target {
+		t.Fatalf("cpu_utilization_target_pct = %v, want %v", got.CPUUtilizationTargetPct, target)
+	}
+}
+
 func TestPg_TriggerDeadLetterNormalizesInvalidJSON(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, _ := seedLiveDeploy(t, s, ctx, "trigger-dlq-json", "trigger-dlq-json")

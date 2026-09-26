@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -2009,6 +2010,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
 	resourcesProfile := fs.String("resources-profile", "", "named compute profile for this revision: micro|small|medium|large|xlarge")
 	maxInstances := fs.Int("max-instances", 0, "maximum serving instances for this revision (0 = inherit app limit)")
+	cpuUtilizationTargetPct := fs.Float64("cpu-utilization-target-pct", -1, "revision CPU scale-up target in percent (0-100; 0 disables; -1 = inherit app policy)")
 	ramMB := fs.Int("ram-mb", 0, "revision RAM override in MiB (must fit the plan)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "revision CPU override in millicores: 250, 500, or 1000")
 	vcpu := fs.Int("vcpu", 0, "assert the plan guest vCPU shape (omit to use the plan default)")
@@ -2338,7 +2340,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "app-protocol", "resources-profile", "ram-mb", "cpu-millicores", "max-instances"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "app-protocol", "resources-profile", "ram-mb", "cpu-millicores", "max-instances", "cpu-utilization-target-pct"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2407,11 +2409,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if explicit["max-instances"] && (*diff || *dryRun) {
 		return printErr("Invalid flags", errors.New("--max-instances is only applied by a deploy; remove --diff/--dry-run"))
 	}
+	if explicit["cpu-utilization-target-pct"] && (math.IsNaN(*cpuUtilizationTargetPct) || math.IsInf(*cpuUtilizationTargetPct, 0) || *cpuUtilizationTargetPct < 0 || *cpuUtilizationTargetPct > 100) {
+		return printErr("Invalid --cpu-utilization-target-pct", fmt.Errorf("must be between 0 and 100; got %g", *cpuUtilizationTargetPct))
+	}
+	if explicit["cpu-utilization-target-pct"] && (*diff || *dryRun) {
+		return printErr("Invalid flags", errors.New("--cpu-utilization-target-pct is only applied by a deploy; remove --diff/--dry-run"))
+	}
 	if resourcesRequested && *githubSnippet {
 		return printErr("Invalid flags", errors.New("--github emits a generic workflow; add revision compute settings to the workflow's deploy command"))
 	}
 	if explicit["max-instances"] && *githubSnippet {
 		return printErr("Invalid flags", errors.New("--github emits a generic workflow; set max_instances in the workflow's deploy command"))
+	}
+	if explicit["cpu-utilization-target-pct"] && *githubSnippet {
+		return printErr("Invalid flags", errors.New("--github emits a generic workflow; set cpu_utilization_target_pct in the workflow's deploy command"))
 	}
 	if *vcpu < 0 {
 		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
@@ -2523,7 +2534,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// overrides here instead of silently dropping them from both
 			// the scan and apply requests.
 			"function", "app", "runtime", "handler", "dockerfile",
-			"vcpu", "profile", "resources-profile", "ram-mb", "cpu-millicores", "max-instances", "require-authn", "no-require-authn",
+			"vcpu", "profile", "resources-profile", "ram-mb", "cpu-millicores", "max-instances", "cpu-utilization-target-pct", "require-authn", "no-require-authn",
 			"app-protocol", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		} {
 			if explicit[name] {
@@ -2594,6 +2605,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if explicit["max-instances"] {
 		value := *maxInstances
 		maxInstancesPtr = &value
+	}
+	var deploymentScaling *api.DeploymentScalingRequest
+	var deploymentScalingTargetPct *float64
+	if explicit["cpu-utilization-target-pct"] {
+		value := *cpuUtilizationTargetPct
+		deploymentScaling = &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &value}
+		deploymentScalingTargetPct = &value
 	}
 	slug := *name
 	if slug == "" {
@@ -2701,6 +2719,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			DeployedBy:   resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			CPUUtilizationTargetPct: deploymentScalingTargetPct,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -2729,6 +2748,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Environment:            *environment,
 			Resources:              deploymentResources,
 			MaxInstances:           maxInstancesPtr,
+			Scaling:                deploymentScaling,
 			DeployedBy:             resolveDeployedBy(*deployedBy),
 			PRNumber:               *prNumber,
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
@@ -3364,7 +3384,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, NoTriggers: *noTriggers,
-		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
+		CPUUtilizationTargetPct: deploymentScalingTargetPct,
+		ProjectSlug:             *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
 	if keyErr != nil {
@@ -3691,6 +3712,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Environment:            *environment,
 			Resources:              deploymentResources,
 			MaxInstances:           maxInstancesPtr,
+			Scaling:                deploymentScaling,
 			Reason:                 *reason,
 			Tag:                    *tag,
 			DeployedBy:             resolveDeployedBy(*deployedBy),
@@ -3728,7 +3750,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
-				Environment: ann.Environment, Resources: ann.Resources, MaxInstances: ann.MaxInstances, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
+				Environment: ann.Environment, Resources: ann.Resources, MaxInstances: ann.MaxInstances, Scaling: ann.Scaling, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
@@ -3860,6 +3882,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:            *environment,
 		RollbackOn5xx:          rollbackOn5xxPtr,
 		DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+		Scaling:                deploymentScaling,
 		Workflows:              workflowDefs,
 		Companions:             sidecarDefs,
 		TrafficPercent:         optTrafficPercent(*trafficPercent),

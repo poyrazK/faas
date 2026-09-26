@@ -60,6 +60,10 @@ type InstanceStat struct {
 	// AppID is the app the instance belongs to
 	// (state.Instances.AppID). Empty rows are not published.
 	AppID string
+	// DeploymentID is the immutable revision that owns the instance.
+	// It is joined from durable instance state by the poller and lets
+	// deployment-scoped autoscaling targets use only their own samples.
+	DeploymentID string
 	// CPUPct is the host cgroup CPU percent for the most recent
 	// interval. The schedd-side poller does not compute the
 	// rate; vmmd (PR-B) owns the cumulative-counter → rate
@@ -498,6 +502,35 @@ func (r *Reader) MaxCPU(appID string) (float64, bool) {
 			continue
 		}
 		if row.CPUPct > max {
+			max = row.CPUPct
+		}
+	}
+	if !seen {
+		return 0, false
+	}
+	return max, true
+}
+
+// MaxCPUForDeployment returns the maximum fresh CPU percentage for one
+// deployment. A fresh row with unknown CPU still returns (0, true), matching
+// MaxCPU's distinction between an idle/unknown live instance and no instances.
+func (r *Reader) MaxCPUForDeployment(appID, deploymentID string) (float64, bool) {
+	if deploymentID == "" {
+		return 0, false
+	}
+	cur := r.snap.Load()
+	if cur == nil {
+		return 0, false
+	}
+	now := time.Now()
+	var max float64
+	var seen bool
+	for _, row := range *cur {
+		if row.AppID != appID || row.DeploymentID != deploymentID || !freshSample(row.SampledAt, now) {
+			continue
+		}
+		seen = true
+		if row.CPU == Valid && row.CPUPct > max {
 			max = row.CPUPct
 		}
 	}

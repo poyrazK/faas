@@ -569,6 +569,7 @@ func cmdDeploymentGet(args []string) int {
 	if d.MaxInstances > 0 {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %d\n", "max_instances:", d.MaxInstances)
 	}
+	renderDeploymentScaling(osStdout, d.Scaling)
 	// Issue #977 / ADR-116: annotation block. Each field is
 	// conditional on non-empty so pre-feature rows render the
 	// same shape as before (no `-` placeholders for legacy data).
@@ -660,6 +661,18 @@ func renderDeploymentResources(w io.Writer, resources *api.DeploymentResources) 
 		shape += " (" + resources.ResourceProfile + " profile)"
 	}
 	_, _ = fmt.Fprintf(w, "%-14s %s\n", "resources:", shape)
+}
+
+func renderDeploymentScaling(w io.Writer, scaling *api.DeploymentScalingRequest) {
+	if scaling == nil || scaling.CPUUtilizationTargetPct == nil {
+		return
+	}
+	target := *scaling.CPUUtilizationTargetPct
+	if target == 0 {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "cpu_target:", "disabled (0%)")
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%-14s %g%%\n", "cpu_target:", target)
 }
 
 // renderDeploymentHostingReceipt prints the durable post-readiness evidence

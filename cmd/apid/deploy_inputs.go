@@ -141,6 +141,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		disableStartupCPUBoost *bool
 		resources              *api.DeploymentResourcesRequest
 		maxInstances           *int
+		scaling                *api.DeploymentScalingRequest
 		noTriggers             bool
 		ann                    annotationForm
 		stagedManifest         sourceRefManifestStaged
@@ -288,6 +289,14 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			maxInstances = &value
+		case "scaling":
+			b, readErr := io.ReadAll(io.LimitReader(part, 64<<10))
+			var requested api.DeploymentScalingRequest
+			if readErr != nil || json.Unmarshal(b, &requested) != nil {
+				api.WriteProblem(w, api.ErrValidation("scaling must be a valid deployment scaling object"))
+				return
+			}
+			scaling = &requested
 		case "canary":
 			b, readErr := io.ReadAll(io.LimitReader(part, 64<<10))
 			var spec api.CanaryPresetSpec
@@ -359,7 +368,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, Resources: resources, MaxInstances: maxInstances, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, Resources: resources, MaxInstances: maxInstances, Scaling: scaling, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, Sidecars: sidecars}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return

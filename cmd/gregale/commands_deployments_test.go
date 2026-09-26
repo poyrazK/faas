@@ -392,6 +392,29 @@ func TestRenderDeploymentResourcesShowsResolvedShape(t *testing.T) {
 	}
 }
 
+func TestRenderDeploymentScalingShowsRevisionOverride(t *testing.T) {
+	target := 72.5
+	zero := 0.0
+	tests := []struct {
+		name    string
+		scaling *api.DeploymentScalingRequest
+		want    string
+	}{
+		{name: "inherit", scaling: nil, want: ""},
+		{name: "explicit target", scaling: &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &target}, want: "cpu_target:    72.5%\n"},
+		{name: "disabled", scaling: &api.DeploymentScalingRequest{CPUUtilizationTargetPct: &zero}, want: "cpu_target:    disabled (0%)\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			renderDeploymentScaling(&buf, tt.scaling)
+			if got := buf.String(); got != tt.want {
+				t.Fatalf("rendered scaling = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRenderDeploymentRow_PinsColumnLayout pins the column-count and
 // per-column widths of the human list table. If the DTO's id-length
 // ceiling changes (e.g. UUIDv7 takes over for deployments) this layout

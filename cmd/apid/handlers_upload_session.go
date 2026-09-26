@@ -154,7 +154,11 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	if req.DeployOptions != nil {
-		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx, DisableStartupCPUBoost: req.DeployOptions.DisableStartupCPUBoost}
+		if prob := validateDeploymentScaling(req.DeployOptions.Scaling, acct.Plan); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx, DisableStartupCPUBoost: req.DeployOptions.DisableStartupCPUBoost, Scaling: req.DeployOptions.Scaling}
 		if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -605,7 +609,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			s.log.Warn("upload-session manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, Resources: opts.Resources, MaxInstances: opts.MaxInstances, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, Resources: opts.Resources, MaxInstances: opts.MaxInstances, Scaling: opts.Scaling, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
 	limits := api.MustLimitsFor(acct.Plan)
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
@@ -621,7 +625,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost}
+	rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Scaling: opts.Scaling}
 	if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return

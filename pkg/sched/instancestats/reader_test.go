@@ -277,6 +277,22 @@ func TestReader_MaxCPU(t *testing.T) {
 	})
 }
 
+func TestReader_MaxCPUForDeployment(t *testing.T) {
+	now := time.Now()
+	r := NewReader()
+	r.Replace([]InstanceStat{
+		{AppID: "app1", DeploymentID: "dep-hot", InstanceID: "i-hot", SampledAt: now, CPUPct: 78, CPU: Valid},
+		{AppID: "app1", DeploymentID: "dep-stable", InstanceID: "i-stable", SampledAt: now, CPUPct: 94, CPU: Valid},
+		{AppID: "other", DeploymentID: "dep-hot", InstanceID: "i-other", SampledAt: now, CPUPct: 99, CPU: Valid},
+	})
+	if got, ok := r.MaxCPUForDeployment("app1", "dep-hot"); !ok || got != 78 {
+		t.Fatalf("MaxCPUForDeployment(hot) = (%v, %v), want (78, true)", got, ok)
+	}
+	if got, ok := r.MaxCPUForDeployment("app1", "dep-missing"); ok || got != 0 {
+		t.Fatalf("MaxCPUForDeployment(missing) = (%v, %v), want (0, false)", got, ok)
+	}
+}
+
 func TestReader_SignalFreshness(t *testing.T) {
 	stale := time.Now().Add(-DefaultFreshness - time.Second)
 	fresh := time.Now()

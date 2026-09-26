@@ -75,11 +75,23 @@ type AppStore interface {
 	ListAppsByNodeID(ctx context.Context, nodeID string) ([]state.App, error)
 }
 
+// DeploymentScalingStore is the optional batch read used by revision-scoped
+// CPU targets. It returns all live revisions for apps with a live explicit
+// override in one query, keeping the one-second scheduler tick bounded.
+type DeploymentScalingStore interface {
+	ListLiveDeploymentsForCPUScalingApps(ctx context.Context, ownerNodeID string) ([]state.Deployment, error)
+}
+
 // Ledger is the read-only slice of NodeLedger the trigger needs.
 // Concurrency returns the number of instances of appID counting toward
 // its plan cap (pkg/sched/admission.go:304).
 type Ledger interface {
 	Concurrency(appID string) int
+}
+
+// DeploymentLedger is implemented by the scheduler's admission ledger.
+type DeploymentLedger interface {
+	ConcurrencyForDeployment(appID, deploymentID string) int
 }
 
 // EventWriter is the narrow durable-audit surface used by the trigger.
@@ -103,6 +115,13 @@ type Engine interface {
 	// path deliberately does not call it: its idempotent Phase-1
 	// shortcut cannot create a second VM for a hot app.
 	EnsureWake(ctx context.Context, appID, trigger string) (WakeOutcome, error)
+}
+
+// DeploymentEngine is the targeted admission path used when one revision's
+// CPU target is hot. It prevents a hot older revision from scaling whichever
+// revision happens to be newest.
+type DeploymentEngine interface {
+	AdmitInstanceForDeployment(ctx context.Context, appID, deploymentID, scope, trigger string) (AdmitResult, error)
 }
 
 // BurstEngine is the optional fast path for engines that can admit a bounded
@@ -157,6 +176,11 @@ type InstatsReader interface {
 	MaxInflightForApp(appID string) (n int64, ok bool)
 }
 
+// DeploymentCPUReader is the optional per-revision CPU sample accessor.
+type DeploymentCPUReader interface {
+	MaxCPUForDeployment(appID, deploymentID string) (pct float64, ok bool)
+}
+
 // RequestRateReader is an optional provider-independent RPS signal. The
 // concrete instancestats.Reader derives it from VMMD's cumulative activity
 // counter, so split-box and bare-metal deployments do not need to expose a
@@ -171,6 +195,9 @@ type RequestRateReader interface {
 // AppStats per app and dispatches to decide.
 type AppStats struct {
 	AppID string
+	// DeploymentID is empty for app-wide decisions and set for a revision
+	// whose CPU target is evaluated independently.
+	DeploymentID string
 	// TargetRPS / TargetCPU are the resolved per-instance targets, 0 when
 	// the axis is not configured. float64 rather than int because ADR-194
 	// lets an app declare them in `scaling.targets`, where a value is a
@@ -453,6 +480,24 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("scaleup: list apps: %w", err)
 	}
+	deploymentsByApp := map[string][]state.Deployment(nil)
+	deploymentCPUOverridesByApp := map[string]bool(nil)
+	if store, ok := t.appStore.(DeploymentScalingStore); ok {
+		var revisions []state.Deployment
+		revisions, err = store.ListLiveDeploymentsForCPUScalingApps(ctx, t.ownerNodeID)
+		if err != nil {
+			t.log.Warn("scaleup: discover revision CPU targets failed", "err", err)
+		} else {
+			deploymentsByApp = make(map[string][]state.Deployment)
+			deploymentCPUOverridesByApp = make(map[string]bool)
+			for _, dep := range revisions {
+				deploymentsByApp[dep.AppID] = append(deploymentsByApp[dep.AppID], dep)
+				if dep.CPUUtilizationTargetPct != nil {
+					deploymentCPUOverridesByApp[dep.AppID] = true
+				}
+			}
+		}
+	}
 	for _, app := range apps {
 		// Resolve this trigger's two axes (ADR-194). A target declared in
 		// scaling.targets wins; the legacy integer column is the fallback
@@ -471,10 +516,19 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if v, ok := app.ScalingPolicy.TargetFor(api.ScalingMetricCPU); ok {
 			targetCPU = v
 		}
+		appTargetCPU := targetCPU
+		liveDeployments := deploymentsByApp[app.ID]
+		deploymentCPUOverride := deploymentCPUOverridesByApp[app.ID]
+		if deploymentCPUOverride {
+			// Once at least one revision opts in, evaluate every live revision
+			// independently. Revisions without an override inherit the app target;
+			// explicit zero disables only that revision.
+			targetCPU = 0
+		}
 		// Autoscale is "enabled" iff at least one target is set.
 		// No target → skip. Spec is explicit: no separate boolean
 		// (per user direction).
-		if targetRPS == 0 && targetCPU == 0 {
+		if targetRPS == 0 && targetCPU == 0 && !deploymentCPUOverride {
 			continue
 		}
 		conc := 0
@@ -539,51 +593,129 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			t.metrics.ObserveScaleUpWinningSignal(app.ID, dec.Winner)
 		}
 		t.emitScaleDecision(ctx, stats, dec, time.Now())
-		if !dec.ShouldAdmit {
-			continue
-		}
 		// Admit path: request the desired number of instances, bounded
 		// by ScaleUpMaxBurstPerTick. The engine enforces the cap via
 		// NodeLedger.Admit; if it is hit between the decide() check and
 		// a batch attempt, the corresponding result is AtCapacity.
-		if t.engine == nil {
+		if dec.ShouldAdmit && t.engine != nil && !t.admissionBackoffActive(app.ID, time.Now()) {
+			// Scale-out must use AdmitInstance, not EnsureWake. EnsureWake is
+			// deliberately idempotent: its Phase-1 fast path returns an
+			// existing RUNNING instance. Using it here makes a hot app with
+			// one running VM stay at one VM forever, even when decide() found
+			// headroom. AdmitInstance skips that fast path and reserves a new
+			// capacity slot through the shared ledger.
+			results, err := t.admit(ctx, app.ID, dec.Admissions)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return err
+				}
+				t.recordAdmissionFailure(app.ID, time.Now())
+				// Defensive: do not surface this as a hard
+				// error to the loop (the next tick can
+				// retry). Log + skip.
+				t.log.Warn("scaleup: admit failed", "app", app.ID, "err", err)
+			} else {
+				t.clearAdmissionBackoff(app.ID)
+			}
+			for _, result := range results {
+				if result.AtCapacity {
+					// The ledger can reach the cap between decide() and
+					// an individual batch attempt. Preserve the decision
+					// metric and record the effective rejection.
+					t.metrics.ObserveScaleUp(app.ID, string(OutcomeRejectAtCap))
+					continue
+				}
+				// Successful admit: observe the per-instance RPS at
+				// decision time so the dashboard can p95/p99 the
+				// trigger's aggressiveness.
+				t.metrics.ObserveScaleUpAdmitRPS(dec.ObservedRPS)
+			}
+		}
+		if deploymentCPUOverride {
+			if err := t.scaleDeploymentCPU(ctx, app, liveDeployments, appTargetCPU, conc, time.Now()); errors.Is(err, context.Canceled) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (t *Trigger) scaleDeploymentCPU(ctx context.Context, app state.App, deployments []state.Deployment, inheritedTarget float64, appConcurrency int, now time.Time) error {
+	reader, hasReader := t.instats.(DeploymentCPUReader)
+	ledger, hasLedger := t.ledger.(DeploymentLedger)
+	engine, hasEngine := t.engine.(DeploymentEngine)
+	if !hasReader || !hasLedger || !hasEngine {
+		t.log.Warn("scaleup: revision CPU targets require deployment CPU telemetry, ledger, and admission support", "app", app.ID)
+		return nil
+	}
+	maxInstances := app.MaxConcurrency
+	if app.ScalingPolicy != nil && app.ScalingPolicy.MaxInstances > 0 && (maxInstances == 0 || app.ScalingPolicy.MaxInstances < maxInstances) {
+		maxInstances = app.ScalingPolicy.MaxInstances
+	}
+	if maxInstances <= 0 {
+		return nil
+	}
+	for _, dep := range deployments {
+		target := inheritedTarget
+		if dep.CPUUtilizationTargetPct != nil {
+			target = *dep.CPUUtilizationTargetPct
+		}
+		if target <= 0 {
 			continue
 		}
-		if t.admissionBackoffActive(app.ID, time.Now()) {
+		concurrency := ledger.ConcurrencyForDeployment(app.ID, dep.ID)
+		// Account for instances in sibling revisions before applying this
+		// revision's cap, so the app-wide policy remains the aggregate bound.
+		revisionMax := maxInstances - (appConcurrency - concurrency)
+		if dep.MaxInstances > 0 && dep.MaxInstances < revisionMax {
+			revisionMax = dep.MaxInstances
+		}
+		if revisionMax < concurrency {
+			revisionMax = concurrency
+		}
+		perInstanceCPU, haveCPU := reader.MaxCPUForDeployment(app.ID, dep.ID)
+		stats := AppStats{
+			AppID:          app.ID,
+			DeploymentID:   dep.ID,
+			TargetCPU:      target,
+			MaxConcurrency: revisionMax,
+			Concurrency:    concurrency,
+			PerInstanceCPU: perInstanceCPU,
+			HaveCPU:        haveCPU,
+		}
+		dec := decide(stats)
+		t.metrics.ObserveScaleUp(app.ID, string(dec.Outcome))
+		if dec.Outcome == OutcomeAdmit {
+			t.metrics.ObserveScaleUpWinningSignal(app.ID, dec.Winner)
+		}
+		t.emitScaleDecision(ctx, stats, dec, now)
+		if !dec.ShouldAdmit || t.engine == nil {
 			continue
 		}
-		// Scale-out must use AdmitInstance, not EnsureWake. EnsureWake is
-		// deliberately idempotent: its Phase-1 fast path returns an
-		// existing RUNNING instance. Using it here makes a hot app with
-		// one running VM stay at one VM forever, even when decide() found
-		// headroom. AdmitInstance skips that fast path and reserves a new
-		// capacity slot through the shared ledger.
-		results, err := t.admit(ctx, app.ID, dec.Admissions)
+		backoffKey := scaleupAdmissionKey(app.ID, dep.ID)
+		if t.admissionBackoffActive(backoffKey, now) {
+			continue
+		}
+		result, err := engine.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, dep.Scope, wakeBootTriggerScaleup)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
-			t.recordAdmissionFailure(app.ID, time.Now())
-			// Defensive: do not surface this as a hard
-			// error to the loop (the next tick can
-			// retry). Log + skip.
-			t.log.Warn("scaleup: admit failed", "app", app.ID, "err", err)
-		} else {
-			t.clearAdmissionBackoff(app.ID)
+			t.recordAdmissionFailure(backoffKey, now)
+			t.log.Warn("scaleup: admit deployment failed", "app", app.ID, "deployment", dep.ID, "err", err)
+			continue
 		}
-		for _, result := range results {
-			if result.AtCapacity {
-				// The ledger can reach the cap between decide() and
-				// an individual batch attempt. Preserve the decision
-				// metric and record the effective rejection.
-				t.metrics.ObserveScaleUp(app.ID, string(OutcomeRejectAtCap))
-				continue
-			}
-			// Successful admit: observe the per-instance RPS at
-			// decision time so the dashboard can p95/p99 the
-			// trigger's aggressiveness.
-			t.metrics.ObserveScaleUpAdmitRPS(dec.ObservedRPS)
+		t.clearAdmissionBackoff(backoffKey)
+		if result.AtCapacity {
+			t.metrics.ObserveScaleUp(app.ID, string(OutcomeRejectAtCap))
 		}
 	}
 	return nil
+}
+
+func scaleupAdmissionKey(appID, deploymentID string) string {
+	if deploymentID == "" {
+		return appID
+	}
+	return appID + ":deployment:" + deploymentID
 }

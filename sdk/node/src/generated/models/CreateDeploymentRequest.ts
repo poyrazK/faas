@@ -5,6 +5,7 @@
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 import type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
 import type { DeploymentResourcesRequest } from './DeploymentResourcesRequest.js';
+import type { DeploymentScalingRequest } from './DeploymentScalingRequest.js';
 import type { Sidecar } from './Sidecar.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
@@ -53,6 +54,7 @@ export type CreateDeploymentRequest = {
    * A deployment-local maximum for live serving VMs. When absent or 0, no stricter revision bound is applied; the app/plan aggregate remains authoritative.
    */
   max_instances?: number | null;
+  scaling?: DeploymentScalingRequest;
   /**
    * Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280.
    */

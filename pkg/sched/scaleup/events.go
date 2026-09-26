@@ -16,6 +16,7 @@ const scaleDecisionEventKind = "scale.decision"
 // the payload stays useful to consumers that read events by subject.
 type ScaleDecisionEvent struct {
 	AppID              string  `json:"app_id"`
+	DeploymentID       string  `json:"deployment_id,omitempty"`
 	Outcome            string  `json:"outcome"`
 	Reason             string  `json:"reason"`
 	ObservedRPS        float64 `json:"observed_rps"`
@@ -47,14 +48,15 @@ func (t *Trigger) emitScaleDecision(ctx context.Context, stats AppStats, dec Dec
 	// rather than "50.000000", so an app that never left the legacy columns
 	// keeps the exact fingerprint string it had and its dedupe window is
 	// not reset by this change.
-	fingerprint := fmt.Sprintf("%s:%s:%d:%d:%d:%g:%g", dec.Outcome, reason,
+	fingerprint := fmt.Sprintf("%s:%s:%s:%d:%d:%d:%g:%g", stats.DeploymentID, dec.Outcome, reason,
 		stats.Concurrency, desired, stats.MaxConcurrency, stats.TargetRPS, stats.TargetCPU)
-	if !t.allowScaleDecisionEvent(stats.AppID, fingerprint, now) {
+	if !t.allowScaleDecisionEvent(scaleupAdmissionKey(stats.AppID, stats.DeploymentID), fingerprint, now) {
 		return
 	}
 
 	payload, err := json.Marshal(ScaleDecisionEvent{
 		AppID:              stats.AppID,
+		DeploymentID:       stats.DeploymentID,
 		Outcome:            string(dec.Outcome),
 		Reason:             reason,
 		ObservedRPS:        stats.PerInstanceRPS,
