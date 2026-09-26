@@ -40,23 +40,36 @@ func (e *asyncRouteEnqueuer) EnqueueAsyncRoute(ctx context.Context, req gateway.
 		invocationID = uuid.NewSHA1(asyncRouteInvocationNamespace, []byte(req.AppID+"\x00"+req.IdempotencyKey)).String()
 	}
 	retryPolicy := app.RetryPolicyJSON
+	if req.RetryPolicy != nil {
+		retryPolicy, err = json.Marshal(req.RetryPolicy)
+		if err != nil {
+			return gateway.AsyncRouteAccepted{}, err
+		}
+	}
 	if string(retryPolicy) == "{}" {
 		retryPolicy = nil
 	}
-	inv, err := e.store.EnqueueInvocation(ctx, state.Invocation{
-		ID:              invocationID,
-		AppID:           req.AppID,
-		AccountID:       req.AccountID,
-		Source:          state.InvocationAsyncInvoke,
-		Method:          req.Method,
-		Path:            req.Path,
-		Payload:         append(json.RawMessage(nil), req.Payload...),
-		Headers:         headers,
-		DueAt:           time.Now().UTC(),
-		RetryPolicyJSON: append(json.RawMessage(nil), retryPolicy...),
+	prepared, version, err := state.ResolveInvocationVersion(ctx, e.store, state.Invocation{
+		ID:                     invocationID,
+		AppID:                  req.AppID,
+		AccountID:              req.AccountID,
+		Source:                 state.InvocationAsyncInvoke,
+		Method:                 req.Method,
+		Path:                   req.Path,
+		Payload:                append(json.RawMessage(nil), req.Payload...),
+		Headers:                headers,
+		DueAt:                  time.Now().UTC(),
+		RetryPolicyJSON:        append(json.RawMessage(nil), retryPolicy...),
+		DeadlineAt:             req.DeadlineAt,
+		OnSuccessDestinationID: req.OnSuccessWebhook,
+		OnFailureDestinationID: req.OnFailureWebhook,
 	})
+	if err != nil {
+		return gateway.AsyncRouteAccepted{}, err
+	}
+	inv, err := e.store.EnqueueInvocation(ctx, prepared)
 	if err == nil {
-		return gateway.AsyncRouteAccepted{ID: inv.ID}, nil
+		return gateway.AsyncRouteAccepted{ID: inv.ID, ReleaseID: version.ReleaseID, DeploymentID: version.DeploymentID}, nil
 	}
 	if !errors.Is(err, state.ErrConflict) || invocationID == "" {
 		return gateway.AsyncRouteAccepted{}, err
@@ -68,5 +81,9 @@ func (e *asyncRouteEnqueuer) EnqueueAsyncRoute(ctx context.Context, req gateway.
 		}
 		return gateway.AsyncRouteAccepted{}, state.ErrConflict
 	}
-	return gateway.AsyncRouteAccepted{ID: existing.ID}, nil
+	_, existingVersion, versionErr := state.ResolveInvocationVersion(ctx, e.store, existing)
+	if versionErr != nil {
+		return gateway.AsyncRouteAccepted{}, versionErr
+	}
+	return gateway.AsyncRouteAccepted{ID: existing.ID, ReleaseID: existingVersion.ReleaseID, DeploymentID: existingVersion.DeploymentID}, nil
 }

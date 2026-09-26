@@ -27,8 +27,6 @@ package state_test
 // the test inserts directly without parent rows.
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -39,8 +37,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -116,6 +114,65 @@ func TestPgStoreRequestTelemetry_ConsumerDimension(t *testing.T) {
 		} else if row.Requests != wantCount {
 			t.Errorf("consumer %q requests = %d, want %d", value, row.Requests, wantCount)
 		}
+	}
+}
+
+func TestPgStoreRequestTelemetryByPlatformTenantUsesRequestTimeAttribution(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, otherAccountID := uuid.NewString(), uuid.NewString()
+	tenantID := uuid.NewString()
+	appA, appB := uuid.NewString(), uuid.NewString()
+	deploymentID := uuid.NewString()
+	now := time.Now().UTC()
+
+	rows := []struct {
+		account, tenant, app string
+		status, count        int32
+		at                   time.Time
+	}{
+		{accountID, tenantID, appA, 503, 3, now.Add(-time.Minute)},
+		{accountID, tenantID, appB, 200, 5, now.Add(-2 * time.Minute)},
+		{accountID, uuid.NewString(), appA, 503, 7, now.Add(-3 * time.Minute)},
+		// Even a matching tenant UUID cannot cross the account boundary.
+		{otherAccountID, tenantID, appA, 503, 11, now.Add(-4 * time.Minute)},
+	}
+	for _, row := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, row.account), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, row.app), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        "GET /tenant-activity", Method: "GET", Status: row.status,
+			LatencyMs: 24, Count: row.count, ReceivedAt: pgtype.Timestamptz{Time: row.at, Valid: true},
+			UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+			PlatformTenantID: pgtype.UUID{Bytes: parseUUID(t, row.tenant), Valid: true},
+		}); err != nil {
+			t.Fatalf("Insert request telemetry: %v", err)
+		}
+	}
+
+	got, err := store.ListRequestTelemetryByPlatformTenant(ctx, sqlc.ListRequestTelemetryByPlatformTenantParams{
+		AccountID:        pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		PlatformTenantID: pgtype.UUID{Bytes: parseUUID(t, tenantID), Valid: true},
+		ReceivedFrom:     pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
+		ReceivedUntil:    pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		Limit:            10,
+	})
+	if err != nil {
+		t.Fatalf("List tenant activity: %v", err)
+	}
+	if len(got) != 2 || uuid.UUID(got[0].AppID.Bytes).String() != appA || got[0].Status != 503 || got[0].Count != 3 || uuid.UUID(got[1].AppID.Bytes).String() != appB {
+		t.Fatalf("tenant activity = %+v, want only the two request-time matches for account/tenant", got)
+	}
+
+	filtered, err := store.ListRequestTelemetryByPlatformTenant(ctx, sqlc.ListRequestTelemetryByPlatformTenantParams{
+		AccountID:        pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+		PlatformTenantID: pgtype.UUID{Bytes: parseUUID(t, tenantID), Valid: true},
+		ReceivedFrom:     pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
+		ReceivedUntil:    pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
+		AppIDFilter:      appA, StatusFilter: 503, Limit: 10,
+	})
+	if err != nil || len(filtered) != 1 || filtered[0].Count != 3 {
+		t.Fatalf("filtered tenant activity = %+v, err=%v; want one matching 503 row", filtered, err)
 	}
 }
 
@@ -563,98 +620,6 @@ func TestPgStoreDebugRegressions_ReadinessFailsWhenTableMissing(t *testing.T) {
 	}
 }
 
-func TestPgStoreRequestAnalyticsIncludesColdWakeAndGuestExecutionPercentiles(t *testing.T) {
-	store, pool, ctx := pgStoreWithPool(t)
-	accountID, appID, deploymentID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	now := time.Now().UTC()
-	wakeOne, wakeTwo := "wake-analytics-"+uuid.NewString(), "wake-analytics-"+uuid.NewString()
-	insertAnalyticsWakeEvent(t, ctx, pool, wakeOne, "wake.boot_started", now.Add(-10*time.Second))
-	insertAnalyticsWakeEvent(t, ctx, pool, wakeOne, "wake.boot_completed", now.Add(-9800*time.Millisecond))
-	insertAnalyticsWakeEvent(t, ctx, pool, wakeTwo, "wake.boot_started", now.Add(-5*time.Second))
-	insertAnalyticsWakeEvent(t, ctx, pool, wakeTwo, "wake.boot_completed", now.Add(-4600*time.Millisecond))
-	rows := []struct {
-		route        string
-		latency      int32
-		coldBoot     bool
-		wakeID       string
-		guestMS      int32
-		guestRuntime string
-		guestCPU     int32
-		guestRSS     int32
-		resources    bool
-		count        int32
-	}{
-		{route: "GET /checkout", latency: 40, guestMS: 15, guestRuntime: "node24", guestCPU: 10, guestRSS: 48, resources: true, count: 2},
-		{route: "GET /checkout", latency: 180, coldBoot: true, wakeID: wakeOne, guestMS: 140, guestRuntime: "node24", guestCPU: 20, guestRSS: 80, resources: true, count: 1},
-		{route: "GET /checkout", latency: 220, coldBoot: true, wakeID: wakeTwo, guestMS: 200, guestRuntime: "node24", guestCPU: 30, guestRSS: 144, resources: true, count: 1},
-		{route: "GET /users", latency: 25, count: 1},
-	}
-	for _, row := range rows {
-		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
-			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
-			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
-			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
-			Route:        row.route, Method: "GET", Status: 200, LatencyMs: row.latency,
-			ColdBoot: row.coldBoot, ReceivedAt: pgtype.Timestamptz{Time: now, Valid: true}, Count: row.count,
-			UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
-			WakeID:          pgtype.Text{String: row.wakeID, Valid: row.wakeID != ""},
-			GuestDurationMs: row.guestMS, GuestRuntime: row.guestRuntime, GuestOutcome: "ok",
-			GuestCpuTimeMs: row.guestCPU, GuestPeakRssMb: row.guestRSS, GuestResourceUsageAvailable: row.resources,
-		}); err != nil {
-			t.Fatalf("insert %s: %v", row.route, err)
-		}
-	}
-
-	got, err := store.RequestTelemetryAnalyticsByDimension(ctx, sqlc.RequestTelemetryAnalyticsByDimensionParams{
-		AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
-		AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
-		ReceivedAt:   pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
-		ReceivedAt_2: pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
-		GroupBy:      "route", Limit: 10,
-	})
-	if err != nil {
-		t.Fatalf("analytics by route: %v", err)
-	}
-	byRoute := make(map[string]sqlc.RequestTelemetryAnalyticsByDimensionRow, len(got))
-	for _, row := range got {
-		byRoute[fmt.Sprint(row.Dimension)] = row
-	}
-	checkout := byRoute["GET /checkout"]
-	if checkout.Requests != 4 || checkout.ColdBoots != 2 {
-		t.Fatalf("checkout totals = requests %d cold %d, want 4 and 2", checkout.Requests, checkout.ColdBoots)
-	}
-	if !checkout.ColdRequestP95Ms.Valid || checkout.ColdRequestP95Ms.Int32 != 220 {
-		t.Errorf("cold request p95 = %+v, want 220ms", checkout.ColdRequestP95Ms)
-	}
-	if !checkout.WakeBootP95Ms.Valid || checkout.WakeBootP95Ms.Int32 != 400 {
-		t.Errorf("wake boot p95 = %+v, want 400ms", checkout.WakeBootP95Ms)
-	}
-	if !checkout.GuestExecutionP50Ms.Valid || checkout.GuestExecutionP50Ms.Int32 != 15 ||
-		!checkout.GuestExecutionP95Ms.Valid || checkout.GuestExecutionP95Ms.Int32 != 200 {
-		t.Errorf("guest execution percentiles = (%+v, %+v), want (15ms, 200ms)", checkout.GuestExecutionP50Ms, checkout.GuestExecutionP95Ms)
-	}
-	if !checkout.GuestCpuAvgMs.Valid || checkout.GuestCpuAvgMs.Int32 != 18 ||
-		!checkout.GuestCpuP95Ms.Valid || checkout.GuestCpuP95Ms.Int32 != 30 ||
-		!checkout.GuestPeakRssMaxMb.Valid || checkout.GuestPeakRssMaxMb.Int32 != 144 {
-		t.Errorf("guest resources avg/p95/max = (%+v, %+v, %+v), want (18ms, 30ms, 144MiB)", checkout.GuestCpuAvgMs, checkout.GuestCpuP95Ms, checkout.GuestPeakRssMaxMb)
-	}
-	users := byRoute["GET /users"]
-	if users.ColdRequestP95Ms.Valid || users.WakeBootP95Ms.Valid || users.GuestExecutionP50Ms.Valid || users.GuestExecutionP95Ms.Valid || users.GuestCpuAvgMs.Valid || users.GuestCpuP95Ms.Valid || users.GuestPeakRssMaxMb.Valid {
-		t.Errorf("route without cold/runtime evidence has non-null percentiles: %+v", users)
-	}
-}
-
-func insertAnalyticsWakeEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, wakeID, kind string, at time.Time) {
-	t.Helper()
-	data, err := json.Marshal(map[string]string{"wake_id": wakeID})
-	if err != nil {
-		t.Fatalf("marshal wake event: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO events (actor, kind, data, at) VALUES ('schedd', $1, $2, $3)`, kind, data, at); err != nil {
-		t.Fatalf("insert wake event %s: %v", kind, err)
-	}
-}
-
 // TestPgStoreRequestTelemetry_CHECKRejection pins the
 // route-CHECK + method-CHECK enforcement. The Store layer is a
 // thin delegate; the database is the enforcement boundary, so
@@ -693,6 +658,64 @@ func TestPgStoreRequestTelemetry_CHECKRejection(t *testing.T) {
 	// (the closed-enum CHECK at migration 00427 line 103).
 	if !strings.Contains(pgErr.ConstraintName, "method") {
 		t.Errorf("constraint name = %q, expected substring 'method'", pgErr.ConstraintName)
+	}
+}
+
+func TestPgStoreRequestTelemetry_CircuitBreakerSummaryIncludesColdBootP95(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID, deploymentID := seedLiveDeploy(t, store, ctx)
+	now := time.Now().UTC()
+	instance, err := store.CreateInstance(ctx, appID, deploymentID, string(state.StateRunning), 128, resolveDefaultLocal(t, ctx, store), "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := store.AppendUsage(ctx, accountID, appID, instance.ID, now.Truncate(time.Minute), 0, 12, 500_000, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	rows := []struct {
+		status   int32
+		latency  int32
+		coldBoot bool
+		count    int32
+	}{
+		{status: 200, latency: 10, count: 9},
+		{status: 500, latency: 100, coldBoot: true, count: 2},
+		{status: 200, latency: 200, coldBoot: true, count: 2},
+		{status: 200, latency: 300, count: 1},
+	}
+	for i, sample := range rows {
+		if err := store.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: parseUUID(t, accountID), Valid: true},
+			AppID:        pgtype.UUID{Bytes: parseUUID(t, appID), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: parseUUID(t, deploymentID), Valid: true},
+			Route:        "GET /breaker-summary",
+			Method:       "GET",
+			Status:       sample.status,
+			LatencyMs:    sample.latency,
+			ColdBoot:     sample.coldBoot,
+			ReceivedAt:   pgtype.Timestamptz{Time: now.Add(time.Duration(i) * time.Second), Valid: true},
+			Count:        sample.count,
+			UaFamily:     "__unknown__",
+			ReferrerHost: "__none__",
+			Country:      "__unknown__",
+		}); err != nil {
+			t.Fatalf("Insert sample %d: %v", i, err)
+		}
+	}
+
+	requests, serverErrors, p95, coldBootRequests, coldBootP95, cpuUsec, cpuRequests, err := store.RequestTelemetryCircuitBreakerSummary(
+		ctx, appID, deploymentID, now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("RequestTelemetryCircuitBreakerSummary: %v", err)
+	}
+	if requests != 14 || serverErrors != 2 || p95 != 300 {
+		t.Errorf("overall summary = requests:%d errors:%d p95:%g, want 14/2/300", requests, serverErrors, p95)
+	}
+	if coldBootRequests != 4 || coldBootP95 != 200 {
+		t.Errorf("cold-boot summary = requests:%d p95:%g, want 4/200", coldBootRequests, coldBootP95)
+	}
+	if cpuUsec != 500_000 || cpuRequests != 12 {
+		t.Errorf("CPU/request summary = cpu_usec:%d requests:%d, want 500000/12", cpuUsec, cpuRequests)
 	}
 }
 

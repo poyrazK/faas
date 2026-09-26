@@ -995,6 +995,7 @@ type EdgeRule struct {
 	UpdatedAt    pgtype.Timestamptz
 	ValidateMode string
 	CorsPresetID pgtype.UUID
+	ManifestKey  pgtype.Text
 }
 
 type EgressPolicy struct {
@@ -1852,6 +1853,7 @@ type RequestTelemetry struct {
 	DeploymentTag               string
 	DeploymentCreatedAt         string
 	ImageDigest                 string
+	PlatformTenantID            pgtype.UUID
 	GuestCpuTimeMs              int32
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool

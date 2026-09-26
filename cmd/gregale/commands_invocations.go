@@ -1,4 +1,4 @@
-// commands_invocations.go — `gregale invocations <list|get>` (Tier C)
+// commands_invocations.go — `gregale invocations <list|get|wait>` (Tier C)
 // plus the Tier B `--replay` extension on `get` (issue #315).
 //
 // The Tier C list/get surface closes the audit gap for
@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -39,6 +40,8 @@ import (
 // site pointer.
 const invocationGetCmdUsage = "usage: gregale invocations get [--json|--replay] <id>"
 
+const invocationWaitCmdUsage = "usage: gregale invocations wait [--json] [--timeout D] [--interval D] <id>"
+
 // invocationCmdDocsTopic is the docs topic slug appended to
 // PrintUsage when it emits the trailing "Docs:" row. Kept
 // on the plural "invocations" namespace since the singular form is
@@ -47,7 +50,7 @@ const invocationCmdDocsTopic = "invocations"
 
 func cmdInvocations(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale invocations <list|get [--replay]>", "invocations")
+		PrintUsage(os.Stderr, "usage: gregale invocations <list|get [--replay]|wait>", "invocations")
 		return 1
 	}
 	if strings.HasPrefix(args[0], "-") {
@@ -58,9 +61,119 @@ func cmdInvocations(args []string) int {
 		return cmdInvocationsList(args[1:])
 	case "get":
 		return cmdInvocationsGet(args[1:])
+	case "wait":
+		return cmdInvocationsWait(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown invocations subcommand %q\n", args[0])
 	return 1
+}
+
+// cmdInvocationsWait polls the durable status endpoint until the invocation
+// reaches a terminal state. The timeout is optional because async invocations
+// may legitimately wait for a long time in the durable queue; Ctrl-C exits
+// promptly with the conventional 130 status.
+func cmdInvocationsWait(args []string) int {
+	fs := newFlagSet("invocations wait", flag.ContinueOnError)
+	timeout := fs.Duration("timeout", 0, "stop waiting after this duration (0 waits indefinitely)")
+	interval := fs.Duration("interval", time.Second, "time between status checks")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 || *timeout < 0 || *interval <= 0 {
+		PrintUsage(os.Stderr, invocationWaitCmdUsage, invocationCmdDocsTopic)
+		return 1
+	}
+
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if *timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+
+	id := fs.Arg(0)
+	if !jsonOutput {
+		PrintProgress(osStderr, "Waiting for invocation %s…", id)
+	}
+	inv, err := waitForInvocation(ctx, client, id, *interval)
+	if err != nil {
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return 130
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			if inv.ID != "" {
+				if code := renderInvocationWaitResult(inv); code != 0 {
+					return code
+				}
+			}
+			_, _ = fmt.Fprintf(osStderr, "gregale: timed out waiting for invocation %s; it may still be running (inspect with `gregale invocations get %s`)\n", id, id)
+			return 124
+		}
+		var ae *APIError
+		if errors.As(err, &ae) {
+			renderAPIError(os.Stderr, ae)
+			return exitCodeForStatus(ae.Problem.Status)
+		}
+		return printErr("Could not wait for invocation", err)
+	}
+
+	if code := renderInvocationWaitResult(inv); code != 0 {
+		return code
+	}
+	if inv.State != "completed" {
+		return 1
+	}
+	return 0
+}
+
+func waitForInvocation(ctx context.Context, client *api.Client, id string, interval time.Duration) (api.Invocation, error) {
+	var latest api.Invocation
+	for {
+		inv, err := client.GetInvocation(ctx, id)
+		if err != nil {
+			return latest, err
+		}
+		latest = inv
+		if invocationStateTerminal(inv.State) {
+			return inv, nil
+		}
+
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return latest, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func invocationStateTerminal(state string) bool {
+	switch state {
+	case "completed", "failed", "cancelled", "dead_letter":
+		return true
+	default:
+		return false
+	}
+}
+
+func renderInvocationWaitResult(inv api.Invocation) int {
+	if jsonOutput {
+		return jsonOut(writeJSON(inv))
+	}
+	renderInvocation(osStdout, inv)
+	return 0
 }
 
 // cmdInvocationsList implements `gregale invocations list

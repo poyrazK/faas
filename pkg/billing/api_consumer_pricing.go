@@ -16,12 +16,117 @@ var ErrMixedAPIConsumerRateCardCurrency = errors.New("billing: API consumer rate
 // APIConsumerUsageChargeBucket is the priced form of one durable usage
 // minute. RateCardID is empty when no card was effective for that minute.
 type APIConsumerUsageChargeBucket struct {
-	WindowStart            time.Time
-	BillableUnits          int64
-	RateCardID             string
-	Currency               string
-	PriceMillicentsPerUnit int64
-	AmountMillicents       int64
+	WindowStart              time.Time
+	BillableUnits            int64
+	RateCardID               string
+	PlatformTenantRateCardID string
+	Currency                 string
+	PriceMillicentsPerUnit   int64
+	AmountMillicents         int64
+}
+
+// QuotePlatformTenantUsage applies a tenant-wide customer tariff when one is
+// effective for a usage minute. Before the tenant's first effective card, it
+// falls back to the app-level price. The output records which pricing source
+// determined each immutable statement line.
+func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard, usage []state.APIConsumerUsageBucket) (APIConsumerUsageQuote, error) {
+	if len(tenantCards) == 0 {
+		return QuoteAPIConsumerUsage(appCards, usage)
+	}
+	orderedTenantCards := append([]state.PlatformTenantRateCard(nil), tenantCards...)
+	sort.Slice(orderedTenantCards, func(i, j int) bool {
+		if orderedTenantCards[i].EffectiveFrom.Equal(orderedTenantCards[j].EffectiveFrom) {
+			return orderedTenantCards[i].ID < orderedTenantCards[j].ID
+		}
+		return orderedTenantCards[i].EffectiveFrom.Before(orderedTenantCards[j].EffectiveFrom)
+	})
+	tenantCardsAsAppCards := make([]state.APIConsumerRateCard, 0, len(orderedTenantCards))
+	for _, card := range orderedTenantCards {
+		if card.Unit != state.PlatformTenantRateCardUnitRequest {
+			return APIConsumerUsageQuote{}, fmt.Errorf("billing: unsupported platform tenant rate-card unit %q", card.Unit)
+		}
+		tenantCardsAsAppCards = append(tenantCardsAsAppCards, state.APIConsumerRateCard{
+			ID: card.ID, Currency: card.Currency, Unit: card.Unit,
+			PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, EffectiveFrom: card.EffectiveFrom,
+		})
+	}
+	// Validate the complete append-only history, including duplicate effective
+	// minutes and currency/unit invariants, before selecting a card per minute.
+	if _, err := QuoteAPIConsumerUsage(tenantCardsAsAppCards, nil); err != nil {
+		return APIConsumerUsageQuote{}, err
+	}
+
+	orderedUsage := append([]state.APIConsumerUsageBucket(nil), usage...)
+	sort.Slice(orderedUsage, func(i, j int) bool {
+		if orderedUsage[i].WindowStart.Equal(orderedUsage[j].WindowStart) {
+			return orderedUsage[i].AppID < orderedUsage[j].AppID
+		}
+		return orderedUsage[i].WindowStart.Before(orderedUsage[j].WindowStart)
+	})
+	tenantCardForUsage := make([]int, len(orderedUsage))
+	fallbackUsage := make([]state.APIConsumerUsageBucket, 0, len(orderedUsage))
+	tenantCardIndex := -1
+	for i, bucket := range orderedUsage {
+		if bucket.BillableUnits < 0 {
+			return APIConsumerUsageQuote{}, fmt.Errorf("billing: negative platform tenant billable units")
+		}
+		for tenantCardIndex+1 < len(orderedTenantCards) && !orderedTenantCards[tenantCardIndex+1].EffectiveFrom.After(bucket.WindowStart.UTC()) {
+			tenantCardIndex++
+		}
+		tenantCardForUsage[i] = tenantCardIndex
+		if tenantCardIndex < 0 {
+			fallbackUsage = append(fallbackUsage, bucket)
+		}
+	}
+	var fallbackQuote APIConsumerUsageQuote
+	var err error
+	if len(fallbackUsage) > 0 {
+		fallbackQuote, err = QuoteAPIConsumerUsage(appCards, fallbackUsage)
+		if err != nil {
+			return APIConsumerUsageQuote{}, err
+		}
+	}
+
+	quote := APIConsumerUsageQuote{Buckets: make([]APIConsumerUsageChargeBucket, 0, len(orderedUsage))}
+	fallbackIndex := 0
+	for i, bucket := range orderedUsage {
+		if quote.BillableUnits > maxInt64-bucket.BillableUnits {
+			return APIConsumerUsageQuote{}, fmt.Errorf("billing: platform tenant usage total overflow")
+		}
+		quote.BillableUnits += bucket.BillableUnits
+		var priced APIConsumerUsageChargeBucket
+		if tenantCardForUsage[i] >= 0 {
+			card := orderedTenantCards[tenantCardForUsage[i]]
+			amount, err := multiplyMillicents(bucket.BillableUnits, card.PriceMillicentsPerUnit)
+			if err != nil {
+				return APIConsumerUsageQuote{}, err
+			}
+			priced = APIConsumerUsageChargeBucket{WindowStart: bucket.WindowStart.UTC(), BillableUnits: bucket.BillableUnits,
+				PlatformTenantRateCardID: card.ID, Currency: card.Currency,
+				PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, AmountMillicents: amount}
+		} else {
+			priced = fallbackQuote.Buckets[fallbackIndex]
+			fallbackIndex++
+		}
+		if priced.RateCardID == "" && priced.PlatformTenantRateCardID == "" {
+			if quote.UnpricedUnits > maxInt64-bucket.BillableUnits {
+				return APIConsumerUsageQuote{}, fmt.Errorf("billing: platform tenant unpriced usage total overflow")
+			}
+			quote.UnpricedUnits += bucket.BillableUnits
+		} else {
+			if quote.Currency != "" && quote.Currency != priced.Currency {
+				return APIConsumerUsageQuote{}, ErrMixedAPIConsumerRateCardCurrency
+			}
+			quote.Currency = priced.Currency
+			if quote.AmountMillicents > maxInt64-priced.AmountMillicents {
+				return APIConsumerUsageQuote{}, fmt.Errorf("billing: platform tenant charge total overflow")
+			}
+			quote.AmountMillicents += priced.AmountMillicents
+		}
+		quote.Buckets = append(quote.Buckets, priced)
+	}
+	quote.Priced = quote.BillableUnits > 0 && quote.UnpricedUnits == 0 && quote.Currency != ""
+	return quote, nil
 }
 
 // APIConsumerUsageQuote is a deterministic estimate, not an invoice or a

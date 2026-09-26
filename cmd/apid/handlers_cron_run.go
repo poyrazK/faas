@@ -76,6 +76,11 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		s.notFound(w, "no such cron")
 		return
 	}
+	if len(c.Command) > 0 {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Command cron is scheduled", "command crons fire on their schedule; use 'gregale app <slug> exec' for a one-off command"))
+		return
+	}
 
 	// Plan-tier gate runs BEFORE InsertFireNowRequest so a Free
 	// customer never creates a row that schedd will then stamp as

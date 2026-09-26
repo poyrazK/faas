@@ -236,6 +236,54 @@ func TestMemStore_RecoverRolloutActionsAndGuards(t *testing.T) {
 	}
 }
 
+func TestMemStore_RecoverRolloutForDeploymentRestoresExactScopePredecessor(t *testing.T) {
+	m, ctx, _, app, fixture := memDeploymentFixture(t)
+	now := time.Now().UTC()
+	stable := fixture
+	stable.ID = uuid.NewString()
+	stable.Status = DeployLive
+	stable.Scope = "production"
+	stable.RolloutState = "complete"
+	stable.TrafficPercent = 90
+	stable.CreatedAt = now.Add(-time.Minute)
+	seedCanaryDeployment(m, stable)
+
+	candidate := fixture
+	candidate.ID = uuid.NewString()
+	candidate.Status = DeployLive
+	candidate.Scope = "production"
+	candidate.RolloutState = "rolling_out"
+	candidate.CanaryStep = 1
+	candidate.CanaryTotalSteps = 4
+	candidate.TrafficPercent = 10
+	candidate.CreatedAt = now
+	seedCanaryDeployment(m, candidate)
+
+	otherScope := stable
+	otherScope.ID = uuid.NewString()
+	otherScope.Scope = "staging"
+	otherScope.TrafficPercent = 100
+	seedCanaryDeployment(m, otherScope)
+
+	if _, _, err := m.RecoverRolloutForDeployment(ctx, app.ID, candidate.ID, otherScope.ID, "abort", "wrong environment"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("recovery with predecessor from another scope = %v, want ErrNotFound", err)
+	}
+
+	aborted, auditID, err := m.RecoverRolloutForDeployment(ctx, app.ID, candidate.ID, stable.ID, "abort", "circuit breaker")
+	if err != nil {
+		t.Fatalf("RecoverRolloutForDeployment: %v", err)
+	}
+	if auditID == 0 || aborted.ID != candidate.ID || aborted.RolloutState != "aborted" || aborted.TrafficPercent != 0 {
+		t.Fatalf("aborted candidate = %+v audit=%d; want exact candidate aborted at 0%%", aborted, auditID)
+	}
+	if got, err := m.DeploymentByID(ctx, stable.ID); err != nil || got.TrafficPercent != 100 {
+		t.Fatalf("production predecessor after abort = traffic:%d err:%v; want 100%%", got.TrafficPercent, err)
+	}
+	if got, err := m.DeploymentByID(ctx, otherScope.ID); err != nil || got.TrafficPercent != 100 {
+		t.Fatalf("staging deployment after production abort = traffic:%d err:%v; want unchanged 100%%", got.TrafficPercent, err)
+	}
+}
+
 func TestMemStore_RecoverRolloutErrorGuards(t *testing.T) {
 	noRollout, ctx, _, app, _ := memDeploymentFixture(t)
 	if _, _, err := noRollout.RecoverRollout(ctx, app.ID, "abort", "none"); !errors.Is(err, ErrNotFound) {

@@ -32,15 +32,35 @@ func TestConsumerUsageReceiptIndependentOfDebuggerAndIdempotent(t *testing.T) {
 		RequestCount:      1, BillableUnits: 1,
 	}
 	first, err := receiver.RecordConsumerUsage(context.Background(), event)
-	if err != nil || !first.GetApplied() {
+	if err != nil || !first.GetApplied() || !first.GetSurfaceAttributionSupported() {
 		t.Fatalf("first receipt=%v err=%v", first, err)
 	}
 	second, err := receiver.RecordConsumerUsage(context.Background(), event)
-	if err != nil || second.GetApplied() {
+	if err != nil || second.GetApplied() || !second.GetSurfaceAttributionSupported() {
 		t.Fatalf("duplicate receipt=%v err=%v", second, err)
 	}
 	if len(store.usage) != 1 || store.usage[0].PlatformTenantID != event.GetPlatformTenantId() {
 		t.Fatalf("usage=%+v", store.usage)
+	}
+}
+
+// adr: 239
+func TestConsumerUsageReceiptSupportsAnonymousTenantSurface(t *testing.T) {
+	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
+	receiver := newRequestTelemetryReceiver(store, nil, nil, false)
+	event := &apidpb.ConsumerUsageEvent{EventId: uuid.NewString(), AccountId: uuid.NewString(),
+		AppId: uuid.NewString(), PlatformTenantId: uuid.NewString(), PlatformTenantSurfaceId: uuid.NewString(),
+		WindowStartUnixMs: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC).UnixMilli(),
+		RequestCount:      1, BillableUnits: 1}
+	receipt, err := receiver.RecordConsumerUsage(context.Background(), event)
+	if err != nil || !receipt.GetApplied() || !receipt.GetSurfaceAttributionSupported() || len(store.usage) != 1 ||
+		store.usage[0].ConsumerKey != state.AnonymousConsumerKey || store.usage[0].PlatformTenantSurfaceID != event.PlatformTenantSurfaceId {
+		t.Fatalf("surface receipt=%+v usage=%+v err=%v", receipt, store.usage, err)
+	}
+	event.ConsumerId = uuid.NewString()
+	event.EventId = uuid.NewString()
+	if _, err := receiver.RecordConsumerUsage(context.Background(), event); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("mixed consumer/surface event err=%v", err)
 	}
 }
 
@@ -134,12 +154,12 @@ func TestRequestTelemetryReceiverPersistsConsumerID(t *testing.T) {
 	store := &consumerTelemetryStore{account: state.Account{Plan: api.PlanPro}}
 	r := newRequestTelemetryReceiver(store, nil, nil, true)
 	accountID, appID, deploymentID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	consumerID := uuid.NewString()
+	consumerID, tenantID := uuid.NewString(), uuid.NewString()
 
 	out := r.handleOne(context.Background(), &apidpb.IncrementRequestTelemetryRequest{
 		AccountId: accountID, AppId: appID, DeploymentId: deploymentID,
 		RouteTemplate: "GET /v1/usage", Method: "GET", HttpStatus: 200,
-		LatencyMs: 20, ReceivedAtUnixMs: 1, ConsumerId: consumerID,
+		LatencyMs: 20, ReceivedAtUnixMs: 1, ConsumerId: consumerID, PlatformTenantId: tenantID,
 	})
 	if out.GetOutcome() != rtOutcomeInserted {
 		t.Fatalf("outcome = %q, want %q", out.GetOutcome(), rtOutcomeInserted)
@@ -149,6 +169,9 @@ func TestRequestTelemetryReceiverPersistsConsumerID(t *testing.T) {
 	}
 	if got := store.inserted[0].ConsumerID.String(); got != consumerID {
 		t.Fatalf("ConsumerID = %q, want %q", got, consumerID)
+	}
+	if got := uuid.UUID(store.inserted[0].PlatformTenantID.Bytes).String(); !store.inserted[0].PlatformTenantID.Valid || got != tenantID {
+		t.Fatalf("PlatformTenantID = %q (valid=%t), want %q", got, store.inserted[0].PlatformTenantID.Valid, tenantID)
 	}
 	if _, err := uuid.Parse(store.eventIDs[0]); err != nil {
 		t.Fatalf("log event id %q is not a UUID: %v", store.eventIDs[0], err)

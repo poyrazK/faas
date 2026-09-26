@@ -20,9 +20,23 @@ import (
 	"time"
 )
 
+// MaxOutboundRequestsPerDay is the structural upper bound for a
+// customer-configured daily request budget on one integration. Plan ceilings
+// below are at or below this value. See ADR-257.
+const MaxOutboundRequestsPerDay int64 = 100_000_000
+
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
+	// Customer-configured admission budgets are safety bounds, not plan
+	// allowances. Zero disables a dimension; these caps keep counters and
+	// request validation bounded without prescribing a default quota.
+	MaxPlatformTenantRequestsPerMinute int64 = 1_000_000
+	MaxPlatformTenantRequestsPerDay    int64 = 100_000_000
+	// RevisionPinMaxTTLSeconds bounds how long a superseded deployment can
+	// remain addressable by clients after a stable cutover.
+	RevisionPinMaxTTLSeconds    = 7 * 24 * 60 * 60
+	ProjectReleaseSetMaxMembers = 100
 	// CertIssuanceFailedAfter is the sustained failure window before the
 	// platform raises the customer-facing certificate issuance alert.
 	CertIssuanceFailedAfter = 15 * time.Minute
@@ -298,6 +312,17 @@ type Limits struct {
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
+	// OutboundRequestsPerDayMax (ADR-257) caps the customer-selected daily
+	// request limit on any one managed outbound integration. It is a policy
+	// ceiling, not an included usage allowance; an omitted limit remains uncapped.
+	OutboundRequestsPerDayMax int64
+	// Outbound request policy ceilings bound customer-selected per-integration
+	// rate, burst, concurrency, and timeout. These are configurable safeguards,
+	// not included outbound request allowances; see ADR-258.
+	OutboundRatePerSecondMax    float64
+	OutboundBurstMax            int
+	OutboundMaxInFlightMax      int
+	OutboundRequestTimeoutMSMax int
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
@@ -1732,8 +1757,10 @@ const UpstreamAffinityTTL = 30 * time.Second
 //	Scale 100/20 / 1024 / 1500
 var planLimits = map[Plan]Limits{
 	PlanFree: {
-		Plan:           PlanFree,
-		DeployedApps:   1,
+		Plan:                      PlanFree,
+		DeployedApps:              1,
+		OutboundRequestsPerDayMax: 100_000,
+		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000,
 		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
@@ -2112,8 +2139,10 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxWaitDays:    0,
 	},
 	PlanHobby: {
-		Plan:                  PlanHobby,
-		DeployedApps:          5,
+		Plan:                      PlanHobby,
+		DeployedApps:              5,
+		OutboundRequestsPerDayMax: 1_000_000,
+		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000,
 		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
@@ -2509,8 +2538,10 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxWaitDays:    7,
 	},
 	PlanPro: {
-		Plan:                  PlanPro,
-		DeployedApps:          25,
+		Plan:                      PlanPro,
+		DeployedApps:              25,
+		OutboundRequestsPerDayMax: 10_000_000,
+		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000,
 		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
@@ -2868,8 +2899,10 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxWaitDays:    7,
 	},
 	PlanScale: {
-		Plan:                  PlanScale,
-		DeployedApps:          100,
+		Plan:                      PlanScale,
+		DeployedApps:              100,
+		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
+		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000,
 		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
@@ -3727,6 +3760,10 @@ const (
 	// lookup needed to resolve a narrower plan budget is temporarily
 	// unavailable, so lookup failures can never turn into infinite retry.
 	DurableRetryMaxAttempts = 25
+	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
+	// rule age before the serving plan applies its lower deadline cap.
+	// The Scale plan currently owns the largest invocation deadline.
+	MaxAsyncRouteAgeSeconds = 86400
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -4964,6 +5001,17 @@ func execCmd(name string, args ...string) ([]byte, error) {
 func LimitsFor(p Plan) (Limits, bool) {
 	l, ok := planLimits[p]
 	return l, ok
+}
+
+// OutboundRequestsPerDayMaxForPlan returns the maximum customer-selected
+// daily request limit for one managed outbound integration. It is a policy
+// configuration ceiling, not an included request allowance.
+func OutboundRequestsPerDayMaxForPlan(p Plan) (int64, bool) {
+	limits, ok := LimitsFor(p)
+	if !ok || limits.OutboundRequestsPerDayMax < 1 || limits.OutboundRequestsPerDayMax > MaxOutboundRequestsPerDay {
+		return 0, false
+	}
+	return limits.OutboundRequestsPerDayMax, true
 }
 
 // WakeQueueDefaultsForPlan returns the per-app cold-wake waiter and wait

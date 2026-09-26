@@ -3,9 +3,9 @@ package daemonunitspec
 import "github.com/onebox-faas/faas/pkg/daemonunit"
 
 // UnitOutboundd is the canonical unit for faas-outboundd, the explicit
-// request-aware third-party API gateway. It owns no provider credentials in
-// the unit; those are supplied through the per-daemon secret environment
-// file and the configured integration records in Postgres.
+// request-aware third-party API gateway. Operator provider values arrive via
+// the per-daemon secret environment; customer values are sealed in Postgres
+// and opened with the fleet identity delivered through LoadCredential.
 func UnitOutboundd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description: "onebox-faas outboundd — request-aware third-party API gateway",
@@ -23,6 +23,12 @@ func UnitOutboundd() daemonunit.Unit {
 		MemoryMax: "256M",
 
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/outboundd/outboundd.env -/etc/faas/otel.env",
+		Environment: []daemonunit.KV{
+			{Key: "FAAS_FLEET_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
+		},
+		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
+		},
 
 		NoNewPrivileges:       true,
 		ProtectSystem:         "strict",

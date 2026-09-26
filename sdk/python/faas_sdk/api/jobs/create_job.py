@@ -101,7 +101,8 @@ def sync_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateJobRequest): Job creation payload — name + image + command + caps.
+        body (CreateJobRequest): Job creation payload — name + image + command + caps; schedule
+            enables recurring runs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,7 +139,8 @@ def sync(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateJobRequest): Job creation payload — name + image + command + caps.
+        body (CreateJobRequest): Job creation payload — name + image + command + caps; schedule
+            enables recurring runs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,7 +172,8 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateJobRequest): Job creation payload — name + image + command + caps.
+        body (CreateJobRequest): Job creation payload — name + image + command + caps; schedule
+            enables recurring runs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -205,7 +208,8 @@ async def asyncio(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateJobRequest): Job creation payload — name + image + command + caps.
+        body (CreateJobRequest): Job creation payload — name + image + command + caps; schedule
+            enables recurring runs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

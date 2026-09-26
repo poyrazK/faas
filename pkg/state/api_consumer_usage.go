@@ -41,12 +41,30 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 		}
 	}
 	if event.PlatformTenantID != "" {
-		if event.ConsumerKey == AnonymousConsumerKey {
-			return fmt.Errorf("consumer usage: anonymous traffic cannot have platform_tenant_id")
-		}
 		if _, err := uuid.Parse(event.PlatformTenantID); err != nil {
 			return fmt.Errorf("consumer usage: platform_tenant_id must be a UUID: %w", err)
 		}
+	}
+	if event.PlatformTenantSurfaceID != "" {
+		if _, err := uuid.Parse(event.PlatformTenantSurfaceID); err != nil {
+			return fmt.Errorf("consumer usage: platform_tenant_surface_id must be a UUID: %w", err)
+		}
+	}
+	if event.PlatformTenantJWTAuthorizationRuleID != "" {
+		if _, err := uuid.Parse(event.PlatformTenantJWTAuthorizationRuleID); err != nil {
+			return fmt.Errorf("consumer usage: platform_tenant_jwt_authorization_rule_id must be a UUID: %w", err)
+		}
+	}
+	if event.ConsumerKey == AnonymousConsumerKey {
+		if event.PlatformTenantID == "" {
+			if event.PlatformTenantSurfaceID != "" || event.PlatformTenantJWTAuthorizationRuleID != "" {
+				return fmt.Errorf("consumer usage: anonymous source attribution requires a tenant")
+			}
+		} else if (event.PlatformTenantSurfaceID == "") == (event.PlatformTenantJWTAuthorizationRuleID == "") {
+			return fmt.Errorf("consumer usage: anonymous tenant attribution requires exactly one surface or JWT rule")
+		}
+	} else if event.PlatformTenantSurfaceID != "" || event.PlatformTenantJWTAuthorizationRuleID != "" {
+		return fmt.Errorf("consumer usage: consumer events cannot claim an anonymous tenant source")
 	}
 	if event.WindowStart.IsZero() {
 		return fmt.Errorf("consumer usage: window_start is required")
@@ -159,11 +177,24 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	bucket.BillableUnits += event.BillableUnits
 	m.apiConsumerUsage[key] = bucket
 	if event.PlatformTenantID != "" {
-		tenantKey := platformTenantUsageBucketKey(event.AccountID, event.PlatformTenantID, event.AppID, event.ConsumerKey, event.WindowStart)
+		subject := event.ConsumerKey
+		if event.PlatformTenantSurfaceID != "" {
+			subject = "surface:" + event.PlatformTenantSurfaceID
+		} else if event.PlatformTenantJWTAuthorizationRuleID != "" {
+			subject = "jwt:" + event.PlatformTenantJWTAuthorizationRuleID
+		}
+		tenantKey := platformTenantUsageBucketKey(event.AccountID, event.PlatformTenantID, event.AppID, subject, event.WindowStart)
 		tenantBucket := m.platformTenantUsage[tenantKey]
 		if tenantBucket.AppID == "" {
 			tenantBucket = APIConsumerUsageBucket{AccountID: event.AccountID, AppID: event.AppID,
-				ConsumerKey: event.ConsumerKey, WindowStart: event.WindowStart.UTC()}
+				WindowStart: event.WindowStart.UTC()}
+			if event.PlatformTenantSurfaceID != "" {
+				tenantBucket.SurfaceID = event.PlatformTenantSurfaceID
+			} else if event.PlatformTenantJWTAuthorizationRuleID != "" {
+				tenantBucket.JWTAuthorizationRuleID = event.PlatformTenantJWTAuthorizationRuleID
+			} else {
+				tenantBucket.ConsumerKey = event.ConsumerKey
+			}
 		}
 		tenantBucket.RequestCount += event.RequestCount
 		tenantBucket.ErrorCount += event.ErrorCount

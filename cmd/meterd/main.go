@@ -1121,7 +1121,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The single meterd process today has exactly one evaluator; the
 	// loop's contract is "at most one", matching the design note at
 	// pkg/alerts/evaluator.go.
-	evaluator := buildAlertEvaluator(deps, store, log, ops)
+	promClient := buildPromQLClient(deps)
+	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can
@@ -1162,7 +1163,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("meterd: runtime config watcher exited", "err", err)
 		}
 	}()
-	canaryProg, canaryAPID := buildCanaryProgression(deps, store, ops, log)
+	canaryProg, canaryAPID := buildCanaryProgression(deps, store, ops, log, promClient)
 	safeDeployOrch := buildSafeDeployOrchestrator(deps, store, ops, log, canaryAPID, evaluator)
 	// ADR-099 / issue #1184 Workstream A: 7 job-task Prometheus
 	// metrics on a fresh per-daemon registry (same pattern as
@@ -1290,6 +1291,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Ops:      ops,
 		Interval: mc.DeploymentFailureSweepInterval,
 	})
+	go revisionPinSweepLoop(ctx, store, log)
 	// Metrics + healthz listener. Mirrors cmd/schedd/main.go:143-158 —
 	// per-daemon Prometheus registry (ADR-015), mux at /metrics +
 	// /healthz, 5s graceful shutdown on drain. Empty cfg.MetricsAddr
@@ -1438,21 +1440,22 @@ func stuckAfterFromEnvMeterd(getenv func(string) string, log *slog.Logger) time.
 // strictly; a 0o400 file-mode check (pkg/secretbox.LoadHostKey) is
 // the load-bearing detail for the §11 tripwire.
 func buildAlertEvaluator(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics) *alerts.Evaluator {
+	return buildAlertEvaluatorWithPromQL(deps, store, log, ops, buildPromQLClient(deps))
+}
+
+func buildPromQLClient(deps runDeps) appmetrics.PromQL {
 	promURL := deps.getenv("FAAS_PROMETHEUS_URL")
-	identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
-	if promURL == "" && identityPath == "" {
-		log.Warn("meterd: alert evaluator disabled — both FAAS_PROMETHEUS_URL and FAAS_HOST_AGE_IDENTITY_PATH unset; running with five ticks")
+	if promURL == "" {
 		return nil
 	}
+	return promql.NewClient(promURL, nil)
+}
 
-	var promClient appmetrics.PromQL
-	if promURL != "" {
-		// pkg/promql.NewClient takes an HTTPDoer for testability;
-		// nil resolves to http.DefaultClient. PerAttempt timeout is
-		// applied by pkg/webhookout's dispatcher, not the
-		// evaluator (the evaluator's PromQL calls have their own
-		// per-query deadline via the caller's context).
-		promClient = promql.NewClient(promURL, nil)
+func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics, promClient appmetrics.PromQL) *alerts.Evaluator {
+	identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
+	if promClient == nil && identityPath == "" {
+		log.Warn("meterd: alert evaluator disabled — both FAAS_PROMETHEUS_URL and FAAS_HOST_AGE_IDENTITY_PATH unset; running with five ticks")
+		return nil
 	}
 
 	var identityLoader func() *age.X25519Identity
@@ -1553,7 +1556,7 @@ func buildUpstreamProbe(deps runDeps, store state.Store, ops *wire.OpsMetrics, l
 // Returns (nil, nil) when the token is missing — the
 // call sites nil-check the progression and skip the goroutine,
 // preserving the pre-PR meterd behaviour exactly.
-func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger) (*canary.Progression, *api.InternalSafeDeployClient) {
+func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, promClient appmetrics.PromQL) (*canary.Progression, *api.InternalSafeDeployClient) {
 	token := safeDeployToken(deps.getenv, "FAAS_CANARY_PROGRESSION_TOKEN")
 	if token == "" {
 		log.Info("meterd: canary_progression disabled — FAAS_CANARY_PROGRESSION_TOKEN unset; running without canary_progression tick")
@@ -1561,7 +1564,7 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 	}
 	apidBase := safeDeployInternalBaseURL(deps.getenv)
 	apid := api.NewInternalSafeDeployClient(apidBase, token, safeDeployToken(deps.getenv, "FAAS_SAFEDEPLOY_TOKEN"))
-	progression := canary.NewProgression(&canaryStoreAdapter{store: store}, apid, ops, log)
+	progression := canary.NewProgression(&canaryStoreAdapter{store: store, promQL: promClient}, apid, ops, log)
 	return progression, apid
 }
 

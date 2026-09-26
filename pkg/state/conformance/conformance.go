@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +49,7 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
+		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
 		{"queued_build_claim_is_exactly_once", testQueuedBuildClaimIsExactlyOnce},
@@ -117,7 +119,9 @@ func Run(t *testing.T, open Open) {
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
+		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
 		{"queued_job_capacity_deferral_preserves_retry", testJobTaskDeferQueued},
+		{"scheduled_command_cron_cursor_and_run_history_are_consistent", testScheduledCommandCronLifecycle},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
@@ -126,6 +130,45 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testScheduledCommandCronLifecycle(t *testing.T, fx *Fixture) {
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/local/cron.ext4", "apps/conformance/cron-rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := fx.Store.CreateCronWithOptions(fx.Ctx, fx.App.ID, "* * * * *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance", "--compact"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+
+	firedAt := time.Now().UTC().Truncate(time.Minute)
+	first, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, nil, firedAt)
+	if err != nil || !created {
+		t.Fatalf("first scheduled fire = %+v, created=%t, err=%v", first, created, err)
+	}
+	if first.Kind != state.AppTaskKindCron || first.CronID != cron.ID || first.DeploymentID != fx.Deployment.ID ||
+		first.ScheduledFor == nil || !first.ScheduledFor.Equal(firedAt) || len(first.Command) != 2 || first.Command[0] != "bin/maintenance" {
+		t.Fatalf("first scheduled task did not preserve cron metadata: %+v", first)
+	}
+
+	secondAt := firedAt.Add(time.Minute)
+	second, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, &firedAt, secondAt)
+	if err != nil || !created {
+		t.Fatalf("second scheduled fire = %+v, created=%t, err=%v", second, created, err)
+	}
+	duplicate, created, err := fx.Store.CreateScheduledCronAppTask(fx.Ctx, cron.ID, &firedAt, secondAt)
+	if err != nil || created || duplicate.ID != "" {
+		t.Fatalf("stale scheduled fire = %+v, created=%t, err=%v; want no-op", duplicate, created, err)
+	}
+	if active, err := fx.Store.CountActiveCronAppTasks(fx.Ctx, cron.ID); err != nil || active != 2 {
+		t.Fatalf("CountActiveCronAppTasks = %d, %v; want 2", active, err)
+	}
+	runs, err := fx.Store.ListCronAppTaskRuns(fx.Ctx, cron.ID, 10, "")
+	if err != nil || len(runs) != 2 || runs[0].ID != second.ID || runs[1].ID != first.ID {
+		t.Fatalf("ListCronAppTaskRuns = %+v, %v; want newest-first history", runs, err)
 	}
 }
 
@@ -1355,6 +1398,62 @@ func testJobBootFailureBudget(t *testing.T, fx *Fixture) {
 	}
 }
 
+// adr: 099 — reaping must fence the stale lease, retry within budget, and
+// dead-letter after the final attempt.
+func testJobTaskReapClaimed(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "reap-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 1, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	run, tasks, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", nil, nil, nil, nil, 1)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("JobRunCreate: tasks=%d err=%v", len(tasks), err)
+	}
+	expired := time.Now().UTC().Add(-time.Minute)
+	cutoff := time.Now().UTC().Add(-30 * time.Second)
+	instance1 := uuid.NewString()
+	if _, err := fx.Store.CreateJobInstance(fx.Ctx, instance1, job.ID, run.ID, 0,
+		string(state.StateColdBooting), 128, fx.Node.ID, ""); err != nil {
+		t.Fatalf("first CreateJobInstance: %v", err)
+	}
+	lease1 := uuid.NewString()
+	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, instance1, lease1, expired, fx.Node.ID); err != nil {
+		t.Fatalf("first JobTaskMarkClaimed: %v", err)
+	}
+	if _, err := fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, lease1, expired.Add(-time.Second), 1, time.Now()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("premature reap: %v, want ErrNotFound", err)
+	}
+	retry, err := fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, lease1, cutoff, 1, time.Now().UTC())
+	if err != nil || !retry {
+		t.Fatalf("first reap: retry=%v err=%v, want retry", retry, err)
+	}
+	task, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, 0)
+	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.LeaseToken != nil {
+		t.Fatalf("retried task: %+v, %v", task, err)
+	}
+	instance2 := uuid.NewString()
+	if _, err := fx.Store.CreateJobInstance(fx.Ctx, instance2, job.ID, run.ID, 0,
+		string(state.StateColdBooting), 128, fx.Node.ID, ""); err != nil {
+		t.Fatalf("second CreateJobInstance: %v", err)
+	}
+	lease2 := uuid.NewString()
+	if err := fx.Store.JobTaskMarkClaimed(fx.Ctx, run.ID, 0, instance2, lease2, expired, fx.Node.ID); err != nil {
+		t.Fatalf("second JobTaskMarkClaimed: %v", err)
+	}
+	retry, err = fx.Store.JobTaskReapClaimed(fx.Ctx, run.ID, 0, lease2, cutoff, 1, time.Now().UTC())
+	if err != nil || retry {
+		t.Fatalf("final reap: retry=%v err=%v, want terminal", retry, err)
+	}
+	run, err = fx.Store.JobRunGetByID(fx.Ctx, run.ID)
+	if err != nil || run.AggregateStatus != "dead_letter" || run.TasksFailed != 1 || run.DeadLetterCount != 1 {
+		t.Fatalf("settled run: %+v, %v", run, err)
+	}
+}
+
 func testJobTaskDeferQueued(t *testing.T, fx *Fixture) {
 	job, err := fx.Store.JobCreate(
 		fx.Ctx, fx.Account.ID, "defer-"+uuid.NewString()[:8], "batch",
@@ -2570,6 +2669,64 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	resealed, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
 	if err != nil || resealed.SecretVersion != 2 || resealed.DeliveryVersion != 2 {
 		t.Fatalf("reseal changed secret revision: secret=%+v err=%v", resealed, err)
+	}
+}
+
+func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
+	const key = "DATABASE_URL"
+	scope := api.DefaultEnvScope
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v1")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v1): %v", err)
+	}
+	result := state.AppSecretRuntimeReloadResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: strings.Repeat("a", 64), Projection: state.SecretReloadProjectionUpdated,
+		Signal:     state.SecretReloadSignalSent,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 1}},
+	}
+	updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result)
+	if err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload(v1): updated=%d err=%v, want 1/nil", updated, err)
+	}
+	observations, err := fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(observations) != 1 || observations[0].InstanceID != instance.ID || observations[0].Version != 1 {
+		t.Fatalf("ListAppSecretRuntimeReloadObservations(v1) = %+v, %v", observations, err)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher-v2")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope(v2): %v", err)
+	}
+	updated, err = fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result)
+	if !errors.Is(err, state.ErrConflict) || updated != 0 {
+		t.Fatalf("stale RecordAppSecretRuntimeReload(v1): updated=%d err=%v, want conflict", updated, err)
+	}
+	current, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope(after stale runtime reload): %v", err)
+	}
+	if current.DeliveryVersion != 2 || current.LastRuntimeReloadVersion != 1 {
+		t.Fatalf("stale runtime reload changed current metadata = current %d observed %d, want 2/1", current.DeliveryVersion, current.LastRuntimeReloadVersion)
+	}
+	result.Candidates[0].Version = 2
+	result.Revision = strings.Repeat("b", 64)
+	if updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, result); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload(v2): updated=%d err=%v", updated, err)
+	}
+	ack := state.AppSecretRuntimeReloadAckResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: result.Revision, Status: state.SecretApplicationReloadAckApplied,
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 2}},
+	}
+	if updated, err := fx.Store.RecordAppSecretRuntimeReloadAck(fx.Ctx, ack); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReloadAck(v2): updated=%d err=%v", updated, err)
+	}
+	observations, err = fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+	if err != nil || len(observations) != 1 || observations[0].ApplicationAckVersion != 2 || observations[0].ApplicationAck != state.SecretApplicationReloadAckApplied {
+		t.Fatalf("ListAppSecretRuntimeReloadObservations(app ack) = %+v, %v", observations, err)
 	}
 }
 

@@ -130,7 +130,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EXECUTION_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes |
 | `FAAS_EXECUTION_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired |
 | `FAAS_EXTENSION_SOCKET` | guest | `guest` |  | /run/guest/extension.sock | `` | optional per-guest extension lifecycle endpoint; vmmd may deliver an override in the guest boot environment |
-| `FAAS_FLEET_AGE_IDENTITY_PATH` | apid | `unit` |  |  | `` |  |
+| `FAAS_FLEET_AGE_IDENTITY_PATH` | apid, outboundd | `unit` |  |  | `` |  |
 | `FAAS_FLEET_AGE_RECIPIENT_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
@@ -358,6 +358,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_SECRETS_FILE` | guest | `guest` |  |  | `` | guest-init stamps the tmpfs path only for apps opted into secret reload |
+| `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` | guest | `guest` |  |  | `` | guest-init stamps the local metadata endpoint only for apps opted into secret reload; app reports a closed outcome and non-sensitive secret revision |
+| `FAAS_SECRETS_REVISION_FILE` | guest | `guest` |  |  | `` | guest-init stamps a mode-0400 tmpfs file containing only the current non-sensitive secret-set revision for opted-in apps |
 | `FAAS_SERVICE_CALLER_ASSERTIONS` | gatewayd-internal | `default` |  |  | `` | ADR-206 opt-in: mint a signed caller assertion on every internal service call. Off is production-correct today because nothing verifies one yet (guest JWKS, runtime helper, and allow_callers policy are follow-ups), so no deploy path sets it and an operator without a verifier loads no key and computes no signature |
 | `FAAS_SERVICE_CALLER_KEY_PATH` | gatewayd-internal | `default` |  |  | `` | ADR-206 per-host Ed25519 signing key path; code default /etc/faas/secrets/service-caller/gatewayd.ed25519 is production-correct and the key is generated there on first boot. Only read when FAAS_SERVICE_CALLER_ASSERTIONS is on |
 | `FAAS_SESSION_KEY` | apid, gatewayd-internal, shared | `unit` |  |  | `` | LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service |

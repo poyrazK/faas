@@ -59,6 +59,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 410:
         response_410 = Problem.from_dict(response.json())
 
@@ -109,7 +114,9 @@ def sync_detailed(
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
     scope is added (ADR-090 §Sub-decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
-    unaffected.
+    unaffected. This endpoint applies to HTTP crons only; use
+    `gregale app <slug> exec` for a one-off command rather than
+    manually firing a deployment-command cron.
 
     Args:
         id (str):
@@ -158,7 +165,9 @@ def sync(
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
     scope is added (ADR-090 §Sub-decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
-    unaffected.
+    unaffected. This endpoint applies to HTTP crons only; use
+    `gregale app <slug> exec` for a one-off command rather than
+    manually firing a deployment-command cron.
 
     Args:
         id (str):
@@ -202,7 +211,9 @@ async def asyncio_detailed(
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
     scope is added (ADR-090 §Sub-decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
-    unaffected.
+    unaffected. This endpoint applies to HTTP crons only; use
+    `gregale app <slug> exec` for a one-off command rather than
+    manually firing a deployment-command cron.
 
     Args:
         id (str):
@@ -249,7 +260,9 @@ async def asyncio(
     Scoped to `deploy:write` (or `admin`); no new `cron:write`
     scope is added (ADR-090 §Sub-decisions 1). The fire does
     NOT shift `last_fired_at` — the next scheduled boundary is
-    unaffected.
+    unaffected. This endpoint applies to HTTP crons only; use
+    `gregale app <slug> exec` for a one-off command rather than
+    manually firing a deployment-command cron.
 
     Args:
         id (str):

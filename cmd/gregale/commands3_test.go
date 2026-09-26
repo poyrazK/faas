@@ -23,6 +23,36 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+func TestSecretRuntimeReloadLabelSummarizesReportsWithoutClaimingConvergence(t *testing.T) {
+	got := secretRuntimeReloadLabel(2, 1, "failed", "not_attempted", "instance-old", []api.SecretRuntimeReloadObservation{
+		{InstanceID: "instance-current", Version: 2, Projection: "updated", Signal: "sent"},
+		{InstanceID: "instance-old", Version: 1, Projection: "failed", Signal: "not_attempted"},
+	})
+	for _, want := range []string{"2 active reports", "1 current", "1 stale", "instance-old"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("runtime summary %q does not contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "/2") || strings.Contains(got, "converged") {
+		t.Errorf("runtime summary overclaims fleet convergence: %q", got)
+	}
+}
+
+func TestSecretRuntimeReloadLabelSeparatesApplicationAcknowledgement(t *testing.T) {
+	got := secretRuntimeReloadLabel(2, 1, "updated", "sent", "instance-old", []api.SecretRuntimeReloadObservation{
+		{InstanceID: "instance-current", Version: 2, Projection: "updated", Signal: "sent", ApplicationAckVersion: 2, ApplicationAck: "applied"},
+		{InstanceID: "instance-old", Version: 1, Projection: "updated", Signal: "sent", ApplicationAckVersion: 1, ApplicationAck: "failed"},
+	})
+	for _, want := range []string{"app ack: 1 applied, 0 failed, 1 stale", "instance-old"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("runtime summary %q does not contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "app applied") {
+		t.Errorf("runtime summary should distinguish the app acknowledgement from guest status: %q", got)
+	}
+}
+
 func TestSetProjectDeploySecrets(t *testing.T) {
 	var paths []string
 	var bodies []api.PutAppSecretRequest
@@ -180,8 +210,8 @@ func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 		onGet: func() (int, any) {
 			return http.StatusOK, api.AppSecretListResponse{
 				Secrets: []api.AppSecretResponse{
-					{Key: "STRIPE_KEY", DeliveryStatus: "pending"},
-					{Key: "DB_URL", DeliveryStatus: "delivered"},
+					{Key: "STRIPE_KEY", DeliveryVersion: 2, DeliveryStatus: "pending", LastRuntimeReloadVersion: 2, LastRuntimeReloadProjection: "updated", LastRuntimeReloadSignal: "sent", LastRuntimeReloadInstanceID: "instance-1"},
+					{Key: "DB_URL", DeliveryVersion: 3, DeliveryStatus: "delivered", LastRuntimeReloadVersion: 1, LastRuntimeReloadProjection: "updated", LastRuntimeReloadSignal: "sent", LastRuntimeReloadInstanceID: "instance-2"},
 				},
 				Quota: 25,
 				Count: 2,
@@ -203,7 +233,7 @@ func TestCmdSecrets_ListRendersQuotaAndKeys(t *testing.T) {
 		t.Fatalf("cmdSecrets list = %d, want 0", code)
 	}
 	out := stdout.String()
-	for _, want := range []string{"my-app", "2/25", "STRIPE_KEY", "delivery pending", "DB_URL", "delivery delivered"} {
+	for _, want := range []string{"my-app", "2/25", "STRIPE_KEY", "delivery pending", "runtime file updated; signal sent (instance-1)", "DB_URL", "delivery delivered", "runtime status stale (v1) (instance-2)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n%s", want, out)
 		}

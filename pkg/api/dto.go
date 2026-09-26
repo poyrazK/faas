@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -243,6 +244,7 @@ type CreateAppRequest struct {
 	// VersionAffinityCookie derives rollout affinity from this browser cookie.
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -515,6 +517,7 @@ type UpdateAppRequest struct {
 	// VersionAffinityCookie replaces the cookie source; empty disables it.
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1340,6 +1343,7 @@ type AppResponse struct {
 	SessionAffinity              bool   `json:"session_affinity"`
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -3500,39 +3504,56 @@ type AddTenantHostnameRequest struct {
 	Hostname string `json:"hostname"`
 }
 
-// CronResponse mirrors the crons table. Timezone and SkipIfRunning expose the
-// optional scheduling controls; LastFiredAt is the most recent fire stamp
-// schedd wrote (MarkCronFired).
+// CronResponse mirrors the crons table. Kind selects either an HTTP path or a
+// deployment-attached command. Timezone and SkipIfRunning expose scheduling
+// controls; LastFiredAt is the most recent fire stamp written by schedd.
 type CronResponse struct {
-	ID              string `json:"id"`
-	AppID           string `json:"app_id"`
-	Schedule        string `json:"schedule"`
-	Path            string `json:"path"`
-	Enabled         bool   `json:"enabled"`
-	SuspendedReason string `json:"suspended_reason,omitempty"`
-	Timezone        string `json:"timezone"`
-	SkipIfRunning   bool   `json:"skip_if_running"`
-	CreatedAt       string `json:"created_at"`
-	LastFiredAt     string `json:"last_fired_at,omitempty"`
+	ID                  string   `json:"id"`
+	AppID               string   `json:"app_id"`
+	Kind                string   `json:"kind"`
+	Schedule            string   `json:"schedule"`
+	Path                string   `json:"path,omitempty"`
+	Command             []string `json:"command,omitempty"`
+	CommandShell        bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
+	RetryMax            int      `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
+	Enabled             bool     `json:"enabled"`
+	SuspendedReason     string   `json:"suspended_reason,omitempty"`
+	Timezone            string   `json:"timezone"`
+	SkipIfRunning       bool     `json:"skip_if_running"`
+	CreatedAt           string   `json:"created_at"`
+	LastFiredAt         string   `json:"last_fired_at,omitempty"`
 }
 
-// CreateCronRequest creates a scheduled synthetic POST.
+// CreateCronRequest creates either a scheduled HTTP request or a
+// deployment-attached command schedule. Command and Path are mutually
+// exclusive; omitting both keeps the HTTP default path of "/".
 type CreateCronRequest struct {
-	AppID         string `json:"app_id"`
-	Schedule      string `json:"schedule"`
-	Path          string `json:"path,omitempty"`
-	Enabled       *bool  `json:"enabled,omitempty"`
-	Timezone      string `json:"timezone,omitempty"`
-	SkipIfRunning *bool  `json:"skip_if_running,omitempty"`
+	AppID               string   `json:"app_id"`
+	Schedule            string   `json:"schedule"`
+	Path                string   `json:"path,omitempty"`
+	Command             []string `json:"command,omitempty"`
+	CommandShell        bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
+	RetryMax            int      `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
+	Enabled             *bool    `json:"enabled,omitempty"`
+	Timezone            string   `json:"timezone,omitempty"`
+	SkipIfRunning       *bool    `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
 type UpdateCronRequest struct {
-	Schedule      *string `json:"schedule,omitempty"`
-	Path          *string `json:"path,omitempty"`
-	Enabled       *bool   `json:"enabled,omitempty"`
-	Timezone      *string `json:"timezone,omitempty"`
-	SkipIfRunning *bool   `json:"skip_if_running,omitempty"`
+	Schedule            *string `json:"schedule,omitempty"`
+	Path                *string `json:"path,omitempty"`
+	Enabled             *bool   `json:"enabled,omitempty"`
+	Timezone            *string `json:"timezone,omitempty"`
+	SkipIfRunning       *bool   `json:"skip_if_running,omitempty"`
+	RetryMax            *int    `json:"retry_max,omitempty"`
+	RetryBackoffSeconds *int    `json:"retry_backoff_seconds,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
@@ -4751,6 +4772,36 @@ type RetryPolicyDTO struct {
 	JitterSeconds float64 `json:"jitter_seconds,omitempty"`
 }
 
+// Validate checks the shared per-invocation retry override shape. The
+// scheduler still clamps MaxAttempts against the account plan when dispatching
+// so a later downgrade cannot retain a larger retry budget.
+func (p *RetryPolicyDTO) Validate() *Problem {
+	if p == nil {
+		return nil
+	}
+	if p.MaxAttempts < 0 || p.MaxAttempts > DurableRetryMaxAttempts {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", fmt.Sprintf("max_attempts must be between 0 and %d", DurableRetryMaxAttempts))
+	}
+	if p.BaseSeconds < 0 || math.IsNaN(p.BaseSeconds) || math.IsInf(p.BaseSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "base_seconds must be finite and non-negative")
+	}
+	if p.MaxSeconds < 0 || math.IsNaN(p.MaxSeconds) || math.IsInf(p.MaxSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be finite and non-negative")
+	}
+	if p.BaseSeconds > 0 && p.MaxSeconds > 0 && p.MaxSeconds < p.BaseSeconds {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be at least base_seconds")
+	}
+	if p.JitterSeconds < 0 || p.JitterSeconds > 1 || math.IsNaN(p.JitterSeconds) || math.IsInf(p.JitterSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "jitter_seconds must be between 0 and 1")
+	}
+	return nil
+}
+
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
@@ -4853,13 +4904,16 @@ const (
 	CronRunTimeout CronRunOutcome = "timeout"
 	// CronRunDeadLetter — the per-plan retry budget was exhausted.
 	CronRunDeadLetter CronRunOutcome = "dead_letter"
+	// CronRunCancelled — a deployment-attached command was cancelled.
+	CronRunCancelled CronRunOutcome = "cancelled"
 	// CronRunRunning — the fire is still in flight (the underlying
 	// invocation row is non-terminal and carries no outcome).
 	CronRunRunning CronRunOutcome = "running"
 )
 
 // CronRun is one row of a cron's execution history: GET
-// /v1/crons/{id}/runs.
+// /v1/crons/{id}/runs. HTTP schedules project invocations; command schedules
+// project deployment-attached app tasks.
 //
 // Deliberately NOT the full Invocation shape. A cron run is a narrow
 // question — did it work, when, and for how long — and the caller
@@ -4869,7 +4923,7 @@ const (
 // without churning the cron surface.
 type CronRun struct {
 	ID string `json:"id"`
-	// StartedAt is the underlying invocation's created_at — when the
+	// StartedAt is the underlying invocation/task's created_at — when the
 	// cron fired, not when the app began executing.
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
@@ -4880,6 +4934,7 @@ type CronRun struct {
 	// Attempts is the dispatch count; > 1 means the row was retried.
 	Attempts   int    `json:"attempts"`
 	InstanceID string `json:"instance_id,omitempty"`
+	TaskID     string `json:"task_id,omitempty"`
 	// Error is the operator-facing failure text. Unstructured and
 	// unversioned — branch on Outcome, never on this string.
 	Error string `json:"error,omitempty"`
@@ -7129,6 +7184,42 @@ type EdgeRuleRewriteAction struct {
 	To   string `json:"to"`
 }
 
+// ApplyEdgeRuleRewritePath applies the edge-rule prefix rewrite semantics used
+// by both the gateway and the read-only trace preview. It returns applied=false
+// when From is not a prefix of requestPath (the selector may still have
+// matched, but the gateway treats this inconsistent action as a miss).
+func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath string, applied bool) {
+	if from == "*" {
+		from = ""
+	}
+	if from == "" {
+		to = NormalizeEdgeRuleRewriteTarget(to)
+		if to == "/" {
+			return requestPath, true
+		}
+		return to + requestPath, true
+	}
+	if !strings.HasPrefix(requestPath, from) {
+		return requestPath, false
+	}
+	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+}
+
+// NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to
+// one leading slash and removes a trailing slash except for the root path.
+func NormalizeEdgeRuleRewriteTarget(value string) string {
+	if value == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(value, "/") {
+		value = "/" + value
+	}
+	if len(value) > 1 && strings.HasSuffix(value, "/") {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
 func (a *EdgeRuleRewriteAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("rewrite action is required")
@@ -7269,10 +7360,9 @@ type EdgeRuleCORSAction struct {
 // The grammar is deliberately tiny (no regex metacharacters, no
 // path matching, no scheme matching) so the gateway hot-path
 // matcher can stay an O(n) string-prefix scan without backtracking.
-// The regex below enforces the grammar at create-time; the gateway
-// applies the same predicates in handler.go::matchOrigin (so a
-// rule that bypasses the apid validator still matches what the
-// customer expects — defence in depth).
+// The regex below enforces the grammar at create-time; both the gateway
+// and simulator use MatchEdgeRuleCORSOrigin for the runtime predicates (so a
+// rule that bypasses the apid validator still matches consistently).
 //
 // Footgun guard (ADR-091 D12) only fires for the bare "*" entry
 // combined with AllowCredentials: true. A pattern like
@@ -7393,11 +7483,12 @@ var edgeRuleJWTAllowedAlgs = map[string]struct{}{
 
 // EdgeRuleJWTAction validates an inbound Bearer JWT.
 type EdgeRuleJWTAction struct {
-	Issuer         string            `json:"issuer"`
-	Audience       []string          `json:"audience,omitempty"`
-	JWKSURL        string            `json:"jwks_url"`
-	Algorithms     []string          `json:"algorithms"`
-	RequiredClaims map[string]string `json:"required_claims,omitempty"`
+	Issuer                         string            `json:"issuer"`
+	Audience                       []string          `json:"audience,omitempty"`
+	JWKSURL                        string            `json:"jwks_url"`
+	Algorithms                     []string          `json:"algorithms"`
+	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes
@@ -7446,6 +7537,13 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 	for _, alg := range a.Algorithms {
 		if _, ok := edgeRuleJWTAllowedAlgs[alg]; !ok {
 			return ErrValidation(fmt.Sprintf("jwt action algorithm %q is not in the closed vocabulary (RS256/RS384/RS512/ES256/ES384/ES512)", alg))
+		}
+	}
+	claim := a.PlatformTenantExternalRefClaim
+	if claim != "" {
+		if len(claim) > 128 || strings.TrimSpace(claim) != claim || strings.ContainsAny(claim, " \t\r\n\x00") ||
+			claim == "iss" || claim == "aud" || claim == "sub" || claim == "exp" || claim == "nbf" || claim == "iat" || claim == "jti" {
+			return ErrValidation("platform_tenant_external_ref_claim must name a custom JWT claim (1-128 characters, no whitespace), not a registered JWT claim")
 		}
 	}
 	return nil
@@ -7722,14 +7820,25 @@ type EdgeRuleRespondAction struct {
 	Body       json.RawMessage `json:"body,omitempty"`
 }
 
-// EdgeRuleAsyncAction has no knobs in v1. The durable invocation subsystem
-// supplies retry, deadline, retention, and payload limits from the app and
-// account plan, keeping an async route's behavior aligned with /invoke/async.
-type EdgeRuleAsyncAction struct{}
+// EdgeRuleAsyncAction configures an async route's durable execution policy
+// and terminal destinations. Omitted retry and age controls keep the existing
+// app / account-plan defaults.
+type EdgeRuleAsyncAction struct {
+	OnSuccess     string          `json:"on_success,omitempty"`
+	OnFailure     string          `json:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int             `json:"max_age_seconds,omitempty"`
+}
 
 func (a *EdgeRuleAsyncAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("async action is required")
+	}
+	if p := a.RetryPolicy.Validate(); p != nil {
+		return p
+	}
+	if a.MaxAgeSeconds < 0 || a.MaxAgeSeconds > MaxAsyncRouteAgeSeconds {
+		return ErrValidation(fmt.Sprintf("async action: max_age_seconds must be between 0 and %d", MaxAsyncRouteAgeSeconds))
 	}
 	return nil
 }
@@ -10266,6 +10375,16 @@ type RecoverRolloutRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// RecoverDeploymentRolloutRequest is the internal, exact-target variant used
+// by meterd's deployment circuit breaker. The predecessor is part of the
+// compare-and-abort contract so a delayed signal cannot restore a different
+// revision after traffic has moved.
+type RecoverDeploymentRolloutRequest struct {
+	Action                          string `json:"action"`
+	Reason                          string `json:"reason,omitempty"`
+	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
+}
+
 // RolloutTransitionResponse is the body returned by
 // POST /v1/apps/{slug}/rollouts/recover. The Deployment carries
 // the post-transition state (rollout_state + canary_step +
@@ -10307,11 +10426,16 @@ type CreateJobRequest struct {
 	// hyphens. Validated by the handler against validSlug.
 	Name string `json:"name"`
 	// Kind is the closed-set {batch, recurring}. batch
-	// tasks run exactly once; recurring tasks re-run on
-	// the run's schedule (issue #1184 Workstream A
-	// extension — base schema accepts both). Defaults to
-	// "batch" when empty.
+	// tasks are dispatched manually; recurring jobs require
+	// a cron schedule. A non-empty Schedule also implies
+	// "recurring". Defaults to "batch" when empty.
 	Kind string `json:"kind,omitempty"`
+	// Schedule enables recurring runs. The scheduler creates one job run per
+	// matching occurrence; omitted means this is a batch job.
+	Schedule string `json:"schedule,omitempty"`
+	// Timezone is an IANA name used to evaluate Schedule. Omitted defaults to
+	// UTC and is ignored for batch jobs.
+	Timezone string `json:"timezone,omitempty"`
 	// ImageRef is the OCI image name[:tag | @digest].
 	// Digest pinning is RECOMMENDED — the same way app
 	// builds are — but not enforced at this layer.
@@ -10364,6 +10488,10 @@ type UpdateJobRequest struct {
 	// DELETE /v1/jobs/{name} (separate status='deleted'
 	// transition with the no-live-instances guard).
 	Status *string `json:"status,omitempty"`
+	// Schedule changes recurring execution. An empty string removes the
+	// schedule and converts the job back to batch mode.
+	Schedule *string `json:"schedule,omitempty"`
+	Timezone *string `json:"timezone,omitempty"`
 }
 
 // CreateJobRunRequest is the POST /v1/jobs/{name}/runs body.
@@ -10397,15 +10525,18 @@ type CreateJobRunRequest struct {
 // single type. CreatedAt / UpdatedAt are RFC 3339 strings
 // (matches the AppResponse convention).
 type JobResponse struct {
-	ID        string `json:"id"`
-	AccountID string `json:"account_id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	ImageRef  string `json:"image_ref"`
+	ID              string `json:"id"`
+	AccountID       string `json:"account_id"`
+	Name            string `json:"name"`
+	Kind            string `json:"kind"`
+	Schedule        string `json:"schedule,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
+	LastScheduledAt string `json:"last_scheduled_at,omitempty"`
+	ImageRef        string `json:"image_ref"`
 	// ImageResolvedDigest is the immutable manifest selected from image_ref
 	// by imaged. It is empty while the image is pending materialization.
 	ImageResolvedDigest string `json:"image_resolved_digest,omitempty"`
-	// ImageStorageKey is the canonical ext4 artifact vmmd boots.
+	// ImageStorageKey is the immutable ext4 artifact vmmd boots.
 	ImageStorageKey string `json:"image_storage_key,omitempty"`
 	// ImageMaterializationStatus is pending, verifying_legacy, ready, or failed.
 	ImageMaterializationStatus string            `json:"image_materialization_status"`

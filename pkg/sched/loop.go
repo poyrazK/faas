@@ -3511,8 +3511,69 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 // second; a stuck pgpool is louder while the real vmmd job RPC remains
 // the source of truth for boot and exit supervision.
 func (l *Loop) runJobsDispatchTick(ctx context.Context) {
-	if err := l.engine.DispatchJobsTick(ctx); err != nil {
-		l.log.Warn("schedd: jobs dispatch tick failed", "err", err)
+	// A cold job boot can take far longer than the 1s tick. Coalesce
+	// overlapping ticks in the bounded pool so watchdog, cron and reaper
+	// continue to run on the select goroutine. The recurring schedule scan
+	// shares this work item so database latency cannot stall the main loop.
+	l.submitWork(workJobDispatch, "tick", func() {
+		l.runScheduledJobsTick(ctx)
+		if err := l.engine.DispatchJobsTick(ctx); err != nil {
+			l.log.Warn("schedd: jobs dispatch tick failed", "err", err)
+		}
+	})
+}
+
+// runScheduledJobsTick evaluates recurring job definitions using the same
+// cron grammar/timezone parser as app crons. The store atomically advances a
+// job's cursor and creates its run, making this safe with multiple schedd
+// nodes and across process restarts.
+func (l *Loop) runScheduledJobsTick(ctx context.Context) {
+	store, ok := l.engine.Store().(state.JobScheduleStore)
+	if !ok {
+		l.log.Warn("schedd: job schedule store is unavailable")
+		return
+	}
+	jobs, err := store.JobListScheduled(ctx)
+	if err != nil {
+		l.log.Warn("schedd: list scheduled jobs failed", "err", err)
+		return
+	}
+	now := l.now().UTC()
+	for _, job := range jobs {
+		if job.Status != "active" || job.Kind != "recurring" || job.CronSchedule == "" {
+			continue
+		}
+		schedule, err := ParseScheduleWithTimezone(job.CronSchedule, job.CronTimezone)
+		if err != nil {
+			l.log.Error("schedd: invalid persisted job schedule", "job_id", job.ID, "err", err)
+			continue
+		}
+		boundary := job.CreatedAt
+		if job.LastScheduledAt != nil {
+			boundary = *job.LastScheduledAt
+		}
+		if schedule.NextFireAt(boundary).After(now) {
+			continue
+		}
+		run, created, err := store.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule,
+			job.CronTimezone, job.LastScheduledAt, now)
+		if err != nil {
+			l.log.Warn("schedd: create scheduled job run failed", "job_id", job.ID, "err", err)
+			continue
+		}
+		if !created {
+			continue
+		}
+		l.log.Info("schedd: scheduled job run created", "job_id", job.ID, "run_id", run.ID)
+		if l.engine.notif != nil {
+			payload, _ := json.Marshal(map[string]string{
+				"kind": "run_created", "job_id": job.ID,
+				"run_id": run.ID, "account_id": job.AccountID,
+			})
+			if err := l.engine.notif.Notify(ctx, db.NotifyJobChanged, string(payload)); err != nil {
+				l.log.Warn("schedd: notify scheduled job run failed", "job_id", job.ID, "run_id", run.ID, "err", err)
+			}
+		}
 	}
 }
 
@@ -3655,6 +3716,13 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	}
 	if c.SkipIfRunning {
 		active, err := l.engine.Store().CountActiveCronInvocations(ctx, c.ID)
+		if len(c.Command) > 0 {
+			if commandStore, ok := l.engine.Store().(state.AppTaskStore); ok {
+				active, err = commandStore.CountActiveCronAppTasks(ctx, c.ID)
+			} else {
+				err = errors.New("app task store is unavailable")
+			}
+		}
 		if err != nil {
 			l.log.Warn("cron: count active invocations", "cron_id", c.ID, "err", err)
 			return
@@ -3669,6 +3737,10 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 			return
 		}
 	}
+	if len(c.Command) > 0 {
+		l.dispatchScheduledCommandCron(ctx, c, now)
+		return
+	}
 	res, ok := l.dispatchCronLocked(ctx, c, now, TriggerSchedule)
 	_ = res
 	if !ok {
@@ -3677,6 +3749,73 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	if err := l.engine.Store().MarkCronFired(ctx, c.ID, now); err != nil {
 		l.log.Warn("cron: mark fired", "cron_id", c.ID, "err", err)
 	}
+}
+
+func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, now time.Time) {
+	store := l.engine.Store()
+	app, err := store.AppByID(ctx, c.AppID)
+	if err != nil {
+		l.log.Warn("cron command: resolve app", "cron_id", c.ID, "err", err)
+		return
+	}
+	account, err := store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		l.log.Warn("cron command: resolve account", "cron_id", c.ID, "err", err)
+		return
+	}
+	if !account.Active() {
+		return
+	}
+	commandStore, ok := store.(state.AppTaskStore)
+	if !ok {
+		l.log.Warn("cron command: app task store is unavailable", "cron_id", c.ID)
+		return
+	}
+	expectedLastFiredAt := nonZeroSchedTimePtr(c.LastFiredAt)
+	task, created, err := commandStore.CreateScheduledCronAppTask(ctx, c.ID, expectedLastFiredAt, now)
+	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
+		if suspender, ok := store.(state.CronSuspensionStore); ok {
+			count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+			if suspendErr != nil {
+				l.log.Warn("cron command: suspend after missing live deployment", "cron_id", c.ID, "err", suspendErr)
+			} else if count > 0 {
+				l.log.Info("cron command: suspended until app redeploy", "app_id", c.AppID, "count", count)
+			}
+		}
+		return
+	}
+	if err != nil {
+		l.log.Warn("cron command: create scheduled task", "cron_id", c.ID, "err", err)
+		if markErr := store.MarkCronFired(ctx, c.ID, now); markErr != nil {
+			l.log.Warn("cron command: consume failed fire", "cron_id", c.ID, "err", markErr)
+		}
+		l.emitCommandCronFired(ctx, c, account.ID, now, "err", "")
+		return
+	}
+	if !created {
+		return
+	}
+	l.log.Info("cron command: scheduled task queued", "cron_id", c.ID, "task_id", task.ID, "deployment_id", task.DeploymentID)
+	l.emitCommandCronFired(ctx, c, account.ID, now, "ok", task.ID)
+}
+
+func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID string, firedAt time.Time, outcome, taskID string) {
+	if l.audit == nil {
+		return
+	}
+	l.audit.Emit(ctx, AuditEventCronFired, &accountID, map[string]any{
+		"cron_id": c.ID, "app_id": c.AppID, "schedule": c.Schedule,
+		"task_id": taskID, "invocation_id": "", "instance_id": "",
+		"fired_at": firedAt.UTC().Format(time.RFC3339Nano), "status": outcome,
+		"trigger": string(TriggerSchedule),
+	})
+}
+
+func nonZeroSchedTimePtr(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 // dispatchCronLocked is the post-boundary part of the cron fire path.

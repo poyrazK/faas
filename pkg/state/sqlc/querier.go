@@ -733,6 +733,10 @@ type Querier interface {
 	// handlers_debug_telemetry.go (parseDebugSinceFromString). Cursor pages use
 	// the strict (received_at, id) tuple so equal timestamps cannot reorder rows.
 	ListRequestTelemetryByApp(ctx context.Context, db DBTX, arg ListRequestTelemetryByAppParams) ([]ListRequestTelemetryByAppRow, error)
+	// Cross-app support view for a platform customer. Always constrain by both
+	// owning account and the immutable request-time tenant snapshot; do not infer
+	// attribution by joining today's consumer/surface links.
+	ListRequestTelemetryByPlatformTenant(ctx context.Context, db DBTX, arg ListRequestTelemetryByPlatformTenantParams) ([]ListRequestTelemetryByPlatformTenantRow, error)
 	// Bounded read path for the historical debugger dependency view. The
 	// account_id predicate is defense in depth for callers that accidentally
 	// pass an app id from another tenant; the app lookup remains the primary
@@ -1058,6 +1062,11 @@ type Querier interface {
 	// weight so callers can report request totals rather than stored
 	// aggregate-row totals. Uses request_telemetry_app_dep_received_idx.
 	RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryByDeploymentParams) ([]RequestTelemetryByDeploymentRow, error)
+	// Bounded candidate/stable health summary for the deployment circuit breaker.
+	// `count` weights collapsed telemetry rows; compute request and 5xx totals,
+	// overall p95, and cold-boot-only p95 in SQL so each progression tick transfers
+	// only one row.
+	RequestTelemetryCircuitBreakerSummary(ctx context.Context, db DBTX, arg RequestTelemetryCircuitBreakerSummaryParams) (RequestTelemetryCircuitBreakerSummaryRow, error)
 	// Signal coverage for the customer debugger. Counts are weighted by the
 	// publisher's collapsed-row `count`, while the row totals make the amount
 	// of aggregation visible to callers. This query deliberately reports

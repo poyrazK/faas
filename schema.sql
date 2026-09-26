@@ -2577,6 +2577,7 @@ CREATE TABLE public.edge_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     validate_mode text DEFAULT 'block'::text NOT NULL,
     cors_preset_id uuid,
+    manifest_key text,
     CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text]))),
     CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000))),
     CONSTRAINT edge_rules_validate_mode_check CHECK ((validate_mode = ANY (ARRAY['observe'::text, 'warn'::text, 'block'::text])))
@@ -3572,6 +3573,7 @@ CREATE TABLE public.request_telemetry (
     deployment_tag text DEFAULT ''::text NOT NULL,
     deployment_created_at text DEFAULT ''::text NOT NULL,
     image_digest text DEFAULT ''::text NOT NULL,
+    platform_tenant_id uuid,
     guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
@@ -6579,6 +6581,13 @@ CREATE INDEX domain_doctor_observations_stale_idx ON public.domain_doctor_observ
 --
 
 CREATE INDEX edge_rules_app_id_enabled_idx ON public.edge_rules USING btree (app_id) WHERE enabled;
+
+
+--
+-- Name: edge_rules_app_manifest_key_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX edge_rules_app_manifest_key_uidx ON public.edge_rules USING btree (app_id, manifest_key) WHERE (manifest_key IS NOT NULL);
 
 
 --

@@ -4,7 +4,7 @@
 //
 // The PR-A pass-through behavior is gone: every row drained from the
 // recorder is now collapsed by
-// (app_id, deployment_id, route, method, status, dimensions,
+// (app_id, deployment_id, route, method, status, dimensions, cold_boot,
 // minute_bucket, latency_bucket) into one row with Count = the number
 // of originals that folded into the bucket. These tests pin the shape:
 //
@@ -12,7 +12,7 @@
 //   - 2 distinct routes → 2 collapsed rows with Count=100 each
 //   - rows straddling a minute boundary DO NOT fold together
 //   - latency buckets preserve distinct portions of the distribution
-//   - ColdBoot OR: any cold row in the bucket → ColdBoot=true
+//   - warm and cold-boot rows never share a bucket, preserving cold samples
 //   - TraceID: first non-empty wins
 //   - ReceivedAt is truncated to the minute bucket boundary
 //   - Count is clamped to >= 1 (defends against recorder-side bugs
@@ -137,6 +137,22 @@ func TestCollapseRequestTelemetrySeparatesTenantLinkTransition(t *testing.T) {
 	got := collapseRequestTelemetry(rows)
 	if len(got) != 2 || got[0].Count != 1 || got[1].Count != 1 {
 		t.Fatalf("link transition collapsed across tenant boundary: %+v", got)
+	}
+}
+
+// adr: 239
+func TestCollapseRequestTelemetrySeparatesTenantSurfaces(t *testing.T) {
+	accountID, appID, deploymentID := uuid.New(), uuid.New(), uuid.New()
+	minute := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	first := makeCollapseRow(accountID, appID, deploymentID, "GET /", "GET", 200, 20, false, "", minute)
+	first.PlatformTenantID = uuid.NewString()
+	first.PlatformTenantSurfaceID = uuid.NewString()
+	second := first
+	second.EventID = uuid.New()
+	second.PlatformTenantSurfaceID = uuid.NewString()
+	got := collapseRequestTelemetry([]RequestTelemetryRow{first, second})
+	if len(got) != 2 || got[0].Count != 1 || got[1].Count != 1 {
+		t.Fatalf("surface rows collapsed across host binding: %+v", got)
 	}
 }
 
@@ -335,7 +351,7 @@ func TestCollapseRequestTelemetry_MinuteBoundarySplitsBuckets(t *testing.T) {
 	}
 }
 
-func TestCollapseRequestTelemetrySeparatesColdAndWarmRequests(t *testing.T) {
+func TestCollapseRequestTelemetrySeparatesColdBootState(t *testing.T) {
 	t.Parallel()
 	appID := uuid.New()
 	deployID := uuid.New()
@@ -352,14 +368,13 @@ func TestCollapseRequestTelemetrySeparatesColdAndWarmRequests(t *testing.T) {
 
 	collapsed := collapseRequestTelemetry(rows)
 	if got, want := len(collapsed), 2; got != want {
-		t.Fatalf("len(collapsed) = %d, want %d (cold and warm buckets stay distinct)", got, want)
+		t.Fatalf("len(collapsed) = %d, want %d", got, want)
 	}
-	counts := map[bool]int{}
-	for _, row := range collapsed {
-		counts[row.ColdBoot] = row.Count
+	if collapsed[0].ColdBoot || collapsed[0].Count != 4 {
+		t.Errorf("warm bucket = cold:%v count:%d, want false/4", collapsed[0].ColdBoot, collapsed[0].Count)
 	}
-	if counts[false] != 4 || counts[true] != 1 {
-		t.Errorf("cold/warm counts = %v, want warm=4 cold=1", counts)
+	if !collapsed[1].ColdBoot || collapsed[1].Count != 1 {
+		t.Errorf("cold bucket = cold:%v count:%d, want true/1", collapsed[1].ColdBoot, collapsed[1].Count)
 	}
 }
 

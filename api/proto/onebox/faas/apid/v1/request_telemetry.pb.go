@@ -60,10 +60,12 @@ type ConsumerUsageEvent struct {
 	Audit             *RequestAuditEvidence  `protobuf:"bytes,10,opt,name=audit,proto3" json:"audit,omitempty"`
 	// A normalized route candidate. Independent of the optional exact audit
 	// record; the receiver persists it idempotently with the usage event.
-	DiscoveredRoute    string `protobuf:"bytes,11,opt,name=discovered_route,json=discoveredRoute,proto3" json:"discovered_route,omitempty"`
-	DiscoveredAtUnixMs int64  `protobuf:"varint,12,opt,name=discovered_at_unix_ms,json=discoveredAtUnixMs,proto3" json:"discovered_at_unix_ms,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	DiscoveredRoute                      string `protobuf:"bytes,11,opt,name=discovered_route,json=discoveredRoute,proto3" json:"discovered_route,omitempty"`
+	DiscoveredAtUnixMs                   int64  `protobuf:"varint,12,opt,name=discovered_at_unix_ms,json=discoveredAtUnixMs,proto3" json:"discovered_at_unix_ms,omitempty"`
+	PlatformTenantSurfaceId              string `protobuf:"bytes,13,opt,name=platform_tenant_surface_id,json=platformTenantSurfaceId,proto3" json:"platform_tenant_surface_id,omitempty"`                                            // anonymous traffic on a verified surface only
+	PlatformTenantJwtAuthorizationRuleId string `protobuf:"bytes,14,opt,name=platform_tenant_jwt_authorization_rule_id,json=platformTenantJwtAuthorizationRuleId,proto3" json:"platform_tenant_jwt_authorization_rule_id,omitempty"` // anonymous traffic attributed by this verified JWT rule
+	unknownFields                        protoimpl.UnknownFields
+	sizeCache                            protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageEvent) Reset() {
@@ -180,6 +182,20 @@ func (x *ConsumerUsageEvent) GetDiscoveredAtUnixMs() int64 {
 	return 0
 }
 
+func (x *ConsumerUsageEvent) GetPlatformTenantSurfaceId() string {
+	if x != nil {
+		return x.PlatformTenantSurfaceId
+	}
+	return ""
+}
+
+func (x *ConsumerUsageEvent) GetPlatformTenantJwtAuthorizationRuleId() string {
+	if x != nil {
+		return x.PlatformTenantJwtAuthorizationRuleId
+	}
+	return ""
+}
+
 type ConsumerUsageReceipt struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// False means the event was committed by an earlier attempt.
@@ -191,8 +207,12 @@ type ConsumerUsageReceipt struct {
 	// True only after the optional discovered route was committed. A gateway
 	// retains the outbox item when talking to a receiver that ignores field 11.
 	DiscoveryRecorded bool `protobuf:"varint,3,opt,name=discovery_recorded,json=discoveryRecorded,proto3" json:"discovery_recorded,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Older apid versions cannot acknowledge these attribution modes. Keep the
+	// outbox record until a receiver explicitly advertises support.
+	SurfaceAttributionSupported   bool `protobuf:"varint,4,opt,name=surface_attribution_supported,json=surfaceAttributionSupported,proto3" json:"surface_attribution_supported,omitempty"`
+	JwtTenantAttributionSupported bool `protobuf:"varint,5,opt,name=jwt_tenant_attribution_supported,json=jwtTenantAttributionSupported,proto3" json:"jwt_tenant_attribution_supported,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageReceipt) Reset() {
@@ -242,6 +262,20 @@ func (x *ConsumerUsageReceipt) GetAuditRecorded() bool {
 func (x *ConsumerUsageReceipt) GetDiscoveryRecorded() bool {
 	if x != nil {
 		return x.DiscoveryRecorded
+	}
+	return false
+}
+
+func (x *ConsumerUsageReceipt) GetSurfaceAttributionSupported() bool {
+	if x != nil {
+		return x.SurfaceAttributionSupported
+	}
+	return false
+}
+
+func (x *ConsumerUsageReceipt) GetJwtTenantAttributionSupported() bool {
+	if x != nil {
+		return x.JwtTenantAttributionSupported
 	}
 	return false
 }
@@ -482,9 +516,11 @@ type IncrementRequestTelemetryRequest struct {
 	// guest_resource_usage_available — true only when both process CPU and RSS
 	// were measured for this invocation. False distinguishes unavailable from
 	// a measured zero/sub-MiB value.
-	GuestResourceUsageAvailable bool `protobuf:"varint,33,opt,name=guest_resource_usage_available,json=guestResourceUsageAvailable,proto3" json:"guest_resource_usage_available,omitempty"`
-	unknownFields               protoimpl.UnknownFields
-	sizeCache                   protoimpl.SizeCache
+	GuestResourceUsageAvailable          bool   `protobuf:"varint,33,opt,name=guest_resource_usage_available,json=guestResourceUsageAvailable,proto3" json:"guest_resource_usage_available,omitempty"`
+	PlatformTenantSurfaceId              string `protobuf:"bytes,34,opt,name=platform_tenant_surface_id,json=platformTenantSurfaceId,proto3" json:"platform_tenant_surface_id,omitempty"`
+	PlatformTenantJwtAuthorizationRuleId string `protobuf:"bytes,35,opt,name=platform_tenant_jwt_authorization_rule_id,json=platformTenantJwtAuthorizationRuleId,proto3" json:"platform_tenant_jwt_authorization_rule_id,omitempty"`
+	unknownFields                        protoimpl.UnknownFields
+	sizeCache                            protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -748,6 +784,20 @@ func (x *IncrementRequestTelemetryRequest) GetGuestResourceUsageAvailable() bool
 	return false
 }
 
+func (x *IncrementRequestTelemetryRequest) GetPlatformTenantSurfaceId() string {
+	if x != nil {
+		return x.PlatformTenantSurfaceId
+	}
+	return ""
+}
+
+func (x *IncrementRequestTelemetryRequest) GetPlatformTenantJwtAuthorizationRuleId() string {
+	if x != nil {
+		return x.PlatformTenantJwtAuthorizationRuleId
+	}
+	return ""
+}
+
 // IncrementRequestTelemetryResponse is the per-record outcome the
 // server returns. outcome ∈ {inserted, rate_limited, db_error}.
 // `inserted` is a successful INSERT; `rate_limited` means the
@@ -815,7 +865,7 @@ var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\xf1\x03\n" +
+	"+onebox/faas/apid/v1/request_telemetry.proto\x12\x13onebox.faas.apid.v1\"\x87\x05\n" +
 	"\x12ConsumerUsageEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -832,11 +882,15 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x05audit\x18\n" +
 	" \x01(\v2).onebox.faas.apid.v1.RequestAuditEvidenceR\x05audit\x12)\n" +
 	"\x10discovered_route\x18\v \x01(\tR\x0fdiscoveredRoute\x121\n" +
-	"\x15discovered_at_unix_ms\x18\f \x01(\x03R\x12discoveredAtUnixMs\"\x86\x01\n" +
+	"\x15discovered_at_unix_ms\x18\f \x01(\x03R\x12discoveredAtUnixMs\x12;\n" +
+	"\x1aplatform_tenant_surface_id\x18\r \x01(\tR\x17platformTenantSurfaceId\x12W\n" +
+	")platform_tenant_jwt_authorization_rule_id\x18\x0e \x01(\tR$platformTenantJwtAuthorizationRuleId\"\x93\x02\n" +
 	"\x14ConsumerUsageReceipt\x12\x18\n" +
 	"\aapplied\x18\x01 \x01(\bR\aapplied\x12%\n" +
 	"\x0eaudit_recorded\x18\x02 \x01(\bR\rauditRecorded\x12-\n" +
-	"\x12discovery_recorded\x18\x03 \x01(\bR\x11discoveryRecorded\"\xdf\x02\n" +
+	"\x12discovery_recorded\x18\x03 \x01(\bR\x11discoveryRecorded\x12B\n" +
+	"\x1dsurface_attribution_supported\x18\x04 \x01(\bR\x1bsurfaceAttributionSupported\x12G\n" +
+	" jwt_tenant_attribution_supported\x18\x05 \x01(\bR\x1djwtTenantAttributionSupported\"\xdf\x02\n" +
 	"\x14RequestAuditEvidence\x12%\n" +
 	"\x0eroute_template\x18\x01 \x01(\tR\rrouteTemplate\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +
@@ -852,7 +906,8 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\t \x01(\tR\trequestId\x12\x1b\n" +
 	"\tsource_ip\x18\n" +
-	" \x01(\tR\bsourceIp\"\xab\t\n" +
+	" \x01(\tR\bsourceIp\"\xc1\n" +
+	"\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -893,7 +948,9 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x0eusage_outboxed\x18\x1e \x01(\bR\rusageOutboxed\x12)\n" +
 	"\x11guest_cpu_time_ms\x18\x1f \x01(\x05R\x0eguestCpuTimeMs\x12)\n" +
 	"\x11guest_peak_rss_mb\x18  \x01(\x05R\x0eguestPeakRssMb\x12C\n" +
-	"\x1eguest_resource_usage_available\x18! \x01(\bR\x1bguestResourceUsageAvailable\"c\n" +
+	"\x1eguest_resource_usage_available\x18! \x01(\bR\x1bguestResourceUsageAvailable\x12;\n" +
+	"\x1aplatform_tenant_surface_id\x18\" \x01(\tR\x17platformTenantSurfaceId\x12W\n" +
+	")platform_tenant_jwt_authorization_rule_id\x18# \x01(\tR$platformTenantJwtAuthorizationRuleId\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\x8e\x02\n" +

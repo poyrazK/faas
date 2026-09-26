@@ -54,6 +54,59 @@ func TestMemStoreApplyProjectReconcileRollsBackOnCronResolutionError(t *testing.
 	}
 }
 
+// adr: 099 — project reconciliation leaves independently managed command crons intact.
+func TestMemStoreApplyProjectReconcilePreservesCommandCrons(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	acct, err := store.CreateAccount(ctx, "project-command-cron@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	project, err := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "command-cron", ScanSource: ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, ProjectID: project.ID, Slug: "api", WorkloadName: "api", Status: AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	commandCron, err := store.CreateCronWithOptions(ctx, app.ID, "0 2 * * *", "/", true, CronOptions{
+		Command: []string{"bin/maintenance"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions(command): %v", err)
+	}
+	if _, err := store.CreateCron(ctx, app.ID, "*/5 * * * *", "/old", true); err != nil {
+		t.Fatalf("CreateCron(http): %v", err)
+	}
+
+	_, err = store.ApplyProjectReconcile(ctx, project, nil, []ProjectReconcileCron{{
+		WorkloadName: "api", Schedule: "*/10 * * * *", Path: "/new", Enabled: true,
+	}}, ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby))
+	if err != nil {
+		t.Fatalf("ApplyProjectReconcile: %v", err)
+	}
+	crons, err := store.ListCronsForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("ListCronsForApp: %v", err)
+	}
+	if len(crons) != 2 {
+		t.Fatalf("crons after HTTP reconciliation = %#v; want command cron plus desired HTTP cron", crons)
+	}
+	foundCommand, foundHTTP := false, false
+	for _, cron := range crons {
+		if cron.ID == commandCron.ID && len(cron.Command) == 1 && cron.Command[0] == "bin/maintenance" {
+			foundCommand = true
+		}
+		if cron.Schedule == "*/10 * * * *" && cron.Path == "/new" && len(cron.Command) == 0 {
+			foundHTTP = true
+		}
+	}
+	if !foundCommand || !foundHTTP {
+		t.Fatalf("crons after reconciliation lost an independently-managed command or desired HTTP cron: %#v", crons)
+	}
+}
+
 func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()

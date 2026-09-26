@@ -44,10 +44,65 @@ func happyEdgeRuleValidateAction() EdgeRuleValidateAction {
 	}
 }
 
+func TestApplyEdgeRuleRewritePath(t *testing.T) {
+	cases := []struct {
+		name, requestPath, from, to, wantPath string
+		wantApplied                           bool
+	}{
+		{name: "replace prefix", requestPath: "/api/items", from: "/api", to: "/v1", wantPath: "/v1/items", wantApplied: true},
+		{name: "add prefix", requestPath: "/items", from: "", to: "/v1", wantPath: "/v1/items", wantApplied: true},
+		{name: "wildcard from adds prefix", requestPath: "/items", from: "*", to: "v1/", wantPath: "/v1/items", wantApplied: true},
+		{name: "root is no-op", requestPath: "/items", from: "", to: "/", wantPath: "/items", wantApplied: true},
+		{name: "from mismatch", requestPath: "/api/items", from: "/v2", to: "/v1", wantPath: "/api/items", wantApplied: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotPath, gotApplied := ApplyEdgeRuleRewritePath(tc.requestPath, tc.from, tc.to)
+			if gotPath != tc.wantPath || gotApplied != tc.wantApplied {
+				t.Fatalf("ApplyEdgeRuleRewritePath(%q, %q, %q) = (%q, %v), want (%q, %v)", tc.requestPath, tc.from, tc.to, gotPath, gotApplied, tc.wantPath, tc.wantApplied)
+			}
+		})
+	}
+}
+
 func TestEdgeRuleValidateAction_Validate_HappyPath(t *testing.T) {
 	a := happyEdgeRuleValidateAction()
 	if p := a.Validate(); p != nil {
 		t.Fatalf("happy path returned %v, want nil", p)
+	}
+}
+
+func TestEdgeRuleAsyncAction_ValidateExecutionPolicy(t *testing.T) {
+	cases := []struct {
+		name    string
+		action  EdgeRuleAsyncAction
+		wantErr string
+	}{
+		{
+			name: "valid policy",
+			action: EdgeRuleAsyncAction{
+				RetryPolicy:   &RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 1, MaxSeconds: 30, JitterSeconds: 0.2},
+				MaxAgeSeconds: 300,
+			},
+		},
+		{name: "negative max age", action: EdgeRuleAsyncAction{MaxAgeSeconds: -1}, wantErr: "max_age_seconds"},
+		{name: "age exceeds platform ceiling", action: EdgeRuleAsyncAction{MaxAgeSeconds: MaxAsyncRouteAgeSeconds + 1}, wantErr: "max_age_seconds"},
+		{name: "invalid retry attempts", action: EdgeRuleAsyncAction{RetryPolicy: &RetryPolicyDTO{MaxAttempts: -1}}, wantErr: "max_attempts"},
+		{name: "retry cap below base", action: EdgeRuleAsyncAction{RetryPolicy: &RetryPolicyDTO{BaseSeconds: 5, MaxSeconds: 2}}, wantErr: "max_seconds"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := tc.action.Validate()
+			if tc.wantErr == "" {
+				if problem != nil {
+					t.Fatalf("Validate() = %v, want nil", problem)
+				}
+				return
+			}
+			if problem == nil || !strings.Contains(problem.Detail, tc.wantErr) {
+				t.Fatalf("Validate() = %v, want detail containing %q", problem, tc.wantErr)
+			}
+		})
 	}
 }
 

@@ -3,14 +3,20 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Immutable tenant-attributed UTC minute priced with one app's rate-card version.
+ * Immutable tenant-attributed UTC minute priced with either an app rate-card version or a tenant-wide rate-card version. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
  */
 export type PlatformTenantStatementLineResponse = {
   app_id: string;
-  consumer_id: string;
+  consumer_id?: string;
+  surface_id?: string;
+  jwt_authorization_rule_id?: string;
   window_start: string;
   billable_units: number;
   rate_card_id?: string;
+  /**
+   * Tenant-wide price source; mutually exclusive with rate_card_id.
+   */
+  platform_tenant_rate_card_id?: string;
   currency?: string;
   price_millicents_per_unit?: number;
   amount_millicents: number;

@@ -2698,6 +2698,103 @@ func TestCreateCron_OptionsRoundTrip(t *testing.T) {
 	}
 }
 
+// adr: 099 — a cron may target an app command as well as an HTTP path.
+func TestCreateCron_CommandRunRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	_, _ = seedAppTaskDeployment(t, e, "cron-command")
+	rec := e.do(t, "POST", "/v1/crons", api.CreateCronRequest{
+		AppID: "cron-command", Schedule: "0 2 * * *",
+		Command: []string{"bin/reindex", "--delta"}, TimeoutSeconds: 180, MaxOutputBytes: 8192,
+		RetryMax: 2, RetryBackoffSeconds: 15,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST command cron = %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode command cron: %v", err)
+	}
+	if out.Kind != "command" || out.Path != "" || strings.Join(out.Command, "|") != "bin/reindex|--delta" ||
+		out.TimeoutSeconds != 180 || out.MaxOutputBytes != 8192 || out.RetryMax != 2 || out.RetryBackoffSeconds != 15 {
+		t.Fatalf("command cron response = %+v", out)
+	}
+	stored, err := e.store.CronByID(context.Background(), out.ID)
+	if err != nil || strings.Join(stored.Command, "|") != "bin/reindex|--delta" || stored.RetryMax != 2 || stored.RetryBackoffSeconds != 15 {
+		t.Fatalf("stored command cron = %+v, %v", stored, err)
+	}
+}
+
+func TestCreateCron_RetryOptionsRequireCommandCron(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-http-retry")
+	rec := e.do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{
+		AppID: appID, Schedule: "0 2 * * *", Path: "/heartbeat", RetryMax: 1,
+	}, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+}
+
+func TestUpdateCommandCronRetryPolicyRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	app, _ := seedAppTaskDeployment(t, e, "cron-command-retry-update")
+	cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, "0 2 * * *", "/", true, state.CronOptions{
+		Command: []string{"bin/maintenance"}, RetryMax: 1, RetryBackoffSeconds: 10,
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	retryMax, backoff := 3, 25
+	rec := e.do(t, http.MethodPatch, "/v1/crons/"+cron.ID, api.UpdateCronRequest{
+		RetryMax: &retryMax, RetryBackoffSeconds: &backoff,
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH retry policy = %d: %s", rec.Code, rec.Body)
+	}
+	var out api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode updated cron: %v", err)
+	}
+	if out.RetryMax != retryMax || out.RetryBackoffSeconds != backoff {
+		t.Fatalf("updated retry policy = max %d, backoff %d", out.RetryMax, out.RetryBackoffSeconds)
+	}
+}
+
+func TestCreateCron_CommandRequiresTaskAPIAndCannotAlsoSetPath(t *testing.T) {
+	t.Run("feature gate", func(t *testing.T) {
+		e := setup(t, api.PlanPro)
+		rec := e.do(t, "POST", "/v1/crons", api.CreateCronRequest{
+			AppID: "does-not-need-resolution", Schedule: "0 2 * * *", Command: []string{"bin/task"},
+		}, nil)
+		if rec.Code != http.StatusNotImplemented {
+			t.Fatalf("POST command cron with task API disabled = %d, want 501: %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("mutually exclusive target", func(t *testing.T) {
+		e := setup(t, api.PlanPro)
+		enableAppTaskAPIForTest(&e)
+		rec := e.do(t, "POST", "/v1/crons", api.CreateCronRequest{
+			AppID: "cron-command-path", Schedule: "0 2 * * *", Path: "/jobs", Command: []string{"bin/task"},
+		}, nil)
+		assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	})
+}
+
+func TestUpdateCommandCronRejectsHTTPPathPatch(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableAppTaskAPIForTest(&e)
+	app, _ := seedAppTaskDeployment(t, e, "cron-command-update")
+	cron, err := e.store.CreateCronWithOptions(context.Background(), app.ID, "0 2 * * *", "/", true, state.CronOptions{
+		Command: []string{"bin/maintenance"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	path := "/run"
+	rec := e.do(t, http.MethodPatch, "/v1/crons/"+cron.ID, api.UpdateCronRequest{Path: &path}, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+}
+
 func TestCreateCron_InvalidTimezone(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "cron-bad-tz")
@@ -3401,6 +3498,17 @@ func TestCronResponse_LastFiredAtBranch(t *testing.T) {
 	r2 := cronResponse(c2)
 	if r2.LastFiredAt != "" {
 		t.Errorf("zero LastFiredAt should be empty: %+v", r2)
+	}
+}
+
+func TestCronResponse_CommandOmitsHTTPPath(t *testing.T) {
+	r := cronResponse(state.Cron{
+		ID: "c-command", AppID: "a1", Schedule: "0 2 * * *", Path: "/",
+		Command: []string{"bin/maintenance"}, CommandTimeoutSeconds: 600,
+		CommandMaxOutputBytes: 1024 * 1024, Enabled: true,
+	})
+	if r.Kind != "command" || r.Path != "" || len(r.Command) != 1 || r.TimeoutSeconds != 600 {
+		t.Fatalf("command CronResponse = %+v", r)
 	}
 }
 

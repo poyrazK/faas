@@ -1,5 +1,7 @@
 # ADR-226 · Account-level platform tenants
 
+ADR-239 extends request-time attribution to anonymous traffic on authoritative, verified tenant-surface routes; the consumer-key-only attribution boundary below describes the original rollout.
+
 - **Status:** accepted
 - **Date:** 2026-09-24
 - **Decision:** Introduce one account-owned end-customer identity that can bind existing API consumers and tenant surfaces across apps, report their durable raw usage together, and suspend their linked credential and hostname paths.

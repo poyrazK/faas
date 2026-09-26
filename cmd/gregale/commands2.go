@@ -1530,6 +1530,8 @@ func cronCreateRequestFromResponse(cron api.CronResponse) api.CreateCronRequest 
 	enabled, skip := cron.Enabled, cron.SkipIfRunning
 	return api.CreateCronRequest{
 		AppID: cron.AppID, Schedule: cron.Schedule, Path: cron.Path,
+		Command: append([]string(nil), cron.Command...), CommandShell: cron.CommandShell,
+		TimeoutSeconds: cron.TimeoutSeconds, MaxOutputBytes: cron.MaxOutputBytes,
 		Enabled: &enabled, Timezone: cron.Timezone, SkipIfRunning: &skip,
 	}
 }
@@ -1741,6 +1743,9 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	}
 	existingByKey := make(map[string]api.CronResponse, len(existing))
 	for _, cron := range existing {
+		if cron.Kind == "command" {
+			continue // deployment manifests own HTTP path crons only
+		}
 		existingByKey[manifestCronKey(cron.Schedule, cron.Path)] = cron
 	}
 
@@ -1781,6 +1786,9 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	// Remove stale rows before creates so replacement at the exact cap has
 	// headroom. Each delete records enough data to recreate the prior row.
 	for _, cron := range existing {
+		if cron.Kind == "command" {
+			continue // command schedules are managed independently via `crons`
+		}
 		if _, keep := desiredByKey[manifestCronKey(cron.Schedule, cron.Path)]; keep {
 			continue
 		}
@@ -4421,7 +4429,7 @@ func cmdCrons(args []string) int {
 		}
 		// The ID leads because `crons info|update|rm|runs` all require it
 		// and nothing else printed it (issue #3362).
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %s\n", "ID", "SCHEDULE", "STATE", "PATH")
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %-10s %s\n", "ID", "SCHEDULE", "STATE", "KIND", "TARGET")
 		for _, c := range out {
 			state := "enabled"
 			if !c.Enabled {
@@ -4429,16 +4437,27 @@ func cmdCrons(args []string) int {
 			} else if c.SuspendedReason != "" {
 				state = "suspended: " + c.SuspendedReason
 			}
-			_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %s\n", c.ID, c.Schedule, state, c.Path)
+			target := c.Path
+			if c.Kind == "command" {
+				target = formatCronCommand(c)
+			}
+			_, _ = fmt.Fprintf(osStdout, "%-36s %-30s %-15s %-10s %s\n", c.ID, c.Schedule, state, cronKindOrHTTP(c.Kind), target)
 		}
 		return 0
 	case subAdd:
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
 		slug := fs.String("app", "", "app slug (required)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
-		path := fs.String("path", "/", "request path")
+		path := fs.String("path", "", "HTTP request path (HTTP cron only; default: /)")
+		command := fs.String("command", "", "executable for a deployment-attached command cron")
+		commandArgs := registerJobsMultiFlag(fs, "arg", "append one command argument; repeat as needed")
+		commandShell := fs.Bool("shell", false, "run --command as a shell string (requires exactly one string and no --arg flags)")
+		timeoutSeconds := fs.Int("timeout-seconds", 0, "command timeout in seconds (default: 600; command crons only)")
+		maxOutputBytes := fs.Int("max-output-bytes", 0, "maximum captured output bytes (default: 1048576; command crons only)")
 		timezone := fs.String("timezone", "", "IANA timezone (defaults to UTC)")
 		skipIfRunning := fs.Bool("skip-if-running", false, "skip a scheduled fire while the previous cron run is active")
+		retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
+		retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
@@ -4446,24 +4465,72 @@ func cmdCrons(args []string) int {
 			return 1
 		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' [--path /] [--timezone UTC] [--skip-if-running]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N]", "crons")
+			return 1
+		}
+		pathSet := false
+		retryFlagsSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "path" {
+				pathSet = true
+			}
+			if f.Name == "retry-max" || f.Name == "retry-backoff-seconds" {
+				retryFlagsSet = true
+			}
+		})
+		if *command != "" && pathSet {
+			fmt.Fprintln(os.Stderr, "--path and --command are mutually exclusive")
+			return 1
+		}
+		if *command == "" && (len(*commandArgs) > 0 || *commandShell || *timeoutSeconds != 0 || *maxOutputBytes != 0 || retryFlagsSet) {
+			fmt.Fprintln(os.Stderr, "--arg, --shell, --timeout-seconds, --max-output-bytes, and retry options require --command")
+			return 1
+		}
+		if *retryMax < 0 || *retryMax > 5 || *retryBackoff < 1 || *retryBackoff > 3600 {
+			fmt.Fprintln(os.Stderr, "--retry-max must be 0..5 and --retry-backoff-seconds must be 1..3600")
+			return 1
+		}
+		if *commandShell && len(*commandArgs) > 0 {
+			fmt.Fprintln(os.Stderr, "--shell accepts one command string and cannot be combined with --arg")
+			return 1
+		}
+		if *command != "" && strings.TrimSpace(*command) == "" {
+			fmt.Fprintln(os.Stderr, "--command must not be empty")
 			return 1
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		c, err := client.CreateCron(context.Background(), *slug, api.CreateCronRequest{
-			AppID: *slug, Schedule: *schedule, Path: *path, Enabled: boolPtr(true),
+		req := api.CreateCronRequest{
+			AppID: *slug, Schedule: *schedule, Enabled: boolPtr(true),
 			Timezone: *timezone, SkipIfRunning: boolPtr(*skipIfRunning),
-		})
+		}
+		if *command == "" {
+			req.Path = *path
+			if req.Path == "" {
+				req.Path = "/"
+			}
+		} else {
+			req.Command = append([]string{*command}, (*commandArgs)...)
+			req.CommandShell = *commandShell
+			req.TimeoutSeconds = *timeoutSeconds
+			req.MaxOutputBytes = *maxOutputBytes
+			req.RetryMax = *retryMax
+			req.RetryBackoffSeconds = *retryBackoff
+		}
+		c, err := client.CreateCron(context.Background(), *slug, req)
 		if err != nil {
 			return printErr("Create failed", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(c))
 		}
-		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, c.Path)
+		target := c.Path
+		if c.Kind == "command" {
+			target = "command " + formatCronCommand(c)
+		}
+		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
 		return 0
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
@@ -4523,16 +4590,37 @@ var cronIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-
 // already names the row.
 func renderCronState(w io.Writer, c api.CronResponse) {
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "schedule:", c.Schedule)
-	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "path:", c.Path)
+	if c.Kind == "command" {
+		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "command:", formatCronCommand(c))
+		_, _ = fmt.Fprintf(w, "  %-10s %d retries, base delay %ds\n", "retries:", c.RetryMax, c.RetryBackoffSeconds)
+	} else {
+		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "path:", c.Path)
+	}
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "enabled:", strconv.FormatBool(c.Enabled))
 	if c.SuspendedReason != "" {
 		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "suspended:", c.SuspendedReason)
 	}
 }
 
+func cronKindOrHTTP(kind string) string {
+	if kind == "" {
+		return "http"
+	}
+	return kind
+}
+
+func formatCronCommand(c api.CronResponse) string {
+	command := formatCommand(c.Command)
+	if c.CommandShell {
+		return "shell " + command
+	}
+	return command
+}
+
 // cmdCronsUpdate implements `gregale crons update <id> [--schedule EXPR]
 // [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap]
-// [--enable|--disable]`. Partial-update semantics:
+// [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]`.
+// Partial-update semantics:
 // every flag is optional, but at least one patch field must be set
 // (the server happily no-ops an empty body and emits a cron-changed
 // notification — a footgun we'd rather catch at the CLI). Uses
@@ -4543,7 +4631,7 @@ func renderCronState(w io.Writer, c api.CronResponse) {
 // the server's validCron so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	id := args[0]
@@ -4559,11 +4647,13 @@ func cmdCronsUpdate(args []string) int {
 	disable := fs.Bool("disable", false, "disable the cron")
 	skipIfRunning := fs.Bool("skip-if-running", false, "skip scheduled fires while a prior run is active")
 	allowOverlap := fs.Bool("allow-overlap", false, "allow scheduled fires to overlap")
+	retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
+	retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	if *enable && *disable {
@@ -4579,8 +4669,8 @@ func cmdCronsUpdate(args []string) int {
 	// catch at the CLI before a pointless network round-trip.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--enable|--disable]", "crons")
+	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] {
+		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	// Local schedule shape check (5 whitespace tokens) mirrors the
@@ -4588,6 +4678,14 @@ func cmdCronsUpdate(args []string) int {
 	// validate field ranges — that's the scheduler's job.
 	if explicit["schedule"] && len(strings.Fields(*schedule)) != 5 {
 		PrintFail(os.Stderr, "Invalid --schedule %q (expected 5 fields, e.g. \"*/15 * * * *\")", *schedule)
+		return 1
+	}
+	if explicit["retry-max"] && (*retryMax < 0 || *retryMax > 5) {
+		PrintFail(os.Stderr, "Invalid --retry-max %d (expected 0..5)", *retryMax)
+		return 1
+	}
+	if explicit["retry-backoff-seconds"] && (*retryBackoff < 1 || *retryBackoff > 3600) {
+		PrintFail(os.Stderr, "Invalid --retry-backoff-seconds %d (expected 1..3600)", *retryBackoff)
 		return 1
 	}
 	client, err := authedClient()
@@ -4622,6 +4720,14 @@ func cmdCronsUpdate(args []string) int {
 	if explicit["allow-overlap"] {
 		v := false
 		req.SkipIfRunning = &v
+	}
+	if explicit["retry-max"] {
+		v := *retryMax
+		req.RetryMax = &v
+	}
+	if explicit["retry-backoff-seconds"] {
+		v := *retryBackoff
+		req.RetryBackoffSeconds = &v
 	}
 	updated, err := client.UpdateCron(context.Background(), id, req)
 	if err != nil {

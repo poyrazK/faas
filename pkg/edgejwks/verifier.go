@@ -327,6 +327,12 @@ func (v *joseVerifier) Verify(ctx context.Context, rawToken string, rule Verifie
 // cardinality semantics require a separate contract.
 func boundedCustomClaims(raw map[string]any, priority []string) map[string]string {
 	keys := make([]string, 0, len(raw))
+	prioritized := make(map[string]struct{}, len(priority))
+	for _, key := range priority {
+		if validPrioritizedClaimName(key) {
+			prioritized[key] = struct{}{}
+		}
+	}
 	for key := range raw {
 		if _, registered := registeredJWTClaims[key]; registered || !customClaimNamePattern.MatchString(key) {
 			continue
@@ -352,7 +358,9 @@ func boundedCustomClaims(raw map[string]any, priority []string) map[string]strin
 		ordered = append(ordered, key)
 	}
 	for _, key := range ordered {
-		if _, registered := registeredJWTClaims[key]; registered || !customClaimNamePattern.MatchString(key) {
+		_, isPrioritized := prioritized[key]
+		if _, registered := registeredJWTClaims[key]; registered ||
+			(!isPrioritized && !customClaimNamePattern.MatchString(key)) || !validPrioritizedClaimName(key) {
 			continue
 		}
 		var value string
@@ -375,6 +383,11 @@ func boundedCustomClaims(raw map[string]any, priority []string) map[string]strin
 		}
 	}
 	return out
+}
+
+func validPrioritizedClaimName(key string) bool {
+	return len(key) > 0 && len(key) <= 128 && strings.TrimSpace(key) == key &&
+		!strings.ContainsAny(key, " \t\r\n\x00")
 }
 
 // mapParseError turns the go-jose/jwt error zoo into our sentinels

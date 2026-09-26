@@ -1,8 +1,9 @@
 from typing import Literal
 
-AppTaskResponseKind = Literal["manual", "release"]
+AppTaskResponseKind = Literal["cron", "manual", "release"]
 
 APP_TASK_RESPONSE_KIND_VALUES: set[AppTaskResponseKind] = {
+    "cron",
     "manual",
     "release",
 }

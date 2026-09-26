@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -136,7 +135,7 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrValidation("headers must be a JSON object of string values"))
 		return
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), r.Header, state.Invocation{
 		AppID:                  app.ID,
 		AccountID:              acct.ID,
 		Source:                 state.InvocationAsyncInvoke,
@@ -150,11 +149,12 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
-	})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue async invoke"))
+	}, "enqueue async invoke")
+	if versionProblem != nil {
+		api.WriteProblem(w, versionProblem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusAccepted, api.AsyncInvokeResponse{
 		ID:        inv.ID,
 		StatusURL: "/v1/invocations/" + inv.ID,
@@ -209,7 +209,7 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrValidation("headers must be a JSON object of string values"))
 		return
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), r.Header, state.Invocation{
 		AppID:     app.ID,
 		AccountID: acct.ID,
 		Source:    state.InvocationAsyncInvoke, // sync reuses the async source; the long-poll is what makes it sync
@@ -231,11 +231,12 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
-	})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue sync invoke"))
+	}, "enqueue sync invoke")
+	if versionProblem != nil {
+		api.WriteProblem(w, versionProblem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	var waitErr error
 	if s.invocationCompletion != nil {
 		waitErr = s.invocationCompletion.Wait(r.Context(), inv.ID, timeout)
@@ -327,11 +328,12 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), acct, app, req.Payload, req.QueueName, req.RetryPolicy)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.QueueName, req.RetryPolicy)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusCreated, api.QueueSendResponse{
 		ID:      inv.ID,
 		TraceID: traceID,
@@ -382,11 +384,12 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("encode application message"))
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), acct, app, payload, req.QueueName, req.RetryPolicy)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.QueueName, req.RetryPolicy)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusAccepted, api.SendAppMessageResponse{
 		ID:        inv.ID,
 		EventID:   envelope.ID,
@@ -397,7 +400,7 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 	})
 }
 
-func (s *server) enqueueAppMessage(ctx context.Context, acct state.Account, app state.App, payload json.RawMessage, queueName string, retryPolicy *api.RetryPolicyDTO) (state.Invocation, string, *api.Problem) {
+func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, queueName string, retryPolicy *api.RetryPolicyDTO) (state.Invocation, string, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxQueueDepth == 0 {
 		return state.Invocation{}, "", api.ErrPlanFeatureGated("queues", acct.Plan)
@@ -420,7 +423,7 @@ func (s *server) enqueueAppMessage(ctx context.Context, acct state.Account, app 
 	if err != nil {
 		return state.Invocation{}, "", api.ErrCapacity("encode queue trace context")
 	}
-	inv, err := s.store.EnqueueInvocation(ctx, state.Invocation{
+	inv, versionProblem := s.enqueueVersionedInvocation(ctx, requestHeaders, state.Invocation{
 		AppID:           app.ID,
 		AccountID:       acct.ID,
 		Source:          state.InvocationQueue,
@@ -429,9 +432,9 @@ func (s *server) enqueueAppMessage(ctx context.Context, acct state.Account, app 
 		Headers:         traceHeaders,
 		DueAt:           time.Now().UTC(),
 		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
-	})
-	if err != nil {
-		return state.Invocation{}, "", api.ErrCapacity("enqueue application message")
+	}, "enqueue application message")
+	if versionProblem != nil {
+		return state.Invocation{}, "", versionProblem
 	}
 	var traceHeaderValues map[string]string
 	_ = json.Unmarshal(traceHeaders, &traceHeaderValues)
@@ -701,7 +704,7 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("encode delayed task trace context"))
 		return
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), r.Header, state.Invocation{
 		AppID:                  app.ID,
 		AccountID:              acct.ID,
 		Source:                 state.InvocationDelayedTask,
@@ -716,11 +719,12 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		ResultRetentionUntil:   retentionForRequestAt(sched, req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
-	})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue delayed task"))
+	}, "enqueue delayed task")
+	if versionProblem != nil {
+		api.WriteProblem(w, versionProblem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusCreated, delayedTaskResponse(inv))
 }
 
@@ -900,30 +904,7 @@ func validateInvokeRequest(req invokeRequest) *api.Problem {
 }
 
 func validateInvocationRetryPolicy(policy *api.RetryPolicyDTO) *api.Problem {
-	if policy == nil {
-		return nil
-	}
-	if policy.MaxAttempts < 0 || policy.MaxAttempts > api.DurableRetryMaxAttempts {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", fmt.Sprintf("max_attempts must be between 0 and %d", api.DurableRetryMaxAttempts))
-	}
-	if policy.BaseSeconds < 0 || math.IsNaN(policy.BaseSeconds) || math.IsInf(policy.BaseSeconds, 0) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "base_seconds must be finite and non-negative")
-	}
-	if policy.MaxSeconds < 0 || math.IsNaN(policy.MaxSeconds) || math.IsInf(policy.MaxSeconds, 0) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "max_seconds must be finite and non-negative")
-	}
-	if policy.BaseSeconds > 0 && policy.MaxSeconds > 0 && policy.MaxSeconds < policy.BaseSeconds {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "max_seconds must be at least base_seconds")
-	}
-	if policy.JitterSeconds < 0 || policy.JitterSeconds > 1 || math.IsNaN(policy.JitterSeconds) || math.IsInf(policy.JitterSeconds, 0) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "jitter_seconds must be between 0 and 1")
-	}
-	return nil
+	return policy.Validate()
 }
 
 // marshalRetryPolicy (ADR-134 PR-B) converts the wire DTO into the JSONB blob
@@ -1086,7 +1067,7 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrValidation("original invocation headers must be a JSON object of string values"))
 		return
 	}
-	inv, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
+	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), nil, state.Invocation{
 		AppID:                orig.AppID,
 		AccountID:            acct.ID,
 		Source:               state.InvocationReplay,
@@ -1098,11 +1079,12 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 		RetryPolicyJSON:      effectiveInvocationRetryPolicy(app, nil, api.MustLimitsFor(acct.Plan).MaxQueueAttempts),
 		DeadlineAt:           deadlineForRequest(nil, acct),
 		ResultRetentionUntil: retentionForRequest(nil, acct),
-	})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("enqueue replay invocation"))
+	}, "enqueue replay invocation")
+	if versionProblem != nil {
+		api.WriteProblem(w, versionProblem)
 		return
 	}
+	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusAccepted, api.AsyncInvokeResponse{
 		ID:        inv.ID,
 		StatusURL: "/v1/invocations/" + inv.ID,
