@@ -95,7 +95,7 @@ func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClien
 		return printErr("Service is not bound to this app", fmt.Errorf("%s has no declared binding for %s", slug, service))
 	}
 
-	report, task, errorTitle, err, exitCode := executeServiceBindingProbe(ctx, client, slug, service, pollInterval, waitTimeout)
+	report, task, errorTitle, exitCode, err := executeServiceBindingProbe(ctx, client, slug, service, pollInterval, waitTimeout)
 	if errorTitle != "" {
 		return printErr(errorTitle, err)
 	}
@@ -149,7 +149,7 @@ func runAllServiceBindingProbes(ctx context.Context, client serviceBindingProbeC
 			batch.Bindings = append(batch.Bindings, serviceBindingProbeBatchItem{Service: service, Status: "not_checked", Report: report})
 			continue
 		}
-		report, task, errorTitle, probeErr, exitCode := executeServiceBindingProbe(batchContext, client, slug, service, pollInterval, waitTimeout)
+		report, task, errorTitle, exitCode, probeErr := executeServiceBindingProbe(batchContext, client, slug, service, pollInterval, waitTimeout)
 		if errorTitle != "" {
 			report = newServiceBindingProbeReport(slug, service)
 			report.Error = probeErr.Error()
@@ -196,7 +196,7 @@ func runAllServiceBindingProbes(ctx context.Context, client serviceBindingProbeC
 	return 0
 }
 
-func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration) (api.ServiceBindingProbeReport, api.AppTaskResponse, string, error, int) {
+func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration) (api.ServiceBindingProbeReport, api.AppTaskResponse, string, int, error) {
 	report := newServiceBindingProbeReport(slug, service)
 	request := api.CreateAppTaskRequest{
 		Command:        []string{api.AppTaskServiceBindingProbeCommand, service},
@@ -206,7 +206,7 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 	task, err := client.CreateAppTask(ctx, slug, request)
 	if err != nil {
 		report.Error = err.Error()
-		return report, task, "Could not start service-binding canary", err, 1
+		return report, task, "Could not start service-binding canary", 1, err
 	}
 	report.TaskID = task.ID
 	report.DeploymentID = task.DeploymentID
@@ -226,20 +226,20 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 				} else if !jsonOutput {
 					PrintWarn(osStderr, "cancellation requested for canary task %s (status=%s)", task.ID, cancelled.Status)
 				}
-				return report, task, "", nil, 130
+				return report, task, "", 130, nil
 			}
 			report.Error = "canary task did not finish before the wait timeout"
-			return report, task, "Service-binding canary is still running", waitContext.Err(), 1
+			return report, task, "Service-binding canary is still running", 1, waitContext.Err()
 		case <-time.After(pollInterval):
 		}
 		task, err = client.GetAppTask(waitContext, slug, task.ID)
 		if err != nil {
 			if errors.Is(waitContext.Err(), context.DeadlineExceeded) {
 				report.Error = "canary task did not finish before the wait timeout"
-				return report, task, "Service-binding canary wait timed out; the task is still running", waitContext.Err(), 1
+				return report, task, "Service-binding canary wait timed out; the task is still running", 1, waitContext.Err()
 			}
 			report.Error = err.Error()
-			return report, task, "Could not read service-binding canary status", err, 1
+			return report, task, "Could not read service-binding canary status", 1, err
 		}
 	}
 
@@ -272,9 +272,9 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 				report.Error = "canary task did not succeed"
 			}
 		}
-		return report, task, "", nil, 1
+		return report, task, "", 1, nil
 	}
-	return report, task, "", nil, 0
+	return report, task, "", 0, nil
 }
 
 func newServiceBindingProbeReport(app, service string) api.ServiceBindingProbeReport {
