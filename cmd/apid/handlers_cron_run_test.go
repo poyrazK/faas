@@ -88,6 +88,20 @@ func TestFireCronNow_HappyPath(t *testing.T) {
 	}
 }
 
+// adr: 099 — scheduled command crons are distinct from HTTP-triggered crons.
+func TestFireCronNow_CommandCronReturnsConflict(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := mustSeedApp(t, e, "command-cron-fire-now")
+	cron, err := e.store.CreateCronWithOptions(context.Background(), app, "0 2 * * *", "/", true, state.CronOptions{
+		Command: []string{"bin/maintenance"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/run", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+}
+
 func TestFireCronNow_BadID(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	rec := e.do(t, "POST", "/v1/crons/not-a-uuid/run", nil, nil)

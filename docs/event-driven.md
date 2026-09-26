@@ -7,13 +7,36 @@ gregale invoke --async --payload @payload.json APP_ID
 gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
 gregale jobs run nightly --tasks 10
 gregale crons add --app APP_ID --schedule "0 * * * *" --path /jobs/nightly
+gregale crons add --app APP_ID --schedule "*/15 * * * *" --command bin/maintenance --arg=--compact
 gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
 ```
 
 Use a scheduled job when work should run to completion in an isolated job
-environment; use an app cron when the schedule should make an HTTP request to
-an app route. Scheduled jobs create one task per occurrence and pick up the
-job's current configuration at fire time.
+environment; use an HTTP app cron when the schedule should make a request to an
+app route. Use a command cron when a recurring task needs the app's deployment
+environment without an HTTP endpoint:
+
+```bash
+gregale crons add --app APP_ID --schedule "0 2 * * *" \
+  --command bin/rebuild-index --arg=--incremental --timezone Europe/Istanbul
+gregale crons add --app APP_ID --schedule "0 4 * * 0" \
+  --command "bin/cleanup --older-than 30d" --shell
+gregale crons runs CRON_ID
+```
+
+Command crons create one deployment-attached app task for each scheduled
+occurrence and select the app's currently live deployment at fire time, so a
+later deployment automatically supplies the new command environment. The
+command runs with a 10-minute timeout and 1 MiB output limit by default; use
+`--timeout-seconds` and `--max-output-bytes` to adjust them. `--arg` is
+repeatable and preserves argument boundaries. `--shell` instead treats the
+single `--command` value as a shell string and cannot be combined with `--arg`.
+Use `--skip-if-running` to skip a firing while an earlier command task remains
+active. Inspect outcomes with `crons runs`; the returned `task_id` can be used
+with `GET /v1/apps/APP_ID/tasks/TASK_ID` to read captured output. Command crons
+do not support fire-now, while `gregale app APP_ID exec ...` remains the
+one-off command surface. Scheduled jobs create one task per occurrence and
+pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
@@ -25,6 +48,30 @@ after completion; the failure destination receives the same envelope when the
 invocation permanently fails or exhausts its retry budget. Webhook delivery
 has its own retry and dead-letter lifecycle, so a downstream outage does not
 change the invocation result.
+
+Async edge rules can also set their own retry curve and maximum invocation
+age instead of inheriting the app retry curve and plan deadline:
+
+```json
+{
+  "retry_policy": {
+    "max_attempts": 4,
+    "base_seconds": 1,
+    "max_seconds": 30,
+    "jitter_seconds": 0.2
+  },
+  "max_age_seconds": 600,
+  "on_failure": "WEBHOOK_ID"
+}
+```
+
+`max_attempts` includes the initial attempt; the current plan caps the retry
+budget. `max_age_seconds` starts when the edge accepts the request and is
+clamped to the plan's maximum invocation deadline. Omit either setting (or
+use zero for maximum age) to keep the existing app/plan default. The CLI
+equivalents are `--async-max-attempts`, `--async-retry-base-seconds`,
+`--async-retry-max-seconds`, `--async-retry-jitter-seconds`, and
+`--async-max-age-seconds` on `gregale edge-rules create`.
 
 ## Application inbox
 

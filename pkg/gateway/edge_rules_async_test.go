@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -40,10 +41,38 @@ func TestPickFirstAsyncMatch(t *testing.T) {
 	}
 }
 
+func TestAsyncRouteDeadlineAtDefaultsAndClampsToPlan(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name       string
+		requested  int
+		planMax    int
+		wantSecond time.Duration
+	}{
+		{name: "plan default", requested: 0, planMax: 300, wantSecond: 300 * time.Second},
+		{name: "explicit age", requested: 120, planMax: 300, wantSecond: 120 * time.Second},
+		{name: "plan cap", requested: 600, planMax: 300, wantSecond: 300 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := asyncRouteDeadlineAt(now, tc.requested, tc.planMax)
+			if got == nil || !got.Equal(now.Add(tc.wantSecond)) {
+				t.Fatalf("deadline = %v, want %s after now", got, tc.wantSecond)
+			}
+		})
+	}
+	if got := asyncRouteDeadlineAt(now, 120, 0); got != nil {
+		t.Errorf("deadline without plan limit = %v, want nil", got)
+	}
+}
+
 func TestApplyEdgeRuleAsyncEnqueuesAdmittedRequest(t *testing.T) {
 	enqueuer := &recordingAsyncRouteEnqueuer{}
 	h := &Handler{asyncRoutes: enqueuer}
-	rule := &EdgeRuleAsyncResolved{ID: "rule_async", AccountID: "acct_1", AppID: "app_1"}
+	rule := &EdgeRuleAsyncResolved{
+		ID: "rule_async", AccountID: "acct_1", AppID: "app_1",
+		RetryPolicy:   &api.RetryPolicyDTO{MaxAttempts: api.DurableRetryMaxAttempts, BaseSeconds: 1, MaxSeconds: 30, JitterSeconds: 0.2},
+		MaxAgeSeconds: 7200,
+	}
 	app := App{
 		ID:                        "app_1",
 		AccountID:                 "acct_1",
@@ -61,6 +90,7 @@ func TestApplyEdgeRuleAsyncEnqueuesAdmittedRequest(t *testing.T) {
 	r.Header.Set("X-Request-Label", "finance")
 	w := httptest.NewRecorder()
 
+	startedAt := time.Now()
 	if handled := h.applyEdgeRuleAsync(w, r, app, rule); !handled {
 		t.Fatal("async rule was not handled")
 	}
@@ -82,6 +112,16 @@ func TestApplyEdgeRuleAsyncEnqueuesAdmittedRequest(t *testing.T) {
 	}
 	if got.IdempotencyKey != "report-september" {
 		t.Errorf("idempotency key = %q", got.IdempotencyKey)
+	}
+	if got.RetryPolicy == nil || got.RetryPolicy.MaxAttempts != api.MustLimitsFor(api.PlanHobby).MaxQueueAttempts || got.RetryPolicy.BaseSeconds != 1 || got.RetryPolicy.MaxSeconds != 30 || got.RetryPolicy.JitterSeconds != 0.2 {
+		t.Errorf("retry policy = %+v, want plan-capped attempts and configured backoff", got.RetryPolicy)
+	}
+	if got.DeadlineAt == nil {
+		t.Fatal("deadline_at = nil, want configured route maximum age")
+	}
+	deadlineWindow := got.DeadlineAt.Sub(startedAt)
+	if deadlineWindow < 3599*time.Second || deadlineWindow > 3601*time.Second {
+		t.Errorf("deadline window = %s, want Hobby plan cap near 1h", deadlineWindow)
 	}
 	for _, name := range []string{"Authorization", "Cookie", "Connection", "X-Faas-Internal", "X-Remove-Me"} {
 		if _, ok := got.Headers[name]; ok {

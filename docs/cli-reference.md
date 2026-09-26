@@ -21,7 +21,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`connect`](#connect) | Connect a third-party service (github \| repo OWNER/NAME) |
 | [`github`](#github) | Manage an app&#39;s GitHub installation and repository binding |
 | [`cors`](#cors) | Configure CORS for an app (allow\|ls\|rm\|show) |
-| [`crons`](#crons) | Manage scheduled requests |
+| [`crons`](#crons) | Manage scheduled HTTP requests and deployment commands |
 | [`triggers`](#triggers) | Manage unified event triggers (broker mappings + cron-linked rows) |
 | [`workers`](#workers) | Inspect and manage background worker pools |
 | [`jobs`](#jobs) | Manage jobs (run-to-completion workloads) |
@@ -611,7 +611,7 @@ Show per-app default CORS + active rules (defaults to linked context)
 
 ## crons
 
-Manage scheduled requests
+Manage scheduled HTTP requests and deployment commands
 
 `gregale crons [<subcommand>]`
 
@@ -621,7 +621,20 @@ List cron rules
 
 ### crons add
 
-Add a cron rule
+Schedule an HTTP request or deployment command
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (required) | required |
+| `--schedule <EXPR>` | five-field cron expression (required) | required |
+| `--path <PATH>` | HTTP request path (mutually exclusive with --command) |  |
+| `--command <EXEC>` | executable for a deployment command cron |  |
+| `--arg <ARG>` | append one command argument (repeatable) |  |
+| `--shell` | run --command as one shell string |  |
+| `--timeout-seconds <N>` | command timeout (default 600 seconds) |  |
+| `--max-output-bytes <N>` | captured output limit (default 1048576 bytes) |  |
+| `--timezone <TZ>` | IANA timezone (default UTC) |  |
+| `--skip-if-running` | skip fires while the previous run is active |  |
 
 ### crons info
 

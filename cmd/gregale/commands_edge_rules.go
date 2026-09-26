@@ -179,6 +179,13 @@ func cmdEdgeRulesCreate(args []string) int {
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
+	onSuccessWebhook := fs.String("on-success-webhook", "", "kind=async: app webhook subscription ID for successful invocations")
+	onFailureWebhook := fs.String("on-failure-webhook", "", "kind=async: app webhook subscription ID for failed invocations")
+	asyncMaxAttempts := fs.Int("async-max-attempts", 0, "kind=async: total delivery attempts (0=plan default; capped by plan)")
+	asyncRetryBaseSeconds := fs.Float64("async-retry-base-seconds", 0, "kind=async: base retry delay in seconds")
+	asyncRetryMaxSeconds := fs.Float64("async-retry-max-seconds", 0, "kind=async: maximum retry delay in seconds")
+	asyncRetryJitterSeconds := fs.Float64("async-retry-jitter-seconds", 0, "kind=async: retry jitter fraction (0..1)")
+	asyncMaxAgeSeconds := fs.Int("async-max-age-seconds", 0, "kind=async: invocation lifetime from acceptance in seconds (0=plan default)")
 
 	// rewrite
 	rewriteFrom := fs.String("rewrite-from", "", "kind=rewrite: from path (required)")
@@ -314,6 +321,12 @@ func cmdEdgeRulesCreate(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	asyncRetryPolicySet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "async-max-attempts" || strings.HasPrefix(f.Name, "async-retry-") {
+			asyncRetryPolicySet = true
+		}
+	})
 	if *slug == "" || *kind == "" || *matchHost == "" {
 		PrintUsage(os.Stderr, "usage: gregale edge-rules create --app <slug> --kind <K> --match-host <H> [--match-path <P>] [--match-method M]... [--match-header Name=Value]... [--priority N] [--enabled] <kind-specific flags>", "edge-rules")
 		return 1
@@ -384,6 +397,14 @@ func cmdEdgeRulesCreate(args []string) int {
 		MaintenanceMessage:                *maintenanceMessage,
 		RespondStatus:                     *respondStatus,
 		RespondBody:                       *respondBody,
+		AsyncOnSuccess:                    *onSuccessWebhook,
+		AsyncOnFailure:                    *onFailureWebhook,
+		AsyncRetryPolicy: api.RetryPolicyDTO{
+			MaxAttempts: *asyncMaxAttempts, BaseSeconds: *asyncRetryBaseSeconds,
+			MaxSeconds: *asyncRetryMaxSeconds, JitterSeconds: *asyncRetryJitterSeconds,
+		},
+		AsyncRetryPolicySet: asyncRetryPolicySet,
+		AsyncMaxAgeSeconds:  *asyncMaxAgeSeconds,
 	})
 	if err != nil {
 		return printErr("Invalid flags for --kind="+*kind, err)
@@ -478,6 +499,13 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// requires the full new action shape — no partial sub-keys.
 	kind := fs.String("kind", "", "rule kind (required when patching --*-action flags)")
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug")
+	onSuccessWebhook := fs.String("on-success-webhook", "", "kind=async: app webhook subscription ID for successful invocations")
+	onFailureWebhook := fs.String("on-failure-webhook", "", "kind=async: app webhook subscription ID for failed invocations")
+	asyncMaxAttempts := fs.Int("async-max-attempts", 0, "kind=async: total delivery attempts (0=plan default; capped by plan)")
+	asyncRetryBaseSeconds := fs.Float64("async-retry-base-seconds", 0, "kind=async: base retry delay in seconds")
+	asyncRetryMaxSeconds := fs.Float64("async-retry-max-seconds", 0, "kind=async: maximum retry delay in seconds")
+	asyncRetryJitterSeconds := fs.Float64("async-retry-jitter-seconds", 0, "kind=async: retry jitter fraction (0..1)")
+	asyncMaxAgeSeconds := fs.Int("async-max-age-seconds", 0, "kind=async: invocation lifetime from acceptance in seconds (0=plan default)")
 	rewriteFrom := fs.String("rewrite-from", "", "kind=rewrite: from path")
 	rewriteTo := fs.String("rewrite-to", "", "kind=rewrite: to path")
 	redirectStatus := fs.Int("redirect-status", 0, "kind=redirect: status code")
@@ -704,6 +732,14 @@ func cmdEdgeRulesUpdate(args []string) int {
 			MaintenanceMessage:                *maintenanceMessage,
 			RespondStatus:                     *respondStatus,
 			RespondBody:                       *respondBody,
+			AsyncOnSuccess:                    *onSuccessWebhook,
+			AsyncOnFailure:                    *onFailureWebhook,
+			AsyncRetryPolicy: api.RetryPolicyDTO{
+				MaxAttempts: *asyncMaxAttempts, BaseSeconds: *asyncRetryBaseSeconds,
+				MaxSeconds: *asyncRetryMaxSeconds, JitterSeconds: *asyncRetryJitterSeconds,
+			},
+			AsyncRetryPolicySet: visited["async-max-attempts"] || visited["async-retry-base-seconds"] || visited["async-retry-max-seconds"] || visited["async-retry-jitter-seconds"],
+			AsyncMaxAgeSeconds:  *asyncMaxAgeSeconds,
 		})
 		if err != nil {
 			return printErr("Invalid flags for --kind="+*kind, err)
@@ -770,6 +806,11 @@ func cmdEdgeRulesRm(args []string) int {
 type edgeRuleActionInputs struct {
 	// route
 	RouteTarget string
+	// async
+	AsyncOnSuccess, AsyncOnFailure string
+	AsyncRetryPolicy               api.RetryPolicyDTO
+	AsyncRetryPolicySet            bool
+	AsyncMaxAgeSeconds             int
 	// rewrite
 	RewriteFrom, RewriteTo string
 	// redirect
@@ -1165,7 +1206,14 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		}
 		return marshalAction(a)
 	case "async":
-		a := api.EdgeRuleAsyncAction{}
+		a := api.EdgeRuleAsyncAction{
+			OnSuccess: in.AsyncOnSuccess, OnFailure: in.AsyncOnFailure,
+			MaxAgeSeconds: in.AsyncMaxAgeSeconds,
+		}
+		if in.AsyncRetryPolicySet {
+			retryPolicy := in.AsyncRetryPolicy
+			a.RetryPolicy = &retryPolicy
+		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
 		}
@@ -1359,6 +1407,9 @@ func parseHeaderOps(add, set, rm []string, dir string) ([]api.EdgeRuleHeaderOp, 
 func anyKindFlagVisited(visited map[string]bool) bool {
 	kindFlagNames := []string{
 		"route-target-slug",
+		"on-success-webhook", "on-failure-webhook",
+		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
+		"async-retry-jitter-seconds", "async-max-age-seconds",
 		"rewrite-from", "rewrite-to",
 		"redirect-status", "redirect-to", "redirect-header",
 		"headers-request-add", "headers-request-set", "headers-request-remove",

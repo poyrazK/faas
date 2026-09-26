@@ -2767,13 +2767,18 @@ type DomainDoctorObservation struct {
 	CertCheckedAt   time.Time
 }
 
-// Cron is a scheduled synthetic POST through gatewayd-internal (spec §4.3).
+// Cron is a recurring app schedule. Empty Command means an HTTP request cron;
+// a non-empty Command runs against the app's live deployment at fire time.
 type Cron struct {
-	ID       string
-	AppID    string
-	Schedule string // cron expression
-	Path     string
-	Enabled  bool
+	ID                    string
+	AppID                 string
+	Schedule              string // cron expression
+	Path                  string
+	Command               []string
+	CommandShell          bool
+	CommandTimeoutSeconds int
+	CommandMaxOutputBytes int
+	Enabled               bool
 	// SuspendedReason is set by the scheduler when customer intent remains
 	// enabled but the app has no live deployment. A later successful deploy
 	// clears it without re-enabling a cron the customer disabled explicitly.
@@ -2791,8 +2796,12 @@ const CronSuspendedNoLiveDeployment = "no_live_deployment"
 // advances the schedule without dispatching when a prior cron invocation is
 // still pending or dispatching.
 type CronOptions struct {
-	Timezone      string
-	SkipIfRunning bool
+	Timezone              string
+	SkipIfRunning         bool
+	Command               []string
+	CommandShell          bool
+	CommandTimeoutSeconds int
+	CommandMaxOutputBytes int
 }
 
 // FireNowStatus is the closed vocabulary for cron_fire_now_requests.status
@@ -3688,9 +3697,9 @@ type Invocation struct {
 	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
 	// OnSuccessDestinationID and OnFailureDestinationID reference
 	// app_webhooks subscriptions selected by the caller at enqueue time.
-	// They are immutable invocation intent: the scheduler reads them only
-	// after the row reaches a terminal outcome and enqueues one durable
-	// job.finished delivery to the selected subscription.
+	// They are immutable invocation intent: the state store enqueues the
+	// matching durable job.finished delivery atomically when the invocation
+	// reaches a terminal outcome.
 	OnSuccessDestinationID string `json:"on_success_destination_id,omitempty"`
 	OnFailureDestinationID string `json:"on_failure_destination_id,omitempty"`
 }
@@ -7085,10 +7094,16 @@ type EdgeRuleThrottleAction struct {
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
 }
 
-// EdgeRuleAsyncAction is intentionally empty. Matching, payload limits,
-// retry defaults, deadlines, and result retention all reuse the existing
-// durable invocation contract and the account plan's limits.
-type EdgeRuleAsyncAction struct{}
+// EdgeRuleAsyncAction configures a durable async route. Omitted retry and age
+// controls keep the app and account-plan defaults; explicit values are copied
+// to each accepted invocation and the scheduler still applies current plan
+// caps.
+type EdgeRuleAsyncAction struct {
+	OnSuccess     string              `json:"on_success,omitempty"`
+	OnFailure     string              `json:"on_failure,omitempty"`
+	RetryPolicy   *api.RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int                 `json:"max_age_seconds,omitempty"`
+}
 
 // EdgeRuleAction is the kind-tagged union stored in edge_rules.action
 // as jsonb. The wire shape lives in pkg/api/dto.go (one struct per

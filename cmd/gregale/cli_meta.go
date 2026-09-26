@@ -584,10 +584,21 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "crons",
 		DocSlug: "crons",
-		Short:   "Manage scheduled requests",
+		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List cron rules"},
-			{Name: "add", Short: "Add a cron rule"},
+			{Name: "add", Short: "Schedule an HTTP request or deployment command", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (required)", Req: true, Value: "slug"},
+				{Name: "schedule", Short: "five-field cron expression (required)", Req: true, Value: "EXPR"},
+				{Name: "path", Short: "HTTP request path (mutually exclusive with --command)", Value: "PATH"},
+				{Name: "command", Short: "executable for a deployment command cron", Value: "EXEC"},
+				{Name: "arg", Short: "append one command argument (repeatable)", Value: "ARG"},
+				{Name: "shell", Short: "run --command as one shell string"},
+				{Name: "timeout-seconds", Short: "command timeout (default 600 seconds)", Value: "N"},
+				{Name: "max-output-bytes", Short: "captured output limit (default 1048576 bytes)", Value: "N"},
+				{Name: "timezone", Short: "IANA timezone (default UTC)", Value: "TZ"},
+				{Name: "skip-if-running", Short: "skip fires while the previous run is active"},
+			}},
 			{Name: "info", Short: "Show one cron rule"},
 			{Name: "update", Short: "Update one cron rule"},
 			{Name: "rm", Short: "Delete one cron rule"},

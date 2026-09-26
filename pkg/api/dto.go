@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -3506,30 +3507,41 @@ type AddTenantHostnameRequest struct {
 	Hostname string `json:"hostname"`
 }
 
-// CronResponse mirrors the crons table. Timezone and SkipIfRunning expose the
-// optional scheduling controls; LastFiredAt is the most recent fire stamp
-// schedd wrote (MarkCronFired).
+// CronResponse mirrors the crons table. Kind selects either an HTTP path or a
+// deployment-attached command. Timezone and SkipIfRunning expose scheduling
+// controls; LastFiredAt is the most recent fire stamp written by schedd.
 type CronResponse struct {
-	ID              string `json:"id"`
-	AppID           string `json:"app_id"`
-	Schedule        string `json:"schedule"`
-	Path            string `json:"path"`
-	Enabled         bool   `json:"enabled"`
-	SuspendedReason string `json:"suspended_reason,omitempty"`
-	Timezone        string `json:"timezone"`
-	SkipIfRunning   bool   `json:"skip_if_running"`
-	CreatedAt       string `json:"created_at"`
-	LastFiredAt     string `json:"last_fired_at,omitempty"`
+	ID              string   `json:"id"`
+	AppID           string   `json:"app_id"`
+	Kind            string   `json:"kind"`
+	Schedule        string   `json:"schedule"`
+	Path            string   `json:"path,omitempty"`
+	Command         []string `json:"command,omitempty"`
+	CommandShell    bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds  int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes  int      `json:"max_output_bytes,omitempty"`
+	Enabled         bool     `json:"enabled"`
+	SuspendedReason string   `json:"suspended_reason,omitempty"`
+	Timezone        string   `json:"timezone"`
+	SkipIfRunning   bool     `json:"skip_if_running"`
+	CreatedAt       string   `json:"created_at"`
+	LastFiredAt     string   `json:"last_fired_at,omitempty"`
 }
 
-// CreateCronRequest creates a scheduled synthetic POST.
+// CreateCronRequest creates either a scheduled HTTP request or a
+// deployment-attached command schedule. Command and Path are mutually
+// exclusive; omitting both keeps the HTTP default path of "/".
 type CreateCronRequest struct {
-	AppID         string `json:"app_id"`
-	Schedule      string `json:"schedule"`
-	Path          string `json:"path,omitempty"`
-	Enabled       *bool  `json:"enabled,omitempty"`
-	Timezone      string `json:"timezone,omitempty"`
-	SkipIfRunning *bool  `json:"skip_if_running,omitempty"`
+	AppID          string   `json:"app_id"`
+	Schedule       string   `json:"schedule"`
+	Path           string   `json:"path,omitempty"`
+	Command        []string `json:"command,omitempty"`
+	CommandShell   bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes int      `json:"max_output_bytes,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+	Timezone       string   `json:"timezone,omitempty"`
+	SkipIfRunning  *bool    `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
@@ -4757,6 +4769,36 @@ type RetryPolicyDTO struct {
 	JitterSeconds float64 `json:"jitter_seconds,omitempty"`
 }
 
+// Validate checks the shared per-invocation retry override shape. The
+// scheduler still clamps MaxAttempts against the account plan when dispatching
+// so a later downgrade cannot retain a larger retry budget.
+func (p *RetryPolicyDTO) Validate() *Problem {
+	if p == nil {
+		return nil
+	}
+	if p.MaxAttempts < 0 || p.MaxAttempts > DurableRetryMaxAttempts {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", fmt.Sprintf("max_attempts must be between 0 and %d", DurableRetryMaxAttempts))
+	}
+	if p.BaseSeconds < 0 || math.IsNaN(p.BaseSeconds) || math.IsInf(p.BaseSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "base_seconds must be finite and non-negative")
+	}
+	if p.MaxSeconds < 0 || math.IsNaN(p.MaxSeconds) || math.IsInf(p.MaxSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be finite and non-negative")
+	}
+	if p.BaseSeconds > 0 && p.MaxSeconds > 0 && p.MaxSeconds < p.BaseSeconds {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "max_seconds must be at least base_seconds")
+	}
+	if p.JitterSeconds < 0 || p.JitterSeconds > 1 || math.IsNaN(p.JitterSeconds) || math.IsInf(p.JitterSeconds, 0) {
+		return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+			"Invalid invocation retry policy", "jitter_seconds must be between 0 and 1")
+	}
+	return nil
+}
+
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
@@ -4859,13 +4901,16 @@ const (
 	CronRunTimeout CronRunOutcome = "timeout"
 	// CronRunDeadLetter — the per-plan retry budget was exhausted.
 	CronRunDeadLetter CronRunOutcome = "dead_letter"
+	// CronRunCancelled — a deployment-attached command was cancelled.
+	CronRunCancelled CronRunOutcome = "cancelled"
 	// CronRunRunning — the fire is still in flight (the underlying
 	// invocation row is non-terminal and carries no outcome).
 	CronRunRunning CronRunOutcome = "running"
 )
 
 // CronRun is one row of a cron's execution history: GET
-// /v1/crons/{id}/runs.
+// /v1/crons/{id}/runs. HTTP schedules project invocations; command schedules
+// project deployment-attached app tasks.
 //
 // Deliberately NOT the full Invocation shape. A cron run is a narrow
 // question — did it work, when, and for how long — and the caller
@@ -4875,7 +4920,7 @@ const (
 // without churning the cron surface.
 type CronRun struct {
 	ID string `json:"id"`
-	// StartedAt is the underlying invocation's created_at — when the
+	// StartedAt is the underlying invocation/task's created_at — when the
 	// cron fired, not when the app began executing.
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
@@ -4886,6 +4931,7 @@ type CronRun struct {
 	// Attempts is the dispatch count; > 1 means the row was retried.
 	Attempts   int    `json:"attempts"`
 	InstanceID string `json:"instance_id,omitempty"`
+	TaskID     string `json:"task_id,omitempty"`
 	// Error is the operator-facing failure text. Unstructured and
 	// unversioned — branch on Outcome, never on this string.
 	Error string `json:"error,omitempty"`
@@ -7725,14 +7771,25 @@ type EdgeRuleRespondAction struct {
 	Body       json.RawMessage `json:"body,omitempty"`
 }
 
-// EdgeRuleAsyncAction has no knobs in v1. The durable invocation subsystem
-// supplies retry, deadline, retention, and payload limits from the app and
-// account plan, keeping an async route's behavior aligned with /invoke/async.
-type EdgeRuleAsyncAction struct{}
+// EdgeRuleAsyncAction configures an async route's durable execution policy
+// and terminal destinations. Omitted retry and age controls keep the existing
+// app / account-plan defaults.
+type EdgeRuleAsyncAction struct {
+	OnSuccess     string          `json:"on_success,omitempty"`
+	OnFailure     string          `json:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int             `json:"max_age_seconds,omitempty"`
+}
 
 func (a *EdgeRuleAsyncAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("async action is required")
+	}
+	if p := a.RetryPolicy.Validate(); p != nil {
+		return p
+	}
+	if a.MaxAgeSeconds < 0 || a.MaxAgeSeconds > MaxAsyncRouteAgeSeconds {
+		return ErrValidation(fmt.Sprintf("async action: max_age_seconds must be between 0 and %d", MaxAsyncRouteAgeSeconds))
 	}
 	return nil
 }

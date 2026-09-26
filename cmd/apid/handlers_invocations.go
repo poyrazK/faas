@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -905,30 +904,7 @@ func validateInvokeRequest(req invokeRequest) *api.Problem {
 }
 
 func validateInvocationRetryPolicy(policy *api.RetryPolicyDTO) *api.Problem {
-	if policy == nil {
-		return nil
-	}
-	if policy.MaxAttempts < 0 || policy.MaxAttempts > api.DurableRetryMaxAttempts {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", fmt.Sprintf("max_attempts must be between 0 and %d", api.DurableRetryMaxAttempts))
-	}
-	if policy.BaseSeconds < 0 || math.IsNaN(policy.BaseSeconds) || math.IsInf(policy.BaseSeconds, 0) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "base_seconds must be finite and non-negative")
-	}
-	if policy.MaxSeconds < 0 || math.IsNaN(policy.MaxSeconds) || math.IsInf(policy.MaxSeconds, 0) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "max_seconds must be finite and non-negative")
-	}
-	if policy.BaseSeconds > 0 && policy.MaxSeconds > 0 && policy.MaxSeconds < policy.BaseSeconds {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "max_seconds must be at least base_seconds")
-	}
-	if policy.JitterSeconds < 0 || policy.JitterSeconds > 1 || math.IsNaN(policy.JitterSeconds) || math.IsInf(policy.JitterSeconds, 0) {
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid invocation retry policy", "jitter_seconds must be between 0 and 1")
-	}
-	return nil
+	return policy.Validate()
 }
 
 // marshalRetryPolicy (ADR-134 PR-B) converts the wire DTO into the JSONB blob

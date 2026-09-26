@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
+// adr: 099 — HTTP and command schedules have distinct cron identities.
 func TestMigrations_00210_CronsUniqueAppSchedulePath(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
@@ -93,7 +94,7 @@ func TestMigrations_00210_CronsUniqueAppSchedulePath(t *testing.T) {
 	`, appID1)
 	var pgErr *pgconn.PgError
 	if err == nil {
-		t.Errorf("duplicate (app_id, schedule, path) should be rejected by crons_app_schedule_path_unique")
+		t.Errorf("duplicate HTTP (app_id, schedule, path) should be rejected by the cron identity constraint")
 	} else if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
 		t.Errorf("duplicate error = %v, want pgx 23505 (unique_violation)", err)
 	}
@@ -123,5 +124,32 @@ func TestMigrations_00210_CronsUniqueAppSchedulePath(t *testing.T) {
 	`, appID2)
 	if err != nil {
 		t.Errorf("different app, same triple should be OK: %v", err)
+	}
+
+	// The current identity key includes command argv so HTTP and direct
+	// command schedules coexist, while an identical command schedule remains
+	// unique.
+	_, err = pool.Exec(ctx, `
+		insert into crons (app_id, schedule, path, command)
+		values ($1, '*/5 * * * *', '/cleanup', ARRAY['bin/cleanup']::text[])
+	`, appID1)
+	if err != nil {
+		t.Fatalf("first command insert: %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		insert into crons (app_id, schedule, path, command)
+		values ($1, '*/5 * * * *', '/cleanup', ARRAY['bin/cleanup']::text[])
+	`, appID1)
+	if err == nil {
+		t.Error("duplicate command schedule should be rejected by the cron identity constraint")
+	} else if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Errorf("duplicate command error = %v, want pgx 23505 (unique_violation)", err)
+	}
+	_, err = pool.Exec(ctx, `
+		insert into crons (app_id, schedule, path, command)
+		values ($1, '*/5 * * * *', '/cleanup', ARRAY['bin/other']::text[])
+	`, appID1)
+	if err != nil {
+		t.Errorf("same path and schedule, different command should be OK: %v", err)
 	}
 }

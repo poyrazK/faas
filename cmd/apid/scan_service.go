@@ -2394,6 +2394,9 @@ func projectCronsWithPreserved(
 			continue
 		}
 		for _, cron := range inventory[app.ID] {
+			if len(cron.Command) > 0 {
+				continue
+			}
 			out = append(out, planCron{
 				WorkloadName: app.WorkloadName,
 				Schedule:     cron.Schedule,

@@ -3636,6 +3636,15 @@ func (m *MemStore) ApplyProjectReconcile(
 			if app.ProjectID != project.ID || app.AccountID != project.AccountID || app.PreviewOfSlug != "" {
 				continue
 			}
+			if app.Status == AppDeleted {
+				delete(m.crons, id)
+				continue
+			}
+			// Command crons are explicitly managed through `gregale crons`;
+			// project manifests only describe HTTP path crons.
+			if len(cron.Command) > 0 {
+				continue
+			}
 			key := cron.Schedule + "\x00" + cron.Path
 			desired, keep := desiredByApp[cron.AppID][key]
 			if !keep || kept[cron.AppID][key] {
@@ -10698,10 +10707,11 @@ func (m *MemStore) CreateCronWithOptions(_ context.Context, appID, schedule, pat
 	if _, ok := m.apps[appID]; !ok {
 		return Cron{}, fmt.Errorf("state: cron for unknown app %q", appID)
 	}
-	if opts.Timezone == "" {
-		opts.Timezone = "UTC"
-	}
-	c := Cron{ID: newID(), AppID: appID, Schedule: schedule, Path: path, Enabled: enabled, Timezone: opts.Timezone, SkipIfRunning: opts.SkipIfRunning, CreatedAt: time.Now()}
+	opts = normalizeCronOptions(opts)
+	c := Cron{ID: newID(), AppID: appID, Schedule: schedule, Path: path,
+		Command: append([]string(nil), opts.Command...), CommandShell: opts.CommandShell,
+		CommandTimeoutSeconds: opts.CommandTimeoutSeconds, CommandMaxOutputBytes: opts.CommandMaxOutputBytes,
+		Enabled: enabled, Timezone: opts.Timezone, SkipIfRunning: opts.SkipIfRunning, CreatedAt: time.Now()}
 	m.crons[c.ID] = c
 	return c, nil
 }
@@ -10729,14 +10739,14 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 	if !ok || app.Status == AppDeleted {
 		return Cron{}, ErrNotFound
 	}
-	if opts.Timezone == "" {
-		opts.Timezone = "UTC"
-	}
+	opts = normalizeCronOptions(opts)
 	// Match PgStore: an identical retry returns the durable row before quota
 	// checks, so reapplying at the exact cap remains idempotent.
 	for _, c := range m.crons {
-		if c.AppID == appID && c.Schedule == schedule && c.Path == path &&
-			c.Enabled == enabled && c.Timezone == opts.Timezone && c.SkipIfRunning == opts.SkipIfRunning {
+		if c.AppID == appID && c.Schedule == schedule && c.Path == path && sameCronCommand(c.Command, opts.Command) &&
+			c.Enabled == enabled && c.Timezone == opts.Timezone && c.SkipIfRunning == opts.SkipIfRunning &&
+			c.CommandShell == opts.CommandShell && c.CommandTimeoutSeconds == opts.CommandTimeoutSeconds &&
+			c.CommandMaxOutputBytes == opts.CommandMaxOutputBytes {
 			return c, nil
 		}
 	}
@@ -10775,14 +10785,18 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 		}
 	}
 	c := Cron{
-		ID:            newID(),
-		AppID:         appID,
-		Schedule:      schedule,
-		Path:          path,
-		Enabled:       enabled,
-		Timezone:      opts.Timezone,
-		SkipIfRunning: opts.SkipIfRunning,
-		CreatedAt:     time.Now(),
+		ID:                    newID(),
+		AppID:                 appID,
+		Schedule:              schedule,
+		Path:                  path,
+		Command:               append([]string(nil), opts.Command...),
+		CommandShell:          opts.CommandShell,
+		CommandTimeoutSeconds: opts.CommandTimeoutSeconds,
+		CommandMaxOutputBytes: opts.CommandMaxOutputBytes,
+		Enabled:               enabled,
+		Timezone:              opts.Timezone,
+		SkipIfRunning:         opts.SkipIfRunning,
+		CreatedAt:             time.Now(),
 	}
 	m.crons[c.ID] = c
 	return c, nil
@@ -11819,6 +11833,9 @@ func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.
 	inv.CompletedAt = &now
 	outcome := OutcomeSuccess
 	inv.Outcome = &outcome
+	if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
+		return err
+	}
 	m.invocations[id] = inv
 	// PR-B fixup (code-review #1185 finding #6): MemStore parity
 	// with PgStore. Without the decrement, ClaimInvocationWithCap
@@ -11844,6 +11861,27 @@ func (m *MemStore) decrementAccountAsyncInflightLocked(accountID string) {
 		q.CurrentInflight--
 	}
 	m.accountAsyncQuota[accountID] = q
+}
+
+// enqueueInvocationDestinationLocked mirrors the PgStore transaction path.
+// Caller holds m.mu so the callback row and terminal invocation become
+// visible together to MemStore readers.
+func (m *MemStore) enqueueInvocationDestinationLocked(inv Invocation) error {
+	delivery, ok, err := invocationDestinationDelivery(inv)
+	if err != nil || !ok {
+		return err
+	}
+	hook, exists := m.appWebhooks[delivery.WebhookID]
+	if !exists || !hook.Enabled || hook.AppID != delivery.AppID || hook.AccountID != delivery.AccountID {
+		return nil
+	}
+	delivery.ID = newID()
+	delivery.UpdatedAt = delivery.CreatedAt
+	if m.appWebhookDeliveries == nil {
+		m.appWebhookDeliveries = make(map[string]AppWebhookDelivery)
+	}
+	m.appWebhookDeliveries[delivery.ID] = delivery
+	return nil
 }
 
 // FailInvocation is the durable store half of the drain's error
@@ -11917,6 +11955,11 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		// ApplyFailOptions defaults it to OutcomeFailed.
 		outcome := failOpts.Outcome
 		inv.Outcome = &outcome
+	}
+	if inv.State == InvocationFailed || inv.State == InvocationDeadLetter {
+		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
+			return err
+		}
 	}
 	m.invocations[id] = inv
 	// A slot belongs to the dispatching lease. Release it on every
@@ -23550,6 +23593,9 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		inv.LastError = "deadline_at breached"
 		now := time.Now()
 		inv.CompletedAt = &now
+		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
+			return nil, err
+		}
 		m.invocations[id] = inv
 		if quotaReserved {
 			m.decrementAccountAsyncInflightLocked(inv.AccountID)

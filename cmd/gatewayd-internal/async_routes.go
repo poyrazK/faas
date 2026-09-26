@@ -40,20 +40,29 @@ func (e *asyncRouteEnqueuer) EnqueueAsyncRoute(ctx context.Context, req gateway.
 		invocationID = uuid.NewSHA1(asyncRouteInvocationNamespace, []byte(req.AppID+"\x00"+req.IdempotencyKey)).String()
 	}
 	retryPolicy := app.RetryPolicyJSON
+	if req.RetryPolicy != nil {
+		retryPolicy, err = json.Marshal(req.RetryPolicy)
+		if err != nil {
+			return gateway.AsyncRouteAccepted{}, err
+		}
+	}
 	if string(retryPolicy) == "{}" {
 		retryPolicy = nil
 	}
 	prepared, version, err := state.ResolveInvocationVersion(ctx, e.store, state.Invocation{
-		ID:              invocationID,
-		AppID:           req.AppID,
-		AccountID:       req.AccountID,
-		Source:          state.InvocationAsyncInvoke,
-		Method:          req.Method,
-		Path:            req.Path,
-		Payload:         append(json.RawMessage(nil), req.Payload...),
-		Headers:         headers,
-		DueAt:           time.Now().UTC(),
-		RetryPolicyJSON: append(json.RawMessage(nil), retryPolicy...),
+		ID:                     invocationID,
+		AppID:                  req.AppID,
+		AccountID:              req.AccountID,
+		Source:                 state.InvocationAsyncInvoke,
+		Method:                 req.Method,
+		Path:                   req.Path,
+		Payload:                append(json.RawMessage(nil), req.Payload...),
+		Headers:                headers,
+		DueAt:                  time.Now().UTC(),
+		RetryPolicyJSON:        append(json.RawMessage(nil), retryPolicy...),
+		DeadlineAt:             req.DeadlineAt,
+		OnSuccessDestinationID: req.OnSuccessWebhook,
+		OnFailureDestinationID: req.OnFailureWebhook,
 	})
 	if err != nil {
 		return gateway.AsyncRouteAccepted{}, err
