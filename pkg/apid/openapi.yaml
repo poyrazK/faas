@@ -550,6 +550,37 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/service-caller-keys:
+    get:
+      tags: [networking]
+      operationId: getServiceCallerKeys
+      summary: Read the public keys used to verify service-caller assertions.
+      description: |
+        Unauthenticated, rate-limited JWKS containing only public Ed25519 keys.
+        Keys retired during node rotation remain listed for the 30-second
+        assertion lifetime. Cache responses only briefly and refresh on an
+        unknown `kid` before rejecting an otherwise valid assertion.
+      security: []
+      responses:
+        '200':
+          description: Current and rotation-grace verification keys.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Public max-age 5 seconds; stale responses must be revalidated.
+          content:
+            application/jwk-set+json:
+              schema: { $ref: '#/components/schemas/ServiceCallerJWKSet' }
+        '429':
+          description: Source-IP request limit exceeded.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '500':
+          description: The public verification key set could not be read safely.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/status:
     get:
@@ -22560,6 +22591,28 @@ components:
       maxProperties: 100
       additionalProperties:
         $ref: '#/components/schemas/ServiceCallScope'
+
+    ServiceCallerJWK:
+      description: "Public Ed25519 key used to verify a signed service-caller assertion."
+      type: object
+      required: [kty, crv, kid, x, alg, use]
+      properties:
+        kty: { type: string, enum: [OKP] }
+        crv: { type: string, enum: [Ed25519] }
+        kid: { type: string, minLength: 16, maxLength: 64 }
+        x: { type: string, minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}$' }
+        alg: { type: string, enum: [EdDSA] }
+        use: { type: string, enum: [sig] }
+
+    ServiceCallerJWKSet:
+      description: "Public-only JWKS for verifying Gregale service-caller assertions."
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          maxItems: 20000
+          items: { $ref: '#/components/schemas/ServiceCallerJWK' }
 
     PreviewServiceCallsPolicy:
       description: "Production target policy for internal service calls from preview apps. `allow` preserves existing behavior; `deny` rejects preview callers before waking the target."

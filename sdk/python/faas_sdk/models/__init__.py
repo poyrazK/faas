@@ -1427,6 +1427,12 @@ from .send_app_message_response_status import SendAppMessageResponseStatus
 from .service_binding_policy import ServiceBindingPolicy
 from .service_binding_transport import ServiceBindingTransport
 from .service_call_scope import ServiceCallScope
+from .service_caller_jwk import ServiceCallerJWK
+from .service_caller_jwk_alg import ServiceCallerJWKAlg
+from .service_caller_jwk_crv import ServiceCallerJWKCrv
+from .service_caller_jwk_kty import ServiceCallerJWKKty
+from .service_caller_jwk_set import ServiceCallerJWKSet
+from .service_caller_jwk_use import ServiceCallerJWKUse
 from .service_caller_scopes import ServiceCallerScopes
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
@@ -3035,6 +3041,12 @@ __all__ = (
     "SendAppMessageResponseStatus",
     "ServiceBindingPolicy",
     "ServiceBindingTransport",
+    "ServiceCallerJWK",
+    "ServiceCallerJWKAlg",
+    "ServiceCallerJWKCrv",
+    "ServiceCallerJWKKty",
+    "ServiceCallerJWKSet",
+    "ServiceCallerJWKUse",
     "ServiceCallerScopes",
     "ServiceCallScope",
     "ServiceReplicas",

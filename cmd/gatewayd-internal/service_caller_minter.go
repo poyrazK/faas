@@ -24,9 +24,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -94,8 +92,8 @@ func newServiceCallerMinter(ctx context.Context, store state.ServiceCallerKeySto
 // itself produces assertions nobody else can check.
 //
 // A publish failure is logged, not fatal: the daemon still serves traffic, and
-// the assertion is additive. Failing boot over it would take a node out of
-// rotation for a feature nothing consumes yet.
+// the assertion is additive. Workloads must remain tolerant of absent or
+// unverifiable assertions until every source node is publishing successfully.
 func publishServiceCallerKey(ctx context.Context, store state.ServiceCallerKeyStore, nodeID string, priv ed25519.PrivateKey, kid string, log *slog.Logger) {
 	if store == nil || strings.TrimSpace(nodeID) == "" {
 		return
@@ -211,7 +209,5 @@ func parseServiceCallerKeyPEM(data []byte) (ed25519.PrivateKey, error) {
 // key always publishes the same kid and a verifier can map kid → node without
 // extra bookkeeping.
 func serviceCallerKid(priv ed25519.PrivateKey) string {
-	pub := priv.Public().(ed25519.PublicKey)
-	sum := sha256.Sum256(pub)
-	return base64.RawURLEncoding.EncodeToString(sum[:16])
+	return servicecaller.KeyID(priv.Public().(ed25519.PublicKey))
 }

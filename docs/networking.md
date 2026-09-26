@@ -524,9 +524,32 @@ The header is platform-owned and stripped from anything a workload sends, so it
 cannot be forged. It is additive: nothing rejects a call for lacking one, and a
 signing failure forwards the call unsigned rather than dropping it.
 
-Guest-reachable key publication and a runtime verification helper are not
-shipped yet, so this is currently useful for operators wiring their own
-verification. Leave the flag off otherwise.
+Guest workloads can fetch the public-only JWKS from
+`https://<api-origin>/v1/service-caller-keys` without an API token. The endpoint
+is rate-limited, contains no tenant metadata, and publishes only Ed25519 public
+keys. Responses are cacheable for five seconds and must be revalidated
+afterward; refresh immediately when a token names an unknown `kid`. During
+node key rotation, the previous key stays published for the assertion's
+30-second maximum lifetime so requests already in flight remain verifiable.
+
+Verification must check the signature, issuer `gregale.svc`, audience equal to
+the target app's platform-injected `FAAS_APP_ID`, and the token time window.
+Gregale's Go `pkg/servicecaller` package exposes `FetchTrustedKeys` and
+`Verify` for this flow:
+
+```go
+keys, err := servicecaller.FetchTrustedKeys(ctx, http.DefaultClient, apiOrigin+"/v1/service-caller-keys")
+if err != nil {
+    return err
+}
+caller, err := servicecaller.Verify(r.Header.Get("X-Faas-Caller-Assertion"), keys, os.Getenv("FAAS_APP_ID"), time.Now())
+```
+
+The signer remains opt-in and is not made a fleet-wide default by this
+endpoint. Enable `FAAS_SERVICE_CALLER_ASSERTIONS=1` on every node that may
+originate calls before making verified identity mandatory in a workload; while
+rollout is mixed, an absent assertion is still possible and must not be treated
+as verified identity.
 
 ## Internal-only ingress
 

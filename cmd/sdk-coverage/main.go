@@ -285,6 +285,8 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":     "UnbindOutboundIntegration",
 	"PUT /v1/outbound/integrations/{integration}/credential":     "PutOutboundCredential",
 	"DELETE /v1/outbound/integrations/{integration}/credential":  "DeleteOutboundCredential",
+	// The hyphenated path uses its explicit OpenAPI operationId in the Go SDK.
+	"GET /v1/service-caller-keys": "GetServiceCallerKeys",
 	// First-class queue bindings use a hyphenated path segment. Pin the
 	// noun-oriented Go SDK names instead of the fallback's literal
 	// "Queue-bindings" spelling.

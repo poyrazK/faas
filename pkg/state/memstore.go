@@ -142,8 +142,10 @@ type MemStore struct {
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
 	runtimeConfigChangedAt map[string]time.Time
 	// serviceCallerKeys mirrors service_caller_keys: one published
-	// public key per node (ADR-206).
-	serviceCallerKeys map[string]ServiceCallerKey
+	// public key per node (ADR-206). Rotated keys remain trusted only for
+	// the assertion maximum TTL so requests already in flight can finish.
+	serviceCallerKeys       map[string]ServiceCallerKey
+	serviceCallerKeyHistory map[string]retiredServiceCallerKey
 	// customMetrics[appID][name] holds ADR-202 pushed gauges. Nested so
 	// the per-app distinct-name cap is a len() on the inner map, matching
 	// what PgStore's count(*) over (app_id) measures.
