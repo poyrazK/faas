@@ -365,7 +365,10 @@ func TestWorkflowOrchestrator_RetryAndFail(t *testing.T) {
 		t.Fatalf("retry run = status %s scheduled_for %s, want pending in the future", queued.Status, queued.ScheduledFor)
 	}
 
-	// Tick 2: advances run again -> attempt 2 -> retries exhausted -> dead
+	// Tick 2: the retry is eligible only after its persisted deadline.
+	if delay := time.Until(queued.ScheduledFor); delay > 0 {
+		time.Sleep(delay + 10*time.Millisecond)
+	}
 	_ = orch.AdvanceWorkflowRun(ctx, run.ID)
 	steps, _ = store.GetWorkflowSteps(ctx, run.ID)
 	if steps[0].Attempt != 2 || steps[0].Status != state.WorkflowStepStatusDead {

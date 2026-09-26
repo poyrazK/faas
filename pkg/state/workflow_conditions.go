@@ -89,10 +89,7 @@ func (m *MemStore) ResolveWorkflowCondition(_ context.Context, u WorkflowConditi
 		if step.Status == WorkflowStepStatusPending || step.NextCheckAt == nil || !now.Before(*step.NextCheckAt) {
 			return WorkflowConditionOutcome{Status: WorkflowConditionReady}, nil
 		}
-		wake := *step.NextCheckAt
-		if run.Status == WorkflowRunStatusAwaitingEvent && run.ScheduledFor.Before(wake) {
-			wake = run.ScheduledFor
-		}
+		wake := earlierWorkflowWake(run.ScheduledFor, *step.NextCheckAt, now)
 		run.Status = WorkflowRunStatusAwaitingEvent
 		run.ScheduledFor = wake
 		run.UpdatedAt = now
@@ -124,10 +121,7 @@ func (m *MemStore) ResolveWorkflowCondition(_ context.Context, u WorkflowConditi
 	step.Status = WorkflowStepStatusAwaitingEvent
 	step.NextCheckAt = &next
 	m.workflowSteps[u.RunID][u.StepName] = step
-	wake := next
-	if run.Status == WorkflowRunStatusAwaitingEvent && run.ScheduledFor.Before(wake) {
-		wake = run.ScheduledFor
-	}
+	wake := earlierWorkflowWake(run.ScheduledFor, next, now)
 	run.Status = WorkflowRunStatusAwaitingEvent
 	run.CurrentStep = &u.StepName
 	run.ScheduledFor = wake
@@ -207,10 +201,7 @@ func (s *PgStore) ResolveWorkflowCondition(ctx context.Context, u WorkflowCondit
 		if status == WorkflowStepStatusPending || nextCheckAt == nil || !now.Before(*nextCheckAt) {
 			return WorkflowConditionOutcome{Status: WorkflowConditionReady}, tx.Commit(ctx)
 		}
-		wake := *nextCheckAt
-		if runStatus == WorkflowRunStatusAwaitingEvent && scheduledFor.Before(wake) {
-			wake = scheduledFor
-		}
+		wake := earlierWorkflowWake(scheduledFor, *nextCheckAt, now)
 		if _, err := tx.Exec(ctx, `UPDATE workflow_runs SET status = 'awaiting_event', scheduled_for = $2, updated_at = $3 WHERE id = $1`, u.RunID, wake, now); err != nil {
 			return WorkflowConditionOutcome{}, fmt.Errorf("pgstore: repark condition: %w", err)
 		}
@@ -235,10 +226,7 @@ func (s *PgStore) ResolveWorkflowCondition(ctx context.Context, u WorkflowCondit
 		return resolveExpiredPgCondition(ctx, tx, u, now)
 	}
 	next := workflowConditionWake(now, *startedAt, u.Interval, u.Timeout)
-	wake := next
-	if runStatus == WorkflowRunStatusAwaitingEvent && scheduledFor.Before(wake) {
-		wake = scheduledFor
-	}
+	wake := earlierWorkflowWake(scheduledFor, next, now)
 	if _, err := tx.Exec(ctx, `UPDATE workflow_steps SET status = 'awaiting_event', output = $3, error = $4, next_check_at = $5 WHERE run_id = $1 AND step_name = $2`, u.RunID, u.StepName, u.Result, u.Error, next); err != nil {
 		return WorkflowConditionOutcome{}, fmt.Errorf("pgstore: park condition step: %w", err)
 	}

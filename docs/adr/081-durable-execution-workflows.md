@@ -201,6 +201,10 @@ with exponential backoff up to the step's `max_attempts`. A 4xx
 fails the step (the run continues if downstream steps have
 `on_error: continue`, otherwise the run is `dead`).
 
+The retry deadline is persisted on the step row. A run with parallel waits and
+retries wakes for the earliest deadline, and unrelated events cannot execute a
+retry before that step's backoff expires.
+
 The synthetic-wake RPC is the existing `GatewaySynth.Invoke` on
 `pkg/sched/loop.go:1313` (the cron path crosses the
 schedd→gatewayd boundary through this RPC; the new

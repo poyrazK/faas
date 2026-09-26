@@ -26712,6 +26712,7 @@ components:
         output: {}
         started_at: { type: [string, 'null'], format: date-time }
         next_check_at: { type: [string, 'null'], format: date-time }
+        next_retry_at: { type: [string, 'null'], format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }
         error: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }

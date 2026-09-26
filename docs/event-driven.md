@@ -30,6 +30,11 @@ workflows:
         depends_on: [check_delivery]
 ```
 
+Handler retries persist a `next_retry_at` deadline per step, so an unrelated
+event cannot run a retry before its configured backoff expires. When a workflow
+has parallel waits and retries, the scheduler wakes it for the earliest due
+step.
+
 Deploy the manifest, then start a run with:
 
 ```bash

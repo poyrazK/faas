@@ -331,6 +331,9 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		if s.Status != state.WorkflowStepStatusPending {
 			continue
 		}
+		if s.NextRetryAt != nil && time.Now().UTC().Before(*s.NextRetryAt) {
+			continue
+		}
 
 		stepSpec, exists := specStepMap[s.StepName]
 		if !exists {
@@ -392,17 +395,16 @@ func (o *WorkflowOrchestrator) AdvanceWorkflowRun(ctx context.Context, runID str
 		// Recurse to see if downstream steps are unlocked
 		return o.AdvanceWorkflowRun(ctx, runID)
 	}
-	// An active condition has an independent next-check timestamp. Reconcile
-	// the run wake against every parked wait after this pass, so a parallel
-	// timer or event deadline is not lost when the checker re-parks.
-	if err := o.reconcileConditionWake(ctx, runID, spec); err != nil {
+	// Reconcile all parked waits and retry deadlines after this pass. This also
+	// corrects the run wake after an unrelated event caused an early dispatch.
+	if err := o.reconcileWorkflowWake(ctx, runID, spec); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (o *WorkflowOrchestrator) reconcileConditionWake(ctx context.Context, runID string, spec api.WorkflowSpec) error {
+func (o *WorkflowOrchestrator) reconcileWorkflowWake(ctx context.Context, runID string, spec api.WorkflowSpec) error {
 	steps, err := o.store.GetWorkflowSteps(ctx, runID)
 	if err != nil {
 		return err
@@ -411,9 +413,21 @@ func (o *WorkflowOrchestrator) reconcileConditionWake(ctx context.Context, runID
 	for _, item := range spec.Steps {
 		byName[item.Name] = item
 	}
-	conditionAwaiting := false
 	var earliest time.Time
+	nextStatus := ""
+	consider := func(due time.Time, status string) {
+		if due.IsZero() {
+			return
+		}
+		if earliest.IsZero() || due.Before(earliest) || (due.Equal(earliest) && status == state.WorkflowRunStatusPending) {
+			earliest = due
+			nextStatus = status
+		}
+	}
 	for _, step := range steps {
+		if step.Status == state.WorkflowStepStatusPending && step.NextRetryAt != nil {
+			consider(*step.NextRetryAt, state.WorkflowRunStatusPending)
+		}
 		if step.Status != state.WorkflowStepStatusAwaitingEvent || step.StartedAt == nil {
 			continue
 		}
@@ -421,19 +435,16 @@ func (o *WorkflowOrchestrator) reconcileConditionWake(ctx context.Context, runID
 		var due time.Time
 		switch {
 		case item.WaitForCondition != nil && step.NextCheckAt != nil:
-			conditionAwaiting = true
 			due = *step.NextCheckAt
 		case item.WaitForDuration > 0:
 			due = step.StartedAt.Add(item.WaitForDuration)
 		case item.WaitForEvent != "" || item.WaitForCallback:
 			due = step.StartedAt.Add(item.Timeout)
 		}
-		if !due.IsZero() && (earliest.IsZero() || due.Before(earliest)) {
-			earliest = due
-		}
+		consider(due, state.WorkflowRunStatusAwaitingEvent)
 	}
-	if conditionAwaiting && !earliest.IsZero() {
-		return o.store.SetWorkflowRunWaitWake(ctx, runID, earliest)
+	if !earliest.IsZero() {
+		return o.store.SetWorkflowRunWake(ctx, runID, nextStatus, earliest)
 	}
 	return nil
 }
@@ -595,11 +606,8 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	if (statusCode >= 500 || err != nil) && step.Attempt+1 < maxAttempts {
 		// Retry eligible — schedule the next attempt after the configured
 		// backoff so a failing dependency cannot hot-loop the dispatcher.
-		if err := o.store.MarkWorkflowStepStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusPending, step.Attempt+1, nil, &errMsg); err != nil {
-			return false, err
-		}
-		if err := o.store.ScheduleWorkflowRun(ctx, run.ID, state.WorkflowRunStatusPending,
-			time.Now().UTC().Add(workflowRetryDelay(spec, step.Attempt+1))); err != nil {
+		retryAt := time.Now().UTC().Add(workflowRetryDelay(spec, step.Attempt+1))
+		if err := o.store.ScheduleWorkflowStepRetry(ctx, run.ID, step.StepName, step.Attempt+1, retryAt, errMsg); err != nil {
 			return false, err
 		}
 		return false, nil

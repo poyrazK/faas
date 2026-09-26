@@ -25,6 +25,7 @@ class WorkflowStepResponse:
     output: Any | Unset = UNSET
     started_at: datetime.datetime | None | Unset = UNSET
     next_check_at: datetime.datetime | None | Unset = UNSET
+    next_retry_at: datetime.datetime | None | Unset = UNSET
     finished_at: datetime.datetime | None | Unset = UNSET
     error: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -58,6 +59,14 @@ class WorkflowStepResponse:
         else:
             next_check_at = self.next_check_at
 
+        next_retry_at: None | str | Unset
+        if isinstance(self.next_retry_at, Unset):
+            next_retry_at = UNSET
+        elif isinstance(self.next_retry_at, datetime.datetime):
+            next_retry_at = self.next_retry_at.isoformat()
+        else:
+            next_retry_at = self.next_retry_at
+
         finished_at: None | str | Unset
         if isinstance(self.finished_at, Unset):
             finished_at = UNSET
@@ -90,6 +99,8 @@ class WorkflowStepResponse:
             field_dict["started_at"] = started_at
         if next_check_at is not UNSET:
             field_dict["next_check_at"] = next_check_at
+        if next_retry_at is not UNSET:
+            field_dict["next_retry_at"] = next_retry_at
         if finished_at is not UNSET:
             field_dict["finished_at"] = finished_at
         if error is not UNSET:
@@ -146,6 +157,23 @@ class WorkflowStepResponse:
 
         next_check_at = _parse_next_check_at(d.pop("next_check_at", UNSET))
 
+        def _parse_next_retry_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                next_retry_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return next_retry_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        next_retry_at = _parse_next_retry_at(d.pop("next_retry_at", UNSET))
+
         def _parse_finished_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
                 return data
@@ -181,6 +209,7 @@ class WorkflowStepResponse:
             output=output,
             started_at=started_at,
             next_check_at=next_check_at,
+            next_retry_at=next_retry_at,
             finished_at=finished_at,
             error=error,
         )

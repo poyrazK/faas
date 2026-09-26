@@ -162,6 +162,13 @@ type WorkflowRun struct {
 	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
+func earlierWorkflowWake(current, candidate, now time.Time) time.Time {
+	if current.After(now) && (candidate.IsZero() || current.Before(candidate)) {
+		return current
+	}
+	return candidate
+}
+
 // WorkflowStep is one row of public.workflow_steps.
 type WorkflowStep struct {
 	RunID       string          `json:"run_id"`
@@ -172,6 +179,7 @@ type WorkflowStep struct {
 	Output      json.RawMessage `json:"output,omitempty"`
 	StartedAt   *time.Time      `json:"started_at,omitempty"`
 	NextCheckAt *time.Time      `json:"next_check_at,omitempty"`
+	NextRetryAt *time.Time      `json:"next_retry_at,omitempty"`
 	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
 	Error       *string         `json:"error,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
@@ -209,9 +217,9 @@ type WorkflowStore interface {
 	// event wait takes its timeout path.
 	ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error)
 	ScheduleWorkflowRun(ctx context.Context, id, status string, scheduledFor time.Time) error
-	// SetWorkflowRunWaitWake replaces a parked run's deadline after all active
-	// waits have been evaluated. It does not override a newly pending event wake.
-	SetWorkflowRunWaitWake(ctx context.Context, id string, scheduledFor time.Time) error
+	// SetWorkflowRunWake replaces the scheduler wake after active waits and
+	// pending retries have been evaluated.
+	SetWorkflowRunWake(ctx context.Context, id, status string, scheduledFor time.Time) error
 	RecoverWorkflowRun(ctx context.Context, id string) error
 	CancelWorkflowRun(ctx context.Context, id, reason string) (*WorkflowRun, error)
 	CountActiveRunsByApp(ctx context.Context, appID string) (int, error)
@@ -220,6 +228,8 @@ type WorkflowStore interface {
 	CreateWorkflowSteps(ctx context.Context, runID string, steps []*WorkflowStep) error
 	GetWorkflowSteps(ctx context.Context, runID string) ([]*WorkflowStep, error)
 	MarkWorkflowStepStatus(ctx context.Context, runID, stepName, status string, attempt int, output json.RawMessage, err *string) error
+	// ScheduleWorkflowStepRetry atomically persists the retry deadline and run wake.
+	ScheduleWorkflowStepRetry(ctx context.Context, runID, stepName string, attempt int, retryAt time.Time, stepErr string) error
 	// ParkWorkflowTimer atomically records the step's first activation and the
 	// run's durable wake deadline. Re-parking never resets the original deadline.
 	ParkWorkflowTimer(ctx context.Context, runID, stepName string, duration time.Duration) (time.Time, error)
