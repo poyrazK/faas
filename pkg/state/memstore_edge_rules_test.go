@@ -15,6 +15,7 @@ package state_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -129,7 +130,7 @@ func TestMemStore_EdgeRule_ManifestKeyUniquePerApp(t *testing.T) {
 	if created.ManifestKey != params.ManifestKey {
 		t.Fatalf("ManifestKey = %q, want %q", created.ManifestKey, params.ManifestKey)
 	}
-	if _, err := m.CreateEdgeRule(ctx, params); err != state.ErrConflict {
+	if _, err := m.CreateEdgeRule(ctx, params); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate manifest key error = %v, want ErrConflict", err)
 	}
 }

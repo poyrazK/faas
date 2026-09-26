@@ -1,3 +1,5 @@
+-- filename: 20260926094619939_manifest_edge_rule_ownership.sql
+
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE edge_rules
