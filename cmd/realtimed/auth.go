@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/edgejwks"
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
 )
 
@@ -16,6 +18,9 @@ type realtimeJWTAuthorizer struct {
 
 func newRealtimeJWTAuthorizer(log *slog.Logger) realtime.JWTAuthorizer {
 	cache := edgejwks.NewCache(edgejwks.Options{
+		// auth_jwks_url is customer-supplied; fetch it through the §11
+		// egress guard like the callback client (see newJWKSHTTPClient).
+		HTTPClient: newJWKSHTTPClient(),
 		OnFetchErr: func(rawURL string, err error) {
 			if log != nil {
 				log.Warn("realtime: jwks fetch failed", "jwks_url", rawURL, "err", err)
@@ -51,4 +56,18 @@ func (a *realtimeJWTAuthorizer) Authorize(ctx context.Context, rawToken string, 
 		return "", fmt.Errorf("realtime: jwt subject is missing")
 	}
 	return claims.Subject, nil
+}
+
+// newJWKSHTTPClient fetches an endpoint's customer-supplied JWKS URL. The
+// API validator rejects only a fixed list of private-address string
+// prefixes, so a hostname resolving to a node-local or metadata address —
+// or a redirect to one — needs the dial-time guard.
+func newJWKSHTTPClient() *http.Client {
+	client := oci.NewEgressHTTPClient()
+	// Dev/test-only escape hatch, gated on FAAS_EGRESS_ALLOW_LOOPBACK=1.
+	if loopback := oci.NewEgressHTTPClientAllowLoopback(); loopback != nil {
+		client = loopback
+	}
+	client.Timeout = edgejwks.DefaultFetchTimeout
+	return client
 }

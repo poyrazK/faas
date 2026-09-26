@@ -23,6 +23,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/edgejwks"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/oci"
 )
 
 // edgeJWKSAdapter adapts pkg/edgejwks.Verifier to
@@ -36,12 +37,11 @@ type edgeJWKSAdapter struct {
 
 // newEdgeJWKSAdapter constructs the production JWKS adapter with
 // the standard 5-minute refresh interval + 5-second fetch timeout.
-// The cache uses http.DefaultClient because the JWKS endpoint is
-// a public URL (no auth, no proxy); cmd/gatewayd-internal/main.go
-// can swap the client if a future PR adds egress proxying.
+// The JWKS URL is customer-supplied, so the fetch goes through the
+// §11 egress-guarded client (newJWKSHTTPClient).
 func newEdgeJWKSAdapter(log *slog.Logger) *edgeJWKSAdapter {
 	cache := edgejwks.NewCache(edgejwks.Options{
-		HTTPClient: &http.Client{Timeout: 5 * time.Second},
+		HTTPClient: newJWKSHTTPClient(),
 		OnFetchErr: func(rawURL string, err error) {
 			if log != nil {
 				log.Warn("edgejwks: jwks fetch failed",
@@ -55,6 +55,22 @@ func newEdgeJWKSAdapter(log *slog.Logger) *edgeJWKSAdapter {
 		v:     edgejwks.NewVerifier(cache, edgejwks.DefaultSkew),
 		log:   log,
 	}
+}
+
+// newJWKSHTTPClient fetches customer-supplied JWKS URLs from the node. The
+// edge-rule validator only rejects a fixed list of private-address string
+// prefixes, which a hostname resolving to 127.0.0.1, 172.16/12 or
+// 169.254.169.254 — or a redirect to one — walks straight past; the plain
+// client then fetched it. The dial-time guard checks every connection,
+// redirects included, against the same denylist as tenant egress.
+func newJWKSHTTPClient() *http.Client {
+	client := oci.NewEgressHTTPClient()
+	// Dev/test-only escape hatch, gated on FAAS_EGRESS_ALLOW_LOOPBACK=1.
+	if loopback := oci.NewEgressHTTPClientAllowLoopback(); loopback != nil {
+		client = loopback
+	}
+	client.Timeout = 5 * time.Second
+	return client
 }
 
 // Verify is the JWTVerifier shape. We lazy-Register the URL on
