@@ -302,7 +302,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "List PostgreSQL, object-storage, and queue bindings for an app",
+		Short:       "List app bindings and HTTP/HTTPS service endpoints (service state is authorization, not endpoint health)",
 		Positionals: []string{"<app>"},
 	},
 	{

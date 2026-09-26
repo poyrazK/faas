@@ -52,7 +52,11 @@ func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 			{Type: bindingTypeObjectStorage, Name: "assets", Binding: "GREGALE_S3_ASSETS", Scope: "production", Access: "read_write", State: "active"},
 			{Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready"},
 			{Type: bindingTypeQueue, Name: "email", Binding: "email-worker", Scope: "app", Access: "push", State: "active"},
-			{Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL", Scope: "app", Access: "invoke", State: "enforced"},
+			{
+				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
+				HTTPURL: "http://billing.svc.gregale:10080", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
+				HTTPSURL: "https://billing.internal", Scope: "app", Access: "invoke", State: "enforced",
+			},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -178,11 +182,21 @@ func TestRenderAppBindingInventory(t *testing.T) {
 		Bindings: []appBindingInventoryItem{
 			{Type: bindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production", Access: "read_write", State: "ready"},
 			{Type: bindingTypeQueue, Name: "jobs", Binding: "worker", Scope: "app", Access: "push", State: "active"},
+			{
+				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
+				HTTPURL: "http://billing.svc.gregale:10080", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
+				HTTPSURL: "https://billing.internal", Scope: "app", Access: "invoke", State: "enforced",
+			},
 		},
 		Warnings: []string{managedPostgresBindingsWarning},
 	})
 
-	for _, want := range []string{"TYPE", "NAME", "BINDING", "SCOPE", "ACCESS", "STATE", "postgres", "DATABASE_URL", "queue", "worker", "Warning: " + managedPostgresBindingsWarning} {
+	for _, want := range []string{
+		"TYPE", "NAME", "BINDING / HTTP ENV", "HTTP URL", "HTTPS ENV", "HTTPS URL", "SCOPE", "ACCESS", "STATE",
+		"postgres", "DATABASE_URL", "queue", "worker", "GREGALE_SERVICE_BILLING_URL",
+		"http://billing.svc.gregale:10080", "GREGALE_SERVICE_BILLING_HTTPS_URL", "https://billing.internal",
+		"Warning: " + managedPostgresBindingsWarning,
+	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
