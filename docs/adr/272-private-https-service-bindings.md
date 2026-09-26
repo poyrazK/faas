@@ -40,7 +40,7 @@ curl --cacert /etc/faas/service-proxy-ca.crt https://billing.internal/healthz
 
 This initial slice avoids silently trusting a platform CA outside the service
 namespace. Language clients must point their TLS verifier at the staged bundle;
-sidecars are not promised that file by this slice. [ADR-245](245-workload-scoped-service-ca-trust.md)
+sidecars are not promised that file by this slice. [ADR-273](273-workload-scoped-service-ca-trust.md)
 extends this contract with workload-local bundles and common runtime trust
 variables, and requires the service CA to be constrained to `.internal` DNS
 names.

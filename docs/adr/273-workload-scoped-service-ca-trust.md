@@ -1,4 +1,4 @@
-# ADR-245: Workload-scoped trust for private service bindings
+# ADR-273: Workload-scoped trust for private service bindings
 
 - **Status:** accepted
 - **Date:** 2026-09-25
@@ -6,7 +6,7 @@
 
 ## Why
 
-ADR-244 made the HTTPS endpoint opt-in and left certificate selection to each
+ADR-272 made the HTTPS endpoint opt-in and left certificate selection to each
 client. A staged certificate path was insufficient for sidecars and required
 applications to know a platform-internal file location. The guest can expose a
 stable workload-local path while preserving image roots and the read-only
@@ -49,11 +49,11 @@ service CA, guest-init does not create a bundle or modify TLS environment.
 ## Rollout and compatibility
 
 The HTTPS listener, bridge firewall rule, and URL generation remain opt-in and
-unchanged. Operators using ADR-244's pre-existing service CA must replace it
+unchanged. Operators using ADR-272's pre-existing service CA must replace it
 with one whose certificate has a **critical permitted DNS name constraint of
 `.internal`** before enabling guest trust. Existing manual use of
 `/etc/faas/service-proxy-ca.crt` remains available to applications that prefer
-per-request CA selection. CA rotation retains ADR-244's overlap-and-restart
+per-request CA selection. CA rotation retains ADR-272's overlap-and-restart
 requirements.
 
 This does not switch generated binding URLs to HTTPS, install the CA into the
