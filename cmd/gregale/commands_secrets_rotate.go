@@ -29,6 +29,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 // secretsRotate handles `gregale secrets rotate --app <slug>
@@ -47,6 +48,8 @@ func secretsRotate(args []string) int {
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE from stdin (one pair)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to rotate (defaults to linked project environment)")
 	restart := fs.Bool("restart", false, "restart app with the rotated secret")
+	waitForAck := fs.Bool("wait-for-ack", false, "wait until every active authorized runtime confirms it applied the rotated secret")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for application acknowledgements")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret rotate:", err)
@@ -57,7 +60,21 @@ func secretsRotate(args []string) int {
 	}
 	if *app == "" {
 		PrintUsage(os.Stderr,
-			"usage: gregale secrets rotate --app <slug> KEY=VALUE [--from-stdin] [--scope <name>] [--restart]", "secrets")
+			"usage: gregale secrets rotate --app <slug> KEY=VALUE [--from-stdin] [--scope <name>] [--restart] [--wait-for-ack [--timeout 2m]]", "secrets")
+		return 1
+	}
+	if *timeout <= 0 {
+		fmt.Fprintln(os.Stderr, "secret rotate: --timeout must be greater than zero")
+		return 1
+	}
+	timeoutSpecified := false
+	fs.Visit(func(value *flag.Flag) {
+		if value.Name == "timeout" {
+			timeoutSpecified = true
+		}
+	})
+	if timeoutSpecified && !*waitForAck {
+		fmt.Fprintln(os.Stderr, "secret rotate: --timeout requires --wait-for-ack")
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -137,7 +154,39 @@ func secretsRotate(args []string) int {
 		if err != nil {
 			return printErr("Restart failed", err)
 		}
-		PrintOK(osStdout, "Restart requested after secret rotation (wake_id=%s)", out.WakeID)
+		if !*waitForAck {
+			PrintOK(osStdout, "Restart requested after secret rotation (wake_id=%s)", out.WakeID)
+			return 0
+		}
+		if strings.TrimSpace(out.WakeID) == "" {
+			return printErr("Restart failed", errors.New("server accepted the restart without returning a wake_id"))
+		}
+		waitCtx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		instance, err := waitForAppWake(waitCtx, client, *app, out.WakeID, *timeout, 250*time.Millisecond)
+		if err != nil {
+			return printErr("Waiting for restarted app failed", err)
+		}
+		count, err := waitForSecretApplicationAckAfterRestart(waitCtx, client, *app, pair.Key, *scope, instance.ID)
+		if err != nil {
+			return printErr("Waiting for application acknowledgement failed", err)
+		}
+		PrintOK(osStdout, "Restart completed (wake_id=%s, instance_id=%s)", out.WakeID, instance.ID)
+		PrintOK(osStdout, "All %d active authorized runtime(s) confirmed they applied %s", count, pair.Key)
+		return 0
+	}
+	if *waitForAck {
+		waitCtx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		count, err := waitForSecretApplicationAck(waitCtx, client, *app, pair.Key, *scope)
+		if err != nil {
+			return printErr("Waiting for application acknowledgement failed", err)
+		}
+		if count == 0 {
+			PrintOK(osStdout, "No active authorized runtimes; %s rotation will apply on their next cold wake", pair.Key)
+			return 0
+		}
+		PrintOK(osStdout, "All %d active authorized runtime(s) confirmed they applied %s", count, pair.Key)
 		return 0
 	}
 	PrintWarn(osStdout, "The rotated secret applies on the next cold wake; running instances keep their current environment. Use --restart to apply now.")

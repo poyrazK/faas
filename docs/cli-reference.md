@@ -1101,7 +1101,7 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--production-branch <BRANCH>` | production branch for a project binding |  |
 | `--ref <REF>` | git ref for --repo (branch, tag, or 40-char SHA) |  |
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -1528,7 +1528,7 @@ Scaffold a reference project from a built-in template (--template NAME --path DI
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -2296,12 +2296,14 @@ List every secret across apps
 
 ### secrets rotate
 
-Re-seal one secret under the current host key
+Rotate a secret and optionally wait for runtime application
 
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
+| `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret (works with --restart) |  |
+| `--timeout <DURATION>` | maximum time to wait for restart and application acknowledgements |  |
 
 
 ## slo

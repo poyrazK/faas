@@ -219,7 +219,7 @@ type cliFlag struct {
 
 // templateNames13 is the canonical template catalog. The historical name is
 // retained because tests and completion metadata refer to this package-local
-// symbol; it now contains all 16 embedded templates. Mirrors
+// symbol; it now contains all 18 embedded templates. Mirrors
 // cmd/gregale/templates/embed.go::Names verbatim; the ClosedSet literals
 // in deploy/init reference this const so goconst stops flagging the
 // duplicated 13-name lists. Kept in sync with the embed FS by the
@@ -242,6 +242,7 @@ var templateNames13 = []string{
 	"cron-worker",
 	"webhook-receiver",
 	"ai-chat",
+	"secret-reload-node",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -1694,7 +1695,7 @@ var cliCommands = []cliCommand{
 			{Name: "set", Short: "Set a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply updated secrets now"}}},
 			{Name: "unset", Short: "Remove a sealed secret", Flags: []cliFlag{{Name: "scope", Short: "env scope to delete from (defaults to linked project environment)", Value: "SCOPE"}}},
 			{Name: "list-all", Short: "List every secret across apps"},
-			{Name: subRotate, Short: "Re-seal one secret under the current host key", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}}},
+			{Name: subRotate, Short: "Rotate a secret and optionally wait for runtime application", Flags: []cliFlag{{Name: "scope", Short: "env scope to rotate (defaults to linked project environment)", Value: "SCOPE"}, {Name: "restart", Short: "restart the app and apply the rotated secret now"}, {Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret (works with --restart)"}, {Name: "timeout", Short: "maximum time to wait for restart and application acknowledgements", Value: "DURATION"}}},
 		},
 	},
 	{

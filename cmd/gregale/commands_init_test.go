@@ -74,6 +74,16 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			},
 		},
 		{
+			name:  "secret-reload-node",
+			files: []string{"handler.js", "secret-reload.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
+			readmeHas: []string{
+				"SIGHUP",
+				"DATABASE_URL",
+				"gregale secrets rotate",
+				"--wait-for-ack",
+			},
+		},
+		{
 			name:  "cron-worker",
 			files: []string{"handler.js", "package.json", "README.md"},
 			readmeHas: []string{
@@ -390,6 +400,7 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 		{"s3-uploader", []string{"--create-only", "s3-uploader", "S3_BUCKET", "gregale secrets set", "cd <dest>"}},
 		{"slack-bot", []string{"--create-only", "slack-bot", "SLACK_SIGNING_SECRET", "gregale secrets set", "cd <dest>"}},
 		{"rest-api-postgres", []string{"--create-only", "rest-api-postgres", "DATABASE_URL", "gregale secrets set", "cd <dest>"}},
+		{"secret-reload-node", []string{"--secrets-file", "DATABASE_URL", "gregale secrets rotate", "--wait-for-ack"}},
 		{"cron-worker", []string{"--create-only", "cron-worker", "QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "gregale secrets set", "cd <dest>"}},
 		{"webhook-receiver", []string{"WEBHOOK_SECRET", "openssl rand", "gregale secrets set", "cd <dest>"}},
 		{"ai-chat", []string{"--create-only", "ai-chat", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "gregale secrets set", "cd <dest>"}},
@@ -443,6 +454,8 @@ func TestValidateTemplateSecrets(t *testing.T) {
 		noErr bool
 	}{
 		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}}, want: "S3_REGION"},
+		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL"}}, want: "missing required secret(s): DATABASE_URL"},
+		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
 		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}, {Key: "S3_REGION", Value: "region"}, {Key: "S3_ACCESS_KEY_ID", Value: "access"}, {Key: "S3_SECRET_ACCESS_KEY", Value: "secret"}}, noErr: true},
 		{tpl: "ai-chat", pairs: []secretsPair{{Key: "OPENAI_API_KEY"}, {Key: "ANTHROPIC_API_KEY"}}, want: "exactly one"},
 	}
@@ -525,7 +538,7 @@ func TestCheckDestEmpty(t *testing.T) {
 }
 
 // TestCmdInit_List_GroupsByCategory: `gregale init --list` short-circuits
-// before materialization and renders the 17 templates grouped by
+// before materialization and renders the 18 templates grouped by
 // category. Pins both the group ordering (templates.CategoryOrder) and
 // the per-category content (CategoryFor). A future template addition
 // must add a Names entry, a CategoryFor case, and (if it's a new group)
@@ -559,7 +572,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		"hello":              {"hello-node", "hello-python", "hello-go"},
 		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example"},
 		"event-driven":       {"event-worker", "queue-worker"},
-		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver"},
+		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node"},
 		"ai":                 {"ai-chat"},
 	}
 	for cat, names := range wantPerCat {
@@ -645,10 +658,11 @@ func TestRequestHandlingTemplatesDoNotEchoOrLogRequestSecrets(t *testing.T) {
 
 func TestTemplateDocsMatchTemplatePurpose(t *testing.T) {
 	wants := map[string]string{
-		"function-node": functionsDocsURL,
-		"hello-node":    deployFromSourceDocsURL,
-		"cron-example":  eventDrivenDocsURL,
-		"s3-uploader":   storageDocsURL,
+		"function-node":      functionsDocsURL,
+		"hello-node":         deployFromSourceDocsURL,
+		"cron-example":       eventDrivenDocsURL,
+		"s3-uploader":        storageDocsURL,
+		"secret-reload-node": secretsDocsURL,
 	}
 	for _, name := range templates.Names {
 		got := docsURLForTemplate(name)
