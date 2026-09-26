@@ -14304,12 +14304,18 @@ func (s *PgStore) CountFailedInvocationsSince(ctx context.Context, accountID, ap
 	if source != "" {
 		sourceArg = string(source)
 	}
+	// A failure is dated by when it became terminal, not by when the
+	// invocation was created: with retries, a queue message that fails
+	// for good an hour after it arrived lies outside every short alert
+	// window when filtered on created_at. dead_letter is the terminal
+	// state for an invocation whose retries ran out — the failure the
+	// alert most needs to see — and was not counted at all.
 	var n int
 	row := s.pool.QueryRow(ctx, `
 		select count(*) from invocations
 		 where account_id = $1
-		   and state = 'failed'
-		   and created_at >= $2
+		   and state in ('failed', 'dead_letter')
+		   and coalesce(completed_at, created_at) >= $2
 		   and ($3::uuid is null or app_id is not distinct from $3::uuid)
 		   and ($4::text is null or source = $4::text)`,
 		accountID, since.UTC(), appArg, sourceArg)

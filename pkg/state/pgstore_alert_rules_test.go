@@ -572,3 +572,42 @@ func TestPgStore_AlertRule_SetLastEvaluatedAndDelete(t *testing.T) {
 		t.Errorf("DeleteAlertRule missing = %v; want ErrNotFound", err)
 	}
 }
+
+// TestPgStore_CountFailedInvocationsSince_CountsLateDeadLetters — the
+// failed_invocations alert counted state='failed' rows created inside the
+// window. An invocation whose retries ran out lands in dead_letter, which was
+// never counted, and a retried message fails long after it was created, so a
+// short window filtered on created_at missed it anyway.
+func TestPgStore_CountFailedInvocationsSince_CountsLateDeadLetters(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx)
+	inv, err := s.EnqueueInvocation(ctx, state.Invocation{
+		AppID: app, AccountID: acct, Source: state.InvocationQueue,
+		State: state.InvocationPending, Method: "POST", Path: "/",
+		CreatedAt: time.Now().Add(-2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimInvocation(ctx, inv.ID, "", 30); err != nil {
+		t.Fatal(err)
+	}
+	// Retryable failure with the attempt budget spent → dead_letter.
+	if err := s.FailInvocation(ctx, inv.ID, "boom", time.Second, 1); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.InvocationByID(ctx, inv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.InvocationDeadLetter {
+		t.Fatalf("state = %s, want dead_letter", got.State)
+	}
+	n, err := s.CountFailedInvocationsSince(ctx, acct, app, state.InvocationQueue, time.Now().Add(-5*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("failed invocations in the last 5 minutes = %d, want 1 (dead-lettered just now)", n)
+	}
+}

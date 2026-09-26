@@ -20916,10 +20916,14 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 		if inv.AccountID != accountID {
 			continue
 		}
-		if inv.State != InvocationFailed {
+		if inv.State != InvocationFailed && inv.State != InvocationDeadLetter {
 			continue
 		}
-		if inv.CreatedAt.Before(since) {
+		failedAt := inv.CreatedAt
+		if inv.CompletedAt != nil {
+			failedAt = *inv.CompletedAt
+		}
+		if failedAt.Before(since) {
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
