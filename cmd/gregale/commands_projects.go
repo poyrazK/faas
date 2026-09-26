@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|releases|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|history|config|routes|policies|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -54,6 +54,10 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentProtection(args[1:], true)
 	case "unprotect":
 		return cmdProjectsEnvironmentProtection(args[1:], false)
+	case "inspect":
+		return cmdProjectsEnvironmentInspect(args[1:])
+	case "release-sets":
+		return cmdProjectsEnvironmentReleaseSets(args[1:])
 	case "releases", "release":
 		return cmdProjectsEnvironmentReleases(args[1:])
 	case "history":

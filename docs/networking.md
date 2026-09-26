@@ -261,6 +261,47 @@ propagation and are not covered by this guarantee. A guest must forward the
 received `X-Gregale-Release` on each managed outbound service call when its
 deployment can belong to multiple live release sets.
 
+### Inspect a project's release graph
+
+```sh
+gregale projects environments inspect shop production
+gregale projects environments inspect shop production --json
+gregale projects environments release-sets shop production --limit 20
+```
+
+`inspect` compares active release-set membership with each workload's ordinary
+live deployment, which is what its stable environment URL currently selects.
+It reports different selections and project membership gaps explicitly. A bare
+`gregale projects environments inspect` uses the linked project and selected
+environment; supplying both positional arguments overrides that context.
+
+The overview includes the configuration version, last promotion, and managed
+PostgreSQL/object-storage binding metadata. It omits configuration and variable
+values, secret names, and secret fingerprints in both text and JSON. Service
+and queue bindings are outside this first overview's binding coverage. Runtime
+health is reported as `not_checked`: a live deployment record alone does not
+prove health, and inspection does not wake parked workloads. Failure to read
+promotion history appears as an issue while the available environment inventory
+remains visible. Failure to read environment or release state fails inspection.
+
+`release-sets` lists active, retired, and expired graphs, newest first. The
+page size defaults to 50, with a maximum of 100. Pass `next_before` back through
+`--before` to continue. Historical visibility does not extend a graph's routing
+eligibility or retain deleted artifacts.
+
+The read API uses the same project/environment scope as publication:
+
+- `GET /v1/projects/{slug}/environments/{environment}/release-sets`
+- `GET /v1/projects/{slug}/environments/{environment}/release-sets/active`
+- `GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}`
+
+An active lookup returns 404 when no active set exists. The environment-state
+response instead returns `release_set_status: none` and `active_release_set:
+null`. When a graph exists, state includes `release_set_status: active`, the
+complete stored graph, and each workload's `app_id` for joining membership.
+Existing workload `release` fields continue to describe ordinary live selection.
+All release inventory reads require the owning account's read access.
+
 ### Smoke-test a downstream deployment
 
 To test a live deployment of a bound service before giving it traffic, send
