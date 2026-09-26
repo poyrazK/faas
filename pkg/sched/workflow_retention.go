@@ -9,7 +9,8 @@ import (
 )
 
 // WorkflowRetention runs the background retention sweeps for durable workflows (ADR-081 §9).
-// It enforces 30 days retention for completed workflow runs and 90 days for historical events.
+// It enforces 30 days retention for completed workflow runs and a 90-day
+// event age threshold. Events for active runs remain until the run terminates.
 type WorkflowRetention struct {
 	store state.WorkflowStore
 	log   *slog.Logger
@@ -38,7 +39,7 @@ func (r *WorkflowRetention) SweepOnce(ctx context.Context) error {
 		return err
 	}
 
-	// 90 days retention for workflow events
+	// 90-day age threshold for events of terminal runs only.
 	eventsDeleted, err := r.store.SweepExpiredWorkflowEvents(ctx, 90*24*time.Hour)
 	if err != nil {
 		if r.log != nil {

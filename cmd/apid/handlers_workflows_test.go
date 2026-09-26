@@ -30,6 +30,7 @@ func seedWorkflowApp(t *testing.T, e testEnv, slug string) state.App {
 		{Name: "process-order", Steps: []api.WorkflowStepSpec{{Name: "main", Path: "/process-order"}}},
 		{Name: "w1", Steps: []api.WorkflowStepSpec{{Name: "main", Path: "/w1"}}},
 		{Name: "approval", Steps: []api.WorkflowStepSpec{{Name: "step_one", WaitForEvent: "manager.approved", Timeout: time.Hour}}},
+		{Name: "callback", Steps: []api.WorkflowStepSpec{{Name: "await", WaitForCallback: true, Timeout: time.Hour}}},
 	}
 	raw, err := json.Marshal(definitions)
 	if err != nil {
@@ -42,6 +43,76 @@ func seedWorkflowApp(t *testing.T, e testEnv, slug string) state.App {
 		t.Fatalf("CreateDeployment(%q): %v", slug, err)
 	}
 	return app
+}
+
+func TestWorkflowCallbacks_AuthenticatedOneTimeCompletion(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedWorkflowApp(t, e, "callback-app")
+	create := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/callback/runs", app.Slug), map[string]any{"request_id": "r1"}, nil)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create callback workflow = %d: %s", create.Code, create.Body.String())
+	}
+	var run api.WorkflowRunResponse
+	if err := json.Unmarshal(create.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	base := fmt.Sprintf("/v1/workflows/runs/%s/callbacks", run.ID)
+	list := e.do(t, "GET", base, nil, nil)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list callbacks = %d: %s", list.Code, list.Body.String())
+	}
+	var callbacks api.ListWorkflowCallbacksResponse
+	if err := json.Unmarshal(list.Body.Bytes(), &callbacks); err != nil {
+		t.Fatal(err)
+	}
+	if len(callbacks.Callbacks) != 1 || callbacks.Callbacks[0].StepName != "await" || callbacks.Callbacks[0].ExpiresAt != nil {
+		t.Fatalf("callbacks = %#v", callbacks.Callbacks)
+	}
+	callbackID := callbacks.Callbacks[0].ID
+	completeURL := base + "/" + callbackID
+	first := e.do(t, "POST", completeURL, map[string]any{"approved": true}, nil)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first callback = %d: %s", first.Code, first.Body.String())
+	}
+	var firstReceipt api.CompleteWorkflowCallbackResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &firstReceipt); err != nil || firstReceipt.Duplicate {
+		t.Fatalf("first receipt = %#v, err=%v", firstReceipt, err)
+	}
+	retry := e.do(t, "POST", completeURL, map[string]any{"approved": true}, nil)
+	var retryReceipt api.CompleteWorkflowCallbackResponse
+	if err := json.Unmarshal(retry.Body.Bytes(), &retryReceipt); err != nil || retry.Code != http.StatusOK || !retryReceipt.Duplicate {
+		t.Fatalf("retry = %d %#v, err=%v", retry.Code, retryReceipt, err)
+	}
+	conflict := e.do(t, "POST", completeURL, map[string]any{"approved": false}, nil)
+	assertProblem(t, conflict, http.StatusConflict, api.CodeWorkflowCallbackPayloadConflict)
+	unknown := e.do(t, "POST", base+"/00000000-0000-0000-0000-000000000000", map[string]any{"approved": true}, nil)
+	assertProblem(t, unknown, http.StatusNotFound, api.CodeWorkflowStepNotFound)
+	reserved := e.do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/events", run.ID), api.InjectWorkflowEventRequest{
+		EventName: api.WorkflowCallbackEventName(run.ID, "await"), Payload: json.RawMessage("{\"approved\":true}"),
+	}, nil)
+	assertProblem(t, reserved, http.StatusBadRequest, api.CodeValidation)
+
+	secondCreate := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/callback/runs", app.Slug), map[string]any{"request_id": "r2"}, nil)
+	var second api.WorkflowRunResponse
+	if err := json.Unmarshal(secondCreate.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.CreateWorkflowSteps(context.Background(), second.ID, []*state.WorkflowStep{{StepName: "await"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.store.ParkWorkflowEvent(context.Background(), second.ID, "await", api.WorkflowCallbackEventName(second.ID, "await"), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	parkedList := e.do(t, "GET", fmt.Sprintf("/v1/workflows/runs/%s/callbacks", second.ID), nil, nil)
+	var parked api.ListWorkflowCallbacksResponse
+	if err := json.Unmarshal(parkedList.Body.Bytes(), &parked); err != nil || len(parked.Callbacks) != 1 || parked.Callbacks[0].ExpiresAt == nil {
+		t.Fatalf("parked callbacks = %#v, err=%v", parked.Callbacks, err)
+	}
+	if _, err := e.store.CancelWorkflowRun(context.Background(), second.ID, "test"); err != nil {
+		t.Fatal(err)
+	}
+	closed := e.do(t, "POST", fmt.Sprintf("/v1/workflows/runs/%s/callbacks/%s", second.ID, parked.Callbacks[0].ID), map[string]any{"approved": true}, nil)
+	assertProblem(t, closed, http.StatusConflict, api.CodeWorkflowCallbackClosed)
 }
 
 func TestCreateWorkflowRun_FreePlan_PaymentRequired(t *testing.T) {

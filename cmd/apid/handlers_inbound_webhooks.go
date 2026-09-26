@@ -312,6 +312,9 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, problem)
 		return
 	}
+	if s.receiveBoundWorkflowCallback(w, r, endpoint, body) {
+		return
+	}
 	app, err := s.store.AppByID(r.Context(), endpoint.AppID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook app"))

@@ -1695,7 +1695,8 @@ type Limits struct {
 	// WorkflowStepMaxTimeout is the maximum active execution timeout for
 	// one workflow step.
 	WorkflowStepMaxTimeout time.Duration
-	// WorkflowMaxWaitDays is the maximum wait_for_event timeout.
+	// WorkflowMaxWaitDays is the plan's maximum duration, event, or callback
+	// wait. Condition polling keeps its separate bounded seven-day horizon.
 	WorkflowMaxWaitDays int
 }
 
@@ -2535,7 +2536,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxPerApp:      3,
 		WorkflowMaxConcurrent:  10,
 		WorkflowStepMaxTimeout: 10 * time.Minute,
-		WorkflowMaxWaitDays:    7,
+		WorkflowMaxWaitDays:    30,
 	},
 	PlanPro: {
 		Plan:                      PlanPro,
@@ -2896,7 +2897,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxPerApp:      10,
 		WorkflowMaxConcurrent:  50,
 		WorkflowStepMaxTimeout: 30 * time.Minute,
-		WorkflowMaxWaitDays:    7,
+		WorkflowMaxWaitDays:    90,
 	},
 	PlanScale: {
 		Plan:                      PlanScale,
@@ -3290,7 +3291,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowMaxPerApp:      50,
 		WorkflowMaxConcurrent:  200,
 		WorkflowStepMaxTimeout: 2 * time.Hour,
-		WorkflowMaxWaitDays:    7,
+		WorkflowMaxWaitDays:    365,
 	},
 }
 
@@ -4811,7 +4812,7 @@ var (
 	WorkflowMaxPerApp         = [4]int{0, 3, 10, 50}
 	WorkflowMaxConcurrentRuns = [4]int{0, 10, 50, 200}
 	WorkflowStepMaxTimeoutSec = [4]int{0, 600, 1800, 7200}
-	WorkflowMaxWaitDays       = 7
+	WorkflowMaxWaitDays       = 365 // deprecated global ceiling; use Plan.WorkflowMaxWaitDays()
 )
 
 const (
@@ -5361,8 +5362,8 @@ func (p Plan) WorkflowStepMaxTimeout() time.Duration {
 	return l.WorkflowStepMaxTimeout
 }
 
-// WorkflowMaxWaitDays returns the maximum wait_for_event timeout for
-// the plan. Unknown plans fail closed.
+// WorkflowMaxWaitDays returns the plan's maximum duration, event, or callback
+// wait in days. Unknown plans fail closed.
 func (p Plan) WorkflowMaxWaitDays() int {
 	l, ok := LimitsFor(p)
 	if !ok {

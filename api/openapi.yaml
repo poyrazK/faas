@@ -11887,6 +11887,173 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/workflows/runs/{id}/steps/{step}/attempts:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Parent run for the requested executor-attempt history.
+      - name: step
+        in: path
+        required: true
+        schema: { type: string }
+        description: Workflow step name whose executor attempts are returned.
+    get:
+      tags: [workflows]
+      operationId: listWorkflowStepAttempts
+      summary: List executor attempts for one workflow step.
+      responses:
+        '200':
+          description: Ordered executor attempts, including retry and condition-check outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowStepAttemptsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowStepAttemptsNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/callbacks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow-run identifier.
+    get:
+      tags: [workflows]
+      operationId: listWorkflowCallbacks
+      summary: List callback handles for a workflow run.
+      description: Callback IDs identify waits but are not bearer credentials; completion requires account authorization.
+      responses:
+        '200':
+          description: Callback handles from the run's snapshotted definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListWorkflowCallbacksResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/callbacks/{callback_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow run whose callback will be completed.
+      - name: callback_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Stable callback handle returned by the callback list endpoint.
+    post:
+      tags: [workflows]
+      operationId: completeWorkflowCallback
+      summary: Complete one callback wait.
+      description: |
+        Requires the run owner's workflow-write authorization. An identical
+        retry returns duplicate=true, including after the run finishes; a
+        different payload conflicts. Completion may arrive before the step
+        parks and will be consumed when the step becomes runnable.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '200':
+          description: The callback was durably received or was an identical retry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompleteWorkflowCallbackResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '409':
+          description: Callback is closed or the ID was completed with different JSON.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: Callback wait has expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow run that owns the callback binding.
+      - name: callback_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Stable callback handle to bind to one verified provider event.
+    put:
+      tags: [workflows]
+      operationId: putWorkflowCallbackWebhookBinding
+      summary: Bind one verified Stripe object event to a workflow callback.
+      description: |
+        Requires account workflow-write authorization and a Stripe inbound
+        webhook endpoint owned by the same app. Repeating the identical
+        binding is safe; another callback cannot claim the same endpoint,
+        event type, and object ID. The endpoint's existing URL and signing
+        secret are reused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWorkflowCallbackWebhookBindingRequest' }
+      responses:
+        '200':
+          description: The durable binding, whether newly created or already present.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowCallbackWebhookBindingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '409':
+          description: The callback is closed, or the callback/provider event already has a different binding.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+    get:
+      tags: [workflows]
+      operationId: getWorkflowCallbackWebhookBinding
+      summary: Read the callback's verified webhook binding.
+      responses:
+        '200':
+          description: The bound provider event. No endpoint URL or secret is returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowCallbackWebhookBindingResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+    delete:
+      tags: [workflows]
+      operationId: deleteWorkflowCallbackWebhookBinding
+      summary: Stop routing the provider event to this callback.
+      description: Later verified provider events resume ordinary app delivery; an already verified in-flight request may still complete the callback.
+      responses:
+        '204': { description: Binding deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/workflows/runs/{id}/events:
     parameters:
       - name: id
@@ -15567,9 +15734,10 @@ paths:
       description: |
         This route does not use a Gregale bearer key. The opaque URL and the
         provider signature are the trust boundary. For Stripe, the exact raw
-        body is verified against Stripe-Signature. A 202 is returned only after
-        the deterministic invocation receipt commits. Provider retries return
-        the same receipt with duplicate=true.
+        body is verified against Stripe-Signature. An exact workflow callback
+        binding completes its callback durably instead of enqueuing an app
+        invocation. Unmatched events keep the ordinary invocation path.
+        Terminal callbacks are acknowledged as ignored after verification.
       security: []
       parameters:
         - name: Stripe-Signature
@@ -15584,10 +15752,13 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         '202':
-          description: Verified and durably accepted, or an already accepted provider retry.
+          description: Verified and durably accepted, duplicated, or ignored after callback closure.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/InboundWebhookReceiptResponse' }
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/InboundWebhookReceiptResponse'
+                  - $ref: '#/components/schemas/WorkflowCallbackWebhookReceiptResponse'
         '400': { $ref: '#/components/responses/InboundWebhookInvalid' }
         '404': { $ref: '#/components/responses/NotFound' }
         '413': { $ref: '#/components/responses/InboundWebhookTooLarge' }
@@ -26237,8 +26408,9 @@ components:
       description: |
         One workflow step. The canonical ADR-081 target is `run`; `path`
         and `method` remain accepted for the existing HTTP wake executor
-        during the runtime migration. Exactly one of `run`, `path`, or
-        `wait_for_event` must be supplied.
+        during the runtime migration. Exactly one of `run`, `path`,
+        `wait_for_event`, `wait_for_callback`, `wait_for_duration`, or
+        `wait_for_condition` must be supplied.
       type: object
       required: [name]
       properties:
@@ -26269,6 +26441,15 @@ components:
           items: { type: string }
         wait_for_event:
           type: string
+        wait_for_callback:
+          type: boolean
+          description: "Park for one account-authorized callback completion. Requires a wait timeout."
+        wait_for_duration:
+          type: string
+          description: "Durable timer, from 1s up to the plan's 7-day workflow wait limit. Fixed day suffixes such as `3d` mean 24-hour days; no compute is held while waiting."
+          example: "3d"
+        wait_for_condition:
+          $ref: '#/components/schemas/WorkflowConditionSpec'
         timeout:
           type: string
           description: "Step or wait timeout in time.ParseDuration form, for example `30s`; workflow also accepts fixed 24-hour day suffixes such as `7d`."
@@ -26279,6 +26460,15 @@ components:
           oneOf:
             - $ref: '#/components/schemas/WorkflowRetrySpec'
             - type: 'null'
+
+    WorkflowConditionSpec:
+      description: "Bounded scheduled checker. Each 2xx response must be a JSON object with boolean done. A false response becomes the next check's input; no compute is held between checks."
+      type: object
+      required: [run, interval, max_attempts]
+      properties:
+        run: { type: string, description: "Named app handler that checks the condition." }
+        interval: { type: string, description: "Delay between checks; at least 1m and no more than the plan wait limit.", example: "30m" }
+        max_attempts: { type: integer, minimum: 1, maximum: 1000 }
 
     WorkflowSpec:
       description: "A named workflow DAG submitted with a deployment (ADR-081)."
@@ -26548,6 +26738,8 @@ components:
         input: {}
         output: {}
         started_at: { type: [string, 'null'], format: date-time }
+        next_check_at: { type: [string, 'null'], format: date-time }
+        next_retry_at: { type: [string, 'null'], format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }
         error: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
@@ -26560,6 +26752,30 @@ components:
         steps:
           type: array
           items: { $ref: '#/components/schemas/WorkflowStepResponse' }
+
+    WorkflowStepAttemptResponse:
+      description: "One durable executor invocation for a workflow step."
+      type: object
+      required: [attempt, status, started_at]
+      properties:
+        attempt: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [running, retrying, succeeded, failed]
+        http_status: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        next_attempt_at: { type: [string, 'null'], format: date-time }
+        error: { type: [string, 'null'] }
+
+    ListWorkflowStepAttemptsResponse:
+      description: "The ordered executor-attempt history for one workflow step."
+      type: object
+      required: [attempts]
+      properties:
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowStepAttemptResponse' }
 
     InjectWorkflowEventResponse:
       description: "Acknowledgement that an external workflow event was recorded."
@@ -26576,6 +26792,63 @@ components:
       properties:
         event_name: { type: string }
         payload: {}
+
+    WorkflowCallbackResponse:
+      description: Account-authorized handle for one callback wait step.
+      type: object
+      required: [id, step_name]
+      properties:
+        id: { type: string, format: uuid }
+        step_name: { type: string }
+        expires_at: { type: string, format: date-time, description: Present after the wait activates. }
+
+    ListWorkflowCallbacksResponse:
+      description: Callback handles declared in this run's workflow snapshot.
+      type: object
+      required: [callbacks]
+      properties:
+        callbacks:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowCallbackResponse' }
+
+    CompleteWorkflowCallbackResponse:
+      description: Receipt for an initial or repeated callback completion.
+      type: object
+      required: [status, duplicate]
+      properties:
+        status: { type: string, enum: [received] }
+        duplicate: { type: boolean }
+
+    CreateWorkflowCallbackWebhookBindingRequest:
+      description: Exact Stripe event/object correlation for one callback on an existing signed inbound endpoint.
+      type: object
+      required: [endpoint_id, event_type, object_id]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        event_type: { type: string, maxLength: 256, pattern: '^[a-z][a-z0-9_.]*$', example: payment_intent.succeeded }
+        object_id: { type: string, maxLength: 256, pattern: '^[A-Za-z0-9_-]+$', example: pi_123 }
+
+    WorkflowCallbackWebhookBindingResponse:
+      description: Persisted binding metadata without the endpoint's URL or secret.
+      type: object
+      required: [id, run_id, step_name, endpoint_id, event_type, object_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        step_name: { type: string }
+        endpoint_id: { type: string, format: uuid }
+        event_type: { type: string }
+        object_id: { type: string }
+        created_at: { type: string, format: date-time }
+
+    WorkflowCallbackWebhookReceiptResponse:
+      description: Acknowledgement after a verified webhook completes or cannot change a callback.
+      type: object
+      required: [callback_id, status, duplicate]
+      properties:
+        callback_id: { type: string, format: uuid }
+        status: { type: string, enum: [received, ignored] }
+        duplicate: { type: boolean }
 
     CreateDeploymentRequest:
       description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / healthcheck without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients."
@@ -38380,6 +38653,12 @@ components:
 
     WorkflowRunNotFound:
       description: "code: workflow_run_not_found — the run is absent or belongs to another account."
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    WorkflowStepAttemptsNotFound:
+      description: "The workflow run is absent or not owned by the caller, or code: workflow_step_not_found — the requested step is absent."
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

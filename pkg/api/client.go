@@ -6378,8 +6378,49 @@ func (c *Client) GetWorkflowRun(ctx context.Context, runID string) (WorkflowRunR
 // ListWorkflowSteps (ADR-081) lists step records for a workflow run.
 func (c *Client) ListWorkflowSteps(ctx context.Context, runID string) (ListWorkflowStepsResponse, error) {
 	var resp ListWorkflowStepsResponse
-	err := c.do(ctx, "GET", "/v1/workflows/runs/"+runID+"/steps", nil, &resp)
+	err := c.do(ctx, "GET", "/v1/workflows/runs/"+url.PathEscape(runID)+"/steps", nil, &resp)
 	return resp, err
+}
+
+// ListWorkflowStepAttempts lists executor attempts for one step in a run.
+func (c *Client) ListWorkflowStepAttempts(ctx context.Context, runID, stepName string) (ListWorkflowStepAttemptsResponse, error) {
+	var resp ListWorkflowStepAttemptsResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/steps/" + url.PathEscape(stepName) + "/attempts"
+	err := c.do(ctx, "GET", path, nil, &resp)
+	return resp, err
+}
+
+// ListWorkflowCallbacks lists stable handles for the run's callback waits.
+func (c *Client) ListWorkflowCallbacks(ctx context.Context, runID string) (ListWorkflowCallbacksResponse, error) {
+	var out ListWorkflowCallbacksResponse
+	return out, c.do(ctx, "GET", "/v1/workflows/runs/"+url.PathEscape(runID)+"/callbacks", nil, &out)
+}
+
+// CompleteWorkflowCallback supplies the JSON value for an authenticated callback wait.
+func (c *Client) CompleteWorkflowCallback(ctx context.Context, runID, callbackID string, payload json.RawMessage) (CompleteWorkflowCallbackResponse, error) {
+	var out CompleteWorkflowCallbackResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID)
+	return out, c.do(ctx, "POST", path, payload, &out)
+}
+
+// PutWorkflowCallbackWebhookBinding binds a verified Stripe object event to a callback wait.
+func (c *Client) PutWorkflowCallbackWebhookBinding(ctx context.Context, runID, callbackID string, req CreateWorkflowCallbackWebhookBindingRequest) (WorkflowCallbackWebhookBindingResponse, error) {
+	var out WorkflowCallbackWebhookBindingResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID) + "/webhook-binding"
+	return out, c.do(ctx, "PUT", path, req, &out)
+}
+
+// GetWorkflowCallbackWebhookBinding reads the callback's verified webhook binding.
+func (c *Client) GetWorkflowCallbackWebhookBinding(ctx context.Context, runID, callbackID string) (WorkflowCallbackWebhookBindingResponse, error) {
+	var out WorkflowCallbackWebhookBindingResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID) + "/webhook-binding"
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// DeleteWorkflowCallbackWebhookBinding restores ordinary delivery for later matching events.
+func (c *Client) DeleteWorkflowCallbackWebhookBinding(ctx context.Context, runID, callbackID string) error {
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/callbacks/" + url.PathEscape(callbackID) + "/webhook-binding"
+	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
 // SendWorkflowEvent (ADR-081) injects an external event into a workflow run.

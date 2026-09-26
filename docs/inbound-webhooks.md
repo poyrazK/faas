@@ -4,7 +4,8 @@ Gregale can accept a webhook while your app is scaled to zero. It verifies the
 provider request, writes it to the durable invocation queue, and returns `202
 Accepted`. The scheduler then wakes the app and POSTs the provider JSON payload
 to the configured path. Failed deliveries use the existing async retry and
-dead-letter lifecycle.
+dead-letter lifecycle. An explicitly bound workflow callback is completed
+directly instead of creating an app invocation.
 
 Stripe is the first supported provider. Inbound webhooks are available on the
 Hobby, Pro, and Scale plans.
@@ -73,6 +74,33 @@ Treat the `X-Gregale-*` fields as metadata only after checking that source.
 
 Stripe retries of the same event for the same endpoint return the same receipt
 ID with `duplicate: true` and do not enqueue a second delivery.
+
+## Complete a workflow callback
+
+An account-authorized client can bind a `wait_for_callback` step to one
+known Stripe object event:
+
+```http
+PUT /v1/workflows/runs/RUN_ID/callbacks/CALLBACK_ID/webhook-binding
+Authorization: Bearer fp_live_...
+Content-Type: application/json
+
+{"endpoint_id":"ENDPOINT_ID","event_type":"payment_intent.succeeded","object_id":"pi_123"}
+```
+
+Use an existing endpoint owned by the same app. Gregale still verifies the
+Stripe signature and extracts the event type and `data.object.id`. An exact
+match writes the signed JSON as the callback result in the durable workflow
+ledger and acknowledges with `{"callback_id":"...","status":"received","duplicate":false}`.
+It does not enqueue an app invocation. A signed event that does not match a
+binding follows the ordinary delivery path above. A matched event that arrives
+after the callback closed is acknowledged with `status: "ignored"` to stop
+provider retries. Bind before the event arrives.
+
+The binding can be inspected with `GET` or revoked with `DELETE` at the same
+path. The endpoint URL and Stripe secret remain managed through the existing
+endpoint API; they are never returned by the binding API. Revocation affects
+later deliveries; an already verified request may still finish its callback.
 
 Failed-delivery alerts can use `failure_source: inbound_webhook`; the `any`
 source aggregate includes webhook deliveries as well.

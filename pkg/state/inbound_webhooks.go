@@ -183,6 +183,11 @@ func (m *MemStore) DeleteInboundWebhookEndpoint(_ context.Context, id string) er
 		return ErrNotFound
 	}
 	delete(m.inboundWebhookEndpoints, id)
+	for bindingID, binding := range m.workflowCallbackWebhookBindings {
+		if binding.EndpointID == id {
+			delete(m.workflowCallbackWebhookBindings, bindingID)
+		}
+	}
 	return nil
 }
 

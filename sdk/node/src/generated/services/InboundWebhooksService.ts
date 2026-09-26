@@ -6,6 +6,7 @@ import type { CreateInboundWebhookEndpointRequest } from '../models/CreateInboun
 import type { InboundWebhookEndpointResponse } from '../models/InboundWebhookEndpointResponse.js';
 import type { InboundWebhookReceiptResponse } from '../models/InboundWebhookReceiptResponse.js';
 import type { UpdateInboundWebhookEndpointRequest } from '../models/UpdateInboundWebhookEndpointRequest.js';
+import type { WorkflowCallbackWebhookReceiptResponse } from '../models/WorkflowCallbackWebhookReceiptResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -197,11 +198,12 @@ export class InboundWebhooksService {
    * Verify and durably accept a provider webhook.
    * This route does not use a Gregale bearer key. The opaque URL and the
    * provider signature are the trust boundary. For Stripe, the exact raw
-   * body is verified against Stripe-Signature. A 202 is returned only after
-   * the deterministic invocation receipt commits. Provider retries return
-   * the same receipt with duplicate=true.
+   * body is verified against Stripe-Signature. An exact workflow callback
+   * binding completes its callback durably instead of enqueuing an app
+   * invocation. Unmatched events keep the ordinary invocation path.
+   * Terminal callbacks are acknowledged as ignored after verification.
    *
-   * @returns InboundWebhookReceiptResponse Verified and durably accepted, or an already accepted provider retry.
+   * @returns any Verified and durably accepted, duplicated, or ignored after callback closure.
    * @throws ApiError
    */
   public static receiveInboundWebhook({
@@ -218,7 +220,7 @@ export class InboundWebhooksService {
      */
     stripeSignature: string,
     requestBody: Record<string, any>,
-  }): CancelablePromise<InboundWebhookReceiptResponse> {
+  }): CancelablePromise<(InboundWebhookReceiptResponse | WorkflowCallbackWebhookReceiptResponse)> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/hooks/{token}',
