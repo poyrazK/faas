@@ -68,7 +68,16 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 		}
 		workloads = append(workloads, workload)
 	}
+	release, problem := s.activeProjectReleaseState(ctx, acct.ID, project.ID, environment.Slug)
+	if problem != nil {
+		return api.ProjectEnvironmentStateResponse{}, problem
+	}
+	status := "none"
+	if release != nil {
+		status = "active"
+	}
 	return api.ProjectEnvironmentStateResponse{
+		ActiveReleaseSet: release, ReleaseSetStatus: status,
 		ProjectSlug: project.Slug, Environment: environment.Slug, Protected: environment.Protected,
 		Configuration: projectEnvironmentConfigResponse(project.Slug, environment.Slug, config),
 		Workloads:     workloads, SharedResources: projectEnvironmentSharedResources(workloads),
@@ -111,7 +120,7 @@ func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accoun
 		return api.ProjectEnvironmentStateWorkloadResponse{}, api.ErrCapacity("could not inspect project environment policies")
 	}
 	return api.ProjectEnvironmentStateWorkloadResponse{
-		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Release: release,
+		AppID: app.ID, WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, Release: release,
 		Variables: projectEnvironmentVariables(variables), Secrets: projectEnvironmentSecrets(secrets),
 		Bindings: projectEnvironmentBindings(secrets),
 		Routes:   routes,

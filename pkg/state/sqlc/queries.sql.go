@@ -6766,6 +6766,58 @@ func (q *Queries) ListOrgsForAccount(ctx context.Context, db DBTX, accountID pgt
 	return items, nil
 }
 
+const listProjectReleaseSetsBefore = `-- name: ListProjectReleaseSetsBefore :many
+SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
+        'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'app_id', rm.app_id, 'deployment_id', rm.deployment_id) ORDER BY rm.app_id)
+            FROM project_release_members rm WHERE rm.release_id = rs.id), '[]'::jsonb)))::jsonb AS release
+  FROM project_release_sets rs
+  JOIN projects p ON p.id = rs.project_id AND p.account_id = rs.account_id
+ WHERE rs.account_id = $1 AND rs.project_id = $2
+   AND rs.environment_slug = $3
+   AND ($4::timestamptz IS NULL
+     OR (rs.created_at, rs.id) < ($4::timestamptz, $5::uuid))
+ ORDER BY rs.created_at DESC, rs.id DESC
+ LIMIT $6
+`
+
+type ListProjectReleaseSetsBeforeParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+	BeforeAt    pgtype.Timestamptz
+	BeforeID    pgtype.UUID
+	PageLimit   int32
+}
+
+// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
+func (q *Queries) ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg ListProjectReleaseSetsBeforeParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listProjectReleaseSetsBefore,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var release []byte
+		if err := rows.Scan(&release); err != nil {
+			return nil, err
+		}
+		items = append(items, release)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentEventsForAccount = `-- name: ListRecentEventsForAccount :many
 select id, at, actor, kind, subject, data
 from events
@@ -10549,6 +10601,39 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
 	return i, err
+}
+
+const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one
+SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
+        'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'app_id', rm.app_id, 'deployment_id', rm.deployment_id) ORDER BY rm.app_id)
+            FROM project_release_members rm WHERE rm.release_id = rs.id), '[]'::jsonb)))::jsonb AS release
+  FROM project_release_sets rs
+  JOIN projects p ON p.id = rs.project_id AND p.account_id = rs.account_id
+ WHERE rs.account_id = $1 AND rs.project_id = $2
+   AND rs.environment_slug = $3
+   AND (($4::uuid IS NULL AND rs.active)
+     OR rs.id = $4::uuid)
+`
+
+type ReadProjectReleaseSetParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+	ReleaseID   pgtype.UUID
+}
+
+// A single statement reads the pointer and its complete membership together.
+func (q *Queries) ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readProjectReleaseSet,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+		arg.ReleaseID,
+	)
+	var release []byte
+	err := row.Scan(&release)
+	return release, err
 }
 
 const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many

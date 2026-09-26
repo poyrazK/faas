@@ -13223,6 +13223,30 @@ paths:
         required: true
         description: Target project environment.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: listProjectReleaseSets
+      summary: List active, retired, and expired project release sets.
+      description: Returns newest first, ordered by created_at and ID descending. Pass next_before as before for the next page.
+      parameters:
+        - name: before
+          in: query
+          description: Continue release-set history from the next_before cursor returned by the preceding page.
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: Maximum number of release sets to return.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Page of release graphs owned by the requested project environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSetListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [projects]
       operationId: publishProjectReleaseSet
@@ -13243,6 +13267,67 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/active:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose active release is requested.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose active graph should be returned.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getActiveProjectReleaseSet
+      summary: Get the active project release graph.
+      description: Returns 404 when no active release exists in this project environment.
+      responses:
+        '200':
+          description: Currently active release graph and its immutable deployment membership.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/{release}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project owning the specific release being inspected.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Environment that originally published the requested release.
+        schema: { type: string }
+      - name: release
+        in: path
+        required: true
+        description: Release-set UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [projects]
+      operationId: getProjectReleaseSet
+      summary: Inspect a specific project release graph.
+      description: Includes retired and expired graphs for diagnosis; this read does not make them routable.
+      responses:
+        '200':
+          description: Requested historical release graph, including its activation and expiry metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/state:
@@ -28493,6 +28578,16 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ProjectReleaseSetMemberResponse' }
 
+    ProjectReleaseSetListResponse:
+      description: Cursor-paginated release graphs, newest first, including expired sets.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectReleaseSetResponse' }
+        next_before: { type: string }
+
     ProjectReleaseSetMemberResponse:
       description: One app and exact deployment in an immutable project release set.
       type: object
@@ -28558,6 +28653,7 @@ components:
       type: object
       required: [workload_slug, workload_name, release, variables, secrets, bindings, routes, policies]
       properties:
+        app_id: { type: string, format: uuid }
         workload_slug: { type: string }
         workload_name: { type: string }
         release: { $ref: '#/components/schemas/ProjectEnvironmentReleaseWorkloadResponse' }
@@ -28651,6 +28747,12 @@ components:
       type: object
       required: [project_slug, environment, protected, configuration, workloads, shared_resources, generated_at]
       properties:
+        active_release_set:
+          description: Active graph, or null when no graph has been published. Its selected members may differ from the per-workload live deployments below.
+          oneOf:
+            - $ref: '#/components/schemas/ProjectReleaseSetResponse'
+            - type: 'null'
+        release_set_status: { type: string, enum: [active, none] }
         project_slug: { type: string }
         environment: { type: string }
         protected: { type: boolean }

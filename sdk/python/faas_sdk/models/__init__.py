@@ -1237,11 +1237,15 @@ from .project_environment_shared_resource_response import ProjectEnvironmentShar
 from .project_environment_shared_resource_response_kind import ProjectEnvironmentSharedResourceResponseKind
 from .project_environment_shared_resource_response_ownership import ProjectEnvironmentSharedResourceResponseOwnership
 from .project_environment_state_response import ProjectEnvironmentStateResponse
+from .project_environment_state_response_release_set_status import ProjectEnvironmentStateResponseReleaseSetStatus
 from .project_environment_state_workload_response import ProjectEnvironmentStateWorkloadResponse
 from .project_environment_variable_change_response import ProjectEnvironmentVariableChangeResponse
 from .project_environment_variable_change_response_kind import ProjectEnvironmentVariableChangeResponseKind
 from .project_environment_variable_response import ProjectEnvironmentVariableResponse
 from .project_environment_workload_diff_response import ProjectEnvironmentWorkloadDiffResponse
+from .project_release_set_list_response import ProjectReleaseSetListResponse
+from .project_release_set_member_response import ProjectReleaseSetMemberResponse
+from .project_release_set_response import ProjectReleaseSetResponse
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
@@ -1276,6 +1280,8 @@ from .public_status_update_state import PublicStatusUpdateState
 from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_response import PublishEventResponse
+from .publish_project_release_set_request import PublishProjectReleaseSetRequest
+from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_request import PutAppSecretRequest
@@ -2818,11 +2824,15 @@ __all__ = (
     "ProjectEnvironmentSharedResourceResponseKind",
     "ProjectEnvironmentSharedResourceResponseOwnership",
     "ProjectEnvironmentStateResponse",
+    "ProjectEnvironmentStateResponseReleaseSetStatus",
     "ProjectEnvironmentStateWorkloadResponse",
     "ProjectEnvironmentVariableChangeResponse",
     "ProjectEnvironmentVariableChangeResponseKind",
     "ProjectEnvironmentVariableResponse",
     "ProjectEnvironmentWorkloadDiffResponse",
+    "ProjectReleaseSetListResponse",
+    "ProjectReleaseSetMemberResponse",
+    "ProjectReleaseSetResponse",
     "ProjectResponse",
     "ProjectScanRequest",
     "ProjectSourceRefScanRequest",
@@ -2857,6 +2867,8 @@ __all__ = (
     "PublishEventRequest",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishProjectReleaseSetRequest",
+    "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
     "PutAppSecretRequest",
