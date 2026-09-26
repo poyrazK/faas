@@ -79,10 +79,10 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	elapsed := now.Sub(state.last).Seconds()
 	if elapsed > 0 {
 		state.tokens += elapsed * spec.RatePerSecond
-		if state.tokens > float64(spec.Burst) {
-			state.tokens = float64(spec.Burst)
-		}
 		state.last = now
+	}
+	if state.tokens > float64(spec.Burst) {
+		state.tokens = float64(spec.Burst)
 	}
 	if len(state.leases) >= spec.MaxInFlight {
 		retry := ttl
@@ -94,14 +94,14 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		if retry < time.Millisecond {
 			retry = time.Millisecond
 		}
-		return Decision{RetryAfter: retry, Reason: ReasonConcurrency}, nil
+		return Decision{RetryAfter: retry, Reason: ReasonConcurrency, RequestTimeout: ttl}, nil
 	}
 	if state.tokens < 1 {
 		retry := time.Duration((1 - state.tokens) / spec.RatePerSecond * float64(time.Second))
 		if retry < time.Millisecond {
 			retry = time.Millisecond
 		}
-		return Decision{RetryAfter: retry, Reason: ReasonRate}, nil
+		return Decision{RetryAfter: retry, Reason: ReasonRate, RequestTimeout: ttl}, nil
 	}
 	if spec.DailyRequestLimit != nil && state.dailyRequestCount >= *spec.DailyRequestLimit {
 		nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
@@ -109,13 +109,13 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		if retry < time.Millisecond {
 			retry = time.Millisecond
 		}
-		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit}, nil
+		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
 	}
 	state.tokens--
 	state.dailyRequestCount++
 	id := uuid.NewString()
 	state.leases[id] = memoryLease{expiresAt: now.Add(ttl)}
-	return Decision{Granted: true, LeaseID: id}, nil
+	return Decision{Granted: true, LeaseID: id, RequestTimeout: ttl}, nil
 }
 
 func (b *MemoryBackend) Release(ctx context.Context, integrationID, leaseID string) error {

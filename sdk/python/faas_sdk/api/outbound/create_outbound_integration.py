@@ -90,7 +90,7 @@ def sync_detailed(
 
     Args:
         body (CreateOutboundIntegrationRequest): A fixed public HTTPS destination, maximum HTTP
-            route policy, and optional daily admitted-request limit.
+            route policy, and optional admission policy and daily admitted-request limit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -123,7 +123,7 @@ def sync(
 
     Args:
         body (CreateOutboundIntegrationRequest): A fixed public HTTPS destination, maximum HTTP
-            route policy, and optional daily admitted-request limit.
+            route policy, and optional admission policy and daily admitted-request limit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,7 +151,7 @@ async def asyncio_detailed(
 
     Args:
         body (CreateOutboundIntegrationRequest): A fixed public HTTPS destination, maximum HTTP
-            route policy, and optional daily admitted-request limit.
+            route policy, and optional admission policy and daily admitted-request limit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,7 +182,7 @@ async def asyncio(
 
     Args:
         body (CreateOutboundIntegrationRequest): A fixed public HTTPS destination, maximum HTTP
-            route policy, and optional daily admitted-request limit.
+            route policy, and optional admission policy and daily admitted-request limit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

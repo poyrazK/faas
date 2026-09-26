@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -15,6 +15,10 @@ from ..models.outbound_integration_offer_owner_kind import (
     OutboundIntegrationOfferOwnerKind,
     check_outbound_integration_offer_owner_kind,
 )
+
+if TYPE_CHECKING:
+    from ..models.outbound_request_policy import OutboundRequestPolicy
+
 
 T = TypeVar("T", bound="OutboundIntegrationOffer")
 
@@ -37,6 +41,8 @@ class OutboundIntegrationOffer:
     """Whether the integration is operator-provisioned or customer-created."""
     daily_request_limit: int | None
     """Effective per-integration UTC-day admitted-request limit; null means no configured limit."""
+    request_policy: OutboundRequestPolicy
+    """Effective customer-selected per-integration policy, bounded by the account plan."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +67,8 @@ class OutboundIntegrationOffer:
         daily_request_limit: int | None
         daily_request_limit = self.daily_request_limit
 
+        request_policy = self.request_policy.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,6 +83,7 @@ class OutboundIntegrationOffer:
                 "credential_configured": credential_configured,
                 "owner_kind": owner_kind,
                 "daily_request_limit": daily_request_limit,
+                "request_policy": request_policy,
             }
         )
 
@@ -82,6 +91,8 @@ class OutboundIntegrationOffer:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.outbound_request_policy import OutboundRequestPolicy
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -108,6 +119,8 @@ class OutboundIntegrationOffer:
 
         daily_request_limit = _parse_daily_request_limit(d.pop("daily_request_limit"))
 
+        request_policy = OutboundRequestPolicy.from_dict(d.pop("request_policy"))
+
         outbound_integration_offer = cls(
             id=id,
             name=name,
@@ -119,6 +132,7 @@ class OutboundIntegrationOffer:
             credential_configured=credential_configured,
             owner_kind=owner_kind,
             daily_request_limit=daily_request_limit,
+            request_policy=request_policy,
         )
 
         outbound_integration_offer.additional_properties = d

@@ -227,9 +227,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Metrics.IncInFlight(metricIntegrationID)
 
 	ctx := r.Context()
-	if integration.RequestTimeout > 0 {
+	requestTimeout := decision.RequestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = integration.RequestTimeout
+	}
+	if requestTimeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, integration.RequestTimeout)
+		ctx, cancel = context.WithTimeout(ctx, requestTimeout)
 		defer cancel()
 	}
 	defer func() {

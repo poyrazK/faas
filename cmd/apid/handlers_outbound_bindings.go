@@ -28,6 +28,7 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		CredentialConfigured: offer.CredentialConfigured,
 		OwnerKind:            offer.OwnerKind,
 		DailyRequestLimit:    copyOutboundDailyLimit(offer.DailyRequestLimit),
+		RequestPolicy:        offer.RequestPolicy,
 	}
 }
 
@@ -91,6 +92,14 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	requestPolicy := api.DefaultOutboundRequestPolicy()
+	if req.RequestPolicy != nil {
+		requestPolicy = *req.RequestPolicy
+	}
+	if !api.OutboundRequestPolicyAllowedForPlan(acct.Plan, requestPolicy) {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Request policy exceeds the account plan ceiling")
+		return
+	}
 	origin, err := url.Parse(req.Origin)
 	if err != nil || strings.ContainsAny(req.Origin, "?#") || outbound.ValidatePublicOrigin(r.Context(), origin) != nil {
 		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Origin must resolve only to public addresses over HTTPS")
@@ -105,12 +114,13 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 		AllowedMethods:      append([]string(nil), req.AllowedMethods...),
 		AllowedPathPrefixes: append([]string(nil), req.AllowedPathPrefixes...),
 		DailyRequestLimit:   copyOutboundDailyLimit(req.DailyRequestLimit),
+		RequestPolicy:       requestPolicy,
 		Enabled:             true, CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: "customer",
 	}
 	created, err := store.CreateOutboundIntegration(r.Context(), offer)
 	switch {
 	case errors.Is(err, state.ErrInvalidArgument):
-		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Integration name, methods, or paths are invalid")
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Integration name, methods, paths, or request policy are invalid")
 	case errors.Is(err, state.ErrConflict):
 		outboundBindingProblem(w, http.StatusConflict, api.CodeConflict, "An outbound integration with this name already exists")
 	case errors.Is(err, state.ErrOutboundIntegrationLimit):
@@ -120,6 +130,39 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 	default:
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusCreated, outboundOfferResponse(created))
+	}
+}
+
+func (s *server) putOutboundRequestPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	integrationID := r.PathValue("integration")
+	if _, err := uuid.Parse(integrationID); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Integration ID must be a UUID")
+		return
+	}
+	var req api.PutOutboundRequestPolicyRequest
+	if err := decodeJSONSized(r, &req, 4<<10); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "A complete outbound request policy is required")
+		return
+	}
+	if !api.OutboundRequestPolicyAllowedForPlan(acct.Plan, req.RequestPolicy) {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Request policy exceeds the account plan ceiling")
+		return
+	}
+	store, ok := s.outboundBindingStore(w)
+	if !ok {
+		return
+	}
+	err := store.SetOutboundRequestPolicy(r.Context(), acct.ID, integrationID, req.RequestPolicy)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		s.notFound(w, "customer outbound integration not found")
+	case errors.Is(err, state.ErrInvalidArgument):
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Request policy exceeds the account plan ceiling")
+	case err != nil:
+		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_policy_unavailable", "Outbound request policy could not be updated")
+	default:
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

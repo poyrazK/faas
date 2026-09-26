@@ -113,7 +113,7 @@ its environment. A newly-created integration will not require an `outboundd`
 restart, but changing its JWKS or systemd credential configuration does.
 
 Create the integration with a fixed public HTTPS origin and the maximum routes
-any attached app may use:
+any attached app may use. This request-policy example fits the Pro plan:
 
 ```json
 {
@@ -121,7 +121,13 @@ any attached app may use:
   "origin": "https://api.stripe.com",
   "allowed_methods": ["GET", "POST"],
   "allowed_path_prefixes": ["/v1/customers", "/v1/payment_intents"],
-  "daily_request_limit": 10000
+  "daily_request_limit": 10000,
+  "request_policy": {
+    "rate_per_second": 50,
+    "burst": 200,
+    "max_in_flight": 100,
+    "request_timeout_ms": 2000
+  }
 }
 ```
 
@@ -132,10 +138,31 @@ credential, and binding calls require MFA and deploy-write scope. Origin DNS is
 checked before it is stored and checked again on every new gateway connection;
 private, loopback, and special-use destinations are rejected. The customer's
 method/path policy is the integration-wide ceiling; each app binding can narrow
-it further. Customer-created integrations have a fixed 10 requests/second,
-burst 20, 10 concurrent requests, and 30-second timeout, with a maximum of 25
-enabled customer integrations per account. The credential remains unavailable
-until uploaded and the gateway fails closed if it is missing or revoked.
+it further. The optional `request_policy` configures rate, burst, concurrency,
+and upstream timeout for this integration. If omitted, it defaults to 10
+requests/second, burst 20, 10 concurrent requests, and 30 seconds. Customer
+integrations can be changed later with
+`PUT /v1/outbound/integrations/{id}/request-policy`; send the full
+`request_policy` object shown above. Updates affect subsequent admissions
+without an `outboundd` restart. Requests already admitted retain their original
+deadline, and reducing `max_in_flight` does not terminate calls already running.
+The credential remains unavailable until uploaded and the gateway fails closed
+if it is missing or revoked. A maximum of 25 enabled customer integrations is
+allowed per account.
+
+The account plan bounds each integration's request policy:
+
+| Plan | Rate/sec | Burst | In flight | Timeout |
+| --- | ---: | ---: | ---: | ---: |
+| Free | 10 | 20 | 10 | 30 s |
+| Hobby | 20 | 100 | 50 | 60 s |
+| Pro | 100 | 500 | 250 | 120 s |
+| Scale | 500 | 2,000 | 1,000 | 300 s |
+
+These are configurable ceilings, not included usage. A plan downgrade clamps
+the effective policy on subsequent admissions and in API reads; upgrading later
+does not automatically raise the customer's saved values. Operator-provisioned
+integration policies remain operator-managed through `outboundd.toml`.
 
 `daily_request_limit` is optional and caps admitted calls for this integration
 in one UTC day. Its maximum is plan-specific per integration (Free 100,000;
@@ -153,13 +180,15 @@ next UTC midnight. This is a request-count guard, not a dollar or token budget;
 provider pricing and usage units still need provider-specific adapters.
 Operator-provisioned integrations can set the same field in their
 `outboundd.toml` configuration; the customer API only changes customer-owned
-integrations.
+integrations. The rate/burst/concurrency/timeout policy remains independently
+configurable and is not inferred from the daily request cap.
 
 Delete a customer-owned integration with
 `DELETE /v1/outbound/integrations/{id}`. This permanently removes its sealed
 credential, app bindings, and admission state. This endpoint cannot delete
 operator-provisioned integrations. See
-[ADR-256](../adr/256-customer-created-outbound-integrations.md).
+[ADR-256](../adr/256-customer-created-outbound-integrations.md) and
+[ADR-258](../adr/258-customer-configurable-outbound-request-policy.md).
 
 For every managed integration, set `allowed_methods` (uppercase `GET`, `HEAD`,
 `POST`, `PUT`, `PATCH`, or `DELETE`) and `allowed_path_prefixes`. A prefix

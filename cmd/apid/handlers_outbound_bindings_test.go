@@ -101,6 +101,58 @@ func TestOutboundCustomerBindingLifecycle(t *testing.T) {
 	}
 }
 
+func TestOutboundCustomerRequestPolicyLifecycle(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	id := uuid.NewString()
+	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: id, AccountID: e.acct.ID, Name: "customer-policy", Origin: "https://api.example.com",
+		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
+		Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed",
+	})
+	policy := api.OutboundRequestPolicy{RatePerSecond: 50, Burst: 200, MaxInFlight: 100, RequestTimeoutMS: 45_000}
+	path := "/v1/outbound/integrations/" + id + "/request-policy"
+	updated := e.do(t, http.MethodPut, path, api.PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil)
+	if updated.Code != http.StatusNoContent {
+		t.Fatalf("update request policy = %d %s", updated.Code, updated.Body.String())
+	}
+	for _, invalid := range []api.OutboundRequestPolicy{
+		{RatePerSecond: 101, Burst: 200, MaxInFlight: 100, RequestTimeoutMS: 45_000},
+		{RatePerSecond: 50, Burst: 200, MaxInFlight: 100, RequestTimeoutMS: 120_001},
+		{},
+	} {
+		assertProblem(t, e.do(t, http.MethodPut, path, api.PutOutboundRequestPolicyRequest{RequestPolicy: invalid}, nil), http.StatusBadRequest, api.CodeValidation)
+	}
+	other, err := e.store.CreateAccount(context.Background(), "other-outbound-policy@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID := uuid.NewString()
+	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: otherID, AccountID: other.ID, Name: "foreign-policy", Origin: "https://api.example.com",
+		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"},
+		Enabled: true, OwnerKind: "customer", CredentialSource: "customer_sealed",
+	})
+	assertProblem(t, e.do(t, http.MethodPut, "/v1/outbound/integrations/"+otherID+"/request-policy",
+		api.PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil), http.StatusNotFound, api.CodeNotFound)
+	operatorID := uuid.NewString()
+	e.store.SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
+		ID: operatorID, AccountID: e.acct.ID, Name: "operator-policy", Origin: "https://api.operator.example",
+		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+	})
+	assertProblem(t, e.do(t, http.MethodPut, "/v1/outbound/integrations/"+operatorID+"/request-policy",
+		api.PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil), http.StatusNotFound, api.CodeNotFound)
+	list := e.do(t, http.MethodGet, "/v1/outbound/integrations", nil, nil)
+	var offers api.OutboundIntegrationOfferList
+	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &offers) != nil || len(offers.Items) != 2 {
+		t.Fatalf("offer list = %d %s", list.Code, list.Body.String())
+	}
+	for _, offer := range offers.Items {
+		if offer.ID == id && offer.RequestPolicy != policy {
+			t.Fatalf("effective policy = %+v, want %+v", offer.RequestPolicy, policy)
+		}
+	}
+}
+
 func TestOutboundCustomerCredentialLifecycle(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	identity, err := age.GenerateX25519Identity()

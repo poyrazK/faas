@@ -14,7 +14,7 @@ func pgCustomerOutboundOffer(accountID, name string) state.OutboundIntegrationOf
 	return state.OutboundIntegrationOffer{
 		ID: uuid.NewString(), AccountID: accountID, Name: name, Origin: "https://api.example.com",
 		AllowedMethods: []string{"GET", "POST"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
-		CredentialSource: "customer_sealed", OwnerKind: "customer",
+		CredentialSource: "customer_sealed", OwnerKind: "customer", RequestPolicy: api.DefaultOutboundRequestPolicy(),
 	}
 }
 
@@ -24,13 +24,30 @@ func TestPgStore_OutboundBindingCustomerLifecycle(t *testing.T) {
 	offer := pgCustomerOutboundOffer(accountID, "stripe")
 	limit := int64(1000)
 	offer.DailyRequestLimit = &limit
+	// Exercise the store's fallback for an omitted request policy.
+	offer.RequestPolicy = api.OutboundRequestPolicy{}
 	created, err := s.CreateOutboundIntegration(ctx, offer)
 	if err != nil || created.ID != offer.ID {
 		t.Fatalf("CreateOutboundIntegration = %+v, %v", created, err)
 	}
+	if created.RequestPolicy != api.DefaultOutboundRequestPolicy() {
+		t.Fatalf("default request policy = %+v", created.RequestPolicy)
+	}
+	requestPolicy := api.OutboundRequestPolicy{RatePerSecond: 50, Burst: 250, MaxInFlight: 100, RequestTimeoutMS: 60_000}
+	if err := s.SetOutboundRequestPolicy(ctx, accountID, offer.ID, requestPolicy); err != nil {
+		t.Fatalf("SetOutboundRequestPolicy: %v", err)
+	}
+	tooHighPolicy := requestPolicy
+	tooHighPolicy.RatePerSecond = 101
+	if err := s.SetOutboundRequestPolicy(ctx, accountID, offer.ID, tooHighPolicy); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("over-plan request policy = %v, want ErrInvalidArgument", err)
+	}
+	if err := s.SetOutboundRequestPolicy(ctx, uuid.NewString(), offer.ID, requestPolicy); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account request policy = %v, want ErrNotFound", err)
+	}
 
 	listed, err := s.ListOutboundIntegrationOffers(ctx, accountID)
-	if err != nil || len(listed) != 1 || listed[0].ID != offer.ID || listed[0].DailyRequestLimit == nil || *listed[0].DailyRequestLimit != limit {
+	if err != nil || len(listed) != 1 || listed[0].ID != offer.ID || listed[0].DailyRequestLimit == nil || *listed[0].DailyRequestLimit != limit || listed[0].RequestPolicy != requestPolicy {
 		t.Fatalf("ListOutboundIntegrationOffers = %+v, %v", listed, err)
 	}
 	if cross, err := s.ListOutboundIntegrationOffers(ctx, uuid.NewString()); err != nil || len(cross) != 0 {

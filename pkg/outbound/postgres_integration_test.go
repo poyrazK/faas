@@ -155,6 +155,71 @@ func TestPostgresBackendSharesBudgetAcrossGatewayInstances(t *testing.T) {
 	}
 }
 
+func TestPostgresOutboundRequestPolicyUpdatesApplyToAdmissions(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, fmt.Sprintf("outbound-policy-%s@example.com", uuid.NewString()), api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultPolicy := api.DefaultOutboundRequestPolicy()
+	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
+		ID: uuid.NewString(), AccountID: account.ID, Name: "request-policy",
+		Origin: "https://api.example.com", AllowedMethods: []string{http.MethodGet},
+		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+		CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: outbound.IntegrationOwnerCustomer,
+		RequestPolicy: defaultPolicy,
+	})
+	if err != nil {
+		t.Fatalf("create customer integration: %v", err)
+	}
+	resolver, err := outbound.NewPostgresResolver(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := resolver.Integration(ctx, offer.ID)
+	if err != nil || before.RatePerSecond != defaultPolicy.RatePerSecond || before.Burst != defaultPolicy.Burst {
+		t.Fatalf("initial resolved policy = %+v, %v", before, err)
+	}
+	updatedPolicy := api.OutboundRequestPolicy{RatePerSecond: 1, Burst: 1, MaxInFlight: 1, RequestTimeoutMS: 1500}
+	if err := store.SetOutboundRequestPolicy(ctx, account.ID, offer.ID, updatedPolicy); err != nil {
+		t.Fatalf("update customer policy: %v", err)
+	}
+	after, err := resolver.Integration(ctx, offer.ID)
+	if err != nil || after.RatePerSecond != 1 || after.Burst != 1 || after.MaxInFlight != 1 || after.RequestTimeout != 1500*time.Millisecond {
+		t.Fatalf("resolved updated policy = %+v, %v", after, err)
+	}
+
+	backend, err := outbound.NewPostgresBackend(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleResolverSnapshot := outbound.AdmissionSpec{
+		IntegrationID: offer.ID, RatePerSecond: defaultPolicy.RatePerSecond,
+		Burst: defaultPolicy.Burst, MaxInFlight: defaultPolicy.MaxInFlight,
+		LeaseTTL: time.Duration(defaultPolicy.RequestTimeoutMS) * time.Millisecond,
+	}
+	first, err := backend.Admit(ctx, staleResolverSnapshot)
+	if err != nil || !first.Granted || first.RequestTimeout != 1500*time.Millisecond {
+		t.Fatalf("admission after policy update = %+v, %v", first, err)
+	}
+	second, err := backend.Admit(ctx, staleResolverSnapshot)
+	if err != nil || second.Granted || second.Reason != outbound.ReasonConcurrency || second.RequestTimeout != 1500*time.Millisecond {
+		t.Fatalf("stale snapshot bypassed concurrency update: %+v, %v", second, err)
+	}
+	if err := backend.Release(ctx, offer.ID, first.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	third, err := backend.Admit(ctx, staleResolverSnapshot)
+	if err != nil || third.Granted || third.Reason != outbound.ReasonRate {
+		t.Fatalf("stale snapshot bypassed rate update: %+v, %v", third, err)
+	}
+}
+
 func TestPostgresCustomerSealedCredentialRotation(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()

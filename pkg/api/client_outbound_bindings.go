@@ -31,6 +31,11 @@ func (c *Client) SetOutboundIntegrationDailyBudget(ctx context.Context, integrat
 	return c.do(ctx, "PUT", path, PutOutboundDailyRequestBudgetRequest{DailyRequestLimit: limit}, nil)
 }
 
+func (c *Client) SetOutboundIntegrationRequestPolicy(ctx context.Context, integrationID string, policy OutboundRequestPolicy) error {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/request-policy"
+	return c.do(ctx, "PUT", path, PutOutboundRequestPolicyRequest{RequestPolicy: policy}, nil)
+}
+
 func (c *Client) ListOutboundAppBindings(ctx context.Context, slug string) (OutboundAppBindingList, error) {
 	var out OutboundAppBindingList
 	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/outbound-bindings", nil, &out)

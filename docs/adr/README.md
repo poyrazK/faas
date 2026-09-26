@@ -55,6 +55,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 240 | [Cross-app platform tenant request budgets](240-platform-tenant-request-budgets.md) | accepted | Synchronously enforce optional customer-wide minute/day admission ceilings across apps and gateway replicas |
+| 258 | [Customer-configurable outbound request policy](258-customer-configurable-outbound-request-policy.md) | accepted | Per-integration rate, burst, concurrency, and timeout controls with plan ceilings and live Postgres-backed enforcement |
 | 256 | [Customer-created outbound integrations](256-customer-created-outbound-integrations.md) | accepted | Account-owned public HTTPS destinations, sealed provider Authorization, bounded admission defaults, live gateway resolution, and deletion cascade |
 | 239 | [Verified tenant-surface usage attribution](239-platform-tenant-surface-usage.md) | accepted | Bill anonymous requests on verified customer hostnames without conflating them with consumer-key usage |
 | 238 | [Cross-app platform tenant usage statements](238-cross-app-platform-tenant-statements.md) | accepted | Immutable single-currency customer snapshots, late-usage adjustment revisions, and mutually exclusive app/tenant handoffs |

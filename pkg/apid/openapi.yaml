@@ -415,6 +415,30 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/request-policy:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the customer-owned integration whose request policy is being changed.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundIntegrationRequestPolicy
+      summary: Replace a customer-owned integration's rate, burst, concurrency, and timeout policy.
+      description: Requires MFA and deploy-write scope. Every value must fit the account plan ceiling. Changes are enforced on subsequent admissions without an outboundd restart; already-admitted calls keep their existing deadline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundRequestPolicyRequest' }
+      responses:
+        '204': { description: Request policy updated; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/usage:
     parameters:
       - name: integration
@@ -19687,7 +19711,7 @@ components:
     OutboundIntegrationOffer:
       type: object
       description: Account-owned managed integration metadata; never contains a provider key or gateway token.
-      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled, credential_source, credential_configured, owner_kind, daily_request_limit]
+      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled, credential_source, credential_configured, owner_kind, daily_request_limit, request_policy]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -19715,9 +19739,10 @@ components:
           minimum: 1
           maximum: 100000000
           description: Effective per-integration UTC-day admitted-request limit; null means no configured limit.
+        request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }
     CreateOutboundIntegrationRequest:
       type: object
-      description: A fixed public HTTPS destination, maximum HTTP route policy, and optional daily admitted-request limit.
+      description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
       required: [name, origin, allowed_methods, allowed_path_prefixes]
       properties:
         name: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
@@ -19739,6 +19764,25 @@ components:
           minimum: 1
           maximum: 100000000
           description: Optional per-integration daily admitted-request limit; account plan ceilings may be lower.
+        request_policy:
+          allOf:
+            - $ref: '#/components/schemas/OutboundRequestPolicy'
+          description: Optional full request policy. Omission selects the default 10 RPS, burst 20, 10 in flight, and 30-second timeout.
+    OutboundRequestPolicy:
+      type: object
+      description: Effective customer-selected per-integration policy, bounded by the account plan.
+      required: [rate_per_second, burst, max_in_flight, request_timeout_ms]
+      properties:
+        rate_per_second: { type: number, format: double, exclusiveMinimum: true, minimum: 0, maximum: 500 }
+        burst: { type: integer, minimum: 1, maximum: 2000 }
+        max_in_flight: { type: integer, minimum: 1, maximum: 1000 }
+        request_timeout_ms: { type: integer, minimum: 1, maximum: 300000 }
+    PutOutboundRequestPolicyRequest:
+      type: object
+      description: Replace all admission policy values for a customer-owned integration.
+      required: [request_policy]
+      properties:
+        request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }
     PutOutboundDailyRequestBudgetRequest:
       type: object
       description: Set a lower per-integration daily request limit or clear it with null.

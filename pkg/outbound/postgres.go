@@ -53,21 +53,29 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
 		return Decision{}, err
 	}
-	// Re-read the durable customer-selected cap under a row lock. A concurrent
-	// API update and this admission are therefore ordered: once a lower limit
-	// update returns, a request cannot be admitted against a stale resolver
-	// snapshot. The plan ceiling is read in the same statement so downgrades
-	// also constrain subsequent admissions immediately.
-	var plan string
+	// Lock the account first, then the integration, matching customer policy
+	// writes. A completed policy update is therefore visible to every gateway
+	// admission, even if its resolver read happened just before the update.
+	var plan, ownerKind string
 	var storedDailyRequestLimit int64
+	var requestPolicy api.OutboundRequestPolicy
 	err = tx.QueryRow(ctx, `
-		SELECT account.plan,
-		       COALESCE(integration.daily_request_limit, 0)
-		  FROM outbound_integrations integration
-		  JOIN accounts account ON account.id = integration.account_id
+		SELECT account.plan
+		  FROM accounts account
+		  JOIN outbound_integrations integration ON integration.account_id = account.id
 		 WHERE integration.id = $1
-		 FOR SHARE OF integration, account`, integrationID).
-		Scan(&plan, &storedDailyRequestLimit)
+		 FOR SHARE OF account`, integrationID).Scan(&plan)
+	if err != nil {
+		return Decision{}, err
+	}
+	err = tx.QueryRow(ctx, `
+		SELECT COALESCE(daily_request_limit, 0), rate_per_second, burst,
+		       max_in_flight, request_timeout_ms, owner_kind
+		  FROM outbound_integrations
+		 WHERE id = $1
+		 FOR SHARE`, integrationID).
+		Scan(&storedDailyRequestLimit, &requestPolicy.RatePerSecond, &requestPolicy.Burst,
+			&requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &ownerKind)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -81,6 +89,16 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 			storedDailyRequestLimit = maximum
 		}
 		dailyRequestLimit = &storedDailyRequestLimit
+	}
+	if ownerKind == "customer" {
+		requestPolicy, ok := api.EffectiveOutboundRequestPolicyForPlan(api.Plan(plan), requestPolicy)
+		if !ok {
+			return Decision{}, fmt.Errorf("%w: customer outbound request policy is invalid", ErrInvalidIntegration)
+		}
+		spec.RatePerSecond = requestPolicy.RatePerSecond
+		spec.Burst = requestPolicy.Burst
+		spec.MaxInFlight = requestPolicy.MaxInFlight
+		ttl = time.Duration(requestPolicy.RequestTimeoutMS) * time.Millisecond
 	}
 	// The state row is created lazily. The lock below serializes all admissions
 	// for this integration; leases are still deleted by expiry during admission.
@@ -111,10 +129,10 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}
 	if elapsed := now.Sub(lastRefill).Seconds(); elapsed > 0 {
 		tokens += elapsed * spec.RatePerSecond
-		if tokens > float64(spec.Burst) {
-			tokens = float64(spec.Burst)
-		}
 		lastRefill = now
+	}
+	if tokens > float64(spec.Burst) {
+		tokens = float64(spec.Burst)
 	}
 	// Persist refill progress even when the request is rejected. This prevents
 	// repeated callers from repeatedly receiving a stale Retry-After value.
@@ -141,7 +159,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		if err := tx.Commit(ctx); err != nil {
 			return Decision{}, err
 		}
-		return Decision{RetryAfter: retry, Reason: ReasonConcurrency}, nil
+		return Decision{RetryAfter: retry, Reason: ReasonConcurrency, RequestTimeout: ttl}, nil
 	}
 	if tokens < 1 {
 		retry := time.Duration((1 - tokens) / spec.RatePerSecond * float64(time.Second))
@@ -151,7 +169,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		if err := tx.Commit(ctx); err != nil {
 			return Decision{}, err
 		}
-		return Decision{RetryAfter: retry, Reason: ReasonRate}, nil
+		return Decision{RetryAfter: retry, Reason: ReasonRate, RequestTimeout: ttl}, nil
 	}
 	if dailyRequestLimit != nil && dailyRequestCount >= *dailyRequestLimit {
 		retry := today.Add(24 * time.Hour).Sub(utcNow)
@@ -161,7 +179,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		if err := tx.Commit(ctx); err != nil {
 			return Decision{}, err
 		}
-		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit}, nil
+		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
 	}
 	tokens--
 	dailyRequestCount++
@@ -177,7 +195,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if err := tx.Commit(ctx); err != nil {
 		return Decision{}, err
 	}
-	return Decision{Granted: true, LeaseID: leaseID.String()}, nil
+	return Decision{Granted: true, LeaseID: leaseID.String(), RequestTimeout: ttl}, nil
 }
 
 func (b *PostgresBackend) Release(ctx context.Context, integrationID, leaseID string) error {

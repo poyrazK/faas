@@ -28,6 +28,21 @@ func copyOutboundBinding(in OutboundAppBinding) OutboundAppBinding {
 	return in
 }
 
+func effectiveMemOutboundOffer(offer OutboundIntegrationOffer, plan api.Plan) OutboundIntegrationOffer {
+	if offer.OwnerKind == "customer" {
+		if policy, ok := api.EffectiveOutboundRequestPolicyForPlan(plan, offer.RequestPolicy); ok {
+			offer.RequestPolicy = policy
+		}
+	}
+	if offer.DailyRequestLimit != nil {
+		if maximum, ok := api.OutboundRequestsPerDayMaxForPlan(plan); ok && *offer.DailyRequestLimit > maximum {
+			limit := maximum
+			offer.DailyRequestLimit = &limit
+		}
+	}
+	return copyOutboundOffer(offer)
+}
+
 func (m *MemStore) SetOutboundDailyRequestLimit(_ context.Context, accountID, integrationID string, limit *int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -48,6 +63,22 @@ func (m *MemStore) SetOutboundDailyRequestLimit(_ context.Context, accountID, in
 		copy := *limit
 		offer.DailyRequestLimit = &copy
 	}
+	m.outboundIntegrationOffers[integrationID] = offer
+	return nil
+}
+
+func (m *MemStore) SetOutboundRequestPolicy(_ context.Context, accountID, integrationID string, policy api.OutboundRequestPolicy) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	account, accountOK := m.accounts[accountID]
+	if !ok || offer.AccountID != accountID || offer.OwnerKind != "customer" || !accountOK || !offer.Enabled {
+		return ErrNotFound
+	}
+	if !api.OutboundRequestPolicyAllowedForPlan(account.Plan, policy) {
+		return ErrInvalidArgument
+	}
+	offer.RequestPolicy = policy
 	m.outboundIntegrationOffers[integrationID] = offer
 	return nil
 }
@@ -90,10 +121,16 @@ func (m *MemStore) SeedOutboundIntegrationOffer(offer OutboundIntegrationOffer) 
 		offer.CredentialSource = "operator_env"
 		offer.CredentialConfigured = true
 	}
+	if offer.RequestPolicy == (api.OutboundRequestPolicy{}) {
+		offer.RequestPolicy = api.DefaultOutboundRequestPolicy()
+	}
 	m.outboundIntegrationOffers[offer.ID] = copyOutboundOffer(offer)
 }
 
 func (m *MemStore) CreateOutboundIntegration(_ context.Context, offer OutboundIntegrationOffer) (OutboundIntegrationOffer, error) {
+	if offer.RequestPolicy == (api.OutboundRequestPolicy{}) {
+		offer.RequestPolicy = api.DefaultOutboundRequestPolicy()
+	}
 	if err := validateCustomerOutboundIntegration(offer); err != nil {
 		return OutboundIntegrationOffer{}, err
 	}
@@ -108,6 +145,9 @@ func (m *MemStore) CreateOutboundIntegration(_ context.Context, offer OutboundIn
 		if !planKnown || *offer.DailyRequestLimit > maximum {
 			return OutboundIntegrationOffer{}, ErrInvalidArgument
 		}
+	}
+	if !api.OutboundRequestPolicyAllowedForPlan(account.Plan, offer.RequestPolicy) {
+		return OutboundIntegrationOffer{}, ErrInvalidArgument
 	}
 	active := 0
 	for _, existing := range m.outboundIntegrationOffers {
@@ -180,7 +220,10 @@ func (m *MemStore) ListOutboundIntegrationOffers(_ context.Context, accountID st
 	out := make([]OutboundIntegrationOffer, 0)
 	for _, offer := range m.outboundIntegrationOffers {
 		if offer.AccountID == accountID && offer.Enabled && len(offer.AllowedMethods) > 0 && len(offer.AllowedPathPrefixes) > 0 {
-			out = append(out, copyOutboundOffer(offer))
+			account, exists := m.accounts[accountID]
+			if exists {
+				out = append(out, effectiveMemOutboundOffer(offer, account.Plan))
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -201,7 +244,11 @@ func (m *MemStore) ListOutboundAppBindings(_ context.Context, accountID, appID s
 			continue
 		}
 		if offer, ok := m.outboundIntegrationOffers[binding.ID]; ok && offer.AccountID == accountID {
-			binding.OutboundIntegrationOffer = copyOutboundOffer(offer)
+			account, exists := m.accounts[accountID]
+			if !exists {
+				continue
+			}
+			binding.OutboundIntegrationOffer = effectiveMemOutboundOffer(offer, account.Plan)
 			binding.Enabled = offer.Enabled && len(offer.AllowedMethods) > 0 && len(offer.AllowedPathPrefixes) > 0
 			out = append(out, copyOutboundBinding(binding))
 		}
@@ -225,10 +272,10 @@ func (m *MemStore) BindOutboundIntegration(_ context.Context, accountID, appID, 
 	}
 	key := appID + "|" + integrationID
 	if existing, ok := m.outboundAppBindings[key]; ok {
-		existing.OutboundIntegrationOffer = copyOutboundOffer(offer)
+		existing.OutboundIntegrationOffer = effectiveMemOutboundOffer(offer, m.accounts[accountID].Plan)
 		return copyOutboundBinding(existing), nil
 	}
-	binding := OutboundAppBinding{OutboundIntegrationOffer: copyOutboundOffer(offer), AppID: appID,
+	binding := OutboundAppBinding{OutboundIntegrationOffer: effectiveMemOutboundOffer(offer, m.accounts[accountID].Plan), AppID: appID,
 		RouteMethods: append([]string(nil), offer.AllowedMethods...), RoutePathPrefixes: append([]string(nil), offer.AllowedPathPrefixes...), CreatedAt: time.Now()}
 	m.outboundAppBindings[key] = binding
 	return copyOutboundBinding(binding), nil
