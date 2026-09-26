@@ -7261,10 +7261,9 @@ type EdgeRuleCORSAction struct {
 // The grammar is deliberately tiny (no regex metacharacters, no
 // path matching, no scheme matching) so the gateway hot-path
 // matcher can stay an O(n) string-prefix scan without backtracking.
-// The regex below enforces the grammar at create-time; the gateway
-// applies the same predicates in handler.go::matchOrigin (so a
-// rule that bypasses the apid validator still matches what the
-// customer expects — defence in depth).
+// The regex below enforces the grammar at create-time; both the gateway
+// and simulator use MatchEdgeRuleCORSOrigin for the runtime predicates (so a
+// rule that bypasses the apid validator still matches consistently).
 //
 // Footgun guard (ADR-091 D12) only fires for the bare "*" entry
 // combined with AllowCredentials: true. A pattern like

@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -60,8 +61,15 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()
 	}
+	presets, presetErr := s.store.ListCorsPresetsForAccount(ctx, acct.ID)
+	if presetErr != nil {
+		log.Warn("dashboard edge rules: list CORS presets", "account_id", acct.ID, "app_id", app.ID, "err", presetErr)
+	} else {
+		data.CorsPresets = projectDashboardCorsPresets(presets, app.ID)
+	}
 	if traceForm != nil {
 		data.Trace = *traceForm
+		data.Trace.Headers = edgeruletrace.RedactHeaderInputForDisplay(data.Trace.Headers)
 	}
 	if rules, listErr := s.store.ListEdgeRulesForApp(ctx, app.ID); listErr != nil {
 		data.ErrorMessage = "Edge-rule data is temporarily unavailable. Please try again shortly."
@@ -75,11 +83,37 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			}
 		}
 		if traceInput != nil {
+			traceContext := *traceInput
+			traceContext.AppMaintenanceLoaded = true
+			traceContext.AppMaintenanceMode = app.MaintenanceMode
+			traceContext.OnlyAllowDeclaredRoutes = app.OnlyAllowDeclaredRoutes
+			traceContext.DeclaredRoutes = make([]api.DeclaredRoute, 0, len(app.DeclaredRoutes))
+			for _, route := range app.DeclaredRoutes {
+				traceContext.DeclaredRoutes = append(traceContext.DeclaredRoutes, api.DeclaredRoute{Path: route.Path, Methods: append([]string(nil), route.Methods...)})
+			}
+			if traceContext.OnlyAllowDeclaredRoutes && len(traceContext.DeclaredRoutes) == 0 {
+				doc, _, docErr := s.store.GetAppOpenAPIDoc(ctx, app.ID, acct.ID)
+				switch {
+				case docErr == nil:
+					traceContext.DeclaredRouteDocumentLoaded = true
+					traceContext.DeclaredRouteOpenAPIDoc = append([]byte(nil), doc...)
+				case errors.Is(docErr, state.ErrNotFound):
+					traceContext.DeclaredRouteDocumentMissing = true
+				default:
+					log.Warn("dashboard edge rules: load declared-route OpenAPI document", "account_id", acct.ID, "app_id", app.ID, "err", docErr)
+				}
+			}
+			traceContext.AppCORSDefaultsLoaded = true
+			traceContext.CORSDefaultEnabled = app.CORSDefaultEnabled
+			traceContext.CORSDefaultOrigins = append([]string(nil), app.CORSDefaultOrigins...)
+			if presetErr == nil {
+				traceContext.CorsPresets = corsPresetResponsesFromRows(presets)
+			}
 			apiRules := make([]api.EdgeRuleResponse, 0, len(rules))
 			for _, rule := range rules {
 				apiRules = append(apiRules, edgeRuleResponse(rule))
 			}
-			result, traceErr := edgeruletrace.Simulate(*traceInput, apiRules)
+			result, traceErr := edgeruletrace.Simulate(traceContext, apiRules)
 			if traceErr != nil {
 				data.Trace.ErrorMessage = "The request could not be simulated. Check the request fields and try again."
 			} else {
@@ -88,11 +122,6 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		} else if data.Trace.Submitted && data.Trace.ErrorMessage == "" && data.ErrorMessage != "" {
 			data.Trace.ErrorMessage = "Edge rules are temporarily unavailable, so this request could not be traced."
 		}
-	}
-	if presets, listErr := s.store.ListCorsPresetsForAccount(ctx, acct.ID); listErr != nil {
-		log.Warn("dashboard edge rules: list CORS presets", "account_id", acct.ID, "app_id", app.ID, "err", listErr)
-	} else {
-		data.CorsPresets = projectDashboardCorsPresets(presets, app.ID)
 	}
 	if s.sessions != nil {
 		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
