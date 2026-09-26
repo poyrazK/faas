@@ -471,8 +471,19 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if callersProblem != nil {
 		return state.App{}, callersProblem
 	}
+	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, req.Slug)
+	if bindingsProblem != nil {
+		return state.App{}, bindingsProblem
+	}
+	servicePolicy, servicePolicyProblem := standaloneServicePolicy(req.ServiceBindingPolicy)
+	if servicePolicyProblem != nil {
+		return state.App{}, servicePolicyProblem
+	}
 	appManifest := stateManifestFromAPI(lifecycle)
 	appManifest.AllowedServiceCallers = allowedCallers
+	appManifest.ServiceBindings = bindings
+	appManifest.ServiceBindingPolicy = servicePolicy
+	appManifest.Env = api.ServiceBindingEnv(appManifest.Env, bindings)
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
 		Visibility: visibility,

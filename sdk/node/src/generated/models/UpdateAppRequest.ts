@@ -21,6 +21,14 @@ export type UpdateAppRequest = {
    * Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to restore same-account access. Project-managed and preview apps reject this PATCH.
    */
   allowed_service_callers?: any[] | null;
+  /**
+   * Replace standalone outbound target app slugs (ADR-268). Omit or null to keep unchanged; [] clears all bindings. Project-managed and preview apps reject non-null changes.
+   */
+  service_binding_targets?: any[] | null;
+  /**
+   * Set standalone caller authorization (ADR-268). Omit or null to keep unchanged; account restores same-account reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
+   */
+  service_binding_policy?: 'account' | 'declared';
   ram_mb?: number | null;
   /**
    * Sustained CPU allowance per instance. Omit for no change.

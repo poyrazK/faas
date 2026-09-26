@@ -93,7 +93,7 @@ export type AppResponse = {
   preview_expires_at?: string | null;
   manifest: AppManifest;
   /**
-   * Repository-declared same-account service dependencies currently injected into this workload. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy.
+   * Declared same-account service dependencies currently injected into this workload. Project workloads derive these from Compose; standalone apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy.
    */
   service_bindings?: Array<AppServiceBinding>;
   /**

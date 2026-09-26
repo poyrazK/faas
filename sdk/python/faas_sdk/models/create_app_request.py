@@ -28,6 +28,10 @@ from ..models.create_app_request_restart_policy import (
     check_create_app_request_restart_policy,
 )
 from ..models.create_app_request_runtime import CreateAppRequestRuntime, check_create_app_request_runtime
+from ..models.create_app_request_service_binding_policy import (
+    CreateAppRequestServiceBindingPolicy,
+    check_create_app_request_service_binding_policy,
+)
 from ..models.create_app_request_type import CreateAppRequestType, check_create_app_request_type
 from ..models.create_app_request_visibility import CreateAppRequestVisibility, check_create_app_request_visibility
 from ..models.resource_profile import ResourceProfile, check_resource_profile
@@ -58,6 +62,13 @@ class CreateAppRequest:
     allowed_service_callers: list[str] | Unset = UNSET
     """Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are
     normalized to lowercase, sorted, and deduplicated."""
+    service_binding_targets: list[str] | Unset = UNSET
+    """Standalone outbound target app slugs (ADR-268). Names are normalized, sorted, and deduplicated; the platform
+    derives read-only binding keys and internal URLs. Targets may be declared before they exist. Omit or [] for no
+    bindings."""
+    service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
+    """Standalone caller authorization (ADR-268). Omit for legacy same-account reachability; declared permits only
+    service_binding_targets."""
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
     vcpu: int | Unset = UNSET
@@ -182,6 +193,14 @@ class CreateAppRequest:
         allowed_service_callers: list[str] | Unset = UNSET
         if not isinstance(self.allowed_service_callers, Unset):
             allowed_service_callers = self.allowed_service_callers
+
+        service_binding_targets: list[str] | Unset = UNSET
+        if not isinstance(self.service_binding_targets, Unset):
+            service_binding_targets = self.service_binding_targets
+
+        service_binding_policy: str | Unset = UNSET
+        if not isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = self.service_binding_policy
 
         runtime: str | Unset = UNSET
         if not isinstance(self.runtime, Unset):
@@ -311,6 +330,10 @@ class CreateAppRequest:
             field_dict["visibility"] = visibility
         if allowed_service_callers is not UNSET:
             field_dict["allowed_service_callers"] = allowed_service_callers
+        if service_binding_targets is not UNSET:
+            field_dict["service_binding_targets"] = service_binding_targets
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
         if ram_mb is not UNSET:
@@ -419,6 +442,15 @@ class CreateAppRequest:
             visibility = check_create_app_request_visibility(_visibility)
 
         allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
+        service_binding_targets = cast(list[str], d.pop("service_binding_targets", UNSET))
+
+        _service_binding_policy = d.pop("service_binding_policy", UNSET)
+        service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset
+        if isinstance(_service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        else:
+            service_binding_policy = check_create_app_request_service_binding_policy(_service_binding_policy)
 
         _runtime = d.pop("runtime", UNSET)
         runtime: CreateAppRequestRuntime | Unset
@@ -581,6 +613,8 @@ class CreateAppRequest:
             type_=type_,
             visibility=visibility,
             allowed_service_callers=allowed_service_callers,
+            service_binding_targets=service_binding_targets,
+            service_binding_policy=service_binding_policy,
             runtime=runtime,
             ram_mb=ram_mb,
             vcpu=vcpu,

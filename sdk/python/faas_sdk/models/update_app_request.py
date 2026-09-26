@@ -80,6 +80,18 @@ from ..models.update_app_request_restart_policy_type_3_type_1 import (
     UpdateAppRequestRestartPolicyType3Type1,
     check_update_app_request_restart_policy_type_3_type_1,
 )
+from ..models.update_app_request_service_binding_policy_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType1,
+    check_update_app_request_service_binding_policy_type_1,
+)
+from ..models.update_app_request_service_binding_policy_type_2_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType2Type1,
+    check_update_app_request_service_binding_policy_type_2_type_1,
+)
+from ..models.update_app_request_service_binding_policy_type_3_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType3Type1,
+    check_update_app_request_service_binding_policy_type_3_type_1,
+)
 from ..models.update_app_request_visibility_type_1 import (
     UpdateAppRequestVisibilityType1,
     check_update_app_request_visibility_type_1,
@@ -122,6 +134,19 @@ class UpdateAppRequest:
     allowed_service_callers: list[str] | None | Unset = UNSET
     """Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to
     restore same-account access. Project-managed and preview apps reject this PATCH."""
+    service_binding_targets: list[str] | None | Unset = UNSET
+    """Replace standalone outbound target app slugs (ADR-268). Omit or null to keep unchanged; [] clears all
+    bindings. Project-managed and preview apps reject non-null changes."""
+    service_binding_policy: (
+        None
+        | Unset
+        | UpdateAppRequestServiceBindingPolicyType1
+        | UpdateAppRequestServiceBindingPolicyType2Type1
+        | UpdateAppRequestServiceBindingPolicyType3Type1
+    ) = UNSET
+    """Set standalone caller authorization (ADR-268). Omit or null to keep unchanged; account restores same-account
+    reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
+   """
     ram_mb: int | None | Unset = UNSET
     cpu_millicores: (
         None
@@ -315,6 +340,27 @@ class UpdateAppRequest:
 
         else:
             allowed_service_callers = self.allowed_service_callers
+
+        service_binding_targets: list[str] | None | Unset
+        if isinstance(self.service_binding_targets, Unset):
+            service_binding_targets = UNSET
+        elif isinstance(self.service_binding_targets, list):
+            service_binding_targets = self.service_binding_targets
+
+        else:
+            service_binding_targets = self.service_binding_targets
+
+        service_binding_policy: None | str | Unset
+        if isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        else:
+            service_binding_policy = self.service_binding_policy
 
         ram_mb: int | None | Unset
         if isinstance(self.ram_mb, Unset):
@@ -664,6 +710,10 @@ class UpdateAppRequest:
             field_dict["visibility"] = visibility
         if allowed_service_callers is not UNSET:
             field_dict["allowed_service_callers"] = allowed_service_callers
+        if service_binding_targets is not UNSET:
+            field_dict["service_binding_targets"] = service_binding_targets
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
         if cpu_millicores is not UNSET:
@@ -843,6 +893,75 @@ class UpdateAppRequest:
             return cast(list[str] | None | Unset, data)
 
         allowed_service_callers = _parse_allowed_service_callers(d.pop("allowed_service_callers", UNSET))
+
+        def _parse_service_binding_targets(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                service_binding_targets_type_0 = cast(list[str], data)
+
+                return service_binding_targets_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        service_binding_targets = _parse_service_binding_targets(d.pop("service_binding_targets", UNSET))
+
+        def _parse_service_binding_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestServiceBindingPolicyType1
+            | UpdateAppRequestServiceBindingPolicyType2Type1
+            | UpdateAppRequestServiceBindingPolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_1 = check_update_app_request_service_binding_policy_type_1(data)
+
+                return service_binding_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_2_type_1 = check_update_app_request_service_binding_policy_type_2_type_1(
+                    data
+                )
+
+                return service_binding_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_3_type_1 = check_update_app_request_service_binding_policy_type_3_type_1(
+                    data
+                )
+
+                return service_binding_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestServiceBindingPolicyType1
+                | UpdateAppRequestServiceBindingPolicyType2Type1
+                | UpdateAppRequestServiceBindingPolicyType3Type1,
+                data,
+            )
+
+        service_binding_policy = _parse_service_binding_policy(d.pop("service_binding_policy", UNSET))
 
         def _parse_ram_mb(data: object) -> int | None | Unset:
             if data is None:
@@ -1558,6 +1677,8 @@ class UpdateAppRequest:
         update_app_request = cls(
             visibility=visibility,
             allowed_service_callers=allowed_service_callers,
+            service_binding_targets=service_binding_targets,
+            service_binding_policy=service_binding_policy,
             ram_mb=ram_mb,
             cpu_millicores=cpu_millicores,
             resource_profile=resource_profile,

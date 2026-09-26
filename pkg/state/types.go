@@ -1553,9 +1553,9 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
-	// ServiceBindings is the authoritative project-reconcile projection of
-	// Compose depends_on edges. Keeping it beside the generated service URL
-	// environment makes the declaration inspectable without parsing env text.
+	// ServiceBindings is the authoritative declared projection of Compose
+	// depends_on edges or standalone service_binding_targets. Keeping it beside
+	// generated service URLs makes it inspectable without parsing env text.
 	ServiceBindings []api.AppServiceBinding `json:"service_bindings,omitempty"`
 
 	ServiceBindingPolicy      api.ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
@@ -1648,7 +1648,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
-			if strings.HasPrefix(key, "GREGALE_SERVICE_") && strings.HasSuffix(key, "_URL") {
+			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) {
 				continue
 			}
 			merged[key] = value

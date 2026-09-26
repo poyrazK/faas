@@ -225,6 +225,33 @@ all internal callers; PATCH with `null` restores same-account access. Omission
 leaves the current policy unchanged. Project-managed and preview apps cannot
 change this field through PATCH; edit `x-gregale-allow-callers` in the source.
 
+Standalone callers can declare outbound targets without a Compose project:
+
+```json
+{
+  "service_binding_targets": ["billing", "identity", "email"],
+  "service_binding_policy": "declared"
+}
+```
+
+Send these fields on `POST /v1/apps` or `PATCH /v1/apps/frontend`. Gregale
+injects `GREGALE_SERVICE_BILLING_URL`, `GREGALE_SERVICE_IDENTITY_URL`, and
+`GREGALE_SERVICE_EMAIL_URL` into `frontend`; `GET /v1/apps/frontend` reports
+the generated `service_bindings`. Under `declared`, the gateway rejects any
+other internal target before waking it. Existing standalone apps stay on
+`account` reachability unless they opt in; adding targets alone is discovery
+only. A PATCH with `service_binding_targets: []` clears the bindings (and
+denies every internal target if the policy is `declared`); setting
+`service_binding_policy: "account"` restores same-account access. Target names
+may be forward references, but a call cannot succeed until the target app
+exists. Authorization changes take effect at the gateway immediately; new URL
+environment variables appear when the caller next starts or redeploys, while
+already-running instances retain their current environment. The generated
+`GREGALE_SERVICE_*_URL` namespace is platform-owned.
+Project-managed and preview apps reject changes to these fields on PATCH; edit the
+project source instead. This feature does not create a `billing.internal` DNS
+alias or expose the service publicly.
+
 Calls are authorized by the platform, not by your code. The caller is
 identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the

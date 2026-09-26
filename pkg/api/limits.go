@@ -7097,6 +7097,9 @@ const (
 	// policy (ADR-266). Scale admits at most 100 deployed apps, so a larger
 	// list cannot grant additional live callers and would slow every hop.
 	AllowedServiceCallersMax = 100
+	// ServiceBindingTargetsMax bounds a standalone caller's declared targets.
+	// The account app cap is 100, so additional names cannot add live targets.
+	ServiceBindingTargetsMax = 100
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

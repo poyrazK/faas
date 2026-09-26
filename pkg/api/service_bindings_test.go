@@ -48,3 +48,34 @@ func TestNormalizeAllowedServiceCallers(t *testing.T) {
 		t.Fatalf("over-limit error = %v", err)
 	}
 }
+
+func TestStandaloneServiceBindingProjection(t *testing.T) {
+	targets, err := NormalizeServiceBindingTargets([]string{" Identity ", "billing", "BILLING"})
+	if err != nil || !reflect.DeepEqual(targets, []string{"billing", "identity"}) {
+		t.Fatalf("targets = %v, %v", targets, err)
+	}
+	bindings := ServiceBindingsForTargets(targets)
+	want := []AppServiceBinding{
+		{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"},
+		{Binding: "GREGALE_SERVICE_IDENTITY_URL", Service: "identity"},
+	}
+	if !reflect.DeepEqual(bindings, want) {
+		t.Fatalf("bindings = %#v, want %#v", bindings, want)
+	}
+	env := ServiceBindingEnv(map[string]string{"CUSTOM": "kept", "GREGALE_SERVICE_OLD_URL": "stale"}, bindings)
+	if len(env) != 3 || env["CUSTOM"] != "kept" || env["GREGALE_SERVICE_OLD_URL"] != "" || env["GREGALE_SERVICE_BILLING_URL"] != "http://billing.svc.gregale:10080" {
+		t.Fatalf("env = %#v", env)
+	}
+	if empty := ServiceBindingEnv(env, nil); !reflect.DeepEqual(empty, map[string]string{"CUSTOM": "kept"}) {
+		t.Fatalf("cleared env = %#v", empty)
+	}
+	for _, invalid := range []string{"", "../billing", "-billing", "billing-"} {
+		if _, err := NormalizeServiceBindingTargets([]string{invalid}); err == nil {
+			t.Errorf("accepted invalid target %q", invalid)
+		}
+	}
+	over := make([]string, ServiceBindingTargetsMax+1)
+	if _, err := NormalizeServiceBindingTargets(over); err == nil {
+		t.Fatal("accepted oversized target list")
+	}
+}
