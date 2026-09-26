@@ -239,6 +239,27 @@ func TestServiceProxyReportsBindingDenialSeparately(t *testing.T) {
 	}
 }
 
+// adr: 239
+func TestServiceProxyReportsTargetCallerDenialSeparately(t *testing.T) {
+	m := NewMetrics()
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-orders"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{}, ErrServiceProxyCallerDenied
+		},
+		Metrics: m,
+	})
+	rec := meteredGET(t, proxy)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "target does not allow") {
+		t.Fatalf("response = %d %q, want target-specific 403", rec.Code, rec.Body.String())
+	}
+	if got := callCount(t, m, ServiceCallCallerDenied); got != 1 {
+		t.Fatalf("caller_denied = %v, want 1", got)
+	}
+}
+
 func TestServiceProxyReportsPreviewDenialSeparately(t *testing.T) {
 	m := NewMetrics()
 	proxy := NewServiceProxy(ServiceProxyConfig{

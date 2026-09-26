@@ -81,6 +81,34 @@ func TestDiffFieldsChangedDetectsServiceBindingPolicy(t *testing.T) {
 	}
 }
 
+func TestDiffFieldsChangedPreservesLegacyServiceBindingPolicy(t *testing.T) {
+	workload := reposcan.Workload{Name: "api"}
+	app := state.App{WorkloadName: "api", WorkloadClass: state.WorkloadClassHTTP}
+	if got := diffFieldsChanged(app, workload, ""); len(got) != 0 {
+		t.Fatalf("legacy reapply changed fields = %v, want none", got)
+	}
+	if got := serviceBindingPolicyForExistingWorkload(workload, app.Manifest.ServiceBindingPolicy); got != api.ServiceBindingPolicyAccount {
+		t.Fatalf("legacy policy = %q, want account", got)
+	}
+}
+
+func TestDiffFieldsChangedDetectsAllowedServiceCallers(t *testing.T) {
+	callers := []string{"frontend"}
+	workload := reposcan.Workload{Name: "billing", AllowedServiceCallers: &callers}
+	app := state.App{WorkloadName: "billing", WorkloadClass: state.WorkloadClassHTTP}
+	got := diffFieldsChanged(app, workload, "")
+	if !reflect.DeepEqual(got, []string{"allowed_service_callers"}) {
+		t.Fatalf("changed fields = %v, want allowed_service_callers", got)
+	}
+	// Empty is an explicit deny-all policy, not the legacy account policy.
+	empty := []string{}
+	workload.AllowedServiceCallers = &empty
+	got = diffFieldsChanged(app, workload, "")
+	if !reflect.DeepEqual(got, []string{"allowed_service_callers"}) {
+		t.Fatalf("empty list changed fields = %v", got)
+	}
+}
+
 func TestDiffFieldsChangedDetectsPreviewServiceCallsPolicy(t *testing.T) {
 	workload := reposcan.Workload{
 		Name:                      "billing",

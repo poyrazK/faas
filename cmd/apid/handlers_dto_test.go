@@ -42,10 +42,12 @@ func TestAppResponseSurfacesMaintenanceMode(t *testing.T) {
 func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
 	s := &server{}
 	bindings := []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"}}
+	callers := []string{"frontend"}
 	got := s.appResponse(state.App{Manifest: state.AppManifest{
 		ServiceBindings:           bindings,
 		ServiceBindingPolicy:      api.ServiceBindingPolicyDeclared,
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsDeny,
+		AllowedServiceCallers:     &callers,
 	}}, api.PlanHobby)
 	if !reflect.DeepEqual(got.ServiceBindings, bindings) {
 		t.Fatalf("service bindings = %#v, want %#v", got.ServiceBindings, bindings)
@@ -59,6 +61,13 @@ func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
 	}
 	if got.PreviewServiceCallsPolicy != api.PreviewServiceCallsDeny {
 		t.Fatalf("preview service calls policy = %q, want deny", got.PreviewServiceCallsPolicy)
+	}
+	if got.AllowedServiceCallers == nil || !reflect.DeepEqual(*got.AllowedServiceCallers, []string{"frontend"}) {
+		t.Fatalf("allowed service callers = %v, want frontend", got.AllowedServiceCallers)
+	}
+	callers[0] = "mutated"
+	if (*got.AllowedServiceCallers)[0] != "frontend" {
+		t.Fatal("app response aliases target caller policy")
 	}
 }
 

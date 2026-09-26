@@ -1451,7 +1451,7 @@ func NewMetrics() *Metrics {
 		serviceCallTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_service_call_total",
-				Help: "Count of same-account service-to-service calls handled by the node-local service proxy (ADR-196 / ADR-197). Labelled by outcome: forwarded (target was already warm), woken (target was parked and a wake produced a replica), no_replica, registry_unavailable, wake_failed, wake_queue_full, unauthenticated, denied, binding_denied, preview_denied, not_found, upgrade_rejected. Not labelled by app — the series count must stay bounded; per-app attribution lives in the wake timeline.",
+				Help: "Count of same-account service-to-service calls handled by the node-local service proxy (ADR-196 / ADR-197 / ADR-266). Labelled by outcome: forwarded (target was already warm), woken (target was parked and a wake produced a replica), no_replica, registry_unavailable, wake_failed, wake_queue_full, unauthenticated, denied, binding_denied, caller_denied, preview_denied, not_found, upgrade_rejected. Not labelled by app — the series count must stay bounded; per-app attribution lives in the wake timeline.",
 			},
 			[]string{"outcome"},
 		),
@@ -3307,6 +3307,8 @@ const (
 	// ServiceCallBindingDenied — a same-account caller selected the declared
 	// policy but did not declare the requested target service.
 	ServiceCallBindingDenied ServiceCallOutcome = "binding_denied"
+	// ServiceCallCallerDenied — the target rejected the caller by its allowlist.
+	ServiceCallCallerDenied ServiceCallOutcome = "caller_denied"
 	// ServiceCallNotFound — the service name resolves to no app.
 	ServiceCallNotFound ServiceCallOutcome = "not_found"
 	// ServiceCallUpgradeRejected — an Upgrade request the target does not
@@ -3326,7 +3328,7 @@ const (
 var ServiceCallOutcomes = []ServiceCallOutcome{
 	ServiceCallForwarded, ServiceCallWoken, ServiceCallNoReplica,
 	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
-	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallBindingDenied,
+	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallBindingDenied, ServiceCallCallerDenied,
 	ServiceCallNotFound, ServiceCallUpgradeRejected, ServiceCallPreviewDenied,
 	ServiceCallOverrideRejected, ServiceCallOverrideUnavailable,
 }

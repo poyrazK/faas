@@ -279,11 +279,14 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !serviceBindingsEqual(a.Manifest.ServiceBindings, serviceBindingsForWorkloadWithAvailable(w, serviceNames)) {
 		changed = append(changed, "service_bindings")
 	}
-	if a.Manifest.EffectiveServiceBindingPolicy() != serviceBindingPolicyForWorkload(w) {
+	if a.Manifest.EffectiveServiceBindingPolicy() != serviceBindingPolicyForExistingWorkload(w, a.Manifest.ServiceBindingPolicy) {
 		changed = append(changed, "service_binding_policy")
 	}
 	if a.Manifest.EffectivePreviewServiceCallsPolicy() != previewServiceCallsPolicyForWorkload(w) {
 		changed = append(changed, "preview_service_calls_policy")
+	}
+	if !allowedServiceCallersEqual(a.Manifest.AllowedServiceCallers, w.AllowedServiceCallers) {
+		changed = append(changed, "allowed_service_callers")
 	}
 	return changed
 }

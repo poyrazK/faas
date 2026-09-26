@@ -220,6 +220,10 @@ type scanPlanResponse struct {
 // representation ("single"/"convention"/"workspace"/"compose"/
 // "unknown"), matching the OpenAPI PlanWorkload.tier enum.
 func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
+	policy := api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
+	if w.ServiceBindingPolicy == "" {
+		policy = api.ServiceBindingPolicyDeclared
+	}
 	return api.PlanWorkload{
 		Name:       w.Name,
 		RootDir:    w.RootDir,
@@ -227,8 +231,9 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		Command:    w.Command,
 		DependsOn:  w.DependsOn,
 
-		ServiceBindingPolicy:      api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective(),
+		ServiceBindingPolicy:      policy,
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective(),
+		AllowedServiceCallers:     w.AllowedServiceCallers,
 
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
@@ -1659,6 +1664,16 @@ func (s *server) scanService(
 		pw := toPlanWorkload(w)
 		pw.Action = partition.WillDeploy[i].Action
 		pw.ExistingAppID = partition.WillDeploy[i].ID
+		if w.ServiceBindingPolicy == "" {
+			if pw.ExistingAppID != "" {
+				for _, existing := range acctApps {
+					if existing.ID == pw.ExistingAppID {
+						pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
+						break
+					}
+				}
+			}
+		}
 		respWorkloads[i] = pw
 	}
 	respManaged := make([]api.PlanManaged, len(filteredMc))
