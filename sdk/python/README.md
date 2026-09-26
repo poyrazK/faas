@@ -114,6 +114,28 @@ Things to know:
 1. If your endpoint had any tags on it, the first tag will be used as a module name for the function (my_tag above)
 1. Any endpoint which did not have a tag will be in `faas_sdk.api.default`
 
+## Project release context
+
+For app-to-app calls, wrap the ASGI application in
+`GregaleReleaseMiddleware` and use a release-aware HTTPX transport for calls
+to managed services. The transport forwards only `X-Gregale-Release` and
+strips the caller-scoped `X-Gregale-Revision` header on those hops:
+
+```python
+import httpx
+from faas_sdk import AsyncGregaleReleaseTransport, GregaleReleaseMiddleware
+
+app = GregaleReleaseMiddleware(app)
+
+async def call_billing():
+    async with httpx.AsyncClient(transport=AsyncGregaleReleaseTransport()) as client:
+        return await client.get("http://billing.svc.gregale:10080/health")
+```
+
+The middleware scopes context to each HTTP or WebSocket request. The proxy
+still verifies release membership from the caller deployment's network
+identity; the header is context, not authorization.
+
 ## Advanced customizations
 
 There are more settings on the generated `Client` class which let you control more runtime behavior, check out the docstring on that class for more info. You can also customize the underlying `httpx.Client` or `httpx.AsyncClient` (depending on your use-case):

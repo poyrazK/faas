@@ -104,6 +104,38 @@ dep, err := c.Deploy(ctx, slug, req)
 A retried call with the same key returns the cached response from
 the server's replay middleware (24h window).
 
+## Project release context
+
+For app-to-app calls, capture the inbound release once and let the SDK
+transport forward it to managed `*.svc.gregale` hosts. The transport strips
+`X-Gregale-Revision` on those hops because a revision pin is scoped to the
+caller app:
+
+```go
+serviceHTTP := &http.Client{
+    Transport: faas.NewGregaleReleaseTransport(http.DefaultTransport),
+}
+handler := faas.GregaleReleaseMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, billingURL+"/health", nil)
+    if err != nil {
+        http.Error(w, "invalid billing URL", http.StatusInternalServerError)
+        return
+    }
+    resp, err := serviceHTTP.Do(req)
+    if err != nil {
+        http.Error(w, "billing unavailable", http.StatusBadGateway)
+        return
+    }
+    defer resp.Body.Close()
+    // Handle resp.
+}))
+```
+
+Wrap only the app handlers that receive Gregale ingress. The platform still
+validates that the caller deployment belongs to the selected release; these
+helpers preserve request context and do not grant deployment-selection
+authority to the guest.
+
 ## Errors
 
 Every 4xx/5xx with a Problem-shaped body returns `*faas.APIError`:
