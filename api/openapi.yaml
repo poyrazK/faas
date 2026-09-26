@@ -22534,6 +22534,33 @@ components:
       type: string
       enum: [http, https]
 
+    ServiceCallScope:
+      description: "Target-owned HTTP request grant for one logical service caller. A path prefix matches itself and slash-delimited descendants; ambiguous request paths fail closed."
+      type: object
+      required: [methods, path_prefixes]
+      properties:
+        methods:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: { type: string, description: "HTTP method in uppercase, or * to explicitly allow every method." }
+        path_prefixes:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: string
+            maxLength: 1024
+            pattern: '^/[^?#]*$'
+            description: "Decoded URL path prefix; for example /v1/orders allows /v1/orders and /v1/orders/42, but not /v1/orders-archive."
+
+    ServiceCallerScopes:
+      description: "Target-owned service authorization map from logical caller app name to allowed HTTP methods and path prefixes. When present, callers missing from the map are denied."
+      type: object
+      maxProperties: 100
+      additionalProperties:
+        $ref: '#/components/schemas/ServiceCallScope'
+
     PreviewServiceCallsPolicy:
       description: "Production target policy for internal service calls from preview apps. `allow` preserves existing behavior; `deny` rejects preview callers before waking the target."
       type: string
@@ -22637,6 +22664,9 @@ components:
           maxItems: 100
           items: { type: string }
           description: "Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies."
+        allowed_service_call_scopes:
+          $ref: '#/components/schemas/ServiceCallerScopes'
+          description: "Per-caller HTTP grants for requests reaching this app through a service binding (ADR-278). A missing caller entry denies that caller; any allowed_service_callers entry must also match."
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
         # the per-app outbound CIDR allowlist. Each entry is a
         # canonical CIDR string — v4 ("1.2.3.0/24") or v6
@@ -23798,6 +23828,9 @@ components:
           maxItems: 100
           items: { type: string }
           description: "Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are normalized to lowercase, sorted, and deduplicated."
+        allowed_service_call_scopes:
+          $ref: '#/components/schemas/ServiceCallerScopes'
+          description: "Optional target-side per-caller method/path grants (ADR-278). When present, callers absent from this map are denied; if allowed_service_callers is also set, both policies must allow the caller."
         service_binding_targets:
           type: array
           maxItems: 100
@@ -24245,6 +24278,11 @@ components:
           maxItems: 100
           items: { type: string }
           description: "Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to restore same-account access. Project-managed and preview apps reject this PATCH."
+        allowed_service_call_scopes:
+          oneOf:
+            - $ref: '#/components/schemas/ServiceCallerScopes'
+            - type: "null"
+          description: "Replace standalone target-side per-caller method/path grants (ADR-278). Omit to keep unchanged, null to clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH."
         service_binding_targets:
           type: [array, "null"]
           maxItems: 100
@@ -29709,6 +29747,9 @@ components:
           type: array
           items: { type: string }
           description: "Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers; an empty array denies all."
+        allowed_service_call_scopes:
+          $ref: '#/components/schemas/ServiceCallerScopes'
+          description: "Target-side method/path grants from Compose `x-gregale-allow-call-scopes`. When present, callers missing from the map are denied."
         class:
           type: string
           enum: [http, graphql, grpc, job, worker, server, unknown]

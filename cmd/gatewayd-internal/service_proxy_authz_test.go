@@ -70,6 +70,9 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 	noNames := []string{}
 	allowlistedTarget := newApp(acct.ID, "allowlistedtarget", state.AppManifest{AllowedServiceCallers: &allowedNames})
 	closedTarget := newApp(acct.ID, "closedtarget", state.AppManifest{AllowedServiceCallers: &noNames})
+	scopedTarget := newApp(acct.ID, "scopedtarget", state.AppManifest{AllowedServiceCallScopes: &api.ServiceCallerScopes{
+		"authzcaller": {Methods: []string{"GET"}, PathPrefixes: []string{"/v1/orders"}},
+	}})
 	preview, err := store.CreateApp(ctx, state.App{
 		AccountID: acct.ID, Slug: "pr-42-authzcaller", Type: state.AppTypeApp,
 		RAMMB: 128, Status: state.AppActive, PreviewOfSlug: caller.Slug,
@@ -115,6 +118,8 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 		{"target admits named caller", caller.ID, allowlistedTarget.ID, nil},
 		{"target rejects unlisted caller", otherCaller.ID, allowlistedTarget.ID, gateway.ErrServiceProxyCallerDenied},
 		{"target rejects all when list empty", caller.ID, closedTarget.ID, gateway.ErrServiceProxyCallerDenied},
+		{"target admits scoped caller", caller.ID, scopedTarget.ID, nil},
+		{"target rejects caller absent from scopes", otherCaller.ID, scopedTarget.ID, gateway.ErrServiceProxyCallerDenied},
 		{"target matches preview by logical caller", preview.ID, allowlistedTarget.ID, nil},
 		{"guard applies only to production target", preview.ID, previewTarget.ID, nil},
 		{"cross-account is denied", outsider.ID, target.ID, gateway.ErrServiceProxyDenied},
@@ -143,6 +148,11 @@ func TestServiceProxyAuthorizer(t *testing.T) {
 				t.Fatalf("authorize = %v, want %v", err, tc.wantErr)
 			}
 		})
+	}
+	if got, err := authorize(ctx, caller.ID, scopedTarget.ID); err != nil {
+		t.Fatalf("authorize scoped caller: %v", err)
+	} else if got.CallScope == nil || !got.CallScope.Allows("GET", "/v1/orders/42") || got.CallScope.Allows("DELETE", "/v1/orders/42") {
+		t.Fatalf("returned scope = %#v, does not enforce expected grant", got.CallScope)
 	}
 }
 

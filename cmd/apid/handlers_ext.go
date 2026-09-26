@@ -896,9 +896,19 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, callerProblem)
 		return
 	}
+	allowedCallScopes, callScopesSet, callScopesProblem := serviceCallScopesForPatch(req.AllowedServiceCallScopes)
+	if callScopesProblem != nil {
+		api.WriteProblem(w, callScopesProblem)
+		return
+	}
 	if callerPolicySet && (app.ProjectID != "" || app.PreviewOfSlug != "") {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Service caller policy is source-managed", "edit x-gregale-allow-callers in the project source; preview policies inherit from their source app"))
+		return
+	}
+	if callScopesSet && (app.ProjectID != "" || app.PreviewOfSlug != "") {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Service caller scopes are source-managed", "edit x-gregale-allow-call-scopes in the project source; preview policies inherit from their source app"))
 		return
 	}
 	if (req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil) && (app.ProjectID != "" || app.PreviewOfSlug != "") {
@@ -1109,6 +1119,14 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			lifecycleManifest = &copyOfManifest
 		}
 		lifecycleManifest.AllowedServiceCallers = allowedCallers
+	}
+	if callScopesSet {
+		if lifecycleManifest == nil {
+			copyOfManifest := app.Manifest
+			lifecycleManifest = &copyOfManifest
+		}
+		lifecycleManifest.AllowedServiceCallScopes = allowedCallScopes
+		lifecycleChanged = true
 	}
 	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.ServiceBindingTransport != nil {
 		if lifecycleManifest == nil {
@@ -1496,6 +1514,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if callerPolicySet {
 		oldApp["allowed_service_callers"] = app.Manifest.AllowedServiceCallers
 		newApp["allowed_service_callers"] = updated.Manifest.AllowedServiceCallers
+	}
+	if callScopesSet {
+		oldApp["allowed_service_call_scopes"] = app.Manifest.AllowedServiceCallScopes
+		newApp["allowed_service_call_scopes"] = updated.Manifest.AllowedServiceCallScopes
 	}
 	if req.ServiceBindingTargets != nil {
 		oldApp["service_bindings"] = app.Manifest.ServiceBindings

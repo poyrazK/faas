@@ -315,6 +315,7 @@ func (s *Service) applyUpdate(
 	manifest.ServiceBindingTransport = transport
 	manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(a.Workload)
 	manifest.AllowedServiceCallers = a.Workload.AllowedServiceCallers
+	manifest.AllowedServiceCallScopes = a.Workload.AllowedServiceCallScopes
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
@@ -387,6 +388,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			ServiceBindingTransport:   transport,
 			PreviewServiceCallsPolicy: previewServiceCallsPolicyForWorkload(w),
 			AllowedServiceCallers:     w.AllowedServiceCallers,
+			AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
 
 			BuildDockerfile: w.Dockerfile,
 		},
@@ -411,6 +413,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.ServiceBindingTransport = transport
 	app.Manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(w)
 	app.Manifest.AllowedServiceCallers = w.AllowedServiceCallers
+	app.Manifest.AllowedServiceCallScopes = w.AllowedServiceCallScopes
 	app.Manifest.BuildDockerfile = w.Dockerfile
 	return app
 }

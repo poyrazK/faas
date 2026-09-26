@@ -292,6 +292,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !allowedServiceCallersEqual(a.Manifest.AllowedServiceCallers, w.AllowedServiceCallers) {
 		changed = append(changed, "allowed_service_callers")
 	}
+	if !allowedServiceCallScopesEqual(a.Manifest.AllowedServiceCallScopes, w.AllowedServiceCallScopes) {
+		changed = append(changed, "allowed_service_call_scopes")
+	}
 	return changed
 }
 

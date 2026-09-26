@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
 )
@@ -133,6 +134,9 @@ type Workload struct {
 	// AllowedServiceCallers is the target-side service policy. Nil permits
 	// legacy same-account callers; a non-nil empty list denies every caller.
 	AllowedServiceCallers *[]string
+	// AllowedServiceCallScopes optionally narrows callers to per-app HTTP
+	// method and path-prefix grants. A non-nil empty map denies all callers.
+	AllowedServiceCallScopes *api.ServiceCallerScopes
 
 	Class    Class  // http|graphql|grpc|job|worker|server|unknown
 	Schedule string // primary cron expression retained for the existing plan wire

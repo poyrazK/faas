@@ -742,6 +742,8 @@ export type { SendAppMessageRequest } from './SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './SendAppMessageResponse.js';
 export type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 export type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+export type { ServiceCallScope } from './ServiceCallScope.js';
+export type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 export type { ServiceReplicas } from './ServiceReplicas.js';
 export type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
 export type { SessionInfo } from './SessionInfo.js';

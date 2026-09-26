@@ -114,6 +114,35 @@ func allowedServiceCallersEqual(left, right *[]string) bool {
 	return true
 }
 
+func allowedServiceCallScopesEqual(left, right *api.ServiceCallerScopes) bool {
+	if (left == nil) != (right == nil) {
+		return false
+	}
+	if left == nil || len(*left) != len(*right) {
+		return left == nil && right == nil
+	}
+	for caller, leftScope := range *left {
+		rightScope, ok := (*right)[caller]
+		if !ok || !stringListsEqual(leftScope.Methods, rightScope.Methods) ||
+			!stringListsEqual(leftScope.PathPrefixes, rightScope.PathPrefixes) {
+			return false
+		}
+	}
+	return true
+}
+
+func stringListsEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func previewServiceCallsPolicyForWorkload(w reposcan.Workload) api.PreviewServiceCallsPolicy {
 	return api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective()
 }

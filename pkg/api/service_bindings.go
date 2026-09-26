@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 )
@@ -84,6 +85,142 @@ func NormalizeServiceBindingTransport(raw ServiceBindingTransport) (ServiceBindi
 type AppServiceBinding struct {
 	Binding string `json:"binding"`
 	Service string `json:"service"`
+}
+
+// ServiceCallScope is one target-owned grant for a logical calling app.
+// Paths are decoded URL-path prefixes; a prefix matches itself and its
+// slash-delimited descendants. A method of "*" explicitly permits every
+// HTTP method.
+type ServiceCallScope struct {
+	Methods      []string `json:"methods" yaml:"methods"`
+	PathPrefixes []string `json:"path_prefixes" yaml:"path_prefixes"`
+}
+
+// ServiceCallerScopes maps logical caller app names to their permitted
+// service-call methods and path prefixes. A non-nil empty map is deny-all.
+type ServiceCallerScopes map[string]ServiceCallScope
+
+// NormalizeServiceCallerScopes validates and canonicalizes a target-owned
+// method/path policy. The result is non-nil even for an explicit empty map.
+func NormalizeServiceCallerScopes(raw ServiceCallerScopes) (ServiceCallerScopes, error) {
+	if len(raw) > AllowedServiceCallersMax {
+		return nil, fmt.Errorf("allowed_service_call_scopes exceeds %d callers", AllowedServiceCallersMax)
+	}
+	normalized := make(ServiceCallerScopes, len(raw))
+	for rawCaller, rawScope := range raw {
+		caller := strings.ToLower(strings.TrimSpace(rawCaller))
+		if !validServiceCallerName(caller) {
+			return nil, fmt.Errorf("allowed_service_call_scopes contains invalid app name %q", rawCaller)
+		}
+		if _, exists := normalized[caller]; exists {
+			return nil, fmt.Errorf("allowed_service_call_scopes contains duplicate caller %q", caller)
+		}
+		if len(rawScope.Methods) == 0 || len(rawScope.Methods) > ServiceCallMethodsMax {
+			return nil, fmt.Errorf("allowed_service_call_scopes.%s.methods must contain 1 to %d methods", caller, ServiceCallMethodsMax)
+		}
+		if len(rawScope.PathPrefixes) == 0 || len(rawScope.PathPrefixes) > ServiceCallPathPrefixesMax {
+			return nil, fmt.Errorf("allowed_service_call_scopes.%s.path_prefixes must contain 1 to %d paths", caller, ServiceCallPathPrefixesMax)
+		}
+
+		methods := make([]string, 0, len(rawScope.Methods))
+		seenMethods := make(map[string]struct{}, len(rawScope.Methods))
+		for _, rawMethod := range rawScope.Methods {
+			method := strings.ToUpper(strings.TrimSpace(rawMethod))
+			if method != "*" && !validHTTPMethodToken(method) {
+				return nil, fmt.Errorf("allowed_service_call_scopes.%s.methods contains invalid method %q", caller, rawMethod)
+			}
+			if _, exists := seenMethods[method]; !exists {
+				seenMethods[method] = struct{}{}
+				methods = append(methods, method)
+			}
+		}
+		sort.Strings(methods)
+
+		paths := make([]string, 0, len(rawScope.PathPrefixes))
+		seenPaths := make(map[string]struct{}, len(rawScope.PathPrefixes))
+		for _, rawPrefix := range rawScope.PathPrefixes {
+			prefix, err := normalizeServiceCallPathPrefix(rawPrefix)
+			if err != nil {
+				return nil, fmt.Errorf("allowed_service_call_scopes.%s.path_prefixes: %w", caller, err)
+			}
+			if _, exists := seenPaths[prefix]; !exists {
+				seenPaths[prefix] = struct{}{}
+				paths = append(paths, prefix)
+			}
+		}
+		sort.Strings(paths)
+		normalized[caller] = ServiceCallScope{Methods: methods, PathPrefixes: paths}
+	}
+	return normalized, nil
+}
+
+// Allows reports whether the normalized policy permits this method and path.
+// Ambiguous paths (dot segments, duplicate separators, or backslashes) fail
+// closed so proxy and application routing cannot normalize them differently.
+func (s ServiceCallScope) Allows(method, requestPath string) bool {
+	pathValue, ok := canonicalServiceCallRequestPath(requestPath)
+	if !ok {
+		return false
+	}
+	methodAllowed := false
+	for _, allowed := range s.Methods {
+		if allowed == "*" || allowed == method {
+			methodAllowed = true
+			break
+		}
+	}
+	if !methodAllowed {
+		return false
+	}
+	for _, prefix := range s.PathPrefixes {
+		if prefix == "/" || pathValue == prefix || strings.HasPrefix(pathValue, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeServiceCallPathPrefix(raw string) (string, error) {
+	prefix := strings.TrimSpace(raw)
+	if prefix == "" || len(prefix) > ServiceCallPathPrefixMaxBytes || !strings.HasPrefix(prefix, "/") ||
+		strings.ContainsAny(prefix, "?#\\\r\n\x00") {
+		return "", fmt.Errorf("path prefix %q must be an origin-form path without query or fragment", raw)
+	}
+	decoded, err := url.PathUnescape(prefix)
+	if err != nil {
+		return "", fmt.Errorf("path prefix %q has invalid escaping", raw)
+	}
+	canonical, ok := canonicalServiceCallRequestPath(decoded)
+	if !ok {
+		return "", fmt.Errorf("path prefix %q is ambiguous", raw)
+	}
+	return canonical, nil
+}
+
+func canonicalServiceCallRequestPath(value string) (string, bool) {
+	if value == "" || len(value) > ServiceCallPathPrefixMaxBytes || !strings.HasPrefix(value, "/") ||
+		strings.ContainsAny(value, "\\\r\n\x00") {
+		return "", false
+	}
+	clean := path.Clean(value)
+	if value != clean && value != clean+"/" {
+		return "", false
+	}
+	return clean, true
+}
+
+func validHTTPMethodToken(method string) bool {
+	if method == "" {
+		return false
+	}
+	for i := 0; i < len(method); i++ {
+		c := method[i]
+		if c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // NormalizeAllowedServiceCallers validates and canonicalizes a target policy.
