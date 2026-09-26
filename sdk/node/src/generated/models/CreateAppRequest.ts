@@ -26,7 +26,7 @@ export type CreateAppRequest = {
    */
   allowed_service_callers?: Array<string>;
   /**
-   * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including an HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings.
+   * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings.
    */
   service_binding_targets?: Array<string>;
   /**
@@ -180,3 +180,4 @@ export type CreateAppRequest = {
    */
   require_authn?: boolean;
 };
+

@@ -18,7 +18,7 @@ class AppServiceBinding:
 
     binding: str
     """Platform-owned canonical service URL environment key. Its scheme follows service_binding_transport; bound
-    workloads also receive a companion `_HTTPS_URL` key for explicit private HTTPS canaries."""
+    workloads also receive a companion key with `_HTTPS_URL` in place of `_URL`."""
     service: str
     """Stable target app name used by private service discovery."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
