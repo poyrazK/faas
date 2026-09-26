@@ -14,7 +14,7 @@
   existing no-snapshot rolling `--restart` path.
 - **Consequences:** The application must handle the selected signal, reread
   `FAAS_SECRETS_FILE`, and apply the values itself. Refresh is polled every 10
-  seconds. ADR-249 adds an opt-in application self-attestation after the
+  seconds. ADR-260 adds an opt-in application self-attestation after the
   process has reread and applied the projection; Gregale does not independently
   verify the application's internal state.
   `secrets list` reports the latest projection/signal outcome separately from
