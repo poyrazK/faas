@@ -921,7 +921,7 @@ var methodRouteMap = map[string]string{
 	// sibling per-app family (GetAppMetrics, GetAppSLO, GetApp,
 	// ListApps) — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/routes": "GetAppRoutes",
-	// ADR-244: the hyphenated endpoint needs an explicit legal Go method name.
+	// ADR-268: the hyphenated endpoint needs an explicit legal Go method name.
 	"GET /v1/apps/{slug}/discovered-routes": "GetAppsSlugDiscoveredRoutes",
 
 	// ADR-102 D6 — per-app streaming classification probe. The
