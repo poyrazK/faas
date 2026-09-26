@@ -1145,6 +1145,23 @@ func TestPlanProblem_Mapping(t *testing.T) {
 	}
 }
 
+func TestPlanTextShowsAsyncRoutesWithAffectedView(t *testing.T) {
+	var out bytes.Buffer
+	plan := api.PlanResponse{
+		ProjectSlug: "reports", CanApply: true,
+		AsyncRoutes: []api.PlanAsyncRoute{{
+			App: "reports", Name: "create-report", Action: "create",
+			MatchHost: "reports.example.com", MatchPath: "/reports", MatchMethods: []string{"POST"},
+		}},
+	}
+	if code := printPlanTextWithExplain(&out, plan, nil, true, false); code != 0 {
+		t.Fatalf("print plan exit = %d", code)
+	}
+	if got := out.String(); !strings.Contains(got, "Async routes:") || !strings.Contains(got, "reports/create-report [create] POST reports.example.com/reports") {
+		t.Fatalf("affected plan output omits async route diff:\n%s", got)
+	}
+}
+
 // TestDefaultProjectSlug covers the basename-derive rule. The
 // extension is stripped; the trailing segment is the slug.
 func TestDefaultProjectSlug(t *testing.T) {

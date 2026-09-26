@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.plan_affected_app import PlanAffectedApp
+    from ..models.plan_async_route import PlanAsyncRoute
     from ..models.plan_cron import PlanCron
     from ..models.plan_detection_warning import PlanDetectionWarning
     from ..models.plan_managed import PlanManaged
@@ -44,6 +45,9 @@ class PlanResponse:
     """Whether applying this plan requires protected-environment approval"""
     environment_config_hash: str | Unset = UNSET
     """Hash of the non-secret environment configuration bound into this plan"""
+    async_routes: list[PlanAsyncRoute] | Unset = UNSET
+    """Structured diff for manifest-owned async routes; omitted when the manifest does not declare async_routes or
+    no route actions need to be shown."""
     warnings: list[str] | Unset = UNSET
     detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
     """Structured skipped/merged detector decisions available to explain-mode clients."""
@@ -100,6 +104,13 @@ class PlanResponse:
         environment_protected = self.environment_protected
 
         environment_config_hash = self.environment_config_hash
+
+        async_routes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.async_routes, Unset):
+            async_routes = []
+            for async_routes_item_data in self.async_routes:
+                async_routes_item = async_routes_item_data.to_dict()
+                async_routes.append(async_routes_item)
 
         warnings: list[str] | Unset = UNSET
         if not isinstance(self.warnings, Unset):
@@ -181,6 +192,8 @@ class PlanResponse:
             field_dict["environment_protected"] = environment_protected
         if environment_config_hash is not UNSET:
             field_dict["environment_config_hash"] = environment_config_hash
+        if async_routes is not UNSET:
+            field_dict["async_routes"] = async_routes
         if warnings is not UNSET:
             field_dict["warnings"] = warnings
         if detection_warnings is not UNSET:
@@ -211,6 +224,7 @@ class PlanResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.plan_affected_app import PlanAffectedApp
+        from ..models.plan_async_route import PlanAsyncRoute
         from ..models.plan_cron import PlanCron
         from ..models.plan_detection_warning import PlanDetectionWarning
         from ..models.plan_managed import PlanManaged
@@ -263,6 +277,15 @@ class PlanResponse:
         environment_protected = d.pop("environment_protected", UNSET)
 
         environment_config_hash = d.pop("environment_config_hash", UNSET)
+
+        _async_routes = d.pop("async_routes", UNSET)
+        async_routes: list[PlanAsyncRoute] | Unset = UNSET
+        if _async_routes is not UNSET:
+            async_routes = []
+            for async_routes_item_data in _async_routes:
+                async_routes_item = PlanAsyncRoute.from_dict(async_routes_item_data)
+
+                async_routes.append(async_routes_item)
 
         warnings = cast(list[str], d.pop("warnings", UNSET))
 
@@ -333,6 +356,7 @@ class PlanResponse:
             environment=environment,
             environment_protected=environment_protected,
             environment_config_hash=environment_config_hash,
+            async_routes=async_routes,
             warnings=warnings,
             detection_warnings=detection_warnings,
             crons_not_allowed=crons_not_allowed,

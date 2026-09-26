@@ -618,6 +618,7 @@ from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
 from .edge_rule_async_action import EdgeRuleAsyncAction
+from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
 from .edge_rule_cache_action import EdgeRuleCacheAction
 from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
@@ -1039,6 +1040,8 @@ from .patch_org_request_plan import PatchOrgRequestPlan
 from .payment_method_summary import PaymentMethodSummary
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
+from .plan_async_route import PlanAsyncRoute
+from .plan_async_route_action import PlanAsyncRouteAction
 from .plan_cron import PlanCron
 from .plan_detected_by import PlanDetectedBy
 from .plan_detected_by_detector import PlanDetectedByDetector
@@ -2228,6 +2231,7 @@ __all__ = (
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
     "EdgeRuleAsyncAction",
+    "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
     "EdgeRuleCacheAction",
     "EdgeRuleCacheActionMethodsItem",
@@ -2645,6 +2649,8 @@ __all__ = (
     "PaymentMethodSummary",
     "PlanAffectedApp",
     "PlanAffectedAppAction",
+    "PlanAsyncRoute",
+    "PlanAsyncRouteAction",
     "PlanCron",
     "PlanDetectedBy",
     "PlanDetectedByDetector",

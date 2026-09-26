@@ -29749,6 +29749,30 @@ components:
         path: { type: string, example: / }
         enabled: { type: boolean }
 
+    PlanAsyncRoute:
+      description: "One manifest-owned async-route reconciliation row in a project deployment plan. Route fields describe the planned route, or the existing route for a removal."
+      type: object
+      required: [app, name, action, match_host, match_path, match_methods, priority, enabled]
+      properties:
+        app: { type: string, description: "Workload or app slug that owns the route" }
+        name: { type: string, description: "Stable async-route identity within the app" }
+        action:
+          type: string
+          enum: [create, update, remove, unchanged, skipped]
+          description: "Reconciliation result; skipped means selection flags or --no-triggers leave this route untouched."
+        match_host: { type: string }
+        match_path: { type: string }
+        match_methods:
+          type: array
+          items: { type: string }
+        priority: { type: integer }
+        enabled: { type: boolean }
+        on_success: { type: string, description: "App webhook destination for successful executions" }
+        on_failure: { type: string, description: "App webhook destination for failed executions" }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+        max_age_seconds: { type: integer, minimum: 0 }
+        reason: { type: string, description: "Why this route is skipped, or what reconciliation does" }
+
     QuotaBlock:
       description: |
         Limit + observed extension on a plan-quota problem. Mirrors
@@ -29796,6 +29820,10 @@ components:
         crons:
           type: array
           items: { $ref: '#/components/schemas/PlanCron' }
+        async_routes:
+          type: array
+          description: "Structured diff for manifest-owned async routes; omitted when the manifest does not declare async_routes or no route actions need to be shown."
+          items: { $ref: '#/components/schemas/PlanAsyncRoute' }
         warnings:
           type: array
           items: { type: string }
@@ -29877,6 +29905,10 @@ components:
         crons:
           type: array
           items: { $ref: '#/components/schemas/PlanCron' }
+        async_routes:
+          type: array
+          description: "Structured async-route reconciliation returned with the applied plan."
+          items: { $ref: '#/components/schemas/PlanAsyncRoute' }
         warnings:
           type: array
           items: { type: string }

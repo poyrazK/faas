@@ -6044,6 +6044,25 @@ type PlanCron struct {
 	Enabled      bool   `json:"enabled"`
 }
 
+// PlanAsyncRoute is one manifest-owned async route change in a project
+// deployment plan. Match and action fields describe the resulting route for
+// create/update/unchanged rows and the existing route for remove rows.
+type PlanAsyncRoute struct {
+	App           string          `json:"app"`
+	Name          string          `json:"name"`
+	Action        string          `json:"action"` // create | update | remove | unchanged | skipped
+	MatchHost     string          `json:"match_host"`
+	MatchPath     string          `json:"match_path"`
+	MatchMethods  []string        `json:"match_methods"`
+	Priority      int             `json:"priority"`
+	Enabled       bool            `json:"enabled"`
+	OnSuccess     string          `json:"on_success,omitempty"`
+	OnFailure     string          `json:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int             `json:"max_age_seconds,omitempty"`
+	Reason        string          `json:"reason,omitempty"`
+}
+
 // PlanAffectedApp is one row of the ADR-124 affected-workloads
 // partition (PlanResponse.WillDeploy / Unaffected). It pairs an
 // existing-or-future app with a closed-vocabulary Action that tells
@@ -6101,6 +6120,7 @@ type PlanResponse struct {
 	Workloads             []PlanWorkload         `json:"workloads"`
 	Managed               []PlanManaged          `json:"managed"`
 	Crons                 []PlanCron             `json:"crons"`
+	AsyncRoutes           []PlanAsyncRoute       `json:"async_routes,omitempty"`
 	Warnings              []string               `json:"warnings,omitempty"`
 	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
 	ObservedApps          int                    `json:"observed_apps"`
