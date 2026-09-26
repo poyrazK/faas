@@ -1006,6 +1006,7 @@ type QueueMessageItem struct {
 // intentionally omitted from the account-wide history table.
 type AsyncInvocationPageItem struct {
 	ID          string
+	DetailURL   string
 	AppSlug     string
 	Method      string
 	Path        string
@@ -1015,6 +1016,40 @@ type AsyncInvocationPageItem struct {
 	Attempts    int
 	CreatedAt   string
 	CompletedAt string
+}
+
+// AsyncInvocationDetailData backs the account-scoped, metadata-only
+// drill-down for one durable asynchronous HTTP request. Request and result
+// bodies are intentionally omitted; operators can use the authenticated CLI
+// when they explicitly need the full invocation record.
+type AsyncInvocationDetailData struct {
+	Invocation AsyncInvocationDetailItem
+}
+
+// AsyncInvocationDetailItem is the safe dashboard projection of one async
+// invocation, including lifecycle settings and the configured completion
+// destinations but excluding payloads, headers, and result bodies.
+type AsyncInvocationDetailItem struct {
+	ID                      string
+	AppSlug                 string
+	Method                  string
+	Path                    string
+	State                   string
+	StateClass              string
+	Outcome                 string
+	Attempts                int
+	CreatedAt               string
+	DueAt                   string
+	ReceivedAt              string
+	CompletedAt             string
+	DeadlineAt              string
+	ResultRetentionUntil    string
+	RetryPolicy             string
+	LastError               string
+	OnSuccessDestinationID  string
+	OnSuccessDestinationURL string
+	OnFailureDestinationID  string
+	OnFailureDestinationURL string
 }
 
 // InstancePageItem is the safe dashboard projection of one instance. It

@@ -100,7 +100,7 @@
           <tbody>
             {{range .Data.AsyncInvocations}}
               <tr>
-                <td>{{if eq .AppSlug "deleted app"}}<span class="muted">{{.AppSlug}}</span>{{else}}<a href="/dashboard/apps/{{.AppSlug}}"><code>{{.AppSlug}}</code></a>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
+                <td>{{if eq .AppSlug "deleted app"}}<span class="muted">{{.AppSlug}}</span>{{else}}<a href="/dashboard/apps/{{.AppSlug}}"><code>{{.AppSlug}}</code></a>{{end}}<br><small class="muted"><a href="{{.DetailURL}}"><code>{{.ID}}</code></a></small></td>
                 <td><code>{{.Method}} {{.Path}}</code></td>
                 <td><span class="badge {{.StateClass}}">{{.State}}</span>{{if .Outcome}}<br><small class="muted">{{.Outcome}}</small>{{end}}</td>
                 <td>{{.Attempts}}</td>

@@ -209,7 +209,8 @@ func projectDashboardAsyncInvocations(rows []state.Invocation, apps []state.App)
 			appSlug = "deleted app"
 		}
 		item := dashboard.AsyncInvocationPageItem{
-			ID: row.ID, AppSlug: appSlug, Method: row.Method, Path: row.Path,
+			ID: row.ID, DetailURL: "/dashboard/invocations/" + url.PathEscape(row.ID),
+			AppSlug: appSlug, Method: row.Method, Path: row.Path,
 			State: string(row.State), StateClass: dashboardInvocationStateClass(row.State),
 			Attempts: row.Attempts, CreatedAt: dashboardJobsTime(row.CreatedAt),
 		}

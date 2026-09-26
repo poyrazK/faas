@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.8rem; white-space: nowrap; }
+    .badge.running, .badge.succeeded { background: #d1fae5; color: #065f46; }
+    .badge.failed, .badge.dead_letter, .badge.cancelled { background: #fee2e2; color: #991b1b; }
+    .badge.queued { background: #fef3c7; color: #92400e; }
+    dl { display: grid; grid-template-columns: minmax(10rem, 0.35fr) 1fr; gap: 0.55rem 1rem; max-width: 60rem; }
+    dt { color: #6b7280; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    @media (max-width: 640px) { dl { grid-template-columns: 1fr; gap: 0.25rem; } dd { margin-bottom: 0.6rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/jobs">Jobs &amp; queues</a>
+      <a href="/dashboard/failed-events">Failed events</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    <p><a href="/dashboard/jobs">← Jobs &amp; queues</a></p>
+    <h1>Async invocation</h1>
+    <section class="card" aria-labelledby="invocation-summary">
+      <h2 id="invocation-summary"><code>{{.Data.Invocation.ID}}</code></h2>
+      <p>
+        {{if eq .Data.Invocation.AppSlug "deleted app"}}<span class="muted">deleted app</span>{{else}}<a href="/dashboard/apps/{{.Data.Invocation.AppSlug}}"><code>{{.Data.Invocation.AppSlug}}</code></a>{{end}}
+        · <span class="badge {{.Data.Invocation.StateClass}}">{{.Data.Invocation.State}}</span>
+        {{if .Data.Invocation.Outcome}} · outcome <code>{{.Data.Invocation.Outcome}}</code>{{end}}
+      </p>
+      <dl>
+        <dt>Request</dt><dd><code>{{.Data.Invocation.Method}} {{.Data.Invocation.Path}}</code></dd>
+        <dt>Attempts</dt><dd>{{.Data.Invocation.Attempts}}</dd>
+        <dt>Accepted</dt><dd>{{if .Data.Invocation.CreatedAt}}{{.Data.Invocation.CreatedAt}}{{else}}—{{end}}</dd>
+        <dt>Scheduled for</dt><dd>{{if .Data.Invocation.DueAt}}{{.Data.Invocation.DueAt}}{{else}}—{{end}}</dd>
+        <dt>Execution started</dt><dd>{{if .Data.Invocation.ReceivedAt}}{{.Data.Invocation.ReceivedAt}}{{else}}—{{end}}</dd>
+        <dt>Finished</dt><dd>{{if .Data.Invocation.CompletedAt}}{{.Data.Invocation.CompletedAt}}{{else}}—{{end}}</dd>
+        <dt>Deadline</dt><dd>{{if .Data.Invocation.DeadlineAt}}{{.Data.Invocation.DeadlineAt}}{{else}}Platform default{{end}}</dd>
+        <dt>Result retained until</dt><dd>{{if .Data.Invocation.ResultRetentionUntil}}{{.Data.Invocation.ResultRetentionUntil}}{{else}}Platform default{{end}}</dd>
+        <dt>Retry policy</dt><dd>{{.Data.Invocation.RetryPolicy}}</dd>
+      </dl>
+      {{if .Data.Invocation.LastError}}<h3>Last failure</h3><pre>{{.Data.Invocation.LastError}}</pre>{{end}}
+    </section>
+
+    <section class="card" aria-labelledby="invocation-destinations">
+      <h2 id="invocation-destinations">Completion destinations</h2>
+      <dl>
+        <dt>On success</dt>
+        <dd>{{if .Data.Invocation.OnSuccessDestinationID}}{{if .Data.Invocation.OnSuccessDestinationURL}}<a href="{{.Data.Invocation.OnSuccessDestinationURL}}">View webhook subscription</a> · {{end}}<code>{{.Data.Invocation.OnSuccessDestinationID}}</code>{{else}}—{{end}}</dd>
+        <dt>On failure</dt>
+        <dd>{{if .Data.Invocation.OnFailureDestinationID}}{{if .Data.Invocation.OnFailureDestinationURL}}<a href="{{.Data.Invocation.OnFailureDestinationURL}}">View webhook subscription</a> · {{end}}<code>{{.Data.Invocation.OnFailureDestinationID}}</code>{{else}}—{{end}}</dd>
+      </dl>
+    </section>
+
+    <p class="muted">Request payloads, headers, and result bodies are not shown on this page. To inspect the full authorized record, use <code>gregale invocations get {{.Data.Invocation.ID}}</code>.</p>
+  </main>
+  <footer>onebox faas · async invocation</footer>
+</body>
+</html>

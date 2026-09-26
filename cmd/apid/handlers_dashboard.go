@@ -101,6 +101,13 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderAppsList(w, r, log, acct)
 		case path == "/dashboard/jobs":
 			s.renderJobsQueues(w, r, log, acct, r.URL.Query().Get("app"))
+		case strings.HasPrefix(path, dashboardAsyncInvocationPath):
+			id := strings.TrimPrefix(path, dashboardAsyncInvocationPath)
+			if id == "" || strings.ContainsRune(id, '/') {
+				http.NotFound(w, r)
+				return
+			}
+			s.renderAsyncInvocationDetail(w, r, log, acct, id)
 		case path == "/dashboard/failed-events":
 			s.renderFailedEvents(w, r, log, acct)
 		case path == "/dashboard/apps/new":
