@@ -7085,6 +7085,42 @@ type EdgeRuleRewriteAction struct {
 	To   string `json:"to"`
 }
 
+// ApplyEdgeRuleRewritePath applies the edge-rule prefix rewrite semantics used
+// by both the gateway and the read-only trace preview. It returns applied=false
+// when From is not a prefix of requestPath (the selector may still have
+// matched, but the gateway treats this inconsistent action as a miss).
+func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath string, applied bool) {
+	if from == "*" {
+		from = ""
+	}
+	if from == "" {
+		to = NormalizeEdgeRuleRewriteTarget(to)
+		if to == "/" {
+			return requestPath, true
+		}
+		return to + requestPath, true
+	}
+	if !strings.HasPrefix(requestPath, from) {
+		return requestPath, false
+	}
+	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+}
+
+// NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to
+// one leading slash and removes a trailing slash except for the root path.
+func NormalizeEdgeRuleRewriteTarget(value string) string {
+	if value == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(value, "/") {
+		value = "/" + value
+	}
+	if len(value) > 1 && strings.HasSuffix(value, "/") {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
 func (a *EdgeRuleRewriteAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("rewrite action is required")
