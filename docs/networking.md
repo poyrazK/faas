@@ -238,13 +238,16 @@ Content-Type: application/json
 The response contains a release UUID. Production project ingress follows the
 active set by default; a client can continue an older set with
 `X-Gregale-Release: <release-uuid>`. Gregale returns that header and sends it
-to the API guest. Forward it on outbound managed service calls. The service
-proxy verifies the calling VM's deployment belongs to that release and picks
-the matching target deployment; it cannot be spoofed into selecting a graph
-from a caller header alone. When the same API deployment belongs to several
-unexpired sets, an internal call without the release header returns 409 rather
-than guessing. The active set does not expire; its TTL starts when a new set
-replaces it. Publish a new complete set whenever project membership changes.
+to the API guest. Propagate it on outbound managed service calls; the Go,
+Node, and Python SDKs provide request-context middleware/transports for this.
+They strip `X-Gregale-Revision` on those downstream hops because revision IDs
+are scoped to the caller app. The service proxy verifies the calling VM's
+deployment belongs to the release and picks the matching target deployment;
+it cannot be spoofed into selecting a graph from a caller header alone. When
+the same API deployment belongs to several unexpired sets, an internal call
+without the release header returns 409 rather than guessing. The active set
+does not expire; its TTL starts when a new set replaces it. Publish a new
+complete set whenever project membership changes.
 
 Release sets pin public HTTP/WebSocket handshakes, managed HTTP service calls,
 and durable invocations (async invoke, delayed tasks, queues, inbox messages,

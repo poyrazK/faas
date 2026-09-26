@@ -84,3 +84,13 @@ export {
   type RunExecutionOptions,
   type WatchExecutionOptions,
 } from './executions.js';
+
+// Request-scoped release propagation for app-to-app calls.
+export {
+  createGregaleFetch,
+  currentGregaleRelease,
+  withGregaleReleaseContext,
+  withGregaleRequestContext,
+  GREGALE_RELEASE_HEADER,
+  GREGALE_REVISION_HEADER,
+} from './release-context.js';
