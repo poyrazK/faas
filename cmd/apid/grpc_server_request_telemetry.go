@@ -115,8 +115,10 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 	event := state.APIConsumerUsageEvent{
 		EventID: req.GetEventId(), AccountID: req.GetAccountId(), AppID: req.GetAppId(),
 		ConsumerKey: consumerKey, PlatformTenantID: req.GetPlatformTenantId(),
-		WindowStart:  time.UnixMilli(req.GetWindowStartUnixMs()).UTC(),
-		RequestCount: req.GetRequestCount(), ErrorCount: req.GetErrorCount(), BillableUnits: req.GetBillableUnits(),
+		PlatformTenantSurfaceID:              req.GetPlatformTenantSurfaceId(),
+		PlatformTenantJWTAuthorizationRuleID: req.GetPlatformTenantJwtAuthorizationRuleId(),
+		WindowStart:                          time.UnixMilli(req.GetWindowStartUnixMs()).UTC(),
+		RequestCount:                         req.GetRequestCount(), ErrorCount: req.GetErrorCount(), BillableUnits: req.GetBillableUnits(),
 	}
 	if err := state.ValidateAPIConsumerUsageEvent(event); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid consumer usage event: %v", err)
@@ -129,7 +131,7 @@ func (r *requestTelemetryReceiver) RecordConsumerUsage(ctx context.Context, req 
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "record consumer usage: %v", err)
 	}
-	return &apidpb.ConsumerUsageReceipt{Applied: applied}, nil
+	return &apidpb.ConsumerUsageReceipt{Applied: applied, SurfaceAttributionSupported: true, JwtTenantAttributionSupported: true}, nil
 }
 
 // IncrementRequestTelemetry streams per-record telemetry rows
@@ -198,14 +200,36 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		consumerKey = parsed.String()
 	}
 	platformTenantID := ""
+	var platformTenantUUID uuid.UUID
+	platformTenantSurfaceID := ""
+	platformTenantJWTAuthorizationRuleID := ""
+	if raw := req.GetPlatformTenantSurfaceId(); raw != "" {
+		parsed, parseErr := uuid.Parse(raw)
+		if parseErr != nil || consumerKey != state.AnonymousConsumerKey {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
+		platformTenantSurfaceID = parsed.String()
+	}
+	if raw := req.GetPlatformTenantJwtAuthorizationRuleId(); raw != "" {
+		parsed, parseErr := uuid.Parse(raw)
+		if parseErr != nil || consumerKey != state.AnonymousConsumerKey || platformTenantSurfaceID != "" {
+			r.observe(rtOutcomeDBError)
+			out.Outcome = rtOutcomeDBError
+			return out
+		}
+		platformTenantJWTAuthorizationRuleID = parsed.String()
+	}
 	if raw := req.GetPlatformTenantId(); raw != "" {
 		parsed, parseErr := uuid.Parse(raw)
-		if parseErr != nil || consumerKey == state.AnonymousConsumerKey {
+		if parseErr != nil || (consumerKey == state.AnonymousConsumerKey && platformTenantSurfaceID == "" && platformTenantJWTAuthorizationRuleID == "") {
 			r.observe(rtOutcomeDBError)
 			out.Outcome = rtOutcomeDBError
 			return out
 		}
 		platformTenantID = parsed.String()
+		platformTenantUUID = parsed
 	}
 
 	count := int(req.GetCount())
@@ -228,7 +252,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		// fallback is deterministic for the same collapsed payload, so a
 		// response-loss retry remains idempotent even before all gateways
 		// carry event_id.
-		eventID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s/%s/%s/%s/%d/%d/%d/%s/%s/%d/%s/%s/%s", accountID, appID, consumerKey, platformTenantID, windowStart.Unix(), req.GetHttpStatus(), count, req.GetRouteTemplate(), req.GetMethod(), req.GetLatencyMs(), req.GetTraceId(), req.GetWakeId(), req.GetInstanceId()))).String()
+		eventID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("%s/%s/%s/%s/%s/%s/%d/%d/%d/%s/%s/%d/%s/%s/%s", accountID, appID, consumerKey, platformTenantID, platformTenantSurfaceID, platformTenantJWTAuthorizationRuleID, windowStart.Unix(), req.GetHttpStatus(), count, req.GetRouteTemplate(), req.GetMethod(), req.GetLatencyMs(), req.GetTraceId(), req.GetWakeId(), req.GetInstanceId()))).String()
 	}
 	var errorCount int64
 	if req.GetHttpStatus() >= 400 {
@@ -244,8 +268,9 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		_, usageErr := usageStore.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
 			EventID: eventID, AccountID: accountID.String(), AppID: appID.String(),
 			ConsumerKey: consumerKey, WindowStart: windowStart,
-			PlatformTenantID: platformTenantID,
-			RequestCount:     int64(count), ErrorCount: errorCount, BillableUnits: int64(count),
+			PlatformTenantID: platformTenantID, PlatformTenantSurfaceID: platformTenantSurfaceID,
+			PlatformTenantJWTAuthorizationRuleID: platformTenantJWTAuthorizationRuleID,
+			RequestCount:                         int64(count), ErrorCount: errorCount, BillableUnits: int64(count),
 		})
 		if usageErr != nil {
 			r.observe(rtOutcomeDBError)
@@ -343,6 +368,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		GuestOutcome:        guestOutcome,
 		GuestErrorClass:     guestErrorClass,
 		ConsumerID:          consumerID,
+		PlatformTenantID:    pgtype.UUID{Bytes: platformTenantUUID, Valid: platformTenantID != ""},
 		NodeID:              req.GetNodeId(),
 		Region:              req.GetRegion(),
 		CommitSha:           req.GetCommitSha(),

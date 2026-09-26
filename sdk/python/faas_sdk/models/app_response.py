@@ -126,7 +126,7 @@ class AppResponse:
     """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
     `deny` rejects preview callers before waking the target."""
     allowed_service_callers: list[str] | Unset = UNSET
-    """Target-side service allowlist of logical app slugs (ADR-239). Omitted means any same-account caller; an
+    """Target-side service allowlist of logical app slugs (ADR-266). Omitted means any same-account caller; an
     explicit empty array denies all. Project Compose owns this field."""
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6

@@ -88,6 +88,32 @@ type ProjectEnvironmentReleaseListResponse struct {
 	Workloads   []ProjectEnvironmentReleaseWorkloadResponse `json:"workloads"`
 }
 
+// PublishProjectReleaseSetRequest atomically publishes a complete immutable
+// deployment graph. Keys are project workload slugs, values deployment IDs.
+type PublishProjectReleaseSetRequest struct {
+	TTLSeconds  int               `json:"ttl_seconds"`
+	Deployments map[string]string `json:"deployments"`
+}
+
+// ProjectReleaseSetResponse is the published immutable deployment graph.
+type ProjectReleaseSetResponse struct {
+	ID          string                            `json:"id"`
+	AccountID   string                            `json:"account_id"`
+	ProjectID   string                            `json:"project_id"`
+	Environment string                            `json:"environment"`
+	Active      bool                              `json:"active"`
+	TTLSeconds  int                               `json:"ttl_seconds"`
+	ExpiresAt   *time.Time                        `json:"expires_at,omitempty"`
+	CreatedAt   time.Time                         `json:"created_at"`
+	Members     []ProjectReleaseSetMemberResponse `json:"members"`
+}
+
+// ProjectReleaseSetMemberResponse maps one project app to its deployment.
+type ProjectReleaseSetMemberResponse struct {
+	AppID        string `json:"app_id"`
+	DeploymentID string `json:"deployment_id"`
+}
+
 // ProjectEnvironmentReleaseWorkloadResponse identifies the live deployment
 // serving one project workload in an environment. It contains release
 // metadata only; environment configuration and secret values are excluded.

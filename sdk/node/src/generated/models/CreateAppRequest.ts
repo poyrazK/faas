@@ -111,6 +111,10 @@ export type CreateAppRequest = {
    */
   version_affinity_managed_cookie?: boolean;
   /**
+   * Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning.
+   */
+  revision_pin_ttl_seconds?: number;
+  /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */
   streaming_enabled?: boolean;

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,51 @@ func TestMetadataEnvHandlerRejectsNonDefaultScope(t *testing.T) {
 	metadataEnvHandler(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestMetadataSecretReloadAckHandlerSendsOnlyClosedMetadata(t *testing.T) {
+	previous := dialRuntimeConfigHost
+	t.Cleanup(func() { dialRuntimeConfigHost = previous })
+	revision := strings.Repeat("b", 64)
+	dialRuntimeConfigHost = func() (net.Conn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			body, err := readRuntimeConfigFrame(server)
+			if err != nil {
+				return
+			}
+			var request runtimeConfigRequest
+			if json.Unmarshal(body, &request) != nil || request.Kind != "secret_reload_ack" || request.Revision != revision ||
+				request.ApplicationAck != "applied" || request.ApplicationAckErrorCode != "" {
+				return
+			}
+			_ = writeRuntimeConfigFrame(server, []byte(`{"accepted":true,"revision":"`+revision+`"}`))
+		}()
+		return client, nil
+	}
+	req := httptest.NewRequest(http.MethodPost, metadataSecretReloadAckEndpoint,
+		strings.NewReader(`{"revision":"`+revision+`","status":"applied"}`))
+	rec := httptest.NewRecorder()
+	metadataSecretReloadAckHandler(rec, req)
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"accepted":true`) {
+		t.Fatalf("ack response = %d %s, want accepted", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMetadataSecretReloadAckHandlerRejectsInvalidRequest(t *testing.T) {
+	for _, body := range []string{
+		`{"revision":"short","status":"applied"}`,
+		`{"revision":"` + strings.Repeat("a", 64) + `","status":"applied","value":"secret"}`,
+		`{"revision":"` + strings.Repeat("a", 64) + `","status":"failed","error":"database password"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, metadataSecretReloadAckEndpoint, strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		metadataSecretReloadAckHandler(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("request %s returned %d, want 400", body, rec.Code)
+		}
 	}
 }
 

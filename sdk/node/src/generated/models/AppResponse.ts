@@ -105,7 +105,7 @@ export type AppResponse = {
    */
   preview_service_calls_policy?: PreviewServiceCallsPolicy;
   /**
-   * Target-side service allowlist of logical app slugs (ADR-239). Omitted means any same-account caller; an explicit empty array denies all. Project Compose owns this field.
+   * Target-side service allowlist of logical app slugs (ADR-266). Omitted means any same-account caller; an explicit empty array denies all. Project Compose owns this field.
    */
   allowed_service_callers?: Array<string>;
   /**
@@ -140,6 +140,10 @@ export type AppResponse = {
    * Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie.
    */
   version_affinity_managed_cookie?: boolean;
+  /**
+   * Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables revision pinning.
+   */
+  revision_pin_ttl_seconds?: number;
   /**
    * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
    */
@@ -221,4 +225,3 @@ export type AppResponse = {
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
 };
-

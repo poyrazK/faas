@@ -57,6 +57,42 @@ func TestServiceProxyDeploymentValidatorLiveMembership(t *testing.T) {
 	}
 }
 
+func TestServiceProxyOverrideCannotBypassExpiredOrDisabledRevisionPin(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	app := seedApp(t, store, "override-retained", api.PlanPro)
+	manifest := app.Manifest
+	manifest.RevisionPinTTLSeconds = 3600
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	old, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:current"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, current.ID); err != nil {
+		t.Fatal(err)
+	}
+	validate := newServiceProxyDeploymentValidator(store)
+	if valid, err := validate(ctx, app.ID, old.ID); err != nil || !valid {
+		t.Fatalf("live retained revision = %v, %v", valid, err)
+	}
+	manifest.RevisionPinTTLSeconds = 0
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if valid, err := validate(ctx, app.ID, old.ID); err != nil || valid {
+		t.Fatalf("disabled revision pin = %v, %v", valid, err)
+	}
+}
+
 type failingLiveDeploymentsStore struct {
 	state.Store
 	err error

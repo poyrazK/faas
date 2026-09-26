@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.platform_tenant_statement_response import PlatformTenantStatementResponse
 
@@ -18,6 +20,7 @@ class PlatformTenantStatementListResponse:
     """Immutable statement revisions for one tenant and period."""
 
     statements: list[PlatformTenantStatementResponse]
+    next_offset: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -26,6 +29,8 @@ class PlatformTenantStatementListResponse:
             statements_item = statements_item_data.to_dict()
             statements.append(statements_item)
 
+        next_offset = self.next_offset
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -33,6 +38,8 @@ class PlatformTenantStatementListResponse:
                 "statements": statements,
             }
         )
+        if next_offset is not UNSET:
+            field_dict["next_offset"] = next_offset
 
         return field_dict
 
@@ -48,8 +55,11 @@ class PlatformTenantStatementListResponse:
 
             statements.append(statements_item)
 
+        next_offset = d.pop("next_offset", UNSET)
+
         platform_tenant_statement_list_response = cls(
             statements=statements,
+            next_offset=next_offset,
         )
 
         platform_tenant_statement_list_response.additional_properties = d

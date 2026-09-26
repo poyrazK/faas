@@ -15,18 +15,14 @@
 // healthy schedd.
 //
 // On a match the reaper:
-//   1. JobTaskMarkTerminal(timeout) atomically settles the row to
-//      status='timeout' so JobRunRecompute can settle the aggregate.
+//   1. Fences the expired lease by token and expiry, then atomically queues
+//      the next bounded retry or marks timeout and increments dead letter.
 //   2. SIGKILL/destroy via vmmd (M7) — the VM may still be alive if vmmd
 //      survived the schedd death; this frees the tenant RAM slot.
 //   3. Lease columns are cleared as part of MarkTaskTerminal.
 //
-// Idempotent: a reaper sweep racing with a healthy schedd's
-// HandleJobExit will see the task transition to terminal and skip
-// the MarkTerminal (the WHERE clause in JobTaskFindStuck restricts
-// to status='claimed'). The "double-terminal" race resolves cleanly
-// because JobTaskMarkTerminal is itself idempotent on the
-// (status IN ('queued','claimed')) guard.
+// Idempotent: a reaper sweep racing with a heartbeat or HandleJobExit
+// loses the fenced transition and leaves the newer lease/result intact.
 
 package sched
 
@@ -35,6 +31,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // StuckJobReaperConfig is the operator-tunable shape of the sweep.
@@ -72,16 +70,16 @@ func (c StuckJobReaperConfig) withDefaults() StuckJobReaperConfig {
 }
 
 // ReapStuckJobTasks is one sweep of the reaper. Returns the number
-// of tasks reclaimed (successfully transitioned to status='timeout').
+// of tasks reclaimed (retried or transitioned to status='timeout').
 // Idempotent across calls; safe to invoke from multiple schedds
-// because each call's UPDATE is guarded by status='claimed'.
+// because each transition is guarded by status, token and expiry.
 //
 // Wired into cmd/schedd/main.go's main loop on a 5s ticker
 // alongside the cronLoop. Production deployments run exactly one
 // schedd's reaper at a time per cluster; multi-schedd setups rely
 // on the lease-token + status='claimed' guards to serialise — a
-// second reaper seeing the same stuck task will see status='timeout'
-// after the first reaper's UPDATE and skip.
+// second reaper seeing the same stale receipt will skip after the first
+// reaper clears the lease.
 //
 // Why a separate function (not a method on Engine): the reaper is
 // invoked from the schedd main loop, not from the engine's per-wake
@@ -98,6 +96,17 @@ func (e *Engine) ReapStuckJobTasks(ctx context.Context, cfg StuckJobReaperConfig
 	}
 	reclaimed := 0
 	for _, t := range stuck {
+		if t.LeaseToken == nil {
+			continue
+		}
+		run, err := e.store.JobRunGetByID(ctx, t.RunID)
+		if err != nil {
+			return reclaimed, fmt.Errorf("sched: reaper resolve run %s: %w", t.RunID, err)
+		}
+		job, err := e.store.JobGetByID(ctx, run.JobID)
+		if err != nil {
+			return reclaimed, fmt.Errorf("sched: reaper resolve job %s: %w", run.JobID, err)
+		}
 		instanceID := ""
 		if t.InstanceID != nil {
 			instanceID = *t.InstanceID
@@ -106,23 +115,14 @@ func (e *Engine) ReapStuckJobTasks(ctx context.Context, cfg StuckJobReaperConfig
 		if t.LastLeaseNode != nil && *t.LastLeaseNode != "" {
 			nodeID = *t.LastLeaseNode
 		}
-		// The MarkTaskTerminal transition is the atomic "reclaim"
-		// — once it commits, the lease_token / lease_expires_at
-		// columns are cleared (per the UPDATE shape in
-		// JobTaskMarkTerminal) so a concurrent reaper on a second
-		// schedd sees status='timeout' and skips.
-		//
-		// exit_code=137 (OOM-killed or SIGKILL) + error_class=
-		// 'timeout' is the canonical mapping for "reaper took
-		// over"; HandleJobExit treats exit_code=137 + error_class
-		// != 'oom' as failed→retry if budget remains. To force a
-		// terminal-no-retry, we pass exit_code=124 (the
-		// coreutils `timeout` sentinel) so mapExitToTerminalStatus
-		// (jobs.go) lands on 'timeout'.
-		if err := e.store.JobTaskMarkTerminal(ctx, t.RunID, t.TaskIndex, "timeout", 124, "infra", "reaper reclaimed stale lease", time.Now()); err != nil {
-			// Likely the task already settled to a different
-			// terminal status via HandleJobExit (lost race). Skip.
+		_, err = e.store.JobTaskReapClaimed(ctx, t.RunID, t.TaskIndex, *t.LeaseToken,
+			time.Now().Add(-cfg.TTL), effectiveJobRetryMax(job, run), time.Now().Add(jobRetryDelay(t.Attempt)))
+		if errors.Is(err, state.ErrNotFound) {
+			// A renewed lease or a competing terminal transition won.
 			continue
+		}
+		if err != nil {
+			return reclaimed, fmt.Errorf("sched: reap task (%s, %d): %w", t.RunID, t.TaskIndex, err)
 		}
 		reclaimed++
 		if t.LeaseToken != nil && e.jobLeaser != nil {
@@ -131,10 +131,6 @@ func (e *Engine) ReapStuckJobTasks(ctx context.Context, cfg StuckJobReaperConfig
 			}
 		}
 		e.cleanupJobInstance(ctx, instanceID, nodeID, "job_reaper_timeout")
-		// Settle the parent run's aggregate counters. Best-effort:
-		// the next dispatch tick + a successful HandleJobExit will
-		// also drive recompute; double-recompute is harmless.
-		_, _ = e.store.JobRunRecompute(ctx, t.RunID)
 	}
 	return reclaimed, nil
 }

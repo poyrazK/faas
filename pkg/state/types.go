@@ -693,22 +693,31 @@ type APIConsumerUsageEvent struct {
 	AppID            string
 	ConsumerKey      string
 	PlatformTenantID string // immutable at-request attribution; empty for pre-link traffic
-	WindowStart      time.Time
-	RequestCount     int64
-	ErrorCount       int64
-	BillableUnits    int64
+	// PlatformTenantSurfaceID is set only for anonymous traffic on a verified
+	// tenant surface. It is a request-time snapshot, not a current-link lookup.
+	PlatformTenantSurfaceID string
+	// PlatformTenantJWTAuthorizationRuleID identifies usage attributed through
+	// a verified JWT rule. Raw JWT subjects and custom claim values are never
+	// written to the financial ledger.
+	PlatformTenantJWTAuthorizationRuleID string
+	WindowStart                          time.Time
+	RequestCount                         int64
+	ErrorCount                           int64
+	BillableUnits                        int64
 }
 
-// APIConsumerUsageBucket is the read-side aggregate for one app, consumer,
-// and UTC minute. It is returned in chronological order by the state layer.
+// APIConsumerUsageBucket is the read-side aggregate for one app, attributed
+// consumer, verified surface, or verified JWT rule, and UTC minute.
 type APIConsumerUsageBucket struct {
-	AccountID     string
-	AppID         string
-	ConsumerKey   string
-	WindowStart   time.Time
-	RequestCount  int64
-	ErrorCount    int64
-	BillableUnits int64
+	AccountID              string
+	AppID                  string
+	ConsumerKey            string
+	SurfaceID              string // populated only for tenant-surface usage reads
+	JWTAuthorizationRuleID string // populated only for opt-in verified JWT attribution
+	WindowStart            time.Time
+	RequestCount           int64
+	ErrorCount             int64
+	BillableUnits          int64
 }
 
 // APIConsumerRateCard is an immutable, versioned price for one request unit
@@ -719,6 +728,20 @@ type APIConsumerRateCard struct {
 	ID                     string
 	AccountID              string
 	AppID                  string
+	Currency               string
+	Unit                   string
+	PriceMillicentsPerUnit int64
+	EffectiveFrom          time.Time
+	CreatedAt              time.Time
+}
+
+// PlatformTenantRateCard is an immutable, versioned customer-facing request
+// price shared by every app attributed to one platform tenant. An effective
+// tenant card overrides an app card for that tenant's usage minute.
+type PlatformTenantRateCard struct {
+	ID                     string
+	AccountID              string
+	TenantID               string
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
@@ -827,6 +850,9 @@ func (k ConsumerKey) Active(now time.Time) bool {
 type APIKey struct {
 	ID        string
 	AccountID string
+	// PlatformTenantID is set only on the synthetic APIKey projection for a
+	// tenant-bound self-service bearer. Persisted account keys leave it empty.
+	PlatformTenantID string
 	// AppID is set only for per-app deploy-token principals. Legacy
 	// account/org API keys leave it empty; authz.LoadApp uses it as an
 	// additional tenant boundary when the principal is app-scoped.
@@ -1570,6 +1596,7 @@ type AppManifest struct {
 	SessionAffinity              bool   `json:"session_affinity,omitempty"`
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
+	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1608,7 +1635,7 @@ func (m AppManifest) IsZero() bool {
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
-		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -3178,8 +3205,8 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 // Outbound webhook delivery (issue #476 / ADR-076)
 //
-// AppWebhook is the per-app subscription; AppWebhookDelivery is the
-// persistent ledger row drained by cmd/schedd's
+// AppWebhook is an app-, account-, or platform-tenant subscription;
+// AppWebhookDelivery is the persistent ledger row drained by cmd/schedd's
 // pkg/webhook.Dispatcher. The wire format, signing scheme, and
 // per-account fairness algorithm live on the dispatcher side; the
 // Store only owns the durable shape.
@@ -3198,32 +3225,34 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
-// An empty filter ([]) means "all platform events"; non-empty filters accept
-// events whose name appears in the array. The delivery ledger also stores
-// bounded custom event names from explicitly addressed application-outbox
-// calls; those names never participate in subscription fan-out matching.
+// An empty filter ([]) means all eligible events for that subscription scope;
+// non-empty filters accept events whose name appears in the array. The delivery
+// ledger also stores bounded custom event names from explicitly addressed
+// application-outbox calls; those names never participate in subscription
+// fan-out matching.
 type AppWebhookEvent string
 
 const (
-	AppWebhookEventCronFired               AppWebhookEvent = "cron.fired"
-	AppWebhookEventCronFiredManually       AppWebhookEvent = "cron.fired.manually"
-	AppWebhookEventAppCreated              AppWebhookEvent = "app.created"
-	AppWebhookEventAppDeleted              AppWebhookEvent = "app.deleted"
-	AppWebhookEventAppDeployed             AppWebhookEvent = "app.deployed"
-	AppWebhookEventAppScaled               AppWebhookEvent = "app.scaled"
-	AppWebhookEventAppParked               AppWebhookEvent = "app.parked"
-	AppWebhookEventAppWoken                AppWebhookEvent = "app.woken"
-	AppWebhookEventBuildSucceeded          AppWebhookEvent = "build.succeeded"
-	AppWebhookEventBuildFailed             AppWebhookEvent = "build.failed"
-	AppWebhookEventDeploymentLive          AppWebhookEvent = "deployment.live"
-	AppWebhookEventDeploymentFailed        AppWebhookEvent = "deployment.failed"
-	AppWebhookEventRolloutCompleted        AppWebhookEvent = "rollout.completed"
-	AppWebhookEventRolloutAborted          AppWebhookEvent = "rollout.aborted"
-	AppWebhookEventErrorNew                AppWebhookEvent = "error.new"
-	AppWebhookEventJobFinished             AppWebhookEvent = "job.finished"
-	AppWebhookEventPreviewCreated          AppWebhookEvent = "preview.created"
-	AppWebhookEventBudgetThreshold         AppWebhookEvent = "budget.threshold"
-	AppWebhookEventUsageStatementFinalized AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventCronFired                        AppWebhookEvent = "cron.fired"
+	AppWebhookEventCronFiredManually                AppWebhookEvent = "cron.fired.manually"
+	AppWebhookEventAppCreated                       AppWebhookEvent = "app.created"
+	AppWebhookEventAppDeleted                       AppWebhookEvent = "app.deleted"
+	AppWebhookEventAppDeployed                      AppWebhookEvent = "app.deployed"
+	AppWebhookEventAppScaled                        AppWebhookEvent = "app.scaled"
+	AppWebhookEventAppParked                        AppWebhookEvent = "app.parked"
+	AppWebhookEventAppWoken                         AppWebhookEvent = "app.woken"
+	AppWebhookEventBuildSucceeded                   AppWebhookEvent = "build.succeeded"
+	AppWebhookEventBuildFailed                      AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentLive                   AppWebhookEvent = "deployment.live"
+	AppWebhookEventDeploymentFailed                 AppWebhookEvent = "deployment.failed"
+	AppWebhookEventRolloutCompleted                 AppWebhookEvent = "rollout.completed"
+	AppWebhookEventRolloutAborted                   AppWebhookEvent = "rollout.aborted"
+	AppWebhookEventErrorNew                         AppWebhookEvent = "error.new"
+	AppWebhookEventJobFinished                      AppWebhookEvent = "job.finished"
+	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
+	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
+	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3249,6 +3278,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
+	AppWebhookEventPlatformTenantStatementFinalized,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -3322,13 +3352,13 @@ type UpdateAppWebhookParams struct {
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 }
 
-// AppWebhookScope is the closed storage vocabulary for ADR-224. Existing
-// subscriptions are app-scoped; account scope is not yet publicly creatable.
+// AppWebhookScope is the closed storage vocabulary for outbound subscriptions.
 type AppWebhookScope string
 
 const (
-	AppWebhookScopeApp     AppWebhookScope = "app"
-	AppWebhookScopeAccount AppWebhookScope = "account"
+	AppWebhookScopeApp            AppWebhookScope = "app"
+	AppWebhookScopeAccount        AppWebhookScope = "account"
+	AppWebhookScopePlatformTenant AppWebhookScope = "platform_tenant"
 )
 
 // ErrInvalidAppWebhookScope prevents the app-only creation path from silently
@@ -3338,18 +3368,19 @@ var ErrInvalidAppWebhookScope = errors.New("state: invalid app webhook scope")
 // AppWebhook is a subscription row (ADR-076, ADR-224). Its sealed secret is
 // never surfaced on a read; the apid response carries a masked constant.
 type AppWebhook struct {
-	ID             string
-	Scope          AppWebhookScope
-	AppID          string
-	AccountID      string
-	TargetURL      string
-	SecretSealed   []byte // age/X25519 ciphertext; never logged
-	EventFilter    []string
-	RetryPolicy    AppWebhookRetryPolicy
-	DeliveryFormat AppWebhookDeliveryFormat
-	Enabled        bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	Scope            AppWebhookScope
+	AppID            string
+	PlatformTenantID string
+	AccountID        string
+	TargetURL        string
+	SecretSealed     []byte // age/X25519 ciphertext; never logged
+	EventFilter      []string
+	RetryPolicy      AppWebhookRetryPolicy
+	DeliveryFormat   AppWebhookDeliveryFormat
+	Enabled          bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // ManagedRealtimeEndpoint is the durable control-plane description of one
@@ -5896,8 +5927,18 @@ type AppSecret struct {
 	LastDeliveryErrorCode   string
 	LastDeliveredWakeID     string
 	LastDeliveredInstanceID string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
+	// These LastRuntimeReload fields preserve the latest guest-init report for
+	// compatibility. Per-runtime latest outcomes are stored separately; neither
+	// represents an application-level acknowledgement.
+	LastRuntimeReloadVersion    int64
+	LastRuntimeReloadRevision   string
+	LastRuntimeReloadProjection SecretReloadProjectionStatus
+	LastRuntimeReloadSignal     SecretReloadSignalStatus
+	LastRuntimeReloadAt         *time.Time
+	LastRuntimeReloadErrorCode  string
+	LastRuntimeReloadInstanceID string
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 type SecretDeliveryStatus string
@@ -5929,6 +5970,77 @@ type AppSecretDeliveryResult struct {
 	ErrorCode   string
 	AttemptedAt time.Time
 	Candidates  []AppSecretDeliveryCandidate
+}
+
+type SecretReloadProjectionStatus string
+
+const (
+	SecretReloadProjectionUpdated   SecretReloadProjectionStatus = "updated"
+	SecretReloadProjectionUnchanged SecretReloadProjectionStatus = "unchanged"
+	SecretReloadProjectionFailed    SecretReloadProjectionStatus = "failed"
+)
+
+type SecretReloadSignalStatus string
+
+const (
+	SecretReloadSignalSent         SecretReloadSignalStatus = "sent"
+	SecretReloadSignalQueued       SecretReloadSignalStatus = "queued"
+	SecretReloadSignalFailed       SecretReloadSignalStatus = "failed"
+	SecretReloadSignalNotAttempted SecretReloadSignalStatus = "not_attempted"
+)
+
+type SecretApplicationReloadAckStatus string
+
+const (
+	SecretApplicationReloadAckApplied SecretApplicationReloadAckStatus = "applied"
+	SecretApplicationReloadAckFailed  SecretApplicationReloadAckStatus = "failed"
+)
+
+// AppSecretRuntimeReloadResult records guest-init's local projection and
+// signal outcome for an exact set of secret versions. It is deliberately not
+// an application acknowledgement: the process may still fail to apply them.
+type AppSecretRuntimeReloadResult struct {
+	AccountID   string
+	AppID       string
+	InstanceID  string
+	Revision    string
+	Projection  SecretReloadProjectionStatus
+	Signal      SecretReloadSignalStatus
+	ErrorCode   string
+	AttemptedAt time.Time
+	Candidates  []AppSecretDeliveryCandidate
+}
+
+// AppSecretRuntimeReloadAckResult records an application-owned outcome for
+// the current secret revision. It attests only what the application reports.
+type AppSecretRuntimeReloadAckResult struct {
+	AccountID   string
+	AppID       string
+	InstanceID  string
+	Revision    string
+	Status      SecretApplicationReloadAckStatus
+	ErrorCode   string
+	AttemptedAt time.Time
+	Candidates  []AppSecretDeliveryCandidate
+}
+
+// AppSecretRuntimeReloadObservation is the latest guest-init projection and
+// signal outcome for one secret version on one active runtime, plus an
+// optional separately-versioned application self-attestation. It contains no
+// secret values and does not independently verify the app's internal state.
+type AppSecretRuntimeReloadObservation struct {
+	Scope                   string
+	Key                     string
+	InstanceID              string
+	Version                 int64
+	Projection              SecretReloadProjectionStatus
+	Signal                  SecretReloadSignalStatus
+	ObservedAt              time.Time
+	ErrorCode               string
+	ApplicationAckVersion   int64
+	ApplicationAck          SecretApplicationReloadAckStatus
+	ApplicationAckAt        *time.Time
+	ApplicationAckErrorCode string
 }
 
 // AccountAppSecret is the per-row shape returned by
@@ -6736,11 +6848,12 @@ type EdgeRuleCORSAction struct {
 // algs. RequiredClaims enforces a key=value check on top of the
 // standard iss/aud/exp/nbf validation.
 type EdgeRuleJWTAction struct {
-	Issuer         string            `json:"issuer"`
-	Audience       []string          `json:"audience,omitempty"`
-	JWKSURL        string            `json:"jwks_url"`
-	Algorithms     []string          `json:"algorithms"`
-	RequiredClaims map[string]string `json:"required_claims,omitempty"`
+	Issuer                         string            `json:"issuer"`
+	Audience                       []string          `json:"audience,omitempty"`
+	JWKSURL                        string            `json:"jwks_url"`
+	Algorithms                     []string          `json:"algorithms"`
+	RequiredClaims                 map[string]string `json:"required_claims,omitempty"`
+	PlatformTenantExternalRefClaim string            `json:"platform_tenant_external_ref_claim,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =

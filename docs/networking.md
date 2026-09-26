@@ -223,6 +223,59 @@ identified from the network identity of the calling VM, so a guest cannot
 claim to be another app, and the proxy only permits calls between apps in the
 same account. Cross-account calls are refused.
 
+### Keep client and service revisions consistent
+
+Enable an app's compatibility window with `revision_pin_ttl_seconds` (up to
+604800). A successful response includes `X-Gregale-Revision: <deployment-id>`.
+Clients that cannot upgrade immediately can send that ID back on later public
+requests. A replaced revision receives 0% normal traffic but remains reachable
+by its exact pin until the cutover TTL expires. A release set can independently
+keep that deployment reachable, even after its direct revision pin expires;
+when the set is replaced, its own TTL begins. An expired or foreign pin is
+rejected; it never silently lands on newer code. This works for HTTP requests
+and WebSocket reconnect handshakes, not already-open connections.
+The default CORS policy exposes both pin response headers. If you configure a
+custom CORS rule, include `X-Gregale-Revision` and `X-Gregale-Release` in its
+exposed headers and permit them as request headers for browser clients.
+
+For a multi-workload project, publish a complete release set after all member
+deployments are ready. An incompatible new service deployment can be deployed
+with an explicit 0% traffic weight first; publishing the new graph activates
+it for release-pinned calls without shifting the ordinary weighted route:
+
+```http
+POST /v1/projects/shop/environments/production/release-sets
+Content-Type: application/json
+
+{"ttl_seconds":3600,"deployments":{"shop-api":"API_DEPLOYMENT_UUID","shop-billing":"BILLING_DEPLOYMENT_UUID"}}
+```
+
+The response contains a release UUID. Production project ingress follows the
+active set by default; a client can continue an older set with
+`X-Gregale-Release: <release-uuid>`. Gregale returns that header and sends it
+to the API guest. Forward it on outbound managed service calls. The service
+proxy verifies the calling VM's deployment belongs to that release and picks
+the matching target deployment; it cannot be spoofed into selecting a graph
+from a caller header alone. When the same API deployment belongs to several
+unexpired sets, an internal call without the release header returns 409 rather
+than guessing. The active set does not expire; its TTL starts when a new set
+replaces it. Publish a new complete set whenever project membership changes.
+
+Release sets pin public HTTP/WebSocket handshakes, managed HTTP service calls,
+and durable invocations (async invoke, delayed tasks, queues, inbox messages,
+and asynchronous edge routes). For durable work, Gregale captures the active
+release or an explicit pin when accepting the row, then checks it again before
+delivery. A queued item whose release expires fails rather than switching to
+new code; schedule it within the compatibility window. The control-plane
+invocation, queue, and task APIs accept the same headers on the HTTP request;
+invoke and task JSON envelopes may also carry them in their `headers` object.
+Accepted control-plane responses return the captured revision or release header
+when a version was selected at enqueue time.
+Calls that bypass `*.svc.gregale` still need their own release-context
+propagation and are not covered by this guarantee. A guest must forward the
+received `X-Gregale-Release` on each managed outbound service call when its
+deployment can belong to multiple live release sets.
+
 ### Smoke-test a downstream deployment
 
 To test a live deployment of a bound service before giving it traffic, send

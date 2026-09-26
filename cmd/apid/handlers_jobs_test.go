@@ -57,6 +57,28 @@ func seedJobRun(t *testing.T, e testEnv, jobName string, tasks int) string {
 	return run.ID
 }
 
+func TestJobImageFailureAndActiveRunConflicts(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	name := seedJob(t, e, "image-failure-conflict", "registry.example/worker:v1")
+	seedJobRun(t, e, name, 1)
+	newRAM := 256
+	rec := e.do(t, http.MethodPatch, "/v1/jobs/"+name, api.UpdateJobRequest{RAMMB: &newRAM}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("PATCH with queued run = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	job, err := e.store.JobGetByName(context.Background(), e.acct.ID, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.JobSetImageMaterialization(context.Background(), job.ID, job.ImageRef, "failed", "", "", "registry image not found"); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, http.MethodPost, "/v1/jobs/"+name+"/runs", api.CreateJobRunRequest{Tasks: 1}, nil)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "image_ref") {
+		t.Fatalf("POST run with failed image = %d, want actionable 409: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestCreateJob_HappyPath pins the basic create flow. Hobby plan
 // is the smallest tier that allows jobs (Free → 402).
 func TestCreateJob_HappyPath(t *testing.T) {
@@ -81,6 +103,76 @@ func TestCreateJob_HappyPath(t *testing.T) {
 	}
 	if resp.Status != "active" {
 		t.Errorf("Status = %q, want active (handler applies default)", resp.Status)
+	}
+}
+
+func TestCreateJobRecurringSchedule(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	rec := e.do(t, "POST", "/v1/jobs", api.CreateJobRequest{
+		Name:     "nightly-export",
+		ImageRef: "ghcr.io/example/worker:v1",
+		Schedule: "0 3 * * *",
+		Timezone: "Europe/Istanbul",
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST recurring job = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.JobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode recurring job: %v", err)
+	}
+	if response.Kind != "recurring" || response.Schedule != "0 3 * * *" || response.Timezone != "Europe/Istanbul" || response.LastScheduledAt != "" {
+		t.Fatalf("recurring job response = %+v", response)
+	}
+}
+
+func TestCreateJobRecurringScheduleRequiresValidCronAndTimezone(t *testing.T) {
+	for name, request := range map[string]api.CreateJobRequest{
+		"invalid expression":         {Name: "invalid-cron", ImageRef: "ghcr.io/example/worker:v1", Schedule: "every morning"},
+		"invalid timezone":           {Name: "invalid-zone", ImageRef: "ghcr.io/example/worker:v1", Schedule: "0 3 * * *", Timezone: "Mars/Olympus_Mons"},
+		"recurring without schedule": {Name: "missing-cron", ImageRef: "ghcr.io/example/worker:v1", Kind: "recurring"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := setup(t, api.PlanHobby)
+			rec := e.do(t, "POST", "/v1/jobs", request, nil)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("POST invalid recurring job = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestUpdateJobRecurringScheduleAndUnschedule(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	created, err := e.store.JobCreate(context.Background(), e.acct.ID, "scheduled-update", "batch",
+		"ghcr.io/example/worker:v1", []string{"/app/run"}, 256, 60, 1, 0, nil)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	schedule := "15 4 * * 1-5"
+	timezone := "America/New_York"
+	rec := e.do(t, "PATCH", "/v1/jobs/"+created.Name, api.UpdateJobRequest{Schedule: &schedule, Timezone: &timezone}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH job schedule = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.JobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode updated job: %v", err)
+	}
+	if response.Kind != "recurring" || response.Schedule != schedule || response.Timezone != timezone || response.LastScheduledAt == "" {
+		t.Fatalf("updated recurring job response = %+v", response)
+	}
+	empty := ""
+	rec = e.do(t, "PATCH", "/v1/jobs/"+created.Name, api.UpdateJobRequest{Schedule: &empty}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH unschedule = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	response = api.JobResponse{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode unscheduled job: %v", err)
+	}
+	if response.Kind != "batch" || response.Schedule != "" {
+		t.Fatalf("unscheduled job response = %+v", response)
 	}
 }
 

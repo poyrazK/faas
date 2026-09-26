@@ -10,6 +10,18 @@ export type JobResponse = {
   account_id: string;
   name: string;
   kind: 'batch' | 'recurring';
+  /**
+   * Recurring five-field cron expression, when configured.
+   */
+  schedule?: string;
+  /**
+   * IANA timezone used to evaluate the recurring schedule.
+   */
+  timezone?: string;
+  /**
+   * Most recent scheduled occurrence that created a run.
+   */
+  last_scheduled_at?: string;
   image_ref: string;
   /**
    * Immutable OCI manifest digest selected from image_ref.

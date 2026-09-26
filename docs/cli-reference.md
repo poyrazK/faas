@@ -796,6 +796,12 @@ List jobs in this account
 
 Create a new job
 
+| Flag | Meaning | |
+|---|---|---|
+| `--image <REF>` | OCI image (required) | required |
+| `--schedule <EXPR>` | recurring five-field cron schedule |  |
+| `--timezone <TZ>` | IANA timezone for the recurring schedule |  |
+
 ### jobs info
 
 Show one job
@@ -803,6 +809,12 @@ Show one job
 ### jobs update
 
 Update one job
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schedule <EXPR>` | replace recurring cron schedule |  |
+| `--timezone <TZ>` | replace schedule IANA timezone |  |
+| `--unschedule` | remove recurring schedule |  |
 
 ### jobs rm
 
@@ -1385,16 +1397,18 @@ List edge rules
 
 ### edge-rules trace
 
-Preview matching edge rules and simulate request headers and IP/geo decisions
+Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
-| `--url <URL>` | absolute HTTP(S) request URL | required |
+| `--config <file|->` | load a versioned JSON scenario (headers array; body or body_base64); - reads stdin and is exclusive with request flags |  |
+| `--app <slug>` | app slug (required unless --config is used) |  |
+| `--url <URL>` | absolute HTTP(S) request URL (required unless --config is used) |  |
 | `--method <method>` | request method (default GET) |  |
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 | `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
+| `--body-file <path|->` | request body file or - for stdin (max 1 MiB; contents are withheld) |  |
 
 ### edge-rules create
 

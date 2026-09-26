@@ -37,8 +37,8 @@ import (
 
 // Job is one row of public.jobs (migrations/00255 + 00572 for command and
 // the image-materialization columns added by the Epic #1184 follow-up).
-// Kind is the closed vocabulary ('app' | 'function') enforced by the
-// jobs_kind_check constraint; Status is ('active' | 'paused' | 'deleted')
+// Kind is the closed vocabulary ('batch' | 'recurring') enforced by the
+// jobs_kind_check and schedule-kind constraints; Status is ('active' | 'paused' | 'deleted')
 // enforced by jobs_status_check. EnvOverrides is jsonb so the customer-
 // facing knob is open-vocabulary; Command is the OCI entrypoint added
 // by 00572 (text[], capped at 64 entries by jobs_command_min_chk).
@@ -46,25 +46,29 @@ import (
 // All UUID columns are exposed as string to match the Cron precedent
 // (Cron.ID is string; the pgx conversion lives inside PgStore).
 type Job struct {
-	ID             string
-	AccountID      string
-	Kind           string // 'app' | 'function'
-	Name           string
-	ImageRef       string
-	RAMMB          int
-	TaskTimeoutS   int
-	MaxParallelism int
-	RetryMax       int
-	EnvOverrides   json.RawMessage
-	Status         string // 'active' | 'paused' | 'deleted'
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	Command        []string // migrations/00572
+	ID              string
+	AccountID       string
+	Kind            string // 'batch' | 'recurring'
+	Name            string
+	ImageRef        string
+	RAMMB           int
+	TaskTimeoutS    int
+	MaxParallelism  int
+	RetryMax        int
+	EnvOverrides    json.RawMessage
+	Status          string // 'active' | 'paused' | 'deleted'
+	CronSchedule    string
+	CronTimezone    string
+	LastScheduledAt *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	Command         []string // migrations/00572
 	// ImageResolvedDigest is the immutable OCI manifest digest selected from
 	// ImageRef by imaged. Empty until materialization succeeds.
 	ImageResolvedDigest string
-	// ImageStorageKey is the canonical ext4 artifact consumed by vmmd
-	// (jobs/<job-id>.ext4). It is populated atomically with a ready status.
+	// ImageStorageKey is the immutable ext4 artifact consumed by vmmd. New
+	// materializations use a per-attempt key; legacy verified artifacts may
+	// still use jobs/<job-id>.ext4. It is populated atomically with ready.
 	ImageStorageKey string
 	// ImageMaterializationStatus is pending, verifying_legacy, ready, or
 	// failed. The verification state fences pre-OCI ext4 references until
@@ -78,6 +82,31 @@ type Job struct {
 	// contract while transient failures are retried durably.
 	ImageMaterializationAttempts      int
 	ImageMaterializationNextAttemptAt *time.Time
+}
+
+// JobScheduleStore is the durable scheduling seam used by schedd. Listing is
+// intentionally separate from claiming: each candidate is revalidated and
+// advanced in the same transaction that creates its job run, so multiple
+// schedulers cannot enqueue duplicate runs and a crash cannot consume a fire
+// without persisting the run.
+type JobScheduleStore interface {
+	JobListScheduled(ctx context.Context) ([]Job, error)
+	JobRunCreateScheduled(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error)
+}
+
+// JobScheduleCreateStore is the schedule-aware job admission seam. It keeps
+// schedule persistence in the same account-locked transaction as job quota
+// admission and row creation.
+type JobScheduleCreateStore interface {
+	JobCreateScheduledIfUnderQuota(ctx context.Context, job Job, limit int) (Job, error)
+}
+
+// JobScheduleUpdateStore atomically updates a job and its schedule. A pointer
+// to an empty schedule clears recurring execution; nil leaves the schedule
+// untouched. Changing either schedule field resets the occurrence cursor so
+// the new rule starts from the update time instead of replaying old fires.
+type JobScheduleUpdateStore interface {
+	JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string, schedule, timezone *string) (Job, error)
 }
 
 // JobRegistryCredential is a sealed Basic Auth credential scoped to one job
@@ -234,7 +263,7 @@ type JobQuotaCreator interface {
 }
 
 // JobImageMaterializationStore is the narrow persistence seam used by imaged
-// to publish the resolved OCI digest and canonical ext4 storage key. It stays
+// to publish the resolved OCI digest and ext4 storage key. It stays
 // optional so small Store test doubles do not need to implement the worker
 // queue surface.
 type JobImageMaterializationStore interface {
@@ -251,6 +280,20 @@ type JobImageMaterializationClaimer interface {
 	JobClaimImageMaterialization(ctx context.Context, id, owner string, lease time.Duration) (Job, error)
 	JobClaimPendingImageMaterialization(ctx context.Context, limit int, owner string, lease time.Duration) ([]Job, error)
 	JobRecordImageMaterializationFailure(ctx context.Context, id, sourceRef, owner, reason string, retryAt time.Time, maxAttempts int) (Job, error)
+}
+
+// JobImageMaterializationLeaseRenewer extends only a live claim; expired or
+// superseded workers cannot resurrect their lease.
+type JobImageMaterializationLeaseRenewer interface {
+	JobRenewImageMaterializationLease(ctx context.Context, id, sourceRef, owner string, attempt int, lease time.Duration) error
+}
+
+// JobImageMaterializationPublisher is the claim-fenced success path for an
+// imaged worker. The attempt and owner must still match a live claim when the
+// immutable artifact key is published; a worker that lost its lease must not
+// replace a newer worker's artifact.
+type JobImageMaterializationPublisher interface {
+	JobPublishImageMaterialization(ctx context.Context, id, sourceRef, owner string, attempt int, resolvedDigest, storageKey string) (Job, error)
 }
 
 // JobLegacyArtifactVerificationStore is a separate lease queue for old
@@ -352,11 +395,12 @@ type JobStore interface {
 	//
 	// Failure modes:
 	//   - ErrNotFound on missing row.
+	//   - ErrConflict while any task from an existing run is queued or claimed.
 	//   - mapErr-wrapped CHECK violations if any of the values
 	//     violate the schema constraint.
 	JobUpdate(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string) (Job, error)
 	// JobSoftDelete flips status='active'|'paused' to status='deleted'
-	// iff no live (waking, cold_booting, or running) job_task instance exists
+	// iff no queued/claimed job task or live job_task instance exists
 	// for the job. Implemented via the soft_delete_job_if_no_live_instances()
 	// PL/pgSQL helper (migrations/00576) on PgStore; memstore mirrors
 	// the predicate directly.
@@ -543,6 +587,10 @@ type JobStore interface {
 	// and calls JobTaskRetry (or JobTaskMarkTerminal if attempt has
 	// exhausted retry_max) per row.
 	JobTaskFindStuck(ctx context.Context, ttl time.Duration) ([]JobTask, error)
+	// JobTaskReapClaimed fences a stale lease by token and expiry, then
+	// atomically retries or times out the task and accounts for dead letter.
+	// ErrNotFound means the lease was renewed or another owner settled it.
+	JobTaskReapClaimed(ctx context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (retryScheduled bool, err error)
 	// JobTaskGet returns ErrNotFound when (run_id, task_index) does
 	// not resolve.
 	JobTaskGet(ctx context.Context, runID string, taskIndex int) (JobTask, error)

@@ -3511,8 +3511,69 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 // second; a stuck pgpool is louder while the real vmmd job RPC remains
 // the source of truth for boot and exit supervision.
 func (l *Loop) runJobsDispatchTick(ctx context.Context) {
-	if err := l.engine.DispatchJobsTick(ctx); err != nil {
-		l.log.Warn("schedd: jobs dispatch tick failed", "err", err)
+	// A cold job boot can take far longer than the 1s tick. Coalesce
+	// overlapping ticks in the bounded pool so watchdog, cron and reaper
+	// continue to run on the select goroutine. The recurring schedule scan
+	// shares this work item so database latency cannot stall the main loop.
+	l.submitWork(workJobDispatch, "tick", func() {
+		l.runScheduledJobsTick(ctx)
+		if err := l.engine.DispatchJobsTick(ctx); err != nil {
+			l.log.Warn("schedd: jobs dispatch tick failed", "err", err)
+		}
+	})
+}
+
+// runScheduledJobsTick evaluates recurring job definitions using the same
+// cron grammar/timezone parser as app crons. The store atomically advances a
+// job's cursor and creates its run, making this safe with multiple schedd
+// nodes and across process restarts.
+func (l *Loop) runScheduledJobsTick(ctx context.Context) {
+	store, ok := l.engine.Store().(state.JobScheduleStore)
+	if !ok {
+		l.log.Warn("schedd: job schedule store is unavailable")
+		return
+	}
+	jobs, err := store.JobListScheduled(ctx)
+	if err != nil {
+		l.log.Warn("schedd: list scheduled jobs failed", "err", err)
+		return
+	}
+	now := l.now().UTC()
+	for _, job := range jobs {
+		if job.Status != "active" || job.Kind != "recurring" || job.CronSchedule == "" {
+			continue
+		}
+		schedule, err := ParseScheduleWithTimezone(job.CronSchedule, job.CronTimezone)
+		if err != nil {
+			l.log.Error("schedd: invalid persisted job schedule", "job_id", job.ID, "err", err)
+			continue
+		}
+		boundary := job.CreatedAt
+		if job.LastScheduledAt != nil {
+			boundary = *job.LastScheduledAt
+		}
+		if schedule.NextFireAt(boundary).After(now) {
+			continue
+		}
+		run, created, err := store.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule,
+			job.CronTimezone, job.LastScheduledAt, now)
+		if err != nil {
+			l.log.Warn("schedd: create scheduled job run failed", "job_id", job.ID, "err", err)
+			continue
+		}
+		if !created {
+			continue
+		}
+		l.log.Info("schedd: scheduled job run created", "job_id", job.ID, "run_id", run.ID)
+		if l.engine.notif != nil {
+			payload, _ := json.Marshal(map[string]string{
+				"kind": "run_created", "job_id": job.ID,
+				"run_id": run.ID, "account_id": job.AccountID,
+			})
+			if err := l.engine.notif.Notify(ctx, db.NotifyJobChanged, string(payload)); err != nil {
+				l.log.Warn("schedd: notify scheduled job run failed", "job_id", job.ID, "run_id", run.ID, "err", err)
+			}
+		}
 	}
 }
 

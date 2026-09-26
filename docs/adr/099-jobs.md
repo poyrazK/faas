@@ -418,11 +418,20 @@ three SDKs. `make spec-sync` is the gate (per ADR-085).
    or job_task". CI fails the merge otherwise (per the
    spec-sync drift gate from ADR-085).
 
+### Implementation amendment (2026-09)
+
+Recurring execution is now implemented as an opt-in extension to the original
+manual/API-triggered v1 model. `jobs.cron_schedule`, `jobs.cron_timezone`, and
+`jobs.last_scheduled_at` define a recurring job; schedd reuses the shared
+five-field cron parser and atomically advances the cursor with creation of a
+single-task `trigger_kind='scheduled'` run. Each occurrence uses the job's
+current configuration. Pausing prevents new fires, schedule edits reset the
+cursor, and downtime coalesces missed boundaries into one run instead of a
+catch-up burst. The cursor/run transaction is idempotent across schedd
+replicas. See `docs/jobs.md` for the CLI contract.
+
 ### Out of scope (explicit, v1.1+)
 
-- **Scheduled / cron-fired runs** — `jobs.cron_schedule` field
-  with the existing cron evaluation pipeline. v1 is manual +
-  API-triggered only.
 - **Per-task env overrides at the CLI** — v1 supports one
   `env_override` per `job_runs` row (applied to all tasks in
   the run). Per-task override (e.g. `TASK_INDEX=42`) is a v1.1

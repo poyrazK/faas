@@ -1,4 +1,4 @@
-# ADR-239: Target-authorized internal service bindings
+# ADR-266: Target-authorized internal service bindings
 
 - **Status:** accepted
 - **Date:** 2026-09-25

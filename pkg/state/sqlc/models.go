@@ -1852,6 +1852,7 @@ type RequestTelemetry struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
+	PlatformTenantID    pgtype.UUID
 }
 
 type RequestTelemetry202608 struct {

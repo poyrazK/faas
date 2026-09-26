@@ -29,6 +29,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -50,6 +51,7 @@ func jobResponse(j state.Job) api.JobResponse {
 		AccountID:                  j.AccountID,
 		Name:                       j.Name,
 		Kind:                       j.Kind,
+		Schedule:                   j.CronSchedule,
 		ImageRef:                   j.ImageRef,
 		ImageResolvedDigest:        j.ImageResolvedDigest,
 		ImageStorageKey:            j.ImageStorageKey,
@@ -63,6 +65,12 @@ func jobResponse(j state.Job) api.JobResponse {
 		Status:                     j.Status,
 		CreatedAt:                  j.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:                  j.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	if j.LastScheduledAt != nil && !j.LastScheduledAt.IsZero() {
+		resp.LastScheduledAt = j.LastScheduledAt.UTC().Format(time.RFC3339)
+	}
+	if j.CronSchedule != "" {
+		resp.Timezone = j.CronTimezone
 	}
 	if j.ImageMaterializedAt != nil && !j.ImageMaterializedAt.IsZero() {
 		resp.ImageMaterializedAt = j.ImageMaterializedAt.UTC().Format(time.RFC3339)
@@ -549,6 +557,27 @@ func (s *server) buildJob(acct state.Account, req api.CreateJobRequest) (state.J
 			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
 	}
 	kind := req.Kind
+	schedule := strings.TrimSpace(req.Schedule)
+	timezone := "UTC"
+	if schedule != "" {
+		kind = "recurring"
+		var err error
+		timezone, err = cronexpr.NormalizeTimezone(req.Timezone)
+		if err != nil {
+			return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid timezone", "timezone must be a valid IANA location")
+		}
+		if _, err := cronexpr.Parse(schedule, timezone); err != nil {
+			return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid schedule", "schedule must be a valid five-field cron expression")
+		}
+	} else if kind == "recurring" {
+		return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Missing schedule", "recurring jobs require a schedule")
+	} else if req.Timezone != "" {
+		return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Timezone without schedule", "timezone can only be set for a recurring job")
+	}
 	if kind == "" {
 		kind = "batch"
 	}
@@ -625,6 +654,8 @@ func (s *server) buildJob(acct state.Account, req api.CreateJobRequest) (state.J
 		MaxParallelism: maxParallelism,
 		RetryMax:       retryMax,
 		Status:         "active",
+		CronSchedule:   schedule,
+		CronTimezone:   timezone,
 	}, nil
 }
 
@@ -662,7 +693,14 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	limit := api.JobMaxPerAccount[acct.Plan.PlanIndex()]
 	var created state.Job
 	var err error
-	if creator, ok := s.store.(state.JobQuotaCreator); ok {
+	if job.CronSchedule != "" {
+		creator, ok := s.store.(state.JobScheduleCreateStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("scheduled jobs are unavailable"))
+			return
+		}
+		created, err = creator.JobCreateScheduledIfUnderQuota(r.Context(), job, limit)
+	} else if creator, ok := s.store.(state.JobQuotaCreator); ok {
 		created, err = creator.JobCreateIfUnderQuota(r.Context(), acct.ID, job.Name, job.Kind,
 			job.ImageRef, job.Command, job.RAMMB, job.TaskTimeoutS,
 			job.MaxParallelism, job.RetryMax, job.EnvOverrides, limit)
@@ -796,6 +834,54 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 	}
+	var schedulePatch, timezonePatch *string
+	if req.Schedule != nil {
+		scheduleValue := strings.TrimSpace(*req.Schedule)
+		if scheduleValue == "" {
+			if req.Timezone != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Timezone without schedule", "timezone cannot be changed while removing the schedule"))
+				return
+			}
+			schedulePatch = &scheduleValue
+		} else {
+			timezoneValue := j.CronTimezone
+			if req.Timezone != nil {
+				timezoneValue = *req.Timezone
+			}
+			normalizedTimezone, timezoneErr := cronexpr.NormalizeTimezone(timezoneValue)
+			if timezoneErr != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid timezone", "timezone must be a valid IANA location"))
+				return
+			}
+			if _, scheduleErr := cronexpr.Parse(scheduleValue, normalizedTimezone); scheduleErr != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid schedule", "schedule must be a valid five-field cron expression"))
+				return
+			}
+			schedulePatch = &scheduleValue
+			timezonePatch = &normalizedTimezone
+		}
+	} else if req.Timezone != nil {
+		if j.CronSchedule == "" {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Timezone without schedule", "timezone can only be set for a recurring job"))
+			return
+		}
+		normalizedTimezone, timezoneErr := cronexpr.NormalizeTimezone(*req.Timezone)
+		if timezoneErr != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid timezone", "timezone must be a valid IANA location"))
+			return
+		}
+		if _, scheduleErr := cronexpr.Parse(j.CronSchedule, normalizedTimezone); scheduleErr != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid schedule", "schedule must be a valid five-field cron expression"))
+			return
+		}
+		timezonePatch = &normalizedTimezone
+	}
 	var envOverrides json.RawMessage
 	if req.EnvOverrides != nil {
 		envOverrides, err = json.Marshal(req.EnvOverrides)
@@ -805,10 +891,27 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 	}
-	updated, err := s.store.JobUpdate(r.Context(), j.ID, req.Command, req.ImageRef,
-		req.RAMMB, req.TaskTimeoutSec, req.MaxParallelism, req.RetryMax,
-		envOverrides, req.Status)
+	var updated state.Job
+	if schedulePatch != nil || timezonePatch != nil {
+		updater, ok := s.store.(state.JobScheduleUpdateStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("scheduled job updates are unavailable"))
+			return
+		}
+		updated, err = updater.JobUpdateWithSchedule(r.Context(), j.ID, req.Command, req.ImageRef,
+			req.RAMMB, req.TaskTimeoutSec, req.MaxParallelism, req.RetryMax,
+			envOverrides, req.Status, schedulePatch, timezonePatch)
+	} else {
+		updated, err = s.store.JobUpdate(r.Context(), j.ID, req.Command, req.ImageRef,
+			req.RAMMB, req.TaskTimeoutSec, req.MaxParallelism, req.RetryMax,
+			envOverrides, req.Status)
+	}
 	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Job has active runs", "wait for active runs to finish or cancel them before updating this job"))
+			return
+		}
 		s.log.Error("update job failed", "job", j.ID, "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not update job"))
 		return
@@ -852,8 +955,8 @@ func (s *server) deleteJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if hasLiveInstances {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeJobHasLiveInstances,
-			"Job has live instances",
-			fmt.Sprintf("job %q has live instances — cancel/wait before deleting", j.Name)))
+			"Job has active work",
+			fmt.Sprintf("job %q has queued or running tasks — cancel/wait before deleting", j.Name)))
 		return
 	}
 	s.audit.Emit(r.Context(), "job.deleted", &acct.ID, map[string]any{
@@ -899,6 +1002,11 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 	if j.Status == "paused" {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Job paused", "job is paused — set status='active' via PATCH to run again"))
+		return
+	}
+	if j.ImageMaterializationStatus == "failed" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Job image unavailable", "update image_ref to retry materialization before creating a run"))
 		return
 	}
 	if req.Tasks < 1 {
@@ -958,6 +1066,11 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 	run, _, err := s.store.JobRunCreate(r.Context(), j.ID, acct.ID, "manual",
 		req.Parallelism, req.RetryMax, req.TaskTimeoutSec, envOverrides, req.Tasks)
 	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Job image unavailable", "update image_ref to retry materialization before creating a run"))
+			return
+		}
 		s.log.Error("create job run failed", "job", j.ID, "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not create run"))
 		return
