@@ -473,38 +473,75 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 		return AppTask{}, fmt.Errorf("%w: a task must be running before it can succeed", ErrAppTaskInvalid)
 	}
 	retryAt := cronAppTaskRetryAt(current, current.Status, params.Status, params.FinishedAt)
-	nextStatus := params.Status
-	var finishedAtArg any = params.FinishedAt
 	var startedAtArg any
 	if current.StartedAt != nil && !current.StartedAt.IsZero() {
 		startedAtArg = *current.StartedAt
 	}
+	var completed AppTask
 	if retryAt != nil {
-		nextStatus = AppTaskQueued
-		finishedAtArg = nil
-		startedAtArg = nil
+		// The database transition guard only permits retrying a terminal failure
+		// back to queued when its failure evidence is already durable. Record the
+		// failed attempt first, then requeue it in the same transaction; neither
+		// intermediate state is visible outside this transaction.
+		tag, err := tx.Exec(ctx, `
+			update app_tasks
+			   set status = $3,
+			       stdout_tail = $4,
+			       stderr_tail = $5,
+			       output_truncated = $6,
+			       exit_code = $7,
+			       failure_code = $8,
+			       failure_message = $9,
+			       finished_at = $10,
+			       retry_at = null,
+			       updated_at = $11,
+			       started_at = $12,
+			       lease_token = null,
+			       lease_owner = null,
+			       lease_expires_at = null
+			 where id = $1 and lease_token = $2`,
+			params.ID, params.LeaseToken, string(params.Status), params.StdoutTail,
+			params.StderrTail, params.OutputTruncated, params.ExitCode,
+			params.FailureCode, params.FailureMessage, params.FinishedAt, params.FinishedAt, startedAtArg)
+		if err != nil {
+			return AppTask{}, mapErr(err)
+		}
+		if tag.RowsAffected() != 1 {
+			return AppTask{}, ErrAppTaskLeaseLost
+		}
+		completed, err = scanAppTask(tx.QueryRow(ctx, `
+			update app_tasks
+			   set status = 'queued',
+			       retry_at = $3,
+			       updated_at = $4,
+			       started_at = null,
+			       finished_at = null
+			 where id = $1 and status = $2
+			returning `+appTaskSelectColumns,
+			params.ID, string(params.Status), retryAt, params.FinishedAt))
+	} else {
+		completed, err = scanAppTask(tx.QueryRow(ctx, `
+			update app_tasks
+			   set status = $3,
+			       stdout_tail = $4,
+			       stderr_tail = $5,
+			       output_truncated = $6,
+			       exit_code = $7,
+			       failure_code = $8,
+			       failure_message = $9,
+			       finished_at = $10,
+			       retry_at = null,
+			       updated_at = $11,
+			       started_at = $12,
+			       lease_token = null,
+			       lease_owner = null,
+			       lease_expires_at = null
+			 where id = $1 and lease_token = $2
+			returning `+appTaskSelectColumns,
+			params.ID, params.LeaseToken, string(params.Status), params.StdoutTail,
+			params.StderrTail, params.OutputTruncated, params.ExitCode,
+			params.FailureCode, params.FailureMessage, params.FinishedAt, params.FinishedAt, startedAtArg))
 	}
-	completed, err := scanAppTask(tx.QueryRow(ctx, `
-		update app_tasks
-		   set status = $3,
-		       stdout_tail = $4,
-		       stderr_tail = $5,
-		       output_truncated = $6,
-		       exit_code = $7,
-		       failure_code = $8,
-		       failure_message = $9,
-		       finished_at = $10,
-		       retry_at = $11,
-		       updated_at = $12,
-		       started_at = $13,
-		       lease_token = null,
-		       lease_owner = null,
-		       lease_expires_at = null
-		 where id = $1 and lease_token = $2
-		returning `+appTaskSelectColumns,
-		params.ID, params.LeaseToken, string(nextStatus), params.StdoutTail,
-		params.StderrTail, params.OutputTruncated, params.ExitCode,
-		params.FailureCode, params.FailureMessage, finishedAtArg, retryAt, params.FinishedAt, startedAtArg))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return AppTask{}, ErrAppTaskLeaseLost
