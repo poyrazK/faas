@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -52,6 +53,77 @@ func TestValidateProjectManifestAsyncRoutesTargetsAndSelection(t *testing.T) {
 	}
 	if problem := validateProjectManifestAsyncRoutes(staleRoute, workloads, workloads, []state.App{staleApp}, map[string]bool{"services/old-worker": true}); problem != nil {
 		t.Fatalf("stale route target excluded by root dir: %+v", problem)
+	}
+}
+
+func TestPlanProjectManifestAsyncRoutesClassifiesDiffAndSkips(t *testing.T) {
+	srv, store, acct, app := sourceRefAsyncRouteTestFixture(t)
+	ctx := context.Background()
+	app.WorkloadName = "reports"
+	app.RootDir = "services/reports"
+	workload := reposcan.Workload{Name: "reports", RootDir: "services/reports", Class: reposcan.ClassHTTP}
+	workloads := []reposcan.Workload{workload}
+	projectApps := []state.App{app}
+	initial := gregalemanifest.AsyncRoute{
+		App: "reports", Name: "create-report", MatchHost: "reports.example.com", MatchPath: "/reports",
+	}
+
+	planned, problem := srv.planProjectManifestAsyncRoutes(ctx, acct, workloads, workloads, projectApps, []gregalemanifest.AsyncRoute{initial}, false)
+	if problem != nil {
+		t.Fatalf("plan create: %s", problem.Detail)
+	}
+	if len(planned) != 1 || planned[0].Action != "create" || planned[0].MatchMethods[0] != "POST" {
+		t.Fatalf("create plan = %+v; want one POST create row", planned)
+	}
+
+	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	if problem := srv.applySourceRefManifestAsyncRoutes(ctx, acct, app, []gregalemanifest.AsyncRoute{initial}, &staged); problem != nil {
+		t.Fatalf("apply initial route: %s", problem.Detail)
+	}
+	planned, problem = srv.planProjectManifestAsyncRoutes(ctx, acct, workloads, workloads, projectApps, []gregalemanifest.AsyncRoute{initial}, false)
+	if problem != nil || len(planned) != 1 || planned[0].Action != "unchanged" {
+		t.Fatalf("unchanged plan = %+v, problem=%+v", planned, problem)
+	}
+
+	updated := initial
+	updated.MatchPath = "/reports/v2"
+	planned, problem = srv.planProjectManifestAsyncRoutes(ctx, acct, workloads, workloads, projectApps, []gregalemanifest.AsyncRoute{updated}, false)
+	if problem != nil || len(planned) != 1 || planned[0].Action != "update" || planned[0].MatchPath != "/reports/v2" {
+		t.Fatalf("update plan = %+v, problem=%+v", planned, problem)
+	}
+
+	planned, problem = srv.planProjectManifestAsyncRoutes(ctx, acct, workloads, workloads, projectApps, []gregalemanifest.AsyncRoute{}, false)
+	if problem != nil || len(planned) != 1 || planned[0].Action != "remove" || planned[0].MatchPath != "/reports" {
+		t.Fatalf("remove plan = %+v, problem=%+v", planned, problem)
+	}
+
+	other := reposcan.Workload{Name: "billing", RootDir: "services/billing", Class: reposcan.ClassHTTP}
+	allWorkloads := []reposcan.Workload{workload, other}
+	planned, problem = srv.planProjectManifestAsyncRoutes(ctx, acct, allWorkloads, workloads, projectApps, []gregalemanifest.AsyncRoute{{
+		App: "billing", Name: "invoice", MatchHost: "billing.example.com", MatchPath: "/invoice",
+	}}, false)
+	if problem != nil || len(planned) != 2 {
+		t.Fatalf("filtered plan = %+v, problem=%+v; want removal on selected app and skipped declaration", planned, problem)
+	}
+	var sawSkipped, sawRemove bool
+	for _, row := range planned {
+		if row.App == "billing" && row.Action == "skipped" && row.Reason == "workload is not selected by this deploy" {
+			sawSkipped = true
+		}
+		if row.App == "reports" && row.Action == "remove" {
+			sawRemove = true
+		}
+	}
+	if !sawSkipped || !sawRemove {
+		t.Fatalf("filtered plan = %+v; want billing skipped and reports removal", planned)
+	}
+
+	planned, problem = srv.planProjectManifestAsyncRoutes(ctx, acct, workloads, workloads, projectApps, []gregalemanifest.AsyncRoute{updated}, true)
+	if problem != nil || len(planned) != 1 || planned[0].Action != "skipped" || !strings.Contains(planned[0].Reason, "--no-triggers") {
+		t.Fatalf("no-triggers plan = %+v, problem=%+v", planned, problem)
+	}
+	if rules, err := store.ListEdgeRulesForApp(ctx, app.ID); err != nil || len(rules) != 1 {
+		t.Fatalf("planning changed existing routes: rules=%+v err=%v", rules, err)
 	}
 }
 

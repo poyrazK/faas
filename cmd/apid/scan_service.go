@@ -144,6 +144,7 @@ type scanPlanResponse struct {
 	Workloads             []api.PlanWorkload      `json:"workloads"`
 	Managed               []api.PlanManaged       `json:"managed"`
 	Crons                 []planCron              `json:"crons"`
+	AsyncRoutes           []api.PlanAsyncRoute    `json:"async_routes,omitempty"`
 	// CronNames parallels Crons: when /apply runs, the apply handler
 	// uses CronNames[i] to look up the freshly inserted app_id from
 	// insertedApps (matched by Slug == WorkloadName). Not exposed
@@ -1564,6 +1565,16 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
+	var asyncRoutePlan []api.PlanAsyncRoute
+	if resolvedManifest.AsyncRoutesPresent {
+		asyncRoutePlan, manifestProblem = s.planProjectManifestAsyncRoutes(
+			r.Context(), acct, result.Workloads, filteredW, projectApps,
+			resolvedManifest.AsyncRoutes, req.NoTriggers,
+		)
+		if manifestProblem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
+		}
+	}
 	prePartition := computeAffectedPartition(onlyFilteredW, result.Workloads, acctApps, nil, projectID)
 	partition := computeAffectedPartition(filteredW, result.Workloads, acctApps, req.Exclude, projectID)
 	var preDesiredCrons, desiredCrons []planCron
@@ -1702,6 +1713,7 @@ func (s *server) scanService(
 		Workloads:             respWorkloads,
 		Managed:               respManaged,
 		Crons:                 crons,
+		AsyncRoutes:           asyncRoutePlan,
 		Warnings:              warnings,
 		DetectionWarnings:     toPlanDetectionWarnings(result.DetectionWarnings),
 		ObservedApps:          projectedApps,

@@ -535,6 +535,7 @@ export type { PasswordSignupRequest } from './PasswordSignupRequest.js';
 export type { PatchOrgRequest } from './PatchOrgRequest.js';
 export type { PaymentMethodSummary } from './PaymentMethodSummary.js';
 export type { PlanAffectedApp } from './PlanAffectedApp.js';
+export type { PlanAsyncRoute } from './PlanAsyncRoute.js';
 export type { PlanCron } from './PlanCron.js';
 export type { PlanDetectedBy } from './PlanDetectedBy.js';
 export type { PlanDetectionWarning } from './PlanDetectionWarning.js';

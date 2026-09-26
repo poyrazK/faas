@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { PlanAffectedApp } from './PlanAffectedApp.js';
+import type { PlanAsyncRoute } from './PlanAsyncRoute.js';
 import type { PlanCron } from './PlanCron.js';
 import type { PlanDetectionWarning } from './PlanDetectionWarning.js';
 import type { PlanManaged } from './PlanManaged.js';
@@ -30,6 +31,10 @@ export type PlanResponse = {
   workloads: Array<PlanWorkload>;
   managed: Array<PlanManaged>;
   crons: Array<PlanCron>;
+  /**
+   * Structured diff for manifest-owned async routes; omitted when the manifest does not declare async_routes or no route actions need to be shown.
+   */
+  async_routes?: Array<PlanAsyncRoute>;
   warnings?: Array<string>;
   /**
    * Structured skipped/merged detector decisions available to explain-mode clients.
