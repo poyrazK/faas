@@ -2296,12 +2296,14 @@ List every secret across apps
 
 ### secrets rotate
 
-Re-seal one secret under the current host key
+Rotate a secret and optionally wait for runtime application
 
 | Flag | Meaning | |
 |---|---|---|
 | `--scope <SCOPE>` | env scope to rotate (defaults to linked project environment) |  |
 | `--restart` | restart the app and apply the rotated secret now |  |
+| `--wait-for-ack` | wait until every active authorized runtime confirms it applied the secret |  |
+| `--timeout <DURATION>` | maximum time to wait for application acknowledgements |  |
 
 
 ## slo
