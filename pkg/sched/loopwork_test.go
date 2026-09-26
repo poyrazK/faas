@@ -71,7 +71,7 @@ func TestWorkPoolPrimeRunsInlineWhenSaturated(t *testing.T) {
 // kinds are idempotent over a durable table with a safety ticker, so
 // dropping beats unbounded goroutine growth.
 func TestWorkPoolReconcileDropsWhenSaturated(t *testing.T) {
-	for _, kind := range []workKind{workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel} {
+	for _, kind := range []workKind{workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch} {
 		t.Run(string(kind), func(t *testing.T) {
 			p := newWorkPool(quietLog(), wire.NewOpsMetrics("test"))
 			release := fillSlots(t, p, kind)

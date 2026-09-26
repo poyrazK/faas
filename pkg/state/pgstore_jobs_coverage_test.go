@@ -253,7 +253,10 @@ func TestPg_Jobs_JobListByAccount(t *testing.T) {
 
 func TestPg_Jobs_JobUpdate(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
-	job, _, _ := pgJobsSeed(t, s, ctx, "job-4")
+	job, run, _ := pgJobsSeed(t, s, ctx, "job-4")
+	if _, err := s.JobRunCancel(ctx, run.ID); err != nil {
+		t.Fatalf("setup JobRunCancel: %v", err)
+	}
 
 	newCmd := []string{"/bin/sh", "-c", "echo updated"}
 	newImg := "oci://registry.example/y@sha256:feedface"
@@ -272,7 +275,10 @@ func TestPg_Jobs_JobUpdate(t *testing.T) {
 
 func TestPg_Jobs_JobSoftDelete(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
-	job, _, _ := pgJobsSeed(t, s, ctx, "job-5")
+	job, run, _ := pgJobsSeed(t, s, ctx, "job-5")
+	if _, err := s.JobRunCancel(ctx, run.ID); err != nil {
+		t.Fatalf("setup JobRunCancel: %v", err)
+	}
 
 	deleted, hasLive, err := s.JobSoftDelete(ctx, job.ID)
 	if err != nil {

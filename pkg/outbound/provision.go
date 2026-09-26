@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // IntegrationRecord contains the account-owned metadata needed when an
@@ -17,10 +18,9 @@ type IntegrationRecord struct {
 	Policy    Integration
 }
 
-// EnsureIntegration atomically upserts an integration policy and its app
-// bindings. It is intentionally kept in this package so outboundd remains the
-// sole writer for these tables; apid can call the same owner through a future
-// API adapter rather than writing the tables directly.
+// EnsureIntegration atomically upserts an operator-owned integration policy
+// and its app bindings. Customer-owned integrations are created by apid and
+// cannot be overwritten by this operator reconciliation path.
 func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record IntegrationRecord) error {
 	if pool == nil {
 		return fmt.Errorf("outbound postgres pool is required")
@@ -40,23 +40,48 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	_, err = tx.Exec(ctx, `
+	if record.Policy.DailyRequestLimit != nil {
+		var plan string
+		if err := tx.QueryRow(ctx, `SELECT plan FROM accounts WHERE id = $1 FOR SHARE`, record.AccountID).Scan(&plan); err != nil {
+			return err
+		}
+		maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
+		if !ok || *record.Policy.DailyRequestLimit > maximum {
+			return fmt.Errorf("%w: daily request limit exceeds the account plan ceiling", ErrInvalidIntegration)
+		}
+	}
+	command, err := tx.Exec(ctx, `
 		INSERT INTO outbound_integrations
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst,
-		     max_in_flight, request_timeout_ms, enabled)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		     max_in_flight, request_timeout_ms, enabled, provider_auth_mode,
+		     allowed_methods, allowed_path_prefixes, credential_source, owner_kind,
+		     daily_request_limit)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'operator',$15)
 		ON CONFLICT (id) DO UPDATE SET
 		    account_id = EXCLUDED.account_id, name = EXCLUDED.name,
 		    origin = EXCLUDED.origin, token_hash = EXCLUDED.token_hash,
 		    rate_per_second = EXCLUDED.rate_per_second, burst = EXCLUDED.burst,
 		    max_in_flight = EXCLUDED.max_in_flight,
 		    request_timeout_ms = EXCLUDED.request_timeout_ms,
-		    enabled = EXCLUDED.enabled, updated_at = now()`,
+		    enabled = EXCLUDED.enabled, provider_auth_mode = EXCLUDED.provider_auth_mode,
+		    allowed_methods = EXCLUDED.allowed_methods,
+		    allowed_path_prefixes = EXCLUDED.allowed_path_prefixes,
+		    credential_source = EXCLUDED.credential_source,
+		    daily_request_limit = EXCLUDED.daily_request_limit,
+		    updated_at = now()
+		WHERE outbound_integrations.account_id = EXCLUDED.account_id
+		  AND outbound_integrations.owner_kind = 'operator'`,
 		integrationID, record.AccountID, record.Name, record.Policy.Origin.String(),
 		record.Policy.TokenHash[:], record.Policy.RatePerSecond, record.Policy.Burst,
-		record.Policy.MaxInFlight, record.Policy.RequestTimeout.Milliseconds(), record.Policy.Enabled)
+		record.Policy.MaxInFlight, record.Policy.RequestTimeout.Milliseconds(), record.Policy.Enabled,
+		providerAuthMode(record.Policy.ProviderAuthMode), nonNilStrings(record.Policy.AllowedMethods),
+		nonNilStrings(record.Policy.AllowedPathPrefixes), credentialSource(record.Policy.CredentialSource),
+		record.Policy.DailyRequestLimit)
 	if err != nil {
 		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf("%w: integration account cannot change", ErrInvalidIntegration)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM outbound_integration_apps WHERE integration_id = $1`, integrationID); err != nil {
 		return err
@@ -71,4 +96,25 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func providerAuthMode(mode string) string {
+	if mode == "" {
+		return ProviderAuthApplication
+	}
+	return mode
+}
+
+func credentialSource(source string) string {
+	if source == "" {
+		return CredentialSourceOperatorEnv
+	}
+	return source
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }

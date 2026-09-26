@@ -1845,80 +1845,54 @@ func TestEngineWake_Idempotent(t *testing.T) {
 	}
 }
 
-// TestEngineWake_HonorsCallerDeploymentID pins the PR-C wake-fan-out
-// contract through the Phase-1 fast path: a caller-supplied
-// `deploymentID` (the gateway's cached target deployment) MUST win
-// over whatever LiveDeployment returns. The bug this catches: a
-// regression that re-introduces `var deploymentID string` inside the
-// fast-path block shadows the function parameter and silently drops
-// the caller's value. The legacy test corpus only exercises the
-// empty-string path (every `e.Wake(ctx, app.ID, "", "", "")` in this file),
-// so the shadowing compiled clean — the bug was invisible until a
-// reviewer audit surfaced it on the `pkg/sched/engine.go::Wake` shape.
-//
-// Setup: app has depA (initial live) + a RUNNING instance attached
-// to depA. We then create depB (which supersedes depA) — LiveDeployment
-// now returns depB. We call Wake(app.ID, depA.ID) and assert:
-//
-//  1. Phase 1 hits (the running instance is found; no cold boot).
-//  2. WakeResult.DeploymentID == depA.ID, NOT depB.ID. The gateway
-//     cached depA on Target; it must not silently re-route to the
-//     fresh deploy.
-//  3. coldBoots stays 1 (the seed cold-boot); the second Wake stays
-//     in Phase 1, no fallthrough to admitAndDispatch.
+// An exact wake must return an instance of the requested deployment. A
+// retained 0%-traffic revision can reuse its own running instance, while a
+// newly requested revision must not borrow that instance and relabel it.
 func TestEngineWake_HonorsCallerDeploymentID(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
-	_, app, depA := seedApp(t, store, api.PlanPro, 512, 5)
-
-	// Cold-wake to materialise a RUNNING instance attached to depA.
+	acct, err := store.CreateAccount(ctx, "wake-revision@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "wake-revision", RAMMB: 512,
+		MaxConcurrency: 5, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(digest string) state.Deployment {
+		t.Helper()
+		dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage,
+			ImageDigest: digest, Status: state.DeployPending, Scope: state.DefaultEnvScope})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+			t.Fatal(err)
+		}
+		return dep
+	}
+	depA := create("sha256:wake-a")
 	vmm := &fakeVMM{}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
+	old, err := e.Wake(ctx, app.ID, depA.ID, "", "")
+	if err != nil {
 		t.Fatalf("seed Wake: %v", err)
 	}
-
-	// Now create depB. CreateDeployment supersedes depA to
-	// DeploySuperseded (memstore.go CreateDeployment flips the prior
-	// pending/live row), so LiveDeployment will return depB.ID.
-	depB, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindImage,
-		ImageDigest: "sha256:def", Status: state.DeployLive,
-	})
-	if err != nil {
-		t.Fatalf("CreateDeployment depB: %v", err)
-	}
-	if depB.ID == depA.ID {
-		t.Fatal("depB.ID == depA.ID; supersede did not produce a fresh row")
-	}
-
-	// Sanity: LiveDeployment now points at depB, not depA. If this
-	// fails the test setup is meaningless (the bug only manifests
-	// when LiveDeployment disagrees with the caller hint).
-	live, err := store.LiveDeployment(ctx, app.ID)
-	if err != nil {
-		t.Fatalf("LiveDeployment: %v", err)
-	}
-	if live.ID != depB.ID {
-		t.Fatalf("LiveDeployment.ID = %q, want depB.ID=%q (test setup)", live.ID, depB.ID)
-	}
-
-	// Wake with the caller-supplied depA.ID — the gateway's cached
-	// target deployment. Phase 1 should hit and the result must
-	// carry depA.ID, NOT the freshly-promoted depB.ID.
+	depB := create("sha256:wake-b")
 	res, err := e.Wake(ctx, app.ID, depA.ID, "", "")
 	if err != nil {
-		t.Fatalf("Wake with caller deploymentID: %v", err)
+		t.Fatalf("Wake retained revision: %v", err)
 	}
-	if vmm.coldBoots != 1 {
-		// Cold boot from the seed Wake above; the second Wake must
-		// stay in Phase 1 (no second cold boot).
-		t.Errorf("coldBoots = %d, want 1 (Phase 1 fast path must not fall through)", vmm.coldBoots)
+	if res.DeploymentID != depA.ID || res.InstanceID != old.InstanceID || vmm.coldBoots != 1 {
+		t.Fatalf("retained wake = %+v, cold boots %d; want old instance and no boot", res, vmm.coldBoots)
 	}
-	if res.DeploymentID != depA.ID {
-		t.Errorf("WakeResult.DeploymentID = %q, want caller-supplied depA.ID=%q "+
-			"(NOT LiveDeployment's depB.ID=%q — gateway's cached target must win)",
-			res.DeploymentID, depA.ID, depB.ID)
+	res, err = e.Wake(ctx, app.ID, depB.ID, "", "")
+	if err != nil {
+		t.Fatalf("Wake new revision: %v", err)
+	}
+	if res.DeploymentID != depB.ID || res.InstanceID == old.InstanceID || vmm.coldBoots != 2 {
+		t.Fatalf("new wake = %+v, cold boots %d; want distinct new-revision instance", res, vmm.coldBoots)
 	}
 }
 

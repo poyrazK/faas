@@ -1289,6 +1289,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Ops:      ops,
 		Interval: mc.DeploymentFailureSweepInterval,
 	})
+	go revisionPinSweepLoop(ctx, store, log)
 	// Metrics + healthz listener. Mirrors cmd/schedd/main.go:143-158 —
 	// per-daemon Prometheus registry (ADR-015), mux at /metrics +
 	// /healthz, 5s graceful shutdown on drain. Empty cfg.MetricsAddr

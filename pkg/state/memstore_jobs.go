@@ -145,6 +145,16 @@ func (m *MemStore) JobUpdate(_ context.Context, id string, command []string, ima
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
+	for runID, run := range m.jobRuns {
+		if run.JobID != id {
+			continue
+		}
+		for _, task := range m.jobTasks[runID] {
+			if task.Status == "queued" || task.Status == "claimed" {
+				return Job{}, ErrConflict
+			}
+		}
+	}
 	if command != nil {
 		j.Command = command
 	}
@@ -285,7 +295,31 @@ func (m *MemStore) JobClaimPendingImageMaterialization(_ context.Context, limit 
 	return out, nil
 }
 
-// JobSetImageMaterialization mirrors the atomic PostgreSQL publication path.
+// JobRenewImageMaterializationLease extends only the current live claim. An
+// expired lease cannot be revived after another worker becomes eligible.
+func (m *MemStore) JobRenewImageMaterializationLease(_ context.Context, id, sourceRef, owner string, attempt int, lease time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if lease <= 0 {
+		lease = 15 * time.Minute
+	}
+	j, ok := m.jobs[id]
+	claim, claimed := m.jobMaterializationClaims[id]
+	if !ok || j.Status == "deleted" || j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" ||
+		j.ImageMaterializationAttempts != attempt || !claimed || claim.owner != owner || !claim.leaseUntil.After(time.Now()) {
+		return ErrConflict
+	}
+	now := time.Now().UTC()
+	claim.leaseUntil = now.Add(lease)
+	j.UpdatedAt = now
+	m.jobMaterializationClaims[id] = claim
+	m.jobs[id] = j
+	return nil
+}
+
+// JobSetImageMaterialization is the general state setter used by setup and
+// non-claiming compatibility callers. Claimed workers publish through the
+// claim-fenced JobPublishImageMaterialization method below.
 func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, status, resolvedDigest, storageKey, failure string) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -302,6 +336,11 @@ func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, 
 	if j.ImageRef != sourceRef {
 		return Job{}, ErrConflict
 	}
+	if status == "ready" {
+		if _, claimed := m.jobMaterializationClaims[id]; claimed {
+			return Job{}, ErrConflict
+		}
+	}
 	j.ImageMaterializationStatus = status
 	j.ImageResolvedDigest = resolvedDigest
 	j.ImageStorageKey = storageKey
@@ -314,6 +353,42 @@ func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, 
 		j.ImageMaterializedAt = &now
 	}
 	j.UpdatedAt = time.Now().UTC()
+	m.jobs[id] = j
+	if status == "failed" {
+		m.settleJobImageFailureLocked(id, failure)
+	}
+	return j, nil
+}
+
+// JobPublishImageMaterialization only lets the current live claim publish its
+// unique artifact. ImageMaterializationAttempts is the generation and owner is
+// unique per claim, so ref changes and lease takeovers both fence stale workers.
+func (m *MemStore) JobPublishImageMaterialization(_ context.Context, id, sourceRef, owner string, attempt int, resolvedDigest, storageKey string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if resolvedDigest == "" || storageKey == "" {
+		return Job{}, fmt.Errorf("state: ready job image materialization requires digest and storage key")
+	}
+	j, ok := m.jobs[id]
+	if !ok || j.Status == "deleted" {
+		return Job{}, ErrNotFound
+	}
+	if j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" || j.ImageMaterializationAttempts != attempt {
+		return Job{}, ErrConflict
+	}
+	claim, ok := m.jobMaterializationClaims[id]
+	if !ok || claim.owner != owner || !claim.leaseUntil.After(time.Now()) {
+		return Job{}, ErrConflict
+	}
+	now := time.Now().UTC()
+	j.ImageMaterializationStatus = "ready"
+	j.ImageResolvedDigest = resolvedDigest
+	j.ImageStorageKey = storageKey
+	j.ImageMaterializationError = ""
+	j.ImageMaterializedAt = &now
+	j.ImageMaterializationNextAttemptAt = nil
+	j.UpdatedAt = now
+	delete(m.jobMaterializationClaims, id)
 	m.jobs[id] = j
 	return j, nil
 }
@@ -335,7 +410,7 @@ func (m *MemStore) JobRecordImageMaterializationFailure(_ context.Context, id, s
 		return Job{}, ErrConflict
 	}
 	claim, ok := m.jobMaterializationClaims[id]
-	if !ok || claim.owner != owner {
+	if !ok || claim.owner != owner || !claim.leaseUntil.After(time.Now()) {
 		return Job{}, ErrConflict
 	}
 	terminal := j.ImageMaterializationAttempts >= maxAttempts
@@ -352,7 +427,41 @@ func (m *MemStore) JobRecordImageMaterializationFailure(_ context.Context, id, s
 	j.UpdatedAt = time.Now().UTC()
 	delete(m.jobMaterializationClaims, id)
 	m.jobs[id] = j
+	if terminal {
+		m.settleJobImageFailureLocked(id, reason)
+	}
 	return j, nil
+}
+
+// settleJobImageFailureLocked closes queued tasks when the image can never
+// become dispatchable. The caller holds m.mu.
+func (m *MemStore) settleJobImageFailureLocked(jobID, reason string) {
+	now := time.Now().UTC()
+	for runID, run := range m.jobRuns {
+		if run.JobID != jobID {
+			continue
+		}
+		tasks := m.jobTasks[runID]
+		changed := false
+		for index, task := range tasks {
+			if task.Status != "queued" {
+				continue
+			}
+			task.Status = "failed"
+			exitCode := 1
+			task.ExitCode = &exitCode
+			class := "infra"
+			task.ErrorClass = &class
+			task.ErrorMessage = &reason
+			task.FinishedAt = &now
+			task.NextAttemptAt = nil
+			tasks[index] = task
+			changed = true
+		}
+		if changed {
+			m.jobRuns[runID] = recomputeJobRun(run, tasks, now)
+		}
+	}
 }
 
 // JobSoftDelete mirrors pgstore_jobs.JobSoftDelete. Live-instance
@@ -459,6 +568,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	job, ok := m.jobs[jobID]
 	if !ok || job.Status == "deleted" {
 		return JobRun{}, nil, ErrNotFound
+	}
+	if job.ImageMaterializationStatus == "failed" {
+		return JobRun{}, nil, ErrConflict
 	}
 	if len(envOverrides) == 0 {
 		envOverrides = json.RawMessage("{}")
@@ -590,13 +702,9 @@ func recomputeJobRun(run JobRun, tasks map[int]JobTask, now time.Time) JobRun {
 		switch t.Status {
 		case "succeeded":
 			succ++
-		case "failed":
+		case "failed", "timeout", "oom":
 			fail++
-		case "cancelled", "timeout", "oom":
-			// 00571 broadened the terminal vocabulary; memstore
-			// folds timeout/oom into "cancelled" for the aggregate
-			// status so a 00571 test asserts the same outcome as
-			// the pgstore SQL.
+		case "cancelled":
 			canc++
 		case "claimed":
 			running++
@@ -1123,6 +1231,58 @@ func (m *MemStore) JobTaskFindStuck(_ context.Context, ttl time.Duration) ([]Job
 		return out[i].LeaseExpiresAt.Before(*out[k].LeaseExpiresAt)
 	})
 	return out, nil
+}
+
+// JobTaskReapClaimed mirrors the fenced PostgreSQL transition under m.mu.
+func (m *MemStore) JobTaskReapClaimed(_ context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tasks, ok := m.jobTasks[runID]
+	if !ok {
+		return false, ErrNotFound
+	}
+	task, ok := tasks[taskIndex]
+	if !ok || task.Status != "claimed" || task.LeaseToken == nil || *task.LeaseToken != leaseToken || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.Before(cutoff) {
+		return false, ErrNotFound
+	}
+	retry := task.Attempt <= retryMax
+	task.LeaseToken = nil
+	task.LeaseExpiresAt = nil
+	task.LastLeaseNode = nil
+	if retry {
+		task.Status = "queued"
+		task.Attempt++
+		task.InstanceID = nil
+		next := nextAttemptAt.UTC()
+		task.NextAttemptAt = &next
+		task.StartedAt = nil
+		task.FinishedAt = nil
+		task.ExitCode = nil
+		task.ErrorClass = nil
+		task.ErrorMessage = nil
+		task.LogContent = ""
+		task.LogTruncated = false
+	} else {
+		task.Status = "timeout"
+		task.NextAttemptAt = nil
+		now := time.Now().UTC()
+		task.FinishedAt = &now
+		code := 124
+		class := "infra"
+		message := "reaper reclaimed stale lease"
+		task.ExitCode = &code
+		task.ErrorClass = &class
+		task.ErrorMessage = &message
+	}
+	tasks[taskIndex] = task
+	run := m.jobRuns[runID]
+	run = recomputeJobRun(run, tasks, time.Now().UTC())
+	if !retry {
+		run.DeadLetterCount++
+		run = recomputeJobRun(run, tasks, time.Now().UTC())
+	}
+	m.jobRuns[runID] = run
+	return retry, nil
 }
 
 // JobTaskGet returns ErrNotFound when (run_id, task_index) does not

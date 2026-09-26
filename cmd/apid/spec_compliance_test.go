@@ -68,6 +68,7 @@ const (
 	devSyncFile                   = "dev_sync.go"                    // developer edit-to-live history
 	privateNetworkFile            = "private_network.go"             // Gregale-owned private network fabric DTOs
 	queueBindingFile              = "queue_bindings.go"              // first-class queue binding DTOs
+	outboundBindingsFile          = "outbound_bindings.go"           // managed outbound binding DTOs
 	platformTenantsFile           = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 )
@@ -183,6 +184,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           true, // HTML form, write-only secrets editor (issue #1397 G2)
 	"POST /dashboard/apps/{slug}/instances/{action}":             true, // HTML form, app lifecycle controls (issue #1397 G6)
 	"POST /dashboard/apps/{slug}/edge-rules":                     true, // HTML form, edge-rule create (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/trace":               true, // HTML form, read-only edge-rule request trace
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":         true, // HTML form, edge-rule enabled toggle (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         true, // HTML form, edge-rule delete (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    true, // HTML form, security-headers preset (issue #1397 G4)
@@ -324,6 +326,7 @@ var dtoExclude = map[string]bool{
 	"AppWebhookRow":                   true,
 	"AppWebhookDeliveryRow":           true,
 	"ListAppWebhookDeliveriesOptions": true,
+	"PlatformTenantActivityOptions":   true, // client-only query parameters; the response DTOs are in the public spec
 	"InboundWebhookEndpointRow":       true,
 	"AppLogDrainRow":                  true,
 	"QueueBindingRow":                 true,
@@ -975,6 +978,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
+		filepath.Join(root, "pkg", "api", outboundBindingsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),

@@ -7005,7 +7005,8 @@ func (s *PgStore) CountLiveInstancesByDeployment(ctx context.Context, deployment
 func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error) {
 	row := s.pool.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
-		 from deployments where app_id = $1 and status = 'superseded'
+		 from deployments where app_id = $1 and (status = 'superseded' or (status = 'live' and traffic_percent = 0
+		   and exists (select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now())))
 		 order by created_at desc limit 1`, appID)
 	return scanDeployment(row)
 }
@@ -7504,9 +7505,38 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	}
 	newWeights := RedistributeTraffic(siblings, 100-params.TrafficPercent)
 	if terminal {
-		if _, err := tx.Exec(ctx,
-			`update deployments set status = 'superseded', traffic_percent = 0
-			  where app_id = $1 and status = 'live' and id != $2`, dep.AppID, dep.ID); err != nil {
+		var manifestJSON []byte
+		if err := tx.QueryRow(ctx, `select coalesce(manifest, '{}'::jsonb) from apps where id = $1`, dep.AppID).Scan(&manifestJSON); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: advance canary load app manifest: %w", err)
+		}
+		var manifest AppManifest
+		if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: advance canary decode app manifest: %w", err)
+		}
+		if manifest.RevisionPinTTLSeconds > 0 && manifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
+			if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
+				select id, app_id, now() + ($3::integer * interval '1 second')
+				  from deployments where app_id = $1 and scope = $4 and status = 'live' and id <> $2 and traffic_percent > 0
+				on conflict (deployment_id) do nothing`, dep.AppID, dep.ID, manifest.RevisionPinTTLSeconds, normalizedDeploymentScope(dep.Scope)); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: advance canary retain siblings: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `update deployments
+				set status = case when exists (
+					select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now()
+				) or exists (
+					select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
+					where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
+				) then 'live' else 'superseded' end,
+				traffic_percent = 0
+				where app_id = $1 and scope = $3 and status = 'live' and id <> $2`, dep.AppID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
+				return Deployment{}, 0, fmt.Errorf("state: advance canary retain live siblings: %w", err)
+			}
+		} else if _, err := tx.Exec(ctx,
+			`update deployments set status = case when exists (
+				select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
+				where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
+			) then 'live' else 'superseded' end, traffic_percent = 0
+			  where app_id = $1 and scope = $3 and status = 'live' and id != $2`, dep.AppID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: advance canary supersede siblings: %w", err)
 		}
 	}
@@ -8473,8 +8503,8 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("state: mark deployment live resolve app: %w", err)
 	}
-	var locked int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {
+	var appManifestJSON []byte
+	if err := tx.QueryRow(ctx, `select coalesce(manifest, '{}'::jsonb) from apps where id = $1 for update`, appID).Scan(&appManifestJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -8597,12 +8627,43 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		// every live revision in this scope and activate the replacement in
 		// one transaction, so readers observe either the old or the new live
 		// row and never an empty routing set.
-		if _, err := tx.Exec(ctx,
-			`update deployments
-			    set status = 'superseded', traffic_percent = 0
-			  where app_id = $1 and scope = $2 and status = 'live' and id <> $3`,
-			dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
-			return fmt.Errorf("state: mark stable live supersede siblings: %w", err)
+		var appManifest AppManifest
+		if err := json.Unmarshal(appManifestJSON, &appManifest); err != nil {
+			return fmt.Errorf("state: decode app manifest for revision pin: %w", err)
+		}
+		if appManifest.RevisionPinTTLSeconds > 0 && appManifest.RevisionPinTTLSeconds <= api.RevisionPinMaxTTLSeconds {
+			// Only traffic-bearing siblings receive a new deadline. Already
+			// retained revisions keep the original cutover deadline.
+			if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
+				select id, app_id, now() + ($4::integer * interval '1 second')
+				  from deployments
+				 where app_id = $1 and scope = $2 and status = 'live' and id <> $3 and traffic_percent > 0
+				on conflict (deployment_id) do nothing`, dep.AppID, normalizedDeploymentScope(dep.Scope), id, appManifest.RevisionPinTTLSeconds); err != nil {
+				return fmt.Errorf("state: retain replaced revisions: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `update deployments
+				set status = case when exists (
+					select 1 from deployment_revision_pins p
+					 where p.deployment_id = deployments.id and p.expires_at > now()
+				) or exists (
+					select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
+					where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
+				) then 'live' else 'superseded' end,
+				traffic_percent = 0
+				where app_id = $1 and scope = $2 and status = 'live' and id <> $3`, dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
+				return fmt.Errorf("state: mark stable live retain siblings: %w", err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx,
+				`update deployments
+				    set status = case when exists (
+						select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
+						where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
+					) then 'live' else 'superseded' end, traffic_percent = 0
+				  where app_id = $1 and scope = $2 and status = 'live' and id <> $3`,
+				dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
+				return fmt.Errorf("state: mark stable live supersede siblings: %w", err)
+			}
 		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set
@@ -9637,8 +9698,10 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	// target.
 	var targetID string
 	err = tx.QueryRow(ctx, `
-		select id from deployments
-		 where app_id = $1 and scope = $3 and status = 'superseded' and id <> $2
+		 select id from deployments
+		 where app_id = $1 and scope = $3 and id <> $2
+		   and (status = 'superseded' or (status = 'live' and traffic_percent = 0
+		     and exists (select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now())))
 		 order by created_at desc
 		 limit 1
 		 for update`, appID, currentDeploymentID, scope).Scan(&targetID)
@@ -21900,7 +21963,11 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 		        COALESCE(managed_credential_generation, 0), COALESCE(managed_object_storage_credential_id::text, ''),
 		        COALESCE(secret_version, 0), delivery_version, COALESCE(delivered_version, 0), delivery_status,
 		        last_delivery_attempt_at, last_delivered_at, COALESCE(last_delivery_error_code, ''),
-		        COALESCE(last_delivered_wake_id, ''), COALESCE(last_delivered_instance_id, ''), created_at, updated_at
+		        COALESCE(last_delivered_wake_id, ''), COALESCE(last_delivered_instance_id, ''),
+		        COALESCE(last_runtime_reload_version, 0), COALESCE(last_runtime_reload_revision, ''),
+		        COALESCE(last_runtime_reload_projection, ''), COALESCE(last_runtime_reload_signal, ''),
+		        last_runtime_reload_at, COALESCE(last_runtime_reload_error_code, ''),
+		        COALESCE(last_runtime_reload_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key).Scan(
@@ -21909,6 +21976,9 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 		&out.SecretVersion, &out.DeliveryVersion, &out.DeliveredVersion, &out.DeliveryStatus,
 		&out.LastDeliveryAttemptAt, &out.LastDeliveredAt, &out.LastDeliveryErrorCode,
 		&out.LastDeliveredWakeID, &out.LastDeliveredInstanceID,
+		&out.LastRuntimeReloadVersion, &out.LastRuntimeReloadRevision,
+		&out.LastRuntimeReloadProjection, &out.LastRuntimeReloadSignal,
+		&out.LastRuntimeReloadAt, &out.LastRuntimeReloadErrorCode, &out.LastRuntimeReloadInstanceID,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -22117,7 +22187,11 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
 		        coalesce(secret_version, 0), delivery_version, coalesce(delivered_version, 0), delivery_status,
 		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
-		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''),
+		        coalesce(last_runtime_reload_version, 0), coalesce(last_runtime_reload_revision, ''),
+		        coalesce(last_runtime_reload_projection, ''), coalesce(last_runtime_reload_signal, ''),
+		        last_runtime_reload_at, coalesce(last_runtime_reload_error_code, ''),
+		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2 and scope = $3
 		 order by scope asc, key asc`,
@@ -22135,6 +22209,9 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 			&r.SecretVersion, &r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
 			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
 			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
+			&r.LastRuntimeReloadVersion, &r.LastRuntimeReloadRevision,
+			&r.LastRuntimeReloadProjection, &r.LastRuntimeReloadSignal,
+			&r.LastRuntimeReloadAt, &r.LastRuntimeReloadErrorCode, &r.LastRuntimeReloadInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -22165,7 +22242,11 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
 		        coalesce(secret_version, 0), delivery_version, coalesce(delivered_version, 0), delivery_status,
 		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
-		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''), created_at, updated_at
+		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''),
+		        coalesce(last_runtime_reload_version, 0), coalesce(last_runtime_reload_revision, ''),
+		        coalesce(last_runtime_reload_projection, ''), coalesce(last_runtime_reload_signal, ''),
+		        last_runtime_reload_at, coalesce(last_runtime_reload_error_code, ''),
+		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at
 		 from app_secrets
 		 where account_id = $1 and app_id = $2
 		 order by scope asc, key asc`,
@@ -22183,6 +22264,9 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 			&r.SecretVersion, &r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
 			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
 			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
+			&r.LastRuntimeReloadVersion, &r.LastRuntimeReloadRevision,
+			&r.LastRuntimeReloadProjection, &r.LastRuntimeReloadSignal,
+			&r.LastRuntimeReloadAt, &r.LastRuntimeReloadErrorCode, &r.LastRuntimeReloadInstanceID,
 			&r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -22329,6 +22413,163 @@ func (s *PgStore) RecordAppSecretDelivery(ctx context.Context, result AppSecretD
 		return 0, mapErr(err)
 	}
 	return updated, nil
+}
+
+func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSecretRuntimeReloadResult) (int, error) {
+	if !validAppSecretRuntimeReloadResult(result) {
+		return 0, ErrInvalidArgument
+	}
+	if len(result.Candidates) == 0 {
+		return 0, nil
+	}
+	attemptedAt := result.AttemptedAt.UTC()
+	if attemptedAt.IsZero() {
+		attemptedAt = time.Now().UTC()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	updated := 0
+	for _, candidate := range result.Candidates {
+		tag, err := tx.Exec(ctx,
+			`update app_secrets
+			 set last_runtime_reload_version = $5,
+			     last_runtime_reload_revision = $6,
+			     last_runtime_reload_projection = $7,
+			     last_runtime_reload_signal = $8,
+			     last_runtime_reload_at = $9,
+			     last_runtime_reload_error_code = nullif($10, ''),
+			     last_runtime_reload_instance_id = $11
+			 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
+			   and delivery_version = $5`,
+			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
+			result.Revision, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode, result.InstanceID)
+		if err != nil {
+			return 0, mapErr(err)
+		}
+		if tag.RowsAffected() != 1 {
+			return 0, ErrConflict
+		}
+		observationTag, err := tx.Exec(ctx,
+			`insert into app_secret_runtime_reload_observations
+				(app_id, scope, key, instance_id, secret_version, projection, signal, observed_at, error_code)
+			 select s.app_id, s.scope, s.key, i.id, $5, $7, $8, $9, nullif($10, '')
+			 from app_secrets s
+			 join instances i on i.id = $6 and i.app_id = s.app_id
+			 where s.account_id = $1 and s.app_id = $2 and s.scope = $3 and s.key = $4
+			   and s.delivery_version = $5
+			 on conflict (app_id, scope, key, instance_id) do update
+			 set secret_version = excluded.secret_version,
+				     projection = excluded.projection,
+				     signal = excluded.signal,
+				     observed_at = excluded.observed_at,
+				     error_code = excluded.error_code,
+				     application_ack_version = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_version END,
+				     application_ack_status = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_status END,
+				     application_ack_at = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_at END,
+				     application_ack_error_code = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_error_code END
+			 where app_secret_runtime_reload_observations.secret_version <= excluded.secret_version`,
+			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
+			result.InstanceID, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode)
+		if err != nil {
+			return 0, mapErr(err)
+		}
+		if observationTag.RowsAffected() != 1 {
+			return 0, ErrConflict
+		}
+		updated++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, mapErr(err)
+	}
+	return updated, nil
+}
+
+func (s *PgStore) RecordAppSecretRuntimeReloadAck(ctx context.Context, result AppSecretRuntimeReloadAckResult) (int, error) {
+	if !validAppSecretRuntimeReloadAckResult(result) {
+		return 0, ErrInvalidArgument
+	}
+	if len(result.Candidates) == 0 {
+		return 0, nil
+	}
+	attemptedAt := result.AttemptedAt.UTC()
+	if attemptedAt.IsZero() {
+		attemptedAt = time.Now().UTC()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	updated := 0
+	for _, candidate := range result.Candidates {
+		tag, err := tx.Exec(ctx,
+			`update app_secret_runtime_reload_observations o
+			    set application_ack_version = $5,
+			        application_ack_status = $6,
+			        application_ack_at = $7,
+			        application_ack_error_code = nullif($8, '')
+			  where o.app_id = $2 and o.scope = $3 and o.key = $4 and o.instance_id = $9
+			    and o.secret_version <= $5 and coalesce(o.application_ack_version, 0) <= $5
+			    and exists (
+			        select 1 from app_secrets s
+			         join instances i on i.id = $9 and i.app_id = s.app_id
+			        where s.account_id = $1 and s.app_id = $2 and s.scope = $3 and s.key = $4
+			          and s.delivery_version = $5
+			    )`,
+			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
+			string(result.Status), attemptedAt, result.ErrorCode, result.InstanceID)
+		if err != nil {
+			return 0, mapErr(err)
+		}
+		if tag.RowsAffected() != 1 {
+			return 0, ErrConflict
+		}
+		updated++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, mapErr(err)
+	}
+	return updated, nil
+}
+
+func (s *PgStore) ListAppSecretRuntimeReloadObservations(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadObservation, error) {
+	if accountID == "" || appID == "" {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := s.pool.Query(ctx,
+		`select o.scope, o.key, o.instance_id::text, o.secret_version,
+		        o.projection, o.signal, o.observed_at, coalesce(o.error_code, ''),
+	        coalesce(o.application_ack_version, 0), coalesce(o.application_ack_status, ''),
+	        o.application_ack_at, coalesce(o.application_ack_error_code, '')
+	   from app_secret_runtime_reload_observations o
+	   join app_secrets s on s.app_id = o.app_id and s.scope = o.scope and s.key = o.key
+	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
+	  where s.account_id = $1 and o.app_id = $2 and ($3 = '' or o.scope = $3)
+	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+	  order by o.scope asc, o.key asc, o.instance_id asc`, accountID, appID, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AppSecretRuntimeReloadObservation
+	for rows.Next() {
+		var observation AppSecretRuntimeReloadObservation
+		var projection, signal string
+		var ackStatus string
+		if err := rows.Scan(&observation.Scope, &observation.Key, &observation.InstanceID,
+			&observation.Version, &projection, &signal, &observation.ObservedAt, &observation.ErrorCode,
+			&observation.ApplicationAckVersion, &ackStatus, &observation.ApplicationAckAt, &observation.ApplicationAckErrorCode); err != nil {
+			return nil, err
+		}
+		observation.Projection = SecretReloadProjectionStatus(projection)
+		observation.Signal = SecretReloadSignalStatus(signal)
+		observation.ApplicationAck = SecretApplicationReloadAckStatus(ackStatus)
+		out = append(out, observation)
+	}
+	return out, rows.Err()
 }
 
 // --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------
@@ -27545,6 +27786,10 @@ func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accoun
 // domain DebugTelemetryRow at the boundary.
 func (s *PgStore) ListRequestTelemetryByApp(ctx context.Context, arg sqlc.ListRequestTelemetryByAppParams) ([]sqlc.ListRequestTelemetryByAppRow, error) {
 	return s.appErrorsQueries().ListRequestTelemetryByApp(ctx, s.pool, arg)
+}
+
+func (s *PgStore) ListRequestTelemetryByPlatformTenant(ctx context.Context, arg sqlc.ListRequestTelemetryByPlatformTenantParams) ([]sqlc.ListRequestTelemetryByPlatformTenantRow, error) {
+	return s.appErrorsQueries().ListRequestTelemetryByPlatformTenant(ctx, s.pool, arg)
 }
 
 // ListRequestTelemetryDependencySpans backs the bounded historical debugger

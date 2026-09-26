@@ -11,6 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
 type Config struct {
@@ -18,27 +19,63 @@ type Config struct {
 	// MetricsAddr is the private bind address for the operator-only
 	// Prometheus endpoint. Keep it loopback unless a firewall explicitly
 	// restricts the scrape network.
-	MetricsAddr  string                       `toml:"metrics_addr"`
-	DBURL        string                       `toml:"db_url"`
-	MaxBodyBytes int64                        `toml:"max_body_bytes"`
-	ReadTimeout  time.Duration                `toml:"read_timeout"`
-	WriteTimeout time.Duration                `toml:"write_timeout"`
-	IdleTimeout  time.Duration                `toml:"idle_timeout"`
-	Integrations map[string]IntegrationConfig `toml:"integrations"`
+	MetricsAddr              string                       `toml:"metrics_addr"`
+	DBURL                    string                       `toml:"db_url"`
+	MaxBodyBytes             int64                        `toml:"max_body_bytes"`
+	ReadTimeout              time.Duration                `toml:"read_timeout"`
+	WriteTimeout             time.Duration                `toml:"write_timeout"`
+	IdleTimeout              time.Duration                `toml:"idle_timeout"`
+	Integrations             map[string]IntegrationConfig `toml:"integrations"`
+	WorkloadIdentityJWKSPath string                       `toml:"workload_identity_jwks_path"`
+	WorkloadIdentityIssuer   string                       `toml:"workload_identity_issuer"`
+}
+
+func (c *Config) IdentityVerifier(items []configuredIntegration) (outbound.IdentityVerifier, error) {
+	managed := false
+	for _, item := range items {
+		if item.Record.Policy.ProviderAuthMode == outbound.ProviderAuthManaged {
+			managed = true
+			break
+		}
+	}
+	if !managed && c.WorkloadIdentityJWKSPath == "" {
+		return nil, nil
+	}
+	if c.WorkloadIdentityJWKSPath == "" {
+		return nil, errors.New("managed outbound integrations require workload_identity_jwks_path")
+	}
+	data, err := os.ReadFile(c.WorkloadIdentityJWKSPath)
+	if err != nil {
+		return nil, fmt.Errorf("read outbound workload identity JWKS: %w", err)
+	}
+	issuer := c.WorkloadIdentityIssuer
+	if issuer == "" {
+		issuer = workloadidentity.DefaultIssuer
+	}
+	verifier, err := outbound.NewWorkloadIdentityVerifier(data, issuer)
+	if err != nil {
+		return nil, err
+	}
+	return verifier, nil
 }
 
 type IntegrationConfig struct {
-	ID             string        `toml:"id"`
-	AccountID      string        `toml:"account_id"`
-	Name           string        `toml:"name"`
-	Origin         string        `toml:"origin"`
-	TokenEnv       string        `toml:"token_env"`
-	AppIDs         []string      `toml:"app_ids"`
-	RatePerSecond  float64       `toml:"rate_per_second"`
-	Burst          int           `toml:"burst"`
-	MaxInFlight    int           `toml:"max_in_flight"`
-	RequestTimeout time.Duration `toml:"request_timeout"`
-	Enabled        *bool         `toml:"enabled"`
+	ID                       string        `toml:"id"`
+	AccountID                string        `toml:"account_id"`
+	Name                     string        `toml:"name"`
+	Origin                   string        `toml:"origin"`
+	TokenEnv                 string        `toml:"token_env"`
+	ProviderAuthorizationEnv string        `toml:"provider_authorization_env"`
+	CredentialSource         string        `toml:"credential_source"`
+	AllowedMethods           []string      `toml:"allowed_methods"`
+	AllowedPathPrefixes      []string      `toml:"allowed_path_prefixes"`
+	AppIDs                   []string      `toml:"app_ids"`
+	RatePerSecond            float64       `toml:"rate_per_second"`
+	Burst                    int           `toml:"burst"`
+	MaxInFlight              int           `toml:"max_in_flight"`
+	DailyRequestLimit        int64         `toml:"daily_request_limit"`
+	RequestTimeout           time.Duration `toml:"request_timeout"`
+	Enabled                  *bool         `toml:"enabled"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -89,7 +126,8 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 type configuredIntegration struct {
-	Record outbound.IntegrationRecord
+	Record                outbound.IntegrationRecord
+	providerAuthorization string
 }
 
 func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, error) {
@@ -117,12 +155,45 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		if token == "" {
 			return nil, fmt.Errorf("integration %q: token environment variable %s is empty", key, tokenEnv)
 		}
+		credentialSource := raw.CredentialSource
+		if credentialSource == "" {
+			credentialSource = outbound.CredentialSourceOperatorEnv
+		}
+		if credentialSource != outbound.CredentialSourceOperatorEnv && credentialSource != outbound.CredentialSourceCustomerSealed {
+			return nil, fmt.Errorf("integration %q: invalid credential_source", key)
+		}
+		if credentialSource == outbound.CredentialSourceCustomerSealed && raw.ProviderAuthorizationEnv != "" {
+			return nil, fmt.Errorf("integration %q: customer_sealed cannot use provider_authorization_env", key)
+		}
+		var providerAuthorization string
+		if raw.ProviderAuthorizationEnv != "" {
+			if raw.ProviderAuthorizationEnv == tokenEnv {
+				return nil, fmt.Errorf("integration %q: provider_authorization_env must differ from token_env", key)
+			}
+			providerAuthorization = getenv(raw.ProviderAuthorizationEnv)
+			if !outbound.ValidManagedAuthorization(providerAuthorization) {
+				return nil, fmt.Errorf("integration %q: provider_authorization_env is empty or invalid", key)
+			}
+		}
 		timeout := raw.RequestTimeout
 		if timeout <= 0 {
 			timeout = 30 * time.Second
 		}
 		policy, err := outbound.NewIntegration(id, raw.Origin, token, raw.AppIDs, raw.RatePerSecond, raw.Burst, raw.MaxInFlight, timeout)
 		if err != nil {
+			return nil, fmt.Errorf("integration %q: %w", key, err)
+		}
+		if providerAuthorization != "" || credentialSource == outbound.CredentialSourceCustomerSealed {
+			policy.ProviderAuthMode = outbound.ProviderAuthManaged
+		}
+		policy.CredentialSource = credentialSource
+		if raw.DailyRequestLimit != 0 {
+			limit := raw.DailyRequestLimit
+			policy.DailyRequestLimit = &limit
+		}
+		policy.AllowedMethods = raw.AllowedMethods
+		policy.AllowedPathPrefixes = raw.AllowedPathPrefixes
+		if err := policy.Validate(); err != nil {
 			return nil, fmt.Errorf("integration %q: %w", key, err)
 		}
 		enabled := true
@@ -134,7 +205,10 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 		if name == "" {
 			name = key
 		}
-		out = append(out, configuredIntegration{Record: outbound.IntegrationRecord{AccountID: accountID, Name: name, Policy: policy}})
+		out = append(out, configuredIntegration{
+			Record:                outbound.IntegrationRecord{AccountID: accountID, Name: name, Policy: policy},
+			providerAuthorization: providerAuthorization,
+		})
 	}
 	return out, nil
 }

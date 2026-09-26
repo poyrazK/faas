@@ -652,6 +652,10 @@ func renderJobState(w io.Writer, j api.JobResponse) {
 	_, _ = fmt.Fprintf(w, "  %-10s %d\n", "parallel:", j.MaxParallelism)
 	_, _ = fmt.Fprintf(w, "  %-10s %d\n", "retries:", j.RetryMax)
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "status:", j.Status)
+	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "image status:", j.ImageMaterializationStatus)
+	if j.ImageMaterializationError != "" {
+		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "image error:", j.ImageMaterializationError)
+	}
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "created:", formatTimeAgo(j.CreatedAt))
 }
 

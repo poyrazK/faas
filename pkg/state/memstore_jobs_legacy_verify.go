@@ -86,6 +86,9 @@ func (m *MemStore) JobFinishLegacyArtifactVerification(_ context.Context, id, so
 	job.UpdatedAt = now
 	m.jobs[id] = job
 	delete(m.jobMaterializationClaims, id)
+	if !found {
+		m.settleJobImageFailureLocked(id, reason)
+	}
 	return job, nil
 }
 

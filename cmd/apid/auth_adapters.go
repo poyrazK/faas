@@ -58,6 +58,16 @@ func (a storeAuthAdapter) TouchDeployTokenLastUsed(ctx context.Context, tokenID 
 	return d.TouchDeployTokenLastUsed(ctx, tokenID)
 }
 
+// AuthenticatePlatformTenantAccessToken forwards this optional credential
+// capability without making it part of the broad state.Store contract.
+func (a storeAuthAdapter) AuthenticatePlatformTenantAccessToken(ctx context.Context, hash []byte) (state.Account, state.PlatformTenantAccessToken, error) {
+	store, ok := a.Store.(state.PlatformTenantAccessStore)
+	if !ok {
+		return state.Account{}, state.PlatformTenantAccessToken{}, state.ErrNotFound
+	}
+	return store.AuthenticatePlatformTenantAccessToken(ctx, hash)
+}
+
 // storeAsSessionLookup returns middleware.SessionLookup as a view over a
 // state.Store. The cookie-branch of pkg/auth.RequireSession uses
 // this to cross-check the AEAD-bound envelope against the live
@@ -95,8 +105,9 @@ type auditorAuthzAdapter struct{ *auditor }
 // pkg/auth + pkg/authz interfaces. A future method added to either
 // interface surfaces as a compile error here.
 var (
-	_ middleware.Authenticator = storeAuthAdapter{}
-	_ middleware.SessionLookup = storeAuthAdapter{}
-	_ middleware.Auditor       = auditorAuthAdapter{}
-	_ authz.AuditEmitter       = auditorAuthzAdapter{}
+	_ middleware.Authenticator                          = storeAuthAdapter{}
+	_ middleware.SessionLookup                          = storeAuthAdapter{}
+	_ middleware.PlatformTenantAccessTokenAuthenticator = storeAuthAdapter{}
+	_ middleware.Auditor                                = auditorAuthAdapter{}
+	_ authz.AuditEmitter                                = auditorAuthzAdapter{}
 )

@@ -69,6 +69,8 @@ export class DelayedTasksService {
     slug,
     requestBody,
     idempotencyKey,
+    xGregaleRevision,
+    xGregaleRelease,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -81,6 +83,14 @@ export class DelayedTasksService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Exact deployment pin. Mutually exclusive with X-Gregale-Release; checked again at delivery.
+     */
+    xGregaleRevision?: string,
+    /**
+     * Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
+     */
+    xGregaleRelease?: string,
   }): CancelablePromise<DelayedTaskResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -90,6 +100,8 @@ export class DelayedTasksService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'X-Gregale-Revision': xGregaleRevision,
+        'X-Gregale-Release': xGregaleRelease,
       },
       body: requestBody,
       mediaType: 'application/json',

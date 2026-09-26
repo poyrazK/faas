@@ -155,7 +155,7 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// The form adapters below delegate to the existing JSON API
 			// handlers so the dashboard cannot drift from API validation.
 			if eslug, ok := parseAppEdgeRulesPath(slug); ok {
-				s.renderAppEdgeRules(w, r, log, acct, eslug)
+				s.renderAppEdgeRules(w, r, log, acct, eslug, nil, nil)
 				return
 			}
 			// G7 / issue #1397 — queue state, pending samples, and

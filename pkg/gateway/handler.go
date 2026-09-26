@@ -355,6 +355,8 @@ type App struct {
 	// VersionAffinityManagedCookie lets the edge issue an opaque, host-only
 	// rollout cookie. It is mutually exclusive with VersionAffinityCookie.
 	VersionAffinityManagedCookie bool
+	RevisionPinTTLSeconds        int
+	ProjectID                    string
 }
 
 type concurrencyAdmissionConfig struct {
@@ -788,6 +790,16 @@ type deploymentTargetPicker interface {
 	PickForDeployment(appID, deploymentID string) PickResult
 }
 
+// revisionPinResolver verifies an exact public client pin against the app,
+// environment, deployment state and durable expiry before the cache or wake.
+type revisionPinResolver interface {
+	ResolveRevisionPin(context.Context, string, string, string) (bool, error)
+}
+
+type projectReleaseResolver interface {
+	ResolveProjectRelease(context.Context, string, string, string) (string, string, error)
+}
+
 // deploymentSmokeTargetResolver looks up a RUNNING snapshotting candidate
 // without adding it to the ordinary customer-traffic picker. The live-target
 // cache intentionally excludes unpromoted deployments, so another gateway
@@ -858,7 +870,11 @@ type Handler struct {
 	// rotating across many apps is rejected before any per-app bucket
 	// drains and before the wake gate (a schedd gRPC RPC) is touched.
 	accountLimiter *Limiter
-	gate           *WakeGate
+	// Configured platform-customer admission is authoritative across apps.
+	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
+	tenantRequestBudgetStore   TenantRequestBudgetStore
+	tenantRequestBudgetEnabled bool
+	gate                       *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -1190,7 +1206,8 @@ type Handler struct {
 	// It is wired by cmd/gatewayd-internal/main.go from the
 	// pkg/edgejwks.Verifier constructed against the per-URL JWKS
 	// cache; nil = JWT kind disabled (unit tests + pre-PR-5 builds).
-	jwtVerifier JWTVerifier
+	jwtVerifier                       JWTVerifier
+	platformTenantExternalRefResolver PlatformTenantExternalRefResolver
 
 	// internalSvcVerifier (ADR-119 / issue #477 #4) is the
 	// per-service public-key allowlist consulted by
@@ -1815,6 +1832,13 @@ func (h *Handler) WithJWTVerifier(v JWTVerifier) *Handler {
 	return h
 }
 
+// WithPlatformTenantExternalRefResolver arms verified JWT-to-tenant lookup.
+// A nil resolver leaves opted-in rules unavailable and therefore fail-closed.
+func (h *Handler) WithPlatformTenantExternalRefResolver(r PlatformTenantExternalRefResolver) *Handler {
+	h.platformTenantExternalRefResolver = r
+	return h
+}
+
 // WithValidator (PR-B) arms the per-rule JSON-Schema validate
 // handle consulted by applyEdgeRuleValidate. v may be nil
 // (validate kind disabled; unit tests + pre-PR-B posture).
@@ -2160,34 +2184,14 @@ func (h *Handler) matchAndApplyRewrite(r *http.Request, app App) bool {
 		}
 		return false
 	}
-	// Apply the prefix-strip + replacement. From="" means
-	// "match-any path" (the path-glob filter passed); we still
-	// need a non-empty To to actually mutate. A rule with From=""
-	// but To="/v1" effectively prefixes every request — the spec
-	// §4.1.2 documents this. From="*" is treated identically.
+	// Apply the shared pure rewrite function so the trace preview and live
+	// gateway cannot diverge on prefix and slash semantics.
 	from := rule.From
 	if from == "*" {
 		from = ""
 	}
-	if from == "" {
-		// Pure prefix-add: prepend To to the existing path. Both
-		// singleSlash(To) and r.URL.Path start with "/" so we can't
-		// just concatenate — that produces "//api/x" (double slash)
-		// when To="/" (valid per apid EdgeRuleRewriteAction.Validate
-		// — non-empty is the only check). We special-case To="/"
-		// (degenerate rewrite, leave path alone) and otherwise
-		// concatenate the single-slashed To with r.URL.Path as-is.
-		// For To="/v1" + /api/x → "/v1/api/x".
-		to := singleSlash(rule.To)
-		if to == "/" {
-			// Degenerate rewrite (from="", To="/") — leave
-			// r.URL.Path unchanged.
-		} else {
-			r.URL.Path = to + r.URL.Path
-		}
-	} else if strings.HasPrefix(r.URL.Path, from) {
-		r.URL.Path = singleSlash(rule.To) + r.URL.Path[len(from):]
-	} else {
+	rewrittenPath, applied := api.ApplyEdgeRuleRewritePath(r.URL.Path, rule.From, rule.To)
+	if !applied {
 		// The path-glob filter matched but the From prefix
 		// doesn't actually prefix the path (e.g. glob="/api/*"
 		// matched "/api/v1" but From="/v1/"). Treat as miss —
@@ -2197,6 +2201,7 @@ func (h *Handler) matchAndApplyRewrite(r *http.Request, app App) bool {
 		}
 		return false
 	}
+	r.URL.Path = rewrittenPath
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.rewrite_matched", nil, map[string]any{
 			"rule_id":   rule.ID,
@@ -2536,62 +2541,11 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 // pkg/api/dto.go validates the allowList entries at create-time;
 // this function is the runtime mirror.
 func matchOrigin(allowList []string, origin string) string {
-	if origin == "" {
-		return ""
-	}
-	// RFC 6454 §3: scheme + host are case-insensitive.
-	// Lowercase the scheme and host of the request Origin so
-	// "HTTPS://App.Example.COM" matches the
-	// "https://app.example.com" allowlist entry.
-	origin = strings.ToLower(origin)
-	for _, raw := range allowList {
-		a := strings.ToLower(raw)
-		if a == "*" || a == origin {
-			return a
-		}
-		// Subdomain wildcard: "https://*.example.com" → match
-		// any "https://<single-label>.example.com". We split
-		// on "://" so the ".*" pattern only applies to the
-		// host segment, not the scheme.
-		sch, hostSuffix, ok := splitScheme(a)
-		if !ok {
-			continue
-		}
-		rSch, rHost, ok2 := splitScheme(origin)
-		if !ok2 {
-			continue
-		}
-		if sch != rSch {
-			continue
-		}
-		// Subdomain wildcard: "*.<rest>" — match any host
-		// with exactly one extra label prefixed to <rest>.
-		if strings.HasPrefix(hostSuffix, "*.") {
-			suffix := hostSuffix[2:] // strip "*."
-			suffixLabels := strings.Count(suffix, ".")
-			if strings.HasSuffix(rHost, "."+suffix) &&
-				strings.Count(rHost, ".") == suffixLabels+1 {
-				return a // echo the lower-cased allowlist entry
-			}
-		}
-		// Port wildcard: "<host>:*" — match any port.
-		if strings.HasSuffix(hostSuffix, ":*") {
-			prefix := strings.TrimSuffix(hostSuffix, ":*")
-			if strings.HasPrefix(rHost, prefix+":") {
-				return a
-			}
-		}
-	}
-	return ""
+	return api.MatchEdgeRuleCORSOrigin(allowList, origin)
 }
 
-// splitScheme is a tiny helper that returns (scheme, "host[:port]")
-// for an origin of the form "scheme://host[:port]". Used by
-// matchOrigin to peel off the scheme before applying the
-// subdomain/port wildcard predicates. Returns false when the input
-// has no "://" separator (which the apid validator rejects at
-// create-time, so this is a runtime guard against a future schema
-// loosening that bypasses apid).
+// splitScheme is retained for focused gateway tests. The production matcher
+// is shared from pkg/api so the simulator and gateway use identical semantics.
 func splitScheme(origin string) (scheme, rest string, ok bool) {
 	idx := strings.Index(origin, "://")
 	if idx < 0 {
@@ -2615,9 +2569,9 @@ func splitScheme(origin string) (scheme, rest string, ok bool) {
 // lower-cased + matched by matchOrigin) so the response
 // always echoes the matched entry verbatim.
 //
-// ADR-102: Streaming-Status + Streaming-Status-Accept-Hint are
-// custom (non-simple) response headers, so a CORS client cannot
-// read them unless the server whitelists them via
+// ADR-102: Streaming-Status + Streaming-Status-Accept-Hint, along with
+// revision/release pins, are custom (non-simple) response headers, so a CORS
+// client cannot read them unless the server whitelists them via
 // Access-Control-Expose-Headers. The default uncredentialed path
 // appends both header names so browser clients see the
 // discoverability signal without the customer authoring a
@@ -2629,7 +2583,7 @@ func corsDefaultOps(allowedOrigin string) []EdgeRuleHeaderOp {
 		{Action: "set", Name: "Access-Control-Allow-Origin", Value: allowedOrigin},
 		{Action: "set", Name: "Access-Control-Allow-Methods", Value: "GET, POST, OPTIONS"},
 		{Action: "set", Name: "Access-Control-Allow-Headers", Value: "*"},
-		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "Streaming-Status, Streaming-Status-Accept-Hint"},
+		{Action: "set", Name: "Access-Control-Expose-Headers", Value: "Streaming-Status, Streaming-Status-Accept-Hint, " + api.RevisionHeader + ", " + api.ReleaseHeader},
 	}
 }
 
@@ -2717,11 +2671,18 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// the JWT access rule does not require that claim's value. Copy the cached
 	// JWT rule before adding the extraction hint; matcher-owned values are
 	// immutable and shared across requests.
-	verifyRule := rule
+	var extractClaims []string
 	if throttle := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method); throttle != nil &&
 		throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
+		extractClaims = append(extractClaims, throttle.JWTClaimName)
+	}
+	if rule.PlatformTenantExternalRefClaim != "" {
+		extractClaims = append(extractClaims, rule.PlatformTenantExternalRefClaim)
+	}
+	verifyRule := rule
+	if len(extractClaims) > 0 {
 		cloned := *rule
-		cloned.ExtractClaims = []string{throttle.JWTClaimName}
+		cloned.ExtractClaims = extractClaims
 		verifyRule = &cloned
 	}
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, verifyRule)
@@ -2738,11 +2699,14 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// applyEdgeRuleThrottle can key a per-consumer bucket when the
 	// matched rule opts into key_by="jwt_subject" or
 	// key_by="jwt_claim". Claims.Custom is the string→string
-	// subset the verifier extracted from rule.RequiredClaims — no
-	// extra parse cost on the hot path.
+	// subset selected by rule requirements or request-local policy —
+	// no extra parse cost on the hot path.
 	authenticated := authenticatedFrom(r.Context())
 	authenticated.JWTSubject = claims.Subject
 	authenticated.JWTClaims = claims.Custom
+	if h.applyPlatformTenantJWTClaim(w, r, app, rule, claims, &authenticated) {
+		return true
+	}
 	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
 	return false
 }
@@ -4481,22 +4445,6 @@ func stampTrustedClientIP(r *http.Request) {
 	}
 }
 
-// singleSlash collapses a path to the canonical slash form (no
-// double slashes from `To: "/v1"` + `/api/...`). Helper for
-// matchAndApplyRewrite's prefix-add and replace branches.
-func singleSlash(p string) string {
-	if p == "" {
-		return "/"
-	}
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	if len(p) > 1 && strings.HasSuffix(p, "/") {
-		p = p[:len(p)-1]
-	}
-	return p
-}
-
 // applyHeaderOp applies one EdgeRuleHeaderOp mutation to a header
 // map. Action ∈ {add, set, remove}; Value is empty for "remove".
 // Blacklist (Host, Content-Length, Transfer-Encoding, Connection,
@@ -5683,6 +5631,15 @@ haveApp:
 	if !h.enforceConsumerAuth(w, r, rec, app) {
 		return
 	}
+	// A verified tenant-surface route is an authoritative customer identity
+	// for requests without a consumer key. The financial ledger keeps these
+	// separate from linked-consumer usage so neither path is counted twice.
+	if app.RoutedSurfaceID != "" && app.PlatformTenantID != "" && authenticatedFrom(r.Context()).ConsumerID == "" {
+		authenticated := authenticatedFrom(r.Context())
+		authenticated.PlatformTenantID = app.PlatformTenantID
+		authenticated.PlatformTenantSurfaceID = app.RoutedSurfaceID
+		*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
+	}
 	// M1 wake hygiene: answer static browser/crawler paths directly at the
 	// edge. This runs after the app-level consumer gate and before edge-rule,
 	// operator-auth, limiter, or wake work, so these paths cannot create an
@@ -5981,9 +5938,103 @@ haveApp:
 	// while the selected cold bucket is waking; never cache that fallback in
 	// the selected deployment's partition.
 	servedDeploymentID := ""
+	clientRevisionID := ""
+	projectReleaseID := ""
+	projectReleaseDeploymentID := ""
+	projectReleaseScope := app.Scope
+	if projectReleaseScope == "" && app.ProjectID != "" && !app.IsPreview {
+		projectReleaseScope = "production"
+	}
 	var asyncRule *EdgeRuleAsyncResolved
 	if !deploymentSmoke {
 		asyncRule = h.matchAsyncRoute(r, sidecarName)
+	}
+	if !deploymentSmoke {
+		_, revisionPresent := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]
+		_, releasePresent := r.Header[http.CanonicalHeaderKey(api.ReleaseHeader)]
+		if revisionPresent && releasePresent {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Conflicting version pins", "send either X-Gregale-Revision or X-Gregale-Release"))
+			return
+		}
+		if releasePresent || (app.ProjectID != "" && !app.IsPreview && !revisionPresent && asyncRule == nil) {
+			values := r.Header.Values(api.ReleaseHeader)
+			if releasePresent && (len(values) != 1 || len(values[0]) != 36) {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid release pin", "X-Gregale-Release must contain one release ID"))
+				return
+			}
+			requested := ""
+			if releasePresent {
+				parsed, parseErr := uuid.Parse(values[0])
+				if parseErr != nil {
+					api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+						"Invalid release pin", "X-Gregale-Release must contain one release ID"))
+					return
+				}
+				requested = parsed.String()
+			}
+			if (app.PinnedDeploymentID != "" || app.IsPreview) && releasePresent {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Release pin unavailable", "deployment preview hosts do not accept release pins"))
+				return
+			}
+			if app.PinnedDeploymentID == "" && !app.IsPreview {
+				resolver, ok := h.backend.(projectReleaseResolver)
+				if !ok {
+					api.WriteProblem(w, api.ErrCapacity("project release resolution is unavailable"))
+					return
+				}
+				var releaseErr error
+				projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				if releaseErr != nil {
+					status := http.StatusServiceUnavailable
+					if errors.Is(releaseErr, ErrReleaseGone) {
+						status = http.StatusGone
+					}
+					api.WriteProblem(w, api.NewProblem(status, api.CodeCapacity,
+						"Project release unavailable", "the requested release is expired, incomplete, or temporarily unavailable"))
+					return
+				}
+				if projectReleaseID != "" {
+					r.Header.Set(api.ReleaseHeader, projectReleaseID)
+					w.Header().Set(api.ReleaseHeader, projectReleaseID)
+					versionDeploymentID = projectReleaseDeploymentID
+					r = r.WithContext(withVersionAffinityDeployment(r.Context(), projectReleaseDeploymentID))
+				}
+			}
+		}
+		if values, present := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]; present {
+			if len(values) != 1 || len(values[0]) != 36 {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid revision pin", "X-Gregale-Revision must contain one deployment ID"))
+				return
+			}
+			parsed, parseErr := uuid.Parse(values[0])
+			if parseErr != nil || app.RevisionPinTTLSeconds <= 0 || app.PinnedDeploymentID != "" {
+				api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Revision pin unavailable", "this app or hostname does not permit revision pins"))
+				return
+			}
+			resolver, ok := h.backend.(revisionPinResolver)
+			if !ok {
+				api.WriteProblem(w, api.ErrCapacity("revision pin validation is unavailable"))
+				return
+			}
+			clientRevisionID = parsed.String()
+			valid, resolveErr := resolver.ResolveRevisionPin(r.Context(), app.ID, projectReleaseScope, clientRevisionID)
+			if resolveErr != nil {
+				api.WriteProblem(w, api.ErrCapacity("revision pin validation failed"))
+				return
+			}
+			if !valid {
+				api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeValidation,
+					"Revision pin expired", "the requested revision is no longer available"))
+				return
+			}
+			versionDeploymentID = clientRevisionID
+			r = r.WithContext(withVersionAffinityDeployment(r.Context(), clientRevisionID))
+		}
 	}
 	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule); served {
 		return
@@ -6163,6 +6214,9 @@ haveApp:
 	if !deploymentSmoke {
 		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 	}
+	if !h.enforceTenantRequestBudget(w, r, rec, app, deploymentSmoke) {
+		return
+	}
 
 	// Receive and bound the complete request body before wake admission. The
 	// upload has a plan-sized deadline and spills large bodies to disk; it does
@@ -6220,6 +6274,20 @@ haveApp:
 		exactDeploymentTrigger = sched.TriggerGateway
 		exactUnavailableTitle = "Deployment preview unavailable"
 		exactUnavailableDetail = "the requested deployment is not ready to serve preview traffic"
+	}
+	if !deploymentSmoke && clientRevisionID != "" {
+		exactDeploymentID = clientRevisionID
+		exactDeploymentScope = projectReleaseScope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Revision pin unavailable"
+		exactUnavailableDetail = "the requested revision has no routable target"
+	}
+	if !deploymentSmoke && projectReleaseDeploymentID != "" {
+		exactDeploymentID = projectReleaseDeploymentID
+		exactDeploymentScope = projectReleaseScope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Project release unavailable"
+		exactUnavailableDetail = "the selected release member has no routable target"
 	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
@@ -6532,6 +6600,9 @@ haveApp:
 	defer vmRelease()
 	target := pick.Target
 	servedDeploymentID = target.DeploymentID
+	if !deploymentSmoke && app.RevisionPinTTLSeconds > 0 && target.DeploymentID != "" {
+		w.Header().Set(api.RevisionHeader, target.DeploymentID)
+	}
 	if app.SessionAffinity {
 		if _, ok := h.backend.(affinityPicker); ok {
 			h.setSessionAffinityCookie(w, app.ID, target.InstanceID)
@@ -7219,10 +7290,22 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				requestTraceID = traceIDForTelemetry(r.Context())
 			}
 			platformTenantID := authenticatedFrom(r.Context()).PlatformTenantID
-			if parsed, err := uuid.Parse(platformTenantID); err == nil && consumerID != "" {
+			platformTenantSurfaceID := authenticatedFrom(r.Context()).PlatformTenantSurfaceID
+			platformTenantJWTAuthorizationRuleID := authenticatedFrom(r.Context()).PlatformTenantJWTAuthorizationRuleID
+			if parsed, err := uuid.Parse(platformTenantID); err == nil && (consumerID != "" || platformTenantSurfaceID != "" || platformTenantJWTAuthorizationRuleID != "") {
 				platformTenantID = parsed.String()
 			} else {
 				platformTenantID = ""
+			}
+			if parsed, err := uuid.Parse(platformTenantSurfaceID); err == nil && consumerID == "" && platformTenantID != "" {
+				platformTenantSurfaceID = parsed.String()
+			} else {
+				platformTenantSurfaceID = ""
+			}
+			if parsed, err := uuid.Parse(platformTenantJWTAuthorizationRuleID); err == nil && consumerID == "" && platformTenantSurfaceID == "" && platformTenantID != "" {
+				platformTenantJWTAuthorizationRuleID = parsed.String()
+			} else {
+				platformTenantJWTAuthorizationRuleID = ""
 			}
 			if h.requestTelemetry != nil && requestTraceID == "" {
 				// Keep the legacy request-id fallback for deployments where the
@@ -7231,36 +7314,42 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				requestTraceID = telemetryTraceID(requestID)
 			}
 			row := RequestTelemetryRow{
-				EventID:             uuid.New(),
-				AccountID:           acctUUID,
-				AppID:               appUUID,
-				DeploymentID:        deploymentUUID,
-				Route:               telemetryRoute,
-				Method:              r.Method,
-				Status:              status,
-				LatencyMS:           int(elapsed / time.Millisecond),
-				ColdBoot:            cold,
-				TraceID:             requestTraceID,
-				ReceivedAt:          time.Now(),
-				WakeID:              target.WakeID,
-				InstanceID:          target.InstanceID,
-				UAFamily:            uaFamily,
-				ReferrerHost:        referrerHost,
-				Country:             country,
-				GuestDurationMS:     guestEvidence.DurationMS,
-				GuestRuntime:        guestEvidence.Runtime,
-				GuestOutcome:        guestEvidence.Outcome,
-				GuestErrorClass:     guestEvidence.ErrorClass,
-				ConsumerID:          consumerID,
-				PlatformTenantID:    platformTenantID,
-				NodeID:              target.NodeID,
-				Region:              target.Region,
-				CommitSHA:           target.CommitSHA,
-				DeploymentTag:       target.DeploymentTag,
-				DeploymentCreatedAt: target.DeploymentCreatedAt,
-				ImageDigest:         target.ImageDigest,
+				EventID:                              uuid.New(),
+				AccountID:                            acctUUID,
+				AppID:                                appUUID,
+				DeploymentID:                         deploymentUUID,
+				Route:                                telemetryRoute,
+				Method:                               r.Method,
+				Status:                               status,
+				LatencyMS:                            int(elapsed / time.Millisecond),
+				ColdBoot:                             cold,
+				TraceID:                              requestTraceID,
+				ReceivedAt:                           time.Now(),
+				WakeID:                               target.WakeID,
+				InstanceID:                           target.InstanceID,
+				UAFamily:                             uaFamily,
+				ReferrerHost:                         referrerHost,
+				Country:                              country,
+				GuestDurationMS:                      guestEvidence.DurationMS,
+				GuestRuntime:                         guestEvidence.Runtime,
+				GuestOutcome:                         guestEvidence.Outcome,
+				GuestErrorClass:                      guestEvidence.ErrorClass,
+				ConsumerID:                           consumerID,
+				PlatformTenantID:                     platformTenantID,
+				PlatformTenantSurfaceID:              platformTenantSurfaceID,
+				PlatformTenantJWTAuthorizationRuleID: platformTenantJWTAuthorizationRuleID,
+				NodeID:                               target.NodeID,
+				Region:                               target.Region,
+				CommitSHA:                            target.CommitSHA,
+				DeploymentTag:                        target.DeploymentTag,
+				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
+				ImageDigest:                          target.ImageDigest,
 			}
-			if h.usageOutbox != nil {
+			if r.Context().Value(suppressFinancialUsageKey{}) == true {
+				// Rejected admissions remain visible in request telemetry but
+				// cannot become billable via either the outbox or debugger fallback.
+				row.UsageOutboxed = true
+			} else if h.usageOutbox != nil {
 				errorCount := int64(0)
 				if status >= 400 {
 					errorCount = 1
@@ -7268,8 +7357,10 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				err := h.usageOutbox.Enqueue(usageoutbox.Event{
 					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
 					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
-					WindowStart:  row.ReceivedAt.UTC().Truncate(time.Minute),
-					RequestCount: 1, ErrorCount: errorCount, BillableUnits: 1,
+					PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
+					PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
+					WindowStart:                          row.ReceivedAt.UTC().Truncate(time.Minute),
+					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: 1,
 				})
 				if err != nil {
 					h.metrics.IncUsageOutboxFailure()

@@ -1836,6 +1836,11 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
+      - name: compile Jobs metal acceptance tests
+        # The metal tag is not part of the regular e2e shards. Keep this
+        # KVM-only acceptance harness type-checked on ordinary PR CI without
+        # trying to boot a VM.
+        run: go test -tags metal -run '^$' cmd/e2e/jobs_harness_stub.go cmd/e2e/jobs_metal_test.go
       - name: e2e tests (shard 1)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=1 -shards=4)

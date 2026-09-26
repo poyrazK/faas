@@ -179,10 +179,9 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 	}
 }
 
-// The smoke lane and the full phases are mutually exclusive within one run:
-// every full-phase step is gated off when lane == smoke, and the smoke step
-// is gated on when it is. A step missing its gate would run the matrix on a
-// smoke dispatch and bring the hour back.
+// The smoke/jobs-only lanes and the full phases are mutually exclusive within
+// one run. A step missing its gate would run the matrix on a targeted dispatch
+// and bring the hour back.
 func TestSmokeLaneAndFullPhasesAreExclusive(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
 	if err != nil {
@@ -192,12 +191,21 @@ func TestSmokeLaneAndFullPhasesAreExclusive(t *testing.T) {
 	if !strings.Contains(wf, "default: smoke") {
 		t.Error("the lane input does not default to smoke; a bare dispatch would run the hour-long matrix")
 	}
-	full := strings.Count(wf, "&& inputs.lane != 'smoke'")
+	full := strings.Count(wf, "&& inputs.lane != 'smoke' && inputs.lane != 'jobs-only'")
+	if strings.Count(wf, "lane == 'jobs-only'") != 1 {
+		t.Error("expected exactly one Jobs-only step gated on lane == 'jobs-only'")
+	}
+	if !strings.Contains(wf, `nonblocking=""`) {
+		t.Error("Jobs-only lane must clear the full-run Jobs nonblocking exception")
+	}
 	if full != 9 {
-		t.Errorf("%d full-phase steps are gated on lane != smoke, want 9 (one per phase)", full)
+		t.Errorf("%d full-phase steps are gated off for smoke and jobs-only, want 9 (one per phase)", full)
 	}
 	if strings.Count(wf, "&& inputs.lane == 'smoke'") != 1 {
 		t.Error("expected exactly one step gated on lane == smoke")
+	}
+	if !strings.Contains(wf, "jobs_only=${{ steps.phase_jobs_only.outcome }}") {
+		t.Error("the Verdict does not see the Jobs-only step's outcome")
 	}
 	if !strings.Contains(wf, "smoke=${{ steps.phase_smoke.outcome }}") {
 		t.Error("the Verdict does not see the smoke step's outcome; a red smoke run would report green")

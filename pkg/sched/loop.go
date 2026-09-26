@@ -3511,9 +3511,14 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 // second; a stuck pgpool is louder while the real vmmd job RPC remains
 // the source of truth for boot and exit supervision.
 func (l *Loop) runJobsDispatchTick(ctx context.Context) {
-	if err := l.engine.DispatchJobsTick(ctx); err != nil {
-		l.log.Warn("schedd: jobs dispatch tick failed", "err", err)
-	}
+	// A cold job boot can take far longer than the 1s tick. Coalesce
+	// overlapping ticks in the bounded pool so watchdog, cron and reaper
+	// continue to run on the select goroutine.
+	l.submitWork(workJobDispatch, "tick", func() {
+		if err := l.engine.DispatchJobsTick(ctx); err != nil {
+			l.log.Warn("schedd: jobs dispatch tick failed", "err", err)
+		}
+	})
 }
 
 // runJobsReaperTick is one iteration of the stuck-job reaper.

@@ -46,6 +46,7 @@ func startEventPublishProxy(log *slog.Logger) error {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(metadataEnvPath, metadataEnvHandler)
+	mux.HandleFunc(metadataSecretReloadAckPath, metadataSecretReloadAckHandler)
 	mux.HandleFunc(eventPublishPath, func(w http.ResponseWriter, r *http.Request) {
 		handleEventPublishRequest(w, r, func(body []byte) error {
 			frame := make([]byte, 1+len(body))

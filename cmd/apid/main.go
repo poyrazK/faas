@@ -1664,7 +1664,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// signal that the box is misconfigured rather than a silent accept-and-
 	// drop of plaintext. The unit tests don't set the var because the
 	// handlers they're checking don't exercise the seal path.
-	recipientPath := deps.getenv("FAAS_FLEET_AGE_RECIPIENT_PATH")
+	fleetRecipientPath := deps.getenv("FAAS_FLEET_AGE_RECIPIENT_PATH")
+	outboundCredentialRecipient = nil
+	recipientPath := fleetRecipientPath
 	if recipientPath == "" {
 		recipientPath = deps.getenv("FAAS_HOST_AGE_RECIPIENT_PATH")
 	}
@@ -1674,6 +1676,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: load fleet age recipient %q: %w", recipientPath, err)
 		}
 		setSecretRecipient = func() *age.X25519Recipient { return r }
+		if fleetRecipientPath != "" {
+			outboundCredentialRecipient = func() *age.X25519Recipient { return r }
+		}
 		// Issue #463 / ADR-068: the sidecar seal helper reuses the
 		// same host age recipient (one age identity per host). A
 		// separate getter keeps the seal helpers testable in

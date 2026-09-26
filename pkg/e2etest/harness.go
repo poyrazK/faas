@@ -174,10 +174,12 @@ func snapshotProcs() []*exec.Cmd {
 	return currentHarness.procs
 }
 
-// Start brings up `which` daemons and wires readiness. Each daemon subprocess
-// runs in its own goroutine draining stdout/stderr to a per-daemon buffer
-// (logged on teardown so a flaky failure has the daemon's last words).
-func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
+// Start brings up `which` daemons and wires readiness. Optional extraEnv
+// entries are appended to the selected daemons' explicit test environment;
+// the harness never inherits the caller's full environment. Each daemon
+// subprocess runs in its own goroutine draining stdout/stderr to a per-daemon
+// buffer (logged on teardown so a flaky failure has the daemon's last words).
+func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *Harness {
 	t.Helper()
 
 	tmp := t.TempDir()
@@ -228,7 +230,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	pgtest.WaitForMigration(t, pool, e2eMigrationTarget, 30*time.Second)
 
 	if which&APID != 0 {
-		startAPID(t, h, bin, dbURL)
+		startAPID(t, h, bin, dbURL, extraEnv...)
 	}
 
 	// Both socket paths are fixed up front: vmmd's env carries schedd's target
@@ -275,7 +277,7 @@ kernel_path = %q
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
-		env := vmmdEnv(dbURL, cfgPath, h.ScheddSock)
+		env := append(vmmdEnv(dbURL, cfgPath, h.ScheddSock), extraEnv...)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
 		waitUnix(t, sockPath, 10*time.Second)
 	}
@@ -293,6 +295,7 @@ kernel_path = %q
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
 		)
+		env = append(env, extraEnv...)
 		h.scheddConfigPath = cfgPath
 		h.scheddEnv = append([]string(nil), env...)
 		// Repoint the seeded node before schedd's initial heartbeat. A
@@ -317,21 +320,21 @@ kernel_path = %q
 	}
 
 	if which&Gatewayd != 0 {
-		startGatewayd(t, h, bin, dbURL, nil)
+		startGatewayd(t, h, bin, dbURL, extraEnv)
 	}
 	if which&GatewaydPublic != 0 {
 		if which&Gatewayd == 0 {
 			t.Fatal("e2etest: GatewaydPublic requires Gatewayd")
 		}
-		startGatewaydPublic(t, h, bin, dbURL, nil)
+		startGatewaydPublic(t, h, bin, dbURL, extraEnv)
 	}
 
 	if which&Imaged != 0 {
-		startImaged(t, h, bin, dbURL, tmp, appsRoot, nil)
+		startImaged(t, h, bin, dbURL, tmp, appsRoot, extraEnv)
 	}
 
 	if which&Meterd != 0 {
-		startMeterd(t, h, bin, dbURL)
+		startMeterd(t, h, bin, dbURL, extraEnv)
 	}
 	if which&Builderd != 0 {
 		// Issue #57: builderd participates in the M6 orchestrator e2e.
@@ -361,6 +364,7 @@ kernel_path = %q
 		if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
 			env = append(env, "FAAS_TEST_DEPLOY_BASE_REF="+dbr)
 		}
+		env = append(env, extraEnv...)
 		h.procs = append(h.procs, startProc(t, bin, "builderd", env))
 		h.BuilderdCfg = cfgPath
 		// builderd doesn't expose a TCP/unix listener (it's a pg_notify-
@@ -829,7 +833,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 // inner-loop case where Start() already handled the other daemons but
 // apid wasn't part of the Which mask (the existing quota_e2e relies on
 // this — Start with APID and no extras is fine).
-func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
+func startAPID(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...string) {
 	t.Helper()
 	addr := freeTCPAddr(t)
 	// Per-test spool roots. Without per-test FAAS_SPOOL_ROOT +
@@ -860,6 +864,7 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 		"FAAS_SPOOL_ROOT="+spoolRoot,
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
+	env = append(env, extraEnv...)
 	h.procs = append(h.procs, startProc(t, bin, "apid", env))
 	h.APIDURL = "http://" + addr
 	// Match the StartWithEnv path above: APID startup can exceed 10s on

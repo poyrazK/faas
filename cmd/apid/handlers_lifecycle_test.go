@@ -52,6 +52,35 @@ func TestCreateApp_RequestTimeoutIsBounded(t *testing.T) {
 	assertProblem(t, rec, 422, api.CodeValidation)
 }
 
+func TestAppRevisionPinTTL(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "skew-app", RevisionPinTTLSeconds: 3600}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.RevisionPinTTLSeconds != 3600 || out.Manifest.RevisionPinTTLSeconds != 3600 {
+		t.Fatalf("create ttl = %d / %d", out.RevisionPinTTLSeconds, out.Manifest.RevisionPinTTLSeconds)
+	}
+	zero := 0
+	rec = e.do(t, "PATCH", "/v1/apps/skew-app", api.UpdateAppRequest{RevisionPinTTLSeconds: &zero}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("disable: %d %s", rec.Code, rec.Body)
+	}
+	stored, err := e.store.AppBySlug(t.Context(), "skew-app")
+	if err != nil || stored.Manifest.RevisionPinTTLSeconds != 0 {
+		t.Fatalf("stored ttl = %d, %v", stored.Manifest.RevisionPinTTLSeconds, err)
+	}
+	invalid := api.RevisionPinMaxTTLSeconds + 1
+	rec = e.do(t, "PATCH", "/v1/apps/skew-app", api.UpdateAppRequest{RevisionPinTTLSeconds: &invalid}, nil)
+	if rec.Code != 422 {
+		t.Fatalf("invalid ttl: %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestAppVersionAffinityCookieRoundTrip(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "cookie-app", VersionAffinityCookie: "visitor_id"}, nil)
