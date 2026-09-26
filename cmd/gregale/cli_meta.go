@@ -956,7 +956,7 @@ var cliCommands = []cliCommand{
 			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
 			{Name: "traffic-percent", Short: "deployment traffic split weight (0-100)", Value: "PERCENT"},
 			{Name: "no-traffic", Short: "stage with 0% production traffic and print the preview URL"},
-			{Name: "no-triggers", Short: "skip gregale.yaml trigger fan-out"},
+			{Name: "no-triggers", Short: "skip gregale.yaml trigger and async-route changes"},
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
 			{Name: "create-only", Short: "create or reserve the app without uploading a deployment"},

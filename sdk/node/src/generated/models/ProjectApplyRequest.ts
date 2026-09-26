@@ -24,7 +24,7 @@ export type ProjectApplyRequest = {
    */
   approval_token?: string;
   /**
-   * Leave trigger declarations and existing project trigger state unchanged for this apply.
+   * Leave trigger and async-route declarations and existing project trigger/route state unchanged for this apply.
    */
   no_triggers?: boolean;
 };

@@ -1659,7 +1659,7 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 // validateProjectManifestConfig rejects app-only declarations that the
 // multi-workload planner cannot safely fan out. Failing explicitly is safer
 // than silently applying only triggers while ignoring a scaling block.
-func validateProjectManifestConfig(cwd string, skipTriggerConfig ...bool) error {
+func validateProjectManifestConfig(cwd string) error {
 	if cwd == "" {
 		return nil
 	}
@@ -1678,10 +1678,6 @@ func validateProjectManifestConfig(cwd string, skipTriggerConfig ...bool) error 
 	}
 	if m.RetryPolicy != nil {
 		return errors.New("retry_policy is supported on single-app deploys; configure each workload separately after project apply")
-	}
-	skipTriggers := len(skipTriggerConfig) > 0 && skipTriggerConfig[0]
-	if m.AsyncRoutes != nil && !skipTriggers {
-		return errors.New("async_routes are supported on single-app deploys; apply them separately to each workload after project apply")
 	}
 	return nil
 }
@@ -2125,7 +2121,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// provisioning (and before the deploy body ships) — see
 	// deployManifestTriggers. The source-ref path stages against its
 	// already-existing app before posting its JSON request.
-	noTriggers := fs.Bool("no-triggers", false, "skip the `gregale.yaml` triggers fan-out (issue #791 PR-C)")
+	noTriggers := fs.Bool("no-triggers", false, "skip `gregale.yaml` trigger and async-route changes")
 	// Deployment completion is wait-by-default for compatibility with the
 	// existing deploy command; --no-wait returns once apid queues the
 	// deployment so CI and scripts can continue immediately.
@@ -3277,7 +3273,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 	if projectRequested {
-		if manifestErr := validateProjectManifestConfig(sourceDir, *noTriggers); manifestErr != nil {
+		if manifestErr := validateProjectManifestConfig(sourceDir); manifestErr != nil {
 			return printErr("Invalid project deploy manifest", manifestErr)
 		}
 	}

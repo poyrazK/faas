@@ -1409,8 +1409,8 @@ func (s *server) scanService(
 	for _, workload := range filteredW {
 		selectedDatabaseWorkloads = append(selectedDatabaseWorkloads, workload.Name)
 	}
-	resolvedManifestBindings, manifestProblem := s.loadAndResolveManifestPostgresBindings(
-		r.Context(), acct, req.ScanDir, selectedDatabaseWorkloads, req.Environment, req.NoTriggers)
+	resolvedManifest, manifestProblem := s.loadAndResolveProjectManifest(
+		r.Context(), acct, req.ScanDir, selectedDatabaseWorkloads, req.Environment)
 	if manifestProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
 	}
@@ -1505,6 +1505,9 @@ func (s *server) scanService(
 	// path from the just-inserted apps.
 	crons := projectWorkloadCrons(filteredW)
 	warnings := append([]string(nil), result.Warnings...)
+	if routeWarning := projectAsyncRoutePlanWarning(resolvedManifest.AsyncRoutes, resolvedManifest.AsyncRoutesPresent, req.NoTriggers); routeWarning != "" {
+		warnings = append(warnings, routeWarning)
+	}
 	if req.NoTriggers {
 		if len(crons) > 0 {
 			warnings = append(warnings, "triggers skipped by request (--no-triggers); existing trigger state left unchanged")
@@ -1551,6 +1554,14 @@ func (s *server) scanService(
 		if app.ProjectID == projectID && projectID != "" {
 			projectApps = append(projectApps, app)
 			existingProjectCrons += len(cronInventory[app.ID])
+		}
+	}
+	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
+		if problem := validateProjectManifestAsyncRoutes(resolvedManifest.AsyncRoutes, result.Workloads, filteredW, projectApps, req.Exclude); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
+		}
+		if problem := projectAsyncRoutesPlanProblem(acct.Plan, resolvedManifest.AsyncRoutes, filteredW, projectApps); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
 	prePartition := computeAffectedPartition(onlyFilteredW, result.Workloads, acctApps, nil, projectID)
@@ -2063,20 +2074,31 @@ func (s *server) scanService(
 			removedSlugs = append(removedSlugs, slug)
 		}
 	}
-	if len(resolvedManifestBindings) > 0 {
+	needsProjectApps := len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers)
+	var currentProjectApps []state.App
+	if needsProjectApps {
 		// Reconcile has already committed the project/app rows. A binding
 		// provider error is therefore returned without deleting a newly
 		// created project: the next deploy can retry the idempotent binding
 		// operation against the durable app instead of orphaning active apps
 		// when project_id is nulled by rollback.
-		bindingApps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if appsErr != nil {
-			prob := customerInternalProblem(s.log, "load workloads for managed database bindings",
-				"Gregale could not finish connecting the declared databases to your workloads.",
+			prob := customerInternalProblem(s.log, "load workloads for project manifest reconciliation",
+				"Gregale could not load this project's workloads to apply its manifest.",
 				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
-		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifestBindings, bindingApps); prob != nil {
+		currentProjectApps = apps
+	}
+	if len(resolvedManifest.PostgresBindings) > 0 {
+		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifest.PostgresBindings, currentProjectApps); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+	}
+	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
+		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
+		if prob := s.applyProjectManifestAsyncRoutes(r.Context(), acct, resolvedManifest.AsyncRoutes, true, false, selectedApps); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}
