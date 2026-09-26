@@ -1133,6 +1133,11 @@ var cliCommands = []cliCommand{
 				{Name: "protected", Short: "protect the new environment"},
 				{Name: "share-resources", Short: "use source managed data with fresh target credentials instead of isolating it"},
 				{Name: "plan", Short: "show a read-only clone plan without creating the environment"},
+				{Name: "deploy", Short: "clone and promote the source live releases into the new environment"},
+				{Name: "yes", Short: "confirm clone and deployment in non-interactive use"},
+				{Name: "idempotency-key", Short: "stable key for retrying clone/deployment operations", Value: "KEY"},
+				{Name: "progress", Short: "print deployment transitions while waiting (requires --deploy)"},
+				{Name: "timeout", Short: "maximum seconds to wait for deployment readiness", Value: "SECONDS"},
 			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Flags: []cliFlag{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
