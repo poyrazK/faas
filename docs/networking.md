@@ -202,14 +202,28 @@ services:
 environment. The dependency graph is validated before anything deploys —
 unknown names, self-edges, and ambiguous names are rejected.
 
-Each binding also has an additive HTTPS canary variable, for example
-`GREGALE_SERVICE_BILLING_HTTPS_URL=https://billing.internal`. The existing
-`GREGALE_SERVICE_BILLING_URL=http://billing.svc.gregale:10080` remains unchanged.
-Applications must explicitly choose the HTTPS variable, and should do so only
-after the private HTTPS listener and workload CA trust are enabled on their
-compute path. An unavailable HTTPS endpoint fails normally; Gregale does not
-silently retry over HTTP. Standalone bindings, project workloads, and preview
-environments receive the same pair of variables.
+By default, `GREGALE_SERVICE_BILLING_URL` remains the legacy HTTP URL, and
+`GREGALE_SERVICE_BILLING_HTTPS_URL=https://billing.internal` is available as
+an explicit HTTPS alias. A caller can opt into HTTPS-first transport for all
+of its declared service bindings:
+
+```yaml
+services:
+  public-api:
+    build: ./public-api
+    depends_on: [auth, billing, recommendation]
+    x-gregale-service-transport: https
+```
+
+With this setting, each canonical `_URL` uses `https://<service>.internal`;
+the `_HTTPS_URL` companion remains available with the same value. Plain HTTP
+calls from that caller are rejected by the service proxy, so client retries do
+not silently downgrade. Enable private HTTPS and workload CA trust on the
+compute path before adopting the setting. Omitted transport keeps existing
+workloads' stored choice and defaults new workloads to HTTP; set the extension
+to `http` to explicitly return to the legacy endpoint. The app API exposes the
+same choice as `service_binding_transport` for standalone apps. `gregale
+bindings <app>` reports the effective transport.
 
 The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, and queue
@@ -268,9 +282,10 @@ inventory, so bypassing DNS cannot grant access. The existing same-account,
 target allowlist, and preview checks still run before any target is woken.
 Unbound `.internal` names are passed to the configured upstream DNS resolver;
 Gregale does not claim the customer's entire private namespace. The existing
-`*.svc.gregale` names and generated `GREGALE_SERVICE_*_URL` values remain
-unchanged for rolling-upgrade compatibility. Operators may enable the private
-HTTPS listener after distributing a dedicated service CA to all compute nodes.
+`*.svc.gregale` endpoint and default generated URLs remain unchanged for
+rolling-upgrade compatibility; callers may opt into HTTPS-first URLs after the
+listener and trust are ready. Operators may enable the private HTTPS listener
+after distributing a dedicated service CA to all compute nodes.
 The CA must have a critical permitted DNS name constraint for `.internal`.
 When configured, guest-init builds a per-workload bundle in `/tmp`, exports
 `GREGALE_SERVICE_CA_BUNDLE`, and configures common TLS clients (`SSL_CERT_FILE`,
@@ -295,7 +310,11 @@ workload-scoped CA bundle, and exercises the same binding and target
 authorization path as a real request. The final routing check only consults
 the healthy endpoint registry: it does not wake an idle target or invoke its
 handler. The probe has no HTTP fallback.
-The alias is never a public ingress
+By default the generated URL remains the legacy HTTP endpoint. [ADR-274](adr/274-additive-https-service-binding-urls.md)
+keeps the explicit HTTPS canary companion, while [ADR-276](adr/276-https-first-service-binding-transport.md)
+lets a caller opt into HTTPS as the canonical `_URL`. See [ADR-272](adr/272-private-https-service-bindings.md)
+for listener rollout, [ADR-273](adr/273-workload-scoped-service-ca-trust.md) for guest trust, and
+[ADR-275](adr/275-https-service-binding-canary.md) for caller verification. The alias is never a public ingress
 hostname.
 
 Calls are authorized by the platform, not by your code. The caller is

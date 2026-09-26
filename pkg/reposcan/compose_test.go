@@ -255,6 +255,7 @@ func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
     build: ./api
     depends_on: [billing]
     x-gregale-service-policy: DECLARED
+    x-gregale-service-transport: HTTPS
   billing:
     build: ./billing
     x-gregale-preview-calls: DENY
@@ -266,8 +267,10 @@ func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
 		t.Fatalf("detectCompose: %v", err)
 	}
 	policies := make(map[string]ServiceBindingPolicy, len(seeds))
+	transports := make(map[string]ServiceBindingTransport, len(seeds))
 	for _, seed := range seeds {
 		policies[seed.name] = seed.serviceBindingPolicy
+		transports[seed.name] = seed.serviceBindingTransport
 	}
 	if policies["api"] != ServiceBindingPolicyDeclared {
 		t.Fatalf("api policy = %q, want declared", policies["api"])
@@ -275,10 +278,27 @@ func TestDetectCompose_ExtractsServiceBindingPolicy(t *testing.T) {
 	if policies["billing"] != "" {
 		t.Fatalf("billing policy = %q, want empty account default", policies["billing"])
 	}
+	if transports["api"] != ServiceBindingTransportHTTPS || transports["billing"] != "" {
+		t.Fatalf("service transports = %#v, want api=https and billing unset", transports)
+	}
 	for _, seed := range seeds {
 		if seed.name == "billing" && seed.previewServiceCallsPolicy != PreviewServiceCallsDeny {
 			t.Fatalf("billing preview policy = %q, want deny", seed.previewServiceCallsPolicy)
 		}
+	}
+}
+
+func TestDetectCompose_RejectsUnknownServiceBindingTransport(t *testing.T) {
+	t.Parallel()
+	_, _, _, err := detectCompose(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  api:
+    build: ./api
+    x-gregale-service-transport: opportunistic
+`)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "x-gregale-service-transport must be http or https") {
+		t.Fatalf("detectCompose error = %v, want closed transport validation", err)
 	}
 }
 

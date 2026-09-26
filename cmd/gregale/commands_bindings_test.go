@@ -110,7 +110,7 @@ func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
-			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api","service_binding_policy":"declared","service_bindings":[{"binding":"GREGALE_SERVICE_BILLING_URL","service":"billing"}]}`))
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api","service_binding_policy":"declared","service_binding_transport":"https","service_bindings":[{"binding":"GREGALE_SERVICE_BILLING_URL","service":"billing"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
 			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"primary"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
@@ -150,7 +150,7 @@ func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 			{
 				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
 				HTTPURL: "http://billing.svc.gregale:10080", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
-				HTTPSURL: "https://billing.internal", Scope: "app", Access: "invoke", State: "enforced",
+				HTTPSURL: "https://billing.internal", Transport: "https", Scope: "app", Access: "invoke", State: "enforced",
 			},
 		},
 	}
@@ -240,6 +240,9 @@ func TestCmdBindingsJSONListsOtherProvidersWhenPostgresPreviewUnavailable(t *tes
 	if len(got.Bindings) != 2 || got.Bindings[0].Type != bindingTypeQueue || got.Bindings[1].Type != bindingTypeService {
 		t.Fatalf("other provider bindings were lost: %+v", got.Bindings)
 	}
+	if got.Bindings[1].Transport != "http" {
+		t.Fatalf("legacy service transport = %q, want http", got.Bindings[1].Transport)
+	}
 	if !reflect.DeepEqual(got.Warnings, []string{managedPostgresBindingsWarning}) {
 		t.Fatalf("warnings = %v", got.Warnings)
 	}
@@ -280,16 +283,16 @@ func TestRenderAppBindingInventory(t *testing.T) {
 			{
 				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
 				HTTPURL: "http://billing.svc.gregale:10080", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
-				HTTPSURL: "https://billing.internal", Scope: "app", Access: "invoke", State: "enforced",
+				HTTPSURL: "https://billing.internal", Transport: "http", Scope: "app", Access: "invoke", State: "enforced",
 			},
 		},
 		Warnings: []string{managedPostgresBindingsWarning},
 	})
 
 	for _, want := range []string{
-		"TYPE", "NAME", "BINDING / HTTP ENV", "HTTP URL", "HTTPS ENV", "HTTPS URL", "SCOPE", "ACCESS", "STATE",
+		"TYPE", "NAME", "BINDING ENV", "TRANSPORT", "HTTP URL", "HTTPS ENV", "HTTPS URL", "SCOPE", "ACCESS", "STATE",
 		"postgres", "DATABASE_URL", "queue", "worker", "GREGALE_SERVICE_BILLING_URL",
-		"http://billing.svc.gregale:10080", "GREGALE_SERVICE_BILLING_HTTPS_URL", "https://billing.internal",
+		"http", "http://billing.svc.gregale:10080", "GREGALE_SERVICE_BILLING_HTTPS_URL", "https://billing.internal",
 		"Warning: " + managedPostgresBindingsWarning,
 	} {
 		if !strings.Contains(out.String(), want) {

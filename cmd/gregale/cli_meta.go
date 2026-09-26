@@ -305,7 +305,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "List app bindings or verify a bound HTTPS service from the caller guest",
+		Short:       "List app bindings and transport choices or verify a bound HTTPS service from the caller guest",
 		Positionals: []string{"<app>"},
 		Subcommands: []cliSub{{
 			Name:        "verify",

@@ -14,7 +14,11 @@ const (
 )
 
 func serviceEnvForWorkloadWithAvailable(base map[string]string, w reposcan.Workload, available map[string]struct{}) map[string]string {
-	return api.ServiceBindingEnv(base, serviceBindingsForWorkloadWithAvailable(w, available))
+	return serviceEnvForWorkloadWithTransport(base, w, available, api.ServiceBindingTransport(w.ServiceBindingTransport))
+}
+
+func serviceEnvForWorkloadWithTransport(base map[string]string, w reposcan.Workload, available map[string]struct{}, transport api.ServiceBindingTransport) map[string]string {
+	return api.ServiceBindingEnvForTransport(base, serviceBindingsForWorkloadWithAvailable(w, available), transport)
 }
 
 func serviceBindingsForWorkloadWithAvailable(w reposcan.Workload, available map[string]struct{}) []api.AppServiceBinding {
@@ -76,6 +80,20 @@ func serviceBindingPolicyForExistingWorkload(w reposcan.Workload, existing api.S
 		return existing.Effective()
 	}
 	return api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
+}
+
+func serviceBindingTransportForNewWorkload(w reposcan.Workload) api.ServiceBindingTransport {
+	if w.ServiceBindingTransport == "" {
+		return ""
+	}
+	return api.ServiceBindingTransport(w.ServiceBindingTransport).Effective()
+}
+
+func serviceBindingTransportForExistingWorkload(w reposcan.Workload, existing api.ServiceBindingTransport) api.ServiceBindingTransport {
+	if w.ServiceBindingTransport == "" {
+		return existing
+	}
+	return api.ServiceBindingTransport(w.ServiceBindingTransport).Effective()
 }
 
 func allowedServiceCallersEqual(left, right *[]string) bool {

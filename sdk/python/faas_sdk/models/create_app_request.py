@@ -35,6 +35,7 @@ from ..models.create_app_request_service_binding_policy import (
 from ..models.create_app_request_type import CreateAppRequestType, check_create_app_request_type
 from ..models.create_app_request_visibility import CreateAppRequestVisibility, check_create_app_request_visibility
 from ..models.resource_profile import ResourceProfile, check_resource_profile
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -64,11 +65,14 @@ class CreateAppRequest:
     normalized to lowercase, sorted, and deduplicated."""
     service_binding_targets: list[str] | Unset = UNSET
     """Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform
-    derives read-only binding keys and internal URLs, including an additive HTTPS canary variable. Targets may be
-    declared before they exist. Omit or [] for no bindings."""
+    derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first
+    canonical URL. Targets may be declared before they exist. Omit or [] for no bindings."""
     service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
     """Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only
     service_binding_targets."""
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
     vcpu: int | Unset = UNSET
@@ -202,6 +206,10 @@ class CreateAppRequest:
         if not isinstance(self.service_binding_policy, Unset):
             service_binding_policy = self.service_binding_policy
 
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = self.service_binding_transport
+
         runtime: str | Unset = UNSET
         if not isinstance(self.runtime, Unset):
             runtime = self.runtime
@@ -334,6 +342,8 @@ class CreateAppRequest:
             field_dict["service_binding_targets"] = service_binding_targets
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
         if ram_mb is not UNSET:
@@ -451,6 +461,13 @@ class CreateAppRequest:
             service_binding_policy = UNSET
         else:
             service_binding_policy = check_create_app_request_service_binding_policy(_service_binding_policy)
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
 
         _runtime = d.pop("runtime", UNSET)
         runtime: CreateAppRequestRuntime | Unset
@@ -615,6 +632,7 @@ class CreateAppRequest:
             allowed_service_callers=allowed_service_callers,
             service_binding_targets=service_binding_targets,
             service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
             runtime=runtime,
             ram_mb=ram_mb,
             vcpu=vcpu,

@@ -3304,6 +3304,9 @@ const (
 	ServiceCallUnauthenticated ServiceCallOutcome = "unauthenticated"
 	// ServiceCallDenied — caller and target belong to different accounts.
 	ServiceCallDenied ServiceCallOutcome = "denied"
+	// ServiceCallTransportDenied — the caller's HTTPS-only binding policy
+	// rejected a plaintext service request.
+	ServiceCallTransportDenied ServiceCallOutcome = "transport_denied"
 	// ServiceCallBindingDenied — a same-account caller selected the declared
 	// policy but did not declare the requested target service.
 	ServiceCallBindingDenied ServiceCallOutcome = "binding_denied"
@@ -3328,7 +3331,7 @@ const (
 var ServiceCallOutcomes = []ServiceCallOutcome{
 	ServiceCallForwarded, ServiceCallWoken, ServiceCallNoReplica,
 	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
-	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallBindingDenied, ServiceCallCallerDenied,
+	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallTransportDenied, ServiceCallBindingDenied, ServiceCallCallerDenied,
 	ServiceCallNotFound, ServiceCallUpgradeRejected, ServiceCallPreviewDenied,
 	ServiceCallOverrideRejected, ServiceCallOverrideUnavailable,
 }

@@ -26,6 +26,28 @@ func TestServiceBindingPolicyEffective(t *testing.T) {
 	}
 }
 
+func TestServiceBindingTransportEffectiveAndNormalize(t *testing.T) {
+	for _, test := range []struct {
+		in   ServiceBindingTransport
+		want ServiceBindingTransport
+	}{
+		{in: "", want: ServiceBindingTransportHTTP},
+		{in: ServiceBindingTransportHTTP, want: ServiceBindingTransportHTTP},
+		{in: ServiceBindingTransportHTTPS, want: ServiceBindingTransportHTTPS},
+		{in: ServiceBindingTransport("future"), want: ServiceBindingTransportHTTPS},
+	} {
+		if got := test.in.Effective(); got != test.want {
+			t.Errorf("%q Effective() = %q, want %q", test.in, got, test.want)
+		}
+	}
+	if got, err := NormalizeServiceBindingTransport(" HTTPS "); err != nil || got != ServiceBindingTransportHTTPS {
+		t.Fatalf("normalized transport = %q, %v", got, err)
+	}
+	if _, err := NormalizeServiceBindingTransport("cleartext"); err == nil {
+		t.Fatal("accepted unknown transport")
+	}
+}
+
 func TestNormalizeAllowedServiceCallers(t *testing.T) {
 	got, err := NormalizeAllowedServiceCallers([]string{" Worker ", "frontend", "FRONTEND"})
 	if err != nil || !reflect.DeepEqual(got, []string{"frontend", "worker"}) {
@@ -84,5 +106,22 @@ func TestStandaloneServiceBindingProjection(t *testing.T) {
 	over := make([]string, ServiceBindingTargetsMax+1)
 	if _, err := NormalizeServiceBindingTargets(over); err == nil {
 		t.Fatal("accepted oversized target list")
+	}
+}
+
+func TestServiceBindingEnvHTTPSFirstKeepsHTTPSAlias(t *testing.T) {
+	bindings := []AppServiceBinding{{Binding: ServiceBindingEnvKey("billing"), Service: "billing"}}
+	got := ServiceBindingEnvForTransport(map[string]string{
+		"GREGALE_SERVICE_OLD_URL":       "stale-http",
+		"GREGALE_SERVICE_OLD_HTTPS_URL": "stale-https",
+		"CUSTOM":                        "kept",
+	}, bindings, ServiceBindingTransportHTTPS)
+	want := map[string]string{
+		"GREGALE_SERVICE_BILLING_URL":       "https://billing.internal",
+		"GREGALE_SERVICE_BILLING_HTTPS_URL": "https://billing.internal",
+		"CUSTOM":                            "kept",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("HTTPS-first env = %#v, want %#v", got, want)
 	}
 }

@@ -64,6 +64,56 @@ func TestServiceProxyAliasRequiresBindingEvenWithDirectHost(t *testing.T) {
 	}
 }
 
+// adr: 276
+func TestServiceProxyHTTPSFirstRejectsPlainHTTPBeforeRoutingOrWake(t *testing.T) {
+	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{
+		AppID: "app-billing", Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}},
+	}}
+	metrics := NewMetrics()
+	var forwards, wakes int
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider:      provider,
+		Metrics:       metrics,
+		ResolveCaller: func(context.Context, string) (string, error) { return "app-frontend", nil },
+		AllowAlias:    func(context.Context, string, string) (bool, error) { return true, nil },
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: "app-billing"}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{RequireHTTPS: true}, nil
+		},
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				forwards++
+				w.WriteHeader(http.StatusNoContent)
+			})
+		},
+		Wake: func(context.Context, string) error { wakes++; return nil },
+	})
+
+	plain := httptest.NewRequest(http.MethodGet, "http://billing.svc.gregale:10080/charge", nil)
+	plain.Host = "billing.svc.gregale:10080"
+	plainRec := httptest.NewRecorder()
+	proxy.ServeHTTP(plainRec, plain)
+	if plainRec.Code != http.StatusForbidden || !strings.Contains(plainRec.Body.String(), "requires HTTPS") {
+		t.Fatalf("plain HTTP response = %d %q, want HTTPS policy denial", plainRec.Code, plainRec.Body.String())
+	}
+	if provider.calls.Load() != 0 || forwards != 0 || wakes != 0 {
+		t.Fatalf("plain HTTP reached routing: provider=%d forwards=%d wakes=%d", provider.calls.Load(), forwards, wakes)
+	}
+	if got := callCount(t, metrics, ServiceCallTransportDenied); got != 1 {
+		t.Fatalf("transport denial metric = %v, want 1", got)
+	}
+
+	secure := httptest.NewRequest(http.MethodGet, "https://billing.internal/charge", nil)
+	secure.Host = "billing.internal"
+	secureRec := httptest.NewRecorder()
+	proxy.ServeHTTP(secureRec, secure)
+	if secureRec.Code != http.StatusNoContent || provider.calls.Load() != 1 || forwards != 1 {
+		t.Fatalf("HTTPS response = %d provider=%d forwards=%d", secureRec.Code, provider.calls.Load(), forwards)
+	}
+}
+
 func TestServiceProxyHTTPSProbeChecksLiveRouteWithoutWakeOrForward(t *testing.T) {
 	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{
 		AppID: "app-billing", Endpoints: []ServiceEndpoint{{InstanceID: "instance-a", NodeID: "node-a", Port: 8080}},

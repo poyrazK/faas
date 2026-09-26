@@ -110,6 +110,7 @@ type workloadSeed struct {
 	dependsOn    []string
 
 	serviceBindingPolicy      ServiceBindingPolicy
+	serviceBindingTransport   ServiceBindingTransport
 	previewServiceCallsPolicy PreviewServiceCallsPolicy
 	allowedServiceCallers     *[]string
 

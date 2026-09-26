@@ -479,11 +479,16 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if servicePolicyProblem != nil {
 		return state.App{}, servicePolicyProblem
 	}
+	serviceTransport, serviceTransportProblem := standaloneServiceTransport(req.ServiceBindingTransport)
+	if serviceTransportProblem != nil {
+		return state.App{}, serviceTransportProblem
+	}
 	appManifest := stateManifestFromAPI(lifecycle)
 	appManifest.AllowedServiceCallers = allowedCallers
 	appManifest.ServiceBindings = bindings
 	appManifest.ServiceBindingPolicy = servicePolicy
-	appManifest.Env = api.ServiceBindingEnv(appManifest.Env, bindings)
+	appManifest.ServiceBindingTransport = serviceTransport
+	appManifest.Env = api.ServiceBindingEnvForTransport(appManifest.Env, bindings, serviceTransport)
 	return state.App{
 		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
 		Visibility: visibility,
@@ -835,6 +840,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		},
 		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
 		ServiceBindingPolicy:      a.Manifest.EffectiveServiceBindingPolicy(),
+		ServiceBindingTransport:   a.Manifest.EffectiveServiceBindingTransport(),
 		PreviewServiceCallsPolicy: a.Manifest.EffectivePreviewServiceCallsPolicy(),
 		AllowedServiceCallers:     allowedCallers,
 		EgressAllowlist:           ea,

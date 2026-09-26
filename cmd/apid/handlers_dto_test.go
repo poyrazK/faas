@@ -46,6 +46,7 @@ func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
 	got := s.appResponse(state.App{Manifest: state.AppManifest{
 		ServiceBindings:           bindings,
 		ServiceBindingPolicy:      api.ServiceBindingPolicyDeclared,
+		ServiceBindingTransport:   api.ServiceBindingTransportHTTPS,
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsDeny,
 		AllowedServiceCallers:     &callers,
 	}}, api.PlanHobby)
@@ -58,6 +59,9 @@ func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
 	}
 	if got.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
 		t.Fatalf("service binding policy = %q, want declared", got.ServiceBindingPolicy)
+	}
+	if got.ServiceBindingTransport != api.ServiceBindingTransportHTTPS {
+		t.Fatalf("service binding transport = %q, want https", got.ServiceBindingTransport)
 	}
 	if got.PreviewServiceCallsPolicy != api.PreviewServiceCallsDeny {
 		t.Fatalf("preview service calls policy = %q, want deny", got.PreviewServiceCallsPolicy)
@@ -75,6 +79,9 @@ func TestAppResponseDefaultsServiceBindingPolicyToAccount(t *testing.T) {
 	got := (&server{}).appResponse(state.App{}, api.PlanHobby)
 	if got.ServiceBindingPolicy != api.ServiceBindingPolicyAccount {
 		t.Fatalf("service binding policy = %q, want account", got.ServiceBindingPolicy)
+	}
+	if got.ServiceBindingTransport != api.ServiceBindingTransportHTTP {
+		t.Fatalf("service binding transport = %q, want legacy http", got.ServiceBindingTransport)
 	}
 	if got.PreviewServiceCallsPolicy != api.PreviewServiceCallsAllow {
 		t.Fatalf("preview service calls policy = %q, want allow", got.PreviewServiceCallsPolicy)

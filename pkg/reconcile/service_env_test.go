@@ -41,6 +41,24 @@ func TestServiceEnvSkipsManagedDependencies(t *testing.T) {
 	}
 }
 
+func TestServiceEnvHTTPSFirstUsesInternalAliasForCanonicalURL(t *testing.T) {
+	got := serviceEnvForWorkloadWithAvailable(nil,
+		reposcan.Workload{
+			Name:                    "api",
+			DependsOn:               []string{"billing"},
+			ServiceBindingTransport: reposcan.ServiceBindingTransportHTTPS,
+		},
+		map[string]struct{}{"billing": {}},
+	)
+	want := map[string]string{
+		"GREGALE_SERVICE_BILLING_URL":       "https://billing.internal",
+		"GREGALE_SERVICE_BILLING_HTTPS_URL": "https://billing.internal",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("HTTPS-first service env = %#v, want %#v", got, want)
+	}
+}
+
 func TestServiceBindingsForWorkloadAreStableAndDeduplicated(t *testing.T) {
 	got := serviceBindingsForWorkloadWithAvailable(
 		reposcan.Workload{Name: "api", DependsOn: []string{" DB ", "cache", "db", "managed"}},
@@ -95,6 +113,39 @@ func TestDiffFieldsChangedPreservesLegacyServiceBindingPolicy(t *testing.T) {
 	}
 	if got := serviceBindingPolicyForExistingWorkload(workload, app.Manifest.ServiceBindingPolicy); got != api.ServiceBindingPolicyAccount {
 		t.Fatalf("legacy policy = %q, want account", got)
+	}
+}
+
+func TestDiffFieldsChangedDetectsHTTPSFirstTransportAndPreservesOmittedMode(t *testing.T) {
+	workload := reposcan.Workload{
+		Name:                    "api",
+		DependsOn:               []string{"db"},
+		ServiceBindingPolicy:    reposcan.ServiceBindingPolicyDeclared,
+		ServiceBindingTransport: reposcan.ServiceBindingTransportHTTPS,
+	}
+	app := state.App{
+		WorkloadName:  "api",
+		WorkloadClass: state.WorkloadClassHTTP,
+		Manifest: state.AppManifest{
+			ServiceBindings:      []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_DB_URL", Service: "db"}},
+			ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+			Env: map[string]string{
+				"GREGALE_SERVICE_DB_URL":       "http://db.svc.gregale:10080",
+				"GREGALE_SERVICE_DB_HTTPS_URL": "https://db.internal",
+			},
+		},
+	}
+	got := diffFieldsChanged(app, workload, "", map[string]struct{}{"api": {}, "db": {}})
+	want := []string{"service_env", "service_binding_transport"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("HTTPS transport changes = %v, want %v", got, want)
+	}
+
+	app.Manifest.ServiceBindingTransport = api.ServiceBindingTransportHTTPS
+	app.Manifest.Env["GREGALE_SERVICE_DB_URL"] = "https://db.internal"
+	workload.ServiceBindingTransport = "" // omitted source preserves an opted-in existing app
+	if got := diffFieldsChanged(app, workload, "", map[string]struct{}{"api": {}, "db": {}}); len(got) != 0 {
+		t.Fatalf("omitted transport changed an existing HTTPS app: %v", got)
 	}
 }
 

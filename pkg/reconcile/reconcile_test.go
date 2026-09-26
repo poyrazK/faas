@@ -932,6 +932,22 @@ func TestReconcile_DraftAppPersistsServiceBindingPolicy(t *testing.T) {
 	}
 }
 
+func TestReconcile_DraftAppPersistsHTTPSFirstBindingTransport(t *testing.T) {
+	_, proj := seedProject(t, newFakeStore(), state.ProjectScanSourceCompose, "main")
+	got := workloadToDraftApp(proj, reposcan.Workload{
+		Name:                    "frontend",
+		DependsOn:               []string{"billing"},
+		ServiceBindingTransport: reposcan.ServiceBindingTransportHTTPS,
+	}, "", api.PlanFree, map[string]struct{}{"billing": {}})
+	if got.Manifest.ServiceBindingTransport != api.ServiceBindingTransportHTTPS {
+		t.Fatalf("service binding transport = %q, want https", got.Manifest.ServiceBindingTransport)
+	}
+	if got.Manifest.Env["GREGALE_SERVICE_BILLING_URL"] != "https://billing.internal" ||
+		got.Manifest.Env["GREGALE_SERVICE_BILLING_HTTPS_URL"] != "https://billing.internal" {
+		t.Fatalf("HTTPS-first service env = %#v", got.Manifest.Env)
+	}
+}
+
 func TestReconcile_NewProjectBindingPolicyDefaultsDeclared(t *testing.T) {
 	got := workloadToDraftApp(state.Project{}, reposcan.Workload{Name: "frontend"}, "", api.PlanFree)
 	if got.Manifest.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {

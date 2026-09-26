@@ -273,7 +273,8 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if len(available) > 0 {
 		serviceNames = available[0]
 	}
-	if !serviceEnvEqual(a.Manifest.Env, serviceEnvForWorkloadWithAvailable(nil, w, serviceNames)) {
+	transport := serviceBindingTransportForExistingWorkload(w, a.Manifest.ServiceBindingTransport)
+	if !serviceEnvEqual(a.Manifest.Env, serviceEnvForWorkloadWithTransport(nil, w, serviceNames, transport)) {
 		changed = append(changed, "service_env")
 	}
 	if !serviceBindingsEqual(a.Manifest.ServiceBindings, serviceBindingsForWorkloadWithAvailable(w, serviceNames)) {
@@ -281,6 +282,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	}
 	if a.Manifest.EffectiveServiceBindingPolicy() != serviceBindingPolicyForExistingWorkload(w, a.Manifest.ServiceBindingPolicy) {
 		changed = append(changed, "service_binding_policy")
+	}
+	if a.Manifest.EffectiveServiceBindingTransport() != transport.Effective() {
+		changed = append(changed, "service_binding_transport")
 	}
 	if a.Manifest.EffectivePreviewServiceCallsPolicy() != previewServiceCallsPolicyForWorkload(w) {
 		changed = append(changed, "preview_service_calls_policy")

@@ -548,6 +548,7 @@ var schemaSpecOnly = map[string]bool{
 	"EnvDiffKind":               true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
 	"ResourceProfile":           true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
 	"ServiceBindingPolicy":      true, // Typed-string enum in pkg/api/service_bindings.go; the schema is still part of the wire contract.
+	"ServiceBindingTransport":   true, // Typed-string enum in pkg/api/service_bindings.go; the schema is part of the binding transport wire contract.
 	"PreviewServiceCallsPolicy": true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
 }
 

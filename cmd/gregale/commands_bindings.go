@@ -40,15 +40,16 @@ func managedPostgresUnavailable(err error) bool {
 }
 
 type appBindingInventoryItem struct {
-	Type     string `json:"type"`
-	Name     string `json:"name"`
-	Binding  string `json:"binding"`
-	HTTPURL  string `json:"http_url,omitempty"`
-	HTTPSEnv string `json:"https_env,omitempty"`
-	HTTPSURL string `json:"https_url,omitempty"`
-	Scope    string `json:"scope"`
-	Access   string `json:"access"`
-	State    string `json:"state"`
+	Type      string `json:"type"`
+	Name      string `json:"name"`
+	Binding   string `json:"binding"`
+	HTTPURL   string `json:"http_url,omitempty"`
+	HTTPSEnv  string `json:"https_env,omitempty"`
+	HTTPSURL  string `json:"https_url,omitempty"`
+	Transport string `json:"transport,omitempty"`
+	Scope     string `json:"scope"`
+	Access    string `json:"access"`
+	State     string `json:"state"`
 }
 
 type appBindingInventoryClient interface {
@@ -103,15 +104,16 @@ func collectAppBindingInventory(ctx context.Context, client appBindingInventoryC
 	}
 	for _, binding := range app.ServiceBindings {
 		inventory.Bindings = append(inventory.Bindings, appBindingInventoryItem{
-			Type:     bindingTypeService,
-			Name:     binding.Service,
-			Binding:  binding.Binding,
-			HTTPURL:  fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, api.ServiceBindingPort),
-			HTTPSEnv: api.ServiceBindingHTTPSEnvKey(binding.Service),
-			HTTPSURL: fmt.Sprintf("https://%s.internal", binding.Service),
-			Scope:    "app",
-			Access:   "invoke",
-			State:    serviceBindingState,
+			Type:      bindingTypeService,
+			Name:      binding.Service,
+			Binding:   binding.Binding,
+			HTTPURL:   fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, api.ServiceBindingPort),
+			HTTPSEnv:  api.ServiceBindingHTTPSEnvKey(binding.Service),
+			HTTPSURL:  fmt.Sprintf("https://%s.internal", binding.Service),
+			Transport: string(app.ServiceBindingTransport.Effective()),
+			Scope:     "app",
+			Access:    "invoke",
+			State:     serviceBindingState,
 		})
 	}
 
@@ -215,12 +217,13 @@ func renderAppBindingInventory(inventory appBindingInventory) {
 		return
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "TYPE\tNAME\tBINDING / HTTP ENV\tHTTP URL\tHTTPS ENV\tHTTPS URL\tSCOPE\tACCESS\tSTATE")
+	_, _ = fmt.Fprintln(tw, "TYPE\tNAME\tBINDING ENV\tTRANSPORT\tHTTP URL\tHTTPS ENV\tHTTPS URL\tSCOPE\tACCESS\tSTATE")
 	for _, binding := range inventory.Bindings {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			binding.Type,
 			humanBindingValue(binding.Name),
 			humanBindingValue(binding.Binding),
+			humanBindingValue(binding.Transport),
 			humanBindingValue(binding.HTTPURL),
 			humanBindingValue(binding.HTTPSEnv),
 			humanBindingValue(binding.HTTPSURL),

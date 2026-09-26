@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
@@ -25,13 +26,17 @@ export type CreateAppRequest = {
    */
   allowed_service_callers?: Array<string>;
   /**
-   * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including an additive HTTPS canary variable. Targets may be declared before they exist. Omit or [] for no bindings.
+   * Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first canonical URL. Targets may be declared before they exist. Omit or [] for no bindings.
    */
   service_binding_targets?: Array<string>;
   /**
    * Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only service_binding_targets.
    */
   service_binding_policy?: 'account' | 'declared';
+  /**
+   * Standalone canonical URL scheme. Omit to preserve the legacy HTTP contract; choose https to make GREGALE_SERVICE_<NAME>_URL use https://<service>.internal.
+   */
+  service_binding_transport?: ServiceBindingTransport;
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
   ram_mb?: number;
   /**

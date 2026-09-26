@@ -1425,6 +1425,7 @@ from .send_app_message_request_data_content_type import SendAppMessageRequestDat
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
 from .service_binding_policy import ServiceBindingPolicy
+from .service_binding_transport import ServiceBindingTransport
 from .service_replicas import ServiceReplicas
 from .service_rollout_handoff_response import ServiceRolloutHandoffResponse
 from .service_rollout_handoff_response_action import ServiceRolloutHandoffResponseAction
@@ -1543,6 +1544,13 @@ from .update_app_request_restart_policy_type_3_type_1 import UpdateAppRequestRes
 from .update_app_request_service_binding_policy_type_1 import UpdateAppRequestServiceBindingPolicyType1
 from .update_app_request_service_binding_policy_type_2_type_1 import UpdateAppRequestServiceBindingPolicyType2Type1
 from .update_app_request_service_binding_policy_type_3_type_1 import UpdateAppRequestServiceBindingPolicyType3Type1
+from .update_app_request_service_binding_transport_type_1 import UpdateAppRequestServiceBindingTransportType1
+from .update_app_request_service_binding_transport_type_2_type_1 import (
+    UpdateAppRequestServiceBindingTransportType2Type1,
+)
+from .update_app_request_service_binding_transport_type_3_type_1 import (
+    UpdateAppRequestServiceBindingTransportType3Type1,
+)
 from .update_app_request_visibility_type_1 import UpdateAppRequestVisibilityType1
 from .update_app_request_visibility_type_2_type_1 import UpdateAppRequestVisibilityType2Type1
 from .update_app_request_visibility_type_3_type_1 import UpdateAppRequestVisibilityType3Type1
@@ -3024,6 +3032,7 @@ __all__ = (
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
     "ServiceBindingPolicy",
+    "ServiceBindingTransport",
     "ServiceReplicas",
     "ServiceRolloutHandoffResponse",
     "ServiceRolloutHandoffResponseAction",
@@ -3142,6 +3151,9 @@ __all__ = (
     "UpdateAppRequestServiceBindingPolicyType1",
     "UpdateAppRequestServiceBindingPolicyType2Type1",
     "UpdateAppRequestServiceBindingPolicyType3Type1",
+    "UpdateAppRequestServiceBindingTransportType1",
+    "UpdateAppRequestServiceBindingTransportType2Type1",
+    "UpdateAppRequestServiceBindingTransportType3Type1",
     "UpdateAppRequestVisibilityType1",
     "UpdateAppRequestVisibilityType2Type1",
     "UpdateAppRequestVisibilityType3Type1",
