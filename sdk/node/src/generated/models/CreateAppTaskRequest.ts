@@ -6,6 +6,8 @@
  * One manual command to execute against the app's live deployment.
  * `command_shell=false` executes argv directly. Shell mode requires one
  * command string and is explicit so clients preserve quoting semantics.
+ * `__gregale_service_binding_probe_v1__ <service>` is reserved for the
+ * Gregale HTTPS service-binding canary and is handled by guest-init.
  *
  */
 export type CreateAppTaskRequest = {

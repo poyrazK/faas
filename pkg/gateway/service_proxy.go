@@ -421,6 +421,17 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// impersonate net.Hijacker.
 		dispatchWriter = w
 	}
+	probe := isServiceBindingProbeRequest(r, targetPath, alias)
+	if probe {
+		dependencySpan.SetAttributes(attribute.Bool("gregale.service.probe", true))
+	}
+	setProbeStage := func(stage string) {
+		if probe {
+			dispatchWriter.Header().Set(api.ServiceBindingProbeResponseHeader, api.ServiceBindingProbeVersion)
+			dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, stage)
+		}
+	}
+	setProbeStage("identity")
 	defer func() {
 		status := traceWriter.status
 		if status == 0 {
@@ -476,6 +487,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
+	setProbeStage("binding")
 	if alias {
 		if p.allowAlias == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorizer is not wired")
@@ -492,6 +504,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	setProbeStage("discovery")
 	target, err := p.resolveTarget(dependencyCtx, caller, service)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyNotFound) {
@@ -503,6 +516,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dependencyHealthTarget = target
+	setProbeStage("authorization")
 	if p.authorize == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
@@ -554,6 +568,27 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// route this platform-owned span to apid without a customer API key.
 	if callerInfo.AccountID != "" {
 		dependencySpan.SetAttributes(attribute.String(retainedSpanAccountIDAttribute, callerInfo.AccountID))
+	}
+	setProbeStage("routing")
+	if probe {
+		if p.provider == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
+			return
+		}
+		endpoints, err := p.endpoints(dependencyCtx, target.AppID)
+		if err != nil {
+			p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
+			return
+		}
+		if len(endpoints) == 0 {
+			p.metrics.IncServiceCall(ServiceCallNoReplica)
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service has no healthy replicas; probe did not wake the target")
+			return
+		}
+		dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, "complete")
+		dispatchWriter.WriteHeader(http.StatusNoContent)
+		return
 	}
 	if p.provider == nil || p.forward == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy transport is not wired")
@@ -642,6 +677,14 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+}
+
+func isServiceBindingProbeRequest(r *http.Request, targetPath string, alias bool) bool {
+	if r == nil || !alias || r.Method != http.MethodHead || targetPath != api.ServiceBindingProbePath {
+		return false
+	}
+	values := r.Header.Values(api.ServiceBindingProbeRequestHeader)
+	return len(values) == 1 && values[0] == api.ServiceBindingProbeVersion
 }
 
 // serviceDeploymentOverrideFromRequest rejects ambiguous headers before the

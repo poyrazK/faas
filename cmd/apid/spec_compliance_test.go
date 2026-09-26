@@ -311,6 +311,10 @@ var dtoExclude = map[string]bool{
 	"ResolvedCreateAppTaskRequest":    true, // validated state admission input, not a public DTO
 	"RecoverDeploymentRolloutRequest": true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
 	"AlertRuleRow":                    true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	// The canary report is emitted through app-task stdout for the CLI to
+	// decode; these structs are not standalone HTTP request/response DTOs.
+	"ServiceBindingProbeCheck":  true,
+	"ServiceBindingProbeReport": true,
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
 	// pkg/api ↔ pkg/state seam. The wire DTOs are OrgResponse /
 	// OrgMemberResponse / OrgInvitationResponse; the *Row types

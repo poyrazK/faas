@@ -182,6 +182,9 @@ func (c cliCommand) completionSlugWord() int {
 type cliSub struct {
 	Name  string
 	Short string
+	// Positionals are documented in the leaf synopsis for verbs whose
+	// argument contract is narrower than the parent command's.
+	Positionals []string
 	// Flags enumerates the per-subcommand flag set. Req marks the
 	// required flags; ClosedSet marks the closed-enum values
 	// (plan names, metric enums, etc.) — completion backends
@@ -302,8 +305,17 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "List app bindings and HTTP/HTTPS service endpoints (service state is authorization, not endpoint health)",
+		Short:       "List app bindings or verify a bound HTTPS service from the caller guest",
 		Positionals: []string{"<app>"},
+		Subcommands: []cliSub{{
+			Name:        "verify",
+			Short:       "Check DNS, TLS, authorization, and live routing for a bound service",
+			Positionals: []string{"<app>", "<service>"},
+			Flags: []cliFlag{
+				{Name: "poll-interval", Short: "status polling interval while the canary runs", Value: "D"},
+				{Name: "wait-timeout", Short: "maximum time to wait for the canary task", Value: "D"},
+			},
+		}},
 	},
 	{
 		Name:    "capabilities",
