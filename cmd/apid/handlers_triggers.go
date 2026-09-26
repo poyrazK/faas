@@ -406,13 +406,13 @@ func enforceCreateTriggerCaps(req *api.CreateTriggerRequest, plan api.Plan, limi
 		}
 	}
 	// PR #993 / issue #757 review MED-4: tls.skip_verify=true on
-	// a Kafka trigger is gated by the plan's TLSSkipVerifyAllowed
+	// a Kafka, NATS, or Redis trigger is gated by the plan's TLSSkipVerifyAllowed
 	// flag (Hobby=false, Pro=true, Scale=true). Pre-MED-4 the
 	// field went straight to the broker — a Hobby customer
 	// could silently weaken hostname + cert verification on the
 	// production broker.
 	if !plan.TLSSkipVerifyAllowed() {
-		skip, err := kafkaSkipVerifyRequested(req.Kind, req.Config)
+		skip, err := triggerSkipVerifyRequested(req.Kind, req.Config)
 		if err != nil {
 			return batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy,
 				api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "invalid trigger config: "+err.Error())
@@ -1446,6 +1446,31 @@ func kafkaSkipVerifyRequested(kind api.TriggerKind, raw json.RawMessage) (bool, 
 		return false, nil
 	}
 	return cfg.TLS.SkipVerify, nil
+}
+
+func triggerSkipVerifyRequested(kind api.TriggerKind, raw json.RawMessage) (bool, error) {
+	switch kind {
+	case api.TriggerKindKafka:
+		return kafkaSkipVerifyRequested(kind, raw)
+	case api.TriggerKindNATS, api.TriggerKindRedisStreams:
+		if len(raw) == 0 {
+			return false, nil
+		}
+		var cfg struct {
+			TLS *struct {
+				SkipVerify bool `json:"skip_verify"`
+			} `json:"tls"`
+		}
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return false, err
+		}
+		if cfg.TLS == nil {
+			return false, nil
+		}
+		return cfg.TLS.SkipVerify, nil
+	default:
+		return false, nil
+	}
 }
 
 // aggregateTriggerMetrics walks trigger_records for the trigger

@@ -30,6 +30,8 @@ package sched
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,6 +42,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/nats-io/nkeys"
 
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -72,15 +75,38 @@ type natsBroker struct {
 	js   jetstream.JetStream
 }
 
-// NewNATSBroker connects to the NATS cluster URL pinned in the
-// trigger config (URL field on the trigger.Config blob). Returns
-// a broker with an open connection + JetStream context.
-//
-// Connection lifecycle: caller MUST invoke broker.Close() at
-// schedd shutdown so in-flight Fetch goroutines unwind and the
-// TCP socket closes.
-func NewNATSBroker(rawURL string) (*natsBroker, error) {
-	parsed, err := url.Parse(rawURL)
+// buildNATSTLSConfig assembles a *tls.Config from natsTLSConfig.
+func buildNATSTLSConfig(t *natsTLSConfig) (*tls.Config, error) {
+	tlsCfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+	if t == nil {
+		return tlsCfg, nil
+	}
+	if t.CACert != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(t.CACert)) {
+			return nil, errors.New("nats_poller: malformed CA certificate PEM")
+		}
+		tlsCfg.RootCAs = pool
+	}
+	if t.ClientCert != "" && t.ClientKey != "" {
+		cert, err := tls.X509KeyPair([]byte(t.ClientCert), []byte(t.ClientKey))
+		if err != nil {
+			return nil, fmt.Errorf("nats_poller: client cert/key: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+	if t.SkipVerify {
+		tlsCfg.InsecureSkipVerify = true
+	}
+	return tlsCfg, nil
+}
+
+// newNATSBrokerWithConfig connects to the NATS cluster URL with full auth
+// (user/pass, token, credentials, nkey) and TLS configuration.
+func newNATSBrokerWithConfig(cfg natsConfig) (*natsBroker, error) {
+	parsed, err := url.Parse(cfg.URL)
 	if err != nil || (parsed.Scheme != "nats" && parsed.Scheme != "tls") || parsed.Host == "" {
 		return nil, fmt.Errorf("nats_broker: invalid server URL")
 	}
@@ -100,7 +126,36 @@ func NewNATSBroker(rawURL string) (*natsBroker, error) {
 		pass, _ := parsed.User.Password()
 		opts = append(opts, nats.UserInfo(user, pass))
 	}
-	conn, err := nats.Connect(rawURL, opts...)
+	if cfg.Username != "" || cfg.Password != "" {
+		opts = append(opts, nats.UserInfo(cfg.Username, cfg.Password))
+	}
+	if cfg.Token != "" {
+		opts = append(opts, nats.Token(cfg.Token))
+	}
+	if cfg.Credentials != "" {
+		opts = append(opts, nats.UserCredentialBytes([]byte(cfg.Credentials)))
+	}
+	if cfg.NKey != "" {
+		kp, err := nkeys.FromSeed([]byte(cfg.NKey))
+		if err != nil {
+			return nil, fmt.Errorf("nats_broker: invalid nkey seed: %w", err)
+		}
+		pubKey, err := kp.PublicKey()
+		if err != nil {
+			return nil, fmt.Errorf("nats_broker: nkey public key: %w", err)
+		}
+		opts = append(opts, nats.Nkey(pubKey, func(nonce []byte) ([]byte, error) {
+			return kp.Sign(nonce)
+		}))
+	}
+	if parsed.Scheme == "tls" || cfg.TLS != nil {
+		tlsCfg, err := buildNATSTLSConfig(cfg.TLS)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, nats.Secure(tlsCfg))
+	}
+	conn, err := nats.Connect(cfg.URL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("nats_broker: connect %s: %w", parsed.Redacted(), err)
 	}
@@ -110,6 +165,13 @@ func NewNATSBroker(rawURL string) (*natsBroker, error) {
 		return nil, fmt.Errorf("nats_broker: jetstream context: %w", err)
 	}
 	return &natsBroker{conn: conn, js: js}, nil
+}
+
+// NewNATSBroker connects to the NATS cluster URL pinned in the
+// trigger config (URL field on the trigger.Config blob). Returns
+// a broker with an open connection + JetStream context.
+func NewNATSBroker(rawURL string) (*natsBroker, error) {
+	return newNATSBrokerWithConfig(natsConfig{URL: rawURL})
 }
 
 // Close drains the connection. Safe to call multiple times.
@@ -131,12 +193,13 @@ func (b *natsBroker) Close() error {
 // batchMax is the broker-natural default (100). The dispatcher
 // truncates-or-extends as needed to honour the per-trigger cap.
 type natsPoller struct {
-	broker   *natsBroker
-	consumer jetstream.Consumer
-	stream   string
-	subject  string
-	durable  string
-	batchMax int
+	broker      *natsBroker
+	ownedBroker *natsBroker
+	consumer    jetstream.Consumer
+	stream      string
+	subject     string
+	durable     string
+	batchMax    int
 
 	mu       sync.Mutex
 	inFlight map[string]natsMsg
@@ -160,22 +223,41 @@ type natsMsg interface {
 	TermWithReason(string) error
 }
 
+type natsTLSConfig struct {
+	CACert     string `json:"ca_cert,omitempty"`
+	ClientCert string `json:"client_cert,omitempty"`
+	ClientKey  string `json:"client_key,omitempty"`
+	SkipVerify bool   `json:"skip_verify,omitempty"`
+}
+
 // natsConfig is the per-kind config blob decoded from
 // trigger.Config json.RawMessage.
 //
 // Schema (validated in pkg/gregalemanifest.validateKindConfig):
 //
 //	{
-//	  "url":     "nats://broker:4222",
-//	  "stream":  "events",
-//	  "subject": "events.>",
-//	  "durable": "faas-<account>-<slug>"
+//	  "url":         "nats://broker:4222",
+//	  "stream":      "events",
+//	  "subject":     "events.>",
+//	  "durable":     "faas-<account>-<slug>",
+//	  "token":       "secret-token",
+//	  "username":    "user",
+//	  "password":    "pwd",
+//	  "credentials": "---JWT...",
+//	  "nkey":        "SUA...",
+//	  "tls":         { ... }
 //	}
 type natsConfig struct {
-	URL     string `json:"url"`
-	Stream  string `json:"stream"`
-	Subject string `json:"subject"`
-	Durable string `json:"durable,omitempty"`
+	URL         string         `json:"url"`
+	Stream      string         `json:"stream"`
+	Subject     string         `json:"subject"`
+	Durable     string         `json:"durable,omitempty"`
+	Username    string         `json:"username,omitempty"`
+	Password    string         `json:"password,omitempty"`
+	Token       string         `json:"token,omitempty"`
+	NKey        string         `json:"nkey,omitempty"`
+	Credentials string         `json:"credentials,omitempty"`
+	TLS         *natsTLSConfig `json:"tls,omitempty"`
 }
 
 func decodeNATSConfig(t sqlc.Trigger) (natsConfig, error) {
@@ -368,13 +450,15 @@ func (n *natsPoller) Nack(_ context.Context, _ sqlc.Trigger, ids []string, reaso
 	return firstErr
 }
 
-// Close releases the consumer handle. The shared nats.Conn stays
-// open (broker.Close owns it).
+// Close releases the consumer handle and any owned broker connection.
 func (n *natsPoller) Close() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	for k := range n.inFlight {
 		delete(n.inFlight, k)
+	}
+	if n.ownedBroker != nil {
+		return n.ownedBroker.Close()
 	}
 	return nil
 }
@@ -407,11 +491,31 @@ func jsonStdUnmarshal(b []byte, v any) error {
 
 func init() {
 	registerPoller("nats", func(t sqlc.Trigger) (triggerSource, error) {
-		broker := getCurrentNATSBroker()
-		if broker == nil {
-			return nil, fmt.Errorf("nats_poller: no broker registered")
+		cfg, err := decodeNATSConfig(t)
+		if err != nil {
+			return nil, err
 		}
-		return newNATSPoller(broker, t)
+		broker := getCurrentNATSBroker()
+		var ownedBroker *natsBroker
+		if broker == nil || cfg.URL != "" || cfg.Token != "" || cfg.Username != "" || cfg.Password != "" || cfg.Credentials != "" || cfg.NKey != "" || cfg.TLS != nil {
+			b, err := newNATSBrokerWithConfig(cfg)
+			if err != nil {
+				return nil, err
+			}
+			broker = b
+			ownedBroker = b
+		}
+		p, err := newNATSPoller(broker, t)
+		if err != nil {
+			if ownedBroker != nil {
+				_ = ownedBroker.Close()
+			}
+			return nil, err
+		}
+		if np, ok := p.(*natsPoller); ok {
+			np.ownedBroker = ownedBroker
+		}
+		return p, nil
 	})
 }
 

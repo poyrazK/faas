@@ -113,6 +113,76 @@ func TestKafkaSkipVerifyRequested(t *testing.T) {
 	}
 }
 
+func TestTriggerSkipVerifyRequested(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    api.TriggerKind
+		raw     string
+		want    bool
+		wantErr bool
+	}{
+		{
+			name: "kafka_skip_verify_true",
+			kind: api.TriggerKindKafka,
+			raw:  `{"brokers":["b:9092"],"tls":{"skip_verify":true}}`,
+			want: true,
+		},
+		{
+			name: "nats_skip_verify_true",
+			kind: api.TriggerKindNATS,
+			raw:  `{"url":"tls://nats:4222","tls":{"skip_verify":true}}`,
+			want: true,
+		},
+		{
+			name: "nats_skip_verify_false",
+			kind: api.TriggerKindNATS,
+			raw:  `{"url":"tls://nats:4222","tls":{"skip_verify":false}}`,
+			want: false,
+		},
+		{
+			name: "redis_skip_verify_true",
+			kind: api.TriggerKindRedisStreams,
+			raw:  `{"addr":"redis:6379","tls":{"skip_verify":true}}`,
+			want: true,
+		},
+		{
+			name: "redis_no_tls",
+			kind: api.TriggerKindRedisStreams,
+			raw:  `{"addr":"redis:6379"}`,
+			want: false,
+		},
+		{
+			name: "queue_ignored",
+			kind: api.TriggerKindQueue,
+			raw:  `{"url":"q","tls":{"skip_verify":true}}`,
+			want: false,
+		},
+		{
+			name:    "nats_malformed_returns_error",
+			kind:    api.TriggerKindNATS,
+			raw:     `{malformed`,
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := triggerSkipVerifyRequested(tc.kind, json.RawMessage(tc.raw))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("err = nil, want parse error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if got != tc.want {
+				t.Errorf("triggerSkipVerifyRequested = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestErrTriggerBatchWindowTooLarge_WireShape pins the error
 // envelope that the CLI / SDK parse. Body must carry the plan cap
 // and the observed value so the user knows what to lower the

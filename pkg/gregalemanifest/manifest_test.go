@@ -700,6 +700,108 @@ func TestValidate_RedisStreams_Happy(t *testing.T) {
 	}
 }
 
+func TestValidate_NATS_AuthAndTLS_Happy(t *testing.T) {
+	m := &Manifest{Triggers: []Trigger{{
+		Kind: TriggerKindNATS, App: "my-api", Slug: "telemetry",
+		Config: map[string]any{
+			"url":      "tls://nats.example.com:4222",
+			"stream":   "events",
+			"subject":  "events.>",
+			"durable":  "faas-telemetry",
+			"token":    "my-secret-token",
+			"username": "user",
+			"password": "pwd",
+			"tls": map[string]any{
+				"skip_verify": true,
+				"ca_cert":     "---CA---",
+			},
+		},
+	}}}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+}
+
+func TestValidate_NATS_HalfWiredMTLS(t *testing.T) {
+	m := &Manifest{Triggers: []Trigger{{
+		Kind: TriggerKindNATS, App: "my-api", Slug: "telemetry",
+		Config: map[string]any{
+			"url":     "tls://nats.example.com:4222",
+			"stream":  "events",
+			"subject": "events.>",
+			"durable": "faas-telemetry",
+			"tls": map[string]any{
+				"client_cert": "cert",
+			},
+		},
+	}}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "requires both client_cert and client_key") {
+		t.Fatalf("err = %v, want half-wired mTLS error", err)
+	}
+}
+
+func TestValidate_RedisStreams_URLAndDB_Happy(t *testing.T) {
+	m := &Manifest{Triggers: []Trigger{{
+		Kind: TriggerKindRedisStreams, App: "my-api", Slug: "cache-invalids",
+		Config: map[string]any{
+			"url":    "rediss://default:pwd@upstash.io:6379/1",
+			"stream": "cacheinvalids",
+			"group":  "faas-cache",
+			"db":     1,
+			"tls": map[string]any{
+				"skip_verify": true,
+			},
+		},
+	}}}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+}
+
+func TestValidate_RedisStreams_BadURL(t *testing.T) {
+	m := &Manifest{Triggers: []Trigger{{
+		Kind: TriggerKindRedisStreams, App: "my-api", Slug: "cache-invalids",
+		Config: map[string]any{
+			"url":    "http://redis.io:6379",
+			"stream": "cacheinvalids",
+			"group":  "faas-cache",
+		},
+	}}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "redis:// or rediss://") {
+		t.Fatalf("err = %v, want bad redis scheme error", err)
+	}
+}
+
+func TestValidate_RedisStreams_MissingAddrAndURL(t *testing.T) {
+	m := &Manifest{Triggers: []Trigger{{
+		Kind: TriggerKindRedisStreams, App: "my-api", Slug: "cache-invalids",
+		Config: map[string]any{
+			"stream": "cacheinvalids",
+			"group":  "faas-cache",
+		},
+	}}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "requires non-empty addr or url") {
+		t.Fatalf("err = %v, want missing addr or url error", err)
+	}
+}
+
+func TestValidate_RedisStreams_HalfWiredMTLS(t *testing.T) {
+	m := &Manifest{Triggers: []Trigger{{
+		Kind: TriggerKindRedisStreams, App: "my-api", Slug: "cache-invalids",
+		Config: map[string]any{
+			"addr":   "redis:6379",
+			"stream": "cacheinvalids",
+			"group":  "faas-cache",
+			"tls": map[string]any{
+				"client_cert": "cert",
+			},
+		},
+	}}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "requires both client_cert and client_key") {
+		t.Fatalf("err = %v, want half-wired mTLS error", err)
+	}
+}
+
 func TestValidate_SQSCompat_Happy(t *testing.T) {
 	m := &Manifest{Triggers: []Trigger{{
 		Kind: TriggerKindSQSCompat, App: "my-api", Slug: "ext-jobs",

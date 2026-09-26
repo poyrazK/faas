@@ -575,10 +575,55 @@ type KafkaConfig struct {
 // name; Subject is the filter pattern (`events.>`); Durable is the
 // durable consumer name.
 type NATSConfig struct {
-	URL     string `json:"url"`
-	Stream  string `json:"stream"`
-	Subject string `json:"subject"`
-	Durable string `json:"durable"`
+	URL         string     `json:"url"`
+	Stream      string     `json:"stream"`
+	Subject     string     `json:"subject"`
+	Durable     string     `json:"durable,omitempty"`
+	Username    string     `json:"username,omitempty"    yaml:"username,omitempty"`
+	Password    string     `json:"password,omitempty"    yaml:"password,omitempty"`
+	Token       string     `json:"token,omitempty"       yaml:"token,omitempty"`
+	NKey        string     `json:"nkey,omitempty"        yaml:"nkey,omitempty"`
+	Credentials string     `json:"credentials,omitempty" yaml:"credentials,omitempty"`
+	TLS         *TLSConfig `json:"tls,omitempty"         yaml:"tls,omitempty"`
+}
+
+// RedisTLSConfig supports either a boolean (tls: true/false) or a structured TLSConfig.
+type RedisTLSConfig struct {
+	Enabled bool
+	Config  *TLSConfig
+}
+
+func (r *RedisTLSConfig) UnmarshalJSON(b []byte) error {
+	trimmed := bytes.TrimSpace(b)
+	if bytes.Equal(trimmed, []byte("true")) {
+		r.Enabled = true
+		return nil
+	}
+	if bytes.Equal(trimmed, []byte("false")) || bytes.Equal(trimmed, []byte("null")) {
+		r.Enabled = false
+		return nil
+	}
+	var cfg TLSConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return err
+	}
+	r.Enabled = true
+	r.Config = &cfg
+	return nil
+}
+
+func (r RedisTLSConfig) MarshalJSON() ([]byte, error) {
+	if r.Config != nil {
+		return json.Marshal(r.Config)
+	}
+	if r.Enabled {
+		return []byte("true"), nil
+	}
+	return []byte("false"), nil
+}
+
+func (r *RedisTLSConfig) IsEnabled() bool {
+	return r != nil && r.Enabled
 }
 
 // RedisStreamsConfig is the per-kind config for kind=redis_streams
@@ -586,13 +631,15 @@ type NATSConfig struct {
 // name; Group is the consumer group; Consumer is the per-instance
 // consumer name (default the trigger slug).
 type RedisStreamsConfig struct {
-	Addr     string `json:"addr"`
-	Stream   string `json:"stream"`
-	Group    string `json:"group"`
-	Consumer string `json:"consumer,omitempty"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
-	TLS      bool   `json:"tls,omitempty"`
+	URL      string          `json:"url,omitempty"      yaml:"url,omitempty"`
+	Addr     string          `json:"addr,omitempty"     yaml:"addr,omitempty"`
+	Stream   string          `json:"stream"`
+	Group    string          `json:"group"`
+	Consumer string          `json:"consumer,omitempty"`
+	Username string          `json:"username,omitempty"`
+	Password string          `json:"password,omitempty"`
+	DB       int             `json:"db,omitempty"       yaml:"db,omitempty"`
+	TLS      *RedisTLSConfig `json:"tls,omitempty"      yaml:"tls,omitempty"`
 }
 
 // SQSCompatConfig is the per-kind config for kind=sqs_compat (issue
@@ -1842,20 +1889,37 @@ func (t Trigger) validateKindConfig(idx int) error {
 		if c.Durable == "" {
 			return fmt.Errorf("trigger[%d]: nats config requires non-empty durable", idx)
 		}
+		if err := validateTLSConfig(idx, "nats", c.TLS); err != nil {
+			return err
+		}
 		return nil
 	case TriggerKindRedisStreams:
 		var c RedisStreamsConfig
 		if err := decodeInto(t.Config, &c); err != nil {
 			return fmt.Errorf("trigger[%d]: bad redis_streams config: %w", idx, err)
 		}
-		if c.Addr == "" {
-			return fmt.Errorf("trigger[%d]: redis_streams config requires non-empty addr", idx)
+		if c.Addr == "" && c.URL == "" {
+			return fmt.Errorf("trigger[%d]: redis_streams config requires non-empty addr or url", idx)
+		}
+		if c.URL != "" {
+			u, err := url.Parse(c.URL)
+			if err != nil || (u.Scheme != "redis" && u.Scheme != "rediss") || u.Host == "" {
+				return fmt.Errorf("trigger[%d]: redis_streams url must be redis:// or rediss:// with a host (got %q)", idx, c.URL)
+			}
+		}
+		if c.DB < 0 {
+			return fmt.Errorf("trigger[%d]: redis_streams db %d cannot be negative", idx, c.DB)
 		}
 		if c.Stream == "" {
 			return fmt.Errorf("trigger[%d]: redis_streams config requires non-empty stream", idx)
 		}
 		if c.Group == "" {
 			return fmt.Errorf("trigger[%d]: redis_streams config requires non-empty group", idx)
+		}
+		if c.TLS != nil && c.TLS.Config != nil {
+			if err := validateTLSConfig(idx, "redis_streams", c.TLS.Config); err != nil {
+				return err
+			}
 		}
 		return nil
 	case TriggerKindSQSCompat:
@@ -1981,26 +2045,27 @@ func validManifestBucketPrefix(value string) bool {
 
 func isUpperAlpha(b byte) bool { return b >= 'A' && b <= 'Z' }
 
-// validateKafkaTLS enforces the closed shape on KafkaConfig.TLS
-// (ADR-118 / issue #757 §criterion 2). nil is the production
-// default ("platform CA bundle, no client cert, no skip-verify")
-// and is accepted silently.
+// validateTLSConfig enforces the closed shape on a trigger kind's TLS block.
+// nil is accepted silently (platform defaults).
 //
 // The half-wired mTLS pair rejection is the load-bearing check:
 // a customer who sets client_cert but forgets client_key (or
-// vice-versa) silently gets a 0-byte handshake with no error
-// from segmentio/kafka-go — only a hang at the first FetchMessage.
+// vice-versa) silently gets handshake errors or hangs.
 // Surfacing the typo at `gregale deploy` time turns that into a
 // typed error pointing at the half-wired field.
-func validateKafkaTLS(idx int, t *TLSConfig) error {
+func validateTLSConfig(idx int, kind string, t *TLSConfig) error {
 	if t == nil {
 		return nil
 	}
 	if (t.ClientCert == "") != (t.ClientKey == "") {
-		return fmt.Errorf("trigger[%d]: kafka tls requires both client_cert and client_key when mTLS is configured (got cert=%q, key-set=%t)",
-			idx, t.ClientCert, t.ClientKey != "")
+		return fmt.Errorf("trigger[%d]: %s tls requires both client_cert and client_key when mTLS is configured (got cert=%q, key-set=%t)",
+			idx, kind, t.ClientCert, t.ClientKey != "")
 	}
 	return nil
+}
+
+func validateKafkaTLS(idx int, t *TLSConfig) error {
+	return validateTLSConfig(idx, "kafka", t)
 }
 
 // validateKafkaSASL enforces the closed vocab on KafkaConfig.SASL
