@@ -13511,9 +13511,9 @@ func (s *PgStore) CountFailedDeploymentsSince(ctx context.Context, accountID, ap
 	return n, nil
 }
 
-// WasInvokedSuccessfullySince returns true iff at least one
-// successful (terminal state != 'failed') invocation exists for
-// (account, app) in the window. Used by the alert evaluator's
+// WasInvokedSuccessfullySince returns true iff the app served at least one
+// request with a non-5xx answer, or completed at least one durable
+// invocation, for (account, app) in the window. Used by the alert evaluator's
 // api_up metric case (issue #1233, ADR-123) — the binary reachability
 // signal. Returns false when the window is empty (cold start).
 //
@@ -13524,14 +13524,27 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 	if appID != "" {
 		appArg = appID
 	}
+	// Ordinary HTTP traffic never creates invocations rows — those are
+	// the durable async/cron/queue paths — so an app actively serving
+	// requests used to read as down and the "API is down" preset paged.
+	// A request that got a non-5xx answer counts as served. Only
+	// completed invocations count: pending, dead-lettered or cancelled
+	// ones are not evidence the app answered.
 	var exists bool
 	row := s.pool.QueryRow(ctx, `
 		select exists(
 			select 1 from invocations
 			 where account_id = $1
-			   and state <> 'failed'
+			   and state = 'completed'
 			   and created_at >= $2
 			   and ($3::uuid is null or app_id is not distinct from $3::uuid)
+			 limit 1)
+		    or exists(
+			select 1 from request_telemetry
+			 where account_id = $1
+			   and received_at >= $2
+			   and status < 500
+			   and ($3::uuid is null or app_id = $3::uuid)
 			 limit 1)`,
 		accountID, since.UTC(), appArg)
 	if err := row.Scan(&exists); err != nil {

@@ -20432,7 +20432,9 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 		if appID != "" && inv.AppID != appID {
 			continue
 		}
-		if inv.State == InvocationFailed {
+		// MemStore keeps no request telemetry; mirror PgStore's
+		// invocation half, which counts only completed invocations.
+		if inv.State != InvocationCompleted {
 			continue
 		}
 		if inv.CreatedAt.Before(since) {
