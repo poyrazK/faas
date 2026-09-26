@@ -203,6 +203,18 @@ func (s *server) listAppErrorRequests(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "list failed", "see request_id"))
 		return
 	}
+	if len(rows) == 0 && curRA != nil {
+		// A page boundary can land exactly on the last row: next_cursor
+		// is emitted whenever a page is full, so the follow-up request
+		// legitimately finds nothing. That is the end of the list, not a
+		// missing fingerprint — answering 404 made cursor walkers
+		// (ListAppErrorRequestsAll) fail on any multiple of the page size.
+		writeJSON(w, http.StatusOK, api.AppErrorRequestsResponse{
+			Fingerprint: fingerprint,
+			Requests:    []api.AppErrorRequestItem{},
+		})
+		return
+	}
 	if len(rows) == 0 {
 		// Drill-down over a purged fingerprint OR over a
 		// fingerprint that never existed for this slug. Both

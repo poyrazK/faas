@@ -2,12 +2,19 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/guest/runners/internal"
 	"github.com/onebox-faas/faas/guest/runners/internal/runnerparity"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // init installs the in-process framework-ready dial hook so the
@@ -106,5 +113,35 @@ func TestGoRunnerHandlerDefault(t *testing.T) {
 	}
 	if *handler != want {
 		t.Errorf("default --handler = %q, want %q", *handler, want)
+	}
+}
+
+// TestHandle_CrashedHandlerIsTerminalHandlerError drives the real runner
+// with a handler that exits non-zero, as a panicking Go handler does. The
+// runner must answer with the handler_error envelope gatewayd-internal
+// treats as terminal; a plain-text 500 made the durable queue re-run the
+// crashing handler.
+func TestHandle_CrashedHandlerIsTerminalHandlerError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "handler")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'panic: boom' >&2\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}"))
+	req.Header.Set(api.InvocationIDHeader, "inv-crash")
+	rec := httptest.NewRecorder()
+	handle(rec, req, path, internal.NewRunnerSignal("crash-test", time.Now()), 0, "")
+
+	var body struct {
+		Error        string `json:"error"`
+		InvocationID string `json:"invocation_id"`
+	}
+	if rec.Code != http.StatusInternalServerError || json.Unmarshal(rec.Body.Bytes(), &body) != nil {
+		t.Fatalf("status %d body %q, want a 500 JSON envelope", rec.Code, rec.Body.String())
+	}
+	if body.Error != "handler_error" || body.InvocationID != "inv-crash" {
+		t.Fatalf("body = %+v, want error=handler_error invocation_id=inv-crash", body)
+	}
+	if strings.Contains(rec.Body.String(), "boom") {
+		t.Fatalf("handler stderr leaked into the response: %q", rec.Body.String())
 	}
 }

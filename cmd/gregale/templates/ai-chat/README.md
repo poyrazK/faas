@@ -3,8 +3,11 @@
 A minimal port-8080 Node.js endpoint that proxies chat completions
 to either **OpenAI** or **Anthropic**. Pick a provider by setting
 exactly one of `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. The model
-defaults to `gpt-4o-mini` (OpenAI) or `claude-3-5-sonnet-latest`
-(Anthropic); both are overridable via env.
+defaults to `gpt-4o-mini` (OpenAI) or `claude-opus-5`
+(Anthropic); both are overridable via env. On Claude Opus 5 the
+endpoint opts into Anthropic's server-side refusal fallback
+(`fallbacks: "default"`), so a declined request is re-served by the
+recommended fallback model instead of returning an empty reply.
 
 This is a SCAFFOLD, not a production chat app — it exposes a single
 `POST /chat` endpoint that takes a `messages` array and returns the
@@ -61,7 +64,7 @@ Setting neither is rejected too — pick one.
 ```sh
 # Pick a specific model (defaults are sensible)
 gregale secrets set --app <slug> OPENAI_MODEL=gpt-4o
-gregale secrets set --app <slug> ANTHROPIC_MODEL=claude-3-opus-20240229
+gregale secrets set --app <slug> ANTHROPIC_MODEL=claude-sonnet-5
 
 # Prepend a system prompt to every conversation. Keep it short —
 # every byte costs tokens on every request.

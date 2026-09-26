@@ -1,39 +1,46 @@
 // cron-worker — Wave 0 PR-B stateless-contract template (function-handler
 // shape, per UX spec §8).
 //
-// Unlike app templates (express on :8080), this template exports a
-// single async handler(event, ctx) that the node22 runner invokes
-// directly. The CLI forces --runtime node22 --handler handler.handler
-// when deploying (commands2.go:298-300), so wiring is automatic.
+// Unlike app templates (express on :8080), this template is a function the
+// node22 runner invokes directly. It exports the Fetch API form
+// (`export default { fetch }`) because QStash signs the exact request bytes:
+// the event-handler form receives a JSON body already parsed into an object,
+// so the raw body a signature covers is not available there.
 //
-// This is a SCAFFOLD that demonstrates the Upstash QStash wiring:
-// the handler validates the QStash signature, logs the invocation,
-// and increments an Upstash Redis counter to demonstrate durable
-// progress across cold boots. QStash verifies the signature with
-// its signing key (different from the customer's secrets) — we
-// verify by recomputing HMAC-SHA256 over the raw body + the
-// `Upstash-Signature` header.
+// This is a SCAFFOLD that demonstrates the Upstash QStash wiring: the handler
+// verifies the QStash signature, logs the invocation, and increments an
+// Upstash Redis counter to demonstrate durable progress across cold boots.
+//
+// QStash signs every request with a JWT in the `Upstash-Signature` header:
+// HS256 over `<header>.<payload>` keyed by your QStash *signing key*, with
+// claims iss="Upstash", nbf/exp, and `body` = base64url(SHA-256(raw body)).
+// QStash rotates between a current and a next signing key, so both are
+// accepted. (The QSTASH_TOKEN API token only authenticates calls you make TO
+// QStash, e.g. creating the schedule; it does not sign deliveries.)
 //
 // Required env vars (set via `gregale secrets set --app <slug> ...`):
 //
-//	QSTASH_TOKEN             — QStash signing key (used to verify
-//	                          Upstash-Signature on incoming invokes).
-//	UPSTASH_REDIS_REST_URL   — Upstash Redis REST endpoint, e.g.
-//	                          https://<instance>.upstash.io
-//	UPSTASH_REDIS_REST_TOKEN — Upstash Redis REST token
+//	QSTASH_CURRENT_SIGNING_KEY — current QStash signing key
+//	QSTASH_NEXT_SIGNING_KEY    — next QStash signing key (rotation)
+//	UPSTASH_REDIS_REST_URL     — Upstash Redis REST endpoint, e.g.
+//	                             https://<instance>.upstash.io
+//	UPSTASH_REDIS_REST_TOKEN   — Upstash Redis REST token
 //
-// Fail-fast: the handler throws on the first invocation if any
-// required env var is missing. The runtime surfaces the error as
-// a 500 to QStash, which logs it; the customer's `gregale logs <slug>`
-// shows the actionable hint.
+// Fail-fast: the handler throws on the first invocation if any required env
+// var is missing. The runtime surfaces the error as a 500 to QStash, which
+// logs it; the customer's `gregale logs <slug>` shows the actionable hint.
 
 import crypto from "node:crypto";
 
 const REQUIRED_ENV = [
-  "QSTASH_TOKEN",
+  "QSTASH_CURRENT_SIGNING_KEY",
+  "QSTASH_NEXT_SIGNING_KEY",
   "UPSTASH_REDIS_REST_URL",
   "UPSTASH_REDIS_REST_TOKEN",
 ];
+
+// Seconds of clock skew tolerated on nbf/exp.
+const CLOCK_TOLERANCE_S = 60;
 
 function missingEnv() {
   return REQUIRED_ENV.filter((k) => !process.env[k] || process.env[k].length === 0);
@@ -45,29 +52,65 @@ function fail(msg, hint) {
   throw e;
 }
 
-function verifyQStashSignature(rawBody, signatureHeader) {
-  if (!signatureHeader) {
+const stripPadding = (s) => s.replace(/=+$/, "");
+
+function base64url(buf) {
+  return stripPadding(Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_"));
+}
+
+// verifyWithKey checks one QStash JWT against one signing key and the exact
+// raw request body. Returns an error string, or "" when valid.
+function verifyWithKey(jwt, key, rawBody, nowS) {
+  const parts = jwt.split(".");
+  if (parts.length !== 3) {
+    return "malformed signature";
+  }
+  const [encodedHeader, encodedClaims, signature] = parts;
+  const expected = base64url(crypto.createHmac("sha256", key).update(`${encodedHeader}.${encodedClaims}`).digest());
+  const a = Buffer.from(expected);
+  const b = Buffer.from(stripPadding(signature));
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return "signature mismatch";
+  }
+  let claims;
+  try {
+    claims = JSON.parse(Buffer.from(encodedClaims, "base64url").toString("utf8"));
+  } catch {
+    return "malformed claims";
+  }
+  if (claims.iss !== "Upstash") {
+    return "unexpected issuer";
+  }
+  if (typeof claims.exp === "number" && nowS - CLOCK_TOLERANCE_S > claims.exp) {
+    return "signature expired";
+  }
+  if (typeof claims.nbf === "number" && nowS + CLOCK_TOLERANCE_S < claims.nbf) {
+    return "signature not yet valid";
+  }
+  const bodyHash = base64url(crypto.createHash("sha256").update(rawBody).digest());
+  if (typeof claims.body !== "string" || stripPadding(claims.body) !== bodyHash) {
+    return "body hash mismatch";
+  }
+  return "";
+}
+
+// verifyQStashSignature accepts a signature from either the current or the
+// next signing key, so deliveries keep verifying across a key rotation.
+export function verifyQStashSignature(jwt, rawBody, nowS = Math.floor(Date.now() / 1000)) {
+  if (!jwt) {
     return false;
   }
-  // Upstash-Signature looks like "v1=<hex>". HMAC-SHA256 over the
-  // raw body with QSTASH_TOKEN as the key.
-  const expected =
-    "v1=" +
-    crypto
-      .createHmac("sha256", process.env.QSTASH_TOKEN)
-      .update(rawBody || "")
-      .digest("hex");
-  const a = Buffer.from(expected, "utf8");
-  const b = Buffer.from(signatureHeader, "utf8");
-  if (a.length !== b.length) {
-    return false;
+  for (const key of [process.env.QSTASH_CURRENT_SIGNING_KEY, process.env.QSTASH_NEXT_SIGNING_KEY]) {
+    if (key && verifyWithKey(jwt, key, rawBody, nowS) === "") {
+      return true;
+    }
   }
-  return crypto.timingSafeEqual(a, b);
+  return false;
 }
 
 async function bumpRedisCounter(key) {
   const url = `${process.env.UPSTASH_REDIS_REST_URL}/incr/${encodeURIComponent(key)}`;
-  const resp = await fetch(url, {
+  const resp = await globalThis.fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
@@ -79,48 +122,43 @@ async function bumpRedisCounter(key) {
   return (await resp.json()).result;
 }
 
-export async function handler(event, ctx) {
-  const missing = missingEnv();
-  if (missing.length > 0) {
-    fail(
-      `missing env: ${missing.join(", ")}`,
-      `run: gregale secrets set --app <slug> ${missing.map((k) => k + "=...").join(" ")}`,
-    );
-  }
+export default {
+  async fetch(request, _env, ctx) {
+    const missing = missingEnv();
+    if (missing.length > 0) {
+      fail(
+        `missing env: ${missing.join(", ")}`,
+        `run: gregale secrets set --app <slug> ${missing.map((k) => k + "=...").join(" ")}`,
+      );
+    }
 
-  // event.body is the raw body string the runner received. The
-  // QStash signature is in event.headers["Upstash-Signature"].
-  const rawBody = event && typeof event.body === "string" ? event.body : "";
-  const sig =
-    (event.headers && (event.headers["Upstash-Signature"] || event.headers["upstash-signature"])) ||
-    "";
-  if (!verifyQStashSignature(rawBody, sig)) {
-    fail(
-      "invalid Upstash-Signature",
-      "verify QSTASH_TOKEN is set correctly and QStash is signing with the same key",
-    );
-  }
+    // The Fetch API form preserves the exact request bytes the signature
+    // covers; re-serializing a parsed JSON body would not.
+    const rawBody = await request.text();
+    if (!verifyQStashSignature(request.headers.get("upstash-signature") || "", rawBody)) {
+      return new Response(JSON.stringify({ ok: false, error: "invalid Upstash-Signature" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    }
 
-  // Bump a single counter so a customer's "how many times has my
-  // cron fired" is a single Redis GET on `cron-worker:fired`. The
-  // counter survives cold boots (park + wake), which is the whole
-  // point of using a managed Redis instead of local filesystem state.
-  const count = await bumpRedisCounter("cron-worker:fired");
+    // Bump a single counter so a customer's "how many times has my cron
+    // fired" is a single Redis GET on `cron-worker:fired`. The counter
+    // survives cold boots (park + wake), which is the whole point of using a
+    // managed Redis instead of local filesystem state.
+    const count = await bumpRedisCounter("cron-worker:fired");
+    const invocationID = request.headers.get("x-faas-invocation-id") || "";
 
-  ctx.log.info("cron-worker fired", {
-    invocation_id: ctx.invocation_id,
-    count,
-    payload_bytes: Buffer.byteLength(rawBody, "utf8"),
-    fired_at: new Date().toISOString(),
-  });
-
-  return {
-    statusCode: 200,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      ok: true,
-      invocation_id: ctx.invocation_id,
+    console.error("cron-worker fired", {
+      invocation_id: invocationID,
       count,
-    }),
-  };
-}
+      payload_bytes: Buffer.byteLength(rawBody, "utf8"),
+      fired_at: new Date().toISOString(),
+    });
+
+    return new Response(JSON.stringify({ ok: true, invocation_id: invocationID, count }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  },
+};

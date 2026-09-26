@@ -331,8 +331,8 @@ func SetRecoverRolloutStuckAfter(d time.Duration) {
 	RecoverRolloutStuckAfter = d
 }
 
-// ErrInvalidStateTransition is returned by CancelDeploymentTx /
-// MarkDeploymentCancelled when the row's current status is not in
+// ErrInvalidStateTransition is returned by CancelDeploymentTx when the
+// row's current status is not in
 // the cancel-eligible set {pending, building, imaging, snapshotting}.
 // Translates at the handler boundary to HTTP 409 with the
 // deployment_cancel_not_cancellable code (ADR-124).
@@ -2773,16 +2773,6 @@ type Store interface {
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
 
-	// MarkDeploymentCancelled atomically transitions the row to
-	// DeployCancelled, stamping cancelled_at / cancelled_by_principal /
-	// cancel_reason audit columns. The CAS guard enforces
-	// status ∈ {pending, building, imaging, snapshotting} —
-	// concurrent terminal transitions are last-write-wins safe.
-	// Returns ErrInvalidStateTransition if the row is already
-	// terminal or DeployLive, and ErrNotFound if id is unknown.
-	// (ADR-124 — deployment queue controls.)
-	MarkDeploymentCancelled(ctx context.Context, id, principal string, reason CancelReason, when time.Time) error
-
 	// CancelDeploymentTx is the single-transaction orchestrator
 	// that mirrors AutoRollbackDeploymentsTx (ADR-118). On
 	// success it has (a) flipped the deployment row to
@@ -3814,11 +3804,11 @@ type Store interface {
 	// contract; a cold-start app with no invocations returns false.
 	WasInvokedSuccessfullySince(ctx context.Context, accountID, appID string, since time.Time) (bool, error)
 
-	// MTDSpendEurCents returns the SUM(eur_cents) of every
-	// account_spend_snapshot row for the account whose
-	// period_start is within the current UTC month-to-date window.
+	// MTDSpendEurCents returns the account's usage spend beyond its
+	// plan's included allowance for the current UTC month, in cents.
 	// Used by the alert evaluator's account_spend_eur metric
-	// branch (issue #1233, ADR-123).
+	// branch and the meterd_account_spend_eur gauge (issue #1233,
+	// ADR-123).
 	MTDSpendEurCents(ctx context.Context, accountID string) (int64, error)
 
 	// CountNewErrorFingerprintsSince counts distinct app error groups first
@@ -6559,4 +6549,15 @@ const (
 // when the optimized ownership query is unavailable.
 type CustomerEventLister interface {
 	ListCustomerEvents(ctx context.Context, filter CustomerEventFilter) ([]Event, error)
+}
+
+// IdempotencyReservation is the outcome of ReserveIdempotent. Exactly one of
+// Reserved (the caller owns the key and must complete it with
+// PutIdempotent), InFlight (another request holds the key), or a completed
+// response (Status/Body to replay) applies.
+type IdempotencyReservation struct {
+	Reserved bool
+	InFlight bool
+	Status   int
+	Body     []byte
 }

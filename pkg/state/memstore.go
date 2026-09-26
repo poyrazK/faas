@@ -7958,36 +7958,6 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 	return nil
 }
 
-// MarkDeploymentCancelled (ADR-124) — memstore mirror of
-// pgstore.MarkDeploymentCancelled. CAS guard via the
-// IsCancelEligible predicate, errrrors mirror pgstore sentinels.
-func (m *MemStore) MarkDeploymentCancelled(_ context.Context, id, principal string, reason CancelReason, when time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	d, ok := m.deployments[id]
-	if !ok {
-		return ErrNotFound
-	}
-	if d.Status == DeployLive {
-		return ErrCancelLiveForbidden
-	}
-	if !d.Status.IsCancelEligible() {
-		return ErrInvalidStateTransition
-	}
-	if !reason.IsValid() {
-		return ErrInvalidStateTransition
-	}
-	d.Status = DeployCancelled
-	d.CancelledAt = &when
-	d.CancelledByPrincipal = principal
-	d.CancelReason = string(reason)
-	if err := finalizeCancelledDeploymentState(&d, when, reason); err != nil {
-		return err
-	}
-	m.deployments[id] = d
-	return nil
-}
-
 // CancelDeploymentTx (ADR-124) — single-mu-lock orchestrator
 // mirroring pgstore.CancelDeploymentTx. The memstore is not
 // concurrent in the same way Postgres is, so we sequentially
@@ -11692,6 +11662,50 @@ func (m *MemStore) InvocationByID(_ context.Context, id string) (Invocation, err
 func (m *MemStore) ListDueInvocations(_ context.Context, now time.Time, limit int) ([]Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	out := m.dueInvocationsLocked(now)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DueAt.Equal(out[j].DueAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].DueAt.Before(out[j].DueAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ListDueInvocationsAfter mirrors PgStore: (due_at, id) order, resumed
+// strictly after the cursor.
+func (m *MemStore) ListDueInvocationsAfter(_ context.Context, now time.Time, after InvocationDueCursor, limit int) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	all := m.dueInvocationsLocked(now)
+	out := all[:0]
+	for _, inv := range all {
+		if after.ID != "" && (inv.DueAt.Before(after.DueAt) || (inv.DueAt.Equal(after.DueAt) && inv.ID <= after.ID)) {
+			continue
+		}
+		out = append(out, inv)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DueAt.Equal(out[j].DueAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].DueAt.Before(out[j].DueAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// dueInvocationsLocked returns the unsorted pending rows the legacy drain
+// owns that are due at now. Caller holds m.mu.
+func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 	var out []Invocation
 	for _, inv := range m.invocations {
 		if inv.State != InvocationPending {
@@ -11720,16 +11734,7 @@ func (m *MemStore) ListDueInvocations(_ context.Context, now time.Time, limit in
 		}
 		out = append(out, inv)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].DueAt.Equal(out[j].DueAt) {
-			return out[i].CreatedAt.Before(out[j].CreatedAt)
-		}
-		return out[i].DueAt.Before(out[j].DueAt)
-	})
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return out
 }
 
 // ClaimInvocation atomically transitions pending → dispatching and
@@ -17510,10 +17515,27 @@ func (m *MemStore) GetIdempotent(_ context.Context, accountID, key string) (int,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.idem[accountID+"\x00"+key]
-	if !ok || time.Since(e.created) > 24*time.Hour {
+	if !ok || time.Since(e.created) > 24*time.Hour || e.status == 0 {
 		return 0, nil, ErrNotFound
 	}
 	return e.status, e.body, nil
+}
+
+// ReserveIdempotent mirrors PgStore.ReserveIdempotent.
+func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := accountID + "\x00" + key
+	e, ok := m.idem[id]
+	age := time.Since(e.created)
+	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter) {
+		m.idem[id] = idemEntry{created: time.Now()}
+		return IdempotencyReservation{Reserved: true}, nil
+	}
+	if e.status == 0 {
+		return IdempotencyReservation{InFlight: true}, nil
+	}
+	return IdempotencyReservation{Status: e.status, Body: append([]byte(nil), e.body...)}, nil
 }
 
 func (m *MemStore) PutIdempotent(_ context.Context, accountID, key string, status int, body []byte) error {
@@ -20468,7 +20490,9 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 		if appID != "" && inv.AppID != appID {
 			continue
 		}
-		if inv.State == InvocationFailed {
+		// MemStore keeps no request telemetry; mirror PgStore's
+		// invocation half, which counts only completed invocations.
+		if inv.State != InvocationCompleted {
 			continue
 		}
 		if inv.CreatedAt.Before(since) {
@@ -20479,25 +20503,11 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 	return false, nil
 }
 
-// MTDSpendEurCents mirrors the pgstore SUM(eur_cents) over
-// account_spend_snapshot. Returns 0 when no rows exist.
-func (m *MemStore) MTDSpendEurCents(_ context.Context, accountID string) (int64, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	monthStart := time.Now().UTC().Add(-time.Duration(time.Now().UTC().Day()-1) * 24 * time.Hour)
-	// Snap to UTC midnight of day 1 — date_trunc equivalent.
-	monthStart = time.Date(monthStart.Year(), monthStart.Month(), 1, 0, 0, 0, 0, time.UTC)
-	var total int64
-	for _, s := range m.accountSpendSnapshots {
-		if s.AccountID != accountID {
-			continue
-		}
-		if s.PeriodStart.Before(monthStart) {
-			continue
-		}
-		total += s.EurCents
-	}
-	return total, nil
+// MTDSpendEurCents mirrors PgStore.MTDSpendEurCents.
+func (m *MemStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
+	// Mirrors PgStore: the month-to-date overage, not the never-written
+	// account_spend_snapshot rows.
+	return m.CurrentMonthOverageCents(ctx, accountID)
 }
 
 // UpsertAccountSpendSnapshot is the memstore mirror of the pg
@@ -20964,10 +20974,14 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 		if inv.AccountID != accountID {
 			continue
 		}
-		if inv.State != InvocationFailed {
+		if inv.State != InvocationFailed && inv.State != InvocationDeadLetter {
 			continue
 		}
-		if inv.CreatedAt.Before(since) {
+		failedAt := inv.CreatedAt
+		if inv.CompletedAt != nil {
+			failedAt = *inv.CompletedAt
+		}
+		if failedAt.Before(since) {
 			continue
 		}
 		if appID != "" && inv.AppID != appID {

@@ -1179,6 +1179,41 @@ var loopMountSession = func(drive, prefix string, fn func(mountRoot string) erro
 	return fn(mp)
 }
 
+// openDriveRoot opens a mounted drive as an os.Root and returns target
+// relative to it. The drive is tenant-writable — the guest writes it at
+// runtime and the customer image seeds it — while vmmd writes it as root on
+// the host. Every write therefore resolves through os.Root: a symlink that
+// leaves the mount fails the write instead of redirecting it onto a host
+// path.
+func openDriveRoot(mountRoot, target string) (*os.Root, string, error) {
+	rel, err := filepath.Rel(mountRoot, target)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return nil, "", fmt.Errorf("drive path %q is outside mount %q", target, mountRoot)
+	}
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return nil, "", fmt.Errorf("open drive root: %w", err)
+	}
+	return root, rel, nil
+}
+
+// clearNonRegular removes a symlink or other non-regular entry at rel so the
+// write that follows creates a fresh file rather than following a link the
+// tenant planted, even one that stays inside the drive.
+func clearNonRegular(root *os.Root, rel string) error {
+	info, err := root.Lstat(rel)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode().IsRegular() {
+		return nil
+	}
+	return root.Remove(rel)
+}
+
 // writeDriveFile writes one file beneath a mounted drive, resolving the
 // full-rootfs marker the same way every Stage* method always has.
 func writeDriveFile(mountRoot, optimizedPath string, blob []byte, mode os.FileMode, label string) error {
@@ -1186,10 +1221,18 @@ func writeDriveFile(mountRoot, optimizedPath string, blob []byte, mode os.FileMo
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	root, rel, err := openDriveRoot(mountRoot, target)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", strings.TrimPrefix(filepath.Dir(optimizedPath), "upper/"), err)
 	}
-	if err := os.WriteFile(target, blob, mode); err != nil {
+	if err := clearNonRegular(root, rel); err != nil {
+		return fmt.Errorf("write %s: %w", label, err)
+	}
+	if err := root.WriteFile(rel, blob, mode); err != nil {
 		return fmt.Errorf("write %s: %w", label, err)
 	}
 	return nil
@@ -1208,11 +1251,18 @@ func writeWorkloadEnv(mountRoot, workloadName string, blob []byte) error {
 	if err != nil {
 		return err
 	}
-	target := filepath.Join(base, workloadName, "env.json")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	root, rel, err := openDriveRoot(mountRoot, filepath.Join(base, workloadName, "env.json"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return fmt.Errorf("mkdir workload env: %w", err)
 	}
-	if err := os.WriteFile(target, blob, 0o400); err != nil {
+	if err := clearNonRegular(root, rel); err != nil {
+		return fmt.Errorf("write workload env: %w", err)
+	}
+	if err := root.WriteFile(rel, blob, 0o400); err != nil {
 		return fmt.Errorf("write workload env: %w", err)
 	}
 	return nil
@@ -1235,13 +1285,18 @@ func writeServiceDiscoveryResolver(mountRoot string, ip netip.Addr) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	root, rel, err := openDriveRoot(mountRoot, target)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return fmt.Errorf("mkdir resolver directory: %w", err)
 	}
-	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove existing resolver file: %w", err)
 	}
-	if err := os.WriteFile(target, serviceDiscoveryResolverContents(ip), serviceDiscoveryResolverMode); err != nil {
+	if err := root.WriteFile(rel, serviceDiscoveryResolverContents(ip), serviceDiscoveryResolverMode); err != nil {
 		return fmt.Errorf("write resolver file: %w", err)
 	}
 	return nil
@@ -3442,26 +3497,30 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	// the host block in rw journal replay while the builder queue is waiting.
 	// A plain read-only mount remains a compatibility fallback for images whose
 	// filesystem features reject noload.
-	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload", drive1, mp).CombinedOutput(); mountErr != nil {
-		if roOut, roErr := exec.Command("mount", "-o", "loop,ro", drive1, mp).CombinedOutput(); roErr != nil {
+	//
+	// The drive was written by untrusted build code running as root in the
+	// guest, so the mount is also nodev,nosuid,noexec: a device node the
+	// build created (the host's NVMe, /dev/zero) must not become a live
+	// device when vmmd, as root, reads the export.
+	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); mountErr != nil {
+		if roOut, roErr := exec.Command("mount", "-o", "loop,ro,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); roErr != nil {
 			return fmt.Errorf("mount loop: ro,noload=%w (%s); ro=%w (%s)", mountErr, bytes.TrimSpace(out), roErr, bytes.TrimSpace(roOut))
 		}
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
 
 	// build-done.json is the canonical manifest builderd reads.
-	srcDone := filepath.Join(mp, "upper", "etc", "faas", "build-done.json")
-	if data, err := os.ReadFile(srcDone); err == nil {
+	if data, ok := readBuildDone(mp); ok {
 		if err := os.WriteFile(filepath.Join(exportDir, "build-done.json"), data, 0o644); err != nil {
 			return fmt.Errorf("write build-done.json: %w", err)
 		}
-	} // else: VM died before guest-init wrote it — caller falls back to exit-code class.
+	} // else: VM died before guest-init wrote it (or it is not a bounded
+	// regular file) — caller falls back to exit-code class.
 
 	// /build/out/ holds the produced OCI tarball. Walk + copy with the size
 	// cap enforced. A build that overruns the cap is logged as infra failure
 	// via the caller's classification (no error returned — best-effort).
-	srcOut := filepath.Join(mp, "upper", "build", "out")
-	if _, err := os.Stat(srcOut); err == nil {
+	if srcOut, ok := buildOutDir(mp); ok {
 		dstOut := filepath.Join(exportDir, "build", "out")
 		if err := os.MkdirAll(dstOut, 0o755); err != nil {
 			return fmt.Errorf("mkdir out: %w", err)
@@ -3469,6 +3528,55 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 		return copyTree(srcOut, dstOut, v.exportMax())
 	}
 	return nil
+}
+
+// maxBuildDoneBytes bounds the guest-written build-done.json manifest (exit
+// code, failure class, and a log tail).
+const maxBuildDoneBytes = 1 << 20
+
+// buildDoneRel is build-done.json's path on the mounted builder drive.
+const buildDoneRel = "upper/etc/faas/build-done.json"
+
+// readBuildDone reads the guest-written build manifest from the mounted
+// builder drive. Untrusted build code wrote the drive and vmmd reads it as
+// root, so the path resolves through os.Root and must name a bounded regular
+// file: a link to a host file, or to an endless device such as /dev/zero,
+// is never read.
+func readBuildDone(mountRoot string) ([]byte, bool) {
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat(buildDoneRel)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxBuildDoneBytes {
+		return nil, false
+	}
+	f, err := root.Open(buildDoneRel)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxBuildDoneBytes+1))
+	if err != nil || len(data) > maxBuildDoneBytes {
+		return nil, false
+	}
+	return data, true
+}
+
+// buildOutDir returns the mounted drive's upper/build/out when every path
+// component is a real directory. A symlinked component would start the
+// export walk inside a host directory.
+func buildOutDir(mountRoot string) (string, bool) {
+	dir := mountRoot
+	for _, part := range []string{"upper", "build", "out"} {
+		dir = filepath.Join(dir, part)
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() {
+			return "", false
+		}
+	}
+	return dir, true
 }
 
 func handoffBuildExportOwnership(exportDir string) error {
@@ -3598,8 +3706,16 @@ const apiEnvPath = "upper/etc/faas/env.json"
 // platform builder, so a malformed value fails closed instead of silently
 // writing state to a path guest-init will never read.
 func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
-	marker := filepath.Join(mountRoot, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
-	info, err := os.Lstat(marker)
+	// The marker lives on the tenant-writable drive, so it resolves through
+	// os.Root like every write: a symlinked parent directory cannot point
+	// the read at a host file.
+	root, err := os.OpenRoot(mountRoot)
+	if err != nil {
+		return "", fmt.Errorf("open drive root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	marker := strings.TrimPrefix(api.FullRootfsMarkerPath, "/")
+	info, err := root.Lstat(marker)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return filepath.Join(mountRoot, optimizedPath), nil
@@ -3609,7 +3725,10 @@ func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return "", fmt.Errorf("full-rootfs marker is not a regular file")
 	}
-	data, err := os.ReadFile(marker)
+	if info.Size() != int64(len(api.FullRootfsMarkerValue)) {
+		return "", fmt.Errorf("invalid full-rootfs marker payload")
+	}
+	data, err := root.ReadFile(marker)
 	if err != nil {
 		return "", fmt.Errorf("read full-rootfs marker: %w", err)
 	}
@@ -4128,12 +4247,13 @@ func copyTree(src, dst string, maxBytes int64) error {
 			}
 			return os.Chmod(target, info.Mode().Perm())
 		}
-		if d.Type()&os.ModeSymlink != 0 {
-			linkName, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(linkName, target)
+		if !d.Type().IsRegular() {
+			// Builder output is an OCI tarball plus BuildKit's local
+			// cache — directories and regular files only. Symlinks, device
+			// nodes, FIFOs and sockets the untrusted build created are
+			// dropped: recreating a link hands builderd a path into the
+			// host, and opening a device node reads it as root.
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {

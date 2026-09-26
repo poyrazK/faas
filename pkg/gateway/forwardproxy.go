@@ -236,6 +236,12 @@ func writeForwarderProblem(w http.ResponseWriter, status int) {
 func fwdOnceWithEvents(w http.ResponseWriter, r *http.Request, nodes NodeClientLookup, log *slog.Logger, t Target, events *evts.Platform) {
 	defer func() {
 		if rec := recover(); rec != nil {
+			if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+				// A deliberate abort of an already-committed response:
+				// writing a problem document now would append it to the
+				// customer's body. Let net/http tear the stream down.
+				panic(rec)
+			}
 			log.Error("gateway: forwarder panic",
 				"node", t.NodeID, "err", fmt.Sprintf("%v", rec))
 			writeForwarderProblem(w, http.StatusInternalServerError)
@@ -484,6 +490,21 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			if handleForwardRequestCancellation(w, r, !wroteHeader) {
 				return
+			}
+			if wroteHeader {
+				// The status line, headers and part of the body are
+				// already on the wire. A problem document written now
+				// would be appended to the customer's body under the
+				// committed status — a corrupt payload that ends cleanly
+				// and looks complete. Abort instead so the client sees a
+				// transport error, matching the public edge's
+				// mid-body failure handling (internal_proxy.go).
+				if st, ok := status.FromError(err); ok && (st.Code() == codes.Unavailable || st.Code() == codes.NotFound) {
+					markStaleTarget(r.Context())
+				}
+				log.Warn("gateway: forwarder stream failed after response commit; aborting",
+					"node", t.NodeID, "err", err.Error())
+				panic(http.ErrAbortHandler)
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 				markStaleTarget(r.Context())

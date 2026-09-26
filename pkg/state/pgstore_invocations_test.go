@@ -743,3 +743,11 @@ func TestPg_ClaimInvocationWithCap_Errors(t *testing.T) {
 		t.Errorf("RetryQueueDeadLetter(missing) = %v, want ErrNotFound", err)
 	}
 }
+
+// TestPg_ListDueInvocationsAfterPagesByKeyset: the drain walks the due
+// backlog with a (due_at, id) cursor; every due row must appear exactly
+// once across pages, including rows that tie on due_at.
+func TestPg_ListDueInvocationsAfterPagesByKeyset(t *testing.T) {
+	s, ctx, appID, acctID := seedInvocationPg(t)
+	testListDueInvocationsAfterPagesByKeyset(t, ctx, s, appID, acctID)
+}

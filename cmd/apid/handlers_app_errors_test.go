@@ -171,6 +171,10 @@ func (appErrorsListStore) ListAppErrorGroups(_ context.Context, _ sqlc.ListAppEr
 	return nil, nil
 }
 
+func (appErrorsListStore) ListAppErrorRequests(_ context.Context, _ sqlc.ListAppErrorRequestsParams) ([]state.AppErrorRequestRow, error) {
+	return nil, nil
+}
+
 // swapStoreForAppErrors rebuilds the server in e with a shadow
 // store wrapper that returns the empty slice from
 // ListAppErrorGroups. e.store stays the original MemStore so the
@@ -184,4 +188,38 @@ func swapStoreForAppErrors(t *testing.T, e *testEnv) {
 		"gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), e.ops)
 	e.h = srv.handler()
 	e.s = srv
+}
+
+// TestAppErrorRequests_CursorPastLastRowIsEmptyNot404 — next_cursor is
+// emitted whenever a drill-down page is full, so for a fingerprint with an
+// exact multiple of the page size the follow-up request finds no rows. That
+// answered 404 "fingerprint not found", which made ListAppErrorRequestsAll
+// fail at the end of every such walk. Without a cursor, an unknown
+// fingerprint is still a 404.
+func TestAppErrorRequests_CursorPastLastRowIsEmptyNot404(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "my-api")
+	swapStoreForAppErrors(t, &e)
+	fingerprint := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	rec := e.do(t, "GET", "/v1/apps/my-api/errors/"+fingerprint, nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("no cursor: status %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+
+	cursor := encodeErrorsCursor(errorsCursorShape{
+		ReceivedAt: time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		RequestID:  "01995a4e-8f20-7d8c-b9e1-2e9d2bd1d4f0",
+	})
+	rec = e.do(t, "GET", "/v1/apps/my-api/errors/"+fingerprint+"?cursor="+cursor, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cursor past the last row: status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out api.AppErrorRequestsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Requests == nil || len(out.Requests) != 0 || out.NextCursor != "" {
+		t.Fatalf("response = %+v, want an empty final page", out)
+	}
 }

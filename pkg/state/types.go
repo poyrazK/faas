@@ -170,7 +170,7 @@ func (s DeploymentStatus) IsTerminal() bool {
 // surface (POST /v1/apps/{slug}/deployments/{id}/cancel) can
 // transition this row. The store layer mirrors the same
 // predicate in the CAS WHERE clause — see
-// pgstore.MarkDeploymentCancelled.
+// CancelDeploymentTx.
 func (s DeploymentStatus) IsCancelEligible() bool {
 	switch s {
 	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting:
@@ -2046,8 +2046,8 @@ type Deployment struct {
 	ErrorFix          string
 	ErrorRelevantLogs []api.LogExcerpt
 	// CancelledAt is the wall-clock at which the row transitioned
-	// to DeployCancelled. Set by MarkDeploymentCancelled /
-	// CancelDeploymentTx (ADR-124). Populates the `cancelled_at`
+	// to DeployCancelled. Set by CancelDeploymentTx (ADR-124).
+	// Populates the `cancelled_at`
 	// column added in migration 00360. Nil for every other row.
 	CancelledAt *time.Time
 	// CancelledByPrincipal is the opaque principal who initiated

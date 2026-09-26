@@ -77,23 +77,17 @@ func (s *PgStore) AcquireEdgeRuleMutationLock(ctx context.Context, appID string)
 	if s == nil || s.pool == nil {
 		return nil, errors.New("state: pgstore has nil pool")
 	}
-	// Session-scoped: pg_advisory_lock below is held across statements on
-	// this pinned connection and released by the returned closure, so it
-	// must not run on a transaction-pooled connection (db/direct.go).
-	conn, err := db.DirectPool(s.pool).Acquire(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("state: acquire edge-rule mutation lock connection: %w", err)
-	}
-	if _, err := conn.Exec(ctx, `select pg_advisory_lock(hashtextextended($1, 0))`, appID); err != nil {
-		conn.Release()
-		return nil, fmt.Errorf("state: acquire edge-rule mutation lock for %q: %w", appID, err)
-	}
-	return func(ctx context.Context) {
-		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		_, _ = conn.Exec(unlockCtx, `select pg_advisory_unlock(hashtextextended($1, 0))`, appID)
-		cancel()
-		conn.Release()
-	}, nil
+	// Session-scoped: the lock is held across statements on a pinned
+	// direct-pool connection and released by the returned closure, so it
+	// must not run on a transaction-pooled connection (db/direct.go). The
+	// key expression is unchanged so mixed-version apids still agree on it.
+	return s.acquireSessionAdvisoryLock(ctx, sessionAdvisoryLock{
+		what:      "edge-rule mutation lock",
+		tryLock:   `select pg_try_advisory_lock(hashtextextended($1, 0))`,
+		unlock:    `select pg_advisory_unlock(hashtextextended($1, 0))`,
+		keyArg:    appID,
+		retryWait: 50 * time.Millisecond,
+	})
 }
 
 // AcquireDeploymentActivationLock holds a session-scoped advisory lock across
@@ -112,35 +106,60 @@ func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymen
 	if s == nil || s.pool == nil {
 		return nil, errors.New("state: pgstore has nil pool")
 	}
+	return s.acquireSessionAdvisoryLock(ctx, sessionAdvisoryLock{
+		what:      "deployment activation lock",
+		tryLock:   `select pg_try_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`,
+		unlock:    `select pg_advisory_unlock(hashtextextended('deployment-activation:' || $1, 0))`,
+		keyArg:    deploymentID,
+		retryWait: 50 * time.Millisecond,
+	})
+}
+
+// sessionAdvisoryLock describes one session-scoped advisory lock: the
+// non-blocking try/unlock statements over the same key expression.
+type sessionAdvisoryLock struct {
+	what      string
+	tryLock   string
+	unlock    string
+	keyArg    string
+	retryWait time.Duration
+}
+
+// acquireSessionAdvisoryLock takes a session-scoped advisory lock on a
+// pinned direct-pool connection without holding a pool connection while it
+// waits. A blocking pg_advisory_lock parks one connection per contender: a
+// handful of concurrent contenders exhausts the pool, and the holder — which
+// needs the same pool for its ordinary reads and writes — can never finish
+// and release. Contenders instead try, give the connection back, and retry.
+//
+// A connection whose lock state is uncertain (the try raced cancellation,
+// or the unlock failed) is closed rather than returned to the pool, where
+// it would orphan the lock and block every later holder.
+func (s *PgStore) acquireSessionAdvisoryLock(ctx context.Context, l sessionAdvisoryLock) (func(context.Context), error) {
 	var conn *pgxpool.Conn
 	for {
 		var err error
 		conn, err = db.DirectPool(s.pool).Acquire(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("state: acquire deployment activation lock connection: %w", err)
+			return nil, fmt.Errorf("state: acquire %s connection: %w", l.what, err)
 		}
 		var locked bool
-		err = conn.QueryRow(ctx,
-			`select pg_try_advisory_lock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&locked)
-		if err != nil {
+		if err = conn.QueryRow(ctx, l.tryLock, l.keyArg).Scan(&locked); err != nil {
 			// Cancellation can race a server-side lock grant. Closing the
 			// session is the only safe way to rule out an orphaned lock.
 			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			_ = conn.Hijack().Close(closeCtx)
 			cancel()
-			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, err)
+			return nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, err)
 		}
 		if locked {
 			break
 		}
 		conn.Release()
-		// A second subscriber may contend for the same deployment while the
-		// winner still needs this pool for ordinary reads and stage writes.
-		// Give the connection back before retrying or waiting for cancellation.
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("state: acquire deployment activation lock for %q: %w", deploymentID, ctx.Err())
-		case <-time.After(50 * time.Millisecond):
+			return nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, ctx.Err())
+		case <-time.After(l.retryWait):
 		}
 	}
 	var once sync.Once
@@ -148,12 +167,11 @@ func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymen
 		once.Do(func() {
 			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			var unlocked bool
-			unlockErr := conn.QueryRow(unlockCtx,
-				`select pg_advisory_unlock(hashtextextended('deployment-activation:' || $1, 0))`, deploymentID).Scan(&unlocked)
+			unlockErr := conn.QueryRow(unlockCtx, l.unlock, l.keyArg).Scan(&unlocked)
 			cancel()
 			if unlockErr != nil || !unlocked {
 				// Never return a connection carrying an uncertain session lock
-				// to the pool: a later activation could block behind itself.
+				// to the pool: a later holder could block behind itself.
 				closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 				_ = conn.Hijack().Close(closeCtx)
 				closeCancel()
@@ -8906,70 +8924,6 @@ func scanOpenAPISnapshot(row pgx.Row) (OpenAPISnapshot, error) {
 	return snap, nil
 }
 
-// MarkDeploymentCancelled (ADR-124) atomically flips the row to
-// DeployCancelled while honoring the cancel-eligible CAS guard.
-// The single UPDATE covers the (a) status transition, (b) audit
-// stamp, and (c) reason column — all in one round-trip so
-// concurrent transitions are last-write-wins safe per the
-// existing pattern at pgstore.go:5675-5683 (build CAS guard).
-//
-// Tag.RowsAffected() == 0 has three distinct failure modes:
-//   - id is unknown                       → ErrNotFound
-//   - id is known, status = DeployLive    → ErrCancelLiveForbidden
-//   - id is known, status in {failed,
-//     superseded, cancelled}              → ErrInvalidStateTransition
-//
-// The two-tier SQL guard surfaces the right sentinel in one
-// round-trip via RETURNING — the row's pre-UPDATE status is
-// captured by a single SELECT before the UPDATE so the caller
-// (apid handler) can pick the correct RFC 7807 code.
-func (s *PgStore) MarkDeploymentCancelled(ctx context.Context, id, principal string, reason CancelReason, when time.Time) error {
-	if !reason.IsValid() {
-		return ErrInvalidStateTransition
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("MarkDeploymentCancelled: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var currentStatus DeploymentStatus
-	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`, id).Scan(&currentStatus); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("MarkDeploymentCancelled: select for update: %w", err)
-	}
-	if currentStatus == DeployLive {
-		return ErrCancelLiveForbidden
-	}
-	if !currentStatus.IsCancelEligible() {
-		return ErrInvalidStateTransition
-	}
-
-	if _, err := tx.Exec(ctx, `
-		UPDATE deployments
-		   SET status = $2,
-		       cancelled_at = $3,
-		       cancelled_by_principal = $4,
-		       cancel_reason = $5
-		 WHERE id = $1
-		   AND status = $2_old`,
-		id,
-		string(DeployCancelled),
-		when.UTC(),
-		principal,
-		string(reason),
-		string(currentStatus),
-	); err != nil {
-		return fmt.Errorf("MarkDeploymentCancelled: update: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("MarkDeploymentCancelled: commit: %w", err)
-	}
-	return nil
-}
-
 // CancelDeploymentTx (ADR-124) is the single-transaction
 // orchestrator. The shape mirrors AutoRollbackDeploymentsTx from
 // ADR-118 (`worktree-feat-deploy-ux-mega-c-pr1` commit c76fd64e6,
@@ -13632,9 +13586,9 @@ func (s *PgStore) CountFailedDeploymentsSince(ctx context.Context, accountID, ap
 	return n, nil
 }
 
-// WasInvokedSuccessfullySince returns true iff at least one
-// successful (terminal state != 'failed') invocation exists for
-// (account, app) in the window. Used by the alert evaluator's
+// WasInvokedSuccessfullySince returns true iff the app served at least one
+// request with a non-5xx answer, or completed at least one durable
+// invocation, for (account, app) in the window. Used by the alert evaluator's
 // api_up metric case (issue #1233, ADR-123) — the binary reachability
 // signal. Returns false when the window is empty (cold start).
 //
@@ -13645,14 +13599,27 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 	if appID != "" {
 		appArg = appID
 	}
+	// Ordinary HTTP traffic never creates invocations rows — those are
+	// the durable async/cron/queue paths — so an app actively serving
+	// requests used to read as down and the "API is down" preset paged.
+	// A request that got a non-5xx answer counts as served. Only
+	// completed invocations count: pending, dead-lettered or cancelled
+	// ones are not evidence the app answered.
 	var exists bool
 	row := s.pool.QueryRow(ctx, `
 		select exists(
 			select 1 from invocations
 			 where account_id = $1
-			   and state <> 'failed'
+			   and state = 'completed'
 			   and created_at >= $2
 			   and ($3::uuid is null or app_id is not distinct from $3::uuid)
+			 limit 1)
+		    or exists(
+			select 1 from request_telemetry
+			 where account_id = $1
+			   and received_at >= $2
+			   and status < 500
+			   and ($3::uuid is null or app_id = $3::uuid)
 			 limit 1)`,
 		accountID, since.UTC(), appArg)
 	if err := row.Scan(&exists); err != nil {
@@ -13661,27 +13628,18 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 	return exists, nil
 }
 
-// MTDSpendEurCents returns the SUM(eur_cents) of every
-// account_spend_snapshot row for the account whose period_start
-// is within the current UTC month-to-date window. Used by the
-// alert evaluator's account_spend_eur metric case (issue #1233,
-// ADR-123).
-//
-// MTD boundary is computed at evaluation time (now() at the UTC
-// midnight of the first day of the current month) so the window
-// is stable across meterd restarts. The (account_id, period_start
-// DESC) partial index at migrations/00350 keeps the scan bounded.
+// MTDSpendEurCents returns the account's month-to-date usage spend beyond
+// its plan's included allowance, in cents. Used by the alert evaluator's
+// account_spend_eur metric case (issue #1233, ADR-123).
 func (s *PgStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
-	var total int64
-	row := s.pool.QueryRow(ctx, `
-		select coalesce(sum(eur_cents), 0)::bigint from account_spend_snapshot
-		 where account_id = $1
-		   and period_start >= date_trunc('month', now() at time zone 'utc')`,
-		accountID)
-	if err := row.Scan(&total); err != nil {
-		return 0, err
-	}
-	return total, nil
+	// account_spend_snapshot has no production writer (only
+	// UpsertAccountSpendSnapshot, which nothing calls), so summing it
+	// returned 0 for every account: the enabled "Spend exceeds €20"
+	// preset and the meterd_account_spend_eur gauge could never move.
+	// Read the month-to-date usage spend beyond the plan's included
+	// allowance from usage_minutes — the same figure the billing page
+	// shows as this month's overage.
+	return s.CurrentMonthOverageCents(ctx, accountID)
 }
 
 // CountNewErrorFingerprintsSince counts app_errors groups whose fingerprint
@@ -14421,12 +14379,18 @@ func (s *PgStore) CountFailedInvocationsSince(ctx context.Context, accountID, ap
 	if source != "" {
 		sourceArg = string(source)
 	}
+	// A failure is dated by when it became terminal, not by when the
+	// invocation was created: with retries, a queue message that fails
+	// for good an hour after it arrived lies outside every short alert
+	// window when filtered on created_at. dead_letter is the terminal
+	// state for an invocation whose retries ran out — the failure the
+	// alert most needs to see — and was not counted at all.
 	var n int
 	row := s.pool.QueryRow(ctx, `
 		select count(*) from invocations
 		 where account_id = $1
-		   and state = 'failed'
-		   and created_at >= $2
+		   and state in ('failed', 'dead_letter')
+		   and coalesce(completed_at, created_at) >= $2
 		   and ($3::uuid is null or app_id is not distinct from $3::uuid)
 		   and ($4::text is null or source = $4::text)`,
 		accountID, since.UTC(), appArg, sourceArg)
@@ -14588,6 +14552,61 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 	// long-running tx the drain's per-app loop would otherwise sit on.
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("state: invocations list-due commit: %w", err)
+	}
+	return out, nil
+}
+
+// InvocationDueCursor is the (due_at, id) keyset position of the last due
+// invocation a drain tick listed. The zero value lists from the beginning.
+type InvocationDueCursor struct {
+	DueAt time.Time
+	ID    string
+}
+
+// ListDueInvocationsAfter is ListDueInvocations ordered by (due_at, id) and
+// resumed strictly after the cursor. The drain pages through the whole due
+// backlog with it once per tick, so rows it cannot claim (another node's
+// app, an account at its async cap) no longer pin the head of every page
+// and starve the rows behind them.
+func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, after InvocationDueCursor, limit int) ([]Invocation, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+	afterDue, afterID := time.Time{}, "00000000-0000-0000-0000-000000000000"
+	if after.ID != "" {
+		afterDue, afterID = after.DueAt.UTC(), after.ID
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("state: invocations begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		select `+invocationSelectCols+`
+		  from invocations i
+		 where i.state = 'pending' and i.due_at <= $1
+		   and (i.source <> 'queue' or i.queue_name = '')
+		   and not exists (
+		       select 1
+		         from triggers t
+		        where t.app_id = i.app_id
+		          and t.kind = 'queue'
+		          and t.enabled
+		          and t.source = i.source
+		   )
+		   and ($3::boolean or (i.due_at, i.id) > ($4::timestamptz, $5::uuid))
+		 order by i.due_at, i.id
+		 for update skip locked
+		 limit $2`, now.UTC(), limit, after.ID == "", afterDue, afterID)
+	if err != nil {
+		return nil, fmt.Errorf("state: invocations list-due-after: %w", err)
+	}
+	out, err := scanInvocations(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("state: invocations list-due-after commit: %w", err)
 	}
 	return out, nil
 }
@@ -21619,7 +21638,8 @@ func (s *PgStore) GetIdempotent(ctx context.Context, accountID, key string) (int
 	var body []byte
 	err := s.pool.QueryRow(ctx,
 		`select response_status, response_body from idempotency_keys
-		 where account_id = $1 and key = $2 and created_at > now() - interval '24 hours'`,
+		 where account_id = $1 and key = $2 and created_at > now() - interval '24 hours'
+		   and response_status > 0`,
 		accountID, key).Scan(&status, &body)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -21634,9 +21654,47 @@ func (s *PgStore) PutIdempotent(ctx context.Context, accountID, key string, stat
 	_, err := s.pool.Exec(ctx,
 		`insert into idempotency_keys (key, account_id, response_status, response_body)
 		 values ($1, $2, $3, $4)
-		 on conflict (account_id, key) do update set response_status = excluded.response_status, response_body = excluded.response_body`,
+		 on conflict (account_id, key) do update set response_status = excluded.response_status,
+		     response_body = excluded.response_body, created_at = now()`,
 		key, accountID, status, body)
 	return err
+}
+
+// ReserveIdempotent claims an Idempotency-Key before the request runs, so
+// two concurrent requests with one key cannot both execute. A new key, a
+// key whose last use is older than the 24 h replay window, or an in-flight
+// reservation older than abandonAfter (its request crashed) is reserved for
+// the caller as an in-flight row (response_status 0). Otherwise the caller
+// gets the completed response to replay, or InFlight while another request
+// still holds the key.
+func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	var reserved bool
+	err := s.pool.QueryRow(ctx,
+		`insert into idempotency_keys (key, account_id, response_status, response_body)
+		 values ($1, $2, 0, ''::bytea)
+		 on conflict (account_id, key) do update
+		    set response_status = 0, response_body = ''::bytea, created_at = now()
+		  where idempotency_keys.created_at <= now() - interval '24 hours'
+		     or (idempotency_keys.response_status = 0
+		         and idempotency_keys.created_at <= now() - make_interval(secs => $3))
+		 returning true`,
+		key, accountID, abandonAfter.Seconds()).Scan(&reserved)
+	if err == nil {
+		return IdempotencyReservation{Reserved: true}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return IdempotencyReservation{}, err
+	}
+	var res IdempotencyReservation
+	err = s.pool.QueryRow(ctx,
+		`select response_status, response_body from idempotency_keys
+		 where account_id = $1 and key = $2`,
+		accountID, key).Scan(&res.Status, &res.Body)
+	if err != nil {
+		return IdempotencyReservation{}, err
+	}
+	res.InFlight = res.Status == 0
+	return res, nil
 }
 
 // --- secrets -----------------------------------------------------------------

@@ -68,10 +68,12 @@ gregale deploy
 
 ```sh
 gregale open <slug>                  # browser, opens the app
-curl -X POST --data 'hello world' https://<slug>.gregale.dev/upload/hello.txt
+curl -X POST -H 'content-type: text/plain' --data-binary 'hello world' https://<slug>.gregale.dev/upload/hello.txt
+curl -X POST -H 'content-type: image/png' --data-binary @photo.png https://<slug>.gregale.dev/upload/photo.png
 ```
 
-The response is `{"ok":true,"key":"hello.txt","bucket":"my-bucket"}`.
+The response is `{"ok":true,"key":"hello.txt","bucket":"my-bucket"}`. The body is stored
+byte-for-byte with the request's `Content-Type`.
 Check the bucket in the AWS / R2 / B2 console to confirm the object
 landed.
 

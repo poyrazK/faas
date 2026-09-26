@@ -753,6 +753,13 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 				"rule", rule.ID, "err", err)
 			return 0, false, skipDegraded
 		}
+		if secs < 0 {
+			// -1 is the "no certificate observed" sentinel, not a
+			// remaining lifetime: compared as a number it is below
+			// every "lt" threshold, so the preset fired for every app
+			// without a tenant-surface certificate.
+			return float64(secs), false, ""
+		}
 		observed := float64(secs)
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricNewErrorFingerprint:

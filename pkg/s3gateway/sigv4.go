@@ -219,7 +219,7 @@ func verifyPresignedSigV4(ctx context.Context, r *http.Request, parsed sigV4Requ
 	query := clone.URL.Query()
 	query.Del("X-Amz-Signature")
 	clone.URL.RawQuery = query.Encode()
-	signed, _, err := awsv4.NewSigner().PresignHTTP(ctx, aws.Credentials{AccessKeyID: parsed.AccessKeyID, SecretAccessKey: secret}, clone, parsed.PayloadHash, "s3", region, parsed.SignedAt)
+	signed, _, err := s3Signer().PresignHTTP(ctx, aws.Credentials{AccessKeyID: parsed.AccessKeyID, SecretAccessKey: secret}, clone, parsed.PayloadHash, "s3", region, parsed.SignedAt)
 	if err != nil {
 		return errSignature
 	}
@@ -232,6 +232,17 @@ func verifyPresignedSigV4(ctx context.Context, r *http.Request, parsed sigV4Requ
 		return errSignature
 	}
 	return nil
+}
+
+// s3Signer returns a SigV4 signer configured the way S3 clients sign. S3 is
+// the one service whose canonical URI is the request path escaped ONCE; the
+// signer's default escapes it a second time, so every key containing a space,
+// '+', or non-ASCII byte ("my file.txt" -> my%2520file.txt) produced a
+// signature no S3 SDK could match.
+func s3Signer() *awsv4.Signer {
+	return awsv4.NewSigner(func(o *awsv4.SignerOptions) {
+		o.DisableURIPathEscaping = true
+	})
 }
 
 func queryValue(query url.Values, name string) string {
@@ -275,7 +286,7 @@ func verifySigV4(ctx context.Context, r *http.Request, parsed sigV4Request, secr
 		}
 	}
 	clone.Header.Del("Authorization")
-	signer := awsv4.NewSigner()
+	signer := s3Signer()
 	if err := signer.SignHTTP(ctx, aws.Credentials{AccessKeyID: parsed.AccessKeyID, SecretAccessKey: secret}, clone, parsed.PayloadHash, "s3", region, parsed.SignedAt); err != nil {
 		return errSignature
 	}

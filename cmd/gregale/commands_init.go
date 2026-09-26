@@ -315,7 +315,7 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 		"s3-uploader":       []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
 		"slack-bot":         []string{"SLACK_SIGNING_SECRET"},
 		"rest-api-postgres": []string{"DATABASE_URL"},
-		"cron-worker":       []string{"QSTASH_TOKEN", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
+		"cron-worker":       []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 	}
 	var missing []string
 	for _, key := range required[tpl] {
@@ -391,7 +391,8 @@ func nextStepsFor(tpl string) []string {
 	case "cron-worker":
 		return []string{
 			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
-			"  QSTASH_TOKEN=...",
+			"  QSTASH_CURRENT_SIGNING_KEY=...",
+			"  QSTASH_NEXT_SIGNING_KEY=...",
 			"  UPSTASH_REDIS_REST_URL=...",
 			"  UPSTASH_REDIS_REST_TOKEN=...",
 			"First deploy with secrets sealed before startup:",
@@ -400,7 +401,7 @@ func nextStepsFor(tpl string) []string {
 			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template cron-worker --name <slug>",
-			"  gregale secrets set --app <slug> QSTASH_TOKEN=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
+			"  gregale secrets set --app <slug> QSTASH_CURRENT_SIGNING_KEY=... QSTASH_NEXT_SIGNING_KEY=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
 			"  cd <dest> && gregale deploy",
 		}
 	case "webhook-receiver":

@@ -229,6 +229,9 @@ func TestLease_ReleaseStrictToken(t *testing.T) {
 func TestLease_AcquireOnMissingRow(t *testing.T) {
 	pool := pgtest.Open(t)
 	ctx := context.Background()
+	// The table must exist so this exercises a missing ROW; without it the
+	// query failed with 42P01 instead.
+	setupTestTable(t, pool)
 
 	mgr := lease.New(pool, "lease_test", "id", "state",
 		"lease_token", "lease_expires_at", fixedClock(time.Now()))

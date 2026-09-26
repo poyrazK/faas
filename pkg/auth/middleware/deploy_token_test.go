@@ -40,7 +40,10 @@ func TestRequireSession_DeployTokenIsAppBound(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	// Production mounts RequireSession inside a "/v1/apps/{slug}/..." mux
+	// pattern; SetPathValue stands in for the router.
 	req := httptest.NewRequest(http.MethodPost, "/v1/apps/mw-app/deployments", nil)
+	req.SetPathValue("slug", "mw-app")
 	req.Header.Set("Authorization", "Bearer "+plain)
 	rec := httptest.NewRecorder()
 	accepted.ServeHTTP(rec, req)
@@ -58,13 +61,26 @@ func TestRequireSession_DeployTokenIsAppBound(t *testing.T) {
 
 	wrongApp := httptest.NewRecorder()
 	wrongReq := httptest.NewRequest(http.MethodPost, "/v1/apps/mw-other/deployments", nil)
+	wrongReq.SetPathValue("slug", other.Slug)
 	wrongReq.Header.Set("Authorization", "Bearer "+plain)
-	mw.RequireSession(func(w http.ResponseWriter, r *http.Request, got state.Account) {
-		if _, ok := mw.LoadApp(w, r, got, other.Slug); ok {
-			t.Error("LoadApp accepted deploy token for a different app")
-		}
+	// The binding is enforced at authentication: a handler that resolves
+	// the app without LoadApp must never run for another app's slug.
+	mw.RequireSession(func(http.ResponseWriter, *http.Request, state.Account) {
+		t.Error("handler ran for a deploy token bound to a different app")
 	})(wrongApp, wrongReq)
 	if wrongApp.Code != http.StatusNotFound {
 		t.Fatalf("wrong-app status = %d, want 404", wrongApp.Code)
+	}
+
+	// A /v1/apps route without a {slug} (account-wide app metrics) is
+	// outside a deploy token's reach.
+	noSlug := httptest.NewRecorder()
+	noSlugReq := httptest.NewRequest(http.MethodGet, "/v1/apps/metrics", nil)
+	noSlugReq.Header.Set("Authorization", "Bearer "+plain)
+	mw.RequireSession(func(http.ResponseWriter, *http.Request, state.Account) {
+		t.Error("handler ran for a deploy token on a route without an app slug")
+	})(noSlug, noSlugReq)
+	if noSlug.Code != http.StatusNotFound {
+		t.Fatalf("no-slug route status = %d, want 404", noSlug.Code)
 	}
 }

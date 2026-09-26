@@ -268,7 +268,11 @@ type connection struct {
 
 type endpointState struct {
 	Endpoint
-	reserved atomic.Int64
+	// reserved counts this endpoint's live connections. It is a pointer
+	// so re-registering the endpoint (apid's reconciler replays intent)
+	// carries the count over: connections admitted under the previous
+	// state release against the same counter the new state admits on.
+	reserved *atomic.Int64
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -402,8 +406,20 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 	if e.CheckOrigin == nil && len(e.AllowedOrigins) > 0 {
 		e.CheckOrigin = checkAllowedOrigins(e.AllowedOrigins)
 	}
-	m.endpoints.Store(e.ID, &endpointState{Endpoint: e})
-	return nil
+	next := &endpointState{Endpoint: e, reserved: new(atomic.Int64)}
+	for {
+		prev, loaded := m.endpoints.LoadOrStore(e.ID, next)
+		if !loaded {
+			return nil
+		}
+		// Replace the definition but keep the live-connection count;
+		// a fresh counter would let every re-registration admit another
+		// MaxConnections on top of the connections still open.
+		next.reserved = prev.(*endpointState).reserved
+		if m.endpoints.CompareAndSwap(e.ID, prev, next) {
+			return nil
+		}
+	}
 }
 
 // RemoveEndpoint stops new connections for an endpoint. Existing connections

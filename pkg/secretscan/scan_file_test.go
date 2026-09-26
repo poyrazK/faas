@@ -163,3 +163,48 @@ func TestIsKeyShaped(t *testing.T) {
 		})
 	}
 }
+
+// TestScanFile_DegenerateKeysDoNotPanic — unquoteKey's quote check lacked
+// parentheses, so its single-quote branch indexed an empty or one-byte key.
+// Ordinary source (a Python dict keyed by '=', a continued assignment, a
+// `{ :` object literal) panicked the scanner, which runs inside
+// `gregale deploy` packaging, apid, and imaged.
+func TestScanFile_DegenerateKeysDoNotPanic(t *testing.T) {
+	cases := map[string]string{
+		"python dict keyed by operator": "OPS = {\n    '=': operator.eq,\n}\n",
+		"continued assignment":          "x \\\n    = 1\n",
+		"brace then colon":              "{ : 1\n",
+		"lone quote then colon":         "':x\n",
+		"lone double quote then equals": "\"=x\n",
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("ScanFile panicked: %v", r)
+				}
+			}()
+			_ = ScanFile("ops.py", []byte(src))
+		})
+	}
+}
+
+func TestUnquoteKey(t *testing.T) {
+	cases := map[string]string{
+		``:        ``,
+		`'`:       `'`,
+		`"`:       `"`,
+		`''`:      ``,
+		`"KEY"`:   `KEY`,
+		`'KEY'`:   `KEY`,
+		`"KEY'`:   `"KEY'`,
+		`KEY`:     `KEY`,
+		`'KEY`:    `'KEY`,
+		`{"KEY"}`: `{"KEY"}`,
+	}
+	for in, want := range cases {
+		if got := string(unquoteKey([]byte(in))); got != want {
+			t.Errorf("unquoteKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

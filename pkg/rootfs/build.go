@@ -1105,6 +1105,9 @@ for await (const line of lines) {
       headers,
       query: env.query || "",
       body,
+      // Spec §4.9: the exact request bytes. body is parsed JSON when the
+      // payload is JSON, which a signature check cannot use.
+      body_b64: env.body_b64 || "",
     };
     value = await eventHandler(event, ctx);
   }
@@ -1162,6 +1165,7 @@ import inspect
 import json
 import os
 import sys
+import traceback
 
 class _Log:
     def info(self, *args, **kwargs):
@@ -1194,51 +1198,81 @@ if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
     real_stdout.write(json.dumps({"__faas_ready": True}) + "\n")
     real_stdout.flush()
 
+# One event loop for the life of the worker. asyncio.run() per request
+# closed the loop after every invocation, so async clients a handler keeps
+# between requests (DB pools, HTTP sessions, queues) were bound to a dead
+# loop and the next warm request failed with "bound to a different event
+# loop" / "Event loop is closed".
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 for line in sys.stdin:
     if not line.strip():
         continue
-    env = json.loads(line)
-    raw = base64.b64decode(env.get("body_b64", "")).decode("utf-8")
-    if raw == "":
-        body = None
-    else:
-        try:
-            body = json.loads(raw)
-        except json.JSONDecodeError:
-            body = raw
-    headers = env.get("headers") or {}
-    invocation_id = headers.get("x-faas-invocation-id", headers.get("X-Faas-Invocation-Id", ""))
+    invocation_id = ""
+    # One failing request must not end the persistent worker. An uncaught
+    # exception used to escape this loop: the worker died, the runner
+    # answered a plain-text 500 that the platform treats as a retryable
+    # infrastructure failure, and the durable queue re-ran the failing
+    # handler. Mirror the Node adapter: a terminal handler_error envelope.
+    try:
+        env = json.loads(line)
+        body_b64 = env.get("body_b64", "") or ""
+        # Lossy for non-UTF-8 payloads (matching the Node adapter); the exact
+        # bytes stay available to the handler as event["body_b64"].
+        raw = base64.b64decode(body_b64).decode("utf-8", errors="replace")
+        if raw == "":
+            body = None
+        else:
+            try:
+                body = json.loads(raw)
+            except json.JSONDecodeError:
+                body = raw
+        headers = env.get("headers") or {}
+        invocation_id = headers.get("x-faas-invocation-id", headers.get("X-Faas-Invocation-Id", ""))
 
-    class _Context:
-        log = _Log()
-        def __init__(self, invocation): self.invocation_id = invocation
+        class _Context:
+            log = _Log()
+            def __init__(self, invocation): self.invocation_id = invocation
 
-    event = {
-        "method": env.get("method") or "POST",
-        "path": env.get("path") or "/",
-        "headers": headers,
-        "query": env.get("query") or "",
-        "body": body,
-    }
-    result = handler(event, _Context(invocation_id))
-    if inspect.isawaitable(result): result = asyncio.run(result)
+        event = {
+            "method": env.get("method") or "POST",
+            "path": env.get("path") or "/",
+            "headers": headers,
+            "query": env.get("query") or "",
+            "body": body,
+            "body_b64": body_b64,
+        }
+        result = handler(event, _Context(invocation_id))
+        if inspect.isawaitable(result): result = loop.run_until_complete(result)
 
-    status = 200
-    response_headers = {}
-    response_body = result
-    if isinstance(result, dict):
-        status = int(result.get("statusCode", result.get("status", 200)))
-        response_headers = result.get("headers") or {}
-        if "body" in result: response_body = result["body"]
-    if response_body is None: response_body = ""
-    if not isinstance(response_body, (str, bytes, bytearray)):
-        response_body = json.dumps(response_body)
-    if isinstance(response_body, str): response_body = response_body.encode("utf-8")
-    real_stdout.write(json.dumps({
-        "status": status,
-        "headers": {str(k): str(v) for k, v in response_headers.items()},
-        "body_b64": base64.b64encode(response_body).decode("ascii"),
-    }) + "\n")
+        status = 200
+        response_headers = {}
+        response_body = result
+        if isinstance(result, dict):
+            status = int(result.get("statusCode", result.get("status", 200)))
+            response_headers = result.get("headers") or {}
+            if "body" in result: response_body = result["body"]
+        if response_body is None: response_body = ""
+        if not isinstance(response_body, (str, bytes, bytearray)):
+            response_body = json.dumps(response_body)
+        if isinstance(response_body, str): response_body = response_body.encode("utf-8")
+        envelope = {
+            "status": status,
+            "headers": {str(k): str(v) for k, v in response_headers.items()},
+            "body_b64": base64.b64encode(response_body).decode("ascii"),
+        }
+    except Exception as exc:
+        traceback.print_exc()
+        message = str(exc)
+        if len(message) > 256: message = message[:256] + "\u2026"
+        error_body = json.dumps({"error": "handler_error", "message": message, "invocation_id": invocation_id})
+        envelope = {
+            "status": 500,
+            "headers": {"content-type": "application/json; charset=utf-8"},
+            "body_b64": base64.b64encode(error_body.encode("utf-8")).decode("ascii"),
+        }
+    real_stdout.write(json.dumps(envelope) + "\n")
     real_stdout.flush()
 `
 

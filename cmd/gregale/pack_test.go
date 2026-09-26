@@ -1451,3 +1451,34 @@ func TestPackDirToTarGz_Gregaleignore(t *testing.T) {
 		}
 	}
 }
+
+// TestMatchGregaleignoreDoubleStar pins gitignore's '**' semantics. The
+// parser always accepted '**', but per-segment filepath.Match read it as
+// '*', so '**/*.pem' let a root-level key.pem through and 'a/**/b' let a/b
+// through — the files were uploaded although the customer excluded them.
+func TestMatchGregaleignoreDoubleStar(t *testing.T) {
+	cases := []struct {
+		patterns string
+		path     string
+		isDir    bool
+		want     bool
+	}{
+		{"**/*.pem", "key.pem", false, true},
+		{"**/*.pem", "certs/deep/key.pem", false, true},
+		{"/**/*.pem", "key.pem", false, true},
+		{"config/**/secrets.json", "config/secrets.json", false, true},
+		{"config/**/secrets.json", "config/a/b/secrets.json", false, true},
+		{"secrets/**", "secrets/a/b/key.txt", false, true},
+		{"/secrets/**", "secrets/key.txt", false, true},
+		{"/secrets/**", "secrets", true, false}, // trailing /** is everything inside
+		{"**/*.pem", "key.pem.txt", false, false},
+		{"config/**/secrets.json", "config/secrets.yaml", false, false},
+		{"**/*.pem\n!**/public.pem", "certs/public.pem", false, false},
+	}
+	for _, tc := range cases {
+		got := matchGregaleignore(tc.path, tc.isDir, parseGregaleignore([]byte(tc.patterns)))
+		if got != tc.want {
+			t.Errorf("patterns %q path %q (dir=%v) = %v, want %v", tc.patterns, tc.path, tc.isDir, got, tc.want)
+		}
+	}
+}

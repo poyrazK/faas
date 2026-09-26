@@ -32,11 +32,14 @@ func legacyMirrorDB(t *testing.T) (*pgxpool.Pool, uuid.UUID) {
 	pool := pgtest.Open(t)
 	// Only the rule's identity and app are used by the rollup. Apply the real
 	// ledger and summary DDL so these tests don't need the unrelated VM schema.
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE mirror_rules (id uuid PRIMARY KEY, app_id uuid NOT NULL)`); err != nil {
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE mirror_rules (id uuid PRIMARY KEY, app_id uuid NOT NULL, percent integer)`); err != nil {
 		t.Fatal(err)
 	}
 	applyMirrorMigration(t, pool, "00386_mirror_invocation_results.sql")
 	applyMirrorMigration(t, pool, "00515_mirror_invocation_summary.sql")
+	// The rollup reads comparison_incomplete; apply the migration that adds
+	// it or every rollup fails with 42703 (column does not exist).
+	applyMirrorMigration(t, pool, "20260923210000002_mirror_safety_comparison.sql")
 	rule := uuid.New()
 	if _, err := pool.Exec(t.Context(), `INSERT INTO mirror_rules VALUES ($1, $2)`, rule, uuid.New()); err != nil {
 		t.Fatal(err)

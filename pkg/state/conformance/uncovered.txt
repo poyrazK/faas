@@ -459,7 +459,6 @@ MarkAutoRollback
 MarkBuildCancelled
 MarkComputeNodeInactive
 MarkCronFired
-MarkDeploymentCancelled
 MarkDeploymentStageFailed
 MarkDomainVerified
 MarkDunningStep

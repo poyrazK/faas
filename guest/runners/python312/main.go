@@ -131,7 +131,7 @@ func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *
 	if err != nil {
 		internal.ObserveGuestExecution(r.Context(), "python312", started, http.StatusInternalServerError, err).ApplyResponseHeaders(w.Header())
 		log.Printf("python312 runner: handler error: %v", err)
-		http.Error(w, "handler error", http.StatusInternalServerError)
+		internal.WriteHandlerFailure(w, r, err)
 		return
 	}
 	if resp.Status == 0 {
