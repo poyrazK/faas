@@ -40,6 +40,9 @@ class PlanWorkload:
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
     """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
     `deny` rejects preview callers before waking the target."""
+    allowed_service_callers: list[str] | Unset = UNSET
+    """Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers;
+    an empty array denies all."""
     class_: PlanWorkloadClass | Unset = UNSET
     schedule: str | Unset = UNSET
     """cron expression when declared (CronJob, render, serverless)"""
@@ -87,6 +90,10 @@ class PlanWorkload:
         if not isinstance(self.preview_service_calls_policy, Unset):
             preview_service_calls_policy = self.preview_service_calls_policy
 
+        allowed_service_callers: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = self.allowed_service_callers
+
         class_: str | Unset = UNSET
         if not isinstance(self.class_, Unset):
             class_ = self.class_
@@ -131,6 +138,8 @@ class PlanWorkload:
             field_dict["service_binding_policy"] = service_binding_policy
         if preview_service_calls_policy is not UNSET:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
         if class_ is not UNSET:
             field_dict["class"] = class_
         if schedule is not UNSET:
@@ -181,6 +190,8 @@ class PlanWorkload:
         else:
             preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
 
+        allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
         _class_ = d.pop("class", UNSET)
         class_: PlanWorkloadClass | Unset
         if isinstance(_class_, Unset):
@@ -226,6 +237,7 @@ class PlanWorkload:
             depends_on=depends_on,
             service_binding_policy=service_binding_policy,
             preview_service_calls_policy=preview_service_calls_policy,
+            allowed_service_callers=allowed_service_callers,
             class_=class_,
             schedule=schedule,
             env_keys=env_keys,

@@ -41,10 +41,18 @@ Retries are at-least-once: a command may have produced side effects before it
 failed, so make retryable commands idempotent. A worker lease lost after
 dispatch is not automatically replayed because completion is uncertain.
 
-Inspect outcomes with `crons runs`; the returned `task_id` can be used
-with `GET /v1/apps/APP_ID/tasks/TASK_ID` to read captured output. Command crons
-do not support fire-now, while `gregale app APP_ID exec ...` remains the
-one-off command surface. Scheduled jobs create one task per occurrence and
+Inspect outcomes with `gregale crons runs CRON_ID`. The history includes a run
+id; for a command cron, inspect its captured stdout/stderr, exit status, and
+retry details on demand with `gregale crons runs CRON_ID --run TASK_ID`. Use
+`gregale crons run CRON_ID` to immediately run the cron's saved command on the
+current live deployment without moving its schedule cursor.
+If `--skip-if-running` is configured and another run is still active, the
+manual request fails rather than overlapping it.
+Cancel a queued or active command-cron run with
+`gregale crons cancel CRON_ID TASK_ID`; an active task reports its cancellation
+request while the worker stops it. Disabling a cron only prevents future fires.
+`gregale app APP_ID exec ...` remains the surface for an arbitrary one-off
+command. Scheduled jobs create one task per occurrence and
 pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
@@ -81,6 +89,39 @@ use zero for maximum age) to keep the existing app/plan default. The CLI
 equivalents are `--async-max-attempts`, `--async-retry-base-seconds`,
 `--async-retry-max-seconds`, `--async-retry-jitter-seconds`, and
 `--async-max-age-seconds` on `gregale edge-rules create`.
+
+For deployed apps, the same async route can be declared in `gregale.yaml` and
+reconciled with the source deployment:
+
+```yaml
+async_routes:
+  - app: reports
+    name: create-report
+    match_host: reports.example.com
+    match_path: /reports
+    match_methods: [POST]
+    on_success: WEBHOOK_ID
+    on_failure: DLQ_WEBHOOK_ID
+    retry_policy:
+      max_attempts: 4
+      base_seconds: 1
+      max_seconds: 30
+      jitter_seconds: 0.2
+    max_age_seconds: 600
+```
+
+`app` is the target app slug (or, in a project deploy, its workload name), and
+destinations are existing webhook IDs from
+`gregale webhooks list --app reports`. Route names are stable per app: later
+deploys update a matching manifest-owned route and remove stale manifest-owned
+routes. Unmanaged edge rules are never adopted or deleted; an exact route
+collision fails deployment with guidance to resolve it first. Omitting
+`async_routes` leaves managed routes unchanged, while `async_routes: []`
+clears them. In project deploys, only selected workloads are reconciled;
+omitted route declarations clear that workload's manifest-owned routes, while
+`--only` and `--exclude` workloads remain untouched. `--no-triggers` leaves
+existing project routes unchanged. Routes default to `POST`; `PUT`, `PATCH`,
+and `DELETE` are also accepted. This declaration is YAML-only.
 
 ## Application inbox
 

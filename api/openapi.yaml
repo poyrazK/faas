@@ -11763,6 +11763,76 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/crons/{id}/runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - name: run_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: The task id returned in the cron run history for a command cron.
+    get:
+      tags: [crons]
+      operationId: getCronCommandRun
+      summary: Get output and execution details for one command-cron run.
+      description: |
+        Returns the durable app-task receipt for one run belonging to this
+        command cron, including captured stdout/stderr tails, exit status,
+        retry count, and failure details. Use this endpoint on demand so
+        history list pages remain compact. HTTP cron runs and task ids that
+        belong to another cron return 404.
+      responses:
+        '200':
+          description: Detailed command-cron execution receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppTaskResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/crons/{id}/runs/{run_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - name: run_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Command-cron task identifier to cancel.
+    post:
+      tags: [crons]
+      operationId: cancelCronCommandRun
+      summary: Request cancellation of one command-cron run.
+      description: |
+        Requests cancellation of one queued or active command-cron run and
+        returns its current durable app-task receipt. A queued run becomes
+        cancelled immediately; an active run records `cancel_requested_at`
+        and is stopped by its worker. Repeating the request is safe. Runs
+        belonging to another cron, HTTP cron runs, and runs owned by another
+        account return the same 404.
+
+        Scoped to `deploy:write` (or `admin`) and subject to the app-task API
+        capability gate. An optional `Idempotency-Key` replays the stored
+        response for the account/key pair.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, maxLength: 255 }
+          description: Replay token for a duplicate cancellation request.
+      responses:
+        '202':
+          description: Cancellation accepted; the receipt may remain active while the worker stops.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/crons/{id}/run:
     parameters:
       - name: id
@@ -11775,14 +11845,12 @@ paths:
       operationId: fireCron
       summary: Manually fire a cron now (bypasses the schedule boundary).
       description: |
-        Issue #791 PR-C / ADR-090. Inserts a pending row into
+        Inserts a pending row into
         `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-        schedd claims the row on the next LISTEN delivery and calls
-        `RunCronNow` in its own process. The response is the
-        immediate 202 with the request id; the customer's
-        `GET /v1/crons/{id}/runs` will surface the matching
-        `cron.fired.manually` audit row once schedd stamps the
-        terminal state.
+        schedd claims the row on the next LISTEN delivery. HTTP crons
+        dispatch through `RunCronNow`; command crons enqueue a task
+        pinned to the current live deployment. Poll the request to
+        obtain its invocation id or command task id.
 
         Idempotent: a replay with the same Idempotency-Key returns
         the stored 202 without enqueuing a second fire.
@@ -11790,9 +11858,10 @@ paths:
         Scoped to `deploy:write` (or `admin`); no new `cron:write`
         scope is added (ADR-090 §Sub-decisions 1). The fire does
         NOT shift `last_fired_at` — the next scheduled boundary is
-        unaffected. This endpoint applies to HTTP crons only; use
-        `gregale app <slug> exec` for a one-off command rather than
-        manually firing a deployment-command cron.
+        unaffected. For a command cron, its saved command, timeout,
+        output limit, retry policy, skip_if_running behavior, and
+        current live deployment are used; no ad-hoc command may be
+        supplied here.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -11815,11 +11884,6 @@ paths:
           description: Plan tier does not include cron support (e.g. Free plan).
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Problem' }
-        '409':
-          description: Command crons only fire on their schedule.
-          content:
-            application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '410':
@@ -22478,7 +22542,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
-        visibility: { type: string, enum: [public, internal], default: public, description: "Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Internal visibility is Pro/Scale." }
+        visibility: { type: string, enum: [public, internal], default: public, description: "Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Available on every plan." }
         workload_class:
           type: string
           enum: [http, graphql, grpc, job, worker]
@@ -22560,6 +22624,11 @@ components:
         preview_service_calls_policy:
           $ref: '#/components/schemas/PreviewServiceCallsPolicy'
           description: "Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`."
+        allowed_service_callers:
+          type: array
+          maxItems: 100
+          items: { type: string }
+          description: "Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies."
         # ADR-031 + ADR-032 (tier-2 network follow-ups, PR-C):
         # the per-app outbound CIDR allowlist. Each entry is a
         # canonical CIDR string — v4 ("1.2.3.0/24") or v6
@@ -23715,7 +23784,12 @@ components:
           example: "hello-world"
           description: The tag- prefix is reserved for stable deployment-alias hostnames.
         type: { type: string, enum: [app, function] , example: "app"}
-        visibility: { type: string, enum: [public, internal], default: public, description: "Ingress exposure for the new app. Choose internal to make it service-only; that option is available on Pro and Scale." }
+        visibility: { type: string, enum: [public, internal], default: public, description: "Ingress exposure for the new app. Choose internal to make it service-only; available on every plan." }
+        allowed_service_callers:
+          type: array
+          maxItems: 100
+          items: { type: string }
+          description: "Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are normalized to lowercase, sorted, and deduplicated."
         runtime: { type: string, enum: [node22, python312, go124, go124-alpine, node24, python313] }
         ram_mb: { type: integer , example: 256}
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128 MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default." }
@@ -24145,7 +24219,12 @@ components:
         visibility:
           type: [string, "null"]
           enum: [public, internal, null]
-          description: "Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale."
+          description: "Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan."
+        allowed_service_callers:
+          type: [array, "null"]
+          maxItems: 100
+          items: { type: string }
+          description: "Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to restore same-account access. Project-managed and preview apps reject this PATCH."
         ram_mb: { type: [integer, "null"] , example: 256}
         cpu_millicores:
           type: [integer, "null"]
@@ -27663,8 +27742,7 @@ components:
 
     FireCronRequestResponse:
       description: |
-        Issue #791 PR-D / ADR-090 §Sub-decision 7. Read shape for
-        `GET /v1/cron-fire-now-requests/{request_id}`.
+        Read shape for `GET /v1/cron-fire-now-requests/{request_id}`.
       type: object
       required: [request_id, cron_id, status, requested_at, account_id]
       properties:
@@ -27676,6 +27754,7 @@ components:
         requested_at: { type: string, format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
         invocation_id: { type: [string, "null"], format: uuid }
+        task_id: { type: [string, "null"], format: uuid, description: "Command task created by this request; absent for HTTP crons or before queueing." }
         error: { type: [string, "null"] }
         account_id: { type: string, format: uuid }
 
@@ -28496,7 +28575,7 @@ components:
         no_triggers:
           type: boolean
           default: false
-          description: "Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair."
+          description: "Leave trigger and async-route declarations and existing project trigger/route state unchanged for this scan/apply pair."
 
     ProjectSummaryResponse:
       description: Stable account-scoped project list item.
@@ -29564,7 +29643,7 @@ components:
         no_triggers:
           type: boolean
           default: false
-          description: "Leave trigger declarations and existing project trigger state unchanged for this apply."
+          description: "Leave trigger and async-route declarations and existing project trigger/route state unchanged for this apply."
 
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
@@ -29586,10 +29665,14 @@ components:
           description: "Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
-          description: "Effective policy selected by the Compose `x-gregale-service-policy` extension. Defaults to `account`."
+          description: "Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
         preview_service_calls_policy:
           $ref: '#/components/schemas/PreviewServiceCallsPolicy'
           description: "Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`."
+        allowed_service_callers:
+          type: array
+          items: { type: string }
+          description: "Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers; an empty array denies all."
         class:
           type: string
           enum: [http, graphql, grpc, job, worker, server, unknown]
@@ -29739,6 +29822,30 @@ components:
         path: { type: string, example: / }
         enabled: { type: boolean }
 
+    PlanAsyncRoute:
+      description: "One manifest-owned async-route reconciliation row in a project deployment plan. Route fields describe the planned route, or the existing route for a removal."
+      type: object
+      required: [app, name, action, match_host, match_path, match_methods, priority, enabled]
+      properties:
+        app: { type: string, description: "Workload or app slug that owns the route" }
+        name: { type: string, description: "Stable async-route identity within the app" }
+        action:
+          type: string
+          enum: [create, update, remove, unchanged, skipped]
+          description: "Reconciliation result; skipped means selection flags or --no-triggers leave this route untouched."
+        match_host: { type: string }
+        match_path: { type: string }
+        match_methods:
+          type: array
+          items: { type: string }
+        priority: { type: integer }
+        enabled: { type: boolean }
+        on_success: { type: string, description: "App webhook destination for successful executions" }
+        on_failure: { type: string, description: "App webhook destination for failed executions" }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+        max_age_seconds: { type: integer, minimum: 0 }
+        reason: { type: string, description: "Why this route is skipped, or what reconciliation does" }
+
     QuotaBlock:
       description: |
         Limit + observed extension on a plan-quota problem. Mirrors
@@ -29786,6 +29893,10 @@ components:
         crons:
           type: array
           items: { $ref: '#/components/schemas/PlanCron' }
+        async_routes:
+          type: array
+          description: "Structured diff for manifest-owned async routes; omitted when the manifest does not declare async_routes or no route actions need to be shown."
+          items: { $ref: '#/components/schemas/PlanAsyncRoute' }
         warnings:
           type: array
           items: { type: string }
@@ -29867,6 +29978,10 @@ components:
         crons:
           type: array
           items: { $ref: '#/components/schemas/PlanCron' }
+        async_routes:
+          type: array
+          description: "Structured async-route reconciliation returned with the applied plan."
+          items: { $ref: '#/components/schemas/PlanAsyncRoute' }
         warnings:
           type: array
           items: { type: string }

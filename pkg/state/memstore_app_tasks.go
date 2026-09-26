@@ -118,6 +118,89 @@ func (m *MemStore) CreateScheduledCronAppTask(_ context.Context, cronID string, 
 	return cloneAppTask(task), true, nil
 }
 
+// CreateManualCronAppTaskForFireNow queues a command cron without changing
+// its scheduled cursor. The fire-now request and task are updated together
+// under the store lock so a replay cannot enqueue a second task.
+func (m *MemStore) CreateManualCronAppTaskForFireNow(_ context.Context, requestID string, firedAt time.Time) (AppTask, error) {
+	if requestID == "" || firedAt.IsZero() {
+		return AppTask{}, ErrAppTaskInvalid
+	}
+	firedAt = firedAt.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureAppTasksLocked()
+
+	request, ok := m.fireNowRequests[requestID]
+	if !ok {
+		return AppTask{}, ErrFireNowRequestNotFound
+	}
+	if request.TaskID != nil {
+		if task, found := m.appTasks[*request.TaskID]; found {
+			return cloneAppTask(task), nil
+		}
+	}
+	if request.Status != FireNowStatusRunning {
+		return AppTask{}, ErrFireNowRequestNotFound
+	}
+	cron, ok := m.crons[request.CronID]
+	if !ok {
+		return AppTask{}, ErrNotFound
+	}
+	if !cron.Enabled {
+		return AppTask{}, ErrAppTaskCronDisabled
+	}
+	if cron.SuspendedReason != "" {
+		return AppTask{}, ErrAppTaskCronSuspended
+	}
+	if len(cron.Command) == 0 {
+		return AppTask{}, ErrAppTaskInvalid
+	}
+	app, ok := m.apps[cron.AppID]
+	if !ok || app.AccountID != request.AccountID || app.Status == AppDeleted {
+		return AppTask{}, ErrNotFound
+	}
+	if cron.SkipIfRunning {
+		for _, active := range m.appTasks {
+			if active.CronID == cron.ID && (active.Status == AppTaskQueued || active.Status == AppTaskRestoring || active.Status == AppTaskRunning) {
+				return AppTask{}, ErrAppTaskCronOverlap
+			}
+		}
+	}
+
+	var deployment Deployment
+	for _, candidate := range m.deployments {
+		if candidate.AppID != app.ID || candidate.Status != DeployLive ||
+			candidate.RootfsKey == "" || candidate.ImageDigest == "" {
+			continue
+		}
+		if deployment.ID == "" || (candidate.TrafficPercent > 0 && deployment.TrafficPercent == 0) ||
+			((candidate.TrafficPercent > 0) == (deployment.TrafficPercent > 0) && candidate.CreatedAt.After(deployment.CreatedAt)) {
+			deployment = candidate
+		}
+	}
+	if deployment.ID == "" {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
+	}
+
+	task := AppTask{
+		ID: uuid.NewString(), AccountID: app.AccountID, AppID: app.ID, DeploymentID: deployment.ID,
+		CronID: cron.ID, Kind: AppTaskKindCron,
+		Command: append([]string(nil), cron.Command...), CommandShell: cron.CommandShell,
+		DeploymentScope: normalizedDeploymentScope(deployment.Scope), ArtifactKey: deployment.RootfsKey,
+		ImageDigest: deployment.ImageDigest, Status: AppTaskQueued,
+		TimeoutSeconds: cron.CommandTimeoutSeconds, MaxOutputBytes: cron.CommandMaxOutputBytes,
+		RetryMax: cron.RetryMax, RetryBackoffSeconds: cron.RetryBackoffSeconds,
+		CreatedAt: firedAt, UpdatedAt: firedAt,
+	}
+	m.appTasks[task.ID] = task
+	request.Status = FireNowStatusSucceeded
+	request.TaskID = &task.ID
+	finishedAt := time.Now().UTC()
+	request.FinishedAt = &finishedAt
+	m.fireNowRequests[requestID] = request
+	return cloneAppTask(task), nil
+}
+
 func (m *MemStore) CountActiveCronAppTasks(_ context.Context, cronID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

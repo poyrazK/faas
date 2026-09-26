@@ -1648,6 +1648,11 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("trigger %d uses kind %q; deploy does not reconcile non-cron manifest triggers yet; pass --no-triggers and create it with `gregale triggers add` after deployment", i+1, trigger.Kind)
 		}
 	}
+	for i, route := range m.AsyncRoutes {
+		if route.App != slug {
+			return fmt.Errorf("async_routes entry %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, route.App, slug)
+		}
+	}
 	return nil
 }
 
@@ -2116,7 +2121,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// provisioning (and before the deploy body ships) — see
 	// deployManifestTriggers. The source-ref path stages against its
 	// already-existing app before posting its JSON request.
-	noTriggers := fs.Bool("no-triggers", false, "skip the `gregale.yaml` triggers fan-out (issue #791 PR-C)")
+	noTriggers := fs.Bool("no-triggers", false, "skip `gregale.yaml` trigger and async-route changes")
 	// Deployment completion is wait-by-default for compatibility with the
 	// existing deploy command; --no-wait returns once apid queues the
 	// deployment so CI and scripts can continue immediately.
@@ -4399,7 +4404,7 @@ func cmdDomains(args []string) int {
 func cmdCrons(args []string) int {
 	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons <list|add|update|rm|runs> [args]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|cancel> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
@@ -4538,6 +4543,8 @@ func cmdCrons(args []string) int {
 		return cmdCronsInfo(args[1:])
 	case subRuns:
 		return cmdCronsRuns(args[1:])
+	case "cancel":
+		return cmdCronsCancel(args[1:])
 	case subRm:
 		if len(args) != 2 {
 			PrintUsage(os.Stderr, "usage: gregale crons rm <id>", "crons")

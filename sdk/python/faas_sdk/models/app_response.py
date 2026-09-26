@@ -88,7 +88,7 @@ class AppResponse:
     ADR-037."""
     visibility: AppResponseVisibility | Unset = "public"
     """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
-    service routing. Internal visibility is Pro/Scale."""
+    service routing. Available on every plan."""
     workload_class: AppResponseWorkloadClass | Unset = UNSET
     """Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot
     may replace it. Distinct from type, which selects the app-vs-function execution contract."""
@@ -125,6 +125,10 @@ class AppResponse:
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
     """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
     `deny` rejects preview callers before waking the target."""
+    allowed_service_callers: list[str] | Unset = UNSET
+    """Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account
+    caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
+   """
     egress_allowlist: list[str] | Unset = UNSET
     """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
     (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
@@ -144,6 +148,9 @@ class AppResponse:
     version_affinity_managed_cookie: bool | Unset = False
     """Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually
     exclusive with version_affinity_cookie."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables
+    revision pinning."""
     route_metrics_enabled: bool | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
@@ -331,6 +338,10 @@ class AppResponse:
         if not isinstance(self.preview_service_calls_policy, Unset):
             preview_service_calls_policy = self.preview_service_calls_policy
 
+        allowed_service_callers: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = self.allowed_service_callers
+
         egress_allowlist: list[str] | Unset = UNSET
         if not isinstance(self.egress_allowlist, Unset):
             egress_allowlist = self.egress_allowlist
@@ -344,6 +355,8 @@ class AppResponse:
         version_affinity_cookie = self.version_affinity_cookie
 
         version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
 
         route_metrics_enabled = self.route_metrics_enabled
 
@@ -509,6 +522,8 @@ class AppResponse:
             field_dict["service_binding_policy"] = service_binding_policy
         if preview_service_calls_policy is not UNSET:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
         if egress_allowlist is not UNSET:
             field_dict["egress_allowlist"] = egress_allowlist
         if streaming_enabled is not UNSET:
@@ -521,6 +536,8 @@ class AppResponse:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
         if version_affinity_managed_cookie is not UNSET:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if route_metrics_enabled is not UNSET:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
         if only_allow_declared_routes is not UNSET:
@@ -745,6 +762,8 @@ class AppResponse:
         else:
             preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
 
+        allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
         egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
 
         streaming_enabled = d.pop("streaming_enabled", UNSET)
@@ -756,6 +775,8 @@ class AppResponse:
         version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
 
         version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
+
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
 
         route_metrics_enabled = d.pop("route_metrics_enabled", UNSET)
 
@@ -977,12 +998,14 @@ class AppResponse:
             service_bindings=service_bindings,
             service_binding_policy=service_binding_policy,
             preview_service_calls_policy=preview_service_calls_policy,
+            allowed_service_callers=allowed_service_callers,
             egress_allowlist=egress_allowlist,
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             route_metrics_enabled=route_metrics_enabled,
             only_allow_declared_routes=only_allow_declared_routes,
             declared_routes=declared_routes,

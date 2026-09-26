@@ -105,6 +105,22 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
 			}
 		}
+		if target.Manifest.AllowedServiceCallers != nil {
+			logicalCaller := caller.Slug
+			if caller.PreviewOfSlug != "" {
+				logicalCaller = caller.PreviewOfSlug
+			}
+			allowed := false
+			for _, name := range *target.Manifest.AllowedServiceCallers {
+				if strings.EqualFold(name, logicalCaller) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
+			}
+		}
 		// The caller row is already loaded; carrying its preview identity out
 		// saves the hop a third store read for a fact we have in hand.
 		return gateway.ServiceCaller{

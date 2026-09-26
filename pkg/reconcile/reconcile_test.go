@@ -932,6 +932,13 @@ func TestReconcile_DraftAppPersistsServiceBindingPolicy(t *testing.T) {
 	}
 }
 
+func TestReconcile_NewProjectBindingPolicyDefaultsDeclared(t *testing.T) {
+	got := workloadToDraftApp(state.Project{}, reposcan.Workload{Name: "frontend"}, "", api.PlanFree)
+	if got.Manifest.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+		t.Fatalf("new project service policy = %q, want declared", got.Manifest.ServiceBindingPolicy)
+	}
+}
+
 func TestReconcile_DraftAppPersistsPreviewServiceCallsPolicy(t *testing.T) {
 	_, proj := seedProject(t, newFakeStore(), state.ProjectScanSourceCompose, "main")
 	got := workloadToDraftApp(proj, reposcan.Workload{

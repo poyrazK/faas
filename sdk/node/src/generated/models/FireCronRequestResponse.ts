@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Issue #791 PR-D / ADR-090 §Sub-decision 7. Read shape for
- * `GET /v1/cron-fire-now-requests/{request_id}`.
+ * Read shape for `GET /v1/cron-fire-now-requests/{request_id}`.
  *
  */
 export type FireCronRequestResponse = {
@@ -14,6 +13,10 @@ export type FireCronRequestResponse = {
   requested_at: string;
   finished_at?: string | null;
   invocation_id?: string | null;
+  /**
+   * Command task created by this request; absent for HTTP crons or before queueing.
+   */
+  task_id?: string | null;
   error?: string | null;
   account_id: string;
 };

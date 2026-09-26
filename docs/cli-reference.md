@@ -662,9 +662,27 @@ Update one cron rule
 
 Delete one cron rule
 
+### crons run
+
+Fire one cron immediately
+
+### crons fire-now
+
+Show the status of a manual fire request
+
 ### crons runs
 
 Show execution history
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <CURSOR>` | pagination cursor for older runs |  |
+| `--limit <N>` | max runs to show (1..100) |  |
+| `--run <TASK-ID>` | show details and captured output for one command run |  |
+
+### crons cancel
+
+Request cancellation of one command-cron run
 
 
 ## triggers
@@ -1157,7 +1175,7 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--app-protocol <PROTOCOL>` | wire protocol selector | one of `http1` · `http2` · `grpc` |
 | `--traffic-percent <PERCENT>` | deployment traffic split weight (0-100) |  |
 | `--no-traffic` | stage with 0% production traffic and print the preview URL |  |
-| `--no-triggers` | skip gregale.yaml trigger fan-out |  |
+| `--no-triggers` | skip gregale.yaml trigger and async-route changes |  |
 | `--wait` | wait for deployment to become live (default) |  |
 | `--no-wait` | return after deployment is queued |  |
 | `--create-only` | create or reserve the app without uploading a deployment |  |

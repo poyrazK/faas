@@ -111,6 +111,7 @@ type workloadSeed struct {
 
 	serviceBindingPolicy      ServiceBindingPolicy
 	previewServiceCallsPolicy PreviewServiceCallsPolicy
+	allowedServiceCallers     *[]string
 
 	class     Class
 	schedule  string

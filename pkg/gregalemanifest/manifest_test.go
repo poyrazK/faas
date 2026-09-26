@@ -1401,3 +1401,61 @@ func TestScalingConfig_SchedulesToAPI(t *testing.T) {
 		t.Errorf("schedule[0] = %+v, want the manifest values", out.Schedules[0])
 	}
 }
+
+func TestAsyncRoutesManifestParseAndValidate(t *testing.T) {
+	m, err := ParseBytes([]byte(`async_routes:
+  - app: reports
+    name: create-report
+    match_host: reports.example.com
+    match_path: /reports
+    on_success: hook-success
+    on_failure: hook-dead-letter
+    retry_policy:
+      max_attempts: 4
+      base_seconds: 1
+      max_seconds: 30
+      jitter_seconds: 0.2
+    max_age_seconds: 600
+`))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(m.AsyncRoutes) != 1 {
+		t.Fatalf("async_routes = %d, want 1", len(m.AsyncRoutes))
+	}
+	route := m.AsyncRoutes[0]
+	if route.App != "reports" || route.Name != "create-report" || route.MatchPath != "/reports" || route.MaxAgeSeconds != 600 {
+		t.Fatalf("route = %+v", route)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestAsyncRoutesManifestExplicitEmptyAndValidation(t *testing.T) {
+	empty, err := ParseBytes([]byte("async_routes: []\n"))
+	if err != nil {
+		t.Fatalf("ParseBytes empty: %v", err)
+	}
+	if empty.AsyncRoutes == nil {
+		t.Fatal("async_routes: [] decoded as nil; explicit empty must clear managed routes")
+	}
+
+	valid := AsyncRoute{App: "reports", Name: "create-report", MatchHost: "reports.example.com", MatchPath: "/reports"}
+	for _, tc := range []struct {
+		name   string
+		routes []AsyncRoute
+		want   string
+	}{
+		{name: "unsafe method", routes: []AsyncRoute{{App: "reports", Name: "read-report", MatchHost: "reports.example.com", MatchPath: "/reports", MatchMethods: []string{"GET"}}}, want: "only supports POST"},
+		{name: "duplicate identity", routes: []AsyncRoute{valid, valid}, want: "duplicate name"},
+		{name: "duplicate route match", routes: []AsyncRoute{valid, {App: "reports", Name: "create-report-v2", MatchHost: "reports.example.com", MatchPath: "/reports"}}, want: "duplicate route match"},
+		{name: "invalid max age", routes: []AsyncRoute{{App: "reports", Name: "create-report", MatchHost: "reports.example.com", MatchPath: "/reports", MaxAgeSeconds: api.MaxAsyncRouteAgeSeconds + 1}}, want: "max_age_seconds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := (&Manifest{AsyncRoutes: tc.routes}).Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() = %v, want error containing %q", err, tc.want)
+			}
+		})
+	}
+}

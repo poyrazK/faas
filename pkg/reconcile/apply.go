@@ -310,8 +310,9 @@ func (s *Service) applyUpdate(
 	}
 	manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, a.Workload, serviceNames)
 	manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(a.Workload, serviceNames)
-	manifest.ServiceBindingPolicy = serviceBindingPolicyForWorkload(a.Workload)
+	manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(a.Workload, a.App.Manifest.ServiceBindingPolicy)
 	manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(a.Workload)
+	manifest.AllowedServiceCallers = a.Workload.AllowedServiceCallers
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
@@ -379,8 +380,9 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			Env:             serviceEnvForWorkloadWithAvailable(nil, w, serviceNames),
 			ServiceBindings: serviceBindingsForWorkloadWithAvailable(w, serviceNames),
 
-			ServiceBindingPolicy:      serviceBindingPolicyForWorkload(w),
+			ServiceBindingPolicy:      serviceBindingPolicyForNewWorkload(w),
 			PreviewServiceCallsPolicy: previewServiceCallsPolicyForWorkload(w),
+			AllowedServiceCallers:     w.AllowedServiceCallers,
 
 			BuildDockerfile: w.Dockerfile,
 		},
@@ -400,8 +402,9 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.StartCommand = resolveStartCommand(w)
 	app.Manifest.Env = serviceEnvForWorkloadWithAvailable(app.Manifest.Env, w, available)
 	app.Manifest.ServiceBindings = serviceBindingsForWorkloadWithAvailable(w, available)
-	app.Manifest.ServiceBindingPolicy = serviceBindingPolicyForWorkload(w)
+	app.Manifest.ServiceBindingPolicy = serviceBindingPolicyForExistingWorkload(w, app.Manifest.ServiceBindingPolicy)
 	app.Manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(w)
+	app.Manifest.AllowedServiceCallers = w.AllowedServiceCallers
 	app.Manifest.BuildDockerfile = w.Dockerfile
 	return app
 }

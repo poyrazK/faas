@@ -118,7 +118,10 @@ class UpdateAppRequest:
         | UpdateAppRequestVisibilityType2Type1
         | UpdateAppRequestVisibilityType3Type1
     ) = UNSET
-    """Change the app's public edge exposure. Omit for no change; internal visibility is Pro/Scale."""
+    """Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan."""
+    allowed_service_callers: list[str] | None | Unset = UNSET
+    """Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to
+    restore same-account access. Project-managed and preview apps reject this PATCH."""
     ram_mb: int | None | Unset = UNSET
     cpu_millicores: (
         None
@@ -198,6 +201,8 @@ class UpdateAppRequest:
     version_affinity_managed_cookie: bool | None | Unset = UNSET
     """Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no
     change."""
+    revision_pin_ttl_seconds: int | None | Unset = UNSET
+    """Set the revision pin window in seconds; zero disables future retention. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
@@ -301,6 +306,15 @@ class UpdateAppRequest:
             visibility = self.visibility
         else:
             visibility = self.visibility
+
+        allowed_service_callers: list[str] | None | Unset
+        if isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = UNSET
+        elif isinstance(self.allowed_service_callers, list):
+            allowed_service_callers = self.allowed_service_callers
+
+        else:
+            allowed_service_callers = self.allowed_service_callers
 
         ram_mb: int | None | Unset
         if isinstance(self.ram_mb, Unset):
@@ -482,6 +496,12 @@ class UpdateAppRequest:
         else:
             version_affinity_managed_cookie = self.version_affinity_managed_cookie
 
+        revision_pin_ttl_seconds: int | None | Unset
+        if isinstance(self.revision_pin_ttl_seconds, Unset):
+            revision_pin_ttl_seconds = UNSET
+        else:
+            revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
         min_instances: int | None | Unset
         if isinstance(self.min_instances, Unset):
             min_instances = UNSET
@@ -642,6 +662,8 @@ class UpdateAppRequest:
         field_dict.update({})
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
         if cpu_millicores is not UNSET:
@@ -692,6 +714,8 @@ class UpdateAppRequest:
             field_dict["version_affinity_cookie"] = version_affinity_cookie
         if version_affinity_managed_cookie is not UNSET:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
         if min_instances is not UNSET:
             field_dict["min_instances"] = min_instances
         if egress_allowlist is not UNSET:
@@ -802,6 +826,23 @@ class UpdateAppRequest:
             )
 
         visibility = _parse_visibility(d.pop("visibility", UNSET))
+
+        def _parse_allowed_service_callers(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                allowed_service_callers_type_0 = cast(list[str], data)
+
+                return allowed_service_callers_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        allowed_service_callers = _parse_allowed_service_callers(d.pop("allowed_service_callers", UNSET))
 
         def _parse_ram_mb(data: object) -> int | None | Unset:
             if data is None:
@@ -1211,6 +1252,15 @@ class UpdateAppRequest:
             d.pop("version_affinity_managed_cookie", UNSET)
         )
 
+        def _parse_revision_pin_ttl_seconds(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        revision_pin_ttl_seconds = _parse_revision_pin_ttl_seconds(d.pop("revision_pin_ttl_seconds", UNSET))
+
         def _parse_min_instances(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -1507,6 +1557,7 @@ class UpdateAppRequest:
 
         update_app_request = cls(
             visibility=visibility,
+            allowed_service_callers=allowed_service_callers,
             ram_mb=ram_mb,
             cpu_millicores=cpu_millicores,
             resource_profile=resource_profile,
@@ -1532,6 +1583,7 @@ class UpdateAppRequest:
             session_affinity=session_affinity,
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
             min_instances=min_instances,
             egress_allowlist=egress_allowlist,
             autoscale_target_rps=autoscale_target_rps,

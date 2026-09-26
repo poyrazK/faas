@@ -5923,9 +5923,10 @@ func (p Plan) RequireAuthnAllowed() bool {
 
 // InternalIngressAllowed reports whether the plan may hide an app from the
 // public edge while keeping it reachable through authenticated service routing.
-// This is intentionally Pro/Scale-only in the first networking slice.
+// Private ingress is a networking primitive on every recognized plan.
 func (p Plan) InternalIngressAllowed() bool {
-	return p == PlanPro || p == PlanScale
+	_, ok := LimitsFor(p)
+	return ok
 }
 
 // AppProtocolAllowed (ADR-124 §Plan gating) reports whether the
@@ -7091,6 +7092,11 @@ const (
 	// row-budget. Past 100 the caller pages via ?cursor.
 	AppErrorsSummaryDefaultLimit = 20
 	AppErrorsSummaryMaxLimit     = 100
+
+	// AllowedServiceCallersMax bounds the target-side internal service
+	// policy (ADR-266). Scale admits at most 100 deployed apps, so a larger
+	// list cannot grant additional live callers and would slow every hop.
+	AllowedServiceCallersMax = 100
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

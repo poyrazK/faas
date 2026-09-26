@@ -112,15 +112,71 @@ func TestCmdCronsRuns_HappyPath_MultiRow(t *testing.T) {
 		t.Errorf("query = %q, want limit=10", gotQuery)
 	}
 	body := stdout.String()
-	// Render invariant: each row has the 4 columns (started_at,
+	// Render invariant: each row has the 5 columns (run_id, started_at,
 	// outcome, duration, error) joined by tabs. With the TTY gate
 	// off (default in tests), glyphs are stripped so the line
-	// starts at the timestamp.
-	if !strings.Contains(body, "2026-08-10T09:00:00Z\tsuccess\t1.2s") {
+	// starts at the run id.
+	if !strings.Contains(body, "0123456789abcdef0123456789abcdef\t2026-08-10T09:00:00Z\tsuccess\t1.2s") {
 		t.Errorf("body missing success row; got:\n%s", body)
 	}
-	if !strings.Contains(body, "2026-08-09T21:00:00Z\ttimeout\t30.0s\tinvoke: gateway timeout") {
+	if !strings.Contains(body, "fedcba9876543210fedcba9876543210\t2026-08-09T21:00:00Z\ttimeout\t30.0s\tinvoke: gateway timeout") {
 		t.Errorf("body missing timeout row; got:\n%s", body)
+	}
+}
+
+func TestCmdCronsRuns_DetailShowsTaskOutput(t *testing.T) {
+	const runID = "fedcba98-7654-3210-fedc-ba9876543210"
+	zero := 0
+	task := api.AppTaskResponse{
+		ID: runID, DeploymentID: "deployment-1", Kind: api.AppTaskKindCron,
+		Status: api.AppTaskStatusSucceeded, AttemptCount: 2, RetryMax: 2,
+		ExitCode: &zero, StdoutTail: "daily job complete\n", StderrTail: "notice: cache cold\n",
+		OutputTruncated: true, MaxOutputBytes: 4096,
+	}
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_ = json.NewEncoder(w).Encode(task)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	var stdout, stderr bytes.Buffer
+	oldOut, oldErr := osStdout, osStderr
+	osStdout, osStderr = &stdout, &stderr
+	defer func() { osStdout, osStderr = oldOut, oldErr }()
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+
+	if code := cmdCronsRuns([]string{cronsRunsID, "--run", runID}); code != 0 {
+		t.Fatalf("crons runs detail = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if gotMethod != http.MethodGet || gotPath != "/v1/crons/"+cronsRunsID+"/runs/"+runID {
+		t.Fatalf("request = %s %s", gotMethod, gotPath)
+	}
+	for _, want := range []string{"status: succeeded", "attempts: 2/3", "exit_code: 0", "stdout:\ndaily job complete", "stderr:\nnotice: cache cold"} {
+		if !strings.Contains(stdout.String(), want) && !strings.Contains(stderr.String(), want) {
+			t.Errorf("detail output missing %q; stdout=%q stderr=%q", want, stdout.String(), stderr.String())
+		}
+	}
+	if !strings.Contains(stderr.String(), "captured output was truncated at 4096 bytes") {
+		t.Errorf("truncation warning missing: %q", stderr.String())
+	}
+}
+
+func TestCmdCronsRuns_DetailRejectsBadOrMixedFlagsBeforeRequest(t *testing.T) {
+	for _, args := range [][]string{
+		{cronsRunsID, "--run", "not-a-task-id"},
+		{cronsRunsID, "--run", "fedcba98-7654-3210-fedc-ba9876543210", "--before", "cursor"},
+	} {
+		var stdout, stderr bytes.Buffer
+		oldOut, oldErr := osStdout, osStderr
+		osStdout, osStderr = &stdout, &stderr
+		if code := cmdCronsRuns(args); code != 1 {
+			t.Errorf("cmdCronsRuns(%v) = %d, want 1", args, code)
+		}
+		osStdout, osStderr = oldOut, oldErr
 	}
 }
 

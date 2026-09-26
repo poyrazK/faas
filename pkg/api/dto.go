@@ -187,16 +187,19 @@ type PrewarmIntentResponse struct {
 type CreateAppRequest struct {
 	Slug string `json:"slug"`
 	// Visibility controls public versus authenticated private ingress. Empty
-	// defaults to public; internal is available on Pro and Scale.
-	Visibility      string `json:"visibility,omitempty"`
-	Type            string `json:"type,omitempty"`             // "app" (default) | "function"
-	Runtime         string `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
-	RAMMB           int    `json:"ram_mb,omitempty"`           // 0 => plan default
-	VCPU            int    `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
-	CPUMillicores   int    `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
-	ResourceProfile string `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
-	MaxConcurrency  int    `json:"max_concurrency,omitempty"`
-	IdleTimeoutS    int    `json:"idle_timeout_s,omitempty"`
+	// defaults to public; internal is available on every plan.
+	Visibility string `json:"visibility,omitempty"`
+	// AllowedServiceCallers restricts internal callers to these logical app
+	// names. Omitted/null preserves same-account access; [] denies all.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
+	Type                  string    `json:"type,omitempty"`             // "app" (default) | "function"
+	Runtime               string    `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	RAMMB                 int       `json:"ram_mb,omitempty"`           // 0 => plan default
+	VCPU                  int       `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
+	CPUMillicores         int       `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
+	ResourceProfile       string    `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
+	MaxConcurrency        int       `json:"max_concurrency,omitempty"`
+	IdleTimeoutS          int       `json:"idle_timeout_s,omitempty"`
 	// Lifecycle settings are app-level defaults merged into every future
 	// deployment manifest. Empty execution_mode/restart_policy and zero
 	// deadline/retry values retain the mode/plan defaults. For service mode,
@@ -464,13 +467,17 @@ type DevSessionResponse struct {
 // "set to zero".
 type UpdateAppRequest struct {
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
-	// values are public or internal. Internal is available on Pro and Scale.
-	Visibility      *string `json:"visibility,omitempty"`
-	RAMMB           *int    `json:"ram_mb,omitempty"`
-	CPUMillicores   *int    `json:"cpu_millicores,omitempty"`
-	ResourceProfile *string `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
-	IdleTimeoutS    *int    `json:"idle_timeout_s,omitempty"`
-	MaxConcurrency  *int    `json:"max_concurrency,omitempty"`
+	// values are public or internal. Internal is available on every plan.
+	Visibility *string `json:"visibility,omitempty"`
+	// AllowedServiceCallers is raw JSON to preserve three PATCH states:
+	// omitted (unchanged), null (same-account access), array (replace, with
+	// [] denying all). The handler validates and normalizes the array.
+	AllowedServiceCallers json.RawMessage `json:"allowed_service_callers,omitempty"`
+	RAMMB                 *int            `json:"ram_mb,omitempty"`
+	CPUMillicores         *int            `json:"cpu_millicores,omitempty"`
+	ResourceProfile       *string         `json:"resource_profile,omitempty"` // named RAM/CPU shape; nil = no change
+	IdleTimeoutS          *int            `json:"idle_timeout_s,omitempty"`
+	MaxConcurrency        *int            `json:"max_concurrency,omitempty"`
 	// Lifecycle settings are partial updates. A non-nil service_replicas
 	// replaces the full policy; use min=max=desired=0 to scale a service to
 	// zero. desired must fit the app's max_concurrency; include both fields
@@ -1300,6 +1307,9 @@ type AppResponse struct {
 	// from preview apps. "allow" is the legacy default; "deny" rejects them
 	// when this app is the production target.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	// AllowedServiceCallers is the target-side internal-service policy. Nil
+	// permits same-account callers; an empty non-nil list denies all.
+	AllowedServiceCallers *[]string `json:"allowed_service_callers,omitempty"`
 	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
@@ -4972,7 +4982,8 @@ type FireCronResponse struct {
 //
 // Polling contract: clients should poll until Status is one of the
 // terminal values {succeeded, failed, cancelled}. The schedd fire-now
-// consumer populates FinishedAt + Error + InvocationID at terminal stamp.
+// consumer populates FinishedAt + Error and either InvocationID (HTTP
+// crons) or TaskID (command crons) at terminal stamp.
 type FireCronRequestResponse struct {
 	RequestID    string  `json:"request_id"`
 	CronID       string  `json:"cron_id"`
@@ -4980,6 +4991,7 @@ type FireCronRequestResponse struct {
 	RequestedAt  string  `json:"requested_at"`          // RFC3339Nano UTC
 	FinishedAt   *string `json:"finished_at,omitempty"` // RFC3339Nano UTC or null
 	InvocationID *string `json:"invocation_id,omitempty"`
+	TaskID       *string `json:"task_id,omitempty"`
 	Error        *string `json:"error,omitempty"`
 	AccountID    string  `json:"account_id"`
 }
@@ -6006,6 +6018,7 @@ type PlanWorkload struct {
 
 	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
+	AllowedServiceCallers     *[]string                 `json:"allowed_service_callers,omitempty"`
 
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`
@@ -6085,6 +6098,25 @@ type PlanCron struct {
 	Enabled      bool   `json:"enabled"`
 }
 
+// PlanAsyncRoute is one manifest-owned async route change in a project
+// deployment plan. Match and action fields describe the resulting route for
+// create/update/unchanged rows and the existing route for remove rows.
+type PlanAsyncRoute struct {
+	App           string          `json:"app"`
+	Name          string          `json:"name"`
+	Action        string          `json:"action"` // create | update | remove | unchanged | skipped
+	MatchHost     string          `json:"match_host"`
+	MatchPath     string          `json:"match_path"`
+	MatchMethods  []string        `json:"match_methods"`
+	Priority      int             `json:"priority"`
+	Enabled       bool            `json:"enabled"`
+	OnSuccess     string          `json:"on_success,omitempty"`
+	OnFailure     string          `json:"on_failure,omitempty"`
+	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	MaxAgeSeconds int             `json:"max_age_seconds,omitempty"`
+	Reason        string          `json:"reason,omitempty"`
+}
+
 // PlanAffectedApp is one row of the ADR-124 affected-workloads
 // partition (PlanResponse.WillDeploy / Unaffected). It pairs an
 // existing-or-future app with a closed-vocabulary Action that tells
@@ -6142,6 +6174,7 @@ type PlanResponse struct {
 	Workloads             []PlanWorkload         `json:"workloads"`
 	Managed               []PlanManaged          `json:"managed"`
 	Crons                 []PlanCron             `json:"crons"`
+	AsyncRoutes           []PlanAsyncRoute       `json:"async_routes,omitempty"`
 	Warnings              []string               `json:"warnings,omitempty"`
 	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
 	ObservedApps          int                    `json:"observed_apps"`

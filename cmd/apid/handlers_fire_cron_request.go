@@ -77,6 +77,7 @@ func (s *server) getFireCronRequest(w http.ResponseWriter, r *http.Request, acct
 		RequestedAt:  req.RequestedAt.UTC().Format(time.RFC3339Nano),
 		FinishedAt:   finishedAtOrNil(req.FinishedAt),
 		InvocationID: req.InvocationID,
+		TaskID:       req.TaskID,
 		Error:        req.Error,
 		AccountID:    req.AccountID,
 	})

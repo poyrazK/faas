@@ -21,13 +21,17 @@ export type PlanWorkload = {
    */
   depends_on?: Array<string>;
   /**
-   * Effective policy selected by the Compose `x-gregale-service-policy` extension. Defaults to `account`.
+   * Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted.
    */
   service_binding_policy?: ServiceBindingPolicy;
   /**
    * Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`.
    */
   preview_service_calls_policy?: PreviewServiceCallsPolicy;
+  /**
+   * Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers; an empty array denies all.
+   */
+  allowed_service_callers?: Array<string>;
   class?: 'http' | 'graphql' | 'grpc' | 'job' | 'worker' | 'server' | 'unknown';
   /**
    * cron expression when declared (CronJob, render, serverless)

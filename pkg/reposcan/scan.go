@@ -127,6 +127,9 @@ type Workload struct {
 	// PreviewServiceCallsPolicy controls whether this workload, as a
 	// production target, accepts internal calls from preview apps.
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy
+	// AllowedServiceCallers is the target-side service policy. Nil permits
+	// legacy same-account callers; a non-nil empty list denies every caller.
+	AllowedServiceCallers *[]string
 
 	Class    Class  // http|graphql|grpc|job|worker|server|unknown
 	Schedule string // primary cron expression retained for the existing plan wire

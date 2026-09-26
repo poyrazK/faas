@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 267 | [Standalone app service-caller policy API](267-standalone-service-caller-policy-api.md) | accepted | Create/PATCH target allowlists with replace, deny-all, and reset semantics; project-owned policy remains source-managed |
 | 266 | [Target-authorized internal service bindings](266-target-authorized-service-bindings.md) | accepted | New project callers default to declared bindings, targets can restrict callers, and private ingress is available on all plans |
 | 245 | [Durable webhooks for platform tenant statements](245-platform-tenant-statement-webhooks.md) | proposed | One signed, retryable tenant event per immutable finalized statement revision |
 | 240 | [Cross-app platform tenant request budgets](240-platform-tenant-request-budgets.md) | accepted | Synchronously enforce optional customer-wide minute/day admission ceilings across apps and gateway replicas |

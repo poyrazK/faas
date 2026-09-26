@@ -32,7 +32,8 @@ class ProjectApplyRequest:
     approval_token: str | Unset = UNSET
     """Short-lived approval credential for the exact protected-environment plan"""
     no_triggers: bool | Unset = False
-    """Leave trigger declarations and existing project trigger state unchanged for this apply."""
+    """Leave trigger and async-route declarations and existing project trigger/route state unchanged for this
+    apply."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

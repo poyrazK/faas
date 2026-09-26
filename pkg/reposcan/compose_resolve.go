@@ -221,6 +221,15 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 		return err
 	}
 	candidate.PreviewServiceCallsPolicy = previewPolicy
+	if candidate.AllowedServiceCallers != nil {
+		for i, caller := range *candidate.AllowedServiceCallers {
+			resolved, err := interpolateComposeString(caller, values, source, service, "x-gregale-allow-callers")
+			if err != nil {
+				return err
+			}
+			(*candidate.AllowedServiceCallers)[i] = resolved
+		}
+	}
 	return nil
 }
 

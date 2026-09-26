@@ -3789,25 +3789,29 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, n
 		if markErr := store.MarkCronFired(ctx, c.ID, now); markErr != nil {
 			l.log.Warn("cron command: consume failed fire", "cron_id", c.ID, "err", markErr)
 		}
-		l.emitCommandCronFired(ctx, c, account.ID, now, "err", "")
+		l.emitCommandCronFired(ctx, c, account.ID, now, "err", "", TriggerSchedule)
 		return
 	}
 	if !created {
 		return
 	}
 	l.log.Info("cron command: scheduled task queued", "cron_id", c.ID, "task_id", task.ID, "deployment_id", task.DeploymentID)
-	l.emitCommandCronFired(ctx, c, account.ID, now, "ok", task.ID)
+	l.emitCommandCronFired(ctx, c, account.ID, now, "ok", task.ID, TriggerSchedule)
 }
 
-func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID string, firedAt time.Time, outcome, taskID string) {
+func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID string, firedAt time.Time, outcome, taskID string, trigger CronDispatchTrigger) {
 	if l.audit == nil {
 		return
 	}
-	l.audit.Emit(ctx, AuditEventCronFired, &accountID, map[string]any{
+	eventName := AuditEventCronFired
+	if trigger == TriggerManual {
+		eventName = AuditEventCronFiredManually
+	}
+	l.audit.Emit(ctx, eventName, &accountID, map[string]any{
 		"cron_id": c.ID, "app_id": c.AppID, "schedule": c.Schedule,
 		"task_id": taskID, "invocation_id": "", "instance_id": "",
 		"fired_at": firedAt.UTC().Format(time.RFC3339Nano), "status": outcome,
-		"trigger": string(TriggerSchedule),
+		"trigger": string(trigger),
 	})
 }
 

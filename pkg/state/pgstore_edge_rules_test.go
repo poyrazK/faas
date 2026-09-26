@@ -211,6 +211,27 @@ func TestPgStore_EdgeRule_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestPgStore_EdgeRule_ManifestKeyRoundTripAndUnique(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app := pgEdgeRuleSeedAccount(t, s, ctx, api.PlanPro, "manifest-key")
+	params := pgSampleEdgeRuleParams(acct, app, "manifest-key.example.com")
+	params.ManifestKey = "async-route:create-report"
+	created, err := s.CreateEdgeRule(ctx, params)
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+	if created.ManifestKey != params.ManifestKey {
+		t.Fatalf("ManifestKey = %q, want %q", created.ManifestKey, params.ManifestKey)
+	}
+	got, err := s.GetEdgeRuleByID(ctx, created.ID)
+	if err != nil || got.ManifestKey != params.ManifestKey {
+		t.Fatalf("GetEdgeRuleByID ManifestKey = %q, err=%v", got.ManifestKey, err)
+	}
+	if _, err := s.CreateEdgeRule(ctx, params); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate manifest key error = %v, want ErrConflict", err)
+	}
+}
+
 // TestPgStore_CreateEdgeRuleIfUnderQuota_PerAppCap fills one app
 // to its per-app edge-rules cap (Pro: 100) and asserts the next
 // insert returns *state.EdgeRuleQuotaError with the per-app limit

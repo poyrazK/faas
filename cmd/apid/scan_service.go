@@ -144,6 +144,7 @@ type scanPlanResponse struct {
 	Workloads             []api.PlanWorkload      `json:"workloads"`
 	Managed               []api.PlanManaged       `json:"managed"`
 	Crons                 []planCron              `json:"crons"`
+	AsyncRoutes           []api.PlanAsyncRoute    `json:"async_routes,omitempty"`
 	// CronNames parallels Crons: when /apply runs, the apply handler
 	// uses CronNames[i] to look up the freshly inserted app_id from
 	// insertedApps (matched by Slug == WorkloadName). Not exposed
@@ -220,6 +221,10 @@ type scanPlanResponse struct {
 // representation ("single"/"convention"/"workspace"/"compose"/
 // "unknown"), matching the OpenAPI PlanWorkload.tier enum.
 func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
+	policy := api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
+	if w.ServiceBindingPolicy == "" {
+		policy = api.ServiceBindingPolicyDeclared
+	}
 	return api.PlanWorkload{
 		Name:       w.Name,
 		RootDir:    w.RootDir,
@@ -227,8 +232,9 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		Command:    w.Command,
 		DependsOn:  w.DependsOn,
 
-		ServiceBindingPolicy:      api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective(),
+		ServiceBindingPolicy:      policy,
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective(),
+		AllowedServiceCallers:     w.AllowedServiceCallers,
 
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
@@ -1404,7 +1410,7 @@ func (s *server) scanService(
 	for _, workload := range filteredW {
 		selectedDatabaseWorkloads = append(selectedDatabaseWorkloads, workload.Name)
 	}
-	resolvedManifestBindings, manifestProblem := s.loadAndResolveManifestPostgresBindings(
+	resolvedManifest, manifestProblem := s.loadAndResolveProjectManifest(
 		r.Context(), acct, req.ScanDir, selectedDatabaseWorkloads, req.Environment)
 	if manifestProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
@@ -1500,6 +1506,9 @@ func (s *server) scanService(
 	// path from the just-inserted apps.
 	crons := projectWorkloadCrons(filteredW)
 	warnings := append([]string(nil), result.Warnings...)
+	if routeWarning := projectAsyncRoutePlanWarning(resolvedManifest.AsyncRoutes, resolvedManifest.AsyncRoutesPresent, req.NoTriggers); routeWarning != "" {
+		warnings = append(warnings, routeWarning)
+	}
 	if req.NoTriggers {
 		if len(crons) > 0 {
 			warnings = append(warnings, "triggers skipped by request (--no-triggers); existing trigger state left unchanged")
@@ -1546,6 +1555,24 @@ func (s *server) scanService(
 		if app.ProjectID == projectID && projectID != "" {
 			projectApps = append(projectApps, app)
 			existingProjectCrons += len(cronInventory[app.ID])
+		}
+	}
+	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
+		if problem := validateProjectManifestAsyncRoutes(resolvedManifest.AsyncRoutes, result.Workloads, filteredW, projectApps, req.Exclude); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
+		}
+		if problem := projectAsyncRoutesPlanProblem(acct.Plan, resolvedManifest.AsyncRoutes, filteredW, projectApps); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	var asyncRoutePlan []api.PlanAsyncRoute
+	if resolvedManifest.AsyncRoutesPresent {
+		asyncRoutePlan, manifestProblem = s.planProjectManifestAsyncRoutes(
+			r.Context(), acct, result.Workloads, filteredW, projectApps,
+			resolvedManifest.AsyncRoutes, req.NoTriggers,
+		)
+		if manifestProblem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
 		}
 	}
 	prePartition := computeAffectedPartition(onlyFilteredW, result.Workloads, acctApps, nil, projectID)
@@ -1659,6 +1686,16 @@ func (s *server) scanService(
 		pw := toPlanWorkload(w)
 		pw.Action = partition.WillDeploy[i].Action
 		pw.ExistingAppID = partition.WillDeploy[i].ID
+		if w.ServiceBindingPolicy == "" {
+			if pw.ExistingAppID != "" {
+				for _, existing := range acctApps {
+					if existing.ID == pw.ExistingAppID {
+						pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
+						break
+					}
+				}
+			}
+		}
 		respWorkloads[i] = pw
 	}
 	respManaged := make([]api.PlanManaged, len(filteredMc))
@@ -1676,6 +1713,7 @@ func (s *server) scanService(
 		Workloads:             respWorkloads,
 		Managed:               respManaged,
 		Crons:                 crons,
+		AsyncRoutes:           asyncRoutePlan,
 		Warnings:              warnings,
 		DetectionWarnings:     toPlanDetectionWarnings(result.DetectionWarnings),
 		ObservedApps:          projectedApps,
@@ -2048,20 +2086,31 @@ func (s *server) scanService(
 			removedSlugs = append(removedSlugs, slug)
 		}
 	}
-	if len(resolvedManifestBindings) > 0 {
+	needsProjectApps := len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers)
+	var currentProjectApps []state.App
+	if needsProjectApps {
 		// Reconcile has already committed the project/app rows. A binding
 		// provider error is therefore returned without deleting a newly
 		// created project: the next deploy can retry the idempotent binding
 		// operation against the durable app instead of orphaning active apps
 		// when project_id is nulled by rollback.
-		bindingApps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if appsErr != nil {
-			prob := customerInternalProblem(s.log, "load workloads for managed database bindings",
-				"Gregale could not finish connecting the declared databases to your workloads.",
+			prob := customerInternalProblem(s.log, "load workloads for project manifest reconciliation",
+				"Gregale could not load this project's workloads to apply its manifest.",
 				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
-		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifestBindings, bindingApps); prob != nil {
+		currentProjectApps = apps
+	}
+	if len(resolvedManifest.PostgresBindings) > 0 {
+		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifest.PostgresBindings, currentProjectApps); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+	}
+	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
+		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
+		if prob := s.applyProjectManifestAsyncRoutes(r.Context(), acct, resolvedManifest.AsyncRoutes, true, false, selectedApps); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}

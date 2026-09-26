@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,8 +39,9 @@ type composeCandidate struct {
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
 
-	ServiceBindingPolicy      string `yaml:"x-gregale-service-policy"`
-	PreviewServiceCallsPolicy string `yaml:"x-gregale-preview-calls"`
+	ServiceBindingPolicy      string    `yaml:"x-gregale-service-policy"`
+	PreviewServiceCallsPolicy string    `yaml:"x-gregale-preview-calls"`
+	AllowedServiceCallers     *[]string `yaml:"x-gregale-allow-callers"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -185,6 +187,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasBuild && previewServiceCallsPolicy != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-preview-calls requires a build workload", src, name)
 		}
+		allowedCallers, callersErr := normalizeAllowedServiceCallers(s.AllowedServiceCallers)
+		if callersErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, callersErr)
+		}
+		if !hasBuild && allowedCallers != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-callers requires a build workload", src, name)
+		}
 		command, commandShell := commandSpec(s.Command)
 		if hasBuild {
 			if (ctx != "" && !fs.ValidPath(ctx)) || strings.HasPrefix(ctx, "../") ||
@@ -237,6 +246,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 
 			serviceBindingPolicy:      serviceBindingPolicy,
 			previewServiceCallsPolicy: previewServiceCallsPolicy,
+			allowedServiceCallers:     allowedCallers,
 
 			ports:   parsePorts(s.Ports),
 			envKeys: envKeys(s.Environment),
@@ -270,6 +280,19 @@ func normalizePreviewServiceCallsPolicy(value string) (PreviewServiceCallsPolicy
 	default:
 		return "", fmt.Errorf("x-gregale-preview-calls must be allow or deny")
 	}
+}
+
+// An absent extension keeps the legacy same-account target policy. An
+// explicitly empty array is a deny-all policy and must remain non-nil.
+func normalizeAllowedServiceCallers(value *[]string) (*[]string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	callers, err := api.NormalizeAllowedServiceCallers(*value)
+	if err != nil {
+		return nil, fmt.Errorf("x-gregale-allow-callers: %w", err)
+	}
+	return &callers, nil
 }
 
 // dependencyNames normalizes Compose's short and long depends_on forms.

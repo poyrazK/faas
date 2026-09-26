@@ -22,7 +22,7 @@ export type AppResponse = {
   slug: string;
   type: 'app' | 'function';
   /**
-   * Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Internal visibility is Pro/Scale.
+   * Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Available on every plan.
    */
   visibility?: 'public' | 'internal';
   /**
@@ -104,6 +104,10 @@ export type AppResponse = {
    * Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`.
    */
   preview_service_calls_policy?: PreviewServiceCallsPolicy;
+  /**
+   * Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
+   */
+  allowed_service_callers?: Array<string>;
   /**
    * Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.
    */
