@@ -15,8 +15,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +36,12 @@ import (
 
 const requestAnalyticsRouteLimit = 50
 const requestAnalyticsGroupLimit = 50
+const requestAnalyticsDependencyRowLimit = 2000
+const requestAnalyticsDependencyGroupLimit = 64
+const requestAnalyticsDependencyOutputLimit = 10
 const requestAnalyticsDeploymentLimit = 50
+const requestAnalyticsDeploymentCPURegressionMinRequests = int64(20)
+const requestAnalyticsDeploymentCPURegressionThresholdPct = 25.0
 
 const requestAnalyticsRouteMaxLength = 256
 
@@ -275,15 +282,22 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		value := requestAnalyticsDimensionString(row.Dimension)
 		method := requestAnalyticsDimensionString(row.Method)
 		group := api.RequestAnalyticsGroup{
-			Value:         value,
-			Method:        method,
-			Requests:      row.Requests,
-			ErrorRequests: row.ErrorRequests,
-			ErrorRatePct:  requestErrorRatePct(row.Requests, row.ErrorRequests),
-			ColdBoots:     row.ColdBoots,
-			P50MS:         int(row.P50Ms),
-			P95MS:         int(row.P95Ms),
-			P99MS:         int(row.P99Ms),
+			Value:               value,
+			Method:              method,
+			Requests:            row.Requests,
+			ErrorRequests:       row.ErrorRequests,
+			ErrorRatePct:        requestErrorRatePct(row.Requests, row.ErrorRequests),
+			ColdBoots:           row.ColdBoots,
+			P50MS:               int(row.P50Ms),
+			P95MS:               int(row.P95Ms),
+			P99MS:               int(row.P99Ms),
+			ColdRequestP95MS:    nullableAnalyticsInt(row.ColdRequestP95Ms),
+			WakeBootP95MS:       nullableAnalyticsInt(row.WakeBootP95Ms),
+			GuestExecutionP50MS: nullableAnalyticsInt(row.GuestExecutionP50Ms),
+			GuestExecutionP95MS: nullableAnalyticsInt(row.GuestExecutionP95Ms),
+			GuestCPUAvgMS:       nullableAnalyticsInt(row.GuestCpuAvgMs),
+			GuestCPUP95MS:       nullableAnalyticsInt(row.GuestCpuP95Ms),
+			GuestPeakRSSMaxMB:   nullableAnalyticsInt(row.GuestPeakRssMaxMb),
 		}
 		groups = append(groups, group)
 		if group.Value == "__other__" {
@@ -295,16 +309,50 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		}
 		if groupBy == "route" {
 			routes = append(routes, api.RequestAnalyticsRoute{
-				Route:         group.Value,
-				Method:        group.Method,
-				Requests:      group.Requests,
-				ErrorRequests: group.ErrorRequests,
-				ErrorRatePct:  group.ErrorRatePct,
-				ColdBoots:     group.ColdBoots,
-				P50MS:         group.P50MS,
-				P95MS:         group.P95MS,
-				P99MS:         group.P99MS,
+				Route:               group.Value,
+				Method:              group.Method,
+				Requests:            group.Requests,
+				ErrorRequests:       group.ErrorRequests,
+				ErrorRatePct:        group.ErrorRatePct,
+				ColdBoots:           group.ColdBoots,
+				P50MS:               group.P50MS,
+				P95MS:               group.P95MS,
+				P99MS:               group.P99MS,
+				ColdRequestP95MS:    group.ColdRequestP95MS,
+				WakeBootP95MS:       group.WakeBootP95MS,
+				GuestExecutionP50MS: group.GuestExecutionP50MS,
+				GuestExecutionP95MS: group.GuestExecutionP95MS,
+				GuestCPUAvgMS:       group.GuestCPUAvgMS,
+				GuestCPUP95MS:       group.GuestCPUP95MS,
+				GuestPeakRSSMaxMB:   group.GuestPeakRSSMaxMB,
 			})
+		}
+	}
+	dependenciesTruncated := false
+	if groupBy == "route" && len(routes) > 0 {
+		dependencyRows, err := s.store.ListRequestTelemetryDependencySpans(ctx, sqlc.ListRequestTelemetryDependencySpansParams{
+			AppID:        params.AppID,
+			AccountID:    params.AccountID,
+			ReceivedAt:   params.ReceivedAt,
+			ReceivedAt_2: params.ReceivedAt_2,
+			Limit:        requestAnalyticsDependencyRowLimit + 1,
+		})
+		if err != nil {
+			return api.RequestAnalyticsResponse{}, err
+		}
+		if len(dependencyRows) > requestAnalyticsDependencyRowLimit {
+			dependenciesTruncated = true
+			dependencyRows = dependencyRows[:requestAnalyticsDependencyRowLimit]
+		}
+		routeDependencies, aggregatedTruncated := buildRequestAnalyticsRouteDependencies(dependencyRows)
+		dependenciesTruncated = dependenciesTruncated || aggregatedTruncated
+		for i := range routes {
+			key := requestAnalyticsRouteKey{route: routes[i].Route, method: routes[i].Method}
+			if value, ok := routeDependencies[key]; ok {
+				routes[i].DependencySamples = value.samples
+				routes[i].DependencyRequests = value.requests
+				routes[i].Dependencies = value.dependencies
+			}
 		}
 	}
 
@@ -373,6 +421,11 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 				if deploymentRequestCount > 0 {
 					sharePct = float64(row.Requests) * 100 / float64(deploymentRequestCount)
 				}
+				var guestCPUAvgMS *int
+				if row.GuestCpuMeasuredRequests > 0 {
+					cpuAvg := int(row.GuestCpuAvgMs)
+					guestCPUAvgMS = &cpuAvg
+				}
 				deployments = append(deployments, api.RequestAnalyticsDeploymentCost{
 					DeploymentID:                   row.DeploymentID,
 					CommitSHA:                      requestAnalyticsDimensionString(row.CommitSha),
@@ -381,8 +434,12 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 					Requests:                       row.Requests,
 					RequestSharePct:                sharePct,
 					EstimatedComputeCostMillicents: deploymentAllocations[i],
+					GuestCPUAvgMS:                  guestCPUAvgMS,
+					GuestCPUMeasuredRequests:       row.GuestCpuMeasuredRequests,
+					GuestCPURegression:             false,
 				})
 			}
+			annotateDeploymentCPURegressions(deployments)
 			otherSharePct := 0.0
 			if deploymentRequestCount > 0 {
 				otherSharePct = float64(otherDeploymentRequests) * 100 / float64(deploymentRequestCount)
@@ -401,29 +458,284 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	}
 
 	return api.RequestAnalyticsResponse{
-		Slug:            app.Slug,
-		Since:           echoDebugSince(window.RequestedSince, window.Since),
-		From:            window.From.Format(time.RFC3339Nano),
-		Until:           window.Until.Format(time.RFC3339Nano),
-		WindowClamped:   window.WindowClamped,
-		Requests:        summary.Requests,
-		ErrorRequests:   summary.ErrorRequests,
-		ErrorRatePct:    requestErrorRatePct(summary.Requests, summary.ErrorRequests),
-		ColdBoots:       summary.ColdBoots,
-		P50MS:           int(summary.P50Ms),
-		P95MS:           int(summary.P95Ms),
-		P99MS:           int(summary.P99Ms),
-		GroupBy:         groupBy,
-		Groups:          groups,
-		GroupsLimit:     requestAnalyticsGroupLimit,
-		GroupsTruncated: groupsTruncated,
-		Routes:          routes,
-		RoutesLimit:     requestAnalyticsRouteLimit,
-		RoutesTruncated: groupsTruncated && groupBy == "route",
-		ComputeCost:     computeCost,
-		DeploymentCosts: deploymentCosts,
-		AsOf:            window.AsOf.Format(time.RFC3339Nano),
+		Slug:                  app.Slug,
+		Since:                 echoDebugSince(window.RequestedSince, window.Since),
+		From:                  window.From.Format(time.RFC3339Nano),
+		Until:                 window.Until.Format(time.RFC3339Nano),
+		WindowClamped:         window.WindowClamped,
+		Requests:              summary.Requests,
+		ErrorRequests:         summary.ErrorRequests,
+		ErrorRatePct:          requestErrorRatePct(summary.Requests, summary.ErrorRequests),
+		ColdBoots:             summary.ColdBoots,
+		P50MS:                 int(summary.P50Ms),
+		P95MS:                 int(summary.P95Ms),
+		P99MS:                 int(summary.P99Ms),
+		GroupBy:               groupBy,
+		Groups:                groups,
+		GroupsLimit:           requestAnalyticsGroupLimit,
+		GroupsTruncated:       groupsTruncated,
+		Routes:                routes,
+		RoutesLimit:           requestAnalyticsRouteLimit,
+		RoutesTruncated:       groupsTruncated && groupBy == "route",
+		DependenciesTruncated: dependenciesTruncated,
+		ComputeCost:           computeCost,
+		DeploymentCosts:       deploymentCosts,
+		AsOf:                  window.AsOf.Format(time.RFC3339Nano),
 	}, nil
+}
+
+// annotateDeploymentCPURegressions compares the mean measured guest CPU time
+// for each deployment with the previous eligible deployment in this analytics
+// window. The comparison is advisory: it is traffic-mix sensitive, only
+// available for instrumented Linux one-shot runtimes, and requires enough
+// measured requests on both sides to avoid warning on tiny samples.
+func annotateDeploymentCPURegressions(deployments []api.RequestAnalyticsDeploymentCost) {
+	type measuredDeployment struct {
+		index     int
+		createdAt time.Time
+	}
+	measured := make([]measuredDeployment, 0, len(deployments))
+	for i := range deployments {
+		deployment := &deployments[i]
+		if deployment.GuestCPUAvgMS == nil || deployment.GuestCPUMeasuredRequests < requestAnalyticsDeploymentCPURegressionMinRequests {
+			continue
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, deployment.DeploymentCreatedAt)
+		if err != nil {
+			continue
+		}
+		measured = append(measured, measuredDeployment{index: i, createdAt: createdAt})
+	}
+	sort.Slice(measured, func(i, j int) bool {
+		if measured[i].createdAt.Equal(measured[j].createdAt) {
+			return deployments[measured[i].index].DeploymentID < deployments[measured[j].index].DeploymentID
+		}
+		return measured[i].createdAt.Before(measured[j].createdAt)
+	})
+
+	var previous *measuredDeployment
+	for i := 0; i < len(measured); {
+		groupEnd := i + 1
+		for groupEnd < len(measured) && measured[groupEnd].createdAt.Equal(measured[i].createdAt) {
+			groupEnd++
+		}
+		if groupEnd-i != 1 {
+			// Creation timestamps do not provide an ordering within this group;
+			// reset the baseline rather than manufacturing a comparison.
+			previous = nil
+			i = groupEnd
+			continue
+		}
+		current := measured[i]
+		currentDeployment := &deployments[current.index]
+		if previous != nil {
+			previousDeployment := deployments[previous.index]
+			baselineMS := *previousDeployment.GuestCPUAvgMS
+			if baselineMS > 0 {
+				changePct := (float64(*currentDeployment.GuestCPUAvgMS-baselineMS) / float64(baselineMS)) * 100
+				currentDeployment.GuestCPUChangePct = &changePct
+				currentDeployment.GuestCPUComparedTo = requestAnalyticsDeploymentRevision(previousDeployment)
+				currentDeployment.GuestCPURegression = changePct >= requestAnalyticsDeploymentCPURegressionThresholdPct
+			}
+		}
+		previous = &measured[i]
+		i++
+	}
+}
+
+func requestAnalyticsDeploymentRevision(deployment api.RequestAnalyticsDeploymentCost) string {
+	if deployment.DeploymentTag != "" {
+		return deployment.DeploymentTag
+	}
+	if deployment.CommitSHA != "" {
+		return deployment.CommitSHA
+	}
+	return deployment.DeploymentID
+}
+
+type requestAnalyticsRouteKey struct {
+	route  string
+	method string
+}
+
+type requestAnalyticsDependencySample struct {
+	durationNanos  uint64
+	exclusiveNanos uint64
+	weight         int64
+	isError        bool
+}
+
+type requestAnalyticsDependencyAggregate struct {
+	dependencyType string
+	dependencyKind string
+	name           string
+	samples        int64
+	calls          int64
+	errors         int64
+	observations   []requestAnalyticsDependencySample
+}
+
+type requestAnalyticsRouteDependencyAggregate struct {
+	requests int64
+	samples  int64
+	groups   map[string]*requestAnalyticsDependencyAggregate
+}
+
+type requestAnalyticsRouteDependencyResult struct {
+	samples      int64
+	requests     int64
+	dependencies []api.RequestAnalyticsDependency
+}
+
+// buildRequestAnalyticsRouteDependencies turns retained, redacted span
+// summaries into a bounded route/dependency rollup. It deliberately uses
+// only spans with a platform-classified dependency identity; application
+// spans do not masquerade as DB or outbound wait. The sample set is bounded
+// by the caller's telemetry-row cap and per-route cardinality cap.
+func buildRequestAnalyticsRouteDependencies(rows []sqlc.ListRequestTelemetryDependencySpansRow) (map[requestAnalyticsRouteKey]requestAnalyticsRouteDependencyResult, bool) {
+	aggregates := make(map[requestAnalyticsRouteKey]*requestAnalyticsRouteDependencyAggregate)
+	truncated := false
+	for _, row := range rows {
+		if row.Route == "" || row.Method == "" {
+			continue
+		}
+		spans, spanTruncated := parseDebugEvidenceSpans(row.SpansSummary)
+		truncated = truncated || spanTruncated
+		if len(spans) == 0 {
+			continue
+		}
+		key := requestAnalyticsRouteKey{route: row.Route, method: row.Method}
+		routeAggregate := aggregates[key]
+		if routeAggregate == nil {
+			routeAggregate = &requestAnalyticsRouteDependencyAggregate{groups: make(map[string]*requestAnalyticsDependencyAggregate)}
+			aggregates[key] = routeAggregate
+		}
+		weight := int64(row.Count)
+		if weight < 1 {
+			weight = 1
+		}
+		exclusives := debugDependencySpanExclusiveDurations(spans)
+		hasDependency := false
+		for index, span := range spans {
+			if span.DependencyType == "" {
+				continue
+			}
+			hasDependency = true
+			routeAggregate.samples++
+			segment := debugDependencySegment(span)
+			segmentKey := debugDependencySegmentKey(segment)
+			dependency := routeAggregate.groups[segmentKey]
+			if dependency == nil {
+				if len(routeAggregate.groups) >= requestAnalyticsDependencyGroupLimit {
+					truncated = true
+					continue
+				}
+				dependency = &requestAnalyticsDependencyAggregate{
+					dependencyType: segment.Type,
+					dependencyKind: segment.Kind,
+					name:           segment.Name,
+				}
+				routeAggregate.groups[segmentKey] = dependency
+			}
+			duration := minDebugDependencyDuration(span.DurationNanos)
+			exclusive := minDebugDependencyDuration(exclusives[index])
+			isError := strings.EqualFold(span.Status, "error")
+			dependency.samples++
+			dependency.calls += weight
+			if isError {
+				dependency.errors += weight
+			}
+			dependency.observations = append(dependency.observations, requestAnalyticsDependencySample{
+				durationNanos:  duration,
+				exclusiveNanos: exclusive,
+				weight:         weight,
+				isError:        isError,
+			})
+		}
+		if hasDependency {
+			routeAggregate.requests += weight
+		}
+	}
+
+	results := make(map[requestAnalyticsRouteKey]requestAnalyticsRouteDependencyResult, len(aggregates))
+	for key, aggregate := range aggregates {
+		dependencies := make([]api.RequestAnalyticsDependency, 0, len(aggregate.groups))
+		for _, dependency := range aggregate.groups {
+			p95 := requestAnalyticsDependencyPercentile(dependency.observations, 0.95, false)
+			exclusiveP95 := requestAnalyticsDependencyPercentile(dependency.observations, 0.95, true)
+			dependencies = append(dependencies, api.RequestAnalyticsDependency{
+				Type:           dependency.dependencyType,
+				Kind:           dependency.dependencyKind,
+				Name:           dependency.name,
+				Samples:        dependency.samples,
+				Calls:          dependency.calls,
+				ErrorCalls:     dependency.errors,
+				P95MS:          p95,
+				ExclusiveP95MS: exclusiveP95,
+			})
+		}
+		sort.SliceStable(dependencies, func(i, j int) bool {
+			if dependencies[i].ExclusiveP95MS != dependencies[j].ExclusiveP95MS {
+				return dependencies[i].ExclusiveP95MS > dependencies[j].ExclusiveP95MS
+			}
+			if dependencies[i].P95MS != dependencies[j].P95MS {
+				return dependencies[i].P95MS > dependencies[j].P95MS
+			}
+			if dependencies[i].Type != dependencies[j].Type {
+				return dependencies[i].Type < dependencies[j].Type
+			}
+			if dependencies[i].Kind != dependencies[j].Kind {
+				return dependencies[i].Kind < dependencies[j].Kind
+			}
+			return dependencies[i].Name < dependencies[j].Name
+		})
+		if len(dependencies) > requestAnalyticsDependencyOutputLimit {
+			dependencies = dependencies[:requestAnalyticsDependencyOutputLimit]
+			truncated = true
+		}
+		results[key] = requestAnalyticsRouteDependencyResult{
+			samples:      aggregate.samples,
+			requests:     aggregate.requests,
+			dependencies: dependencies,
+		}
+	}
+	return results, truncated
+}
+
+func requestAnalyticsDependencyPercentile(samples []requestAnalyticsDependencySample, quantile float64, exclusive bool) int64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	sort.SliceStable(samples, func(i, j int) bool {
+		if exclusive {
+			return samples[i].exclusiveNanos < samples[j].exclusiveNanos
+		}
+		return samples[i].durationNanos < samples[j].durationNanos
+	})
+	var total int64
+	for _, sample := range samples {
+		total += sample.weight
+	}
+	target := int64(math.Ceil(float64(total) * quantile))
+	if target < 1 {
+		target = 1
+	}
+	var cumulative int64
+	for _, sample := range samples {
+		cumulative += sample.weight
+		if cumulative >= target {
+			duration := sample.durationNanos
+			if exclusive {
+				duration = sample.exclusiveNanos
+			}
+			return int64(duration / uint64(time.Millisecond))
+		}
+	}
+	last := samples[len(samples)-1]
+	if exclusive {
+		return int64(last.exclusiveNanos / uint64(time.Millisecond))
+	}
+	return int64(last.durationNanos / uint64(time.Millisecond))
 }
 
 func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, groupBy, route, method string) (api.RequestAnalyticsTimeseriesResponse, error) {
@@ -531,6 +843,14 @@ func requestAnalyticsDimensionString(value any) string {
 	}
 }
 
+func nullableAnalyticsInt(value pgtype.Int4) *int {
+	if !value.Valid {
+		return nil
+	}
+	converted := int(value.Int32)
+	return &converted
+}
+
 func requestErrorRatePct(requests, errors int64) float64 {
 	if requests <= 0 {
 		return 0
@@ -579,19 +899,33 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		debugQuery.Set("since", response.Since)
 		debugQuery.Set("route", route.Route)
 		routes = append(routes, dashboard.RequestAnalyticsRouteView{
-			Route:                   route.Route,
-			Method:                  route.Method,
-			Requests:                route.Requests,
-			ErrorRequests:           route.ErrorRequests,
-			ErrorRatePct:            route.ErrorRatePct,
-			ColdBoots:               route.ColdBoots,
-			P50MS:                   route.P50MS,
-			P95MS:                   route.P95MS,
-			P99MS:                   route.P99MS,
-			EstimatedComputeCostEUR: millicentsAsEUR(route.EstimatedComputeCostMillicents),
-			RequestSharePct:         route.RequestSharePct,
-			TrendURL:                "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),
-			DebugURL:                "/dashboard/apps/" + app.Slug + "/debug?" + debugQuery.Encode(),
+			Route:                       route.Route,
+			Method:                      route.Method,
+			Requests:                    route.Requests,
+			ErrorRequests:               route.ErrorRequests,
+			ErrorRatePct:                route.ErrorRatePct,
+			ColdBoots:                   route.ColdBoots,
+			P50MS:                       route.P50MS,
+			P95MS:                       route.P95MS,
+			P99MS:                       route.P99MS,
+			ColdRequestP95MS:            intFromAnalyticsPointer(route.ColdRequestP95MS),
+			ColdRequestP95Available:     route.ColdRequestP95MS != nil,
+			WakeBootP95MS:               intFromAnalyticsPointer(route.WakeBootP95MS),
+			WakeBootP95Available:        route.WakeBootP95MS != nil,
+			GuestExecutionP50MS:         intFromAnalyticsPointer(route.GuestExecutionP50MS),
+			GuestExecutionP95MS:         intFromAnalyticsPointer(route.GuestExecutionP95MS),
+			GuestExecutionAvailable:     route.GuestExecutionP50MS != nil && route.GuestExecutionP95MS != nil,
+			GuestCPUAvgMS:               intFromAnalyticsPointer(route.GuestCPUAvgMS),
+			GuestCPUP95MS:               intFromAnalyticsPointer(route.GuestCPUP95MS),
+			GuestPeakRSSMaxMB:           intFromAnalyticsPointer(route.GuestPeakRSSMaxMB),
+			GuestResourceUsageAvailable: route.GuestCPUAvgMS != nil && route.GuestCPUP95MS != nil && route.GuestPeakRSSMaxMB != nil,
+			DependencySamples:           route.DependencySamples,
+			DependencyRequests:          route.DependencyRequests,
+			Dependencies:                route.Dependencies,
+			EstimatedComputeCostEUR:     millicentsAsEUR(route.EstimatedComputeCostMillicents),
+			RequestSharePct:             route.RequestSharePct,
+			TrendURL:                    "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),
+			DebugURL:                    "/dashboard/apps/" + app.Slug + "/debug?" + debugQuery.Encode(),
 		})
 	}
 	selectedQuery := url.Values{}
@@ -612,31 +946,32 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		seriesQuery.Set("method", selectedMethod)
 	}
 	view := &dashboard.RequestAnalyticsView{
-		GroupBy:         response.GroupBy,
-		Since:           response.Since,
-		From:            response.From,
-		Until:           response.Until,
-		WindowClamped:   response.WindowClamped,
-		Requests:        response.Requests,
-		ErrorRequests:   response.ErrorRequests,
-		ErrorRatePct:    response.ErrorRatePct,
-		ColdBoots:       response.ColdBoots,
-		P50MS:           response.P50MS,
-		P95MS:           response.P95MS,
-		P99MS:           response.P99MS,
-		Routes:          routes,
-		Groups:          requestAnalyticsGroupViews(response.Groups),
-		GroupsLimit:     response.GroupsLimit,
-		GroupsTruncated: response.GroupsTruncated,
-		RoutesLimit:     response.RoutesLimit,
-		RoutesTruncated: response.RoutesTruncated,
-		ComputeCost:     requestAnalyticsComputeCostView(response.ComputeCost),
-		DeploymentCosts: requestAnalyticsDeploymentCostBreakdownView(response.DeploymentCosts),
-		AsOf:            response.AsOf,
-		SelectedRoute:   selectedRoute,
-		SelectedMethod:  selectedMethod,
-		SelectedQuery:   selectedQuery.Encode(),
-		TimeseriesURL:   "/v1/apps/" + app.Slug + "/analytics/timeseries?" + seriesQuery.Encode(),
+		GroupBy:               response.GroupBy,
+		Since:                 response.Since,
+		From:                  response.From,
+		Until:                 response.Until,
+		WindowClamped:         response.WindowClamped,
+		Requests:              response.Requests,
+		ErrorRequests:         response.ErrorRequests,
+		ErrorRatePct:          response.ErrorRatePct,
+		ColdBoots:             response.ColdBoots,
+		P50MS:                 response.P50MS,
+		P95MS:                 response.P95MS,
+		P99MS:                 response.P99MS,
+		Routes:                routes,
+		Groups:                requestAnalyticsGroupViews(response.Groups),
+		GroupsLimit:           response.GroupsLimit,
+		GroupsTruncated:       response.GroupsTruncated,
+		RoutesLimit:           response.RoutesLimit,
+		RoutesTruncated:       response.RoutesTruncated,
+		DependenciesTruncated: response.DependenciesTruncated,
+		ComputeCost:           requestAnalyticsComputeCostView(response.ComputeCost),
+		DeploymentCosts:       requestAnalyticsDeploymentCostBreakdownView(response.DeploymentCosts),
+		AsOf:                  response.AsOf,
+		SelectedRoute:         selectedRoute,
+		SelectedMethod:        selectedMethod,
+		SelectedQuery:         selectedQuery.Encode(),
+		TimeseriesURL:         "/v1/apps/" + app.Slug + "/analytics/timeseries?" + seriesQuery.Encode(),
 	}
 	series, err := s.requestAnalyticsTimeseriesResponse(ctx, app, acct, window, "", selectedRoute, selectedMethod)
 	if err != nil {
@@ -695,15 +1030,27 @@ func requestAnalyticsDeploymentCostBreakdownView(cost *api.RequestAnalyticsDeplo
 		if revision == "" {
 			revision = deployment.DeploymentID
 		}
-		deployments = append(deployments, dashboard.RequestAnalyticsDeploymentCostView{
-			DeploymentID:    deployment.DeploymentID,
-			Revision:        revision,
-			Tag:             deployment.DeploymentTag,
-			CreatedAt:       deployment.DeploymentCreatedAt,
-			Requests:        deployment.Requests,
-			RequestSharePct: deployment.RequestSharePct,
-			EstimatedEUR:    millicentsAsEUR(deployment.EstimatedComputeCostMillicents),
-		})
+		view := dashboard.RequestAnalyticsDeploymentCostView{
+			DeploymentID:             deployment.DeploymentID,
+			Revision:                 revision,
+			Tag:                      deployment.DeploymentTag,
+			CreatedAt:                deployment.DeploymentCreatedAt,
+			Requests:                 deployment.Requests,
+			RequestSharePct:          deployment.RequestSharePct,
+			EstimatedEUR:             millicentsAsEUR(deployment.EstimatedComputeCostMillicents),
+			GuestCPUAvailable:        deployment.GuestCPUAvgMS != nil,
+			GuestCPUMeasuredRequests: deployment.GuestCPUMeasuredRequests,
+			GuestCPUChangeAvailable:  deployment.GuestCPUChangePct != nil,
+			GuestCPUComparedTo:       deployment.GuestCPUComparedTo,
+			GuestCPURegression:       deployment.GuestCPURegression,
+		}
+		if deployment.GuestCPUAvgMS != nil {
+			view.GuestCPUAvgMS = *deployment.GuestCPUAvgMS
+		}
+		if deployment.GuestCPUChangePct != nil {
+			view.GuestCPUChangePct = *deployment.GuestCPUChangePct
+		}
+		deployments = append(deployments, view)
 	}
 	return &dashboard.RequestAnalyticsDeploymentCostBreakdownView{
 		EstimatedEUR:   millicentsAsEUR(cost.EstimatedMillicents),
@@ -736,4 +1083,11 @@ func requestAnalyticsGroupViews(groups []api.RequestAnalyticsGroup) []dashboard.
 		})
 	}
 	return views
+}
+
+func intFromAnalyticsPointer(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }

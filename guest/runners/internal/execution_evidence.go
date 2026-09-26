@@ -15,13 +15,26 @@ import (
 // invocation. It deliberately contains no request body, headers, or customer
 // error text; the gateway stores only these closed, low-cardinality values.
 type GuestExecutionEvidence struct {
-	Runtime    string
-	DurationMS int
-	Outcome    string
-	ErrorClass string
+	Runtime                string
+	DurationMS             int
+	Outcome                string
+	ErrorClass             string
+	CPUTimeMS              int
+	PeakRSSMB              int
+	ResourceUsageAvailable bool
+}
+
+// GuestProcessUsage contains wait4 resource measurements for one completed
+// child process invocation. Persistent interpreter workers return no sample.
+type GuestProcessUsage struct {
+	CPUTimeMS int
+	PeakRSSMB int
+	Available bool
 }
 
 const (
+	maxGuestProcessMetricMS = 24 * 60 * 60 * 1000
+
 	GuestOutcomeOK           = "ok"
 	GuestOutcomeHTTPError    = "http_error"
 	GuestOutcomeHandlerError = "handler_error"
@@ -73,6 +86,20 @@ func ObserveGuestExecution(ctx context.Context, runtime string, started time.Tim
 	return evidence
 }
 
+func (e GuestExecutionEvidence) WithProcessUsage(usage GuestProcessUsage) GuestExecutionEvidence {
+	if !usage.Available {
+		return e
+	}
+	if usage.CPUTimeMS < 0 || usage.CPUTimeMS > maxGuestProcessMetricMS ||
+		usage.PeakRSSMB < 0 || usage.PeakRSSMB > 65536 {
+		return e
+	}
+	e.CPUTimeMS = usage.CPUTimeMS
+	e.PeakRSSMB = usage.PeakRSSMB
+	e.ResourceUsageAvailable = true
+	return e
+}
+
 // ApplyResponseHeaders writes the platform-owned evidence headers after
 // customer headers, preventing a customer response from spoofing the signal.
 func (e GuestExecutionEvidence) ApplyResponseHeaders(h http.Header) {
@@ -82,6 +109,10 @@ func (e GuestExecutionEvidence) ApplyResponseHeaders(h http.Header) {
 	h.Set(api.GuestEvidenceDurationHeader, strconv.Itoa(e.DurationMS))
 	h.Set(api.GuestEvidenceRuntimeHeader, e.Runtime)
 	h.Set(api.GuestEvidenceOutcomeHeader, e.Outcome)
+	if e.ResourceUsageAvailable {
+		h.Set(api.GuestEvidenceCPUTimeHeader, strconv.Itoa(e.CPUTimeMS))
+		h.Set(api.GuestEvidencePeakRSSHeader, strconv.Itoa(e.PeakRSSMB))
+	}
 	// A customer response may have supplied a same-named marker in the
 	// envelope. Clear it before applying the platform-owned value so a
 	// successful invocation cannot inherit a stale error class.

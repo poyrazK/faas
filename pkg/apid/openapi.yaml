@@ -5170,6 +5170,13 @@ paths:
 
         Counts and percentiles include the recorder's collapsed row `count`,
         so the result represents original requests rather than stored rows.
+        Route groups also include cold-request p95 and platform-runner guest
+        execution wall-time percentiles when available, p95 time from
+        `wake.boot_started` to `wake.boot_completed` for correlated route wakes,
+        plus bounded sampled dependency span timings for platform-classified dependencies. The
+        dependency values are not complete call counts; `dependencies_truncated`
+        marks row or cardinality caps. CPU time and route memory peaks are not
+        inferred from these fields.
         Grouped results contain at most 50 groups plus `__other__`. Consumer
         grouping uses the stable consumer UUID and reports anonymous traffic
         as `__anonymous__`. Only a normalized User-Agent family, hostname-only
@@ -32920,8 +32927,35 @@ components:
         p50_ms: { type: integer, minimum: 0 }
         p95_ms: { type: integer, minimum: 0 }
         p99_ms: { type: integer, minimum: 0 }
+        cold_request_p95_ms: { type: [integer, 'null'], minimum: 0, description: "Weighted p95 gateway-observed request duration among requests that woke a cold instance. Includes handler time; not an isolated wake-phase duration." }
+        wake_boot_p95_ms: { type: [integer, 'null'], minimum: 0, description: "p95 from schedd wake.boot_started to wake.boot_completed (instance RUNNING) for distinct wake IDs correlated to this route; null when event pairs are unavailable." }
+        guest_execution_p50_ms: { type: [integer, 'null'], minimum: 0, description: "Weighted p50 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is unavailable." }
+        guest_execution_p95_ms: { type: [integer, 'null'], minimum: 0, description: "Weighted p95 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is unavailable." }
+        guest_cpu_avg_ms: { type: [integer, 'null'], minimum: 0, description: "Request-weighted average child-process user+system CPU time for Linux one-shot invocations. Includes runtime startup and uses bounded upward buckets; null for persistent workers and arbitrary HTTP containers." }
+        guest_cpu_p95_ms: { type: [integer, 'null'], minimum: 0, description: "Weighted p95 child-process CPU time from Linux one-shot invocations, using bounded upward buckets; null when process usage is unavailable." }
+        guest_peak_rss_max_mb: { type: [integer, 'null'], minimum: 0, description: "Maximum process high-water RSS across measured invocations, rounded into an upper MiB bucket; null when process usage is unavailable." }
+        dependency_samples: { type: integer, format: int64, minimum: 0, description: "Count of retained, platform-classified dependency span samples for this route; not a complete call count." }
+        dependency_requests: { type: integer, format: int64, minimum: 0, description: "Collapsed request weight represented by rows with at least one classified dependency span." }
+        dependencies:
+          type: array
+          description: "Top classified dependencies ranked by sampled exclusive p95. Values are bounded and sample-based."
+          items: { $ref: '#/components/schemas/RequestAnalyticsDependency' }
         estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level included allowance and egress." }
         request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+
+    RequestAnalyticsDependency:
+      type: object
+      description: "Sampled aggregate of platform-classified dependency spans observed under one route. Exclusive duration subtracts overlapping direct child spans; it approximates dependency-owned wait and is not additive request latency. Calls are weighted by collapsed request count and are not a complete span call count."
+      required: [type, name, samples, calls, error_calls, p95_ms, exclusive_p95_ms]
+      properties:
+        type: { type: string, description: "Allowlisted dependency category." }
+        kind: { type: string, description: "Allowlisted dependency kind when available." }
+        name: { type: string, description: "Redacted span name." }
+        samples: { type: integer, format: int64, minimum: 0, description: "Number of retained span observations." }
+        calls: { type: integer, format: int64, minimum: 0, description: "Observed span sample count weighted by the collapsed request-row count; not a full call count." }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0, description: "Weighted p95 inclusive span duration." }
+        exclusive_p95_ms: { type: integer, minimum: 0, description: "Weighted p95 span duration excluding overlapping direct child spans." }
 
     RequestAnalyticsComputeCost:
       type: object
@@ -32942,8 +32976,8 @@ components:
 
     RequestAnalyticsDeploymentCost:
       type: object
-      description: "One deployment's estimated share of app raw compute value, allocated by its observed request share."
-      required: [deployment_id, requests, request_share_pct, estimated_compute_cost_millicents]
+      description: "One deployment's estimated share of app raw compute value, allocated by its observed request share, with optional measured CPU/request comparison. CPU regression comparisons are advisory, traffic-mix sensitive, and only available for supported runtimes."
+      required: [deployment_id, requests, request_share_pct, estimated_compute_cost_millicents, guest_cpu_measured_requests, guest_cpu_regression]
       properties:
         deployment_id: { type: string, description: "Immutable deployment UUID." }
         commit_sha: { type: string }
@@ -32952,6 +32986,11 @@ components:
         requests: { type: integer, format: int64, minimum: 0 }
         request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
         estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        guest_cpu_avg_ms: { type: integer, minimum: 0, description: "Mean measured guest CPU time per request in the analytics window; only populated for supported Linux one-shot runtimes." }
+        guest_cpu_measured_requests: { type: integer, format: int64, minimum: 0, description: "Request-weighted number of requests with measured guest CPU data." }
+        guest_cpu_change_pct: { type: number, format: double, description: "Percentage change in mean guest CPU time from the earlier comparable deployment in this analytics window. Only computed when both deployments have at least 20 measured requests and the baseline is non-zero." }
+        guest_cpu_compared_to: { type: string, description: "Tag, commit SHA, or deployment UUID for the earlier measured deployment used as the CPU comparison baseline." }
+        guest_cpu_regression: { type: boolean, description: "True when measured guest CPU/request increased by at least 25% from the comparison baseline. Advisory and sensitive to traffic mix." }
 
     RequestAnalyticsDeploymentCostBreakdown:
       type: object
@@ -32983,6 +33022,13 @@ components:
         p50_ms: { type: integer, minimum: 0 }
         p95_ms: { type: integer, minimum: 0 }
         p99_ms: { type: integer, minimum: 0 }
+        cold_request_p95_ms: { type: [integer, 'null'], minimum: 0 }
+        wake_boot_p95_ms: { type: [integer, 'null'], minimum: 0 }
+        guest_execution_p50_ms: { type: [integer, 'null'], minimum: 0 }
+        guest_execution_p95_ms: { type: [integer, 'null'], minimum: 0 }
+        guest_cpu_avg_ms: { type: [integer, 'null'], minimum: 0 }
+        guest_cpu_p95_ms: { type: [integer, 'null'], minimum: 0 }
+        guest_peak_rss_max_mb: { type: [integer, 'null'], minimum: 0 }
 
     RequestAnalyticsResponse:
       type: object
@@ -32990,7 +33036,7 @@ components:
         Bounded historical request analytics for
         `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
         `[from, until)`, and the route list is capped at 50 rows.
-      required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, group_by, groups, groups_limit, groups_truncated, routes, routes_limit, routes_truncated, as_of]
+      required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, group_by, groups, groups_limit, groups_truncated, routes, routes_limit, routes_truncated, dependencies_truncated, as_of]
       properties:
         slug: { type: string }
         since: { type: string, description: "Effective lookback duration after retention clamping." }
@@ -33015,6 +33061,7 @@ components:
           items: { $ref: '#/components/schemas/RequestAnalyticsRoute' }
         routes_limit: { type: integer, minimum: 1, description: "Maximum number of route rows returned." }
         routes_truncated: { type: boolean, description: "True when more route rows matched than routes_limit." }
+        dependencies_truncated: { type: boolean, description: "True when dependency span rows, route dependency groups, or route dependency outputs were capped." }
         compute_cost:
           $ref: '#/components/schemas/RequestAnalyticsComputeCost'
         deployment_costs:

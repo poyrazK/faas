@@ -9868,11 +9868,49 @@ type RequestAnalyticsRoute struct {
 	P50MS         int     `json:"p50_ms"`
 	P95MS         int     `json:"p95_ms"`
 	P99MS         int     `json:"p99_ms"`
+	// ColdRequestP95MS is the p95 gateway-observed request duration for
+	// requests that woke a cold instance. It includes app handling time; it
+	// is not an isolated VM wake-phase duration.
+	ColdRequestP95MS *int `json:"cold_request_p95_ms,omitempty"`
+	// WakeBootP95MS is p95 from schedd's boot_started event to
+	// boot_completed (instance RUNNING) for correlated route wakes.
+	WakeBootP95MS *int `json:"wake_boot_p95_ms,omitempty"`
+	// GuestExecution percentiles are present only where the platform-owned
+	// runtime runner emitted execution-duration evidence. This is wall time,
+	// not CPU time, and is not available for arbitrary HTTP containers.
+	GuestExecutionP50MS *int `json:"guest_execution_p50_ms,omitempty"`
+	GuestExecutionP95MS *int `json:"guest_execution_p95_ms,omitempty"`
+	// GuestCPUAvgMS and GuestCPUP95MS are measured child-process CPU time
+	// for Linux one-shot runtime invocations. The measurement includes runtime
+	// startup; it is not available for persistent workers or arbitrary HTTP
+	// containers. RSS is the maximum rounded/bucketed process high-water mark.
+	GuestCPUAvgMS     *int `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUP95MS     *int `json:"guest_cpu_p95_ms,omitempty"`
+	GuestPeakRSSMaxMB *int `json:"guest_peak_rss_max_mb,omitempty"`
+	// DependencySamples counts classified dependency spans retained in the
+	// bounded trace evidence window; it is a sample count, not total calls.
+	DependencySamples  int64                        `json:"dependency_samples,omitempty"`
+	DependencyRequests int64                        `json:"dependency_requests,omitempty"`
+	Dependencies       []RequestAnalyticsDependency `json:"dependencies,omitempty"`
 	// EstimatedComputeCostMillicents allocates this app's estimated raw
 	// RAM-hour value to the route by its share of observed requests. It is
 	// an estimate at the current compute overage rate, not an invoice line.
 	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents,omitempty"`
 	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
+}
+
+// RequestAnalyticsDependency is a route-scoped aggregate of classified,
+// retained dependency span evidence. Percentiles are weighted by the
+// collapsed request row count and should be read as sampled estimates.
+type RequestAnalyticsDependency struct {
+	Type           string `json:"type"`
+	Kind           string `json:"kind,omitempty"`
+	Name           string `json:"name"`
+	Samples        int64  `json:"samples"`
+	Calls          int64  `json:"calls"`
+	ErrorCalls     int64  `json:"error_calls"`
+	P95MS          int64  `json:"p95_ms"`
+	ExclusiveP95MS int64  `json:"exclusive_p95_ms"`
 }
 
 // RequestAnalyticsComputeCost describes the estimated compute value used by
@@ -9894,15 +9932,21 @@ type RequestAnalyticsComputeCost struct {
 }
 
 // RequestAnalyticsDeploymentCost is the estimated share of this app's compute
-// value attributed to one immutable deployment by its observed request share.
+// value attributed to one immutable deployment by its observed request share,
+// with optional measured CPU/request comparison data.
 type RequestAnalyticsDeploymentCost struct {
-	DeploymentID                   string  `json:"deployment_id"`
-	CommitSHA                      string  `json:"commit_sha,omitempty"`
-	DeploymentTag                  string  `json:"deployment_tag,omitempty"`
-	DeploymentCreatedAt            string  `json:"deployment_created_at,omitempty"`
-	Requests                       int64   `json:"requests"`
-	RequestSharePct                float64 `json:"request_share_pct"`
-	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents"`
+	DeploymentID                   string   `json:"deployment_id"`
+	CommitSHA                      string   `json:"commit_sha,omitempty"`
+	DeploymentTag                  string   `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt            string   `json:"deployment_created_at,omitempty"`
+	Requests                       int64    `json:"requests"`
+	RequestSharePct                float64  `json:"request_share_pct"`
+	EstimatedComputeCostMillicents int64    `json:"estimated_compute_cost_millicents"`
+	GuestCPUAvgMS                  *int     `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUMeasuredRequests       int64    `json:"guest_cpu_measured_requests"`
+	GuestCPUChangePct              *float64 `json:"guest_cpu_change_pct,omitempty"`
+	GuestCPUComparedTo             string   `json:"guest_cpu_compared_to,omitempty"`
+	GuestCPURegression             bool     `json:"guest_cpu_regression"`
 }
 
 // RequestAnalyticsDeploymentCostBreakdown is the bounded deployment split of
@@ -9924,43 +9968,51 @@ type RequestAnalyticsDeploymentCostBreakdown struct {
 // the other groupings. Consumer-scoped results use __anonymous__ for requests
 // without a consumer identity and __other__ for groups outside the top-N.
 type RequestAnalyticsGroup struct {
-	Value         string  `json:"value"`
-	Method        string  `json:"method,omitempty"`
-	Requests      int64   `json:"requests"`
-	ErrorRequests int64   `json:"error_requests"`
-	ErrorRatePct  float64 `json:"error_rate_pct"`
-	ColdBoots     int64   `json:"cold_boots"`
-	P50MS         int     `json:"p50_ms"`
-	P95MS         int     `json:"p95_ms"`
-	P99MS         int     `json:"p99_ms"`
+	Value               string  `json:"value"`
+	Method              string  `json:"method,omitempty"`
+	Requests            int64   `json:"requests"`
+	ErrorRequests       int64   `json:"error_requests"`
+	ErrorRatePct        float64 `json:"error_rate_pct"`
+	ColdBoots           int64   `json:"cold_boots"`
+	P50MS               int     `json:"p50_ms"`
+	P95MS               int     `json:"p95_ms"`
+	P99MS               int     `json:"p99_ms"`
+	ColdRequestP95MS    *int    `json:"cold_request_p95_ms,omitempty"`
+	WakeBootP95MS       *int    `json:"wake_boot_p95_ms,omitempty"`
+	GuestExecutionP50MS *int    `json:"guest_execution_p50_ms,omitempty"`
+	GuestExecutionP95MS *int    `json:"guest_execution_p95_ms,omitempty"`
+	GuestCPUAvgMS       *int    `json:"guest_cpu_avg_ms,omitempty"`
+	GuestCPUP95MS       *int    `json:"guest_cpu_p95_ms,omitempty"`
+	GuestPeakRSSMaxMB   *int    `json:"guest_peak_rss_max_mb,omitempty"`
 }
 
 // RequestAnalyticsResponse is the bounded historical request analytics
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
-	Slug            string                                   `json:"slug"`
-	Since           string                                   `json:"since"`
-	From            string                                   `json:"from"`
-	Until           string                                   `json:"until"`
-	WindowClamped   bool                                     `json:"window_clamped"`
-	Requests        int64                                    `json:"requests"`
-	ErrorRequests   int64                                    `json:"error_requests"`
-	ErrorRatePct    float64                                  `json:"error_rate_pct"`
-	ColdBoots       int64                                    `json:"cold_boots"`
-	P50MS           int                                      `json:"p50_ms"`
-	P95MS           int                                      `json:"p95_ms"`
-	P99MS           int                                      `json:"p99_ms"`
-	GroupBy         string                                   `json:"group_by"`
-	Groups          []RequestAnalyticsGroup                  `json:"groups"`
-	GroupsLimit     int                                      `json:"groups_limit"`
-	GroupsTruncated bool                                     `json:"groups_truncated"`
-	Routes          []RequestAnalyticsRoute                  `json:"routes"`
-	RoutesLimit     int                                      `json:"routes_limit"`
-	RoutesTruncated bool                                     `json:"routes_truncated"`
-	ComputeCost     *RequestAnalyticsComputeCost             `json:"compute_cost,omitempty"`
-	DeploymentCosts *RequestAnalyticsDeploymentCostBreakdown `json:"deployment_costs,omitempty"`
-	AsOf            string                                   `json:"as_of"`
+	Slug                  string                                   `json:"slug"`
+	Since                 string                                   `json:"since"`
+	From                  string                                   `json:"from"`
+	Until                 string                                   `json:"until"`
+	WindowClamped         bool                                     `json:"window_clamped"`
+	Requests              int64                                    `json:"requests"`
+	ErrorRequests         int64                                    `json:"error_requests"`
+	ErrorRatePct          float64                                  `json:"error_rate_pct"`
+	ColdBoots             int64                                    `json:"cold_boots"`
+	P50MS                 int                                      `json:"p50_ms"`
+	P95MS                 int                                      `json:"p95_ms"`
+	P99MS                 int                                      `json:"p99_ms"`
+	GroupBy               string                                   `json:"group_by"`
+	Groups                []RequestAnalyticsGroup                  `json:"groups"`
+	GroupsLimit           int                                      `json:"groups_limit"`
+	GroupsTruncated       bool                                     `json:"groups_truncated"`
+	Routes                []RequestAnalyticsRoute                  `json:"routes"`
+	RoutesLimit           int                                      `json:"routes_limit"`
+	RoutesTruncated       bool                                     `json:"routes_truncated"`
+	DependenciesTruncated bool                                     `json:"dependencies_truncated"`
+	ComputeCost           *RequestAnalyticsComputeCost             `json:"compute_cost,omitempty"`
+	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdown `json:"deployment_costs,omitempty"`
+	AsOf                  string                                   `json:"as_of"`
 }
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned

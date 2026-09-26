@@ -1832,7 +1832,8 @@ INSERT INTO request_telemetry (
     status, latency_ms, cold_boot, trace_id, received_at, count,
     ua_family, referrer_host, country, wake_id, instance_id,
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
-    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest
+    node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -1846,7 +1847,10 @@ INSERT INTO request_telemetry (
     sqlc.arg('commit_sha')::text,
     sqlc.arg('deployment_tag')::text,
     sqlc.arg('deployment_created_at')::text,
-    sqlc.arg('image_digest')::text
+    sqlc.arg('image_digest')::text,
+    sqlc.arg('guest_cpu_time_ms')::int,
+    sqlc.arg('guest_peak_rss_mb')::int,
+    sqlc.arg('guest_resource_usage_available')::bool
 );
 
 -- name: ListRequestTelemetryByApp :many
@@ -1899,7 +1903,7 @@ LIMIT sqlc.arg('limit')::int;
 -- pass an app id from another tenant; the app lookup remains the primary
 -- IDOR boundary. The newest rows are preferred because spans_summary is
 -- sampled evidence, not a complete request trace archive.
-SELECT id, count, status, trace_id, received_at, spans_summary
+SELECT id, route, method, count, status, trace_id, received_at, spans_summary
 FROM request_telemetry
 WHERE app_id = $1
   AND account_id = $2
@@ -2153,7 +2157,16 @@ WITH per_deployment AS (
            COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
            COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
            COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
-           SUM(count)::bigint AS requests
+           SUM(count)::bigint AS requests,
+           COALESCE(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
     FROM request_telemetry
     WHERE app_id = $1
       AND account_id = $2
@@ -2166,6 +2179,8 @@ SELECT deployment_id,
        deployment_tag,
        deployment_created_at,
        requests,
+       guest_cpu_measured_requests,
+       guest_cpu_avg_ms,
        SUM(requests) OVER ()::bigint AS total_requests
 FROM per_deployment
 ORDER BY requests DESC, deployment_id ASC
@@ -2190,6 +2205,12 @@ WITH filtered AS (
         latency_ms,
         cold_boot,
         status,
+        guest_duration_ms,
+        guest_runtime,
+        guest_cpu_time_ms,
+        guest_peak_rss_mb,
+        guest_resource_usage_available,
+        wake_id,
         count::bigint AS request_count
     FROM request_telemetry
     WHERE app_id = $1
@@ -2212,6 +2233,12 @@ WITH filtered AS (
         filtered.latency_ms,
         filtered.cold_boot,
         filtered.status,
+        filtered.guest_duration_ms,
+        filtered.guest_runtime,
+        filtered.guest_cpu_time_ms,
+        filtered.guest_peak_rss_mb,
+        filtered.guest_resource_usage_available,
+        filtered.wake_id,
         filtered.request_count
     FROM filtered
     LEFT JOIN top_groups
@@ -2227,6 +2254,124 @@ WITH filtered AS (
            SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
            SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
     FROM latency_values
+), cold_latency_values AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE cold_boot
+    GROUP BY dimension, method, latency_ms
+), cold_wakes AS (
+    SELECT DISTINCT dimension, method, wake_id
+    FROM assigned
+    WHERE cold_boot
+      AND wake_id IS NOT NULL
+      AND wake_id <> ''
+      AND dimension <> '__other__'
+      AND sqlc.arg('group_by')::text = 'route'
+), wake_events AS (
+    SELECT cold_wakes.dimension,
+           cold_wakes.method,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_started' AND events.actor = 'schedd') AS started_at,
+           MIN(events.at) FILTER (WHERE events.kind = 'wake.boot_completed' AND events.actor = 'schedd') AS completed_at
+    FROM cold_wakes
+    JOIN events ON events.data->>'wake_id' = cold_wakes.wake_id
+    WHERE events.kind IN ('wake.boot_started', 'wake.boot_completed')
+    GROUP BY cold_wakes.dimension, cold_wakes.method, cold_wakes.wake_id
+), wake_durations AS (
+    SELECT dimension,
+           method,
+           (EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)::int AS duration_ms
+    FROM wake_events
+    WHERE started_at IS NOT NULL
+      AND completed_at IS NOT NULL
+      AND completed_at > started_at
+), wake_values AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           COUNT(*)::bigint AS sample_count
+    FROM wake_durations
+    GROUP BY dimension, method, duration_ms
+), wake_ranked AS (
+    SELECT dimension,
+           method,
+           duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM wake_values
+), wake_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS wake_boot_p95_ms
+    FROM wake_ranked
+    GROUP BY dimension, method
+), cold_ranked AS (
+    SELECT dimension,
+           method,
+           latency_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM cold_latency_values
+), cold_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(latency_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS cold_request_p95_ms
+    FROM cold_ranked
+    GROUP BY dimension, method
+), guest_latency_values AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE guest_runtime <> '__unknown__'
+    GROUP BY dimension, method, guest_duration_ms
+), guest_ranked AS (
+    SELECT dimension,
+           method,
+           guest_duration_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY guest_duration_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM guest_latency_values
+), guest_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.50))::int AS guest_execution_p50_ms,
+           (MIN(guest_duration_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS guest_execution_p95_ms
+    FROM guest_ranked
+    GROUP BY dimension, method
+), guest_cpu_values AS (
+    SELECT dimension,
+           method,
+           guest_cpu_time_ms,
+           SUM(request_count)::bigint AS sample_count
+    FROM assigned
+    WHERE guest_resource_usage_available
+    GROUP BY dimension, method, guest_cpu_time_ms
+), guest_cpu_ranked AS (
+    SELECT dimension,
+           method,
+           guest_cpu_time_ms,
+           SUM(sample_count) OVER (PARTITION BY dimension, method ORDER BY guest_cpu_time_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+           SUM(sample_count) OVER (PARTITION BY dimension, method) AS total
+    FROM guest_cpu_values
+), guest_resource_metrics AS (
+    SELECT assigned.dimension,
+           assigned.method,
+           ROUND(SUM(assigned.guest_cpu_time_ms::numeric * assigned.request_count)
+                 FILTER (WHERE assigned.guest_resource_usage_available)
+                 / NULLIF(SUM(assigned.request_count) FILTER (WHERE assigned.guest_resource_usage_available), 0))::int AS guest_cpu_avg_ms,
+           MAX(assigned.guest_peak_rss_mb) FILTER (WHERE assigned.guest_resource_usage_available)::int AS guest_peak_rss_max_mb
+    FROM assigned
+    GROUP BY assigned.dimension, assigned.method
+), guest_cpu_percentiles AS (
+    SELECT dimension,
+           method,
+           (MIN(guest_cpu_time_ms) FILTER (WHERE cumulative >= total * 0.95))::int AS guest_cpu_p95_ms
+    FROM guest_cpu_ranked
+    GROUP BY dimension, method
 ), percentiles AS (
     SELECT dimension,
            method,
@@ -2251,9 +2396,21 @@ SELECT totals.dimension,
        totals.cold_boots,
        percentiles.p50_ms,
        percentiles.p95_ms,
-       percentiles.p99_ms
+       percentiles.p99_ms,
+       cold_percentiles.cold_request_p95_ms,
+       wake_percentiles.wake_boot_p95_ms,
+       guest_percentiles.guest_execution_p50_ms,
+       guest_percentiles.guest_execution_p95_ms,
+       guest_resource_metrics.guest_cpu_avg_ms,
+       guest_cpu_percentiles.guest_cpu_p95_ms,
+       guest_resource_metrics.guest_peak_rss_max_mb
 FROM totals
 JOIN percentiles USING (dimension, method)
+LEFT JOIN cold_percentiles USING (dimension, method)
+LEFT JOIN wake_percentiles USING (dimension, method)
+LEFT JOIN guest_percentiles USING (dimension, method)
+LEFT JOIN guest_resource_metrics USING (dimension, method)
+LEFT JOIN guest_cpu_percentiles USING (dimension, method)
 ORDER BY totals.requests DESC, totals.dimension ASC, totals.method ASC;
 
 -- name: RequestTelemetryAnalyticsTimeseries :many

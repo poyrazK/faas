@@ -233,6 +233,19 @@ message IncrementRequestTelemetryRequest {
   // The same request's financial event was fsynced to the dedicated outbox.
   // New receivers skip their legacy ledger write for this debugger row.
   bool usage_outboxed = 30;
+
+  // guest_cpu_time_ms — per-invocation child-process user+system CPU time
+  // measured by a Linux one-shot function runner. See resource-usage flag.
+  int32 guest_cpu_time_ms = 31;
+
+  // guest_peak_rss_mb — the child process peak resident set size, rounded up
+  // to MiB. Persistent workers and arbitrary HTTP containers leave it zero.
+  int32 guest_peak_rss_mb = 32;
+
+  // guest_resource_usage_available — true only when both process CPU and RSS
+  // were measured for this invocation. False distinguishes unavailable from
+  // a measured zero/sub-MiB value.
+  bool guest_resource_usage_available = 33;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

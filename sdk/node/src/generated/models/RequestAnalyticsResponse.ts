@@ -56,6 +56,10 @@ export type RequestAnalyticsResponse = {
    * True when more route rows matched than routes_limit.
    */
   routes_truncated: boolean;
+  /**
+   * True when dependency span rows, route dependency groups, or route dependency outputs were capped.
+   */
+  dependencies_truncated: boolean;
   compute_cost?: RequestAnalyticsComputeCost;
   deployment_costs?: RequestAnalyticsDeploymentCostBreakdown;
   /**

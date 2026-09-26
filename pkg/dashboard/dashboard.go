@@ -1811,6 +1811,7 @@ type RequestAnalyticsView struct {
 	GroupsTruncated       bool
 	RoutesLimit           int
 	RoutesTruncated       bool
+	DependenciesTruncated bool
 	ComputeCost           *RequestAnalyticsComputeCostView
 	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdownView
 	AsOf                  string
@@ -1850,13 +1851,20 @@ type RequestAnalyticsDeploymentCostBreakdownView struct {
 }
 
 type RequestAnalyticsDeploymentCostView struct {
-	DeploymentID    string
-	Revision        string
-	Tag             string
-	CreatedAt       string
-	Requests        int64
-	RequestSharePct float64
-	EstimatedEUR    string
+	DeploymentID             string
+	Revision                 string
+	Tag                      string
+	CreatedAt                string
+	Requests                 int64
+	RequestSharePct          float64
+	EstimatedEUR             string
+	GuestCPUAvailable        bool
+	GuestCPUAvgMS            int
+	GuestCPUMeasuredRequests int64
+	GuestCPUChangeAvailable  bool
+	GuestCPUChangePct        float64
+	GuestCPUComparedTo       string
+	GuestCPURegression       bool
 }
 
 type RequestAnalyticsGroupView struct {
@@ -1872,18 +1880,32 @@ type RequestAnalyticsGroupView struct {
 }
 
 type RequestAnalyticsRouteView struct {
-	Route                   string
-	Method                  string
-	Requests                int64
-	ErrorRequests           int64
-	ErrorRatePct            float64
-	ColdBoots               int64
-	P50MS                   int
-	P95MS                   int
-	P99MS                   int
-	EstimatedComputeCostEUR string
-	RequestSharePct         float64
-	TrendURL                string
+	Route                       string
+	Method                      string
+	Requests                    int64
+	ErrorRequests               int64
+	ErrorRatePct                float64
+	ColdBoots                   int64
+	P50MS                       int
+	P95MS                       int
+	P99MS                       int
+	ColdRequestP95MS            int
+	ColdRequestP95Available     bool
+	WakeBootP95MS               int
+	WakeBootP95Available        bool
+	GuestExecutionP50MS         int
+	GuestExecutionP95MS         int
+	GuestExecutionAvailable     bool
+	GuestCPUAvgMS               int
+	GuestCPUP95MS               int
+	GuestPeakRSSMaxMB           int
+	GuestResourceUsageAvailable bool
+	DependencySamples           int64
+	DependencyRequests          int64
+	Dependencies                []api.RequestAnalyticsDependency
+	EstimatedComputeCostEUR     string
+	RequestSharePct             float64
+	TrendURL                    string
 	// DebugURL opens the read-only request explorer filtered to this route.
 	DebugURL string
 }
