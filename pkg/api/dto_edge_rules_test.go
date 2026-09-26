@@ -100,6 +100,51 @@ func TestEdgeRuleValidateAction_Validate_Rejects(t *testing.T) {
 			wantSub: "external $ref or $id URL",
 		},
 		{
+			name: "schema-external-ref-file-scheme",
+			mutate: func(a *EdgeRuleValidateAction) {
+				// Issue #850 follow-up. PR-C narrowed the value
+				// alternation to `https?://|//`, so a non-HTTP
+				// scheme slipped past apid and was caught only by
+				// the gateway's compile gate — which the applier
+				// treats as a broken dependency (502 + ops alarm,
+				// pkg/gateway/handler.go:2163). The pattern now
+				// matches any RFC 3986 scheme, so apid refuses it
+				// at accept time where a 400 is the right answer.
+				a.Schema = json.RawMessage(`{
+					"type": "object",
+					"$ref": "file:///etc/passwd"
+				}`)
+			},
+			wantSub: "external $ref or $id URL",
+		},
+		{
+			name: "schema-external-ref-uppercase-scheme",
+			mutate: func(a *EdgeRuleValidateAction) {
+				// RFC 3986 §3.1: schemes are case-insensitive, so
+				// `HTTPS://` is the same external fetch as
+				// `https://`. The gateway pattern carries (?i);
+				// apid's did not until issue #850.
+				a.Schema = json.RawMessage(`{
+					"type": "object",
+					"$ref": "HTTPS://internal.example.com/secrets.json"
+				}`)
+			},
+			wantSub: "external $ref or $id URL",
+		},
+		{
+			name: "schema-external-id-exotic-scheme-metadata",
+			mutate: func(a *EdgeRuleValidateAction) {
+				// The §11 posture this gate exists for: a customer
+				// must not be able to aim $ref/$id resolution at
+				// the metadata range, whatever the scheme.
+				a.Schema = json.RawMessage(`{
+					"type": "object",
+					"$id": "gopher://169.254.169.254/latest/meta-data"
+				}`)
+			},
+			wantSub: "external $ref or $id URL",
+		},
+		{
 			name: "schema-external-id-protocol-relative",
 			mutate: func(a *EdgeRuleValidateAction) {
 				// Protocol-relative (`//host/...`) is also caught
