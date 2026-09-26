@@ -122,7 +122,7 @@ func TestPg_Jobs_RecurringScheduleRoundTripAndClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JobUpdateWithSchedule: %v", err)
 	}
-	if updated.Kind != "recurring" || updated.CronSchedule != newSchedule || updated.CronTimezone != newTimezone || updated.LastScheduledAt == nil || !updated.LastScheduledAt.After(firedAt) {
+	if updated.Kind != "recurring" || updated.CronSchedule != newSchedule || updated.CronTimezone != newTimezone || updated.LastScheduledAt == nil || !updated.LastScheduledAt.Equal(updated.UpdatedAt) {
 		t.Fatalf("updated recurring job = %+v", updated)
 	}
 	if _, created, err := s.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule, job.CronTimezone, &firedAt, firedAt.Add(time.Hour)); err != nil || created {
