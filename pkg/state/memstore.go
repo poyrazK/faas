@@ -133,6 +133,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	revisionPins              map[string]time.Time
 	deploymentActivationMu    sync.Mutex
 	deploymentActivationLocks map[string]*deploymentActivationLock
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
@@ -753,6 +754,8 @@ type MemStore struct {
 	projectEnvironmentRoutePolicies      map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies       map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions         map[string]ProjectEnvironmentPromotion
+	projectReleaseSets                   map[string]ProjectReleaseSet
+	activeProjectReleaseSets             map[string]string
 	projectEnvironmentPromotionWorkloads map[string][]ProjectEnvironmentPromotionWorkload
 	// githubDeployBranches stores the optional branch→scope rules keyed by
 	// project ID. It mirrors github_deploy_branches in Postgres.
@@ -939,6 +942,7 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
+		revisionPins:              map[string]time.Time{},
 		objectAccessGrants:        map[string]ObjectBucketAccessGrant{},
 		objectS3Credentials:       map[string]ObjectS3Credential{},
 		objectMultipartUploads:    map[string]ObjectMultipartUpload{},
@@ -1203,6 +1207,8 @@ func NewMemStore() *MemStore {
 		projectsByAccountSlug:                map[string]map[string]string{},
 		projectsByInstallRepo:                map[installRepoKey]string{},
 		projectEnvironments:                  map[string]ProjectEnvironment{},
+		projectReleaseSets:                   map[string]ProjectReleaseSet{},
+		activeProjectReleaseSets:             map[string]string{},
 		projectEnvironmentCleanupJobs:        map[string]ProjectEnvironmentCleanupJob{},
 		projectEnvironmentApprovals:          map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:            map[string][]ProjectEnvironmentConfig{},
@@ -4479,7 +4485,23 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 		d.RolloutCompletedAt = &now
 		for _, sibling := range siblings {
 			other := m.deployments[sibling.ID]
-			other.Status = DeploySuperseded
+			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
+			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
+				if other.TrafficPercent > 0 {
+					if _, exists := m.revisionPins[sibling.ID]; !exists {
+						m.revisionPins[sibling.ID] = now.Add(time.Duration(ttl) * time.Second)
+					}
+				}
+				if expiry, retained := m.revisionPins[sibling.ID]; retained && now.Before(expiry) || m.deploymentInUsableReleaseLocked(sibling.ID) {
+					other.Status = DeployLive
+				} else {
+					other.Status = DeploySuperseded
+				}
+			} else if m.deploymentInUsableReleaseLocked(sibling.ID) {
+				other.Status = DeployLive
+			} else {
+				other.Status = DeploySuperseded
+			}
 			other.TrafficPercent = 0
 			m.deployments[sibling.ID] = other
 		}
@@ -7302,7 +7324,9 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
-		if d.AppID == appID && d.Status == DeploySuperseded && (!found || d.CreatedAt.After(latest.CreatedAt)) {
+		pinExpiry, pinned := m.revisionPins[d.ID]
+		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && pinned && time.Now().Before(pinExpiry))
+		if d.AppID == appID && rollbackEligible && (!found || d.CreatedAt.After(latest.CreatedAt)) {
 			latest, found = d, true
 		}
 	}
@@ -7789,7 +7813,23 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 			if otherID == id || other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(d.Scope) || other.Status != DeployLive {
 				continue
 			}
-			other.Status = DeploySuperseded
+			ttl := m.apps[d.AppID].Manifest.RevisionPinTTLSeconds
+			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
+				if other.TrafficPercent > 0 {
+					if _, exists := m.revisionPins[otherID]; !exists {
+						m.revisionPins[otherID] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
+					}
+				}
+				if expiry, retained := m.revisionPins[otherID]; retained && time.Now().Before(expiry) || m.deploymentInUsableReleaseLocked(otherID) {
+					other.Status = DeployLive
+				} else {
+					other.Status = DeploySuperseded
+				}
+			} else if m.deploymentInUsableReleaseLocked(otherID) {
+				other.Status = DeployLive
+			} else {
+				other.Status = DeploySuperseded
+			}
 			other.TrafficPercent = 0
 			m.deployments[otherID] = other
 		}
@@ -8404,7 +8444,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		if id == currentDeploymentID {
 			continue
 		}
-		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || d.Status != DeploySuperseded {
+		pinExpiry, pinned := m.revisionPins[d.ID]
+		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && pinned && time.Now().Before(pinExpiry))
+		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
 			continue
 		}
 		if latestCreated.IsZero() || d.CreatedAt.After(latestCreated) {

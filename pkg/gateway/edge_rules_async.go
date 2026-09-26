@@ -3,11 +3,13 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // EdgeRuleAsyncResolved is the compiled kind=async matcher payload. The action
@@ -64,7 +66,9 @@ type AsyncRouteRequest struct {
 }
 
 type AsyncRouteAccepted struct {
-	ID string
+	ID           string
+	ReleaseID    string
+	DeploymentID string
 }
 
 // AsyncRouteEnqueuer persists a matched request without waking the app.
@@ -134,6 +138,22 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		Headers:        asyncRouteHeaders(r.Header),
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 	})
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		switch {
+		case errors.Is(err, state.ErrInvalidArgument):
+			status = http.StatusBadRequest
+		case errors.Is(err, state.ErrNotFound):
+			status = http.StatusGone
+		case errors.Is(err, state.ErrConflict):
+			status = http.StatusConflict
+		}
+		if status != http.StatusServiceUnavailable {
+			api.WriteProblem(w, api.NewProblem(status, api.CodeValidation, "Async route version unavailable", "the requested revision or release is invalid, expired, or conflicts with this app"))
+			h.observeAsyncRule(rule, "blocked", "error")
+			return true
+		}
+	}
 	if err != nil || accepted.ID == "" {
 		api.WriteProblem(w, api.ErrCapacity("enqueue async route"))
 		h.observeAsyncRule(rule, "failed", "error")
@@ -143,6 +163,12 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 	statusURL := "/v1/invocations/" + accepted.ID
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(api.InvocationIDHeader, accepted.ID)
+	if accepted.ReleaseID != "" {
+		w.Header().Set(api.ReleaseHeader, accepted.ReleaseID)
+	}
+	if accepted.DeploymentID != "" {
+		w.Header().Set(api.RevisionHeader, accepted.DeploymentID)
+	}
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(api.AsyncInvokeResponse{ID: accepted.ID, StatusURL: statusURL})
 	h.observeAsyncRule(rule, "match", "success")

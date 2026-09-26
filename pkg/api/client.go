@@ -1596,6 +1596,13 @@ func (c *Client) GetProjectEnvironmentReleases(ctx context.Context, projectSlug,
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
+// PublishProjectReleaseSet atomically activates a complete project deployment graph.
+func (c *Client) PublishProjectReleaseSet(ctx context.Context, projectSlug, environmentSlug string, req PublishProjectReleaseSetRequest) (ProjectReleaseSetResponse, error) {
+	var out ProjectReleaseSetResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/release-sets"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
 // GetProjectEnvironmentState returns the effective configuration, release,
 // variable, safe secret metadata, and managed bindings for one environment.
 func (c *Client) GetProjectEnvironmentState(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentStateResponse, error) {

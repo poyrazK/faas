@@ -809,6 +809,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			SessionAffinity:              a.Manifest.SessionAffinity,
 			VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
 			VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
+			RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
 		},
 		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
 		ServiceBindingPolicy:      a.Manifest.EffectiveServiceBindingPolicy(),
@@ -831,6 +832,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		SessionAffinity:              a.Manifest.SessionAffinity,
 		VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
+		RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
 		// ADR-093: per-route observability opt-in (DB round-trip).
 		// Surfaced so dashboards can show "per-route metrics on /
 		// off" alongside the streaming + websocket pills and so a

@@ -13211,6 +13211,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/release-sets:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the release set.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target project environment.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    post:
+      tags: [projects]
+      operationId: publishProjectReleaseSet
+      summary: Atomically activate an immutable project deployment graph.
+      description: Every project workload must have one live deployment and revision pinning enabled for at least the requested TTL. Previous release sets remain addressable until expiry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishProjectReleaseSetRequest' }
+      responses:
+        '201':
+          description: Published release set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/state:
     parameters:
       - name: slug
@@ -16131,6 +16165,8 @@ paths:
         to pick up the eventual result.
       parameters:
         - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -16161,6 +16197,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -16189,6 +16227,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -16218,6 +16258,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -16763,6 +16805,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
       requestBody:
         required: true
         content:
@@ -20016,6 +20060,18 @@ components:
       description: |
         Idempotency key for the POST. Stored for 24h. On replay the server
         returns the original response with `Idempotent-Replayed: true`.
+    GregaleRevision:
+      name: X-Gregale-Revision
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+      description: Exact deployment pin. Mutually exclusive with X-Gregale-Release; checked again at delivery.
+    GregaleRelease:
+      name: X-Gregale-Release
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+      description: Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
     Slug:
       name: slug
       in: path
@@ -22506,6 +22562,12 @@ components:
           description: "Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie."
           type: boolean
           default: false
+        revision_pin_ttl_seconds:
+          description: "Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables revision pinning."
+          type: integer
+          minimum: 0
+          maximum: 604800
+          default: 0
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -23682,6 +23744,12 @@ components:
           description: "Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with version_affinity_cookie; omitted uses false."
           type: boolean
           default: false
+        revision_pin_ttl_seconds:
+          description: "Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."
+          type: integer
+          minimum: 0
+          maximum: 604800
+          default: 0
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -24104,6 +24172,11 @@ components:
         version_affinity_managed_cookie:
           description: "Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no change."
           type: [boolean, "null"]
+        revision_pin_ttl_seconds:
+          description: "Set the revision pin window in seconds; zero disables future retention. Omit for no change."
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 604800
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -24726,6 +24799,12 @@ components:
           description: "Whether the edge issues its own host-only rollout-affinity cookie."
           type: boolean
           default: false
+        revision_pin_ttl_seconds:
+          description: "Configured revision pin window in seconds; zero disables pinning."
+          type: integer
+          minimum: 0
+          maximum: 604800
+          default: 0
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."
@@ -28383,6 +28462,44 @@ components:
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentReleaseWorkloadResponse' }
+
+    PublishProjectReleaseSetRequest:
+      description: A complete mapping of project workload slugs to live deployment UUIDs.
+      type: object
+      additionalProperties: false
+      required: [ttl_seconds, deployments]
+      properties:
+        ttl_seconds: { type: integer, minimum: 1, maximum: 604800 }
+        deployments:
+          type: object
+          minProperties: 1
+          maxProperties: 100
+          additionalProperties: { type: string, format: uuid }
+
+    ProjectReleaseSetResponse:
+      description: Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and expires_at is set.
+      type: object
+      required: [id, account_id, project_id, environment, active, ttl_seconds, created_at, members]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment: { type: string }
+        active: { type: boolean }
+        ttl_seconds: { type: integer, minimum: 1, maximum: 604800 }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectReleaseSetMemberResponse' }
+
+    ProjectReleaseSetMemberResponse:
+      description: One app and exact deployment in an immutable project release set.
+      type: object
+      required: [app_id, deployment_id]
+      properties:
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
 
     ProjectEnvironmentReleaseWorkloadResponse:
       description: Current live deployment metadata for one project workload. The stable environment URL is present before the first deployment but returns 404 until a live release exists.

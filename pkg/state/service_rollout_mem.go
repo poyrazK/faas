@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func deploymentPreferredForWake(candidate, current Deployment) bool {
@@ -85,7 +87,17 @@ func (m *MemStore) FinalizeServiceRollout(_ context.Context, id string) (Deploym
 			continue
 		}
 		other := m.deployments[row.id]
-		other.Status = DeploySuperseded
+		ttl := m.apps[target.AppID].Manifest.RevisionPinTTLSeconds
+		if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds {
+			if _, exists := m.revisionPins[row.id]; !exists {
+				m.revisionPins[row.id] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
+			}
+			other.Status = DeployLive
+		} else if m.deploymentInUsableReleaseLocked(row.id) {
+			other.Status = DeployLive
+		} else {
+			other.Status = DeploySuperseded
+		}
 		other.TrafficPercent = 0
 		m.deployments[row.id] = other
 	}
@@ -125,6 +137,12 @@ func (m *MemStore) BeginServiceRolloutCutover(_ context.Context, id string) (Dep
 		if row.id == id {
 			other.TrafficPercent = 100
 		} else {
+			ttl := m.apps[target.AppID].Manifest.RevisionPinTTLSeconds
+			if ttl > 0 && ttl <= api.RevisionPinMaxTTLSeconds && other.TrafficPercent > 0 {
+				if _, exists := m.revisionPins[row.id]; !exists {
+					m.revisionPins[row.id] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
+				}
+			}
 			other.TrafficPercent = 0
 		}
 		m.deployments[row.id] = other
@@ -218,6 +236,7 @@ func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (De
 	}
 	before := target
 	previous, _ := previousMemServiceRolloutRow(target, rows)
+	delete(m.revisionPins, previous.id)
 	previousID := previous.id
 	for _, row := range rows {
 		if row.id == id {
@@ -227,6 +246,9 @@ func (m *MemStore) AbortServiceRollout(_ context.Context, id, reason string) (De
 		if row.id == previousID {
 			other.Status = DeployLive
 			other.TrafficPercent = 100
+		} else if m.deploymentInUsableReleaseLocked(row.id) {
+			other.Status = DeployLive
+			other.TrafficPercent = 0
 		} else {
 			other.Status = DeploySuperseded
 			other.TrafficPercent = 0

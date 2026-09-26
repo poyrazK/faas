@@ -137,6 +137,10 @@ export type AppResponse = {
    */
   version_affinity_managed_cookie?: boolean;
   /**
+   * Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables revision pinning.
+   */
+  revision_pin_ttl_seconds?: number;
+  /**
    * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
    */
   route_metrics_enabled?: boolean;

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -100,5 +102,50 @@ func TestAsyncRouteEnqueuerIdempotencyKeyReturnsExistingInvocation(t *testing.T)
 	}
 	if got := store.invocations[first.ID].RetryPolicyJSON; len(got) != 0 {
 		t.Errorf("empty retry policy persisted as %s, want nil", got)
+	}
+}
+
+func TestAsyncRouteEnqueuerCapturesProjectRelease(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "edge-version-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "api", Status: state.AppActive,
+		Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", ImageDigest: "sha256:one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	release, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "production", 1800,
+		[]state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: dep.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueuer := &asyncRouteEnqueuer{store: store}
+	accepted, err := enqueuer.EnqueueAsyncRoute(ctx, gateway.AsyncRouteRequest{
+		AppID: app.ID, AccountID: account.ID, Method: "POST", Path: "/checkout", Payload: json.RawMessage(`{}`),
+	})
+	if err != nil || accepted.ReleaseID != release.ID || accepted.DeploymentID != dep.ID {
+		t.Fatalf("accepted = %+v, %v", accepted, err)
+	}
+	queued, err := store.InvocationByID(ctx, accepted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var headers map[string]string
+	if err := json.Unmarshal(queued.Headers, &headers); err != nil || headers[api.ReleaseHeader] != release.ID {
+		t.Fatalf("queued headers = %s, %v", queued.Headers, err)
 	}
 }

@@ -108,6 +108,10 @@ export type UpdateAppRequest = {
    * Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no change.
    */
   version_affinity_managed_cookie?: boolean | null;
+  /**
+   * Set the revision pin window in seconds; zero disables future retention. Omit for no change.
+   */
+  revision_pin_ttl_seconds?: number | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

@@ -25,18 +25,32 @@ export class InvocationsService {
   public static invokeApp({
     slug,
     requestBody,
+    xGregaleRevision,
+    xGregaleRelease,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
     requestBody: InvokeRequest,
+    /**
+     * Exact deployment pin. Mutually exclusive with X-Gregale-Release; checked again at delivery.
+     */
+    xGregaleRevision?: string,
+    /**
+     * Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
+     */
+    xGregaleRelease?: string,
   }): CancelablePromise<InvokeResponse> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/invoke',
       path: {
         'slug': slug,
+      },
+      headers: {
+        'X-Gregale-Revision': xGregaleRevision,
+        'X-Gregale-Release': xGregaleRelease,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -65,6 +79,8 @@ export class InvocationsService {
     slug,
     requestBody,
     idempotencyKey,
+    xGregaleRevision,
+    xGregaleRelease,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -77,6 +93,14 @@ export class InvocationsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Exact deployment pin. Mutually exclusive with X-Gregale-Release; checked again at delivery.
+     */
+    xGregaleRevision?: string,
+    /**
+     * Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
+     */
+    xGregaleRelease?: string,
   }): CancelablePromise<AsyncInvokeResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -86,6 +110,8 @@ export class InvocationsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'X-Gregale-Revision': xGregaleRevision,
+        'X-Gregale-Release': xGregaleRelease,
       },
       body: requestBody,
       mediaType: 'application/json',
