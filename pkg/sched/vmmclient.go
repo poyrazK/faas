@@ -461,6 +461,10 @@ type AppSpec struct {
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// ReadinessProbeJSON carries the optional continuous primary-app
+	// readiness policy. It is separate from HealthcheckPath/GRPC, which
+	// only gate startup admission.
+	ReadinessProbeJSON string
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -1447,6 +1451,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		HealthcheckPath:        a.HealthcheckPath,
 		HealthcheckGrpc:        a.HealthcheckGRPC,
 		HealthcheckGrpcService: a.HealthcheckGRPCService,
+		ReadinessProbeJson:     a.ReadinessProbeJSON,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label

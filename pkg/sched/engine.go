@@ -3271,6 +3271,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		HealthcheckPath:        healthcheckPathFromDep(dep),
 		HealthcheckGRPC:        healthcheckGRPC,
 		HealthcheckGRPCService: healthcheckGRPCService,
+		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -5037,6 +5038,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		HealthcheckPath:        healthcheckPathFromDep(dep),
 		HealthcheckGRPC:        healthcheckGRPC,
 		HealthcheckGRPCService: healthcheckGRPCService,
+		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto
@@ -5755,6 +5757,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		HealthcheckPath:        healthcheckPathFromDep(dep),
 		HealthcheckGRPC:        healthcheckGRPC,
 		HealthcheckGRPCService: healthcheckGRPCService,
+		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label

@@ -4681,7 +4681,7 @@ SELECT DISTINCT ON (CAST(data->>'instance_id' AS text))
        at,
        id
 FROM events
-WHERE kind = 'wake.sidecar_health'
+WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND data->>'status' IN ('ready', 'unready')
   AND data->>'instance_id' = ANY($1::text[])
 ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC
@@ -4707,6 +4707,62 @@ func (q *Queries) LatestInstanceReadiness(ctx context.Context, db DBTX, instance
 		var i LatestInstanceReadinessRow
 		if err := rows.Scan(
 			&i.InstanceID,
+			&i.Status,
+			&i.At,
+			&i.ID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const latestInstanceReadinessBySource = `-- name: LatestInstanceReadinessBySource :many
+SELECT DISTINCT ON (
+           CAST(data->>'instance_id' AS text),
+           CAST(CASE WHEN kind = 'wake.app_readiness' THEN 'primary_app'
+                ELSE 'sidecar:' || CAST(data->>'sidecar_name' AS text) END AS text)
+       )
+       CAST(data->>'instance_id' AS text) AS instance_id,
+       CAST(CASE WHEN kind = 'wake.app_readiness' THEN 'primary_app'
+            ELSE 'sidecar:' || CAST(data->>'sidecar_name' AS text) END AS text) AS source,
+       CAST(data->>'status' AS text) AS status,
+       at,
+       id
+FROM events
+WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
+  AND data->>'status' IN ('ready', 'unready')
+  AND data->>'instance_id' = ANY($1::text[])
+  AND (kind <> 'wake.sidecar_health' OR COALESCE(data->>'sidecar_name', '') <> '')
+ORDER BY CAST(data->>'instance_id' AS text), source, at DESC, id DESC
+`
+
+type LatestInstanceReadinessBySourceRow struct {
+	InstanceID string
+	Source     string
+	Status     string
+	At         pgtype.Timestamptz
+	ID         int64
+}
+
+// Gateway hydration keeps each required readiness source independent so one
+// recovered probe cannot override another probe that is still unready.
+func (q *Queries) LatestInstanceReadinessBySource(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessBySourceRow, error) {
+	rows, err := db.Query(ctx, latestInstanceReadinessBySource, instanceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LatestInstanceReadinessBySourceRow{}
+	for rows.Next() {
+		var i LatestInstanceReadinessBySourceRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.Source,
 			&i.Status,
 			&i.At,
 			&i.ID,

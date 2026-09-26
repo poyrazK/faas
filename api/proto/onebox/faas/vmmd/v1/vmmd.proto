@@ -623,6 +623,11 @@ message AppSpec {
   // characterization class. Empty preserves legacy inference for rolling
   // upgrades and older callers.
   string execution_mode = 18;
+  // readiness_probe_json is the optional recurring primary-app traffic probe
+  // (distinct from the startup healthcheck and liveness probe). Empty keeps
+  // legacy routing behavior; otherwise vmmd decodes the deployment's validated
+  // readiness_probe override and emits reversible ready/unready transitions.
+  string readiness_probe_json = 27;
   // private_network_cidrs are provider-verified VPC destinations for this
   // app. vmmd installs explicit routes and accept-before-deny rules only when
   // this list is non-empty; pending/error attachments stay fail-closed at the
